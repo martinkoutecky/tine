@@ -1,0 +1,14 @@
+[package]
+name = "tine-plugin-revocation-sentinel"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tine-plugin-sdk = { path = "../../../plugin-sdk/rust" }

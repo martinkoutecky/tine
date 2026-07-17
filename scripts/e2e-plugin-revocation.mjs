@@ -3,12 +3,12 @@
 // separately supplied, already-signed fixture instead of weakening production
 // verification with an E2E key or bypass.
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { remote } from "webdriverio";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -20,27 +20,45 @@ const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4491);
 const STALL_PORT = Number(process.env.E2E_PREVIEW_PORT || 4492);
 const TMP = process.env.E2E_TMP_DIR || "/tmp/tine-plugin-revocation-e2e";
 const GRAPH = path.join(TMP, "graph");
+const FIXTURE_ROOT = path.join(ROOT, "fixtures/plugin-revocation");
 const fixture = {
-  index: process.env.TINE_E2E_REVOKED_INDEX,
-  signature: process.env.TINE_E2E_REVOKED_SIGNATURE,
-  manifest: process.env.TINE_E2E_REVOKED_MANIFEST,
-  wasm: process.env.TINE_E2E_REVOKED_WASM,
+  controlIndex: process.env.TINE_E2E_CONTROL_INDEX || path.join(FIXTURE_ROOT, "control-index.json"),
+  controlSignature: process.env.TINE_E2E_CONTROL_SIGNATURE || path.join(FIXTURE_ROOT, "control-index.json.sig"),
+  revokedIndex: process.env.TINE_E2E_REVOKED_INDEX || path.join(FIXTURE_ROOT, "revoked-index.json"),
+  revokedSignature: process.env.TINE_E2E_REVOKED_SIGNATURE || path.join(FIXTURE_ROOT, "revoked-index.json.sig"),
+  manifest: process.env.TINE_E2E_REVOKED_MANIFEST || path.join(FIXTURE_ROOT, "manifest.json"),
+  wasm: process.env.TINE_E2E_REVOKED_WASM || path.join(FIXTURE_ROOT, "plugin.wasm"),
+  publicKey: process.env.TINE_E2E_REGISTRY_PUBLIC_KEY || path.join(FIXTURE_ROOT, "registry-ed25519.pub.pem"),
 };
 
 for (const [name, value] of Object.entries(fixture)) {
   if (!value || !fs.existsSync(value) || !fs.statSync(value).isFile()) {
-    throw new Error(`native plugin revocation fixture ${name} is missing; set TINE_E2E_REVOKED_${name.toUpperCase()}`);
+    const signingHint = name === "revokedSignature" ? "; one offline production signature is still required (see fixtures/plugin-revocation/README.md)" : "";
+    throw new Error(`native plugin revocation fixture ${name} is missing at ${value}${signingHint}`);
   }
 }
-const indexJson = fs.readFileSync(fixture.index, "utf8");
-const signature = fs.readFileSync(fixture.signature, "utf8").trim();
+const controlIndexJson = fs.readFileSync(fixture.controlIndex, "utf8");
+const controlSignature = fs.readFileSync(fixture.controlSignature, "utf8").trim();
+const revokedIndexJson = fs.readFileSync(fixture.revokedIndex, "utf8");
+const revokedSignature = fs.readFileSync(fixture.revokedSignature, "utf8").trim();
 const manifestJson = fs.readFileSync(fixture.manifest, "utf8");
 const wasm = fs.readFileSync(fixture.wasm);
-const index = JSON.parse(indexJson);
+const controlIndex = JSON.parse(controlIndexJson);
+const revokedIndex = JSON.parse(revokedIndexJson);
 const manifest = JSON.parse(manifestJson);
-const revoked = index.revocations?.some((item) => item.id === manifest.id && item.version === manifest.version);
+const verifyFixtureSignature = (indexJson, signature) => crypto.verify(
+  null,
+  Buffer.from(indexJson),
+  fs.readFileSync(fixture.publicKey),
+  Buffer.from(signature, "base64"),
+);
+if (!verifyFixtureSignature(controlIndexJson, controlSignature)) throw new Error("positive-control registry fixture signature did not verify");
+if (!verifyFixtureSignature(revokedIndexJson, revokedSignature)) throw new Error("revoked registry fixture signature did not verify");
+const { remote } = await import("webdriverio");
+if ((controlIndex.revocations ?? []).length !== 0) throw new Error("positive-control registry fixture must contain no revocations");
+const revoked = revokedIndex.revocations?.some((item) => item.id === manifest.id && item.version === manifest.version);
 if (!revoked) throw new Error(`${manifest.id}@${manifest.version} is not revoked by the supplied signed registry fixture`);
-const commandLabels = (manifest.contributions?.commands ?? []).map((item) => item.label);
+const commandLabels = (manifest.contributions?.commands ?? []).map((item) => item.title);
 const decorationKinds = (manifest.contributions?.blockDecorations ?? []).map((item) => item.kind);
 if (commandLabels.length === 0 && !decorationKinds.includes("thread-lines")) {
   throw new Error("revoked fixture must declare a command or thread-lines decoration contribution");
@@ -60,13 +78,16 @@ const packageDir = path.join(appData, "plugins", manifest.id, manifest.version);
 fs.mkdirSync(packageDir, { recursive: true });
 fs.writeFileSync(path.join(packageDir, "manifest.json"), manifestJson);
 fs.writeFileSync(path.join(packageDir, "plugin.wasm"), wasm);
-fs.writeFileSync(path.join(appData, "tine-settings.json"), `${JSON.stringify({
-  known_graphs: [{ name: "graph", path: GRAPH }],
-  last_graph_path: GRAPH,
-  plugin_states: { [manifest.id]: { version: manifest.version, enabled: true } },
-  "plugin-registry-index": indexJson,
-  "plugin-registry-signature": signature,
-}, null, 2)}\n`);
+const settingsPath = path.join(appData, "tine-settings.json");
+function seedEnabledSettings(indexJson, signature) {
+  fs.writeFileSync(settingsPath, `${JSON.stringify({
+    known_graphs: [{ name: "graph", path: GRAPH }],
+    last_graph_path: GRAPH,
+    plugin_states: { [manifest.id]: { version: manifest.version, enabled: true } },
+    "plugin-registry-index": indexJson,
+    "plugin-registry-signature": signature,
+  }, null, 2)}\n`);
+}
 
 // A CONNECT proxy which accepts the TLS tunnel and then never forwards bytes.
 // WebKit's HTTPS request therefore reaches a real open socket but can complete
@@ -98,61 +119,89 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const log = fs.openSync(path.join(TMP, "tauri-driver.log"), "w");
-const td = spawn(TD, [
-  "--port", String(DRIVER_PORT),
-  "--native-port", String(NATIVE_PORT),
-  "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
-], { env, stdio: ["ignore", log, log], detached: true });
-await sleep(2500);
+async function withAppSession(label, check) {
+  const sessionLog = fs.openSync(path.join(TMP, `${label}-tauri-driver.log`), "w");
+  const td = spawn(TD, [
+    "--port", String(DRIVER_PORT),
+    "--native-port", String(NATIVE_PORT),
+    "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+  ], { env, stdio: ["ignore", sessionLog, sessionLog], detached: true });
+  await sleep(2500);
+  let browser;
+  try {
+    browser = await remote({
+      hostname: "127.0.0.1",
+      port: DRIVER_PORT,
+      path: "/",
+      logLevel: "error",
+      connectionRetryCount: 1,
+      connectionRetryTimeout: 60_000,
+      capabilities: {
+        browserName: "wry",
+        "wdio:enforceWebDriverClassic": true,
+        "tauri:options": { application: APP },
+      },
+    });
+    await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+    await check(browser);
+  } finally {
+    try { await browser?.deleteSession(); } catch {}
+    try { process.kill(-td.pid, "SIGKILL"); } catch {}
+    fs.closeSync(sessionLog);
+    await sleep(1000);
+  }
+}
 
-let browser;
 try {
-  browser = await remote({
-    hostname: "127.0.0.1",
-    port: DRIVER_PORT,
-    path: "/",
-    logLevel: "error",
-    connectionRetryCount: 1,
-    connectionRetryTimeout: 60_000,
-    capabilities: {
-      browserName: "wry",
-      "wdio:enforceWebDriverClassic": true,
-      "tauri:options": { application: APP },
-    },
+  seedEnabledSettings(controlIndexJson, controlSignature);
+  await withAppSession("control", async (browser) => {
+    if (decorationKinds.includes("thread-lines")) {
+      await browser.$(".plugin-thread-lines").waitForExist({ timeout: 10_000 });
+    }
+    if (commandLabels.length > 0) {
+      await browser.keys(["Control", "Shift", "p"]);
+      await browser.$(".switcher-input").waitForExist({ timeout: 5_000 });
+      const paletteText = await browser.$(".switcher").getText();
+      const missing = commandLabels.find((label) => !paletteText.includes(label));
+      if (missing) throw new Error(`positive-control command did not activate: ${missing}`);
+    }
   });
-  await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
-  const state = await browser.execute((id, version, kinds) => {
-    return {
+  console.log(`CONTROL PASS: ${manifest.id}@${manifest.version} visibly activated under the signed empty cache`);
+
+  seedEnabledSettings(revokedIndexJson, revokedSignature);
+  await withAppSession("revoked", async (browser) => {
+    const state = await browser.execute((id, version, kinds) => ({
       threadDecorationVisible: kinds.includes("thread-lines") && Boolean(document.querySelector(".plugin-thread-lines")),
       identity: `${id}@${version}`,
-    };
-  }, manifest.id, manifest.version, decorationKinds);
-  if (state.threadDecorationVisible) {
-    throw new Error(`cached-revoked contribution became visible: ${JSON.stringify(state)}`);
-  }
-  if (commandLabels.length > 0) {
-    await browser.keys(["Control", "Shift", "p"]);
-    const palette = await browser.$(".switcher-input");
-    await palette.waitForExist({ timeout: 5_000 });
-    const paletteText = await browser.$(".switcher").getText();
-    const leaked = commandLabels.find((label) => paletteText.includes(label));
-    if (leaked) throw new Error(`cached-revoked command appeared in the command palette: ${leaked}`);
-    await browser.keys(["Escape"]);
-    await browser.$(".switcher").waitForExist({ reverse: true, timeout: 5_000 });
-  }
+    }), manifest.id, manifest.version, decorationKinds);
+    if (state.threadDecorationVisible) throw new Error(`cached-revoked contribution became visible: ${JSON.stringify(state)}`);
+    if (commandLabels.length > 0) {
+      await browser.keys(["Control", "Shift", "p"]);
+      await browser.$(".switcher-input").waitForExist({ timeout: 5_000 });
+      const paletteText = await browser.$(".switcher").getText();
+      const leaked = commandLabels.find((label) => paletteText.includes(label));
+      if (leaked) throw new Error(`cached-revoked command appeared in the command palette: ${leaked}`);
+      await browser.keys(["Escape"]);
+      await browser.$(".switcher").waitForExist({ reverse: true, timeout: 5_000 });
+    }
 
-  await browser.$('[title="Settings (t s)"]').click();
-  await browser.$("button=Plugins").click();
-  await browser.waitUntil(async () => browser.execute((id) => {
-    const rows = [...document.querySelectorAll(".settings-field")];
-    return rows.some((row) => row.textContent?.includes(id) && /revoked/i.test(row.textContent ?? ""));
-  }, manifest.id), { timeout: 10_000, timeoutMsg: "cached-revoked package was not visibly disabled" });
-  console.log(`PASS: ${manifest.id}@${manifest.version} stayed disabled with no command or decoration contribution`);
+    await browser.$('[title="Settings (t s)"]').click();
+    await browser.$("button=Plugins").click();
+    await browser.$("button=Installed (1)").click();
+    await browser.waitUntil(async () => browser.execute((id) => {
+      const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
+      const toggle = row?.querySelector('[role="switch"]');
+      return Boolean(row && /revoked/i.test(row.textContent ?? "") && toggle?.getAttribute("aria-checked") === "false");
+    }, manifest.id), { timeout: 10_000, timeoutMsg: "cached-revoked package was not visibly disabled" });
+  });
+
+  const persisted = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+  const persistedState = persisted.plugin_states?.[manifest.id];
+  if (persistedState?.version !== manifest.version || persistedState.enabled !== false) {
+    throw new Error(`cached revocation was not persisted disabled: ${JSON.stringify(persistedState)}`);
+  }
+  console.log(`PASS: ${manifest.id}@${manifest.version} activated under control, then stayed absent and persisted disabled when revoked`);
 } finally {
-  try { await browser?.deleteSession(); } catch {}
-  try { process.kill(-td.pid, "SIGKILL"); } catch {}
-  fs.closeSync(log);
   for (const socket of sockets) socket.destroy();
   await new Promise((resolve) => stall.close(resolve));
 }
