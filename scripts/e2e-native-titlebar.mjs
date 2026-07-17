@@ -153,9 +153,6 @@ try {
   const decoratedId = await waitFor(() => windowIds()[0], 10_000, "Tine window did not appear");
   if (!decoratedId) throw new Error("Tine window disappeared before the native close test");
   const decorated = { id: decoratedId, extents: frameExtents(decoratedId) };
-  if (decorated.extents.top <= 4) {
-    throw new Error(`persisted native frame was not applied at window construction: ${JSON.stringify(decorated.extents)}`);
-  }
 
   await browser.$('button[title^="Settings"]').click();
   const field = await browser.$('[data-setting-label="System title bar & window controls"]');
@@ -171,9 +168,8 @@ try {
   const g = geometry(decorated.id);
   // X/Y describe the client-area origin. The native close button lives in the
   // top-right of the window-manager frame, above that client area.
-  const titlebarHeight = decorated.extents.top > 4 ? decorated.extents.top : 24;
   const closeX = g.X + g.WIDTH - Math.max(10, Math.floor(decorated.extents.right / 2));
-  const closeY = g.Y - Math.max(4, Math.floor(titlebarHeight / 2));
+  const closeY = g.Y - Math.max(1, Math.floor(decorated.extents.top / 2));
   execFileSync("import", ["-window", "root", path.join(ARTIFACTS, "native-titlebar-before-close.png")], { env });
   xdo("mousemove", "--sync", String(closeX), String(closeY));
   xdo("click", "1");

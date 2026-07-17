@@ -103,52 +103,64 @@ try {
       bubbles: true, cancelable: true,
     }));
   });
-  await browser.waitUntil(() => browser.execute(() =>
-    document.querySelectorAll(".pane-leaf[data-pane-id]").length === 2,
-  ), { timeout: 10_000, timeoutMsg: "duplicate page split was not created" });
-  const splitPane = await browser.execute(() =>
+  await browser.waitUntil(() => browser.execute(() => {
+    const panes = [...document.querySelectorAll(".pane-leaf[data-pane-id]")];
+    return panes.length === 2 && panes.every((pane) =>
+      pane.querySelector("[data-page-actions-trigger]")
+        && pane.querySelector("h1.page-title"));
+  }), { timeout: 10_000, timeoutMsg: "duplicate page split was not ready" });
+  const [paneA, paneB] = await browser.execute(() =>
     [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
-      .map((pane) => pane.getAttribute("data-pane-id"))
-      .find((id) => id && id !== "main") ?? null,
-  );
-  if (!splitPane) throw new Error("duplicate page split id was not found");
-  const expandedByPane = () => browser.execute(() => Object.fromEntries(
-    [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
-      .map((pane) => [
-        pane.getAttribute("data-pane-id"),
-        pane.querySelector("[data-page-actions-trigger]")?.getAttribute("aria-expanded") ?? null,
-      ]),
-  ));
+      .map((pane) => pane.getAttribute("data-pane-id")));
+  if (!paneA || !paneB || paneA === paneB) {
+    throw new Error("duplicate page pane ids were not found");
+  }
+  const clickPageActions = async (paneId) => {
+    const clicked = await browser.execute((id) => {
+      const pane = [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+        .find((node) => node.getAttribute("data-pane-id") === id);
+      const trigger = pane?.querySelector("[data-page-actions-trigger]");
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    }, paneId);
+    if (!clicked) throw new Error(`page-actions trigger for pane ${paneId} was not found`);
+  };
+  const expandedByPane = () => browser.execute((paneIds) => paneIds.map((id) => {
+    const pane = [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .find((node) => node.getAttribute("data-pane-id") === id);
+    return pane?.querySelector("[data-page-actions-trigger]")?.getAttribute("aria-expanded") ?? null;
+  }), [paneA, paneB]);
   const assertExpanded = async (expected, label) => {
     const actual = await expandedByPane();
-    const keys = Object.keys(actual);
-    if (keys.length !== Object.keys(expected).length
-        || Object.entries(expected).some(([paneId, value]) => actual[paneId] !== value)) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`${label}: ${JSON.stringify(actual)} expected ${JSON.stringify(expected)}`);
     }
   };
 
-  await browser.$('.pane-leaf[data-pane-id="main"] [data-page-actions-trigger]').click();
-  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
-  await assertExpanded({ main: "true", [splitPane]: "false" }, "main page-actions owner mismatch");
-  await browser.keys("Escape");
-  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
-  await assertExpanded({ main: "false", [splitPane]: "false" }, "closed duplicate page-actions state mismatch");
+  for (const [owner, paneId] of [paneA, paneB].entries()) {
+    await clickPageActions(paneId);
+    await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+    await assertExpanded([paneA, paneB].map((_, index) => index === owner ? "true" : "false"),
+      `page-actions owner mismatch on split pane ${owner + 1}`);
+    await browser.keys("Escape");
+    await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+    await assertExpanded(["false", "false"], "closed duplicate page-actions state mismatch");
+  }
 
-  await browser.$(`.pane-leaf[data-pane-id="${splitPane}"] [data-page-actions-trigger]`).click();
-  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
-  await assertExpanded({ main: "false", [splitPane]: "true" }, "split page-actions owner mismatch");
-  await browser.keys("Escape");
-  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
-
-  await browser.execute(() => {
-    const title = document.querySelector('.pane-leaf[data-pane-id="main"] h1.page-title');
-    title?.dispatchEvent(new MouseEvent("contextmenu", {
+  const titleContextMenuOpened = await browser.execute((paneId) => {
+    const pane = [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .find((node) => node.getAttribute("data-pane-id") === paneId);
+    const title = pane?.querySelector("h1.page-title");
+    if (!title) return false;
+    title.dispatchEvent(new MouseEvent("contextmenu", {
       bubbles: true, cancelable: true, clientX: 100, clientY: 100,
     }));
-  });
+    return true;
+  }, paneA);
+  if (!titleContextMenuOpened) throw new Error("split page title was not found");
   await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
-  await assertExpanded({ main: "false", [splitPane]: "false" }, "title right-click claimed an ellipsis owner");
+  await assertExpanded(["false", "false"], "title right-click claimed an ellipsis owner");
   await browser.keys("Escape");
   await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
 

@@ -48,6 +48,60 @@ const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NAT
 await sleep(2500);
 
 let browser;
+async function playUntilProgress(selector, label) {
+  const state = await browser.execute(async (mediaSelector) => {
+    const media = document.querySelector(mediaSelector);
+    if (!(media instanceof HTMLMediaElement)) return { missing: true };
+    const before = media.currentTime;
+    let cleanup = () => {};
+    const progress = new Promise((resolve) => {
+      const complete = (progressed, event) => {
+        cleanup();
+        resolve({ progressed, event });
+      };
+      const onProgress = () => {
+        if (media.currentTime > before) complete(true, "timeupdate");
+      };
+      const onEnded = () => complete(media.currentTime > before, "ended");
+      const timer = window.setTimeout(() => complete(false, "timeout"), 5_000);
+      cleanup = () => {
+        window.clearTimeout(timer);
+        media.removeEventListener("timeupdate", onProgress);
+        media.removeEventListener("ended", onEnded);
+      };
+      media.addEventListener("timeupdate", onProgress);
+      media.addEventListener("ended", onEnded);
+    });
+    try {
+      await media.play();
+    } catch (error) {
+      cleanup();
+      return {
+        before,
+        after: media.currentTime,
+        duration: media.duration,
+        error: media.error?.code ?? 0,
+        playError: String(error),
+        src: media.currentSrc || media.src,
+      };
+    }
+    const result = await progress;
+    media.pause();
+    return {
+      before,
+      after: media.currentTime,
+      duration: media.duration,
+      error: media.error?.code ?? 0,
+      progressed: result.progressed,
+      progressEvent: result.event,
+      src: media.currentSrc || media.src,
+    };
+  }, selector);
+  if (state.missing || state.playError || state.error || !(state.duration > 0) || !state.progressed) {
+    throw new Error(`${label} playback did not advance: ${JSON.stringify(state)}`);
+  }
+  return state;
+}
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
@@ -65,17 +119,7 @@ try {
     const media = document.querySelector("video.media-embed");
     return media ? { readyState: media.readyState, error: media.error?.code ?? 0, src: media.currentSrc || media.src } : null;
   }))?.readyState >= 1, { timeout: 20_000, timeoutMsg: "supported MKV never loaded metadata" });
-  const state = await browser.execute(async () => {
-    const media = document.querySelector("video.media-embed");
-    const before = media.currentTime;
-    await media.play();
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    media.pause();
-    return { before, after: media.currentTime, duration: media.duration, error: media.error?.code ?? 0, src: media.currentSrc || media.src };
-  });
-  if (state.error || !(state.src.includes("tine-media") || state.src.startsWith("blob:tauri")) || !(state.duration > 0) || !(state.after > state.before)) {
-    throw new Error(`MKV playback did not advance: ${JSON.stringify(state)}`);
-  }
+  const state = await playUntilProgress("video.media-embed", "MKV");
   console.log(`PASS: supported MKV loaded and played through ${state.src}`);
 
   const audio = await browser.$("audio.media-embed");
@@ -84,17 +128,7 @@ try {
     const media = document.querySelector("audio.media-embed");
     return media ? { readyState: media.readyState, error: media.error?.code ?? 0, src: media.currentSrc || media.src } : null;
   }))?.readyState >= 1, { timeout: 20_000, timeoutMsg: "supported MP3 never loaded metadata" });
-  const audioState = await browser.execute(async () => {
-    const media = document.querySelector("audio.media-embed");
-    const before = media.currentTime;
-    await media.play();
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    media.pause();
-    return { before, after: media.currentTime, duration: media.duration, error: media.error?.code ?? 0, src: media.currentSrc || media.src };
-  });
-  if (audioState.error || !(audioState.src.includes("tine-media") || audioState.src.startsWith("blob:tauri")) || !(audioState.duration > 0) || !(audioState.after > audioState.before)) {
-    throw new Error(`MP3 playback did not advance: ${JSON.stringify(audioState)}`);
-  }
+  const audioState = await playUntilProgress("audio.media-embed", "MP3");
   if (!(await browser.$(".media-audio-widen").isExisting()) || !(await browser.$("audio.media-embed + .media-open-external, .media-audio-wrap .media-open-external").isExisting())) {
     throw new Error("audio playback actions are missing");
   }
@@ -107,17 +141,7 @@ try {
     const media = document.querySelector(".audio-overlay audio");
     return media ? { readyState: media.readyState, error: media.error?.code ?? 0 } : null;
   }))?.readyState >= 1, { timeout: 20_000, timeoutMsg: "expanded MP3 never loaded metadata" });
-  const overlayState = await browser.execute(async () => {
-    const media = document.querySelector(".audio-overlay audio");
-    const before = media.currentTime;
-    await media.play();
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    media.pause();
-    return { before, after: media.currentTime, duration: media.duration, error: media.error?.code ?? 0, src: media.currentSrc || media.src };
-  });
-  if (overlayState.error || !(overlayState.duration > 0) || !(overlayState.after > overlayState.before)) {
-    throw new Error(`expanded MP3 playback did not advance: ${JSON.stringify(overlayState)}`);
-  }
+  const overlayState = await playUntilProgress(".audio-overlay audio", "expanded MP3");
   await browser.$(".audio-close").click();
   await overlay.waitForExist({ reverse: true, timeout: 10_000 });
   console.log(`PASS: expanded MP3 streamed, played, and released on close through ${overlayState.src}`);

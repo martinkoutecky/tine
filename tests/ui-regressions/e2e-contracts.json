@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "scenarios": {
+    "scripts/e2e-alias.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
+      "acceptableVariations": ["Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."],
+      "nonRequirements": ["Exact picker dimensions, animation, or DOM shape."],
+      "stability": "stable"
+    },
+    "scripts/e2e-block-embed.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Embedded blocks keep local disclosure, keyboard navigation, deletion, and caret ownership in the visible embed.", "blocking": true }],
+      "acceptableVariations": ["Embed styling and control placement may evolve without changing the focused editing surface."],
+      "nonRequirements": ["Exact indentation pixels or disclosure-icon artwork."],
+      "stability": "stable"
+    },
+    "scripts/e2e-block-ref-count.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Copied block references refresh visible reference counts and text after saved source changes.", "blocking": true }],
+      "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
+      "nonRequirements": ["Exact badge typography or animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-blockselect.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.", "blocking": true }],
+      "acceptableVariations": ["Selection affordance styling may evolve while keyboard ownership remains intact."],
+      "nonRequirements": ["Exact selection highlight color or transition timing."],
+      "stability": "stable"
+    },
+    "scripts/e2e-capabilities.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The E2E runner can discover native-driver capabilities and retain browser-specific evidence.", "blocking": true }],
+      "acceptableVariations": ["Driver feature detection may vary by supported platform and browser version."],
+      "nonRequirements": ["Any end-user product workflow by itself."],
+      "stability": "stable"
+    },
+    "scripts/e2e-capture.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
+      "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
+      "stability": "stable"
+    },
+    "scripts/e2e-caret.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Arrow navigation preserves a usable caret across wrapped blocks and journal entries.", "blocking": true }],
+      "acceptableVariations": ["Line wrapping may differ with fonts and viewport width while visual-row caret navigation remains correct."],
+      "nonRequirements": ["Exact glyph metrics or line height."],
+      "stability": "stable"
+    },
+    "scripts/e2e-clickcaret-repro.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "A click maps to the intended source caret, including after trailing links and inside inline code.", "blocking": true }],
+      "acceptableVariations": ["Layout and coordinates may differ, but mapping a click to the intended source caret is blocking."],
+      "nonRequirements": ["Exact text rasterization, font metrics, or pointer coordinate values."],
+      "stability": "stable"
+    },
+    "scripts/e2e-empty-query-workspace.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Empty or invalid friendly searches open independent virtual workspaces without querying or writing the graph.", "blocking": true }],
+      "acceptableVariations": ["Empty-state wording and tab presentation may evolve."],
+      "nonRequirements": ["Exact modal geometry or tab animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-external-assets.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An approved external asset directory is read and written through its exact canonical graph and target identity.", "blocking": true, "authority": "Tine external-asset consent and canonical-path contract" }],
+      "acceptableVariations": ["The native file-picker implementation and media presentation may vary after consent is established."],
+      "nonRequirements": ["Exact dialog appearance or host file-manager behavior."],
+      "stability": "stable"
+    },
+    "scripts/e2e-journal-format.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.", "blocking": true }],
+      "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
+      "nonRequirements": ["Exact locale punctuation or date-label spacing."],
+      "stability": "stable"
+    },
+    "scripts/e2e-journal-future-feed.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Future journals stay out of the feed while remaining directly reachable without changing their file bytes.", "blocking": true }],
+      "acceptableVariations": ["Feed ordering and date formatting may evolve around the inclusion boundary."],
+      "nonRequirements": ["Exact feed row height or clock display."],
+      "stability": "stable"
+    },
+    "scripts/e2e-media.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Supported graph audio and MKV media render and play through the real media path.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Media fallback and expanded audio remain bounded rather than retaining unbounded whole files.", "blocking": true, "authority": "Tine media resource-budget contract" }
+      ],
+      "acceptableVariations": ["Native codec availability and player chrome may vary for the supported fixture."],
+      "nonRequirements": ["Exact playback controls, waveform styling, or decoder implementation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-mobile-drawers.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "On compact viewports, sidebars behave as modal overlays with safe dismissal.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "On roomy viewports, sidebars remain persistent rather than becoming modal overlays.", "blocking": true }
+      ],
+      "acceptableVariations": ["Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking."],
+      "nonRequirements": ["Exact breakpoint pixel value, drawer width, overlay opacity, or transition duration."],
+      "stability": "stable"
+    },
+    "scripts/e2e-multigraph.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "One app process keeps two graph windows distinct and routes Quick Capture to the intended open graph.", "blocking": true }],
+      "acceptableVariations": ["Window placement and OS activation order may vary while graph routing remains correct."],
+      "nonRequirements": ["Exact native window coordinates or stacking order."],
+      "stability": "stable"
+    },
+    "scripts/e2e-native-titlebar.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.", "blocking": true }],
+      "acceptableVariations": ["Window-manager decoration details and button geometry may vary."],
+      "nonRequirements": ["Exact titlebar theme, icon size, or frame border width."],
+      "stability": "stable"
+    },
+    "scripts/e2e-og-parity-references.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Slash page and tag references can be authored, selected, rendered, and persisted through the real editor.", "blocking": true }],
+      "acceptableVariations": ["Completion ranking and popup layout may evolve while explicit reference authoring remains intact."],
+      "nonRequirements": ["Exact popup dimensions, suggestion order for unrelated items, or DOM structure."],
+      "stability": "stable"
+    },
+    "scripts/e2e-outline-guide.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.", "blocking": true }],
+      "acceptableVariations": ["Guide visual treatment and control placement may evolve."],
+      "nonRequirements": ["Exact guide-line thickness, color, or animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-file-actions.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Page actions reveal or open the exact Markdown or Org source file that backs the visible page.", "blocking": true, "authority": "Tine page-file action source-identity contract" }],
+      "acceptableVariations": ["The host opener and menu presentation may vary while the resolved source identity stays exact."],
+      "nonRequirements": ["Exact menu order, iconography, or external application launch behavior."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-properties.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
+      "acceptableVariations": ["Panel layout and native form-control styling may evolve."],
+      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing."],
+      "stability": "stable"
+    },
+    "scripts/e2e-page-trailing-block.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content focuses or creates exactly one writable trailing block.", "blocking": true }],
+      "acceptableVariations": ["Target affordance styling and scroll position may evolve."],
+      "nonRequirements": ["Exact target height, cursor blink timing, or focus-ring style."],
+      "stability": "stable"
+    },
+    "scripts/e2e-pdf-logseq.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "PDF highlights, links, annotations, outline destinations, and restored view state interoperate with Logseq data.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
+      ],
+      "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact."],
+      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy."],
+      "stability": "stable"
+    },
+    "scripts/e2e-print-security.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Page-menu PDF export creates only a static, script-disabled print frame.", "blocking": true, "authority": "Tine print-export script isolation contract" }],
+      "acceptableVariations": ["Platform print integration and visual page layout may vary after the isolated frame is created."],
+      "nonRequirements": ["Exact print-dialog appearance, paper margins, or font rasterization."],
+      "stability": "stable"
+    },
+    "scripts/e2e-publish-security.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Generated sites preserve source capability, safe URL handling, contextual anchors, and CSP at the export boundary.", "blocking": true, "authority": "Tine published-site capability and CSP contract" }],
+      "acceptableVariations": ["Generated markup organization and browser rendering may vary while the security boundary holds."],
+      "nonRequirements": ["Exact generated whitespace, CSS class names, or visual theme."],
+      "stability": "stable"
+    },
+    "scripts/e2e-query-workspace.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
+      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct."],
+      "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-rename.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true }],
+      "acceptableVariations": ["Navigation timing and rendered reference layout may vary after rename."],
+      "nonRequirements": ["Exact file-list ordering or transition animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-right-sidebar-collapse.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Right-sidebar disclosures, bulk controls, edit-safe unmounting, and restart restoration retain their state correctly.", "blocking": true }],
+      "acceptableVariations": ["Disclosure icons and collection layout may evolve."],
+      "nonRequirements": ["Exact panel width, transition duration, or icon artwork."],
+      "stability": "stable"
+    },
+    "scripts/e2e-scrollbars.mjs": {
+      "contracts": [{ "class": "flexible-presentation-heuristic", "userOutcome": "Primary panes retain independently usable, theme-aware scrolling affordances.", "blocking": false }],
+      "acceptableVariations": ["Scrollbar thickness, palette, overlay behavior, and platform rendering may evolve."],
+      "nonRequirements": ["Exact scrollbar palette/RGB, thumb dimensions, CSS selector, or DOM structure."],
+      "stability": "stable"
+    },
+    "scripts/e2e-search-parity.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching, current-page scope, evidence, and Shift-Enter sidebar opening.", "blocking": true }],
+      "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
+      "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-selectwrap.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Real editor selection wrapping preserves Logseq-compatible literal delimiter and Alt-modified behavior.", "blocking": true }],
+      "acceptableVariations": ["Selection painting and browser key-event timing may vary."],
+      "nonRequirements": ["Exact selection color, caret blink, or editor DOM nesting."],
+      "stability": "stable"
+    },
+    "scripts/e2e-sheets.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Sheet cells commit before navigation, arrow keys follow the real event path, and field rename migrates dependent data atomically.", "blocking": true }],
+      "acceptableVariations": ["Grid dimensions, cell styling, and focus-ring presentation may evolve."],
+      "nonRequirements": ["Exact cell pixel size, column widths, or formula-editor layout."],
+      "stability": "stable"
+    },
+    "scripts/e2e-sidebar-sections.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Favorites and Recent collapse independently, retain per-graph state, and restore correctly.", "blocking": true }],
+      "acceptableVariations": ["Sidebar ordering and disclosure visuals may evolve."],
+      "nonRequirements": ["Exact sidebar width, icon artwork, or transition duration."],
+      "stability": "stable"
+    },
+    "scripts/e2e-split-history.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Global Back and Forward preserve the focused split pane's history and promote the user-activated Recent page.", "blocking": true }],
+      "acceptableVariations": ["Toolbar styling and split geometry may evolve."],
+      "nonRequirements": ["Exact button placement, tab width, or transition animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-structured-paste.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" }],
+      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved."],
+      "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-tab-overflow.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Overflowing pane tabs expose an accessible overview that activates, closes, and restores focus without unintended drag capture.", "blocking": true }],
+      "acceptableVariations": ["Tab widths, overflow trigger placement, and overview layout may evolve."],
+      "nonRequirements": ["Exact truncation glyphs, animation, or drag threshold."],
+      "stability": "stable"
+    },
+    "scripts/e2e-tag-autocomplete.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "IME-committed Unicode hashtag text keeps bare-tag autocomplete active across editor surfaces.", "blocking": true }],
+      "acceptableVariations": ["IME composition timing and picker layout may vary by platform."],
+      "nonRequirements": ["Exact candidate ordering for unrelated tags or popup geometry."],
+      "stability": "stable"
+    },
+    "scripts/e2e-wayland-app-id.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The real GTK/Tauri window advertises Tine's desktop-entry identity on the Wayland wire.", "blocking": true }],
+      "acceptableVariations": ["Compositor diagnostics and task-switcher presentation may vary."],
+      "nonRequirements": ["Exact task-switcher icon size, title text layout, or compositor animation."],
+      "stability": "stable"
+    },
+    "scripts/e2e-windows-smoke.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.", "blocking": true }],
+      "acceptableVariations": ["Windows chrome, WebView2 startup timing, and native control rendering may vary."],
+      "nonRequirements": ["Exact titlebar palette, DPI-scaled geometry, or startup animation."],
+      "stability": "burn-in"
+    },
+    "scripts/probe-formula-builder.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Formula value pickers dismiss an active child before their editor without changing the formula draft.", "blocking": true }],
+      "acceptableVariations": ["Picker layout and formula-editor presentation may evolve while dismissal ownership remains correct."],
+      "nonRequirements": ["Exact option-row geometry, menu animation, or iconography."],
+      "stability": "stable"
+    }
+  }
+}

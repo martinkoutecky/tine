@@ -32,6 +32,8 @@ const flatpakMetadataWorkflow = fs.readFileSync(
 );
 const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-release-preflight.mjs"), "utf8");
 const e2eRunner = fs.readFileSync(path.join(process.cwd(), "scripts/run-e2e.mjs"), "utf8");
+const receiptHelper = fs.readFileSync(path.join(process.cwd(), "scripts/build-e2e-receipt.mjs"), "utf8");
+const buildInputs = fs.readFileSync(path.join(process.cwd(), "scripts/build-e2e-inputs.mjs"), "utf8");
 const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-print-security.mjs"), "utf8");
 const referenceParity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-og-parity-references.mjs"), "utf8");
 const windowsScenarios = [
@@ -144,6 +146,38 @@ const linuxGate = releaseWorkflow.indexOf("Gate Linux x64 on the complete real-a
 const stageLane = releaseWorkflow.indexOf("Stage immutable release artifact");
 assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
 assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
+assert.match(
+  receiptHelper,
+  /buildInputState[\s\S]*?refusing receipt: HEAD changed while building[\s\S]*?build-input state changed while building[\s\S]*?binary does not embed current production frontend[\s\S]*?buildInputDigest/,
+  "the receipt helper does not bind a build to its pre-build source state and embedded frontend"
+);
+assert.match(buildInputs, /export function buildInputState[\s\S]*?ls-files[\s\S]*?digest/);
+assert.match(
+  e2eRunner,
+  /buildInputState[\s\S]*?const e2eMode = process\.env\.TINE_E2E_MODE \?\? "ordinary";[\s\S]*?buildInputDigest[\s\S]*?build receipt is required at/,
+  "run-e2e does not default to ordinary mode and require a receipt"
+);
+assert.doesNotMatch(e2eRunner, /GITHUB_SHA|TINE_E2E_ALLOW_UNRECEIPTED_APP/);
+assert.match(
+  e2eRunner,
+  /if \(e2eMode === "release"\) \{[\s\S]*?contract\.class !== "flexible-presentation-heuristic"/,
+  "release mode does not block every safety, core-operation, and stateful-UX failure"
+);
+assert.match(
+  uiE2eWorkflow,
+  /Snapshot Linux E2E candidate inputs[\s\S]*?Write Linux E2E candidate receipt[\s\S]*?Snapshot Windows E2E candidate inputs[\s\S]*?Write Windows E2E candidate receipt/,
+  "manually dispatched raw Linux and Windows builds do not create receipts"
+);
+assert.match(
+  releaseWorkflow,
+  /Snapshot Linux E2E candidate inputs[\s\S]*?Write Linux E2E candidate receipt[\s\S]*?TINE_E2E_MODE: release[\s\S]*?npm run e2e:linux:release/,
+  "the release Linux E2E candidate does not use a pre-build receipt or release mode"
+);
+assert.match(
+  releaseWorkflow,
+  /Snapshot Windows E2E candidate inputs[\s\S]*?Write Windows E2E candidate receipt[\s\S]*?release-e2e-receipt-windows-x64[\s\S]*?TINE_E2E_BUILD_RECEIPT=[\s\S]*?TINE_E2E_MODE: release/,
+  "the advisory release Windows E2E run does not receive an exact receipt in release mode"
+);
 assert.match(
   releaseWorkflow,
   /windows-smoke:\n    needs: \[preflight, build\][\s\S]*?if: \$\{\{ always\(\) && needs\.preflight\.result == 'success' && needs\.build\.result != 'cancelled' \}\}[\s\S]*?continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,

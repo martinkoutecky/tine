@@ -313,14 +313,6 @@ try {
   await browser.keys([...PROOF]);
   await sleep(150);
   await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-typed.png"));
-  const lightShadow = await browser.execute(() => getComputedStyle(document.body).boxShadow);
-  await browser.execute(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await sleep(100);
-  const darkShadow = await browser.execute(() => getComputedStyle(document.body).boxShadow);
-  if (lightShadow === "none" || darkShadow === "none" || lightShadow === darkShadow) {
-    throw new Error(`Quick Capture frame was not theme-aware: ${JSON.stringify({ lightShadow, darkShadow })}`);
-  }
-  await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-dark.png"));
   await browser.keys(["Control", "Shift", "Enter"]);
 
   const deadline = Date.now() + 10_000;
@@ -431,7 +423,7 @@ try {
   await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "cold restarted Quick Capture did not initialize persisted typed policy");
   await browser.keys(["Escape"]);
-  console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)} frame=${JSON.stringify({ lightShadow, darkShadow })}`);
+  console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

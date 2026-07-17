@@ -20,6 +20,8 @@ cd "$ROOT"
 
 DEST="${TINE_DEPLOY_DEST:-$HOME/research/tine}"
 BIN="$ROOT/target/release/tine"
+RECEIPT="$BIN.build.json"
+SNAPSHOT="$BIN.build.before.json"
 
 # 1) Toolchain (cargo/rustc live outside the repo — see scripts/env.sh). env.sh is
 #    written for interactive shells and appends to $LD_LIBRARY_PATH, so relax
@@ -29,8 +31,9 @@ set +u
 source "$ROOT/scripts/env.sh"
 set -u
 
-# 2) Frontend FIRST — this is the step a raw cargo build skips. Also stamps the
-#    wall-clock build time into the bundle (vite.config.ts reproBuildTime).
+# 2) Snapshot before either builder can mutate a source input. The receipt helper
+#    refuses an input or HEAD change and verifies the exact output binary later.
+node scripts/build-e2e-receipt.mjs before --snapshot "$SNAPSHOT"
 echo "==> npm run build (frontend + dist)"
 npm run build
 
@@ -39,22 +42,15 @@ npm run build
 echo "==> cargo build --release --features custom-protocol"
 cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
 
-# 4) Prove the binary embeds the frontend we JUST built (not a stale dist). The
-#    plaintext build stamp is gzipped inside the binary, so we can't grep it — but
-#    the content-hashed asset FILENAMES stay plaintext and are unique per build.
-ASSET="$(grep -oE '[A-Za-z0-9_]+-[A-Za-z0-9_-]+\.(js|css)' "$ROOT/dist/index.html" | head -1)"
-if [ -z "$ASSET" ]; then
-  echo "!! could not find a hashed asset in dist/index.html — aborting" >&2
-  exit 1
-fi
-if ! grep -aq -- "$ASSET" "$BIN"; then
-  echo "!! binary does NOT embed current dist ($ASSET) — stale build, aborting" >&2
-  exit 1
-fi
-echo "==> embed OK ($ASSET present in binary)"
+# 4) A checkout SHA alone cannot prove a binary. The helper compares the
+#    pre-build snapshot, verifies the embedded frontend asset, hashes this exact
+#    app, and writes the receipt consumed by run-e2e.
+node scripts/build-e2e-receipt.mjs after --snapshot "$SNAPSHOT" --app "$BIN" --receipt "$RECEIPT"
 
 # 5) Deliver (Syncthing carries $DEST to Martin's machines).
 cp -f "$BIN" "$DEST"
+cp -f "$RECEIPT" "$DEST.build.json"
 SIZE="$(stat -c %s "$DEST" 2>/dev/null || wc -c < "$DEST")"
 echo "==> deployed → $DEST  ($SIZE bytes)"
+echo "    receipt → $DEST.build.json"
 echo "    Settings › Built should now read $(date '+%H:%M') (local)."
