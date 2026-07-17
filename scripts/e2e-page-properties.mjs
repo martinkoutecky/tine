@@ -1,5 +1,5 @@
 // Real Tauri/WebKit and disk round-trip for GH #163. The literal reporter
-// samples travel through page load -> gear panel -> reactive store -> debounced
+// samples travel through page load -> page actions -> properties panel -> reactive store -> debounced
 // native save; helper-only string tests cannot prove this boundary.
 import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
@@ -120,9 +120,16 @@ async function openPage(name) {
   });
 }
 
-async function setGearField(label, value) {
-  await browser.$(".page-gear").click();
+async function openPageProperties() {
+  await browser.$("[data-page-actions-trigger]").click();
+  const item = await browser.$('[data-page-action-id="page-properties"]');
+  await item.waitForExist({ timeout: 5_000 });
+  await item.click();
   await browser.$(".page-props-panel").waitForExist({ timeout: 5_000 });
+}
+
+async function setPagePropertyField(label, value) {
+  await openPageProperties();
   const index = await browser.execute((wanted) => {
     const fields = [...document.querySelectorAll(".page-props-panel .pp-field")];
     return fields.findIndex((field) => field.querySelector(".pp-label")?.textContent?.trim() === wanted);
@@ -169,8 +176,7 @@ async function exerciseNativeFormTabTraversal(aliasValue) {
   // Pointer-open the actual routed named-page panel; the key actions below are
   // W3C native actions, not synthetic DOM events, so WebKit performs its focus
   // default action if the capture handler leaves it alone.
-  await browser.$(".page-gear").click();
-  await browser.$(".page-props-panel").waitForExist({ timeout: 5_000 });
+  await openPageProperties();
   const aliases = (await browser.$$(".page-props-panel .pp-input"))[0];
   await aliases.click();
   await aliases.setValue(aliasValue);
@@ -229,7 +235,7 @@ try {
   }
 
   await openPage("Property simple");
-  await setGearField("Icon", "★");
+  await setPagePropertyField("Icon", "★");
   const simpleAfter = await waitForFile(
     `${GRAPH}/pages/Property simple.md`,
     (text) => text.includes("icon:: ★"),

@@ -23,7 +23,7 @@ import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals } from "../router";
-import { clearConflict, clearRecent, graphEpoch, markConflict, recentPages } from "../ui";
+import { clearConflict, clearRecent, closeContextMenu, graphEpoch, markConflict, recentPages } from "../ui";
 
 beforeAll(async () => {
   await initParser();
@@ -37,6 +37,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   endEdit("blur");
+  closeContextMenu();
   resetStore();
   document.body.innerHTML = "";
   resetTabsToJournals();
@@ -616,6 +617,80 @@ describe("trailing page block target", () => {
     await tick();
     expect(readonly.root.querySelector(".page-trailing-block-target")).toBeNull();
     readonly.dispose();
+  });
+});
+
+describe("page actions entry point", () => {
+  it("exposes a named page actions ellipsis as a real menu button", async () => {
+    const dto: PageDto = {
+      name: "Actions",
+      kind: "page",
+      title: "Actions",
+      pre_block: null,
+      blocks: [{ id: "actions-root", raw: "Body", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "actions-root": node("actions-root", "Body", dto.name) },
+      pages: [page(dto.name, "page", ["actions-root"])],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      const trigger = root.querySelector<HTMLButtonElement>("[data-page-actions-trigger]");
+      expect(trigger).not.toBeNull();
+      expect(trigger?.textContent?.trim()).toBe("⋯");
+      expect(trigger?.getAttribute("aria-label")).toBe("Page actions");
+      expect(trigger?.getAttribute("aria-haspopup")).toBe("menu");
+      expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+      trigger!.click();
+      await tick();
+      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+      closeContextMenu();
+      await tick();
+      expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the trigger on read-only pages and journals but excludes bundled Guides", async () => {
+    const dto: PageDto = {
+      name: "Action matrix",
+      kind: "page",
+      title: "Action matrix",
+      pre_block: null,
+      blocks: [{ id: "matrix-root", raw: "Body", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "matrix-root": node("matrix-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["matrix-root"]), readOnly: true }],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
+
+      setDoc("pages", 0, "kind", "journal");
+      await tick();
+      expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
+
+      setDoc("pages", 0, "guide", true);
+      await tick();
+      expect(root.querySelector("[data-page-actions-trigger]")).toBeNull();
+    } finally {
+      dispose();
+    }
   });
 });
 

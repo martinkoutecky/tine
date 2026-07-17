@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Page titles now expose a discoverable, accessible actions menu.** The
+  ellipsis opens the same file, navigation, copy, export, properties, rename,
+  carry, and delete actions as title right-click; keyboard navigation, touch
+  geometry, and focus restoration are built in. This is the bounded first page
+  menu phase of GH #182.
 - **Children-backed Sheet fields can now be renamed in place.** Right-click a
   column header or double-click its name to update the local schema and its
   dependent filter, grouping, aggregate, and formula configuration as one

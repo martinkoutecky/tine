@@ -5,7 +5,7 @@ import { PaneContext, focusedRouter } from "../panes";
 import {
   zoomedBlock, isFavorite, toggleFavorite,
   graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
-  agendaQuery, openPageProps, dataRev, isConflicted, renamePageInNavigation,
+  agendaQuery, contextMenu, dataRev, isConflicted, renamePageInNavigation,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -535,6 +535,14 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  let pageActionsTrigger: HTMLButtonElement | undefined;
+  const pageActionsOpen = () => {
+    const menu = contextMenu();
+    return menu?.kind === "page"
+      && menu.name === props.page.name
+      && menu.pageKind === props.page.kind
+      && !!menu.fileActions;
+  };
   const firstPropertiesId = () => {
     if (props.page.format !== "md") return null;
     const id = props.page.roots[0];
@@ -684,19 +692,27 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </Show>
         <Show when={!props.page.guide}>
           <button
-            class="page-gear"
-            title="Page properties (alias, public, tags, icon, title)"
-            onClick={(e) => openPageProps(props.page.name, e.clientX, e.clientY)}
+            ref={pageActionsTrigger}
+            type="button"
+            class="page-actions-trigger"
+            data-page-actions-trigger
+            title="Page actions"
+            aria-label="Page actions"
+            aria-haspopup="menu"
+            aria-expanded={pageActionsOpen()}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              openPageContextMenu(
+                rect.left,
+                rect.bottom + 4,
+                props.page.name,
+                props.page.kind,
+                true,
+                e.currentTarget,
+              );
+            }}
           >
-            <svg viewBox="0 0 24 24" class="gear-icon" aria-hidden="true">
-              <path
-                d="M12 8.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z M19.4 12.9c.04-.3.06-.6.06-.9s-.02-.6-.06-.9l1.7-1.3a.5.5 0 00.12-.64l-1.6-2.8a.5.5 0 00-.6-.22l-2 .8a6 6 0 00-1.55-.9l-.3-2.13a.5.5 0 00-.5-.42h-3.2a.5.5 0 00-.5.42l-.3 2.13a6 6 0 00-1.55.9l-2-.8a.5.5 0 00-.6.22l-1.6 2.8a.5.5 0 00.12.64l1.7 1.3c-.04.3-.06.6-.06.9s.02.6.06.9l-1.7 1.3a.5.5 0 00-.12.64l1.6 2.8c.13.23.4.31.6.22l2-.8c.47.37 1 .67 1.55.9l.3 2.13c.04.24.25.42.5.42h3.2c.25 0 .46-.18.5-.42l.3-2.13a6 6 0 001.55-.9l2 .8c.2.09.47.01.6-.22l1.6-2.8a.5.5 0 00-.12-.64z"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linejoin="round"
-              />
-            </svg>
+            <span aria-hidden="true">⋯</span>
           </button>
           <button
             class="fav-star"

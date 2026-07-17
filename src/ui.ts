@@ -1158,7 +1158,14 @@ export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number
 
 export type CtxTarget =
   | { kind: "block"; blockId: string }
-  | { kind: "page"; name: string; pageKind: "journal" | "page"; fileActions?: boolean }
+  | {
+      kind: "page";
+      name: string;
+      pageKind: "journal" | "page";
+      fileActions?: boolean;
+      /** Exact title-row owner for focus restoration after menu dismissal. */
+      focusOwner?: HTMLElement;
+    }
   | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
   | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
   | {
@@ -1192,8 +1199,9 @@ export function openPageContextMenu(
   name: string,
   pageKind: "journal" | "page" = "page",
   fileActions = false,
+  focusOwner?: HTMLElement,
 ) {
-  setContextMenu({ x, y, kind: "page", name, pageKind, fileActions });
+  setContextMenu({ x, y, kind: "page", name, pageKind, fileActions, focusOwner });
 }
 export function openBlockRefContextMenu(
   x: number,
