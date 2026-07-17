@@ -5151,7 +5151,7 @@ impl Graph {
                     "refusing to drop an existing page preamble while authoring page-header properties",
                 ));
             }
-            if let Some(line) = moved_page_property_line(existing, &doc) {
+            if let Some(line) = newly_reclassified_page_property_line(existing, &doc) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("refusing to move page-header property into outline content: {line}"),
@@ -5357,12 +5357,21 @@ fn promote_first_root_page_header(doc: &mut Document) {
     doc.pre_block = Some(first.raw);
 }
 
-/// Return the first existing page-header property line that a proposed DTO has
-/// removed from the pre-block and reproduced verbatim inside an outline block.
-/// There is deliberately no implicit "repair" here: once the frontend has sent
-/// contradictory structure, retaining the original file and surfacing an error
-/// is safer than guessing which representation the user intended.
-fn moved_page_property_line(existing: &str, proposed: &Document) -> Option<String> {
+/// Return the first property-shaped outline line that has no outline provenance
+/// on disk while the proposal also loses page-header property slots.
+///
+/// The firewall is deliberately structural rather than an exact-string test:
+/// a broken DTO must not evade it by editing the moved line's key/value. At the
+/// same time, a property-shaped outline block that genuinely existed on disk is
+/// allowed to stay, move, or be edited. We therefore treat existing outline
+/// property lines as provenance slots: exact multiset matches consume their
+/// original slots first, and remaining slots cover ordinary edits. Only an
+/// excess proposed outline line is newly unproven. There is no implicit repair;
+/// contradictory structure is rejected before bytes or cache can change.
+fn newly_reclassified_page_property_line(
+    existing: &str,
+    proposed: &Document,
+) -> Option<String> {
     // The general data-preservation guard is intentionally a little broader
     // than Tine's editable property grammar: Logseq graphs can contain Unicode
     // or plugin-defined keys that Tine does not expose in its settings panel,
@@ -5375,37 +5384,63 @@ fn moved_page_property_line(existing: &str, proposed: &Document) -> Option<Strin
         !key.is_empty() && key.chars().all(|ch| !ch.is_whitespace() && ch != ':')
     }
 
+    fn pre_property_lines(raw: Option<&str>) -> Vec<&str> {
+        raw.unwrap_or("")
+            .split('\n')
+            .filter(|line| page_header_property(line))
+            .collect()
+    }
+
+    fn outline_property_lines<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a str>) {
+        for block in blocks {
+            out.extend(
+                block
+                    .raw
+                    .split('\n')
+                    .filter(|line| page_header_property(line)),
+            );
+            outline_property_lines(&block.children, out);
+        }
+    }
+
     let existing_doc = doc::parse(existing);
-    let proposed_pre: std::collections::HashSet<&str> = proposed
-        .pre_block
-        .as_deref()
-        .unwrap_or("")
-        .split('\n')
-        .collect();
-    let moved: std::collections::HashSet<&str> = existing_doc
-        .pre_block
-        .as_deref()
-        .unwrap_or("")
-        .split('\n')
-        .filter(|line| page_header_property(line))
-        .filter(|line| !proposed_pre.contains(line))
-        .collect();
-    if moved.is_empty() {
+    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref());
+    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref());
+    if proposed_pre.len() >= existing_pre.len() {
         return None;
     }
 
-    fn find(blocks: &[DocBlock], moved: &std::collections::HashSet<&str>) -> Option<String> {
-        for block in blocks {
-            if let Some(line) = block.raw.split('\n').find(|line| moved.contains(line)) {
-                return Some(line.to_string());
-            }
-            if let Some(line) = find(&block.children, moved) {
-                return Some(line);
-            }
-        }
-        None
+    let mut existing_outline = Vec::new();
+    outline_property_lines(&existing_doc.roots, &mut existing_outline);
+    let mut proposed_outline = Vec::new();
+    outline_property_lines(&proposed.roots, &mut proposed_outline);
+    if proposed_outline.len() <= existing_outline.len() {
+        return None;
     }
-    find(&proposed.roots, &moved)
+
+    // Cancel exact matches as a multiset so the diagnostic identifies a truly
+    // excess proposal line even in the presence of duplicates. Any remaining
+    // existing slots then cover changed/reordered pre-existing outline lines.
+    let mut exact_slots: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for line in &existing_outline {
+        *exact_slots.entry(*line).or_default() += 1;
+    }
+    let mut unmatched = Vec::new();
+    let mut exact_matches = 0usize;
+    for line in proposed_outline {
+        match exact_slots.get_mut(line) {
+            Some(count) if *count > 0 => {
+                *count -= 1;
+                exact_matches += 1;
+            }
+            _ => unmatched.push(line),
+        }
+    }
+    let edited_provenance_slots = existing_outline.len() - exact_matches;
+    unmatched
+        .get(edited_provenance_slots)
+        .map(|line| (*line).to_string())
 }
 
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
@@ -6865,7 +6900,7 @@ mod tests {
         g.save_page(&books, books.rev.as_deref()).unwrap();
 
         let disk = fs::read_to_string(dir.join("pages").join("books.md")).unwrap();
-        assert_eq!(disk, "- alias:: book\n- I like reading\n");
+        assert_eq!(disk, "alias:: book\n\n- I like reading\n");
         assert_eq!(
             g.load_named("book", PageKind::Page).unwrap().unwrap().name,
             "books"
@@ -8361,6 +8396,123 @@ mod tests {
             assert_eq!(fs::read_to_string(&path).unwrap(), original);
             let _ = fs::remove_dir_all(&dir);
         }
+    }
+
+    #[test]
+    fn save_refuses_changed_page_header_properties_reclassified_as_outline() {
+        // H7: the preservation firewall is structural, not an exact-text check.
+        // A stale/buggy DTO must not evade it by changing the moved property's
+        // value or key while reclassifying it as outline content. Exercise both
+        // ordinary and force-save paths from a warm cache and prove neither the
+        // bytes nor cached document move on validation failure.
+        for (shape, original, kept, moved, childful) in [
+            (
+                "partial-value",
+                "A:: old\nB:: old\n",
+                Some("A:: old"),
+                "B:: changed",
+                false,
+            ),
+            (
+                "partial-key",
+                "A:: old\nB:: old\n",
+                Some("A:: old"),
+                "Renamed:: old",
+                false,
+            ),
+            (
+                "whole-key-value",
+                "A:: old\nB:: old\n",
+                None,
+                "Renamed:: changed\nC:: newer",
+                true,
+            ),
+            (
+                "crlf",
+                "A:: old\r\nB:: old\r\n",
+                Some("A:: old"),
+                "B:: changed",
+                false,
+            ),
+            (
+                "unicode-plugin",
+                "A:: old\n插件/键:: old\n",
+                Some("A:: old"),
+                "插件/新:: changed",
+                false,
+            ),
+        ] {
+            for forced in [false, true] {
+                let dir = scratch(&format!(
+                    "page-property-firewall-changed-{shape}-{forced}"
+                ));
+                let path = dir.join("pages").join("Property.md");
+                fs::write(&path, original).unwrap();
+                let g = Graph::open(&dir);
+                g.warm_cache();
+                let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+                let cached_before = dto.clone();
+                let generation_before = g.cache_generation();
+                dto.pre_block = kept.map(str::to_string);
+                dto.blocks = vec![BlockDto {
+                    id: "reclassified-header".into(),
+                    raw: moved.into(),
+                    children: childful
+                        .then(|| BlockDto {
+                            id: "body".into(),
+                            raw: "Body".into(),
+                            ..Default::default()
+                        })
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                }];
+
+                let err = if forced {
+                    g.force_save_page(&dto).unwrap_err()
+                } else {
+                    g.save_page(&dto, dto.rev.as_deref()).unwrap_err()
+                };
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+                assert_eq!(fs::read_to_string(&path).unwrap(), original);
+                assert_eq!(g.cache_generation(), generation_before);
+                let cached_after = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+                assert_eq!(cached_after.pre_block, cached_before.pre_block);
+                assert_eq!(cached_after.blocks.len(), cached_before.blocks.len());
+                assert_eq!(cached_after.rev, cached_before.rev);
+                let _ = fs::remove_dir_all(&dir);
+            }
+        }
+    }
+
+    #[test]
+    fn existing_outline_property_root_remains_editable_beside_page_header() {
+        // An outline block that already had page-property-shaped syntax is not a
+        // reclassified header. Its structural provenance permits a duplicate
+        // header line to be deleted without blaming the already-existing root,
+        // and the root remains ordinarily editable afterwards.
+        let dir = scratch("page-property-existing-outline-provenance");
+        let path = dir.join("pages").join("Property.md");
+        fs::write(&path, "A:: header\nB:: shared\n\n- B:: shared\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+        dto.pre_block = Some("A:: edited header".into());
+        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "A:: edited header\n\n- B:: shared\n"
+        );
+        let mut warm = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+        assert_eq!(warm.pre_block.as_deref(), Some("A:: edited header"));
+        assert_eq!(warm.blocks[0].raw, "B:: shared");
+        warm.blocks[0].raw = "Renamed:: edited outline".into();
+        g.save_page(&warm, warm.rev.as_deref()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "A:: edited header\n\n- Renamed:: edited outline\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
