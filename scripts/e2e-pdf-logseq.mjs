@@ -179,6 +179,61 @@ function processTreeRssKiB() {
 }
 
 let browser;
+async function nativeShiftDrag(start, end) {
+  const mid = {
+    x: Math.round((start.x + end.x) / 2),
+    y: Math.round((start.y + end.y) / 2),
+  };
+  try {
+    await browser.performActions([
+      {
+        type: "key",
+        id: "pdf-area-shift",
+        actions: [
+          { type: "keyDown", value: "\uE008" },
+          { type: "pause", duration: 0 },
+          { type: "pause", duration: 120 },
+          { type: "pause", duration: 120 },
+          { type: "pause", duration: 0 },
+          { type: "keyUp", value: "\uE008" },
+        ],
+      },
+      {
+        type: "pointer",
+        id: "pdf-area-pointer",
+        parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(start.x), y: Math.round(start.y) },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerMove", duration: 120, origin: "viewport", x: mid.x, y: mid.y },
+          { type: "pointerMove", duration: 120, origin: "viewport", x: Math.round(end.x), y: Math.round(end.y) },
+          { type: "pointerUp", button: 0 },
+          { type: "pause", duration: 0 },
+        ],
+      },
+    ]);
+  } finally {
+    await browser.releaseActions();
+  }
+}
+
+async function nativeClickAt(point, id) {
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id,
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(point.x), y: Math.round(point.y) },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerUp", button: 0 },
+      ],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+}
+
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
@@ -249,6 +304,69 @@ try {
   }
   if (Math.abs(geometry.leftRatio - 72 / 612) > 0.005 || Math.abs(geometry.widthRatio - 176 / 612) > 0.005) {
     throw new Error(`Logseq zoom-space highlight was misplaced: ${JSON.stringify(geometry)}`);
+  }
+
+  // OG 1.0.0 area-highlight parity on non-macOS: a literal native Shift drag
+  // opens the shared color chooser without writing. Only a subsequent native
+  // swatch click may crop, persist the chosen color, create the annotation, and
+  // copy its block reference. Keep this branch free of DOM-dispatched gestures.
+  if (process.platform !== "darwin") {
+    const areaSidecarBefore = fs.readFileSync(sidecar, "utf8");
+    const areaHlsBefore = fs.readFileSync(hlsPage, "utf8");
+    const areaImageDir = path.join(GRAPH, "assets", "logseq-sample");
+    const areaImagesBefore = fs.existsSync(areaImageDir) ? fs.readdirSync(areaImageDir).sort() : [];
+    await browser.$(".pdf-page").scrollIntoView({ block: "center", inline: "center" });
+    const areaDrag = await browser.execute(() => {
+      const rect = document.querySelector(".pdf-page")?.getBoundingClientRect();
+      if (!rect) return null;
+      const visibleLeft = Math.max(rect.left + 30, 20);
+      const visibleRight = Math.min(rect.right - 30, window.innerWidth - 20);
+      const visibleTop = Math.max(rect.top + 60, 80);
+      const visibleBottom = Math.min(rect.bottom - 40, window.innerHeight - 80);
+      const start = { x: visibleLeft + 20, y: visibleTop + 10 };
+      const end = {
+        x: Math.min(start.x + 120, visibleRight),
+        y: Math.min(start.y + 80, visibleBottom),
+      };
+      return end.x - start.x > 10 && end.y - start.y > 10 ? { start, end } : null;
+    });
+    if (!areaDrag) throw new Error("the visible PDF page did not expose a >10px native area-drag region");
+    await nativeShiftDrag(areaDrag.start, areaDrag.end);
+    await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
+    if (fs.readFileSync(sidecar, "utf8") !== areaSidecarBefore
+      || fs.readFileSync(hlsPage, "utf8") !== areaHlsBefore
+      || JSON.stringify(fs.existsSync(areaImageDir) ? fs.readdirSync(areaImageDir).sort() : []) !== JSON.stringify(areaImagesBefore)) {
+      throw new Error("releasing a native area drag wrote before the user chose a color");
+    }
+
+    const bluePoint = await browser.execute(() => {
+      const swatch = document.querySelectorAll(".pdf-color-swatch")[2];
+      const rect = swatch?.getBoundingClientRect();
+      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+    });
+    if (!bluePoint) throw new Error("the area chooser did not expose its blue swatch");
+    await nativeClickAt(bluePoint, "pdf-area-blue-swatch");
+    await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5000 });
+    await browser.waitUntil(() => {
+      const written = fs.readFileSync(sidecar, "utf8");
+      const ids = [...written.matchAll(/#uuid "([^"]+)"/g)].map((match) => match[1]);
+      const areaId = ids.find((id) => id !== SAMPLE_ID);
+      const images = fs.existsSync(areaImageDir) ? fs.readdirSync(areaImageDir) : [];
+      const image = areaId && images.find((name) => name.startsWith(`1_${areaId}_`) && name.endsWith(".png"));
+      if (!areaId || !image || !written.includes(':properties {:color "blue"}')) return false;
+      const annotation = fs.readFileSync(hlsPage, "utf8");
+      return annotation.includes(`:id: ${areaId}`)
+        && annotation.includes(":hl-color: blue")
+        && fs.statSync(path.join(areaImageDir, image)).size > 0;
+    }, {
+      timeout: 10_000,
+      timeoutMsg: "native Shift area selection did not persist the chosen blue crop and annotation reference",
+    });
+    await browser.waitUntil(() => browser.execute(() =>
+      [...document.querySelectorAll(".toast")].some((toast) => toast.textContent?.includes("Copied highlight ref"))), {
+      timeout: 5000,
+      timeoutMsg: "native area selection did not copy its persisted block reference",
+    });
   }
 
   // GH #168: both click and right-click share the existing-highlight menu. The

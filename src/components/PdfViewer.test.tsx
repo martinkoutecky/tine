@@ -7,6 +7,7 @@ import {
   PdfViewer,
   PDF_CANVAS_CACHE_PIXEL_BUDGET,
   PDF_FIND_MATCH_CAP,
+  isPdfAreaModifier,
 } from "./PdfViewer";
 import {
   clearTransientLayersForTest,
@@ -261,6 +262,206 @@ describe("PdfViewer resource safety", () => {
       expect(firstCanvas?.isConnected).toBe(false);
       expect(firstCanvas?.width).toBe(0);
       expect(firstCanvas?.height).toBe(0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe("PdfViewer OG area-highlight selection", () => {
+  beforeEach(() => {
+    clearTransientLayersForTest();
+    getDocumentMock.mockReset();
+    TestIntersectionObserver.instances = [];
+    vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => {
+      callback({
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      } as Blob);
+    });
+    getDocumentMock.mockReturnValue({
+      promise: Promise.resolve(documentWithPages([page(612, 792)])),
+    });
+  });
+
+  afterEach(() => {
+    clearTransientLayersForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.body.replaceChildren();
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    Reflect.deleteProperty(document, "elementFromPoint");
+  });
+
+  async function mountAreaViewer() {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    await flush();
+    const wrap = host.querySelector(".pdf-page") as HTMLDivElement;
+    vi.spyOn(wrap, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 612, bottom: 792, width: 612, height: 792, x: 0, y: 0,
+      toJSON: () => ({}),
+    });
+    return { host, wrap, dispose };
+  }
+
+  function dragArea(
+    wrap: HTMLElement,
+    end: { x: number; y: number },
+    modifiers: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean } = {}
+  ) {
+    wrap.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 20,
+      clientY: 30,
+      ...modifiers,
+    }));
+    window.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: end.x,
+      clientY: end.y,
+      ...modifiers,
+    }));
+    window.dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true,
+      clientX: end.x,
+      clientY: end.y,
+      ...modifiers,
+    }));
+  }
+
+  it("maps direct area selection to Command on macOS and Shift elsewhere", () => {
+    expect(isPdfAreaModifier({ metaKey: true, shiftKey: false }, true)).toBe(true);
+    expect(isPdfAreaModifier({ metaKey: false, shiftKey: true }, true)).toBe(false);
+    expect(isPdfAreaModifier({ metaKey: false, shiftKey: true }, false)).toBe(true);
+    expect(isPdfAreaModifier({ metaKey: true, shiftKey: false }, false)).toBe(false);
+  });
+
+  it("opens the area color chooser from a non-macOS Shift drag", async () => {
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      dragArea(wrap, { x: 40, y: 50 }, { shiftKey: true });
+      await flush();
+
+      expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
+      expect(saveArea).not.toHaveBeenCalled();
+      expect(writeHighlights).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not start direct area selection from Control alone off macOS", async () => {
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      dragArea(wrap, { x: 40, y: 50 }, { ctrlKey: true });
+      await flush();
+
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(saveArea).not.toHaveBeenCalled();
+      expect(writeHighlights).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("requires both toolbar-area dimensions to be strictly greater than 10 CSS pixels", async () => {
+    vi.mocked(backend().openPdf).mockResolvedValue({ highlights: [], page: 1, scale: 2 });
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 30, y: 50 });
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(saveArea).not.toHaveBeenCalled();
+
+      dragArea(wrap, { x: 31, y: 41 });
+      await flush();
+      expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
+      expect(saveArea).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("defers toolbar area writes until color choice and dismisses without changing selection or view", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
+    vi.spyOn(Date, "now").mockReturnValue(1234);
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+    const writeViewState = vi.spyOn(backend(), "writePdfViewState").mockResolvedValue(undefined);
+    const selection = { removeAllRanges: vi.fn() } as unknown as Selection;
+    vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+
+      expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
+      expect(saveArea).not.toHaveBeenCalled();
+      expect(writeHighlights).not.toHaveBeenCalled();
+      expect(writeText).not.toHaveBeenCalled();
+      document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(saveArea).not.toHaveBeenCalled();
+      expect(writeHighlights).not.toHaveBeenCalled();
+      expect(writeText).not.toHaveBeenCalled();
+
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      expect(host.querySelectorAll(".pdf-color-swatch")).toHaveLength(5);
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(saveArea).not.toHaveBeenCalled();
+      expect(writeHighlights).not.toHaveBeenCalled();
+      expect(writeText).not.toHaveBeenCalled();
+      expect(selection.removeAllRanges).not.toHaveBeenCalled();
+      expect(writeViewState).not.toHaveBeenCalled();
+      expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("1");
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("100%");
+
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      const blue = host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2];
+      blue.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      await flush();
+      await flush();
+
+      expect(saveArea).toHaveBeenCalledWith("paper.pdf", 1, id, 1234, new Uint8Array([1, 2, 3]));
+      expect(writeHighlights).toHaveBeenCalledOnce();
+      expect(writeHighlights.mock.calls[0][2]).toEqual([
+        expect.objectContaining({ id, page: 1, color: "blue", text: null, image: 1234 }),
+      ]);
+      expect(writeHighlights.mock.calls[0][3]).toEqual([]);
+      expect(writeText).toHaveBeenCalledWith(`((${id}))`);
+      expect(selection.removeAllRanges).not.toHaveBeenCalled();
+      expect(writeViewState).not.toHaveBeenCalled();
     } finally {
       dispose();
     }

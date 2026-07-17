@@ -8,7 +8,7 @@ import { openPage, openPageAtBlock } from "../router";
 import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
-import { isMobilePlatform } from "../nativeChrome";
+import { isMac, isMobilePlatform } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -42,11 +42,24 @@ export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 
 export const PDF_FIND_PAGE_TEXT_BYTES = 1024 * 1024;
 export const PDF_FIND_MATCH_CAP = 10_000;
 
+export function isPdfAreaModifier(
+  event: Pick<MouseEvent, "metaKey" | "shiftKey">,
+  mac: boolean
+): boolean {
+  return mac ? event.metaKey : event.shiftKey;
+}
+
 interface Pending {
   page: number;
   rects: Rect[];
   bounding: Rect;
   text: string;
+}
+
+interface PendingArea {
+  page: number;
+  wrap: HTMLElement;
+  rect: Rect;
 }
 
 /**
@@ -124,6 +137,7 @@ export function PdfViewer(props: {
   let findDebounce: number | undefined;
   let findInputEl: HTMLInputElement | undefined;
   let pending: Pending | null = null;
+  let pendingArea: PendingArea | null = null;
   // The highlight ids last synced to disk (load baseline, refreshed after each
   // successful write) — sent so the backend's 3-way merge honors deletions while
   // preserving externally-added highlights.
@@ -259,12 +273,12 @@ export function PdfViewer(props: {
     return persist();
   };
   const copyExistingHighlightRef = async (id: string) => {
-    setMenu(null);
+    closeHighlightMenu();
     if (!(await ensureExistingHighlightRef(id))) return;
     await copyCreatedHighlightRef(id);
   };
   const openExistingHighlightReferences = async (id: string) => {
-    setMenu(null);
+    closeHighlightMenu();
     if (!(await ensureExistingHighlightRef(id))) return;
     requestBlockReferences(id);
     openPageAtBlock(hlsPageName(props.filename), "page", id);
@@ -273,15 +287,20 @@ export function PdfViewer(props: {
   const deleteHighlight = async (id: string) => {
     const prev = highlights();
     setHighlights(highlights().filter((h) => h.id !== id));
-    setMenu(null);
+    closeHighlightMenu();
     if (!(await persist())) setHighlights(prev); // restore — it's still on disk
   };
   const recolorHighlight = async (id: string, color: string) => {
     const prev = highlights();
     setHighlights(highlights().map((h) => (h.id === id ? { ...h, color } : h)));
-    setMenu(null);
+    closeHighlightMenu();
     if (!(await persist())) setHighlights(prev); // restore the previous color
   };
+
+  function closeHighlightMenu() {
+    pendingArea = null;
+    setMenu(null);
+  }
   const clampScale = (s: number) => Math.min(4, Math.max(0.2, s));
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
@@ -983,10 +1002,11 @@ export function PdfViewer(props: {
   });
 
   const onMouseUp = (e: MouseEvent) => {
-    // An area drag (toggle or Ctrl/⌘) owns the mouse; don't also make a text
+    // An area drag (toggle or platform modifier) owns the mouse; don't also make a text
     // highlight. `areaDrag` is still set here — onMouseUp (on .pdf-scroll) runs
     // before the window-level onAreaUp that clears it.
     if (areaMode() || areaDrag) return;
+    pendingArea = null;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
       setMenu(null);
@@ -1046,7 +1066,7 @@ export function PdfViewer(props: {
     const prev = highlights();
     setHighlights([...highlights(), h]);
     window.getSelection()?.removeAllRanges();
-    setMenu(null);
+    closeHighlightMenu();
     pending = null;
     if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
     else await copyCreatedHighlightRef(h.id);
@@ -1056,28 +1076,34 @@ export function PdfViewer(props: {
   // Rubber-band a rectangle over a single page; on release, crop that region of
   // the page canvas to a PNG (saved in OG's `assets/<key>/<page>_<id>_<stamp>.png`
   // layout) and create an area highlight (`text: null`, `image: <stamp>`).
-  // Area capture starts when the toolbar toggle is on OR the user holds
-  // Ctrl/⌘ while dragging (a quick modifier alternative to the button).
-  const areaModifier = (e: MouseEvent) => e.ctrlKey || e.metaKey;
+  // Area capture starts when the toolbar toggle is on OR the user holds the OG
+  // platform modifier: Command on macOS, Shift elsewhere.
+  const areaModifier = (e: MouseEvent) => isPdfAreaModifier(e, isMac);
+  const areaPoint = (wrap: HTMLElement, e: MouseEvent) => {
+    const base = wrap.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(base.width, e.clientX - base.left)),
+      y: Math.max(0, Math.min(base.height, e.clientY - base.top)),
+    };
+  };
   const onAreaDown = (e: MouseEvent) => {
     if ((!areaMode() && !areaModifier(e)) || e.button !== 0) return;
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     if (!wrap) return;
     e.preventDefault();
-    setMenu(null);
-    const base = wrap.getBoundingClientRect();
+    pending = null;
+    closeHighlightMenu();
+    const start = areaPoint(wrap, e);
     const band = document.createElement("div");
     band.className = "pdf-area-band";
     wrap.appendChild(band);
-    areaDrag = { page: Number(wrap.dataset.page), wrap, startX: e.clientX - base.left, startY: e.clientY - base.top, band };
+    areaDrag = { page: Number(wrap.dataset.page), wrap, startX: start.x, startY: start.y, band };
     window.addEventListener("mousemove", onAreaMove);
     window.addEventListener("mouseup", onAreaUp, { once: true });
   };
   const onAreaMove = (e: MouseEvent) => {
     if (!areaDrag) return;
-    const base = areaDrag.wrap.getBoundingClientRect();
-    const x = e.clientX - base.left;
-    const y = e.clientY - base.top;
+    const { x, y } = areaPoint(areaDrag.wrap, e);
     Object.assign(areaDrag.band.style, {
       left: `${Math.min(x, areaDrag.startX)}px`,
       top: `${Math.min(y, areaDrag.startY)}px`,
@@ -1091,10 +1117,11 @@ export function PdfViewer(props: {
     areaDrag = null;
     if (!drag) return;
     drag.band.remove();
-    const base = drag.wrap.getBoundingClientRect();
+    const { x, y } = areaPoint(drag.wrap, e);
+    const cssWidth = Math.abs(x - drag.startX);
+    const cssHeight = Math.abs(y - drag.startY);
+    if (cssWidth <= 10 || cssHeight <= 10) return;
     const s = scale();
-    const x = e.clientX - base.left;
-    const y = e.clientY - base.top;
     // Rect in unscaled PDF coordinates (the same space highlight rects are stored in).
     const rect: Rect = {
       left: Math.min(x, drag.startX) / s,
@@ -1104,8 +1131,8 @@ export function PdfViewer(props: {
       source_width: dims[drag.page].w,
       source_height: dims[drag.page].h,
     };
-    if (rect.width < 4 || rect.height < 4) return; // ignore a tiny/accidental drag
-    void createAreaHighlight(drag.page, drag.wrap, rect);
+    pendingArea = { page: drag.page, wrap: drag.wrap, rect };
+    setMenu({ x: e.clientX, y: e.clientY });
   };
 
   // Crop the page canvas to `rect` (unscaled coords) → PNG bytes.
@@ -1136,7 +1163,12 @@ export function PdfViewer(props: {
     return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
   }
 
-  const createAreaHighlight = async (page: number, wrap: HTMLElement, rect: Rect) => {
+  const createAreaHighlight = async (color: string) => {
+    const area = pendingArea;
+    if (!area) return;
+    pendingArea = null;
+    setMenu(null);
+    const { page, wrap, rect } = area;
     const bytes = await cropArea(page, wrap, rect);
     if (!bytes) {
       pushToast("Couldn't capture that region — try again.", "error");
@@ -1157,7 +1189,7 @@ export function PdfViewer(props: {
       id,
       page,
       position: areaHighlightPosition(page, rect),
-      color: "yellow",
+      color,
       text: null,
       image: stamp,
     };
@@ -1398,11 +1430,18 @@ export function PdfViewer(props: {
       id: highlightMenuLayerId,
       root: () => highlightMenuRootEl ?? null,
       dismiss: () => {
-        setMenu(null);
+        closeHighlightMenu();
         return true;
       },
     });
-    onCleanup(unregister);
+    const dismissPendingAreaOnOutsidePointer = (event: PointerEvent) => {
+      if (pendingArea && !highlightMenuRootEl?.contains(event.target as Node)) closeHighlightMenu();
+    };
+    document.addEventListener("pointerdown", dismissPendingAreaOnOutsidePointer, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismissPendingAreaOnOutsidePointer, true);
+      unregister();
+    });
   });
 
   return (
@@ -1472,7 +1511,7 @@ export function PdfViewer(props: {
           <button
             class="icon-btn"
             classList={{ active: areaMode() }}
-            title="Area highlight — drag a rectangle to capture a region as an image"
+            title={`Area highlight (${isMac ? "⌘" : "Shift"}) — drag a rectangle to capture a region as an image`}
             onClick={() => setAreaMode((v) => !v)}
           >
             ▭
@@ -1551,6 +1590,7 @@ export function PdfViewer(props: {
                   e.preventDefault();
                   const m = menu()!;
                   if (m.id) void recolorHighlight(m.id, c); // recolor existing
+                  else if (pendingArea) void createAreaHighlight(c); // create area after explicit color choice
                   else void createHighlight(c); // create new
                 }}
               />
