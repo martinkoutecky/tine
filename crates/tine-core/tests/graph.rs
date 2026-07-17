@@ -135,6 +135,52 @@ fn backlinks_include_explicit_links_in_page_properties() {
 }
 
 #[test]
+fn backlinks_include_bare_tags_page_properties() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-page-property-tags-backlink-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::write(root.join("pages/page1.md"), "- Reference target page.\n").unwrap();
+    std::fs::write(
+        root.join("pages/page2.md"),
+        "tags:: unrelated\n\n- Page tagged with the target after load.\n",
+    )
+    .unwrap();
+
+    let g = Graph::open(&root);
+    assert!(
+        g.backlinks("page1").is_empty(),
+        "warm the derived cache before the bare tags property edit"
+    );
+    let entry = g.find_entry("page2", tine_core::PageKind::Page).unwrap();
+    let mut page = g.load_page(&entry).unwrap();
+    page.pre_block = Some("tags:: page1".into());
+    g.save_page(&page, page.rev.as_deref()).unwrap();
+
+    let groups = g.backlinks("page1");
+    let source = groups
+        .iter()
+        .find(|group| group.page == "page2")
+        .expect("a bare tags:: value should create a Linked Reference group");
+    assert_eq!(source.blocks.len(), 1, "one property source counts once");
+    assert_eq!(source.blocks[0].raw, "tags:: page1");
+    assert!(source.blocks[0].page_property);
+    assert_eq!(source.evidence.len(), 1);
+    assert_eq!(source.evidence[0].occurrences.len(), 1);
+    let occurrence = &source.evidence[0].occurrences[0];
+    assert_eq!(occurrence.matched_name, "page1");
+    assert_eq!(occurrence.canonical, "page1");
+    assert_eq!(occurrence.span.start, "tags:: ".encode_utf16().count());
+    assert_eq!(occurrence.span.end, "tags:: page1".encode_utf16().count());
+    assert_eq!(occurrence.rule, "implicit_linkable_property");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn block_ref_counts_and_referrers() {
     // Isolated temp graph: a target block (id:: aaaaaaaa-0000-0000-0000-000000000001) referenced by a same-page
     // block and three blocks on another page (labeled, embed, and a double ref that
