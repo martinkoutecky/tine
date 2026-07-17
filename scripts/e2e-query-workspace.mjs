@@ -481,6 +481,17 @@ await withApp(2, async (browser) => {
         && group.querySelector(".reference-mention-count")?.textContent?.trim() === "2 mentions")), {
     timeout: 10_000, timeoutMsg: "linked reference evidence did not lazy-mount",
   });
+  await browser.execute(() => {
+    const tagged = [...document.querySelectorAll(".linked-references .reference-group")]
+      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source");
+    tagged?.scrollIntoView({ block: "center" });
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".linked-references .reference-group")]
+      .some((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source"
+        && group.querySelector(".reference-mention-count")?.textContent?.trim() === "1 mention")), {
+    timeout: 10_000, timeoutMsg: "bare tags property evidence did not lazy-mount",
+  });
   const linkedProof = await browser.execute(() => {
     const groups = [...document.querySelectorAll(".linked-references .reference-group")];
     const source = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
