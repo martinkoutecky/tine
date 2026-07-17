@@ -86,9 +86,11 @@ import {
 } from "./paneSelect";
 import { openGuide } from "./guide";
 import { pluginManager } from "./plugins/manager";
-import type { PluginBlockSnapshot } from "./plugins/protocol";
+import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
-function pluginFocusedBlock(): PluginBlockSnapshot | undefined {
+function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
+  const owner = capturePluginGraphOwner();
+  if (!owner) return undefined;
   const id = editingId();
   const node = id ? doc.byId[id] : undefined;
   if (!node) return undefined;
@@ -99,7 +101,10 @@ function pluginFocusedBlock(): PluginBlockSnapshot | undefined {
     parentId = doc.byId[parentId].parent;
   }
   const format = doc.pages.find((page) => page.name === node.page)?.format === "org" ? "org" : "md";
-  return { id: node.id, raw: node.raw, parentId: node.parent, depth, format };
+  if (!isPluginGraphOwnerCurrent(owner)) return undefined;
+  const owned = bindPluginBlockSnapshot({ id: node.id, raw: node.raw, parentId: node.parent, depth, format });
+  if (!owned || owned.owner.graphRoot !== owner.graphRoot || owned.owner.generation !== owner.generation) return undefined;
+  return owned;
 }
 
 interface Chord {
@@ -644,7 +649,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
  *  every global command with a run handler, with its effective binding. The
  *  switcher itself is excluded (no point launching the launcher). */
 export function paletteCommands(
-  focusedPluginBlock: PluginBlockSnapshot | null = pluginFocusedBlock() ?? null
+  focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
 ): { id: string; label: string; binding: string; run: () => void }[] {
   const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
     .map((c) => ({

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
@@ -9,6 +9,15 @@ import { clearSelection, doc, loadSingle, moveSelection, resetStore, selectBlock
 import { endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import type { PaneSnapshot } from "./router";
+import type { GraphMeta } from "./types";
+
+const pluginGraphMeta: GraphMeta = {
+  root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
+  shortcuts: {}, start_of_week: 6, block_hidden_properties: [], default_journal_template: null,
+  favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
+  preferred_format: "md", macros: {}, enable_timetracking: true, logbook_with_second_support: true,
+  logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+};
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -146,6 +155,7 @@ afterEach(() => {
   setPdfTarget(null);
   setWorkflow("now");
   setFocusMode(false);
+  setGraphMeta(null);
   exitPaneSelect();
   clearSelection();
   if (switcherOpen()) closeSwitcher();
@@ -156,6 +166,7 @@ afterEach(() => {
 
 describe("plugin command context", () => {
   it("registers plugin default bindings in the same remappable dispatcher", async () => {
+    setGraphMeta(pluginGraphMeta);
     setDoc({
       byId: {
         block: { id: "block", raw: "Heading me", collapsed: false, parent: null, page: "Page", children: [] },
@@ -179,12 +190,16 @@ describe("plugin command context", () => {
 
     expect(key.prevented()).toBe(true);
     expect(invoke).toHaveBeenCalledWith(
-      "page.tine.heading-level-shortcuts", "heading-1", expect.objectContaining({ id: "block", raw: "Heading me" })
+      "page.tine.heading-level-shortcuts", "heading-1", expect.objectContaining({
+        owner: expect.objectContaining({ graphRoot: "/plugin-test" }),
+        block: expect.objectContaining({ id: "block", raw: "Heading me" }),
+      })
     );
     dispose();
   });
 
   it("carries the edited block through Ctrl-K input focus and palette close", async () => {
+    setGraphMeta(pluginGraphMeta);
     setDoc({
       byId: {
         query: { id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table", collapsed: false, parent: null, page: "Sheet", children: [] },
@@ -206,7 +221,10 @@ describe("plugin command context", () => {
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "k", code: "KeyK", ctrlKey: true }).event);
     const captured = switcherPluginBlock();
-    expect(captured).toMatchObject({ id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table" });
+    expect(captured).toMatchObject({
+      owner: { graphRoot: "/plugin-test" },
+      block: { id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table" },
+    });
 
     endEdit("blur");
     const command = paletteCommands(captured).find((item) => item.id === "plugin:page.tine.query-filter:hide-completed");

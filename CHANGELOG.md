@@ -67,6 +67,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Delayed plugin results now stay with the graph and editor that invoked them.**
+  Switching or refreshing a graph while a command or slash completion is pending
+  drops the stale result, even when the new graph contains the same block UUID
+  and text, without disabling the healthy plugin worker.
 - **Ctrl-K page and block results now keep their exact physical file owner.**
   Current, alternate, background-tab, and right-sidebar activation preserve the
   selected graph-relative path, including duplicate-name sidebar restore and
