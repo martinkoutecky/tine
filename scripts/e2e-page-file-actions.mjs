@@ -94,6 +94,62 @@ try {
   }
   await browser.$("h1.page-title").waitForExist({ timeout: 10_000 });
 
+  // GH #184: a duplicated page surface must expose expanded state only on the
+  // exact trigger that owns the global page menu. A title right-click has no
+  // ellipsis owner, so neither duplicate trigger may claim it.
+  await browser.execute(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "\\", code: "Backslash", ctrlKey: true, altKey: true,
+      bubbles: true, cancelable: true,
+    }));
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".pane-leaf[data-pane-id]").length === 2,
+  ), { timeout: 10_000, timeoutMsg: "duplicate page split was not created" });
+  const splitPane = await browser.execute(() =>
+    [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .map((pane) => pane.getAttribute("data-pane-id"))
+      .find((id) => id && id !== "main") ?? null,
+  );
+  if (!splitPane) throw new Error("duplicate page split id was not found");
+  const expandedByPane = () => browser.execute(() => Object.fromEntries(
+    [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .map((pane) => [
+        pane.getAttribute("data-pane-id"),
+        pane.querySelector("[data-page-actions-trigger]")?.getAttribute("aria-expanded") ?? null,
+      ]),
+  ));
+  const assertExpanded = async (expected, label) => {
+    const actual = await expandedByPane();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`${label}: ${JSON.stringify(actual)} expected ${JSON.stringify(expected)}`);
+    }
+  };
+
+  await browser.$('.pane-leaf[data-pane-id="main"] [data-page-actions-trigger]').click();
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "true", [splitPane]: "false" }, "main page-actions owner mismatch");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "false" }, "closed duplicate page-actions state mismatch");
+
+  await browser.$(`.pane-leaf[data-pane-id="${splitPane}"] [data-page-actions-trigger]`).click();
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "true" }, "split page-actions owner mismatch");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+
+  await browser.execute(() => {
+    const title = document.querySelector('.pane-leaf[data-pane-id="main"] h1.page-title');
+    title?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, clientX: 100, clientY: 100,
+    }));
+  });
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "false" }, "title right-click claimed an ellipsis owner");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+
   await openTitleActions();
   const ids = await browser.execute(() => [...document.querySelectorAll("[data-page-action-id]")]
     .map((item) => item.getAttribute("data-page-action-id")));
