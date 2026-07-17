@@ -1111,7 +1111,16 @@ export function openBlockInSidebar(ref: {
   setRightSidebarOpen(true);
   const existing = rightSidebar().findIndex((i) => i.kind === "block" && i.uuid === ref.uuid);
   if (existing >= 0) {
-    setRightSidebar(rightSidebar().map((item, i) => i === existing ? { ...item, ...ref, collapsed: false } : item));
+    const updated = rightSidebar().map((item, i) =>
+      i === existing ? { ...item, ...ref, collapsed: false } : item
+    );
+    setRightSidebar(updated.filter((item, i) => {
+      if (i === existing) return true;
+      const sameOwnerName = item.kind === "page"
+        ? item.name === ref.page && item.pageKind === ref.pageKind
+        : item.page === ref.page && item.pageKind === ref.pageKind;
+      return !sameOwnerName || item.path === ref.path;
+    }));
     return;
   }
   // A pathful duplicate selection must evict incompatible same-name items. The
