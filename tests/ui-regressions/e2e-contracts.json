@@ -159,9 +159,9 @@
     },
     "scripts/e2e-plugin-revocation.mjs": {
       "contracts": [
-        { "class": "exact-safety-interoperability", "userOutcome": "A persisted enabled plugin revoked by the last verified signed cache contributes no command or decoration while the live registry endpoint stalls.", "blocking": true, "authority": "Tine signed plugin launch-revocation contract" }
+        { "class": "exact-safety-interoperability", "userOutcome": "A persisted enabled plugin activates under a verified non-revoking cache, then a verified cached revocation prevents its command or decoration and durably disables it while the live registry endpoint stalls.", "blocking": true, "authority": "Tine signed plugin launch-revocation contract" }
       ],
-      "acceptableVariations": ["The supplied signed fixture may use a host-owned command or thread-lines block-decoration contribution."],
+      "acceptableVariations": ["The reserved signed fixture may use a host-owned command or thread-lines block-decoration contribution, provided the positive control makes activation observable."],
       "nonRequirements": ["Exact styling, worker implementation details, or live-request timing before the abort deadline."],
       "stability": "stable"
     },

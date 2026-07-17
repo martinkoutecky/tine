@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "identity": "page.tine.e2e.revocation-sentinel@0.0.1",
+  "manifestSha256": "23ef018e1fb2ea16743f3be2729319d1b3573c6bdd482e9e8d54e00cf4c03dc0",
+  "wasmSha256": "e06aafc590c2fbc8b3e6ab3e8c1dc0dff1fd877104d3413f2052c0d69792d2e1",
+  "controlIndexSha256": "f666bdd1510f6f90ddec07e4480d97db18f31a935da476c3b1c711832e4397ee",
+  "revokedIndexSha256": "559e97fc455ee38fad9cdeeb0e4035fbb5cd7175741402d755927bcd578aeb30",
+  "publicKeySha256": "c00dd3b538b33cc13bd4f5e6aa608ddead3a828baca842cf4e1950aebb0a5f2a"
+}

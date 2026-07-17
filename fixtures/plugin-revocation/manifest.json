@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "page.tine.e2e.revocation-sentinel",
+  "name": "Revocation E2E sentinel",
+  "version": "0.0.1",
+  "apiVersion": "0.2",
+  "description": "Reserved, never-published fixture whose host-owned thread lines prove plugin activation.",
+  "author": "Tine test fixture",
+  "license": "MIT",
+  "source": "https://github.com/martinkoutecky/tine/tree/master/fixtures/plugin-revocation",
+  "entry": "plugin.wasm",
+  "platforms": ["desktop"],
+  "capabilities": ["block-decorations.register"],
+  "contributions": {
+    "blockDecorations": [
+      { "id": "revocation-sentinel-lines", "kind": "thread-lines" }
+    ]
+  },
+  "aiDevelopment": "primary"
+}

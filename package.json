@@ -39,6 +39,8 @@
     "bench": "node scripts/bench.mjs",
     "bench:startup": "xvfb-run -a node scripts/bench-startup.mjs",
     "plugin:check": "node scripts/tine-plugin.mjs check",
+    "plugin:revocation-fixture:build": "node scripts/build-plugin-revocation-fixture.mjs",
+    "plugin:revocation-fixture:check": "node scripts/check-plugin-revocation-fixtures.mjs",
     "plugin:template-check": "node scripts/test-plugin-template.mjs",
     "plugin:launch-e2e": "node scripts/shot-plugin-docs.mjs",
     "plugin:launch-e2e:android": "TINE_PLUGIN_PLATFORM=android node scripts/shot-plugin-docs.mjs",
