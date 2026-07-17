@@ -168,7 +168,7 @@ describe("community extension startup revocations", () => {
   it("does not let an older verified refresh overwrite the newer cached registry", async () => {
     const api = backend();
     vi.spyOn(api, "verifyPluginRegistry").mockResolvedValue();
-    vi.spyOn(pluginManager, "applyRevocations").mockResolvedValue();
+    const apply = vi.spyOn(pluginManager, "applyRevocations").mockResolvedValue();
     const stored = new Map<string, string>();
     vi.spyOn(api, "setAppString").mockImplementation(async (key, value) => {
       stored.set(key, value);
@@ -212,5 +212,9 @@ describe("community extension startup revocations", () => {
     await vi.waitFor(() => expect(stored.get("plugin-registry-signature")).toBe("new-signature"));
 
     expect(stored.get("plugin-registry-index")).toBe(newIndex);
+    const newerRevocations = new Set(["page.tine.newer-cache@1.0.0"]);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith(newerRevocations);
+    expect(revokedThemeVersions()).toEqual(newerRevocations);
   });
 });
