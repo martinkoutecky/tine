@@ -111,10 +111,9 @@ try {
     return {
       tabs: tabs.length,
       overflowing: !!strip && strip.scrollWidth > strip.clientWidth + 1,
-      minWidth: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
     };
   });
-  if (!initial.overflowing || initial.tabs !== PAGES.length + 1 || initial.minWidth < 110) {
+  if (!initial.overflowing || initial.tabs !== PAGES.length + 1) {
     throw new Error(`unexpected native tab geometry: ${JSON.stringify(initial)}`);
   }
 

@@ -41,9 +41,13 @@ jobs:
       - run: npm ci
       - name: Install browser used by the selection-wrap scenario
         run: npx playwright install --with-deps chromium
+      - name: Snapshot Linux E2E candidate inputs
+        run: node scripts/build-e2e-receipt.mjs before --snapshot target/release/tine.build.before.json
       - run: npm run build
       - name: Build production-protocol app
         run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Write Linux E2E candidate receipt
+        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.build.before.json --app target/release/tine
       - name: Install Tauri WebDriver bridge
         run: cargo install tauri-driver --locked
       - name: Run complete Linux UI regression catalog
@@ -84,9 +88,13 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: npm ci
+      - name: Snapshot Windows E2E candidate inputs
+        run: node scripts/build-e2e-receipt.mjs before --snapshot target/release/tine.exe.build.before.json
       - run: npm run build
       - name: Build production-protocol app
         run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Write Windows E2E candidate receipt
+        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.exe.build.before.json --app target/release/tine.exe
       - name: Install Edge WebDriver matching the hosted browser
         shell: pwsh
         run: |
