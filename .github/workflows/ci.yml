@@ -204,6 +204,8 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: npm ci
+      - name: Verify launch-plugin paths in a standalone checkout
+        run: npm run plugin:launch-paths-check
       - name: Install launch-test browser
         run: npx playwright install --with-deps chromium
       - name: Build Tine and all launch plugins
@@ -212,16 +214,10 @@ jobs:
           ./scripts/build-community-plugins.sh
       - name: Exercise every launch plugin and capture evidence
         env:
-          TINE_BULLET_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/bullet-threading
-          TINE_QUERY_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/query-filter
-          TINE_HEADING_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/heading-level-shortcuts
           TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs
         run: npm run plugin:launch-e2e
       - name: Exercise every launch plugin through the Android host contract
         env:
-          TINE_BULLET_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/bullet-threading
-          TINE_QUERY_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/query-filter
-          TINE_HEADING_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/heading-level-shortcuts
           TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs-android
         run: npm run plugin:launch-e2e:android
       - name: Upload launch-plugin evidence
