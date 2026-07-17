@@ -28,10 +28,12 @@ describe("production revocation E2E fixture preparation", () => {
 
     const module = new WebAssembly.Module(read("plugin.wasm"));
     expect(WebAssembly.Module.imports(module)).toEqual([{ module: "env", name: "memory", kind: "memory" }]);
-    expect(WebAssembly.Module.exports(module).map(({ name }) => name).sort()).toEqual([
-      "tine_alloc",
-      "tine_handle",
-      "tine_result_len",
+    expect(WebAssembly.Module.exports(module).sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: "__data_end", kind: "global" },
+      { name: "__heap_base", kind: "global" },
+      { name: "tine_alloc", kind: "function" },
+      { name: "tine_handle", kind: "function" },
+      { name: "tine_result_len", kind: "function" },
     ]);
   });
 
