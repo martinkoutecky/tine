@@ -541,7 +541,8 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     return menu?.kind === "page"
       && menu.name === props.page.name
       && menu.pageKind === props.page.kind
-      && !!menu.fileActions;
+      && !!menu.fileActions
+      && menu.focusOwner === pageActionsTrigger;
   };
   const firstPropertiesId = () => {
     if (props.page.format !== "md") return null;

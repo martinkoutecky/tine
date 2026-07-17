@@ -652,8 +652,13 @@ describe("page actions entry point", () => {
       await tick();
       expect(triggers.map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["true", "false"]);
 
+      triggers[1].click();
+      await tick();
+      expect(triggers.map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
+
       closeContextMenu();
       await tick();
+      expect(triggers.map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
       const titles = [...root.querySelectorAll<HTMLElement>(".page-title")];
       titles[0].dispatchEvent(new MouseEvent("contextmenu", {
         bubbles: true,
