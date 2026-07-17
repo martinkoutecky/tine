@@ -19,7 +19,7 @@ import {
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
-import { openPage } from "../router";
+import { openFile, openPage, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
@@ -198,24 +198,33 @@ export function RightSidebar(): JSX.Element {
 // renders off actual store presence, so a failed early attempt is harmless.
 // Re-runs on graphEpoch so a sidebar restored *before* the graph is open
 // retries once it opens.
-function useEnsurePage(name: () => string, kind: () => "journal" | "page", enabled: () => boolean) {
+function useEnsurePage(
+  name: () => string,
+  kind: () => "journal" | "page",
+  path: () => string | undefined,
+  enabled: () => boolean,
+) {
   createEffect(() => {
     if (!enabled()) return;
     const epoch = graphEpoch();
     const n = name();
     const k = kind();
-    if (n && !pageByName(n)) {
-      void backend()
-        .getPage(n, k)
+    const p = path();
+    const loaded = pageByName(n);
+    if (n && (!loaded || (p && loaded.path !== p))) {
+      let active = true;
+      onCleanup(() => { active = false; });
+      const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
+      void request
         .then((dto) => {
           // Drop a load that resolved after a graph switch — otherwise it would
           // insert an old-graph page into the new graph's working set.
-          if (epoch !== graphEpoch()) return;
+          if (!active || epoch !== graphEpoch()) return;
           if (dto) {
             // Alias-map warmup usually canonicalizes before the item is created.
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
-            if (k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
+            if (!p && k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
             ensurePageLoaded(dto);
           }
         })
@@ -244,14 +253,22 @@ function SidebarItemView(props: {
 }
 
 function PageItem(props: {
-  item: { name: string; pageKind: "journal" | "page" };
+  item: { name: string; pageKind: "journal" | "page"; path?: string };
   surfaceKey: string;
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
 }): JSX.Element {
-  useEnsurePage(() => props.item.name, () => props.item.pageKind, () => !props.collapsed);
-  const page = () => pageByName(props.item.name);
+  useEnsurePage(
+    () => props.item.name,
+    () => props.item.pageKind,
+    () => props.item.path,
+    () => !props.collapsed,
+  );
+  const page = () => {
+    const loaded = pageByName(props.item.name);
+    return props.item.path && loaded?.path !== props.item.path ? undefined : loaded;
+  };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} classList={{ collapsed: props.collapsed }}>
@@ -259,7 +276,10 @@ function PageItem(props: {
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
-        <a class="rs-item-title" onClick={() => openPage(props.item.name, props.item.pageKind)}>
+        <a class="rs-item-title" onClick={() => {
+          if (props.item.path) openFile(props.item.path, props.item.name, props.item.pageKind);
+          else openPage(props.item.name, props.item.pageKind);
+        }}>
           <EmojiText text={props.item.name} />
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
@@ -282,23 +302,33 @@ function PageItem(props: {
 }
 
 function BlockItem(props: {
-  item: { uuid: string; page: string; pageKind: "journal" | "page" };
+  item: { uuid: string; page: string; pageKind: "journal" | "page"; path?: string };
   surfaceKey: string;
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
 }): JSX.Element {
-  useEnsurePage(() => props.item.page, () => props.item.pageKind, () => !props.collapsed);
+  useEnsurePage(
+    () => props.item.page,
+    () => props.item.pageKind,
+    () => props.item.path,
+    () => !props.collapsed,
+  );
   // Resolve by store key first; fall back to finding the loaded node whose
   // persisted id:: matches (the in-memory key can differ from the id:: it was
   // parked under). Returns the live store node so edits stay propagated.
   const node = () => {
+    const owner = pageByName(props.item.page);
+    if (props.item.path && owner?.path !== props.item.path) return undefined;
     const direct = doc.byId[props.item.uuid];
     if (direct) return direct;
     const re = new RegExp(`(?:^|\\n)id:: *${props.item.uuid}(?:\\s|$)`);
     return Object.values(doc.byId).find((n) => n.page === props.item.page && re.test(n.raw));
   };
-  const pageLoaded = () => !!pageByName(props.item.page);
+  const pageLoaded = () => {
+    const loaded = pageByName(props.item.page);
+    return !!loaded && (!props.item.path || loaded.path === props.item.path);
+  };
   const title = () => {
     const n = node();
     return n ? visibleBody(n.raw)[0] || props.item.page : props.item.page;
@@ -312,7 +342,12 @@ function BlockItem(props: {
         </button>
         <a
           class="rs-item-title"
-          onClick={() => openPage(props.item.page, props.item.pageKind)}
+          onClick={() => openPageAtBlock(
+            props.item.page,
+            props.item.pageKind,
+            props.item.uuid,
+            props.item.path,
+          )}
           title={`On ${props.item.page}`}
         >
           {title()}

@@ -173,6 +173,9 @@ pub enum QueryHit {
     Block {
         page: String,
         kind: PageKind,
+        /// Graph-root-relative physical owner of this result. Block ids and page
+        /// names are not unique enough to recover it after a duplicate-name hit.
+        path: String,
         block: BlockDto,
         /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
         display_text: String,
@@ -1177,6 +1180,7 @@ fn execute_blocks(
                     hits.push(QueryHit::Block {
                         page: entry.name.clone(),
                         kind: entry.kind,
+                        path: entry.rel_path.clone(),
                         block: dto,
                         display_text: visible.clone(),
                         evidence: matched.evidence,
@@ -1709,8 +1713,10 @@ mod tests {
         assert!(!execution.hits.is_empty());
         assert!(execution.hits.iter().all(|hit| matches!(
             hit,
-            QueryHit::Block { page, block, .. }
-                if page == "Opinion Diffusion" && block.raw != "duplicate foo"
+            QueryHit::Block { page, path, block, .. }
+                if page == "Opinion Diffusion"
+                    && path == "pages/Opinion Diffusion.md"
+                    && block.raw != "duplicate foo"
         )));
         fs::remove_dir_all(dir).unwrap();
     }

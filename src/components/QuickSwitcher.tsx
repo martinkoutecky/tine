@@ -19,7 +19,7 @@ type Item =
   | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
+  | { t: "block"; page: string; pageKind: PageKind; path?: string; blockId: string; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
 
 interface Section {
   header: string;
@@ -200,12 +200,13 @@ export function QuickSwitcher(): JSX.Element {
           t: "block",
           page: hit.page,
           pageKind: hit.kind,
+          path: hit.path || undefined,
           blockId: hit.block.id,
           text: hit.display_text,
           crumb: hit.block.breadcrumb ?? [],
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
-          adaptiveIdentity: `block:${hit.kind}:${hit.page.toLocaleLowerCase()}:${hit.block.id}`,
+          adaptiveIdentity: `block:${hit.kind}:${hit.path || hit.page.toLocaleLowerCase()}:${hit.block.id}`,
           adaptiveFavorite: isFavorite(hit.page),
         },
         onCur: currentPageOnly() || !!(cur && hit.page === cur),
@@ -293,7 +294,7 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         return;
       case "block":
-        openPageAtBlock(it.page, it.pageKind, it.blockId);
+        openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
     }
     closeSwitcher();
@@ -316,7 +317,7 @@ export function QuickSwitcher(): JSX.Element {
         router.openPage(it.name, "page");
         break;
       case "block":
-        router.openPageAtBlock(it.page, it.pageKind, it.blockId);
+        router.openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
       case "command":
         it.run();
@@ -340,7 +341,7 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         break;
       case "block":
-        openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId });
+        openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path });
         break;
     }
     closeSwitcher();
@@ -349,13 +350,13 @@ export function QuickSwitcher(): JSX.Element {
   const chooseSidebar = (it: Extract<Item, { t: "page" | "block" }>) => {
     recordChoice(it);
     if (it.t === "page") {
-      openPageInSidebar(it.name, it.pageKind);
+      openPageInSidebar(it.name, it.pageKind, it.path);
     } else {
       // Search results can target a page that is not loaded in the frontend.
       // Stamp its id:: through the guarded ordinary page-save path before the
       // durable sidebar item outlives this search session.
-      void persistBlockRefTarget(it.blockId, it.page, it.pageKind);
-      openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind });
+      void persistBlockRefTarget(it.blockId, it.page, it.pageKind, it.path);
+      openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind, path: it.path });
     }
     closeSwitcher();
   };
@@ -370,7 +371,9 @@ export function QuickSwitcher(): JSX.Element {
       it.path
         ? openInNewTab({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path })
         : openPageInNewTab(it.name, it.pageKind);
-    else if (it.t === "block") openPageInNewTab(it.page, it.pageKind, it.blockId);
+    else if (it.t === "block") openInNewTab({
+      kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path,
+    });
   };
 
   const createPageFile = async (name: string) => {

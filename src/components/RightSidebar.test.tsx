@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore } from "../store";
 import type { PageDto } from "../types";
 import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";
@@ -54,6 +54,43 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
+  it("replaces a same-name loaded page with the sidebar item's exact physical owner", async () => {
+    loadSingle({ ...page, path: "pages/Sidebar test.md" });
+    applySidebarSession({
+      right: true,
+      items: [{
+        kind: "page",
+        name: page.name,
+        pageKind: "page",
+        path: "pages/duplicates/Sidebar test.md",
+      }],
+    });
+    const exact = {
+      ...page,
+      path: "pages/duplicates/Sidebar test.md",
+      blocks: [{ id: "exact-root", raw: "Noncanonical exact content", collapsed: false, children: [] }],
+    };
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(exact);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+
+    try {
+      await vi.waitFor(() => {
+        expect(root.textContent).toContain("Noncanonical exact content");
+        expect(pageByName(page.name)?.path).toBe("pages/duplicates/Sidebar test.md");
+      });
+      expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/Sidebar test.md");
+      expect(getPage).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
   it("adopts the canonical page name for a restored mixed-case sidebar item", async () => {
     const canonical = { ...page, name: "page1", title: "page1" };
     applySidebarSession({

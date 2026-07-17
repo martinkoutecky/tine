@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
 import { closeSwitcher, openSwitcher, pageInventoryRev, rightSidebar, setRightSidebar, setRightSidebarOpen, toasts } from "../ui";
-import { activeId, closeTab, route } from "../router";
+import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
 
@@ -168,6 +168,76 @@ describe("QuickSwitcher search syntax help", () => {
     await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/unloaded.md"));
     expect(getPage).not.toHaveBeenCalled();
     dispose();
+  });
+
+  it("retains one noncanonical path through current alternate and background page/block activation", async () => {
+    const path = "pages/duplicates/Twin.md";
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [
+        {
+          entity: "page",
+          page: { name: "Twin", kind: "page", date_key: null, path },
+          display_text: "Twin",
+          evidence: [{ clause_id: 1, field: "page_name", mode: "fuzzy", spans: [{ start: 0, end: 4 }] }],
+          score: 100,
+          match_class: "exact",
+        },
+        {
+          entity: "block",
+          page: "Twin",
+          kind: "page",
+          path,
+          block: { id: "exact-block", raw: "owned needle", collapsed: false, children: [], breadcrumb: [] },
+          display_text: "owned needle",
+          evidence: [{ clause_id: 2, field: "visible_content", mode: "contains", spans: [{ start: 6, end: 12 }] }],
+          match_class: "body_evidence",
+        },
+      ],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    const openResults = async () => {
+      openSwitcher();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "needle";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const rows = await vi.waitFor(() => {
+        const found = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')];
+        expect(found).toHaveLength(2);
+        return found;
+      });
+      return { input, pageRow: rows[0], blockRow: rows[1] };
+    };
+
+    try {
+      const first = await openResults();
+      first.pageRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 1 }));
+      expect(tabs().map(tabRoute)).toContainEqual({ kind: "page", name: "Twin", pageKind: "page", path });
+
+      first.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      first.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      expect(route()).toMatchObject({ kind: "page", name: "Twin", pageKind: "page", path });
+
+      const alternate = await openResults();
+      alternate.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      alternate.input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter", altKey: true, bubbles: true, cancelable: true,
+      }));
+      const targetPane = layoutPaneIds().find((id) => id !== "main");
+      expect(targetPane).toBeDefined();
+      expect(paneRouter(targetPane!).route()).toMatchObject({
+        kind: "page", name: "Twin", pageKind: "page", path,
+      });
+
+      const background = await openResults();
+      background.blockRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 1 }));
+      expect(tabs().map(tabRoute)).toContainEqual({
+        kind: "page", name: "Twin", pageKind: "page", block: "exact-block", path,
+      });
+    } finally {
+      dispose();
+    }
   });
 
   it("requests a path-authoritative current-page block scope and hides global providers", async () => {

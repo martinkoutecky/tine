@@ -34,11 +34,20 @@ const CURRENT_BLOCK_ID = "88488488-4884-4884-8884-884884884884";
 const COMPOSED_PAGE = "Caf\u00e9 Exact";
 const DECOMPOSED_ALIAS = "Cafe\u0301 Alias";
 const DECOMPOSED_BLOCK = "Unicode Cafe\u0301 block witness";
+const DUPLICATE_PAGE = "Exact Storage Twin";
+const CANONICAL_DUPLICATE_BODY = "CANONICAL-STORAGE-OWNER-641";
+const NONCANONICAL_DUPLICATE_BODY = "NONCANONICAL-STORAGE-OWNER-642";
+const NONCANONICAL_BLOCK_QUERY = "NONCANONICAL-BLOCK-OWNER-643";
+const NONCANONICAL_BLOCK_ID = "64364364-3643-4643-8643-643643643643";
+const NONCANONICAL_EDIT = "Edited exact noncanonical owner 644";
+const CANONICAL_DUPLICATE_FILE = path.join(GRAPH, `pages/${DUPLICATE_PAGE}.md`);
+const NONCANONICAL_DUPLICATE_FILE = path.join(GRAPH, `pages/duplicates/${DUPLICATE_PAGE}.md`);
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) {
   fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 }
+fs.mkdirSync(path.dirname(NONCANONICAL_DUPLICATE_FILE), { recursive: true });
 for (const dir of ["data", "config", "cache"]) {
   fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
 }
@@ -71,6 +80,13 @@ fs.writeFileSync(path.join(GRAPH, `pages/${COMPOSED_PAGE}.md`), [
   "",
 ].join("\n"));
 fs.writeFileSync(path.join(GRAPH, "pages/Cafe Plain Control.md"), "- backend-settle witness\n");
+fs.writeFileSync(CANONICAL_DUPLICATE_FILE, `- ${CANONICAL_DUPLICATE_BODY}\n`);
+fs.writeFileSync(NONCANONICAL_DUPLICATE_FILE, [
+  `- ${NONCANONICAL_DUPLICATE_BODY}`,
+  `- ${NONCANONICAL_BLOCK_QUERY}`,
+  `  id:: ${NONCANONICAL_BLOCK_ID}`,
+  "",
+].join("\n"));
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(GRAPH, `journals/${journal}.md`), `- Open [[${MAIN_PAGE}]]\n`);
@@ -203,6 +219,97 @@ try {
   }, "main fixture page did not settle as the exact active result");
   await browser.keys(["Enter"]);
   await waitPage(browser, MAIN_PAGE);
+
+  // 0. Duplicate display names retain physical file identity. Visit both
+  // same-name rows (filesystem enumeration order is intentionally irrelevant),
+  // then leave the noncanonical one selected and prove the one name-keyed slot
+  // swaps physical owner rather than keeping or editing its sibling.
+  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
+  await typeKeys(browser, DUPLICATE_PAGE);
+  await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
+    && state.rows[0]?.active && state.rows[0]?.name === DUPLICATE_PAGE,
+  "duplicate page results did not settle with the first row active");
+  await browser.keys(["Shift", "Enter"]);
+  const duplicateSurface = `[data-sidebar-surface="sidebar:page:page:${DUPLICATE_PAGE}"]`;
+  await browser.$(duplicateSurface).waitForExist({ timeout: 10_000 });
+  const firstDuplicateBody = await browser.$(`${duplicateSurface} .rs-item-body`).getText();
+  const firstIsNoncanonical = firstDuplicateBody.includes(NONCANONICAL_DUPLICATE_BODY);
+  if (!firstIsNoncanonical && !firstDuplicateBody.includes(CANONICAL_DUPLICATE_BODY)) {
+    throw new Error(`first duplicate row opened unknown content: ${JSON.stringify(firstDuplicateBody)}`);
+  }
+
+  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
+  await typeKeys(browser, DUPLICATE_PAGE);
+  await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
+    && state.rows[0]?.active,
+  "duplicate page results did not settle for noncanonical selection");
+  await browser.keys(["ArrowDown"]);
+  await waitFor(browser, (state) => state.rows[1]?.active && state.rows[1]?.kind === "page" && state.rows[1]?.name === DUPLICATE_PAGE,
+  "ArrowDown did not select the second duplicate page result");
+  await browser.keys(["Shift", "Enter"]);
+  await browser.waitUntil(async () => {
+    const text = await browser.$(`${duplicateSurface} .rs-item-body`).getText();
+    return firstIsNoncanonical
+      ? text.includes(CANONICAL_DUPLICATE_BODY) && !text.includes(NONCANONICAL_DUPLICATE_BODY)
+      : text.includes(NONCANONICAL_DUPLICATE_BODY) && !text.includes(CANONICAL_DUPLICATE_BODY);
+  }, {
+    timeout: 10_000,
+    timeoutMsg: "same-name sidebar slot did not replace content with the second physical owner",
+  });
+  const duplicateSlotCount = await browser.execute((selector) => document.querySelectorAll(selector).length, duplicateSurface);
+  if (duplicateSlotCount !== 1) throw new Error(`same-name duplicate created ${duplicateSlotCount} sidebar slots`);
+
+  if (firstIsNoncanonical) {
+    await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
+    await typeKeys(browser, DUPLICATE_PAGE);
+    await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
+      && state.rows[0]?.active,
+    "duplicate page results did not settle while restoring the noncanonical owner");
+    await browser.keys(["Shift", "Enter"]);
+    await browser.waitUntil(async () => (await browser.$(`${duplicateSurface} .rs-item-body`).getText()).includes(NONCANONICAL_DUPLICATE_BODY), {
+      timeout: 10_000,
+      timeoutMsg: "first duplicate row did not restore its noncanonical physical owner",
+    });
+  }
+
+  await browser.$(`${duplicateSurface} .block-content`).click();
+  await browser.$(`${duplicateSurface} textarea.block-editor`).waitForExist({ timeout: 5000 });
+  await browser.execute((selector, value) => {
+    const input = document.querySelector(selector);
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  }, `${duplicateSurface} textarea.block-editor`, NONCANONICAL_EDIT);
+  await browser.$(`${duplicateSurface} [data-right-sidebar-item-toggle]`).click();
+  await browser.waitUntil(() => fs.readFileSync(NONCANONICAL_DUPLICATE_FILE, "utf8").includes(NONCANONICAL_EDIT), {
+    timeout: 10_000,
+    timeoutMsg: "noncanonical sidebar edit did not persist to its selected file",
+  });
+  const canonicalAfterEdit = fs.readFileSync(CANONICAL_DUPLICATE_FILE, "utf8");
+  if (canonicalAfterEdit !== `- ${CANONICAL_DUPLICATE_BODY}\n`) {
+    throw new Error(`noncanonical sidebar edit changed its canonical sibling: ${JSON.stringify(canonicalAfterEdit)}`);
+  }
+
+  // The block provider must carry the same physical owner through id::
+  // persistence and sidebar hydration, not recover the page canonically by name.
+  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
+  await typeKeys(browser, NONCANONICAL_BLOCK_QUERY);
+  await waitFor(browser, (state) => state.rows.some((row) => row.kind === "block"
+    && row.excerpt.includes(NONCANONICAL_BLOCK_QUERY)),
+  "noncanonical block result did not settle");
+  await browser.keys(["ArrowDown"]);
+  await browser.keys(["Shift", "Enter"]);
+  const duplicateBlockSurface = `[data-sidebar-surface="sidebar:block:${NONCANONICAL_BLOCK_ID}"]`;
+  await browser.$(`${duplicateBlockSurface} .rs-item-body [data-block-id="${NONCANONICAL_BLOCK_ID}"]`).waitForExist({ timeout: 10_000 });
+  const duplicateBlockText = await browser.$(`${duplicateBlockSurface} .rs-item-body`).getText();
+  if (!duplicateBlockText.includes(NONCANONICAL_BLOCK_QUERY)) {
+    throw new Error(`noncanonical block sidebar body was ${JSON.stringify(duplicateBlockText)}`);
+  }
+  receipt.observations.exactStorageIdentity = {
+    page: { name: DUPLICATE_PAGE, sidebarSlots: duplicateSlotCount, edited: NONCANONICAL_EDIT },
+    block: { id: NONCANONICAL_BLOCK_ID, query: NONCANONICAL_BLOCK_QUERY },
+    canonicalSiblingUnchanged: true,
+  };
 
   // 1. Exact global page result + Shift-only Enter parks the page without
   // changing the focused main route.
@@ -337,7 +444,7 @@ try {
   await closeSwitcher(browser);
 
   fs.writeFileSync(path.join(ARTIFACTS, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
-  console.log("PASS: literal search gestures preserve routes, scope blocks, and compare canonical Unicode without accent folding");
+  console.log("PASS: literal search gestures preserve exact storage owners, routes, scope blocks, and canonical Unicode without accent folding");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try {

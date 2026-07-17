@@ -915,6 +915,8 @@ export interface SidebarPage {
   kind: "page";
   name: string;
   pageKind: "journal" | "page";
+  /** Exact graph-relative owner. Absent on legacy entries, which resolve by name. */
+  path?: string;
   collapsed?: boolean;
 }
 export interface SidebarBlock {
@@ -922,6 +924,8 @@ export interface SidebarBlock {
   uuid: string; // stable block id — the live handle into the store
   page: string; // the page it lives on (loaded on demand)
   pageKind: "journal" | "page";
+  /** Exact graph-relative owner. Absent on legacy entries, which resolve by name. */
+  path?: string;
   collapsed?: boolean;
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
@@ -940,10 +944,11 @@ function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarI
     const other = right[index];
     if (!other || item.kind !== other.kind || item.collapsed !== other.collapsed) return false;
     if (item.kind === "page" && other.kind === "page") {
-      return item.name === other.name && item.pageKind === other.pageKind;
+      return item.name === other.name && item.pageKind === other.pageKind && item.path === other.path;
     }
     return item.kind === "block" && other.kind === "block"
-      && item.uuid === other.uuid && item.page === other.page && item.pageKind === other.pageKind;
+      && item.uuid === other.uuid && item.page === other.page && item.pageKind === other.pageKind
+      && item.path === other.path;
   });
 }
 
@@ -957,15 +962,22 @@ function validSidebarItem(i: unknown): i is SidebarItem {
   if (!i || typeof i !== "object") return false;
   const o = i as Record<string, unknown>;
   if (o.collapsed !== undefined && typeof o.collapsed !== "boolean") return false;
+  if (o.path !== undefined && typeof o.path !== "string") return false;
   if (o.kind === "page") return typeof o.name === "string";
   if (o.kind === "block") return typeof o.uuid === "string" && typeof o.page === "string";
   return false;
 }
-function loadRsItems(): SidebarItem[] {
+export function parseStoredSidebarItems(raw: string | null): SidebarItem[] {
   try {
-    const raw = localStorage.getItem(RS_ITEMS_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.filter(validSidebarItem) : [];
+  } catch {
+    return [];
+  }
+}
+function loadRsItems(): SidebarItem[] {
+  try {
+    return parseStoredSidebarItems(localStorage.getItem(RS_ITEMS_KEY));
   } catch {
     return [];
   }
@@ -1060,24 +1072,60 @@ export function setRightSidebar(items: SidebarItem[]) {
   scheduleSessionSave(); // durable right-sidebar items (localStorage isn't kept)
 }
 
-export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page") {
-  if (pageKind === "page") name = resolveAlias(name);
+export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page", path?: string) {
+  if (pageKind === "page" && !path) name = resolveAlias(name);
   setRightSidebarOpen(true);
-  const existing = rightSidebar().findIndex((i) => i.kind === "page" && i.name === name);
+  // The working set is intentionally name-keyed. A duplicate physical file with
+  // the same logical page name therefore replaces that one live sidebar slot;
+  // retaining both would render/save one of them through the other's identity.
+  const existing = rightSidebar().findIndex((i) =>
+    i.kind === "page" && i.name === name && i.pageKind === pageKind
+  );
   if (existing >= 0) {
-    setRightSidebar(rightSidebar().map((item, i) => i === existing ? { ...item, collapsed: false } : item));
+    const replaced = rightSidebar().map((item, i) =>
+      i === existing ? { ...item, name, pageKind, path, collapsed: false } : item
+    );
+    setRightSidebar(replaced.filter((item, i) => {
+      if (i === existing) return true;
+      const sameOwnerName = item.kind === "page"
+        ? item.name === name && item.pageKind === pageKind
+        : item.page === name && item.pageKind === pageKind;
+      return !sameOwnerName || item.path === path;
+    }));
     return;
   }
-  setRightSidebar([{ kind: "page", name, pageKind }, ...rightSidebar()]);
+  const compatible = rightSidebar().filter((item) => {
+    const sameOwnerName = item.kind === "page"
+      ? item.name === name && item.pageKind === pageKind
+      : item.page === name && item.pageKind === pageKind;
+    return !sameOwnerName || item.path === path;
+  });
+  setRightSidebar([{ kind: "page", name, pageKind, path }, ...compatible]);
 }
-export function openBlockInSidebar(ref: { uuid: string; page: string; pageKind: "journal" | "page" }) {
+export function openBlockInSidebar(ref: {
+  uuid: string;
+  page: string;
+  pageKind: "journal" | "page";
+  path?: string;
+}) {
   setRightSidebarOpen(true);
   const existing = rightSidebar().findIndex((i) => i.kind === "block" && i.uuid === ref.uuid);
   if (existing >= 0) {
-    setRightSidebar(rightSidebar().map((item, i) => i === existing ? { ...item, collapsed: false } : item));
+    setRightSidebar(rightSidebar().map((item, i) => i === existing ? { ...item, ...ref, collapsed: false } : item));
     return;
   }
-  setRightSidebar([{ kind: "block", ...ref }, ...rightSidebar()]);
+  // A pathful duplicate selection must evict incompatible same-name items. The
+  // shared store can retain one physical owner for a logical page name, so stale
+  // siblings would otherwise become misleading missing/wrong-file block views.
+  const compatible = rightSidebar().filter((item) => {
+    const sameOwnerName = item.kind === "page"
+      ? item.name === ref.page && item.pageKind === ref.pageKind
+      : item.page === ref.page && item.pageKind === ref.pageKind;
+    if (!sameOwnerName) return true;
+    const itemPath = item.path;
+    return itemPath === ref.path;
+  });
+  setRightSidebar([{ kind: "block", ...ref }, ...compatible]);
 }
 
 /** Restored desktop state can contain both panels.  Entering drawer mode has a

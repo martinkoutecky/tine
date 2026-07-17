@@ -98,7 +98,7 @@ export interface PaneRouter {
     opts?: { inPlace?: boolean }
   ): void;
   focusBlock(id: string | null): void;
-  openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string): void;
+  openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string, path?: string): void;
   openInNewTab(r: Route, foreground?: boolean): void;
   openPageInNewTab(name: string, pageKind?: "journal" | "page", block?: string, foreground?: boolean): void;
   canGoBack(): boolean;
@@ -526,12 +526,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   /** Open a page and scroll the given block into view (block search results jump
    *  to the specific block, not just the page top). */
-  function openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string) {
+  function openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string, path?: string) {
     // Pre-latch the target so its body renders eagerly (not as a deferred raw-text
     // placeholder) - a heavy target (table/image) then lands at its true height
     // instead of growing after the scroll. See AstBody / docs/adr (P1 lazy body).
     renderedBlocks.add(blockId);
-    openPage(name, pageKind);
+    if (path) openFile(path, name, pageKind);
+    else openPage(name, pageKind);
     // Let the page render, then scroll + briefly highlight the target block.
     let tries = 0;
     const tick = () => {
@@ -951,8 +952,8 @@ export function focusBlock(id: string | null) {
   focusedRouterInstance().focusBlock(id);
 }
 
-export function openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string) {
-  focusedRouterInstance().openPageAtBlock(name, pageKind, blockId);
+export function openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string, path?: string) {
+  focusedRouterInstance().openPageAtBlock(name, pageKind, blockId, path);
 }
 
 export function openInNewTab(r: Route, foreground = false) {
