@@ -9,6 +9,7 @@ import { graphEpoch, graphMeta } from "../ui";
 import { OccurrenceControls } from "./ReferenceEvidence";
 import { startEditing } from "../editorController";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
+import { visibleBody } from "../render/block";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -69,6 +70,30 @@ export function LiveRefGroup(props: {
   const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
   const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
+  const liveBreadcrumb = (id: string): string[] | null => {
+    if (!ready() || !doc.byId[id]) return null;
+
+    // The loaded source page is authoritative after hydration. Walk only the
+    // nearest four ancestors: three labels are rendered and the fourth proves
+    // that an ellipsis is needed. This keeps breadcrumb work O(1) per hit even
+    // for malformed or unusually deep outlines, and never invents ancestor IDs
+    // from result-row labels.
+    const nearest: string[] = [];
+    const seen = new Set([id]);
+    let parent = doc.byId[id].parent;
+    while (parent !== null && nearest.length < 4) {
+      if (seen.has(parent)) return null;
+      const ancestor = doc.byId[parent];
+      if (!ancestor) return null;
+      seen.add(parent);
+      const line = (visibleBody(ancestor.raw)[0] ?? "").trim();
+      const chars = [...line];
+      nearest.push(chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : line);
+      parent = ancestor.parent;
+    }
+    const tail = nearest.slice(0, 3).reverse();
+    return nearest.length > 3 ? ["…", ...tail] : tail;
+  };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
   // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline
   // bullets). Give this group its own edit "surface" so an UNSCOPED keyboard nav
@@ -158,7 +183,7 @@ export function LiveRefGroup(props: {
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
             const crumb = () => {
-              const all = dtoById(id)?.breadcrumb ?? [];
+              const all = liveBreadcrumb(id) ?? dtoById(id)?.breadcrumb ?? [];
               const tail = all.slice(-3);
               return all.length > 3 ? ["…", ...tail] : tail;
             };

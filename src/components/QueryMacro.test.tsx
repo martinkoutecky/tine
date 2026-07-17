@@ -135,8 +135,18 @@ function loadAdvancedQueryDoc(queryRaw: string) {
 
 describe("QueryMacro sheet integration", () => {
   it("shows bounded ancestor context for list-query hits", async () => {
-    loadQueryDoc("{{query (task TODO)}}");
-    vi.mocked(backend().runQuery).mockResolvedValue([
+    setDoc({
+      byId: {
+        query: node("query", "{{query (task TODO)}}", null),
+        projects: node("projects", "Projects", null, ["tine"]),
+        tine: node("tine", "Tine", "projects", ["todo"]),
+        todo: node("todo", "TODO From query\nowner:: Martin", "tine"),
+      },
+      pages: [page(["query", "projects"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue([
       {
         page: "Sheet",
         kind: "page",
@@ -145,7 +155,6 @@ describe("QueryMacro sheet integration", () => {
           raw: doc.byId.todo.raw,
           collapsed: false,
           children: [],
-          breadcrumb: ["Projects", "Tine"],
         }],
       },
     ]);

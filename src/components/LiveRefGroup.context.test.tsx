@@ -22,7 +22,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose };
 }
 
-function hierarchy(): { page: PageDto; result: BlockDto } {
+function hierarchy(): { page: PageDto; result: BlockDto; sourceHit: BlockDto } {
   const grandchild: BlockDto = {
     id: "ref-grandchild",
     raw: "Grandchild body",
@@ -42,17 +42,28 @@ function hierarchy(): { page: PageDto; result: BlockDto } {
     children: [child],
     breadcrumb: ["One", "Two", "Three", "Four", "Five"],
   };
+  const labels = ["One", "Two", "Three", "Four", "Five"];
+  let sourceRoot = root;
+  for (const [index, label] of [...labels].reverse().entries()) {
+    sourceRoot = {
+      id: `ancestor-${labels.length - index}`,
+      raw: label,
+      collapsed: false,
+      children: [sourceRoot],
+    };
+  }
   return {
     page: {
       name: "Source",
       title: "Source",
       kind: "page",
       pre_block: null,
-      blocks: [root],
+      blocks: [sourceRoot],
     },
     // Reference/query membership may be refreshed as a new object and may carry
     // only the hit root. The live hierarchy comes from the loaded source page.
-    result: { ...root, children: [] },
+    result: { ...root, children: [], breadcrumb: undefined },
+    sourceHit: root,
   };
 }
 
@@ -122,8 +133,8 @@ describe("LiveRefGroup reference context", () => {
   });
 
   it("retains source collapse for the displayed hit root", async () => {
-    const { page, result } = hierarchy();
-    page.blocks[0].collapsed = true;
+    const { page, result, sourceHit } = hierarchy();
+    sourceHit.collapsed = true;
     result.collapsed = true;
     loadSingle(page);
     const { root, dispose } = mount(() => (
