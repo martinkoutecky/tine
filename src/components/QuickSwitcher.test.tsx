@@ -47,7 +47,7 @@ describe("QuickSwitcher search syntax help", () => {
     }));
 
     expect({ sidebar: rightSidebar(), currentRoute: route(), text: root.textContent }).toMatchObject({
-      sidebar: [{ kind: "page", name: "Sidebar target", pageKind: "page" }],
+      sidebar: [{ kind: "page", name: "Sidebar target", pageKind: "page", path: "pages/sidebar-target.md" }],
       currentRoute: { kind: "journals" },
     });
     expect(root.querySelector(".switcher")).toBeNull();
@@ -133,11 +133,13 @@ describe("QuickSwitcher search syntax help", () => {
 
   it("opens an unloaded selected block in the sidebar and starts durable target persistence", async () => {
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{
         entity: "block",
         page: "Unloaded",
         kind: "page",
+        path: "pages/duplicates/unloaded.md",
         block: { id: "7eab7af1-1b53-4baa-9082-c1d63540e123", raw: "needle block", collapsed: false, children: [], breadcrumb: [] },
         display_text: "needle block",
         evidence: [{ clause_id: 1, field: "visible_content", mode: "contains", spans: [{ start: 0, end: 6 }] }],
@@ -161,8 +163,10 @@ describe("QuickSwitcher search syntax help", () => {
 
     expect(rightSidebar()).toEqual([{
       kind: "block", uuid: "7eab7af1-1b53-4baa-9082-c1d63540e123", page: "Unloaded", pageKind: "page",
+      path: "pages/duplicates/unloaded.md",
     }]);
-    await vi.waitFor(() => expect(getPage).toHaveBeenCalledWith("Unloaded", "page"));
+    await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/unloaded.md"));
+    expect(getPage).not.toHaveBeenCalled();
     dispose();
   });
 

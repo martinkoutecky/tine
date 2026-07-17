@@ -57,6 +57,13 @@ async function loadHarness(
     ]),
   };
   const setAliasMap = vi.fn();
+  const drainPdfWork = vi.fn(async () => {
+    events.push("drain-pdf");
+    return true;
+  });
+  const retirePdfOwnership = vi.fn(() => { events.push("retire-pdf"); });
+  const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
+  const closePdf = vi.fn(() => { events.push("close-pdf"); });
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -77,6 +84,12 @@ async function loadHarness(
     resetLeftSidebarSections: vi.fn(),
     graphTransitioning: () => false,
     setGraphTransitioning: vi.fn(),
+    closePdf,
+  }));
+  vi.doMock("./pdfOwnership", () => ({
+    drainPdfWork,
+    retirePdfOwnership,
+    activatePdfOwnership,
   }));
   vi.doMock("./store", () => ({ resetStore: vi.fn(), flushAll: vi.fn(async () => true) }));
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
@@ -100,7 +113,10 @@ async function loadHarness(
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
   const { loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
-  return { loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap };
+  return {
+    loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
+    drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
+  };
 }
 
 afterEach(() => {
@@ -232,5 +248,28 @@ describe("external assets trust", () => {
 
     expect(api.approveExternalAssets).not.toHaveBeenCalled();
     expect(api.loadGraph).not.toHaveBeenCalled();
+  });
+});
+
+describe("PDF graph ownership", () => {
+  it("drains and retires the old PDF owner before binding another graph", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.events.length = 0;
+    const nextMeta = { ...META, root: "/tmp/other-graph" };
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.events.push("load-next");
+      return { kind: "loaded" as const, meta: nextMeta, binding_generation: 2 };
+    });
+
+    await harness.loadGraphPath(nextMeta.root);
+
+    expect(harness.events).toEqual(expect.arrayContaining([
+      "drain-pdf", "retire-pdf", "close-pdf", "load-next",
+    ]));
+    expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("retire-pdf"));
+    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("close-pdf"));
+    expect(harness.events.indexOf("close-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
+    expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
   });
 });
