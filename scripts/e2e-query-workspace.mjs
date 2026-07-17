@@ -516,7 +516,7 @@ await withApp(2, async (browser) => {
   if (linkedProof.groupCount !== 3 || linkedProof.totalRoots !== 4
     || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 3
     || !linkedProof.taggedPresent
-    || JSON.stringify(linkedProof.breadcrumbs) !== JSON.stringify(["…›Ancestor two›Ancestor three›Ancestor four"])) {
+    || JSON.stringify(linkedProof.breadcrumbs) !== JSON.stringify(["…›Ancestortwo›Ancestorthree›Ancestorfour"])) {
     throw new Error(`linked reference evidence is incomplete: ${JSON.stringify(linkedProof)}`);
   }
 
