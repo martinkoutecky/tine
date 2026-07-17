@@ -567,21 +567,41 @@ await withApp(2, async (browser) => {
     throw new Error("reference-local disclosure changed the source Markdown bytes");
   }
 
-  for (const [id, marker] of [
-    [depthProof.nestedId, "live-root-edit-witness"],
-    [depthProof.immediateId, "live-descendant-edit-witness"],
+  for (const [id, clickText, marker] of [
+    [depthProof.nestedId, "appears explicitly", "live-root-edit-witness"],
+    [depthProof.immediateId, "descendant-only filter witness", "live-descendant-edit-witness"],
   ]) {
-    const entered = await browser.execute((blockId) => {
-      const content = document.querySelector(`[data-block-id="${CSS.escape(blockId)}"] > .block-main .block-content`);
-      if (!(content instanceof HTMLElement)) return false;
-      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    }, id);
-    if (!entered) throw new Error(`could not enter the linked-reference editor for ${marker}`);
-    const editor = await browser.$(`[data-block-id="${id}"] textarea.block-editor`);
+    const root = `[data-block-id="${id}"]`;
+    const textSpanSelector = `${root} > .block-main > .block-content-wrapper > .block-content span[data-so]`;
+    // Saving the first live hit refreshes backlink membership asynchronously.
+    // Wait through that bounded remount; if the revealed child really re-collapsed
+    // or changed identity, this same-ID selector still times out and R6/R7 fail.
+    await browser.$(textSpanSelector).waitForExist({
+      timeout: 10_000,
+      timeoutMsg: `linked-reference edit target ${marker} did not survive the reactive refresh`,
+    });
+    const textSpans = await browser.$$(textSpanSelector);
+    let clickTarget;
+    for (const span of textSpans) {
+      if ((await span.getText()).includes(clickText)) {
+        clickTarget = span;
+        break;
+      }
+    }
+    if (!clickTarget) throw new Error(`missing safe linked-reference edit target ${JSON.stringify(clickText)}`);
+    // Drive the native pointer sequence on ordinary rendered text. Clicking the
+    // block-content box itself lands on an embedded [[page link]] at its center,
+    // which correctly navigates instead of entering edit mode.
+    await clickTarget.click();
+    const editor = await browser.$(`${root} textarea.block-editor`);
     await editor.waitForExist({ timeout: 5_000 });
-    await editor.setValue(`${await editor.getValue()} ${marker}`);
+    await browser.execute((selector) => {
+      const input = document.querySelector(selector);
+      if (!(input instanceof HTMLTextAreaElement)) throw new Error("missing linked-reference editor");
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }, `${root} textarea.block-editor`);
+    await editor.addValue(` ${marker}`);
     await browser.$("h1.page-title").click();
     await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8").includes(marker), {
       timeout: 10_000, timeoutMsg: `live linked-reference edit did not save ${marker}`,
