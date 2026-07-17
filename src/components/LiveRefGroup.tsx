@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, formatForPage, pageByName } from "../store";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
@@ -29,7 +29,7 @@ export function LiveRefGroup(props: {
   blocks: BlockDto[];
   embedId?: string;
   showBreadcrumb?: boolean;
-  surface?: "ref" | "embed";
+  surface: "ref" | "query" | "embed";
   evidence?: ReferenceBlockEvidence[];
 }): JSX.Element {
   const [near, setNear] = createSignal(false);
@@ -77,9 +77,41 @@ export function LiveRefGroup(props: {
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
   const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
+  const resultRootIds = createMemo(() => new Set(props.blocks.map((block) => block.id)));
+  const initialCollapsed = new Map<string, boolean>();
   const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, boolean>>({});
+  const relativeDepth = (id: string): number | null => {
+    const roots = resultRootIds();
+    if (roots.has(id)) return 0;
+    let depth = 0;
+    let current = doc.byId[id];
+    const seen = new Set<string>();
+    while (current?.parent && !seen.has(current.id)) {
+      seen.add(current.id);
+      depth += 1;
+      if (roots.has(current.parent)) return depth;
+      current = doc.byId[current.parent];
+    }
+    return null;
+  };
+  const defaultCollapsed = (id: string, stored: boolean): boolean => {
+    const previous = initialCollapsed.get(id);
+    if (previous !== undefined) return previous;
+    const depth = relativeDepth(id);
+    const hasChildren = (doc.byId[id]?.children.length ?? 0) > 0;
+    // Released OG initializes reference/query disclosure from the source state
+    // and default-open level 2, then keeps that copy local to the result view.
+    // Tine's displayed hit is relative depth 0, so branches immediately below it
+    // default folded. Embeds deliberately retain source disclosure semantics.
+    const initial = stored || (props.surface !== "embed" && depth !== null && depth >= 1 && hasChildren);
+    initialCollapsed.set(id, initial);
+    return initial;
+  };
   const collapseSurface: CollapseSurfaceApi = {
-    collapsed: (id, stored) => localCollapsed()[id] ?? stored,
+    collapsed: (id, stored) => {
+      const local = localCollapsed();
+      return Object.prototype.hasOwnProperty.call(local, id) ? local[id] : defaultCollapsed(id, stored);
+    },
     toggle: (id, current) => setLocalCollapsed((state) => ({ ...state, [id]: !current })),
     setMany: (ids, collapsed) => setLocalCollapsed((state) => {
       const next = { ...state };
@@ -87,6 +119,32 @@ export function LiveRefGroup(props: {
       return next;
     }),
   };
+  // Result DTOs are replaced during filter/query refresh. Retain local choices
+  // for stable roots and their live descendants, but discard state once a root
+  // leaves this group so an old choice cannot leak into a later membership.
+  createEffect(() => {
+    if (!ready()) return;
+    const present = new Set<string>();
+    const visit = (id: string) => {
+      if (present.has(id)) return;
+      present.add(id);
+      for (const child of doc.byId[id]?.children ?? []) visit(child);
+    };
+    for (const root of resultRootIds()) visit(root);
+    for (const id of initialCollapsed.keys()) {
+      if (!present.has(id)) initialCollapsed.delete(id);
+    }
+    setLocalCollapsed((state) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [id, value] of Object.entries(state)) {
+        if (present.has(id)) next[id] = value;
+        else changed = true;
+      }
+      return changed ? next : state;
+    });
+  });
+  onCleanup(() => initialCollapsed.clear());
   return (
     <div
       ref={el}
@@ -99,7 +157,11 @@ export function LiveRefGroup(props: {
         <SurfaceContext.Provider value={surface}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
-            const crumb = () => dtoById(id)?.breadcrumb ?? [];
+            const crumb = () => {
+              const all = dtoById(id)?.breadcrumb ?? [];
+              const tail = all.slice(-3);
+              return all.length > 3 ? ["…", ...tail] : tail;
+            };
             return (
               <>
                 <Show when={props.showBreadcrumb && crumb().length > 0}>

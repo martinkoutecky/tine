@@ -182,6 +182,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   });
 
   const groupKey = (group: RefGroup) => `${group.kind}:${group.page}`;
+  const shownByKey = createMemo(() => new Map(shown().map((group) => [groupKey(group), group] as const)));
   const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
   const setGroupCollapsed = (group: RefGroup, value: boolean) => {
     setCollapsedGroups((current) => {
@@ -301,51 +302,61 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
               <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
             </div>
           </Show>
-          <For each={shown()}>
-            {(g) => (
+          <For each={shown().map(groupKey)}>
+            {(key) => {
+              const group = () => shownByKey().get(key)!;
+              return (
               <div class="reference-group">
                 <div class="reference-group-header">
                   <button
                     type="button"
                     class="reference-group-disclosure"
-                    aria-expanded={!groupCollapsed(g)}
-                    aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
-                    onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
+                    aria-expanded={!groupCollapsed(group())}
+                    aria-label={`${groupCollapsed(group()) ? "Expand" : "Collapse"} references from ${group().page}`}
+                    onClick={() => setGroupCollapsed(group(), !groupCollapsed(group()))}
                   >
-                    {groupCollapsed(g) ? "▸" : "▾"}
+                    {groupCollapsed(group()) ? "▸" : "▾"}
                   </button>
                   <button
                     type="button"
                     class="reference-page"
                     onClick={(e) => {
-                      if (e.shiftKey) openPageInSidebar(g.page, g.kind);
-                      else openPage(g.page, g.kind);
+                      if (e.shiftKey) openPageInSidebar(group().page, group().kind);
+                      else openPage(group().page, group().kind);
                     }}
                     onAuxClick={(e) => {
                       if (e.button === 1) {
                         e.preventDefault();
-                        openPageInNewTab(g.page, g.kind);
+                        openPageInNewTab(group().page, group().kind);
                       }
                     }}
                     onContextMenu={(e) => {
                       if (!shouldOpenTextContextMenu(e.target)) return;
                       e.preventDefault();
-                      openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
+                      openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}
                   >
-                    {g.page}
+                    {group().page}
                   </button>
                 </div>
-                <Show when={!groupCollapsed(g)}>
+                <Show when={!groupCollapsed(group())}>
                   <div
                     class="reference-blocks"
-                    data-inpage-find-surface={`linked:${props.name}:${g.kind}:${g.page}`}
+                    data-inpage-find-surface={`linked:${props.name}:${group().kind}:${group().page}`}
                   >
-                    <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} evidence={g.evidence} />
+                    <LiveRefGroup
+                      page={group().page}
+                      kind={group().kind}
+                      blocks={group().blocks}
+                      evidence={group().evidence}
+                      surface="ref"
+                      showBreadcrumb
+                    />
                   </div>
                 </Show>
               </div>
-            )}
+              );
+            }}
           </For>
         </Show>
       </div>

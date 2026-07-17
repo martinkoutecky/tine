@@ -176,10 +176,16 @@ describe("block embed hierarchy", () => {
         expect(element).not.toBeNull();
         return element!;
       });
+      // Reference/query surfaces initialize the first descendant branch folded
+      // (released OG default-open level 2), unlike embeds which retain source
+      // disclosure. The guide expands that local copy without touching source.
+      expect(root.textContent).not.toContain("Embedded grandchild");
       guide.click();
-      await vi.waitFor(() => expect(root.textContent).not.toContain("Embedded grandchild"));
+      await vi.waitFor(() => expect(root.textContent).toContain("Embedded grandchild"));
       expect(doc.byId[`${targetId}-child`].collapsed).toBe(false);
       expect(doc.byId[`${targetId}-child`].raw).not.toContain("collapsed:: true");
+      guide.click();
+      await vi.waitFor(() => expect(root.textContent).not.toContain("Embedded grandchild"));
     } finally {
       dispose();
     }
