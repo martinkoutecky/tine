@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
+import { pageInventoryRev } from "./ui";
 
 function addAnchor(href: string): HTMLAnchorElement {
   const a = document.createElement("a");
@@ -104,9 +105,17 @@ describe("journal watcher feed reconciliation", () => {
       as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
     });
 
-    await handleGraphChange({ name, kind: "journal", removed: false });
+    await handleGraphChange({ name, kind: "journal", created: false, removed: false });
     await Promise.resolve();
     expect(feed).toHaveBeenCalledTimes(1);
     expect(feed).toHaveBeenCalledWith(3, null);
+  });
+});
+
+describe("watcher page inventory invalidation", () => {
+  it("bumps the rare page-inventory revision for an external create", async () => {
+    const before = pageInventoryRev();
+    await handleGraphChange({ name: "Created Elsewhere", kind: "page", created: true, removed: false });
+    expect(pageInventoryRev()).toBeGreaterThan(before);
   });
 });

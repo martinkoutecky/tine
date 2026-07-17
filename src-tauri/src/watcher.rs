@@ -11,6 +11,7 @@ use tine_core::{model::PageKind, Graph};
 struct GraphChange {
     name: String,
     kind: PageKind,
+    created: bool,
     removed: bool,
 }
 
@@ -222,12 +223,14 @@ fn full_diff_reconcile(
     let mut conflicts_dirty = false;
     for (p, m) in &current {
         if snap.get(p) != Some(m) {
+            let created = !snap.contains_key(p);
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.sync_file(p) {
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created,
                     removed: false,
                 });
             }
@@ -241,6 +244,7 @@ fn full_diff_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created: false,
                     removed: true,
                 });
             }
@@ -260,6 +264,7 @@ fn incremental_reconcile(
 
     for p in paths {
         if let Some(m) = file_snapshot(p) {
+            let created = !snap.contains_key(p);
             // This path came from an explicit OS event. Always compare its
             // content even if a sync/copy tool preserved mtime and length;
             // `Graph::sync_file` already suppresses Tine's own/unchanged bytes.
@@ -269,6 +274,7 @@ fn incremental_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created,
                     removed: false,
                 });
             }
@@ -280,6 +286,7 @@ fn incremental_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created: false,
                     removed: true,
                 });
             }
@@ -753,6 +760,26 @@ mod tests {
     }
 
     #[test]
+    fn incremental_create_is_identified_as_inventory_change() {
+        let tg = TempGraph::new("create-inventory");
+        tg.write("pages/Seed.md", "- seed\n");
+        let graph = Graph::open(&tg.root);
+        warm_cache(&graph);
+        let dirs = graph_dirs(&graph);
+        let mut snap = collect_graph_page_files(&dirs);
+        let path = tg.path("pages/New.md");
+        tg.write("pages/New.md", "- new\n");
+
+        let (changes, conflicts_dirty) =
+            incremental_reconcile(&graph, &mut snap, &HashSet::from([path]));
+
+        assert!(!conflicts_dirty);
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].created);
+        assert!(!changes[0].removed);
+    }
+
+    #[test]
     fn incremental_create_nested_file_matches_full_diff() {
         assert_incremental_matches_full(
             "create-nested",
@@ -808,6 +835,7 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].name, "Edit");
         assert_eq!(changes[0].kind, PageKind::Page);
+        assert!(!changes[0].created);
         assert!(!changes[0].removed);
     }
 

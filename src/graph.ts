@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
@@ -97,9 +97,7 @@ export async function loadGraphPath(
     return { kind: "already_current", root: meta.root };
   }
   resetStore();
-  setAliasMap({});
-  pageIdentityEpoch = -1;
-  pageIdentities = {};
+  resetNavigationIndex();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
     // A graph switch is a full workspace reset (OG opens one graph at a time):
@@ -157,47 +155,73 @@ export async function loadGraphPath(
   }
 }
 
-let pageIdentityEpoch = -1;
+let navigationEpoch = -1;
+let aliasEntries: Record<string, string> = {};
 let pageIdentities: Record<string, string> = {};
+let aliasRequest = 0;
+let pageIdentityRequest = 0;
 
-/** Load the graph's canonical page/alias index so navigation adopts real names.
- *  Guarded by the graph epoch so a slow response after a graph switch can't
- *  install the old graph's aliases. Exposed as `refreshAliases` so it can be
- *  re-run after edits (an alias:: change would otherwise leave nav stale).
- *  Real page names are fetched once per graph epoch; ordinary saves refresh
- *  only the smaller semantic alias list, not the whole page inventory. */
+function resetNavigationIndex(): void {
+  navigationEpoch = -1;
+  aliasEntries = {};
+  pageIdentities = {};
+  aliasRequest++;
+  pageIdentityRequest++;
+  setAliasMap({});
+}
+
+function bindNavigationIndex(epoch: number): void {
+  if (navigationEpoch === epoch) return;
+  navigationEpoch = epoch;
+  aliasEntries = {};
+  pageIdentities = {};
+  aliasRequest++;
+  pageIdentityRequest++;
+  setAliasMap({});
+}
+
+function commitNavigationIndex(): void {
+  // Existing files win a colliding alias, matching core `load_named`.
+  setAliasMap({ ...aliasEntries, ...pageIdentities });
+}
+
+/** Refresh semantic aliases after content saves. Request sequencing prevents an
+ *  older same-epoch response from overwriting a newer alias edit. */
 export async function refreshAliases(): Promise<void> {
   const epoch = graphEpoch();
-  const pagesRequest = pageIdentityEpoch === epoch
-    ? Promise.resolve(null)
-    : backend().listPages();
-  const [aliasesResult, pagesResult] = await Promise.allSettled([
-    backend().pageAliases(),
-    pagesRequest,
-  ]);
-  if (epoch !== graphEpoch()) return;
-
-  if (pagesResult.status === "fulfilled" && pagesResult.value) {
-    pageIdentities = Object.fromEntries(
-      pagesResult.value
-        .filter((entry) => entry.kind === "page")
-        .map((entry) => [entry.name.trim().toLowerCase(), entry.name])
-    );
-    pageIdentityEpoch = epoch;
-  } else if (pageIdentityEpoch !== epoch) {
-    pageIdentities = {};
-  }
-  const aliases = aliasesResult.status === "fulfilled"
-    ? Object.fromEntries(aliasesResult.value)
+  bindNavigationIndex(epoch);
+  const request = ++aliasRequest;
+  const result = await Promise.allSettled([backend().pageAliases()]);
+  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== aliasRequest) return;
+  aliasEntries = result[0].status === "fulfilled"
+    ? Object.fromEntries(result[0].value)
     : {};
-  // Existing files win a colliding alias, matching core `load_named`.
-  setAliasMap({ ...aliases, ...pageIdentities });
+  commitNavigationIndex();
+}
+
+/** Refresh the real-page identity inventory only after graph bind, create,
+ *  delete, or rename. Ordinary content saves refresh aliases but never pay for
+ *  this whole-page-list IPC. Real pages override colliding semantic aliases. */
+export async function refreshPageIdentities(): Promise<void> {
+  const epoch = graphEpoch();
+  bindNavigationIndex(epoch);
+  const request = ++pageIdentityRequest;
+  const result = await Promise.allSettled([backend().listPages()]);
+  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== pageIdentityRequest) return;
+  pageIdentities = result[0].status === "fulfilled"
+    ? Object.fromEntries(
+        result[0].value
+          .filter((entry) => entry.kind === "page")
+          .map((entry) => [pageIdentityKey(entry.name), entry.name])
+      )
+    : {};
+  commitNavigationIndex();
 }
 async function loadAliases(): Promise<void> {
   const epoch = graphEpoch();
   if (!(await waitForWarmCache(epoch))) return;
   if (epoch !== graphEpoch()) return;
-  await refreshAliases();
+  await Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
 /** Refresh frontend state after a successful page rename. The backend rename
@@ -213,11 +237,9 @@ async function loadAliases(): Promise<void> {
 export function refreshAfterRename(from: string, to: string): void {
   renamePageInNavigation(from, to);
   resetStore();
-  setAliasMap({});
-  pageIdentityEpoch = -1;
-  pageIdentities = {};
+  resetNavigationIndex();
   bumpGraphEpoch();
-  void refreshAliases();
+  void Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
 // If config.edn sets :default-templates {:journals "X"}, create today's journal

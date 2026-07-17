@@ -467,6 +467,7 @@ export interface BackupInfo {
 export interface GraphChange {
   name: string;
   kind: "journal" | "page";
+  created: boolean;
   removed: boolean;
 }
 

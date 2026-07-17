@@ -67,6 +67,7 @@ async function loadHarness(
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
     setAliasMap,
+    pageIdentityKey: (name: string) => name.trim().toLowerCase(),
     seedFavorites: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
     pushToast: vi.fn(),
@@ -98,8 +99,8 @@ async function loadHarness(
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, refreshAliases } = await import("./graph");
-  return { loadGraphPath, refreshAliases, api, events, setAliasMap };
+  const { loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
+  return { loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap };
 }
 
 afterEach(() => {
@@ -112,7 +113,7 @@ afterEach(() => {
 
 describe("default journal template graph bind", () => {
   it("loads real page identities once and lets them win colliding aliases", async () => {
-    const { loadGraphPath, refreshAliases, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
 
     await loadGraphPath(META.root);
     await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({
@@ -124,6 +125,54 @@ describe("default journal template graph bind", () => {
     await refreshAliases();
     expect(api.pageAliases).toHaveBeenCalledTimes(2);
     expect(api.listPages).toHaveBeenCalledTimes(1);
+
+    await refreshPageIdentities();
+    expect(api.listPages).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes real-page precedence after a same-session page creation", async () => {
+    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
+
+    api.pageAliases.mockResolvedValue([["new page", "Alias target"]]);
+    api.listPages.mockResolvedValue([
+      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
+      { name: "New Page", kind: "page" as const, date_key: null, path: "pages/New Page.md" },
+    ]);
+    await Promise.all([refreshAliases(), refreshPageIdentities()]);
+
+    expect(setAliasMap).toHaveBeenLastCalledWith({
+      "new page": "New Page",
+      page1: "page1",
+    });
+  });
+
+  it("discards an older same-epoch page-inventory response", async () => {
+    const { loadGraphPath, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
+
+    let releaseStale!: (entries: Awaited<ReturnType<typeof api.listPages>>) => void;
+    const stale = new Promise<Awaited<ReturnType<typeof api.listPages>>>((resolve) => {
+      releaseStale = resolve;
+    });
+    api.listPages
+      .mockImplementationOnce(() => stale)
+      .mockResolvedValueOnce([
+        { name: "Newest", kind: "page" as const, date_key: null, path: "pages/Newest.md" },
+      ]);
+
+    const older = refreshPageIdentities();
+    const newer = refreshPageIdentities();
+    await newer;
+    releaseStale([
+      { name: "Stale", kind: "page" as const, date_key: null, path: "pages/Stale.md" },
+    ]);
+    await older;
+
+    expect(setAliasMap).toHaveBeenLastCalledWith(expect.objectContaining({ newest: "Newest" }));
+    expect(setAliasMap).not.toHaveBeenLastCalledWith(expect.objectContaining({ stale: "Stale" }));
   });
 
   it("invalidates stale loads before awaiting template work, then refreshes after save", async () => {

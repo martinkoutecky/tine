@@ -10,7 +10,7 @@
 
 import { doc, pageByName, pageToDto } from "./store";
 import { backend } from "./backend";
-import { markConflict, isConflicted, conflicts, bumpDataRev, pushToast } from "./ui";
+import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 
 // ---------------------------------------------------------------------------
 // Guard state (owned here; mutated only through the accessors below)
@@ -202,8 +202,12 @@ async function doSave(name: string, force: boolean): Promise<boolean> {
   }
   dirty.delete(name);
   try {
-    const rev = await backend().savePage(dto, baseRev.get(name) ?? null, force);
-    if (token === graphToken) baseRev.set(name, rev);
+    const baseline = baseRev.get(name) ?? null;
+    const rev = await backend().savePage(dto, baseline, force);
+    if (token === graphToken) {
+      baseRev.set(name, rev);
+      if (baseline === null) bumpPageInventoryRev();
+    }
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
     return true;
   } catch (e) {

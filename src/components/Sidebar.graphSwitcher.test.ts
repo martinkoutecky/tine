@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { openKnownGraph, openSidebarPageTarget, type KnownGraphOpenDeps, type SidebarPageOpenDeps } from "./Sidebar";
-import { favorites, isFavorite, setAliasMap, setFavorites, toggleFavorite } from "../ui";
+import { favorites, isFavorite, pageIdentityKey, setAliasMap, setFavorites, toggleFavorite } from "../ui";
 
 describe("known graph open gesture", () => {
   it("uses an in-place switch for an ordinary click", async () => {
@@ -69,6 +69,20 @@ describe("favorite alias navigation", () => {
     expect(deps.sidebar).toHaveBeenCalledWith("page1", "page");
     expect(deps.newTab).toHaveBeenCalledWith("page1", "page");
     expect(deps.context).toHaveBeenCalledWith(4, 8, "page1", "page");
+    setAliasMap({});
+  });
+
+  it("uses the same contextual Unicode lowercase key as core refs::page_key", () => {
+    expect(pageIdentityKey(" ΟΣ ")).toBe("ος");
+    setAliasMap({ ος: "ΟΣ" });
+    const normal = vi.fn();
+    openSidebarPageTarget("ΟΣ", "page", "normal", undefined, {
+      normal,
+      sidebar: vi.fn(),
+      newTab: vi.fn(),
+      context: vi.fn(),
+    });
+    expect(normal).toHaveBeenCalledWith("ΟΣ", "page");
     setAliasMap({});
   });
 });

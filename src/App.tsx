@@ -33,7 +33,7 @@ import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
+import { loadGraphPath, persistedGraphPath, refreshAliases, refreshPageIdentities } from "./graph";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, sameRoute, type PaneRouter, type QueryRoute } from "./router";
@@ -66,6 +66,8 @@ import {
   exitFocusMode,
   dataRev,
   bumpDataRev,
+  pageInventoryRev,
+  bumpPageInventoryRev,
   installPaneTracker,
   markConflict,
   pushToast,
@@ -188,6 +190,7 @@ export async function handleGraphChange(c: GraphChange) {
   // outside the bounded frontend working set (#166); loaded pages are refreshed
   // below, while unloaded block references re-resolve by UUID from dataRev.
   bumpDataRev();
+  if (c.created || c.removed) bumpPageInventoryRev();
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   if (c.removed) {
     const disp = reloadDisposition(c.name);
@@ -798,6 +801,9 @@ export function App(): JSX.Element {
   // alias:: doesn't leave navigation resolving to the old canonical page. The
   // Rust side caches aliases, so this is cheap unless a save actually changed them.
   createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
+  // Page creation/deletion has its own rare invalidation lane: canonical-name
+  // precedence stays current without listing every page after ordinary saves.
+  createEffect(on(pageInventoryRev, () => void refreshPageIdentities(), { defer: true }));
 
   // (Re)install keybindings whenever config or the user's local overrides change
   // (precedence: defaults < config.edn :shortcuts < Settings overrides). We also

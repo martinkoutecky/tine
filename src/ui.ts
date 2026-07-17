@@ -500,6 +500,13 @@ export const [dataRev, setDataRev] = createSignal(0);
 export function bumpDataRev() {
   setDataRev((n) => n + 1);
 }
+// Page-name inventory changes are much rarer than ordinary content saves. Keep
+// their invalidation separate so navigation can refresh canonical names after a
+// create/delete without turning every keystroke save into a whole-page-list IPC.
+export const [pageInventoryRev, setPageInventoryRev] = createSignal(0);
+export function bumpPageInventoryRev() {
+  setPageInventoryRev((n) => n + 1);
+}
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
@@ -1311,9 +1318,14 @@ export const [audioPlayer, setAudioPlayer] =
 
 // Page aliases (alias:: → canonical), keyed by normalized alias; loaded per graph.
 export const [aliasMap, setAliasMap] = createSignal<Record<string, string>>({});
+/** Mirror core `refs::page_key`: trim, then Unicode string lowercase. String
+ *  lowercasing is intentionally contextual (for example `ΟΣ` → `ος`). */
+export function pageIdentityKey(name: string): string {
+  return name.trim().toLowerCase();
+}
 /** Resolve a page name through `alias::` to its canonical page (else unchanged). */
 export function resolveAlias(name: string): string {
-  return aliasMap()[name.trim().toLowerCase()] ?? name;
+  return aliasMap()[pageIdentityKey(name)] ?? name;
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);

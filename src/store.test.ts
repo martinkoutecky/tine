@@ -82,6 +82,7 @@ import {
   seedFavorites,
   renamePageInNavigation,
   dataRev,
+  pageInventoryRev,
   setWorkflow,
 } from "./ui";
 import { journalTitle } from "./journal";
@@ -1275,6 +1276,19 @@ describe("save engine (persistence)", () => {
     markDirty("Test");
     await flushPage("Test");
     expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+  });
+
+  it("refreshes page inventory only when a save creates a new file", async () => {
+    const before = pageInventoryRev();
+    load([blk("new")]);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(pageInventoryRev()).toBeGreaterThan(before);
+
+    const afterCreate = pageInventoryRev();
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(pageInventoryRev()).toBe(afterCreate);
   });
 
   it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {
