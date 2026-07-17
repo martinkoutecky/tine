@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Search can now stay on the current page or send a result to the sidebar.**
+  Ctrl/Cmd-Shift-K searches only blocks owned by the focused routed page,
+  including collapsed descendants, while Shift-Enter in Ctrl-K opens a page or
+  block result in the right sidebar without navigating away.
 - **Page titles now expose a discoverable, accessible actions menu.** The
   ellipsis opens the same file, navigation, copy, export, properties, rename,
   carry, and delete actions as title right-click; keyboard navigation, touch
@@ -34,6 +38,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Search now treats canonically equivalent Unicode spellings as identical.**
+  Composed and decomposed page names, aliases, and block text share membership,
+  exact-page detection, ranking identity, and source-accurate highlights without
+  adding accent folding or transliteration.
 - **Markdown page-header properties are now directly editable and stay
   unbulleted on disk.** Clicking an existing header, or crossing into it with
   the arrow keys, uses the ordinary block editor; newly authored custom and

@@ -197,6 +197,11 @@ pub struct QueryPlan {
     pub branches: Vec<QueryBranch>,
     pub diagnostics: Vec<QueryDiagnostic>,
     page_scope: Option<QueryPageScope>,
+    // Ctrl-K keeps the literal trimmed launcher source so a multi-word page
+    // title/alias can retain the objective Exact class. The parsed AND terms
+    // alone would otherwise downgrade `Foo Bar` to Prefix/Substring and make
+    // the frontend offer a duplicate Create row beside the existing page.
+    page_exact: Option<String>,
     regexes: HashMap<u32, Regex>,
 }
 
@@ -253,6 +258,7 @@ impl QueryPlan {
             branches,
             diagnostics,
             page_scope: None,
+            page_exact: (!query.trim().is_empty()).then(|| canonical_fold(query.trim())),
             regexes,
         }
     }
@@ -283,6 +289,7 @@ impl QueryPlan {
             }],
             diagnostics: Vec::new(),
             page_scope: None,
+            page_exact: None,
             regexes: HashMap::new(),
         }
     }
@@ -321,6 +328,7 @@ impl QueryPlan {
             branches,
             diagnostics,
             page_scope: None,
+            page_exact: None,
             regexes,
         }
     }
@@ -335,6 +343,7 @@ impl QueryPlan {
                 branches: Vec::new(),
                 diagnostics: Vec::new(),
                 page_scope: None,
+                page_exact: None,
                 regexes: HashMap::new(),
             };
         }
@@ -361,6 +370,7 @@ impl QueryPlan {
             }],
             diagnostics: Vec::new(),
             page_scope: None,
+            page_exact: (!query.trim().is_empty()).then(|| canonical_fold(query.trim())),
             regexes,
         }
     }
@@ -926,7 +936,8 @@ fn best_page_match(
     page_name: &str,
     aliases: &[String],
 ) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
-    let mut best = page_base_score(plan, expr, page_name, &canonical_fold(page_name))
+    let page_match = page_base_score(plan, expr, page_name, &canonical_fold(page_name));
+    let mut best = page_match
         .map(|(score, class)| (score, class, page_name.to_string(), None));
     for alias in aliases {
         let Some((score, class)) = page_base_score(plan, expr, alias, &canonical_fold(alias))
@@ -938,6 +949,20 @@ fn best_page_match(
         });
         if replace {
             best = Some((score, class, alias.clone(), Some(alias.clone())));
+        }
+    }
+    // Upgrade only an outcome that already satisfied the parsed expression.
+    // This repairs the objective class for ordinary multi-word titles without
+    // bypassing NOT/OR/regex membership semantics for syntax-looking names.
+    if let Some(exact) = plan.page_exact.as_deref() {
+        if page_match.is_some() && canonical_fold(page_name) == exact {
+            return Some((1500, ObjectiveMatchClass::Exact, page_name.to_string(), None));
+        }
+        if let Some(alias) = aliases.iter().find(|alias| {
+            canonical_fold(alias) == exact
+                && page_base_score(plan, expr, alias, &canonical_fold(alias)).is_some()
+        }) {
+            return Some((1500, ObjectiveMatchClass::Exact, alias.clone(), Some(alias.clone())));
         }
     }
     best
@@ -1367,6 +1392,32 @@ mod tests {
 
     #[test]
     fn canonical_unicode_matches_pages_aliases_blocks_and_original_utf16_spans() {
+        let multiword = QueryPlan::friendly("Canonical page", 8, 8);
+        let multiword_page = best_page_match(
+            &multiword,
+            &multiword.branches[0].predicate,
+            "Canonical page",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(multiword_page.1, ObjectiveMatchClass::Exact);
+
+        let syntax = QueryPlan::friendly("foo -draft", 8, 8);
+        assert!(best_page_match(
+            &syntax,
+            &syntax.branches[0].predicate,
+            "foo -draft",
+            &[],
+        )
+        .is_none());
+        assert!(best_page_match(
+            &syntax,
+            &syntax.branches[0].predicate,
+            "foo ready",
+            &[],
+        )
+        .is_some());
+
         let page_plan = QueryPlan::page_name_fuzzy("Café", 8);
         let page_pred = &page_plan.branches[0].predicate;
         let page = best_page_match(&page_plan, page_pred, "Cafe\u{301}", &[]).unwrap();
