@@ -4,7 +4,7 @@ import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types
 import type { PluginBlockSnapshot } from "./plugins/protocol";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
-import { route, focusBlock, scheduleSessionSave } from "./router";
+import { route, focusBlock, scheduleSessionSave, type PageTarget } from "./router";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
@@ -684,27 +684,34 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
   setFavorites(next);
   persistFavorites(next);
 }
-export function removeDeletedPageFromNavigation(name: string, kind: PageKind) {
+export function removeDeletedPageFromNavigation(target: PageTarget): void;
+export function removeDeletedPageFromNavigation(name: string, kind: PageKind): void;
+export function removeDeletedPageFromNavigation(targetOrName: PageTarget | string, kind?: PageKind) {
+  const target: PageTarget = typeof targetOrName === "string"
+    ? { name: targetOrName, pageKind: kind! }
+    : targetOrName;
+  const name = target.name;
+  kind = target.pageKind;
   const nextFavs = favorites().filter((f) => f.name !== name);
   if (nextFavs.length !== favorites().length) {
     setFavorites(nextFavs);
     persistFavorites(nextFavs);
   }
 
-  const nextRecents = recentPages().filter((r) => !(r.name === name && r.kind === kind));
+  const nextRecents = recentPages().filter((r) => !(
+    r.name === name && r.kind === kind && (target.path === undefined || r.path === target.path)
+  ));
   if (nextRecents.length !== recentPages().length) {
     setRecentPages(nextRecents);
-    try {
-      if (nextRecents.length) localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecents));
-      else localStorage.removeItem(RECENT_KEY);
-    } catch {
-      // ignore
-    }
+    scheduleSessionSave();
   }
 
-  const nextSidebar = rightSidebar().filter((item) =>
-    item.kind === "page" ? item.name !== name : item.page !== name
-  );
+  const nextSidebar = rightSidebar().filter((item) => {
+    const sameLogical = item.kind === "page"
+      ? item.name === name && item.pageKind === kind
+      : item.page === name && item.pageKind === kind;
+    return !sameLogical || (target.path !== undefined && item.path !== target.path);
+  });
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
@@ -712,12 +719,20 @@ export function removeDeletedPageFromNavigation(name: string, kind: PageKind) {
  * page. Keep ordering stable, collapse an existing destination duplicate, and
  * persist both stores before the subsequent openPage(next) promotes the one
  * canonical recent entry to the front. */
-export function renamePageInNavigation(from: string, to: string) {
+export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
+export function renamePageInNavigation(from: string, to: string): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
+  const from: PageTarget = typeof fromOrName === "string"
+    ? { name: fromOrName, pageKind: "page" }
+    : fromOrName;
+  const to: PageTarget = typeof toOrName === "string"
+    ? { name: toOrName, pageKind: from.pageKind }
+    : toOrName;
   const dedupe = (items: FavItem[]): FavItem[] => {
     const seen = new Set<string>();
     const out: FavItem[] = [];
     for (const item of items) {
-      const next = item.kind === "page" && item.name === from ? { ...item, name: to } : item;
+      const next = item.kind === from.pageKind && item.name === from.name ? { ...item, name: to.name } : item;
       const key = `${next.kind}\0${next.name}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -732,23 +747,29 @@ export function renamePageInNavigation(from: string, to: string) {
     persistFavorites(nextFavorites);
   }
 
-  const nextRecents = dedupe(recentPages());
+  const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
+    const matches = item.kind === from.pageKind && item.name === from.name
+      && (from.path === undefined || item.path === from.path);
+    const next = matches
+      ? { name: to.name, kind: to.pageKind, ...(to.path ? { path: to.path } : {}) }
+      : item;
+    if (!out.some((seen) => seen.kind === next.kind && seen.name === next.name)) out.push(next);
+    return out;
+  }, []);
   if (nextRecents.some((item, i) => item !== recentPages()[i]) || nextRecents.length !== recentPages().length) {
     setRecentPages(nextRecents);
-    try {
-      if (nextRecents.length) localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecents));
-      else localStorage.removeItem(RECENT_KEY);
-    } catch {
-      // ignore
-    }
+    scheduleSessionSave();
   }
 
   const seenSidebar = new Set<string>();
   const nextSidebar: SidebarItem[] = [];
   for (const item of rightSidebar()) {
-    const next: SidebarItem = item.kind === "page"
-      ? (item.name === from ? { ...item, name: to } : item)
-      : (item.page === from ? { ...item, page: to } : item);
+    const matches = item.kind === "page"
+      ? item.name === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path)
+      : item.page === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path);
+    const next: SidebarItem = !matches ? item : item.kind === "page"
+      ? { ...item, name: to.name, pageKind: to.pageKind, path: to.path }
+      : { ...item, page: to.name, pageKind: to.pageKind, path: to.path };
     const key = sidebarItemKey(next);
     if (seenSidebar.has(key)) continue;
     seenSidebar.add(key);
@@ -770,40 +791,61 @@ export function seedFavorites(names: string[]) {
   );
 }
 
-// Recently-visited pages (navigation history), newest first. This is the right
-// signal for the sidebar's "recent" list — file mtime is unreliable (a restored
-// backup makes every file look freshly modified). Persisted locally.
+// Recently-visited pages (navigation history), newest first. Unlike Favorites,
+// Recent is graph-scoped session state and may retain one exact physical owner.
 const RECENT_KEY = "logseq-claude.recent";
-function loadRecent(): FavItem[] {
+export interface RecentItem {
+  name: string;
+  kind: PageKind;
+  path?: string;
+}
+function sanitizeRecent(value: unknown): RecentItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): RecentItem[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.name !== "string" || item.name.length > 4096) return [];
+    if (item.kind !== "page" && item.kind !== "journal") return [];
+    if (item.path !== undefined && (typeof item.path !== "string" || item.path.length > 4096)) return [];
+    return [{ name: item.name, kind: item.kind, ...(item.path ? { path: item.path } : {}) }];
+  }).slice(0, 20);
+}
+function loadLegacyRecent(): RecentItem[] {
   try {
-    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
-    return Array.isArray(v) ? v : [];
+    return sanitizeRecent(JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"));
   } catch {
     return [];
   }
 }
-export const [recentPages, setRecentPages] = createSignal<FavItem[]>(loadRecent());
+let legacyRecent = loadLegacyRecent();
+export const [recentPages, setRecentPages] = createSignal<RecentItem[]>([]);
+export function legacyRecentPages(): RecentItem[] {
+  return legacyRecent.map((item) => ({ ...item }));
+}
+export function clearLegacyRecentSource() {
+  legacyRecent = [];
+  try { localStorage.removeItem(RECENT_KEY); } catch { /* ignore */ }
+}
+export { sanitizeRecent };
 /** Drop the recent-pages list. Called on a graph SWITCH so the previous graph's
  *  pages don't linger in quick-switch (Ctrl-K) / the sidebar "recent" list. */
 export function clearRecent() {
   setRecentPages([]);
-  try {
-    localStorage.removeItem(RECENT_KEY);
-  } catch {
-    // ignore
-  }
 }
-export function pushRecent(name: string, kind: "page" | "journal" = "page") {
+export function pushRecent(target: PageTarget): void;
+export function pushRecent(name: string, kind?: PageKind): void;
+export function pushRecent(targetOrName: PageTarget | string, kind: PageKind = "page") {
+  const target: RecentItem = typeof targetOrName === "string"
+    ? { name: targetOrName, kind }
+    : { name: targetOrName.name, kind: targetOrName.pageKind, ...(targetOrName.path ? { path: targetOrName.path } : {}) };
   const first = recentPages()[0];
-  if (first?.name === name && first.kind === kind) return;
-  const cur = recentPages().filter((r) => !(r.name === name && r.kind === kind));
-  const next = [{ name, kind }, ...cur].slice(0, 20);
+  if (first?.name === target.name && first.kind === target.kind && first.path === target.path) return;
+  // One visually indistinguishable same-name row: the latest selected physical
+  // owner replaces the previous one rather than leaving duplicate labels.
+  const cur = recentPages().filter((r) => !(r.name === target.name && r.kind === target.kind));
+  const next = [target, ...cur].slice(0, 20);
   setRecentPages(next);
-  try {
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
+  scheduleSessionSave();
 }
 
 // User keyboard-shortcut overrides set from the Settings modal. Persisted
@@ -1073,7 +1115,18 @@ export function setRightSidebar(items: SidebarItem[]) {
   scheduleSessionSave(); // durable right-sidebar items (localStorage isn't kept)
 }
 
-export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page", path?: string) {
+export function openPageInSidebar(target: PageTarget): void;
+export function openPageInSidebar(name: string, pageKind?: PageKind, path?: string): void;
+export function openPageInSidebar(
+  targetOrName: PageTarget | string,
+  pageKind: PageKind = "page",
+  path?: string,
+) {
+  let { name, pageKind: kind, path: targetPath } = typeof targetOrName === "string"
+    ? { name: targetOrName, pageKind, path }
+    : targetOrName;
+  pageKind = kind;
+  path = targetPath;
   if (pageKind === "page" && !path) name = resolveAlias(name);
   setRightSidebarOpen(true);
   // The working set is intentionally name-keyed. A duplicate physical file with
@@ -1221,11 +1274,12 @@ export type CtxTarget =
       kind: "page";
       name: string;
       pageKind: "journal" | "page";
+      path?: string;
       fileActions?: boolean;
       /** Exact title-row owner for focus restoration after menu dismissal. */
       focusOwner?: HTMLElement;
     }
-  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
+  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page"; path?: string }
   | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
   | {
       kind: "sheet";
@@ -1255,21 +1309,46 @@ export function openContextMenu(x: number, y: number, blockId: string) {
 export function openPageContextMenu(
   x: number,
   y: number,
+  target: PageTarget,
+  fileActions?: boolean,
+  focusOwner?: HTMLElement,
+): void;
+export function openPageContextMenu(
+  x: number,
+  y: number,
   name: string,
-  pageKind: "journal" | "page" = "page",
-  fileActions = false,
+  pageKind?: "journal" | "page",
+  fileActions?: boolean,
+  focusOwner?: HTMLElement,
+): void;
+export function openPageContextMenu(
+  x: number,
+  y: number,
+  targetOrName: PageTarget | string,
+  pageKindOrFileActions: PageKind | boolean = "page",
+  fileActionsOrFocus?: boolean | HTMLElement,
   focusOwner?: HTMLElement,
 ) {
-  setContextMenu({ x, y, kind: "page", name, pageKind, fileActions, focusOwner });
+  const target: PageTarget = typeof targetOrName === "string"
+    ? { name: targetOrName, pageKind: pageKindOrFileActions as PageKind }
+    : targetOrName;
+  const fileActions = typeof targetOrName === "string"
+    ? (typeof fileActionsOrFocus === "boolean" ? fileActionsOrFocus : false)
+    : (typeof pageKindOrFileActions === "boolean" ? pageKindOrFileActions : false);
+  const owner = typeof targetOrName === "string"
+    ? focusOwner
+    : (fileActionsOrFocus instanceof HTMLElement ? fileActionsOrFocus : undefined);
+  setContextMenu({ x, y, kind: "page", ...target, fileActions, focusOwner: owner });
 }
 export function openBlockRefContextMenu(
   x: number,
   y: number,
   uuid: string,
   page: string,
-  pageKind: "journal" | "page" = "page"
+  pageKind: "journal" | "page" = "page",
+  path?: string,
 ) {
-  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind });
+  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind, path });
 }
 export function openSheetCellContextMenu(x: number, y: number, blockId: string, remove?: SheetCellRemoveCtx) {
   setContextMenu({ x, y, kind: "sheet-cell", blockId, remove });

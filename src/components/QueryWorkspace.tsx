@@ -653,8 +653,20 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     queueMicrotask(() => advancedButton?.focus());
   };
   const openHit = (hit: QueryHit) => {
-    if (hit.entity === "page") props.router.openPage(hit.page.name, hit.page.kind);
-    else props.router.openPageAtBlock(hit.page, hit.kind, hit.block.id);
+    if (hit.entity === "page") {
+      props.router.openPageTarget({
+        name: hit.page.name,
+        pageKind: hit.page.kind,
+        ...(hit.page.path ? { path: hit.page.path } : {}),
+      });
+    } else {
+      props.router.openPageAtBlock({
+        name: hit.page,
+        pageKind: hit.kind,
+        block: hit.block.id,
+        ...(hit.path ? { path: hit.path } : {}),
+      });
+    }
   };
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;

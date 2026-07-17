@@ -11,6 +11,7 @@ import {
   type PaneSnapshot,
   type PaneRouter,
   type Route,
+  type PageTarget,
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
@@ -90,6 +91,14 @@ export function firstPaneId(node: LayoutNode | null): string | null {
 
 export function activePaneRoutes(): Route[] {
   return layoutPaneIds().map((id) => paneRouter(id).route());
+}
+
+export function rewritePageTargetAcrossPanes(from: PageTarget, to: PageTarget) {
+  for (const router of routers.values()) router.rewritePageTarget(from, to);
+}
+
+export function removePageTargetAcrossPanes(target: PageTarget) {
+  for (const router of routers.values()) router.removePageTarget(target);
 }
 
 export function feedPaneId(): string | null {

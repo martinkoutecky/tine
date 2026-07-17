@@ -1,6 +1,6 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { openPage, openPageAtBlock, openPageInNewTab } from "../router";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta } from "../ui";
 import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
@@ -66,6 +66,7 @@ function saveCollapsed(key: string, v: boolean) {
 interface Row {
   page: string;
   kind: PageKind;
+  path?: string;
   text: string;
   props: Record<string, string>;
 }
@@ -268,8 +269,8 @@ export function QueryMacro(props: {
         const grouped = new Map<string, RefGroup>();
         for (const hit of execution.hits) {
           if (hit.entity !== "block") continue;
-          const key = `${hit.kind}\0${hit.page}`;
-          const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, blocks: [] };
+          const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
+          const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, path: hit.path, blocks: [] };
           group.blocks.push(hit.block);
           grouped.set(key, group);
         }
@@ -327,8 +328,8 @@ export function QueryMacro(props: {
   const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
   const queryGroupKey = (group: RefGroup, flat: boolean) =>
     flat
-      ? `${group.kind}\0${group.page}\0${group.blocks.map((block) => block.id).join("\0")}`
-      : `${group.kind}\0${group.page}`;
+      ? `${group.kind}\0${group.page}\0${group.path ?? ""}\0${group.blocks.map((block) => block.id).join("\0")}`
+      : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
   const groupedQueryByKey = createMemo(() =>
     new Map((groups() ?? []).map((group) => [queryGroupKey(group, false), group] as const))
   );
@@ -345,7 +346,7 @@ export function QueryMacro(props: {
         // the row's text is the visible body. No re-derivation here.
         const props: Record<string, string> = {};
         for (const [k, val] of b.properties ?? []) props[k] = val;
-        return { page: g.page, kind: g.kind, text: visibleBody(b.raw).join(" "), props };
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props };
       })
     )
   );
@@ -556,7 +557,11 @@ export function QueryMacro(props: {
                                   <button
                                     type="button"
                                     class="query-search-page"
-                                    onClick={() => openPage(hit.page.name, hit.page.kind)}
+                                    onClick={() => openPageTarget({
+                                      name: hit.page.name,
+                                      pageKind: hit.page.kind,
+                                      ...(hit.page.path ? { path: hit.page.path } : {}),
+                                    })}
                                   >
                                     <span class="switcher-kind">{hit.page.kind}</span>
                                     <span>{hit.display_text}</span>
@@ -567,7 +572,12 @@ export function QueryMacro(props: {
                                   <button
                                     type="button"
                                     class="query-search-hit switcher-row block-result"
-                                    onClick={() => openPageAtBlock(blockHit().page, blockHit().kind, blockHit().block.id)}
+                                    onClick={() => openPageAtBlock({
+                                      name: blockHit().page,
+                                      pageKind: blockHit().kind,
+                                      block: blockHit().block.id,
+                                      ...(blockHit().path ? { path: blockHit().path } : {}),
+                                    })}
                                   >
                                     <SearchResultRow
                                       page={blockHit().page}
@@ -669,21 +679,22 @@ export function QueryMacro(props: {
                                     class="qt-page"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      if (e.shiftKey) openPageInSidebar(r.page, r.kind);
-                                      else openPage(r.page, r.kind);
+                                      const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
+                                      if (e.shiftKey) openPageInSidebar(target);
+                                      else openPageTarget(target);
                                     }}
                                     onAuxClick={(e) => {
                                       if (e.button === 1) {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        openPageInNewTab(r.page, r.kind);
+                                        openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                                       }
                                     }}
                                     onContextMenu={(e) => {
                                       if (!shouldOpenTextContextMenu(e.target)) return;
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
+                                      openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                                     }}
                                   >
                                     {r.page}
@@ -734,6 +745,7 @@ export function QueryMacro(props: {
 function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
   const kind = (): PageKind => props.group()?.kind ?? "page";
   const page = () => props.group()?.page ?? "";
+  const target = () => ({ name: page(), pageKind: kind(), ...(props.group()?.path ? { path: props.group()!.path } : {}) });
   return (
     <Show when={props.group()}>
       {(g) => (
@@ -742,26 +754,26 @@ function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
-              if (e.shiftKey) openPageInSidebar(page(), kind());
-              else openPage(page(), kind());
+              if (e.shiftKey) openPageInSidebar(target());
+              else openPageTarget(target());
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                openPageInNewTab(page(), kind());
+                openPageTargetInNewTab(target());
               }
             }}
             onContextMenu={(e) => {
               if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, page(), kind());
+              openPageContextMenu(e.clientX, e.clientY, target());
             }}
           >
             {page()}
           </div>
-          <LiveRefGroup page={page()} kind={kind()} blocks={g().blocks} surface="query" showBreadcrumb />
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb />
         </div>
       )}
     </Show>

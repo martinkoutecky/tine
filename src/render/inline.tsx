@@ -31,7 +31,7 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
-import { doc, setRaw, formatForPage, formatForBlock } from "../store";
+import { doc, setRaw, formatForPage, formatForBlock, blockRef } from "../store";
 import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
@@ -1139,15 +1139,21 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
+          const ref = doc.byId[props.id]
+            ? blockRef(props.id)
+            : { uuid: props.id, page: g.page, pageKind: g.kind };
           if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
-          openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);
+          openBlockRefContextMenu(e.clientX, e.clientY, ref.uuid, ref.page, ref.pageKind, ref.path);
         }}
         onClick={(e) => {
           e.stopPropagation();
           const g = grp();
           if (!g) return;
+          const ref = doc.byId[props.id]
+            ? blockRef(props.id)
+            : { uuid: props.id, page: g.page, pageKind: g.kind };
           const ann = annotation();
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks retain Tine's existing pane/sidebar navigation semantics.
@@ -1167,12 +1173,12 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
           if (e.ctrlKey || e.metaKey)
             openRouteInOtherPane(
-              { kind: "page", name: g.page, pageKind: g.kind, block: props.id },
+              { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
               pane?.paneId ?? focusedPaneId()
             );
-          else if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
+          else if (e.shiftKey) openBlockInSidebar(ref);
           else if (refClickZoom()) focusBlock(props.id);
-          else openPageAtBlock(g.page, g.kind, props.id);
+          else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}
       >
         <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>

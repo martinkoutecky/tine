@@ -19,7 +19,7 @@ import {
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
-import { openFile, openPage, openPageAtBlock } from "../router";
+import { openPageTarget, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
@@ -277,8 +277,7 @@ function PageItem(props: {
           <span aria-hidden="true">▸</span>
         </button>
         <a class="rs-item-title" onClick={() => {
-          if (props.item.path) openFile(props.item.path, props.item.name, props.item.pageKind);
-          else openPage(props.item.name, props.item.pageKind);
+          openPageTarget({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path });
         }}>
           <EmojiText text={props.item.name} />
         </a>
@@ -342,12 +341,12 @@ function BlockItem(props: {
         </button>
         <a
           class="rs-item-title"
-          onClick={() => openPageAtBlock(
-            props.item.page,
-            props.item.pageKind,
-            props.item.uuid,
-            props.item.path,
-          )}
+          onClick={() => openPageAtBlock({
+            name: props.item.page,
+            pageKind: props.item.pageKind,
+            block: props.item.uuid,
+            path: props.item.path,
+          })}
           title={`On ${props.item.page}`}
         >
           {title()}

@@ -170,6 +170,7 @@ function routerMock(activeRoute: QueryRoute = { kind: "query", id: "query-mock",
     updateActiveQuery: vi.fn(),
     replaceActiveRoute: vi.fn(),
     openPage: vi.fn(),
+    openPageTarget: vi.fn(),
     openPageAtBlock: vi.fn(),
   } as unknown as PaneRouter;
 }
@@ -194,6 +195,7 @@ function executionFixture(explained: boolean): QueryExecution {
         entity: "block",
         page: "Research",
         kind: "page",
+        path: "pages/client-b/Research.md",
         block: {
           id: "block-1",
           raw: "An alpha result",
@@ -365,6 +367,15 @@ describe("QueryWorkspace", () => {
     expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["Alpha", "alpha"]);
     expect(root.querySelector(".search-result-context")?.textContent).toContain("Page");
     expect(root.querySelectorAll(".query-result-row")).toHaveLength(2);
+    const resultRows = [...root.querySelectorAll<HTMLButtonElement>(".query-result-row")];
+    resultRows[0].click();
+    expect(router.openPageTarget).toHaveBeenCalledWith({
+      name: "Alpha notes", pageKind: "page", path: "pages/alpha.md",
+    });
+    resultRows[1].click();
+    expect(router.openPageAtBlock).toHaveBeenCalledWith({
+      name: "Research", pageKind: "page", path: "pages/client-b/Research.md", block: "block-1",
+    });
 
     for (const [label, selector] of [
       ["List", ".query-results-list"],

@@ -5,8 +5,8 @@ import { backend } from "./backend";
 import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey, closePdf } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
-import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
-import { resetPaneLayoutToSingle } from "./panes";
+import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
+import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
@@ -261,8 +261,13 @@ async function loadAliases(): Promise<void> {
  *  References to refetch from the now-correct backend). Aliases may have moved with
  *  the renamed file, so refresh those too. Caller must have run flushAll() first
  *  (so resetStore discards nothing unsaved) and then navigate to the new name. */
-export function refreshAfterRename(from: string, to: string): void {
-  renamePageInNavigation(from, to);
+export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
+  if (exactTarget) {
+    removePageTargetAcrossPanes(exactTarget);
+    renamePageInNavigation(exactTarget, { name: to, pageKind: exactTarget.pageKind });
+  } else {
+    renamePageInNavigation(from, to);
+  }
   resetStore();
   resetNavigationIndex();
   bumpGraphEpoch();

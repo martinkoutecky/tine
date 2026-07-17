@@ -18,8 +18,8 @@ import {
   type ContextMenuAction,
   type SheetCellRemoveCtx,
 } from "../ui";
-import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
-import { closePane, layoutPaneIds, paneRouter } from "../panes";
+import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
+import { removePageTargetAcrossPanes } from "../panes";
 import { refreshAfterRename } from "../graph";
 import { backend } from "../backend";
 import { carryDay } from "../carry";
@@ -176,6 +176,7 @@ export function ContextMenu(): JSX.Element {
                   uuid={(m() as { uuid: string }).uuid}
                   page={(m() as { page: string }).page}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
+                  path={(m() as { path?: string }).path}
                   close={close}
                 />
               </Match>
@@ -639,14 +640,15 @@ function BlockRefMenu(props: {
   uuid: string;
   page: string;
   pageKind: "journal" | "page";
+  path?: string;
   close: () => void;
 }): JSX.Element {
   const items = [
     {
       label: "Open in sidebar",
-      run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind }),
+      run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind, path: props.path }),
     },
-    { label: "Go to block", run: () => openPageAtBlock(props.page, props.pageKind, props.uuid) },
+    { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
     {
       label: "Copy block ref",
       run: () => { void backend().writeText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
@@ -744,23 +746,32 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
 function PageMenu(props: {
   name: string;
   pageKind: PageKind;
+  path?: string;
   fileActions: boolean;
   x: number;
   y: number;
   close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
+  const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(props.path ? { path: props.path } : {}) });
   const fav = () => isFavorite(props.name);
-  const readOnly = () => pageByName(props.name)?.readOnly ?? false;
+  const readOnly = () => {
+    const page = pageByName(props.name);
+    return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
+  };
   const runFileAction = async (reveal: boolean) => {
     const name = props.name;
     const kind = props.pageKind;
+    const captured = target();
     const page = pageByName(name);
-    if (!page || page.guide) return;
+    if (!pageTargetMatchesLoaded(captured, page) || page!.guide) {
+      pushToast("This page target changed; reopen the page actions menu.", "error");
+      return;
+    }
     if (isConflicted(name)) {
       pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
       return;
     }
-    if (!page.readOnly && !(await flushPage(name))) {
+    if (!page!.readOnly && !(await flushPage(name))) {
       pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
@@ -769,9 +780,13 @@ function PageMenu(props: {
       return;
     }
     try {
-      await backend().openPageFile(name, kind, page.path, reveal);
+      if (!pageTargetMatchesLoaded(captured, pageByName(name))) {
+        pushToast("This page target changed; reopen the page actions menu.", "error");
+        return;
+      }
+      await backend().openPageFile(name, kind, captured.path ?? page!.path, reveal);
     } catch (error) {
-      const message = page.path
+      const message = page!.path
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
         : "This page has no on-disk file yet. Type something and let Tine save it first.";
       pushToast(message, "error");
@@ -783,25 +798,20 @@ function PageMenu(props: {
     // "stale read from <Show>".
     const name = props.name;
     const kind = props.pageKind;
+    const captured = target();
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
     if (!(await backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`))) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void deletePage(name, kind)
+    void deletePage(name, kind, captured.path)
       .then((ok) => {
         if (!ok) {
           pushToast("Delete failed", "error");
           return;
         }
-        for (const paneId of layoutPaneIds()) {
-          const router = paneRouter(paneId);
-          const r = router.route();
-          if (r.kind !== "page" || r.name !== name) continue;
-          if (router.canGoBack()) router.goBack();
-          else if (!closePane(paneId)) router.openJournals({ inPlace: true });
-        }
+        removePageTargetAcrossPanes(captured);
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
@@ -811,21 +821,24 @@ function PageMenu(props: {
       .catch(() => pushToast("Delete failed", "error"));
   };
   const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
-    { id: "open", label: "Open", run: () => openPage(props.name, props.pageKind) },
-    { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(props.name, props.pageKind) },
-    { id: "open-new-tab", label: "Open in new tab", run: () => openPageInNewTab(props.name, props.pageKind) },
+    { id: "open", label: "Open", run: () => openPageTarget(target()) },
+    { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
+    { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-page-ref", label: "Copy page ref", run: () => { void backend().writeText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
     {
       id: "copy-page-markdown",
       label: "Copy page as Markdown",
-      run: () =>
-        void backend()
-          .getPage(props.name, props.pageKind)
+      run: () => {
+        const request = props.path
+          ? backend().getPageByPath(props.path)
+          : backend().getPage(props.name, props.pageKind);
+        void request
           .then((p) => {
             if (p) backend().writeText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
             pushToast("Copied page as Markdown", "success");
-          }),
+          });
+      },
     },
     { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
     ...(props.fileActions && !pageByName(props.name)?.guide
@@ -860,7 +873,7 @@ function PageMenu(props: {
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
           because window.prompt is a silent no-op in WebKitGTK. */}
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).rename}>
-        <RenamePage name={props.name} pageKind={props.pageKind} close={props.close} />
+        <RenamePage name={props.name} pageKind={props.pageKind} path={props.path} close={props.close} />
       </Show>
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>
         <button
@@ -892,6 +905,7 @@ export function deletePageMenuLabel(pageKind: PageKind): string {
 function RenamePage(props: {
   name: string;
   pageKind: PageKind;
+  path?: string;
   close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
   const [editing, setEditing] = createSignal(false);
@@ -931,11 +945,12 @@ function RenamePage(props: {
         pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
         return;
       }
-      await backend().renamePage(from, next);
+      if (props.path) await backend().renamePage(from, next, props.path);
+      else await backend().renamePage(from, next);
       // Backend rewrote refs across pages via the self-write guard (no watcher
       // reload) → in-memory pages are stale; reset + reload so a stale save can't
       // revert the rename.
-      refreshAfterRename(from, next);
+      refreshAfterRename(from, next, { name: from, pageKind: kind, ...(props.path ? { path: props.path } : {}) });
       openPage(next, kind);
       pushToast(`Renamed to “${next}”`, "success");
     } catch (e) {

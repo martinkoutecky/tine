@@ -202,7 +202,7 @@
       "stability": "stable"
     },
     "scripts/e2e-search-parity.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching, current-page scope, evidence, and Shift-Enter sidebar opening.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results.", "blocking": true }],
       "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
       "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
       "stability": "stable"
