@@ -23,7 +23,7 @@ import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals } from "../router";
-import { clearConflict, graphEpoch, markConflict } from "../ui";
+import { clearConflict, clearRecent, graphEpoch, markConflict, recentPages } from "../ui";
 
 beforeAll(async () => {
   await initParser();
@@ -620,6 +620,33 @@ describe("trailing page block target", () => {
 });
 
 describe("page route loading", () => {
+  it("adopts the existing page's canonical case for a mixed-case page route", async () => {
+    clearRecent();
+    const dto: PageDto = {
+      name: "page1",
+      kind: "page",
+      title: "page1",
+      pre_block: null,
+      blocks: [{ id: "canonical-page", raw: "canonical page content", collapsed: false, children: [] }],
+    };
+    const api = vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage("Page1", "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      await flushMicrotasks();
+      expect(api).toHaveBeenNthCalledWith(1, "Page1", "page");
+      expect(mainPaneRouter.route()).toEqual({ kind: "page", name: "page1", pageKind: "page" });
+      expect(recentPages()[0]).toMatchObject({ name: "page1", kind: "page" });
+      expect(root.textContent).toContain("canonical page content");
+      expect(root.querySelector(".page-trailing-block-target")).not.toBeNull();
+    } finally {
+      dispose();
+      clearRecent();
+    }
+  });
+
   it("ignores an obsolete load failure after a newer route has loaded", async () => {
     const fastId = "11111111-1111-4111-8111-111111111111";
     const fast = {

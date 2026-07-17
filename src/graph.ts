@@ -97,6 +97,9 @@ export async function loadGraphPath(
     return { kind: "already_current", root: meta.root };
   }
   resetStore();
+  setAliasMap({});
+  pageIdentityEpoch = -1;
+  pageIdentities = {};
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
     // A graph switch is a full workspace reset (OG opens one graph at a time):
@@ -154,19 +157,41 @@ export async function loadGraphPath(
   }
 }
 
-/** Load the graph's alias:: index so link/navigation can resolve aliases.
+let pageIdentityEpoch = -1;
+let pageIdentities: Record<string, string> = {};
+
+/** Load the graph's canonical page/alias index so navigation adopts real names.
  *  Guarded by the graph epoch so a slow response after a graph switch can't
  *  install the old graph's aliases. Exposed as `refreshAliases` so it can be
- *  re-run after edits (an alias:: change would otherwise leave nav stale). */
+ *  re-run after edits (an alias:: change would otherwise leave nav stale).
+ *  Real page names are fetched once per graph epoch; ordinary saves refresh
+ *  only the smaller semantic alias list, not the whole page inventory. */
 export async function refreshAliases(): Promise<void> {
   const epoch = graphEpoch();
-  try {
-    const pairs = await backend().pageAliases();
-    if (epoch !== graphEpoch()) return;
-    setAliasMap(Object.fromEntries(pairs));
-  } catch {
-    if (epoch === graphEpoch()) setAliasMap({});
+  const pagesRequest = pageIdentityEpoch === epoch
+    ? Promise.resolve(null)
+    : backend().listPages();
+  const [aliasesResult, pagesResult] = await Promise.allSettled([
+    backend().pageAliases(),
+    pagesRequest,
+  ]);
+  if (epoch !== graphEpoch()) return;
+
+  if (pagesResult.status === "fulfilled" && pagesResult.value) {
+    pageIdentities = Object.fromEntries(
+      pagesResult.value
+        .filter((entry) => entry.kind === "page")
+        .map((entry) => [entry.name.trim().toLowerCase(), entry.name])
+    );
+    pageIdentityEpoch = epoch;
+  } else if (pageIdentityEpoch !== epoch) {
+    pageIdentities = {};
   }
+  const aliases = aliasesResult.status === "fulfilled"
+    ? Object.fromEntries(aliasesResult.value)
+    : {};
+  // Existing files win a colliding alias, matching core `load_named`.
+  setAliasMap({ ...aliases, ...pageIdentities });
 }
 async function loadAliases(): Promise<void> {
   const epoch = graphEpoch();
@@ -188,6 +213,9 @@ async function loadAliases(): Promise<void> {
 export function refreshAfterRename(from: string, to: string): void {
   renamePageInNavigation(from, to);
   resetStore();
+  setAliasMap({});
+  pageIdentityEpoch = -1;
+  pageIdentities = {};
   bumpGraphEpoch();
   void refreshAliases();
 }

@@ -29,6 +29,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Mixed-case page links now open the existing canonical page.** Wiki links,
+  tags, aliases, tabs, and sidebar navigation share the same case-insensitive
+  page identity instead of opening a blank, non-editable case variant. (GH #179)
 - **Bare `tags`, `alias`, and `aliases` property values now create Linked
   References.** Page and block properties use the same canonical reference
   evidence as wrapped page links and hashtags, including after an in-place edit.

@@ -12,6 +12,7 @@ import {
   persistRightSidebarWidth,
   graphEpoch,
   sidebarItemKey,
+  renamePageInNavigation,
   registerRightSidebarClosePreparation,
   type SidebarItem,
 } from "../ui";
@@ -210,7 +211,13 @@ function useEnsurePage(name: () => string, kind: () => "journal" | "page", enabl
           // Drop a load that resolved after a graph switch — otherwise it would
           // insert an old-graph page into the new graph's working set.
           if (epoch !== graphEpoch()) return;
-          if (dto) ensurePageLoaded(dto);
+          if (dto) {
+            // Alias-map warmup usually canonicalizes before the item is created.
+            // A restored/early mixed-case item can race it; adopt the backend's
+            // canonical page name before the exact-keyed store renders the body.
+            if (k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
+            ensurePageLoaded(dto);
+          }
         })
         .catch(() => {
           // graph not open yet / page missing — retried on graphEpoch.

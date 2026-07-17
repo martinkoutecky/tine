@@ -54,6 +54,30 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
+  it("adopts the canonical page name for a restored mixed-case sidebar item", async () => {
+    const canonical = { ...page, name: "page1", title: "page1" };
+    applySidebarSession({
+      right: true,
+      items: [{ kind: "page", name: "Page1", pageKind: "page" }],
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+
+    try {
+      await vi.waitFor(() => {
+        expect(rightSidebar()[0]).toMatchObject({ kind: "page", name: "page1" });
+        expect(root.textContent).toContain("Editable sidebar text");
+      });
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps a real sidebar Block disclosure separate from the sidebar item's disclosure", async () => {
     const { root, dispose } = mount([
       { kind: "page", name: page.name, pageKind: "page" },

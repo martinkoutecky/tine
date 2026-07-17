@@ -1,4 +1,4 @@
-// Linux real-WebKit regression for GH #98/#99/#69/#137/#144/#145/#173:
+// Linux real-WebKit regression for GH #98/#99/#69/#137/#144/#145/#173/#179:
 // authoritative evidence in Ctrl+K and references, a graph-scoped virtual
 // query tab that survives restart, friendly filters/explanation, and guarded
 // materialization as one ordinary query page.
@@ -59,7 +59,7 @@ fs.writeFileSync(`${GRAPH}/pages/Linked source.md`, [
 fs.writeFileSync(`${GRAPH}/pages/Tagged source.md`, "tags:: Query parity\n\n- This page is tagged through a bare page property.\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Research]] and [[Query parity]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Research]] and [[qUeRy PaRiTy]]\n");
 
 const env = {
   ...process.env,
@@ -151,7 +151,7 @@ await withApp(0, async (browser) => {
   await browser.$(".page-ref").waitForExist({ timeout: 10_000 });
   const routed = await browser.execute(() => {
     const refs = [...document.querySelectorAll(".page-ref")];
-    const ref = refs.find((element) => element.textContent?.includes("Query parity"));
+    const ref = refs.find((element) => element.textContent?.toLowerCase().includes("query parity"));
     if (!ref) return {
       ok: false,
       refs: refs.map((element) => element.textContent?.trim()),

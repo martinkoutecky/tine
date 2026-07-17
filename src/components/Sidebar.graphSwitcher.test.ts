@@ -50,4 +50,25 @@ describe("favorite alias navigation", () => {
 
     setAliasMap({});
   });
+
+  it("resolves mixed-case real-page identities across every sidebar gesture", () => {
+    setAliasMap({ page1: "page1" });
+    const deps: SidebarPageOpenDeps = {
+      normal: vi.fn(),
+      sidebar: vi.fn(),
+      newTab: vi.fn(),
+      context: vi.fn(),
+    };
+
+    openSidebarPageTarget("Page1", "page", "normal", undefined, deps);
+    openSidebarPageTarget("PAGE1", "page", "sidebar", undefined, deps);
+    openSidebarPageTarget("pAgE1", "page", "new-tab", undefined, deps);
+    openSidebarPageTarget("PaGe1", "page", "context", { x: 4, y: 8 }, deps);
+
+    expect(deps.normal).toHaveBeenCalledWith("page1", "page");
+    expect(deps.sidebar).toHaveBeenCalledWith("page1", "page");
+    expect(deps.newTab).toHaveBeenCalledWith("page1", "page");
+    expect(deps.context).toHaveBeenCalledWith(4, 8, "page1", "page");
+    setAliasMap({});
+  });
 });

@@ -5,7 +5,7 @@ import { PaneContext, focusedRouter } from "../panes";
 import {
   zoomedBlock, isFavorite, toggleFavorite,
   graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
-  agendaQuery, openPageProps, dataRev, isConflicted,
+  agendaQuery, openPageProps, dataRev, isConflicted, renamePageInNavigation,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -232,6 +232,17 @@ export function PageView(): JSX.Element {
             ? await backend().getPageByPath(r.path)
             : await backend().getPage(r.name, r.pageKind);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
+          // Core page identity is Unicode-case-insensitive while display names
+          // preserve their original spelling. Alias-map warmup normally
+          // canonicalizes before navigation; this adoption also covers an early
+          // click or restored route that raced that map. Re-route once so the
+          // exact-keyed working set, tab history, Recent, and editor all own the
+          // backend's canonical display name instead of a phantom case variant.
+          if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
+            renamePageInNavigation(r.name, dto.name);
+            router.replaceActiveRoute({ ...r, name: dto.name });
+            return;
+          }
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
