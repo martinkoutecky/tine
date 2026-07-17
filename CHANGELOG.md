@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-17
+
 ### Added
 
 - Begin an experimental Tine-native plugin platform: capability-limited WebAssembly
@@ -2110,7 +2112,12 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0
+[0.5.10]: https://github.com/martinkoutecky/tine/compare/v0.5.9...v0.5.10
+[0.5.9]: https://github.com/martinkoutecky/tine/compare/v0.5.8...v0.5.9
+[0.5.8]: https://github.com/martinkoutecky/tine/compare/v0.5.7...v0.5.8
+[0.5.7]: https://github.com/martinkoutecky/tine/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/martinkoutecky/tine/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/martinkoutecky/tine/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/martinkoutecky/tine/compare/v0.5.3...v0.5.4

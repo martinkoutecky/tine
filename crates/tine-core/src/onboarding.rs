@@ -65,6 +65,10 @@ const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/pdf.md"),
     },
     GuideTemplate {
+        title: "Features/Plugins",
+        markdown: include_str!("templates/plugins.md"),
+    },
+    GuideTemplate {
         title: "Features/Tips & shortcuts",
         markdown: include_str!("templates/tips.md"),
     },
@@ -369,7 +373,18 @@ mod tests {
             .find(|p| p.title == "Features/Sheets")
             .expect("sheets guide is bundled");
         assert!(sheets.markdown.contains("Create one yourself"));
-        assert!(sheets.page.blocks.iter().any(|b| b.raw.contains("Positional grid")));
+        assert!(sheets
+            .page
+            .blocks
+            .iter()
+            .any(|b| b.raw.contains("Positional grid")));
+
+        let plugins = pages
+            .iter()
+            .find(|p| p.title == "Features/Plugins")
+            .expect("plugins guide is bundled");
+        assert!(plugins.markdown.contains("installed disabled"));
+        assert!(plugins.markdown.contains("not Logseq or Obsidian plugins"));
     }
 
     /// Bare `[[…]]` link targets in a markdown body (labelled links, embeds, and
@@ -429,6 +444,7 @@ mod tests {
             "Features/Formulas",
             "Features/Quick capture",
             "Features/PDF annotation",
+            "Features/Plugins",
             "Features/Tips & shortcuts",
             "Feature showcase",
         ];
@@ -491,8 +507,9 @@ mod tests {
             );
         }
 
-        let index = std::fs::read_to_string(graph.path_for("tine-guide/Tine Guide", PageKind::Page))
-            .unwrap();
+        let index =
+            std::fs::read_to_string(graph.path_for("tine-guide/Tine Guide", PageKind::Page))
+                .unwrap();
         assert!(index.contains("[[tine-guide/Features/Sheets]]"));
         assert!(!index.contains("[[Features/Sheets]]"));
         assert!(dir.join("assets/quick-capture.png").is_file());

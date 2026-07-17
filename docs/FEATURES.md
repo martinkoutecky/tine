@@ -141,7 +141,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   filtering and hover previews — and in the **right sidebar** page view too
   (shift-click a page to open it there). Both panels use the same parser-owned
   exact-match evidence; large panels group by source page and show bounded,
-  highlighted excerpts with exact jump targets and per-page disclosure.
+  highlighted excerpts with exact jump targets and per-page disclosure. Linked
+  References also combine bounded content search with page, tag, property, and task
+  include/exclude facets without loading complete descendant trees; deep matches show
+  one final ancestor breadcrumb and start folded in a view-local copy that never
+  changes the source block's collapse state.
 - **Per-block reference count** badge → click to reveal the referencing blocks
   (grouped by page, each with its **ancestor breadcrumb**), or shift-click to open
   in the sidebar.
@@ -257,7 +261,10 @@ coordinates, no lock-in.
   scheduled/deadline dates, tags, page, and block properties. Writable fields
   write back to the source block. Optional `tine.fields::` schemas pin column
   order and type cells as text, number, date/datetime, checkbox, list, ref, or
-  enum; the header menu edits that schema in place.
+  enum; the header menu edits that schema in place. A children-backed field can be
+  renamed from its header (or by double-clicking the name), migrating dependent
+  filters, grouping, aggregates, and formulas as one undoable edit; collisions and
+  ambiguous rewrites are refused. Tab commits the current cell before advancing.
 - **Formula columns and filters** — add read-only computed columns with one
   property per expression:
   `tine.formula.effort:: points * 2`,
@@ -402,9 +409,14 @@ within a column; merged cells are still v2+.
 
 - Open PDFs in a resizable, zoomable pane (instant zoom, HiDPI, per-page
   virtualization); in-PDF `Ctrl+F` find with a page jump box.
-- Select text → colored **highlights**, or drag a rectangle (area mode / `Ctrl`-drag)
-  to clip an **area (image) highlight** — both stored Logseq-compatibly
+- Select text → colored **highlights**, or hold **Shift** while dragging on Linux
+  and Windows (**Command** on macOS) and then choose a color to clip an **area
+  (image) highlight**. The drag must exceed 10 pixels in both dimensions, and
+  dismissing the chooser writes nothing. Both forms are stored Logseq-compatibly
   (`assets/<key>.edn` + `hls__` pages, area crops as PNG assets).
+- Reader themes (**Light**, **Warm**, and **Dark**) persist app-locally, while a
+  nested document outline expands independently and follows named or explicit PDF
+  destinations without entering the graph or annotation files.
 - Each highlight becomes a clean bullet you can nest notes under; writes **merge with
   disk**, so an externally-added highlight or your top-level notes are never dropped,
   and recoloring a highlight updates its note-page badge to match.
@@ -418,8 +430,13 @@ within a column; merged cells are still v2+.
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only —
   no false hits on hidden properties/uuids), with separated page/breadcrumb context,
   bounded two-line evidence excerpts, all positive matching terms highlighted, and
-  middle-click → background tab. **Search syntax** documents phrases, alternatives,
-  exclusions, and regex; **Open all results** creates the persistent workspace above.
+  middle-click → background tab. **Shift+Enter** opens the selected page or block in
+  the right sidebar, while **Ctrl/Cmd+Shift+K** searches only blocks owned by the
+  focused routed page (including collapsed descendants). **Search syntax** documents
+  phrases, alternatives, exclusions, and regex; **Open all results** creates the
+  persistent workspace above. Canonically equivalent composed/decomposed Unicode
+  spellings share membership and source-accurate evidence; this does not add accent
+  folding or transliteration.
 - Title results are ranked first by objective exact/prefix/substring/fuzzy class.
   Repeated deliberate choices may break ties inside one class using bounded,
   device-local, per-graph history; this learning can be reset or disabled and never
@@ -447,8 +464,8 @@ within a column; merged cells are still v2+.
   and **Copy the guide into your graph** creates the complete editable
   `tine-guide/...` namespace with inter-guide links rewritten, without overwriting
   existing copied pages. The bundled set covers Sheets, **Formulas** (a from-zero
-  walkthrough of the visual formula editor), Quick capture, PDF annotation, Tips &
-  shortcuts, and the Feature showcase. The Sheets how-tos teach the friendly
+  walkthrough of the visual formula editor), Quick capture, PDF annotation,
+  **Plugins**, Tips & shortcuts, and the Feature showcase. The Sheets how-tos teach the friendly
   gestures — `/Grid`, `/Table`, `/Board`, **Show children as →**, edge-grow, ghost
   Add-row/column buttons, and the board **Group by** picker — rather than hand-typed
   `tine.*` properties.
@@ -473,6 +490,9 @@ within a column; merged cells are still v2+.
   blank — and work offline.
 - **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the
   graph in one transaction.
+- **Page actions menu** — the ellipsis beside an ordinary page title exposes the
+  same source-file, navigation, copy/export, properties, rename, carry, and delete
+  actions as right-click, with keyboard navigation, touch geometry, and focus return.
 
 ## Works with your existing setup
 
@@ -524,6 +544,32 @@ within a column; merged cells are still v2+.
   **New graph…**. Also openable from the command line: `tine /path/to/graph` or
   the `TINE_GRAPH` env var. (No saved recent-graphs list yet — you pick the folder
   each time.)
+
+## Plugins & token themes
+
+- **Experimental Tine-native plugin API 0.2** — small WebAssembly guests receive
+  versioned, bounded events and return inert effects that Tine validates. They do not
+  run JavaScript in the app and cannot directly access the DOM, Tauri, files,
+  processes, the network, or arbitrary graph paths. This is **not compatibility with
+  Logseq's `@logseq/libs` or Obsidian's plugin API**.
+- **Install disabled, enable deliberately** — Settings → Plugins browses a signed
+  community catalogue or accepts a local `manifest.json` plus `.wasm`. Each immutable
+  version shows its source, platforms, declared capabilities, package/report digests,
+  and safety findings. Installation leaves it disabled until the user reviews and
+  enables it; cached signed revocations apply before startup activation.
+- **Host-owned extension points** — plugins can contribute command-palette actions,
+  slash commands, bounded block decorations, declarative settings, and narrowly
+  preconditioned focused-block edits only through declared capabilities. Plugin
+  settings are device-local scalar values in Tine's own controls. Disable or uninstall
+  removes behavior/packages without making graph files unreadable.
+- **Token theme API 0.1** — executable code is not involved: packages contain a
+  strictly validated literal-color vocabulary. Themes install from the signed
+  catalogue or local files under Settings → Appearance, remain device-local, and sit
+  below graph `logseq/custom.css` in the cascade.
+- **Starter ecosystem and authoring tools** — the first examples cover bullet
+  threading, query-filter shortcuts, and a behavioral port of heading shortcuts. A
+  Rust SDK/template, deterministic checker, port-gap format, threat model, registry
+  policy, and submission guide live in [`docs/plugins/`](plugins/README.md).
 
 ## Mobile (Android)
 

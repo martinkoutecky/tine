@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugins in Tine — small extensions with bounded authority</title>
+<meta name="description" content="Tine's experimental plugin platform uses capability-limited WebAssembly guests and inert token themes, with explicit review and no unrestricted host access.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Plugins in Tine — small extensions with bounded authority">
+<meta property="og:description" content="A Tine-native WebAssembly plugin platform with explicit capabilities, signed review evidence, and host-owned extension points.">
+<style>
+  .plugin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 820px; margin-left: auto; margin-right: auto; }
+  @media (max-width: 620px) { .plugin-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="index.html#why">Same graph</a>
+    <a href="plugins.html" aria-current="page">Plugins</a>
+    <a href="compare.html">vs Logseq</a>
+    <a href="demo/">Demo</a>
+    <a href="blog/">Blog</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-inner">
+      <p class="eyebrow">Experimental in Tine 0.6 · native to Tine</p>
+      <h1>Small extensions.<br><span class="accent">Bounded authority.</span></h1>
+      <p class="lede">
+        Tine plugins are WebAssembly guests with explicit capabilities and host-owned controls.
+        They can add useful behavior without receiving unrestricted access to the app, your files,
+        the browser runtime, or arbitrary graph paths.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">Download Tine</a>
+        <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine/blob/master/docs/plugins/README.md">Build a plugin</a>
+      </div>
+      <p class="fineprint">API 0.2 is experimental. Tine plugins are not compatible with Logseq's <code>@logseq/libs</code> or Obsidian's plugin API.</p>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2 class="center-h">A deliberately narrow host</h2>
+    <p class="section-lede center">
+      A plugin receives a bounded event and returns inert effects that Tine validates and applies.
+      It does not run JavaScript inside Tine or gain a hidden general-purpose bridge.
+    </p>
+    <div class="grid plugin-grid">
+      <article class="card">
+        <div class="card-ic">🔐</div>
+        <h3>Capabilities are explicit</h3>
+        <p>Commands, slash actions, decorations, settings, and focused-block writes each require a declared capability. Tine rejects undeclared effects and stale write preconditions.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🧱</div>
+        <h3>The host owns the UI</h3>
+        <p>Plugins return known effects and decorations rather than arbitrary HTML or CSS. Declarative settings render in Tine's own bounded controls.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">📦</div>
+        <h3>Versions are immutable</h3>
+        <p>Packages are addressed by identity, version, and digest. Installation leaves them disabled; enabling is a separate, explicit choice after review.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🛡️</div>
+        <h3>Review evidence is visible</h3>
+        <p>The signed catalogue shows source, platform declarations, capabilities, package and report digests, automated findings, and any required human approval.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="band-inner">
+      <h2>Install and stay in control</h2>
+      <ul class="checks">
+        <li>Open <strong>Settings → Plugins → Browse</strong> to inspect the signed community catalogue, or choose a local <code>manifest.json</code> and <code>.wasm</code> together.</li>
+        <li>Review the package's identity, supported platforms, requested capabilities, provenance, and safety report.</li>
+        <li>Install it disabled, then enable it explicitly under <strong>Installed</strong>.</li>
+        <li>Change plugin-owned options through Tine's host-rendered settings controls.</li>
+        <li>Disable without uninstalling, or remove one app-local package version. Neither action changes graph files.</li>
+        <li>Cached signed revocations apply before startup activation, even while the live catalogue is unavailable.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2 class="center-h">Plugins and themes are separate</h2>
+    <p class="section-lede center">
+      Executable plugins use the WebAssembly API. Token themes contain no code: they are strictly
+      validated color packages installed under <strong>Settings → Appearance → Themes</strong>.
+      Your graph's <code>logseq/custom.css</code> still takes priority.
+    </p>
+    <div class="scope-grid">
+      <div class="scope-item">
+        <h3>Available extension points</h3>
+        <p>Command-palette entries, slash commands, bounded block decorations, declarative settings, and preconditioned edits to the focused block.</p>
+      </div>
+      <div class="scope-item">
+        <h3>Not available</h3>
+        <p>No direct DOM, Tauri, filesystem, process, network, global keyboard, or arbitrary graph access; no arbitrary settings UI.</p>
+      </div>
+      <div class="scope-item">
+        <h3>First examples</h3>
+        <p>Bullet threading, query-filter shortcuts, and a behavioral port of heading-level shortcuts.</p>
+      </div>
+      <div class="scope-item">
+        <h3>Porting is explicit</h3>
+        <p>A Logseq or Obsidian plugin needs a deliberate port. The port-gap report records what is faithful, omitted, host-provided, or intentionally privileged.</p>
+      </div>
+    </div>
+    <div class="cta-row center">
+      <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/blob/master/docs/plugins/README.md">Read the developer guide</a>
+      <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine-plugin-registry">Browse the registry source</a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+          <path d="M16 36 H48"/><path d="M32 36 V70"/>
+        </g>
+      </svg>
+      <span>Tine</span>
+    </div>
+    <nav class="foot-links">
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="index.html">Home</a>
+      <a href="compare.html">vs Logseq</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+    </nav>
+    <p class="foot-note">Tine is an independent reimplementation, not affiliated with or endorsed by Logseq. Its plugin API is Tine-native and intentionally does not claim Logseq or Obsidian API compatibility.</p>
+    <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,903 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.0",
+  "baseTag": "v0.5.10",
+  "focusedAudit": {
+    "required": true,
+    "reason": "Version 0.6.0 introduces the plugin and token-theme subsystem, so the final exact-tree audit sweep includes a focused plugin change-cluster lane."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "Begin an experimental Tine-native plugin platform: capability-limited WebAssembly guests, host-owned contribution points, explicit desktop/mobile declarations, and a public-registry safety model. This is not Logseq or Obsidian API compatibility.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-INVALID-UNINSTALL-001",
+        "UI-THEME-MODE-ORDER-INSTALL-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md",
+          "docs/plugins/README.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/index.html",
+          "website/compare.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add disabled-by-default local and signed-community installation, explicit capability review and enable/disable controls, registry revocations, immutable manifest/WASM/report digests, expandable safety findings, automatic-versus-manual publication labels, and desktop/mobile plugin catalogue layouts.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-INVALID-UNINSTALL-001",
+        "UI-PLUGIN-STARTUP-REVOCATION-001",
+        "UI-THEME-MODE-ORDER-INSTALL-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md",
+          "docs/plugins/README.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Publish the first AI-primary examples (bullet threading, query-filter shortcuts, and a Logseq heading-shortcut behavioral port), a Rust guest SDK/template, deterministic package checker, and developer/security documentation.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-INVALID-UNINSTALL-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md",
+          "docs/plugins/README.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add a credential-separated local registry auditor: rootless hostile builds, no-tools Codex source review, quarantine/manual approval, signed catalogue publishing, and symlink/path/digest fail-closed checks.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/plugins/registry-policy.md",
+          "docs/plugins/threat-model.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add per-version plugin uninstall controls that remove only app-local packages and clear plugin settings after the last installed version.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-INVALID-UNINSTALL-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add plugin API 0.2 declarative settings: bounded host-rendered controls, device-local validated persistence, live settings-change events, reset behavior, nested plugin detail pages, and immutable behavioral-port provenance.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add a separate theme API 0.1 with inert token-only packages, strict literal-color validation, local and signed-catalogue installation, immutable provenance, and Appearance-owned selection that remains subordinate to graph `custom.css`.",
+      "userVisible": true,
+      "regressions": [
+        "UI-THEME-MODE-ORDER-INSTALL-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Add a machine-checkable port-gap report and a current popular-plugin compatibility matrix so AI-assisted ports must distinguish faithful subsets, reusable host API requests, core features, and inherently privileged integrations.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/plugins/porting-logseq-obsidian.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Let host-rendered decoration plugins respond live to their declarative settings, and let command plugins declare ordinary remappable default shortcuts without receiving keyboard, DOM, or global-input authority.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/plugins.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/plugins.html",
+          "website/demo/features-plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Search can now stay on the current page or send a result to the sidebar.** Ctrl/Cmd-Shift-K searches only blocks owned by the focused routed page, including collapsed descendants, while Shift-Enter in Ctrl-K opens a page or block result in the right sidebar without navigating away.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-CURRENT-PAGE-SCOPE-001",
+        "UI-SEARCH-SHIFT-ENTER-SIDEBAR-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/demo/features-tips-shortcuts.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Page titles now expose a discoverable, accessible actions menu.** The ellipsis opens the same file, navigation, copy, export, properties, rename, carry, and delete actions as title right-click; keyboard navigation, touch geometry, and focus restoration are built in. This is the bounded first page menu phase of GH #182.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-ACTIONS-MENU-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/demo/features-tips-shortcuts.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Children-backed Sheet fields can now be renamed in place.** Right-click a column header or double-click its name to update the local schema and its dependent filter, grouping, aggregate, and formula configuration as one undoable, persistence-safe edit. Ambiguous or colliding renames are rejected. (GH #175)",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHEET-FIELD-RENAME-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/sheets.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/demo/features-sheets.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Linked References can now be filtered without loading complete subtrees.** The panel combines bounded content search with page, tag, property, and task facets while preserving reference counts and lazy result expansion. (GH #173)",
+      "userVisible": true,
+      "regressions": [
+        "UI-LINKED-REFERENCES-FILTER-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Broad CI now runs once for a frozen release candidate instead of after each merge.** Pull requests retain a lightweight Linux validation path, while Windows, Android, performance, UI E2E, and Flatpak proofs remain manually dispatchable between releases. Release packaging fails closed unless all full CI jobs succeeded on the exact candidate commit.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/CI.md",
+          "docs/RELEASE-CHECKLIST.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl-K page and block results now keep their exact physical file owner.** Current, alternate, background-tab, and right-sidebar activation preserve the selected graph-relative path, including duplicate-name sidebar restore and block-reference persistence, without breaking older pathless sessions.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-EXACT-STORAGE-IDENTITY-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Cached signed plugin and theme revocations now take effect before startup activation.** A stalled catalogue refresh is abort-bounded, one broken plugin no longer blocks the rest, and a newer verified revocation immediately stops an affected active plugin without restoring older cached state afterward.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-STARTUP-REVOCATION-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md",
+          "docs/plugins/README.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Pending PDF work now stays with the graph that owns it during graph changes.** In-place graph switches and safe close drain the old graph's PDF work first, stale callbacks cannot write into the new graph, and drain failures abort the transition with the old graph still open.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-GRAPH-OWNER-QUIESCE-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**PDF area selection now follows Logseq's platform gesture and confirmation flow.** Shift-drag on Linux and Windows, or Command-drag on macOS, must exceed 10 pixels in both dimensions and opens the color chooser before anything is written; dismissing the chooser leaves the graph unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-AREA-OG-GESTURE-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/pdf.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/demo/features-pdf-annotation.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The PDF reader now has persistent Light, Warm, and Dark themes plus document outlines.** Nested outline entries expand independently and navigate through both named and explicit PDF destinations, while theme preference remains application-local rather than entering graph or annotation files.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-THEMES-OUTLINE-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/pdf.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The dedicated Plugins page, comparison, homepage, or regenerated online Guide now presents this release behavior.",
+        "refs": [
+          "website/demo/features-pdf-annotation.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Search now treats canonically equivalent Unicode spellings as identical.** Composed and decomposed page names, aliases, and block text share membership, exact-page detection, ranking identity, and source-accurate highlights without adding accent folding or transliteration.",
+      "userVisible": true,
+      "regressions": [
+        "UI-SEARCH-CANONICAL-UNICODE-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Markdown page-header properties are now directly editable and stay unbulleted on disk.** Clicking an existing header, or crossing into it with the arrow keys, uses the ordinary block editor; newly authored custom and Unicode properties reopen as canonical Logseq page metadata without changing body blocks or unsafe preambles. (GH #163)",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-PROPERTY-PRESERVATION-001",
+        "UI-PAGE-PROPERTY-AUTHORING-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Linked References and list-query results now keep deep matches concise and understandable.** Each hit shows its final ancestor context, while deeper descendant branches start folded in a view-local copy that never changes the source block's collapse state.",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFERENCE-ANCESTOR-CONTEXT-001",
+        "UI-REFERENCE-LOCAL-DEPTH-001"
+      ],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory or in-app Guide now documents this release behavior.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Mixed-case page links now open the existing canonical page.** Wiki links, tags, aliases, tabs, and sidebar navigation share the same case-insensitive page identity instead of opening a blank, non-editable case variant. (GH #179)",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-IDENTITY-CASE-NAV-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Bare `tags`, `alias`, and `aliases` property values now create Linked References.** Page and block properties use the same canonical reference evidence as wrapped page links and hashtags, including after an in-place edit. (GH #180)",
+      "userVisible": true,
+      "regressions": [
+        "UI-LINKABLE-PROPERTY-BACKLINK-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Selection formatting no longer wraps selected outer spaces.** Bold, italic, strike, and highlight actions keep leading and trailing selected whitespace outside their Markdown or Org delimiters, whether invoked from the keyboard or toolbar. (GH #178)",
+      "userVisible": true,
+      "regressions": [
+        "UI-SELECTION-FORMAT-WHITESPACE-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Nested WebView scroll regions no longer overscroll the Tine window.** Scroll gestures stop at the viewport boundary while panes, sidebars, and drawers retain their own scrolling. (GH #177)",
+      "userVisible": true,
+      "regressions": [
+        "UI-WINDOW-OVERSCROLL-CONTAINMENT-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Every foreground page activation now updates graph-global Recent pages.** Opening or focusing a page through the main pane, split panes, sidebar, or history uses the same RECENT ordering instead of tracking only some routes. (GH #170)",
+      "userVisible": true,
+      "regressions": [
+        "UI-RECENT-FOREGROUND-ACTIVATION-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Simple queries now match Logseq's membership and journal-date semantics.** Bare page references include inherited page membership, date bounds are inclusive and order-independent, and Search preserves the same result identities as List, Table, and Board for supported simple queries.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-PRESENTATION-MEMBERSHIP-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Line-leading inline code containing `::` remains visible code.** It is no longer misclassified as a property drawer, while actual properties and references outside the code span keep their existing behavior.",
+      "userVisible": true,
+      "regressions": [
+        "UI-INLINE-CODE-PROPERTY-CLASSIFICATION-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Escape and Android Back now close every visible popup before the surface beneath it.** Calendar Jump, selection formatting overflow, PDF Find and highlight actions, QueryBuilder menus, and formula value pickers all join the shared one-gesture/one-layer dismissal order without losing selections, drafts, or reader state. (post-GH #161 follow-up)",
+      "userVisible": true,
+      "regressions": [
+        "UI-TRANSIENT-CALENDAR-JUMP-001",
+        "UI-TRANSIENT-SELECTION-OVERFLOW-001",
+        "UI-TRANSIENT-PDF-LOCAL-OWNERS-001",
+        "UI-TRANSIENT-QUERY-LADDER-001",
+        "UI-TRANSIENT-FORMULA-PICKER-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Tab close buttons work on Windows again.** The visible X keeps its native pointer action instead of handing the pointer to the parent tab-drag capture session, while ordinary tab activation and drag-to-reorder stay unchanged. (GH #174)",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-CLOSE-POINTER-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Table cell values now commit before Tab advances to the next cell.** Typing the next value no longer overtypes the cell that was just saved, and formula columns react to the preserved inputs as expected. (GH #176)",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHEET-TABLE-CELL-COMMIT-NAV-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "Existing technical or user documentation already describes this behavior, or the change restores that documented contract without adding a new workflow.",
+        "refs": [
+          "docs/FEATURES.md",
+          "crates/tine-core/src/templates/sheets.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "This item does not require a separate website presentation beyond the current feature pages and generated Guide.",
+        "refs": [
+          "website/index.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    }
+  ]
+}

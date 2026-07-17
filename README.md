@@ -282,7 +282,14 @@ conversion, computed columns with a visual formula builder, filters, and CSV/TSV
 navigation, `Ctrl+click` open-to-side, and tab drag to panes/seams (see
 [FEATURES.md](docs/FEATURES.md#split-view)).
 
-**Planned / under evaluation:** graph view and configurable typographic auto-replace.
+**New — capability-limited plugins:** Tine 0.6 adds an experimental native plugin API for
+bounded WebAssembly guests and inert token themes. Packages install disabled, declare exact
+capabilities, and use host-owned commands, decorations, settings, and write guards rather than
+unrestricted DOM/filesystem/network access. This is not Logseq or Obsidian plugin API
+compatibility; see [the user overview](https://tine.page/plugins.html) and
+[developer guide](docs/plugins/README.md).
+
+**Planned / under evaluation:** graph view.
 
 **Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
 Logseq graph on the phone over your own sync, alongside the Logseq mobile app. iOS is being scoped.
