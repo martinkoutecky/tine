@@ -81,7 +81,7 @@ const suites = {
     ["tag-autocomplete", "scripts/e2e-tag-autocomplete.mjs", {}],
     ["structured-paste", "scripts/e2e-structured-paste.mjs", {}],
     ["media", "scripts/e2e-media.mjs", {}],
-    ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
+    ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["external-assets", "scripts/e2e-external-assets.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
@@ -101,7 +101,7 @@ const suites = {
   "windows-smoke": [
     ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
-    ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
+    ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],

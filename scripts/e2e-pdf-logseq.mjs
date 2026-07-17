@@ -1,9 +1,10 @@
 // Real-app regression for GH #61: current Logseq highlight sidecars use #uuid
 // reader tags, list-shaped :rects, and x1/y1/x2/y2 coordinates. Opening the PDF
 // used to make the native process allocate without bound before the pane mounted.
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,8 +24,28 @@ const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4520);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4521);
 const TMP = path.join(os.tmpdir(), `tine-pdf-logseq-e2e-${process.pid}`);
 const GRAPH = path.join(TMP, "graph");
+const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || TMP;
+const APP_DATA = path.join(TMP, "xdg", "data", "page.tine.Tine");
+const SETTINGS = path.join(APP_DATA, "tine-settings.json");
 const SAMPLE_ID = "6a5604f8-a337-4336-a711-2ba6bc14fbfd";
 const PDF = "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAyMDUgPj4Kc3RyZWFtCkJUIC9GMSAyMCBUZiA3MiA3MjAgVGQgKFRpbmUgUERGIHZpZXdlcikgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgdGV4dCB0byBjcmVhdGUgYSBoaWdobGlnaHQuKSBUaiBFVApCVCAvRjEgMTMgVGYgNzIgNjY4IFRkIChIaWdobGlnaHRzIHBlcnNpc3QgdG8gYXNzZXRzLzxrZXk+LmVkbiArIGFuIGhsc19fIHBhZ2UuKSBUaiBFVAoKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDA0OTcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo1NjcKJSVFT0Y=";
+// Two real pages and a parsed nested outline. This is embedded rather than
+// generated at runtime so the native row never depends on network/tooling.
+const OUTLINE_PDF = "JVBERi0xLjcKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgL091dGxpbmVzIDggMCBSIC9QYWdlTW9kZSAvVXNlT3V0bGluZXMgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA3IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxMzQgPj4Kc3RyZWFtCkJUIC9GMSAyMiBUZiA3MiA3MjAgVGQgKE91dGxpbmUgZml4dHVyZSBwYWdlIG9uZSkgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgZGV0ZXJtaW5pc3RpYyB0ZXh0IGZvciBhIGhpZ2hsaWdodC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDYxMiA3OTJdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDcgMCBSID4+ID4+IC9Db250ZW50cyA2IDAgUiA+PgplbmRvYmoKNiAwIG9iago8PCAvTGVuZ3RoIDEyMyA+PgpzdHJlYW0KQlQgL0YxIDIyIFRmIDcyIDcyMCBUZCAoT3V0bGluZSB0YXJnZXQgcGFnZSB0d28pIFRqIEVUCkJUIC9GMSAxMyBUZiA3MiA2OTAgVGQgKE5lc3RlZCBib29rbWFyayBuYXZpZ2F0aW9uIHN1Y2NlZWRlZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNyAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCjggMCBvYmoKPDwgL1R5cGUgL091dGxpbmVzIC9GaXJzdCA5IDAgUiAvTGFzdCA5IDAgUiAvQ291bnQgMiA+PgplbmRvYmoKOSAwIG9iago8PCAvVGl0bGUgKENoYXB0ZXIgT25lKSAvUGFyZW50IDggMCBSIC9GaXJzdCAxMCAwIFIgL0xhc3QgMTAgMCBSIC9Db3VudCAxIC9EZXN0IFszIDAgUiAvWFlaIG51bGwgbnVsbCBudWxsXSA+PgplbmRvYmoKMTAgMCBvYmoKPDwgL1RpdGxlIChOZXN0ZWQgUGFnZSBUd28pIC9QYXJlbnQgOSAwIFIgL0Rlc3QgWzUgMCBSIC9YWVogbnVsbCBudWxsIG51bGxdID4+CmVuZG9iagp4cmVmCjAgMTEKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwOTcgMDAwMDAgbiAKMDAwMDAwMDE2MCAwMDAwMCBuIAowMDAwMDAwMjg2IDAwMDAwIG4gCjAwMDAwMDA0NzEgMDAwMDAgbiAKMDAwMDAwMDU5NyAwMDAwMCBuIAowMDAwMDAwNzcxIDAwMDAwIG4gCjAwMDAwMDA4NDEgMDAwMDAgbiAKMDAwMDAwMDkxMiAwMDAwMCBuIAowMDAwMDAxMDM4IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgMTEgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjExMzMKJSVFT0YK";
+const MARKDOWN_UPLOAD_SOURCE = path.join(TMP, "literal-markdown.pdf");
+const ORG_UPLOAD_SOURCE = path.join(TMP, "literal-org.pdf");
+const OUTLINE_PAGE = path.join(GRAPH, "pages", "PDF Outline.md");
+const MARKDOWN_PAGE = path.join(GRAPH, "pages", "PDF Upload.md");
+const ORG_PAGE = path.join(GRAPH, "pages", "PDF Org.org");
+const PASTE_PAGE = path.join(GRAPH, "pages", "PDF Paste.md");
+const MARKDOWN_STORED = path.join(GRAPH, "assets", "e2e-literal-markdown.pdf");
+const ORG_STORED = path.join(GRAPH, "assets", "e2e-literal-org.pdf");
+const OUTLINE_STORED = path.join(GRAPH, "assets", "e2e-outline.pdf");
+const ORG_SIDECAR = path.join(GRAPH, "assets", "e2e-literal-org.edn");
+const ORG_HLS_PAGE = path.join(GRAPH, "pages", "hls__e2e-literal-org.org");
+const MARKDOWN_UPLOAD_MARKUP = "![literal-markdown.pdf](../assets/e2e-literal-markdown.pdf)";
+const ORG_UPLOAD_MARKUP = "[[../assets/e2e-literal-org.pdf][literal-org.pdf]]";
+const HIGHLIGHT_TEXT = "Select this deterministic text for a highlight.";
 const SECOND_FIRST_ID = "7b6704f8-a337-4336-a711-2ba6bc14fbf1";
 const SECOND_SECOND_ID = "7b6704f8-a337-4336-a711-2ba6bc14fbf2";
 const EDN = `{:highlights [{:id #uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"
@@ -64,7 +85,18 @@ const EDN_SECOND = `{:highlights [{:id #uuid "${SECOND_FIRST_ID}"
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
+fs.mkdirSync(ARTIFACTS, { recursive: true });
+fs.mkdirSync(APP_DATA, { recursive: true });
+fs.writeFileSync(SETTINGS, '{"asset_name_format":"e2e-%assetname.%ext"}\n');
 fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:preferred-format \"Org\"}\n");
+const outlineBytes = Buffer.from(OUTLINE_PDF, "base64");
+fs.writeFileSync(MARKDOWN_UPLOAD_SOURCE, outlineBytes);
+fs.writeFileSync(ORG_UPLOAD_SOURCE, outlineBytes);
+fs.writeFileSync(OUTLINE_STORED, outlineBytes);
+fs.writeFileSync(OUTLINE_PAGE, "- ![Outline fixture](../assets/e2e-outline.pdf)\n");
+fs.writeFileSync(MARKDOWN_PAGE, "- Markdown upload target\n");
+fs.writeFileSync(ORG_PAGE, "* Org upload target\n");
+fs.writeFileSync(PASTE_PAGE, "- Paste target\n");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-sample.pdf"), Buffer.from(PDF, "base64"));
 const secondPdf = Buffer.from(PDF, "base64");
 const pdfLabelOffset = secondPdf.indexOf(Buffer.from("Tine PDF viewer"));
@@ -114,6 +146,8 @@ fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), [
   `- Second exact annotation ((${SECOND_SECOND_ID}))`,
   `- First sample annotation ((${SAMPLE_ID}))`,
   "- [[hls__logseq-second]]",
+  "- [[PDF Upload]]",
+  "- [[PDF Org]]",
   "",
 ].join("\n"));
 
@@ -140,15 +174,56 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const webviewTarget = await startWebdriverApplication(APP, env, NATIVE_PORT);
-const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || TMP, "tauri-driver.log"), "w");
+const XDOTOOL = process.env.E2E_XDOTOOL || "xdotool";
+const xdo = (...args) => execFileSync(XDOTOOL, args, {
+  encoding: "utf8",
+  env: process.env.E2E_XDOTOOL_LIB
+    ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
+    : env,
+  timeout: 15_000,
+}).trim();
+const wmLog = process.platform === "linux" && process.env.E2E_WINDOW_MANAGER
+  ? fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w")
+  : undefined;
+const wm = wmLog !== undefined
+  ? spawn(process.env.E2E_WINDOW_MANAGER, ["--sm-disable"], {
+      env,
+      stdio: ["ignore", wmLog, wmLog],
+      detached: true,
+    })
+  : undefined;
+if (wm) await sleep(600);
+if (wm?.exitCode != null) {
+  throw new Error(`window manager exited before the app launched: ${fs.readFileSync(path.join(ARTIFACTS, "window-manager.log"), "utf8")}`);
+}
+
+const log = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
 const driverArgs = webdriverServerArgs(
   DRIVER_PORT,
   NATIVE_PORT,
   process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
 );
-const td = spawn(TD, driverArgs, { env: webviewTarget.env, stdio: ["ignore", log, log], detached: process.platform !== "win32" });
-await sleep(2500);
+let webviewTarget;
+let td;
+const killDriverTree = () => {
+  try {
+    if (process.platform === "win32" && td?.pid) {
+      spawnSync("taskkill", ["/PID", String(td.pid), "/T", "/F"], { stdio: "ignore" });
+    }
+    else if (td?.pid) process.kill(-td.pid, "SIGKILL");
+  } catch {}
+  stopWebdriverApplication(webviewTarget);
+};
+const startDriverTree = async (session) => {
+  webviewTarget = await startWebdriverApplication(APP, env, NATIVE_PORT, session);
+  td = spawn(TD, driverArgs, {
+    env: webviewTarget.env,
+    stdio: ["ignore", log, log],
+    detached: process.platform !== "win32",
+  });
+  await sleep(2500);
+};
+await startDriverTree("initial");
 
 function processTreeRssKiB() {
   if (process.platform !== "linux") return null;
@@ -233,6 +308,574 @@ async function nativeClickAt(point, id) {
     await browser.releaseActions();
   }
 }
+
+async function nativePointerDrag(start, end, id, duration = 450) {
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id,
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, origin: "viewport", x: Math.round(start.x), y: Math.round(start.y) },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", duration, origin: "viewport", x: Math.round(end.x), y: Math.round(end.y) },
+        { type: "pointerUp", button: 0 },
+      ],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+}
+
+async function nativeKeyChord(modifier, key, id) {
+  try {
+    await browser.performActions([{
+      type: "key",
+      id,
+      actions: [
+        { type: "keyDown", value: modifier },
+        { type: "keyDown", value: key },
+        { type: "keyUp", value: key },
+        { type: "keyUp", value: modifier },
+      ],
+    }]);
+  } finally {
+    await browser.releaseActions();
+  }
+}
+
+async function nativeClickSelector(selector, id, text) {
+  const point = await browser.execute((wanted, wantedText) => {
+    const candidates = [...document.querySelectorAll(wanted)];
+    const element = wantedText == null
+      ? candidates[0]
+      : candidates.find((candidate) => candidate.textContent?.trim() === wantedText);
+    const rect = element?.getBoundingClientRect();
+    return rect && rect.width > 0 && rect.height > 0
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : null;
+  }, selector, text ?? null);
+  if (!point) throw new Error(`native pointer target was absent: ${selector} ${text ?? ""}`.trim());
+  await nativeClickAt(point, id);
+}
+
+async function nativeClickIndexed(selector, index, id) {
+  const point = await browser.execute((wanted, wantedIndex) => {
+    const element = document.querySelectorAll(wanted)[wantedIndex];
+    const rect = element?.getBoundingClientRect();
+    return rect && rect.width > 0 && rect.height > 0
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : null;
+  }, selector, index);
+  if (!point) throw new Error(`native pointer target was absent: ${selector}[${index}]`);
+  await nativeClickAt(point, id);
+}
+
+async function typeKeys(text) {
+  for (const key of text) await browser.keys([key]);
+}
+
+async function routeToPage(name) {
+  const current = await browser.$("h1.page-title").getText().catch(() => "");
+  if (current.trim() === name) return;
+  await nativeClickSelector('button[title^="Search (Ctrl+K)"]', `route-${name.replaceAll(/\W+/g, "-")}`);
+  const input = await browser.$(".switcher-input");
+  await input.waitForExist({ timeout: 5000 });
+  await typeKeys(name);
+  await browser.waitUntil(() => browser.execute((wanted) => {
+    const active = document.querySelector(".switcher-row.active .switcher-name");
+    if (active?.textContent?.trim() === wanted) return true;
+    return [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
+      .some((node) => node.textContent?.trim() === wanted);
+  }, name), {
+    timeout: 10_000,
+    timeoutMsg: `switcher did not expose routed page ${name}`,
+  });
+  const exactActive = await browser.execute((wanted) =>
+    document.querySelector(".switcher-row.active .switcher-name")?.textContent?.trim() === wanted, name);
+  if (!exactActive) {
+    const point = await browser.execute((wanted) => {
+      const nameElement = [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
+        .find((node) => node.textContent?.trim() === wanted);
+      const rect = nameElement?.closest(".switcher-row")?.getBoundingClientRect();
+      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+    }, name);
+    if (!point) throw new Error(`exact switcher result disappeared for ${name}`);
+    await nativeClickAt(point, `route-result-${name.replaceAll(/\W+/g, "-")}`);
+  } else {
+    await browser.keys(["Enter"]);
+  }
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
+    timeout: 10_000,
+    timeoutMsg: `named page ${name} did not become the active route`,
+  });
+}
+
+function sha256(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function graphSnapshot() {
+  const snapshot = {};
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) snapshot[path.relative(GRAPH, absolute)] = sha256(absolute);
+    }
+  };
+  walk(GRAPH);
+  return snapshot;
+}
+
+function ednIds(content) {
+  return [...content.matchAll(/#uuid "([^"]+)"/g)].map((match) => match[1]);
+}
+
+function ednHighlightEntry(content, id, color) {
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedColor = color.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const entry = content.match(new RegExp(
+    `\\{:id #uuid "${escapedId}"[\\s\\S]*?:properties \\{:color "${escapedColor}"\\}\\}`,
+  ))?.[0];
+  if (!entry) throw new Error(`sidecar has no ${color} highlight entry for ${id}`);
+  return entry;
+}
+
+function ednBounding(entry) {
+  const match = entry.match(/:bounding \{:x1 ([^ ]+) :y1 ([^ ]+) :x2 ([^ ]+) :y2 ([^ ]+) :width ([^ ]+) :height ([^ }\n]+)/);
+  if (!match) throw new Error(`sidecar highlight has no Logseq bounding geometry: ${entry}`);
+  const [x1, y1, x2, y2, width, height] = match.slice(1).map(Number);
+  if (![x1, y1, x2, y2, width, height].every(Number.isFinite)) {
+    throw new Error(`sidecar highlight geometry is not numeric: ${entry}`);
+  }
+  return { x1, y1, x2, y2, width, height };
+}
+
+function assertNear(actual, expected, label, tolerance = 1.25) {
+  if (Math.abs(actual - expected) > tolerance) {
+    throw new Error(`${label} mismatch: expected ${expected}, received ${actual} (±${tolerance})`);
+  }
+}
+
+async function chooseGtkFile(source) {
+  if (process.platform !== "linux") throw new Error("literal GTK file chooser automation is Linux-only");
+  let raw;
+  try {
+    raw = xdo("search", "--sync", "--onlyvisible", "--name", "^Choose a file$");
+  } catch (error) {
+    throw new Error(`GTK chooser did not appear for ${source}: ${error?.stderr?.toString().trim() || error?.message || error}`);
+  }
+  const ids = raw.split(/\s+/).filter(Boolean);
+  const id = ids.at(-1);
+  if (!id) throw new Error(`xdotool returned no GTK chooser window for ${source}`);
+  const title = xdo("getwindowname", id);
+  xdo("windowactivate", "--sync", id);
+  // GTK4's file chooser owns a focused child surface; XTEST reaches it only
+  // through the active X11 window, not xdotool's --window XSendEvent path.
+  xdo("key", "--clearmodifiers", "ctrl+l");
+  xdo("type", "--clearmodifiers", "--delay", "1", source);
+  try {
+    execFileSync("import", ["-window", id, path.join(ARTIFACTS, `gtk-chooser-${path.basename(source)}.png`)], {
+      env,
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+  } catch {}
+  // GTK's location entry first resolves the absolute path; on the current
+  // rfd/GTK bridge it keeps the chooser open until the default Open accelerator
+  // is invoked afterwards. This is still entirely native X11 keyboard input.
+  xdo("key", "--clearmodifiers", "Return");
+  await sleep(120);
+  try {
+    const visible = xdo("search", "--onlyvisible", "--name", "^Choose a file$").split(/\s+/);
+    if (visible.includes(id)) xdo("key", "--clearmodifiers", "alt+o");
+  } catch {
+    // The first Return already accepted the path and closed the chooser.
+  }
+  return { id, title };
+}
+
+async function closePdfWithNativePointer(id) {
+  await nativeClickSelector('button[title="Close PDF"]', id);
+  await browser.$(".pdf-viewer").waitForExist({ reverse: true, timeout: 10_000 });
+}
+
+async function nativeClickPdfLink(filename, label, id) {
+  const point = await browser.execute((wanted, wantedLabel) => {
+    const link = [...document.querySelectorAll(".page-blocks .pdf-link")]
+      .find((candidate) => candidate.outerHTML.includes(wanted) || candidate.textContent?.includes(wantedLabel));
+    const rect = link?.getBoundingClientRect();
+    return rect && rect.width > 0 && rect.height > 0
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : null;
+  }, filename, label);
+  if (!point) {
+    const links = await browser.execute(() => [...document.querySelectorAll(".page-blocks .pdf-link")]
+      .map((link) => link.outerHTML));
+    throw new Error(`rendered PDF link for ${filename} was absent: ${JSON.stringify(links)}`);
+  }
+  await nativeClickAt(point, id);
+}
+
+async function reopenCurrentPagePdf(filename, label, id) {
+  await browser.waitUntil(() => browser.execute((wanted, wantedLabel) =>
+    [...document.querySelectorAll(".page-blocks .pdf-link")]
+      .some((link) => link.outerHTML.includes(wanted) || link.textContent?.includes(wantedLabel)), filename, label), {
+    timeout: 10_000,
+    timeoutMsg: `page did not render the PDF link for ${filename}/${label}`,
+  });
+  await nativeClickPdfLink(filename, label, id);
+  await browser.waitUntil(() => browser.execute((wanted) =>
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === wanted
+      && document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true", filename), {
+    timeout: 20_000,
+    timeoutMsg: `real PDF reopen did not mount ${filename}`,
+  });
+}
+
+async function uploadOnCurrentPage(source, stored, expectedMarkup, receiptKey) {
+  await nativeClickSelector(".page-blocks .ls-block .block-content-wrapper", `${receiptKey}-editor`);
+  const editor = await browser.$(".page-blocks textarea.block-editor");
+  await editor.waitForExist({ timeout: 5000 });
+  await browser.keys(["End"]);
+  await typeKeys(" /upload");
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".autocomplete .ac-item.active .ac-label")?.textContent?.trim() === "Upload an asset"), {
+    timeout: 10_000,
+    timeoutMsg: "literal /upload typing did not activate Upload an asset",
+  });
+  await browser.keys(["Enter"]);
+  const chooser = await chooseGtkFile(source);
+  literalReceipt.rows.upload[receiptKey] = { chooser, source, stored, fixtureHash: sha256(source) };
+  await browser.waitUntil(() => fs.existsSync(stored), {
+    timeout: 15_000,
+    timeoutMsg: `GTK-selected asset was not stored at ${stored}`,
+  });
+  const pageFile = receiptKey === "markdown" ? MARKDOWN_PAGE : ORG_PAGE;
+  await browser.waitUntil(() => fs.readFileSync(pageFile, "utf8").includes(expectedMarkup), {
+    timeout: 10_000,
+    timeoutMsg: `uploaded ${receiptKey} source did not persist ${expectedMarkup}`,
+  });
+  const actualHash = sha256(stored);
+  const fixtureHash = sha256(source);
+  if (actualHash !== fixtureHash) {
+    throw new Error(`${receiptKey} upload changed fixture bytes: ${actualHash} != ${fixtureHash}`);
+  }
+  literalReceipt.rows.upload[receiptKey].sourceMarkup = expectedMarkup;
+  await browser.keys(["Escape"]);
+  try {
+    await browser.waitUntil(() => browser.execute((filename, label) =>
+      [...document.querySelectorAll(".page-blocks .pdf-link")]
+        .some((link) => link.outerHTML.includes(filename) || link.textContent?.includes(label)), path.basename(stored), path.basename(source)), {
+      timeout: 10_000,
+      timeoutMsg: `${receiptKey} page did not render its exact uploaded PDF link`,
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute(() => ({
+      title: document.querySelector("h1.page-title")?.textContent,
+      blocks: [...document.querySelectorAll(".page-blocks")].map((page) => page.innerHTML.slice(0, 4000)),
+      links: [...document.querySelectorAll(".page-blocks .pdf-link")].map((link) => link.outerHTML),
+      editor: document.querySelector("textarea.block-editor")?.value,
+    }));
+    fs.writeFileSync(path.join(ARTIFACTS, `${receiptKey}-upload-render-diagnostic.json`), JSON.stringify(diagnostic, null, 2));
+    throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
+  }
+  await nativeClickPdfLink(path.basename(stored), path.basename(source), `${receiptKey}-uploaded-pdf-link`);
+  try {
+    await browser.waitUntil(() => browser.execute((filename) =>
+      document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === filename
+        && document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true", path.basename(stored)), {
+      timeout: 20_000,
+      timeoutMsg: `${receiptKey} uploaded PDF did not reopen in the real viewer`,
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute(() => ({
+      viewer: document.querySelector(".pdf-viewer")?.outerHTML.slice(0, 1500),
+      links: [...document.querySelectorAll(".pdf-link")].map((link) => ({
+        text: link.textContent,
+        href: link.getAttribute("href"),
+        outer: link.outerHTML.slice(0, 800),
+        rect: (() => {
+          const r = link.getBoundingClientRect();
+          return { left: r.left, top: r.top, width: r.width, height: r.height };
+        })(),
+      })),
+      route: location.href,
+    }));
+    fs.writeFileSync(path.join(ARTIFACTS, `${receiptKey}-upload-reopen-diagnostic.json`), JSON.stringify(diagnostic, null, 2));
+    try { await browser.saveScreenshot(path.join(ARTIFACTS, `${receiptKey}-upload-reopen-diagnostic.png`)); } catch {}
+    throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
+  }
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".textLayer")?.textContent?.includes("Outline fixture page one")), {
+    timeout: 10_000,
+    timeoutMsg: `${receiptKey} uploaded PDF did not render its exact fixture text`,
+  });
+}
+
+async function proveNativeUploadsThemesAndHighlights() {
+  // Exercise the deterministic outline before GTK creates any transient dialog
+  // surfaces. It is a normal graph asset, not a backend shortcut.
+  await closePdfWithNativePointer("close-existing-pdf-before-native-upload");
+  await routeToPage("PDF Outline");
+  await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "pdf-outline-open-fixture");
+
+  // Every theme choice is a literal pointer click. Inspect only after each click
+  // to prove the local reader state rather than manufacturing its state from DOM.
+  await nativeClickSelector('button[title="More settings"]', "pdf-theme-settings-open");
+  await browser.$(".pdf-settings-menu").waitForExist({ timeout: 5_000 });
+  const themeState = {};
+  for (const [theme, cssBackground] of [["light", "rgb(255, 255, 255)"], ["warm", "rgb(246, 239, 223)"], ["dark", "rgb(32, 33, 36)"]]) {
+    await nativeClickSelector(`button[aria-label="${theme[0].toUpperCase()}${theme.slice(1)} PDF theme"]`, `pdf-theme-${theme}`);
+    const state = await browser.execute((expectedTheme) => {
+      const viewer = document.querySelector(".pdf-viewer");
+      const choice = document.querySelector(`button[aria-label="${expectedTheme[0].toUpperCase()}${expectedTheme.slice(1)} PDF theme"]`);
+      return {
+        theme: viewer?.getAttribute("data-theme"),
+        active: choice?.classList.contains("active") ?? false,
+        pressed: choice?.getAttribute("aria-pressed"),
+        background: viewer ? getComputedStyle(viewer).backgroundColor : null,
+        local: localStorage.getItem("ls-pdf-viewer-theme"),
+      };
+    }, theme);
+    if (state.theme !== theme || !state.active || state.pressed !== "true" || state.background !== cssBackground || state.local !== theme) {
+      throw new Error(`native ${theme} theme click did not produce the local reader state: ${JSON.stringify(state)}`);
+    }
+    themeState[theme] = state;
+  }
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-settings-menu").waitForExist({ reverse: true, timeout: 5_000 });
+
+  // The fixture contains Chapter One → Nested Page Two. Expansion and destination
+  // navigation are pointer actions; the DOM only observes their visible result.
+  await nativeClickSelector('button[title="Outline"]', "pdf-outline-open");
+  try {
+    await browser.waitUntil(() => browser.execute(() =>
+      document.querySelector(".pdf-outline-panel")?.textContent?.includes("Chapter One")), {
+      timeout: 10_000,
+      timeoutMsg: "embedded nested PDF outline did not parse into the native reader",
+    });
+  } catch (error) {
+    const diagnostic = await browser.execute(() => ({
+      filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),
+      ready: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready"),
+      outlineButton: document.querySelector('button[title="Outline"]')?.outerHTML,
+      outline: document.querySelector(".pdf-outline-panel")?.outerHTML,
+      pageText: document.querySelector(".textLayer")?.textContent,
+    })).catch((driverError) => ({ driverError: String(driverError) }));
+    fs.writeFileSync(path.join(ARTIFACTS, "pdf-outline-diagnostic.json"), JSON.stringify(diagnostic, null, 2));
+    try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-outline-diagnostic.png")); } catch {}
+    throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
+  }
+  await nativeClickSelector(".pdf-outline-disclosure", "pdf-outline-expand");
+  await browser.$(".pdf-outline-children .pdf-outline-label").waitForExist({ timeout: 5_000 });
+  const expanded = await browser.$(".pdf-outline-disclosure").getAttribute("aria-expanded");
+  if (expanded !== "true") throw new Error(`real outline expansion did not set aria-expanded=true: ${expanded}`);
+  await nativeClickSelector(".pdf-outline-children .pdf-outline-label", "pdf-outline-navigate", "Nested Page Two");
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".pdf-page-input")?.value === "2"), {
+    timeout: 10_000,
+    timeoutMsg: "nested outline pointer navigation did not move to page two",
+  });
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
+  await nativeClickSelector('button[title="Outline"]', "pdf-outline-reopen");
+  await browser.$(".pdf-outline-panel").waitForExist({ timeout: 5_000 });
+  await nativeClickSelector(".pdf-scroll", "pdf-outline-outside-dismiss");
+  await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
+
+  // Closing and reopening remounts PdfViewer. This proves the final dark choice
+  // came from local persistence rather than the old component signal.
+  await closePdfWithNativePointer("outline-close-for-theme-reopen");
+  await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "outline-reopen-after-theme");
+  const remountedTheme = await browser.execute(() => ({
+    theme: document.querySelector(".pdf-viewer")?.getAttribute("data-theme"),
+    local: localStorage.getItem("ls-pdf-viewer-theme"),
+  }));
+  if (remountedTheme.theme !== "dark" || remountedTheme.local !== "dark") {
+    throw new Error(`PDF theme was not locally persistent after a real close/reopen: ${JSON.stringify(remountedTheme)}`);
+  }
+  literalReceipt.rows.themesOutline = { choices: themeState, remountedTheme, nestedDestinationPage: 2 };
+
+  // The two upload pages deliberately have explicit extensions: the same literal
+  // picker action must write Markdown versus Org syntax, while both stored assets
+  // use the device-local e2e-%assetname.%ext naming template seeded above.
+  await closePdfWithNativePointer("outline-close-before-native-uploads");
+  await routeToPage("PDF Upload");
+  await uploadOnCurrentPage(
+    MARKDOWN_UPLOAD_SOURCE,
+    MARKDOWN_STORED,
+    MARKDOWN_UPLOAD_MARKUP,
+    "markdown",
+  );
+  await closePdfWithNativePointer("markdown-close-uploaded-pdf");
+
+  await routeToPage("PDF Org");
+  await uploadOnCurrentPage(
+    ORG_UPLOAD_SOURCE,
+    ORG_STORED,
+    ORG_UPLOAD_MARKUP,
+    "org",
+  );
+
+  // Select the deterministic line with an actual pointer drag across the live
+  // PDF.js text layer. No Range/selection event is synthesized in this proof.
+  await browser.waitUntil(() => browser.execute((expectedText) =>
+    [...document.querySelectorAll(".textLayer span")].some((span) => span.textContent?.trim() === expectedText), HIGHLIGHT_TEXT), {
+    timeout: 10_000,
+    timeoutMsg: "deterministic PDF text was not exposed for literal pointer selection",
+  });
+  const selectionTarget = await browser.execute((expectedText) => {
+    const span = [...document.querySelectorAll(".textLayer span")]
+      .find((candidate) => candidate.textContent?.trim() === expectedText);
+    const rect = span?.getBoundingClientRect();
+    return rect && rect.width > 20 && rect.height > 5
+      ? { start: { x: rect.left + 1, y: rect.top + rect.height / 2 }, end: { x: rect.right - 1, y: rect.top + rect.height / 2 } }
+      : null;
+  }, HIGHLIGHT_TEXT);
+  if (!selectionTarget) throw new Error("deterministic PDF text has no usable native-drag geometry");
+  await nativePointerDrag(selectionTarget.start, selectionTarget.end, "pdf-text-highlight-selection");
+  await browser.$(".pdf-color-menu").waitForExist({ timeout: 5_000 });
+  const selected = await browser.execute(() => {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const page = range?.commonAncestorContainer.parentElement?.closest(".pdf-page")
+      ?? document.querySelector(".pdf-page");
+    const pageRect = page?.getBoundingClientRect();
+    const rects = range ? [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0) : [];
+    const zoom = Number(document.querySelector(".pdf-zoom-level")?.textContent?.replace("%", "")) / 100;
+    return {
+      text: selection?.toString().trim() ?? "",
+      page: Number(page?.getAttribute("data-page")),
+      zoom,
+      pageWidth: pageRect?.width,
+      pageHeight: pageRect?.height,
+      pageLeft: pageRect?.left,
+      pageTop: pageRect?.top,
+      rects: rects.map((rect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })),
+    };
+  });
+  if (selected.text !== HIGHLIGHT_TEXT || selected.page !== 1 || !Number.isFinite(selected.zoom) || selected.rects.length !== 1) {
+    throw new Error(`native pointer selection was not the exact deterministic line: ${JSON.stringify(selected)}`);
+  }
+  const beforeTextIds = fs.existsSync(ORG_SIDECAR) ? ednIds(fs.readFileSync(ORG_SIDECAR, "utf8")) : [];
+  await nativeClickIndexed(".pdf-color-swatch", 4, "pdf-text-highlight-purple");
+  await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  let textHighlightId;
+  await browser.waitUntil(() => {
+    if (!fs.existsSync(ORG_SIDECAR) || !fs.existsSync(ORG_HLS_PAGE)) return false;
+    const written = fs.readFileSync(ORG_SIDECAR, "utf8");
+    textHighlightId = ednIds(written).find((id) => !beforeTextIds.includes(id));
+    return !!textHighlightId && written.includes(`:content {:text "${HIGHLIGHT_TEXT}" :image nil}`)
+      && written.includes(':properties {:color "purple"}')
+      && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${textHighlightId}`);
+  }, { timeout: 15_000, timeoutMsg: "native purple text selection did not persist a matching sidecar and hls annotation" });
+  const textSidecar = fs.readFileSync(ORG_SIDECAR, "utf8");
+  const textHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
+  const textEntry = ednHighlightEntry(textSidecar, textHighlightId, "purple");
+  if (!textEntry.includes(`:content {:text "${HIGHLIGHT_TEXT}" :image nil}`)
+    || !textHls.includes(`* ${HIGHLIGHT_TEXT}`)
+    || !textHls.includes(":hl-page: 1")
+    || !textHls.includes(":hl-color: purple")
+    || !textHls.includes(`:id: ${textHighlightId}`)) {
+    throw new Error(`native text highlight sidecar/hls identity is incomplete: ${JSON.stringify({ textEntry, textHls })}`);
+  }
+  const bounding = ednBounding(textEntry);
+  const rect = selected.rects[0];
+  const expectedGeometry = {
+    x1: (rect.left - selected.pageLeft) / selected.zoom,
+    y1: (rect.top - selected.pageTop) / selected.zoom,
+    x2: (rect.right - selected.pageLeft) / selected.zoom,
+    y2: (rect.bottom - selected.pageTop) / selected.zoom,
+    width: selected.pageWidth / selected.zoom,
+    height: selected.pageHeight / selected.zoom,
+  };
+  for (const key of Object.keys(expectedGeometry)) assertNear(bounding[key], expectedGeometry[key], `text highlight ${key}`);
+  await browser.waitUntil(() => browser.execute((id) => !!document.querySelector(`.pdf-hl[data-highlight-id="${id}"]`), textHighlightId), {
+    timeout: 5_000,
+    timeoutMsg: "persisted text highlight did not paint a live overlay",
+  });
+
+  // Tauri copied the generated block ref to the native clipboard; this actual
+  // Ctrl+V in a separately routed Markdown editor proves it is pasteable text.
+  const textRef = `((${textHighlightId}))`;
+  await closePdfWithNativePointer("org-close-for-clipboard-paste");
+  await routeToPage("PDF Paste");
+  await nativeClickSelector(".page-blocks .ls-block .block-content-wrapper", "pdf-ref-paste-editor");
+  const pasteEditor = await browser.$(".page-blocks textarea.block-editor");
+  await pasteEditor.waitForExist({ timeout: 5_000 });
+  await browser.keys(["End"]);
+  await nativeKeyChord("\uE009", "v", "pdf-generated-ref-native-paste");
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(() => fs.readFileSync(PASTE_PAGE, "utf8").includes(textRef), {
+    timeout: 10_000,
+    timeoutMsg: "the generated PDF ref was not pasted from the native clipboard into Markdown",
+  });
+
+  await routeToPage("PDF Org");
+  await reopenCurrentPagePdf(path.basename(ORG_STORED), path.basename(ORG_UPLOAD_SOURCE), "org-reopen-text-highlight");
+  await browser.$(`.pdf-hl[data-highlight-id="${textHighlightId}"]`).waitForExist({ timeout: 10_000 });
+
+  // A separate real Shift+drag (the OG non-macOS gesture) creates an area image
+  // with a nondefault red swatch, then a close/reopen proves the saved overlay.
+  let areaHighlightId;
+  if (process.platform !== "darwin") {
+    await browser.$(".pdf-page").scrollIntoView({ block: "center", inline: "center" });
+    const areaDrag = await browser.execute(() => {
+      const page = document.querySelector(".pdf-page");
+      const rect = page?.getBoundingClientRect();
+      if (!rect) return null;
+      const start = { x: Math.max(rect.left + 24, 24), y: Math.max(rect.top + 24, 80) };
+      const end = { x: Math.min(start.x + 130, rect.right - 24), y: Math.min(start.y + 76, rect.bottom - 24) };
+      return end.x - start.x > 10 && end.y - start.y > 10 ? { start, end } : null;
+    });
+    if (!areaDrag) throw new Error("uploaded PDF did not expose a usable Shift-area drag region");
+    const beforeAreaIds = ednIds(fs.readFileSync(ORG_SIDECAR, "utf8"));
+    await nativeShiftDrag(areaDrag.start, areaDrag.end);
+    await browser.$(".pdf-color-menu").waitForExist({ timeout: 5_000 });
+    await nativeClickIndexed(".pdf-color-swatch", 3, "pdf-area-red");
+    await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
+    await browser.waitUntil(() => {
+      const written = fs.readFileSync(ORG_SIDECAR, "utf8");
+      areaHighlightId = ednIds(written).find((id) => !beforeAreaIds.includes(id));
+      if (!areaHighlightId || !written.includes(':properties {:color "red"}')) return false;
+      const image = fs.readdirSync(path.join(GRAPH, "assets", "e2e-literal-org"))
+        .find((name) => name.startsWith(`1_${areaHighlightId}_`) && name.endsWith(".png"));
+      return !!image && fs.statSync(path.join(GRAPH, "assets", "e2e-literal-org", image)).size > 0
+        && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${areaHighlightId}`);
+    }, { timeout: 15_000, timeoutMsg: "native Shift-area drag did not persist its red crop and hls annotation" });
+    const areaEntry = ednHighlightEntry(fs.readFileSync(ORG_SIDECAR, "utf8"), areaHighlightId, "red");
+    const areaHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
+    if (!areaEntry.includes(":image ") || !areaHls.includes(":hl-color: red") || !areaHls.includes(":hl-type: area")) {
+      throw new Error(`native area highlight persistence is incomplete: ${JSON.stringify({ areaEntry, areaHls })}`);
+    }
+    await closePdfWithNativePointer("org-close-area-reopen");
+    await reopenCurrentPagePdf(path.basename(ORG_STORED), path.basename(ORG_UPLOAD_SOURCE), "org-reopen-area-highlight");
+    await browser.$(`.pdf-hl-area[data-highlight-id="${areaHighlightId}"]`).waitForExist({ timeout: 10_000 });
+    literalReceipt.rows.area = { id: areaHighlightId, color: "red", reopened: true };
+  }
+  literalReceipt.rows.textHighlight = {
+    id: textHighlightId,
+    text: HIGHLIGHT_TEXT,
+    color: "purple",
+    sidecar: ORG_SIDECAR,
+    hls: ORG_HLS_PAGE,
+    bounding,
+    clipboardPaste: { page: PASTE_PAGE, reference: textRef },
+    reopened: true,
+  };
+  literalReceipt.graph = graphSnapshot();
+  try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-native-proof.png")); } catch {}
+}
+
+const literalReceipt = {
+  schemaVersion: 1,
+  app: path.resolve(APP),
+  appSha256: sha256(APP),
+  settings: { asset_name_format: "e2e-%assetname.%ext" },
+  rows: { upload: {}, textHighlight: {}, area: {}, themesOutline: {} },
+};
 
 try {
   browser = await remote({
@@ -649,12 +1292,21 @@ try {
   if ((await browser.$(".pdf-viewer")).elementId !== annotationViewerElementId) {
     throw new Error("AnnotationBody navigation remounted the same PDF resource");
   }
+  // The literal upload proof drives the native GTK chooser. Keep the existing
+  // cross-platform PDF compatibility assertions above in Windows smoke, while
+  // running this additional native desktop workflow only on Linux.
+  if (process.platform === "linux") await proveNativeUploadsThemesAndHighlights();
   console.log(`PASS: Logseq PDFs keep asset identity separate from exact highlight navigation, with bounded resources, restored view state, OG-compatible notes, correct geometry, and compatible write-back on ${process.platform}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(td.pid), "/T", "/F"], { stdio: "ignore" });
-  else try { process.kill(-td.pid, "SIGKILL"); } catch {}
-  stopWebdriverApplication(webviewTarget);
+  killDriverTree();
   stopCiWindowsApp();
+  if (wm?.pid) {
+    try { process.kill(-wm.pid, "SIGKILL"); } catch {}
+  }
+  if (wmLog !== undefined) fs.closeSync(wmLog);
+  literalReceipt.finishedAt = new Date().toISOString();
+  literalReceipt.graph = literalReceipt.graph || graphSnapshot();
+  try { fs.writeFileSync(path.join(ARTIFACTS, "pdf-native-receipt.json"), `${JSON.stringify(literalReceipt, null, 2)}\n`); } catch {}
   fs.closeSync(log);
 }
