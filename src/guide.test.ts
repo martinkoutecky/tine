@@ -56,4 +56,16 @@ describe("guide copy inventory", () => {
     expect(copy).toHaveBeenCalledWith("Tine Guide");
     expect(pageInventoryRev()).toBeGreaterThan(before);
   });
+
+  it("does not refresh page inventory for an assets-only Guide repair", async () => {
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockResolvedValue({
+      name: "tine-guide/Tine Guide",
+      created: true,
+      created_pages: [],
+      copied_assets: ["assets/guide-image.png"],
+    });
+    const before = pageInventoryRev();
+    await copyGuideIntoGraph("Tine-guide/Tine Guide");
+    expect(pageInventoryRev()).toBe(before);
+  });
 });
