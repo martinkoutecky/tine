@@ -40,7 +40,7 @@ const cachedManifest = JSON.stringify({
   entry: "plugin.wasm",
   platforms: ["desktop"],
   capabilities: ["commands.register"],
-  contributions: { commands: [{ id: "forbidden", label: "Forbidden cached command" }] },
+  contributions: { commands: [{ id: "forbidden", title: "Forbidden cached command" }] },
 });
 
 afterEach(() => {
@@ -68,6 +68,7 @@ describe("community extension startup revocations", () => {
       selected: true,
       enabled: true,
     }]);
+    const persistEnabled = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
     const readEntry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
     const createRuntime = vi.spyOn(PluginRuntime, "create");
     const liveSignals: AbortSignal[] = [];
@@ -86,6 +87,7 @@ describe("community extension startup revocations", () => {
     await vi.waitFor(() => expect(liveSignals.every((signal) => signal.aborted)).toBe(true));
     expect(readEntry).not.toHaveBeenCalled();
     expect(createRuntime).not.toHaveBeenCalled();
+    expect(persistEnabled).toHaveBeenCalledWith(revokedId, revokedVersion, false);
     expect(startup.initialRevocations).toEqual(new Set([revokedKey]));
     expect(verify).toHaveBeenCalledWith(cachedIndex, "valid-signature");
   });
