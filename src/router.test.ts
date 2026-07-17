@@ -273,6 +273,29 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     // The path-pinned route is distinct, so it actually navigates (new history entry).
     expect((route() as { path?: string }).path).toBe("journals/Friday, 26-06-2026.org");
   });
+
+  it("retains the loaded physical owner while zooming into and back out of a block", () => {
+    const path = "pages/client-b/Twin.md";
+    const id = "11111111-1111-4111-8111-111111111111";
+    setDoc({
+      byId: {
+        [id]: { id, raw: "Client B", collapsed: false, parent: null, page: "Twin", children: [] },
+      },
+      pages: [{
+        name: "Twin", kind: "page", title: "Twin", preBlock: null, roots: [id],
+        format: "md", readOnly: false, guide: false, path,
+      }],
+      feed: ["Twin"],
+      loaded: true,
+    });
+    openFile(path, "Twin", "page");
+
+    focusBlock(id);
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id });
+
+    focusBlock(null);
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });
+  });
 });
 
 describe("pinned-left ordering", () => {
