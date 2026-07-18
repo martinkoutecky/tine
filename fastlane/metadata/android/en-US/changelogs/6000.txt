@@ -1,0 +1,3 @@
+Tine 0.6 adds experimental capability-limited WebAssembly plugins and token themes, local package installation, current-page search and sidebar results, page action menus, Sheet field renaming, Linked Reference filters, responsive sidebars, and many PDF, query, Unicode, navigation, editing, and stability fixes.
+
+F-Droid builds omit the network community plugin/theme catalogue; local packages, installed plugins, the plugin host, and built-in themes still work.

@@ -84,6 +84,13 @@ Tine 0.6 exposes the complete plugin/theme lifecycle on Android. `ios` is reserv
 for portable packages but Tine 0.6 does not ship an iOS host. See the
 [Android phone smoke test](android-smoke.md) for the hardware release gate.
 
+The F-Droid build compiles out the network-backed community plugin and theme
+catalogue because that store does not permit downloading executable code at
+runtime. Its capability-limited plugin host, already-installed plugins, local
+`manifest.json` + `.wasm` installation, local token-theme installation, and
+built-in themes remain available. Tine builds from other distribution channels
+retain the signed community catalogue.
+
 ## Compatibility and versioning
 
 The manifest identifies plugin API `0.2`; protocol messages use

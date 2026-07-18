@@ -64,6 +64,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Windows, Android, performance, UI E2E, and Flatpak proofs remain manually
   dispatchable between releases. Release packaging fails closed unless all full
   CI jobs succeeded on the exact candidate commit.
+- **F-Droid builds now meet the store's no-runtime-code-download policy.** They
+  omit the network-backed community plugin and theme catalogue. The
+  capability-limited plugin host, local plugin/theme package installation,
+  already-installed plugins, and built-in themes remain available; other Tine
+  distribution builds retain the signed community catalogue.
 
 ### Fixed
 

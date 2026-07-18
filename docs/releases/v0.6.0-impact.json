@@ -404,6 +404,32 @@
       }
     },
     {
+      "section": "Changed",
+      "text": "**F-Droid builds now meet the store's no-runtime-code-download policy.** They omit the network-backed community plugin and theme catalogue. The capability-limited plugin host, local plugin/theme package installation, already-installed plugins, and built-in themes remain available; other Tine distribution builds retain the signed community catalogue.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {
+        "status": "update",
+        "reason": "The feature inventory and plugin guide now document the distribution-specific catalogue boundary and the local capabilities that remain available.",
+        "refs": [
+          "docs/FEATURES.md",
+          "docs/plugins/README.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "The public Plugins page now distinguishes the F-Droid build from distribution builds that retain the signed community catalogue.",
+        "refs": [
+          "website/plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; the release changelog and distribution documentation carry this packaging distinction.",
+        "refs": []
+      }
+    },
+    {
       "section": "Fixed",
       "text": "**Explicitly selected pages and blocks now keep their exact physical file owner through follow-on actions.** Ctrl-K, page titles, block zoom, sidebar, tabs, Recent, friendly query results, menus, and session restore preserve the selected graph-relative path. Stale or ambiguous rename/delete targets fail closed instead of touching a same-name sibling, while older logical/pathless links, Favorites, and sessions remain compatible.",
       "userVisible": true,

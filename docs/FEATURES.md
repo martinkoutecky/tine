@@ -557,6 +557,11 @@ within a column; merged cells are still v2+.
   version shows its source, platforms, declared capabilities, package/report digests,
   and safety findings. Installation leaves it disabled until the user reviews and
   enables it; cached signed revocations apply before startup activation.
+- **F-Droid distribution boundary** — F-Droid builds omit the network community
+  plugin/theme catalogue to comply with the store's runtime-code-download policy.
+  The bounded plugin host, installed and locally selected plugin/theme packages,
+  and built-in themes remain available; other distribution builds retain the signed
+  catalogue.
 - **Host-owned extension points** — plugins can contribute command-palette actions,
   slash commands, bounded block decorations, declarative settings, and narrowly
   preconditioned focused-block edits only through declared capabilities. Plugin
