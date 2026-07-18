@@ -175,6 +175,22 @@ async function nativeSelectAll() {
   await browser.releaseActions();
 }
 
+async function nativeArrowDown() {
+  // The form traversal above uses a modifier-bearing W3C source. Reset every
+  // remote input source before this semantic editor action: a leaked Shift
+  // makes the editor correctly leave native selection navigation untouched.
+  await browser.releaseActions();
+  await browser.performActions([{
+    type: "key",
+    id: "page-properties-arrow-down",
+    actions: [
+      { type: "keyDown", value: "\uE015" },
+      { type: "keyUp", value: "\uE015" },
+    ],
+  }]);
+  await browser.releaseActions();
+}
+
 async function pageArrowDownCapsule(phase) {
   return browser.execute((failurePhase) => {
     const describeEditor = (element) => {
@@ -229,6 +245,16 @@ async function preparePageHeaderArrowDown(expectedValue) {
       const surface = textarea?.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
       const witness = {
         key: event.key,
+        flags: {
+          shift: event.shiftKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+          meta: event.metaKey,
+          repeat: event.repeat,
+          composing: event.isComposing,
+          bubbles: event.bubbles,
+          cancelable: event.cancelable,
+        },
         target: textarea ? {
           value: textarea.value,
           blockId: block?.getAttribute("data-block-id") ?? null,
@@ -401,7 +427,7 @@ try {
     throw new Error(JSON.stringify(await pageArrowDownCapsule("pre-key")));
   }
   try {
-    await browser.keys(["ArrowDown"]);
+    await nativeArrowDown();
     await browser.waitUntil(() => browser.execute(() => {
       const active = document.activeElement;
       return active instanceof HTMLTextAreaElement
