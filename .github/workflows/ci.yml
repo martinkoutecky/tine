@@ -60,6 +60,7 @@ jobs:
           node scripts/check-flatpak-node-sources.mjs
           node scripts/check-flatpak-cargo-sources.mjs
           node scripts/test-release-readiness-lib.mjs
+          node scripts/test-reddit-release-evidence.mjs
           node scripts/test-release-pipeline.mjs
 
       - name: lsdoc generated artifacts are current
@@ -106,6 +107,7 @@ jobs:
       - name: Release pipeline contract fixtures
         run: |
           node scripts/test-release-readiness-lib.mjs
+          node scripts/test-reddit-release-evidence.mjs
           node scripts/test-release-pipeline.mjs
 
       - name: Performance baseline policy is current

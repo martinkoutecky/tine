@@ -10,6 +10,7 @@ import {
   releaseSection,
   validateDisposition,
 } from "./release-readiness-lib.mjs";
+import { validateRedditReleaseEvidence } from "./reddit-release-evidence-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
@@ -89,13 +90,12 @@ if (section && fs.existsSync(impactPath)) {
     if (!fs.existsSync(redditPath)) problems.push(`missing minor Reddit/blog evidence ${path.basename(redditPath)}`);
     else {
       const reddit = JSON.parse(fs.readFileSync(redditPath, "utf8"));
-      if (reddit.version !== version || reddit.schemaVersion !== 1) problems.push("Reddit/blog evidence version or schema mismatch");
-      if (reddit.author !== "al-Quaknaa") problems.push("Reddit/blog evidence has unexpected author");
-      if (!Array.isArray(reddit.unprocessed) || reddit.unprocessed.length) problems.push("Reddit/blog evidence has unprocessed author posts");
-      if (!Array.isArray(reddit.failedThreads) || reddit.failedThreads.length) problems.push("Reddit/blog evidence has discussion refresh failures");
-      if (!Array.isArray(reddit.threadSnapshots) || reddit.threadSnapshots.some((item) => !/^[0-9a-f]{64}$/.test(item.sha256 ?? ""))) {
-        problems.push("Reddit/blog evidence lacks valid discussion snapshots");
-      }
+      const redditManifest = JSON.parse(fs.readFileSync(path.join(root, "website/blog/reddit-sources.json"), "utf8"));
+      problems.push(...validateRedditReleaseEvidence(reddit, {
+        version,
+        author: redditManifest.author,
+        requiredSources: redditManifest.sources,
+      }));
     }
   }
 }

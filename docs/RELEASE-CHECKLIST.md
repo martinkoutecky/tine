@@ -60,8 +60,11 @@ may tag, publish, comment, and close issues.
 
 1. Run `npm run blog:sync -- --version=X.Y.0`, synchronize every reported new
    `r/TineOutline` post into the human blog, and re-check every Reddit thread
-   already cited by an existing entry. Commit the clean
-   `docs/releases/vX.Y.0-reddit.json` evidence.
+   already cited by an existing entry. Author discovery and cited-discussion
+   refresh must use Reddit's public REST/JSON feeds. Do not use RSS/Atom: those
+   endpoints are throttled and are not complete release evidence. Commit only a
+   complete schema-v2 `docs/releases/vX.Y.0-reddit.json`; network, pagination,
+   or discussion-tree incompleteness remains release-blocking.
 2. Run three independent audit areas: data safety/security/privacy;
    behavioral correctness/Logseq compatibility; performance/resource
    lifecycle.

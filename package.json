@@ -27,6 +27,7 @@
     "e2e:wayland-app-id": "node scripts/e2e-wayland-app-id.mjs",
     "blog:check": "node scripts/check-reddit-blog.mjs",
     "blog:sync": "node scripts/sync-reddit-blog.mjs",
+    "blog:test": "node scripts/test-reddit-release-evidence.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
     "e2e:plugins": "node scripts/e2e-plugins.mjs",
