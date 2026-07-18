@@ -136,6 +136,10 @@ export function caretColumnOnVisualRow(ta: HTMLTextAreaElement, offset: number):
 /** True if the caret at `offset` is on the FIRST visual row of the textarea (so
  *  Up / shift-select-up should leave the block). Degrades to true if unmeasurable. */
 export function caretAtFirstRow(ta: HTMLTextAreaElement, offset: number): boolean {
+  // The start of the value is necessarily on its first visual row. Besides
+  // avoiding needless layout work, this keeps an exact boundary independent of
+  // browser-specific mirror rounding.
+  if (offset === 0) return true;
   const rows = measureRows(ta, [offset]);
   return rows ? rows[0] === 0 : true;
 }
@@ -143,6 +147,10 @@ export function caretAtFirstRow(ta: HTMLTextAreaElement, offset: number): boolea
 /** True if the caret at `offset` is on the LAST visual row of the textarea (so
  *  Down / shift-select-down should leave the block). Degrades to true if unmeasurable. */
 export function caretAtLastRow(ta: HTMLTextAreaElement, offset: number): boolean {
+  // The end of the value is necessarily on its last visual row. WebKitGTK can
+  // round the off-screen mirror's end marker onto a phantom following row,
+  // which must not trap ArrowDown at the end of an editor.
+  if (offset === ta.value.length) return true;
   const rows = measureRows(ta, [offset, ta.value.length]);
   return rows ? rows[0] === rows[1] : true;
 }
