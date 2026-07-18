@@ -439,10 +439,11 @@ pub struct Graph {
     // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
     // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
     cache: RwLock<Option<Arc<Vec<(PageEntry, Arc<Document>)>>>>,
-    /// Companion index for `cache`: `(kind, page_key(name)) -> Vec slot`. The Vec
-    /// stays the source of truth for whole-graph iteration; this makes warm
-    /// by-name cache probes O(1). `None` means "rebuild from the Vec on next
-    /// lookup" and is preferred over risking a stale slot after broad mutations.
+    /// Companion indexes for `cache`: the logical `(kind, page_key(name)) -> Vec
+    /// slot` index preserves deterministic first-wins lookup, while the exact-path
+    /// index keeps cache ownership physical. The Vec stays the source of truth for
+    /// whole-graph iteration. `None` means "rebuild from the Vec on next lookup"
+    /// and is preferred over risking a stale slot after broad mutations.
     cache_index: RwLock<Option<PageCacheIndex>>,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
     /// captures this before reading disk and rebuilds if a mutation raced it
@@ -498,15 +499,15 @@ pub struct Graph {
     /// bytes we wrote and suppress that false positive (the parse-cache comparison
     /// alone races that window). See `write_page` / `sync_file_content`.
     recent_writes: std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
-    /// `key(kind,name) → content_rev` of the on-disk bytes the cached page's
+    /// `path → content_rev` of the on-disk bytes the cached page's
     /// `Document` was parsed from. Invariant: an entry exists IFF the page is in
-    /// the cache, and `disk_revs[key] == content_rev(current disk bytes)` ⟹ the
+    /// the cache, and `disk_revs[path] == content_rev(current disk bytes)` ⟹ the
     /// cached doc reflects disk (is fresh). Lets `sync_file_content` skip the
     /// parse→serialize→parse freshness comparison when a file is unchanged — the
     /// common case on every page navigation and most watcher polls. A missing or
     /// mismatched entry always falls through to the correct parse-compare path, so
     /// the worst a desync can cause is redundant work, never a stale serve.
-    disk_revs: RwLock<std::collections::HashMap<String, String>>,
+    disk_revs: RwLock<std::collections::HashMap<PathBuf, String>>,
     /// All page names referenced anywhere — `[[link]]`/`#tag`/`#[[..]]` plus
     /// `tags::`/`alias::` property values — in their as-written display case,
     /// keyed by `cache_gen`. Like OG, a page that is only referenced (never given
@@ -531,14 +532,10 @@ pub struct Graph {
     >,
 }
 
-/// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
-/// case-insensitive name, scoped by kind so a page and a journal of the same
-/// title never collide.
-fn rev_key(kind: PageKind, name: &str) -> String {
-    format!("{kind:?}\u{1}{}", crate::refs::page_key(name))
+struct PageCacheIndex {
+    by_name: std::collections::HashMap<(PageKind, String), usize>,
+    by_path: std::collections::HashMap<PathBuf, usize>,
 }
-
-type PageCacheIndex = std::collections::HashMap<(PageKind, String), usize>;
 
 fn page_cache_key(kind: PageKind, name: &str) -> (PageKind, String) {
     (kind, crate::refs::page_key(name))
@@ -562,14 +559,16 @@ fn document_block_ref_counts(doc: &Document) -> std::collections::HashMap<String
 }
 
 fn build_page_cache_index(pages: &[(PageEntry, Arc<Document>)]) -> PageCacheIndex {
-    let mut index = std::collections::HashMap::with_capacity(pages.len());
+    let mut by_name = std::collections::HashMap::with_capacity(pages.len());
+    let mut by_path = std::collections::HashMap::with_capacity(pages.len());
     for (i, (entry, _)) in pages.iter().enumerate() {
         // Preserve Vec `.find` semantics if duplicates ever slip in: first wins.
-        index
+        by_name
             .entry(page_cache_key(entry.kind, &entry.name))
             .or_insert(i);
+        by_path.insert(entry.path.clone(), i);
     }
-    index
+    PageCacheIndex { by_name, by_path }
 }
 
 fn is_date_stem_entry(entry: &PageEntry) -> bool {
@@ -2365,7 +2364,7 @@ impl Graph {
         {
             let guard = self.cache_index.read().unwrap();
             if let Some(index) = guard.as_ref() {
-                if let Some(&i) = index.get(&key) {
+                if let Some(&i) = index.by_name.get(&key) {
                     if pages.get(i).is_some_and(|(e, _)| {
                         e.kind == kind && crate::refs::same_page(&e.name, name)
                     }) {
@@ -2382,7 +2381,7 @@ impl Graph {
 
         let mut guard = self.cache_index.write().unwrap();
         let rebuild = match guard.as_ref() {
-            Some(index) => index.get(&key).is_some_and(|&i| {
+            Some(index) => index.by_name.get(&key).is_some_and(|&i| {
                 !pages
                     .get(i)
                     .is_some_and(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
@@ -2396,12 +2395,56 @@ impl Graph {
         }
         guard
             .as_ref()
-            .and_then(|index| index.get(&key).copied())
+            .and_then(|index| index.by_name.get(&key).copied())
             .filter(|&i| {
                 pages
                     .get(i)
                     .is_some_and(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
             })
+    }
+
+    /// Locate a page in the parsed-doc cache by its resolved physical path.
+    /// Callers must already hold either `cache.read()` or `cache.write()`; this
+    /// function only touches the companion index, preserving the lock order
+    /// cache -> cache_index.
+    fn cached_page_index_for_path(
+        &self,
+        pages: &[(PageEntry, Arc<Document>)],
+        path: &Path,
+    ) -> Option<usize> {
+        {
+            let guard = self.cache_index.read().unwrap();
+            if let Some(index) = guard.as_ref() {
+                if let Some(&i) = index.by_path.get(path) {
+                    if pages.get(i).is_some_and(|(e, _)| e.path == path) {
+                        return Some(i);
+                    }
+                    // A mismatched slot means a previous mutation dropped/shifted
+                    // entries without rebuilding. Rebuild below rather than
+                    // serving whatever the stale slot now points at.
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        let mut guard = self.cache_index.write().unwrap();
+        let rebuild = match guard.as_ref() {
+            Some(index) => index
+                .by_path
+                .get(path)
+                .is_some_and(|&i| !pages.get(i).is_some_and(|(e, _)| e.path == path)),
+            None => true,
+        };
+        if rebuild {
+            #[cfg(test)]
+            count_cache_linear_scan(pages.len());
+            *guard = Some(build_page_cache_index(pages));
+        }
+        guard
+            .as_ref()
+            .and_then(|index| index.by_path.get(path).copied())
+            .filter(|&i| pages.get(i).is_some_and(|(e, _)| e.path == path))
     }
 
     /// A page DTO from the cache ONLY if the cache is already built — never
@@ -2410,7 +2453,7 @@ impl Graph {
     fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
         let guard = self.cache.read().unwrap();
         let pages = guard.as_ref()?;
-        let i = self.cached_page_index(pages, entry.kind, &entry.name)?;
+        let i = self.cached_page_index_for_path(pages, &entry.path)?;
         pages.get(i).map(|(e, d)| page_dto(e, d))
     }
 
@@ -2561,9 +2604,9 @@ impl Graph {
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
     fn install_built(&self, built: Vec<(PageEntry, Document, String)>) {
-        let revs: std::collections::HashMap<String, String> = built
+        let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
-            .map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone()))
+            .map(|(e, _, r)| (e.path.clone(), r.clone()))
             .collect();
         let pages: Vec<(PageEntry, Arc<Document>)> = built
             .into_iter()
@@ -2745,7 +2788,7 @@ impl Graph {
         let new_block_refs = document_block_ref_counts(&doc);
         let mut block_refs_touched = false;
         let mut alias_touched = !new_aliases.is_empty();
-        let key = rev_key(entry.kind, &entry.name);
+        let path_key = entry.path.clone();
         let doc = Arc::new(doc);
         // Keep the new content + identity for the scoped derived-cache pass below
         // (the original is moved into the cache slot; this clone is a refcount bump).
@@ -2757,7 +2800,7 @@ impl Graph {
         let cache_built = guard.is_some();
         if let Some(pages) = guard.as_mut() {
             let pages = Arc::make_mut(pages);
-            match self.cached_page_index(pages, entry.kind, &entry.name) {
+            match self.cached_page_index_for_path(pages, &entry.path) {
                 Some(i) => {
                     let slot = &mut pages[i];
                     alias_touched = new_aliases != crate::query::document_aliases(&slot.1);
@@ -2768,10 +2811,14 @@ impl Graph {
                 None => {
                     is_new_page = true;
                     block_refs_touched = !new_block_refs.is_empty();
-                    let index_key = page_cache_key(entry.kind, &entry.name);
+                    let name_key = page_cache_key(entry.kind, &entry.name);
                     pages.push((entry, doc));
                     if let Some(index) = self.cache_index.write().unwrap().as_mut() {
-                        index.entry(index_key).or_insert(pages.len() - 1);
+                        let slot = pages.len() - 1;
+                        index.by_path.insert(path_key.clone(), slot);
+                        // Exact-path additions must never repoint the stable
+                        // logical duplicate winner.
+                        index.by_name.entry(name_key).or_insert(slot);
                     }
                 }
             }
@@ -2784,7 +2831,7 @@ impl Graph {
             // always cache → disk_revs; readers never hold disk_revs while taking
             // the cache lock, so this nesting can't deadlock. Sets only when the
             // page is actually cached (preserves "entry exists IFF cached").
-            self.disk_revs.write().unwrap().insert(key, disk_rev);
+            self.disk_revs.write().unwrap().insert(path_key, disk_rev);
         }
         // Bump cache_gen AFTER publishing the new content (and disk_revs), still
         // under the cache write lock. A reader loads cache_gen (Acquire) then takes
@@ -3022,16 +3069,69 @@ impl Graph {
         let mut block_refs_touched = false;
         if let Some(pages) = guard.as_mut() {
             let pages = Arc::make_mut(pages);
-            if let Some(i) = self.cached_page_index(pages, kind, name) {
-                alias_touched = !crate::query::document_aliases(&pages[i].1).is_empty();
-                block_refs_touched = !document_block_ref_counts(&pages[i].1).is_empty();
-            }
+            let removed_paths = pages
+                .iter()
+                .filter(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
+                .map(|(e, doc)| {
+                    alias_touched |= !crate::query::document_aliases(doc).is_empty();
+                    block_refs_touched |= !document_block_ref_counts(doc).is_empty();
+                    e.path.clone()
+                })
+                .collect::<Vec<_>>();
             pages.retain(|(e, _)| !(e.kind == kind && crate::refs::same_page(&e.name, name)));
-            // Drop the rev under the cache lock (same cache → disk_revs order as
+            // Drop all exact revisions removed by this ambiguity-validated logical
+            // delete under the cache lock (same cache → disk_revs order as
             // cache_upsert) so the two never diverge.
-            self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
+            let mut revs = self.disk_revs.write().unwrap();
+            for path in removed_paths {
+                revs.remove(&path);
+            }
         }
         *self.cache_index.write().unwrap() = None;
+        // Bump AFTER the removal is published (under the cache lock), so a reader
+        // that loads the new gen is guaranteed to see the page gone — see the
+        // gen-after-content note in cache_upsert.
+        let newgen = self
+            .cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release)
+            + 1;
+        drop(guard);
+        {
+            let mut counts = self.block_ref_count_cache.write().unwrap();
+            if block_refs_touched {
+                *counts = None;
+            } else if let Some((generation, _)) = counts.as_mut() {
+                *generation = newgen;
+            }
+        }
+        if alias_touched {
+            *self.alias_cache.write().unwrap() = None;
+        }
+    }
+
+    /// Drop one physical page from the cache after its file disappears. Unlike
+    /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
+    /// first-wins index from the surviving entries.
+    fn cache_remove_path(&self, entry: &PageEntry) {
+        // A page delete is a page-set change (affects namespaces, exists-by-ref,
+        // every backlink/query) — drop the whole derived cache.
+        *self.derived_cache.write().unwrap() = None;
+        *self.advanced_cache.write().unwrap() = None;
+        let mut guard = self.cache.write().unwrap();
+        let mut alias_touched = false;
+        let mut block_refs_touched = false;
+        if let Some(pages) = guard.as_mut() {
+            let pages = Arc::make_mut(pages);
+            if let Some(i) = self.cached_page_index_for_path(pages, &entry.path) {
+                alias_touched = !crate::query::document_aliases(&pages[i].1).is_empty();
+                block_refs_touched = !document_block_ref_counts(&pages[i].1).is_empty();
+                pages.remove(i);
+                // Drop the rev under the cache lock (same cache → disk_revs order
+                // as cache_upsert) so the two never diverge.
+                self.disk_revs.write().unwrap().remove(&entry.path);
+            }
+            *self.cache_index.write().unwrap() = Some(build_page_cache_index(pages));
+        }
         // Bump AFTER the removal is published (under the cache lock), so a reader
         // that loads the new gen is guaranteed to see the page gone — see the
         // gen-after-content note in cache_upsert.
@@ -5019,7 +5119,7 @@ impl Graph {
                 .disk_revs
                 .read()
                 .unwrap()
-                .get(&rev_key(entry.kind, &entry.name))
+                .get(path)
                 .is_some_and(|r| *r == disk_rev)
             {
                 return None;
@@ -5042,7 +5142,7 @@ impl Graph {
                 *self.cache_index.write().unwrap() = None;
                 return None;
             };
-            if let Some(i) = self.cached_page_index(cache, entry.kind, &entry.name) {
+            if let Some(i) = self.cached_page_index_for_path(cache, path) {
                 let cached = &cache[i].1;
                 // Compare CONTENT, not the in-memory uuids: cached blocks carry
                 // generated uuids (assigned at cache build / upsert), while a
@@ -5078,9 +5178,9 @@ impl Graph {
             let guard = self.cache.read().unwrap();
             guard
                 .as_ref()
-                .is_some_and(|c| self.cached_page_index(c, entry.kind, &entry.name).is_some())
+                .is_some_and(|c| self.cached_page_index_for_path(c, &entry.path).is_some())
         };
-        self.cache_remove(&entry.name, entry.kind);
+        self.cache_remove_path(&entry);
         was_cached.then_some(entry)
     }
 
@@ -5334,7 +5434,7 @@ impl Graph {
             && (changed || {
                 let guard = self.cache.read().unwrap();
                 guard.as_ref().is_some_and(|pages| {
-                    self.cached_page_index(pages, page.kind, &page.name)
+                    self.cached_page_index_for_path(pages, &path)
                         .is_none()
                 })
             });
@@ -5342,7 +5442,7 @@ impl Graph {
             // For a brand-new journal, derive its date_key from the name so it's
             // recognized as a dated journal by `journals_desc` (which reads this
             // cache) — otherwise today's freshly-created page would be missing.
-            let entry = self.find_entry(&page.name, page.kind).unwrap_or_else(|| {
+            let entry = self.entry_for_path(&path).unwrap_or_else(|| {
                 let date_key = if page.kind == PageKind::Journal {
                     crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
                 } else {
@@ -10501,6 +10601,149 @@ mod tests {
         assert!(
             !dir.join("pages").join("foo.md").exists(),
             "path-pinned saves must not create a flat pages/foo.md twin"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warmed_duplicate_name_cache_keeps_physical_owners_distinct() {
+        let dir = scratch("warmed-duplicate-name-owners");
+        fs::create_dir_all(dir.join("pages/duplicates")).unwrap();
+        let flat = dir.join("pages/Exact Storage Twin.md");
+        let nested = dir.join("pages/duplicates/Exact Storage Twin.md");
+        fs::write(&flat, "- flat original sentinel\n").unwrap();
+        fs::write(&nested, "- nested original sentinel\n").unwrap();
+
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let logical_winner = g
+            .find_entry("Exact Storage Twin", PageKind::Page)
+            .expect("one duplicate is the stable name winner");
+        let non_winner_path = if logical_winner.path == flat { &nested } else { &flat };
+        let non_winner_entry = g
+            .entry_for_path(non_winner_path)
+            .expect("non-winning duplicate is addressable by path");
+        let winner_original = fs::read_to_string(&logical_winner.path).unwrap();
+
+        // Save through the duplicate's captured physical path after both entries
+        // have been warmed. The name winner must remain stable while the other
+        // physical owner receives its own cached document and revision.
+        let mut non_winner = g
+            .load_by_path(&non_winner_entry.rel_path)
+            .unwrap()
+            .expect("non-winning duplicate loads by path");
+        non_winner.blocks[0].raw = "nested saved sentinel".into();
+        g.save_page(&non_winner, non_winner.rev.as_deref()).unwrap();
+
+        assert_eq!(
+            g.find_entry("Exact Storage Twin", PageKind::Page)
+                .expect("name winner remains present")
+                .path,
+            logical_winner.path,
+            "path-addressed save must not repoint the logical first winner"
+        );
+
+        let winner_loaded = g.load_page(&logical_winner).unwrap();
+        assert_eq!(
+            winner_loaded.blocks[0].raw,
+            winner_original.trim_start_matches("- ").trim_end(),
+            "the name winner retains its own warmed bytes"
+        );
+        let non_winner_loaded = g.load_page(&non_winner_entry).unwrap();
+        assert_eq!(non_winner_loaded.blocks[0].raw, "nested saved sentinel");
+        assert_eq!(non_winner_loaded.path, non_winner_entry.rel_path);
+
+        let cached = g.with_pages(|pages| {
+            pages
+                .iter()
+                .filter(|(entry, _)| entry.name == "Exact Storage Twin")
+                .map(|(entry, doc)| (entry.path.clone(), doc.roots[0].raw.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert!(cached.iter().any(|(path, raw)| {
+            *path == logical_winner.path
+                && raw == winner_original.trim_start_matches("- ").trim_end()
+        }));
+        assert!(cached
+            .iter()
+            .any(|(path, raw)| *path == *non_winner_path && raw == "nested saved sentinel"));
+
+        for (needle, path) in [
+            (
+                winner_original.trim_start_matches("- ").trim_end(),
+                logical_winner.rel_path.as_str(),
+            ),
+            ("nested saved sentinel", non_winner_entry.rel_path.as_str()),
+        ] {
+            assert!(
+                g.run_graph_search(needle, 0, 8, false).hits.iter().any(|hit| matches!(
+                    hit,
+                    crate::query_plan::QueryHit::Block { path: hit_path, .. } if hit_path == path
+                )),
+                "search hit for {needle:?} must retain its physical owner {path:?}"
+            );
+        }
+
+        // Give the winner the non-winner's current bytes. A name-keyed revision
+        // map incorrectly treats that as already fresh and suppresses its reload.
+        fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
+        assert!(
+            g.sync_file(&logical_winner.path)
+                .is_some_and(|entry| entry.path == logical_winner.path),
+            "one duplicate's revision must not mark the other duplicate fresh"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn forget_file_evicts_only_the_deleted_duplicate_path() {
+        let dir = scratch("forget-duplicate-path");
+        fs::create_dir_all(dir.join("pages/duplicates")).unwrap();
+        let flat = dir.join("pages/Exact Storage Twin.md");
+        let nested = dir.join("pages/duplicates/Exact Storage Twin.md");
+        fs::write(&flat, "- flat survives if not removed\n").unwrap();
+        fs::write(&nested, "- nested survives if not removed\n").unwrap();
+
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let removed = g
+            .find_entry("Exact Storage Twin", PageKind::Page)
+            .expect("one duplicate is the initial logical winner");
+        let survivor_path = if removed.path == flat { &nested } else { &flat };
+        let survivor = g
+            .entry_for_path(survivor_path)
+            .expect("the other duplicate is a physical cache owner");
+
+        fs::remove_file(&removed.path).unwrap();
+        assert_eq!(
+            g.forget_file(&removed.path)
+                .expect("the deleted path had a cache entry")
+                .path,
+            removed.path
+        );
+        assert_eq!(
+            g.find_entry("Exact Storage Twin", PageKind::Page)
+                .expect("surviving duplicate is the new name winner")
+                .path,
+            survivor.path
+        );
+        assert_eq!(
+            g.with_pages(|pages| {
+                pages
+                    .iter()
+                    .filter(|(entry, _)| entry.name == "Exact Storage Twin")
+                    .map(|(entry, _)| entry.path.clone())
+                    .collect::<Vec<_>>()
+            }),
+            vec![survivor.path.clone()],
+            "forgetting one physical duplicate leaves the other cached"
+        );
+        assert_eq!(
+            g.load_page(&survivor).unwrap().blocks[0].raw,
+            fs::read_to_string(&survivor.path)
+                .unwrap()
+                .trim_start_matches("- ")
+                .trim_end()
         );
         let _ = fs::remove_dir_all(&dir);
     }
