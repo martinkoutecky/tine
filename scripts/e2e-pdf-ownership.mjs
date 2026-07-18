@@ -1,7 +1,7 @@
 // Native H2 proof: delayed PDF work stays with the graph/window generation that
 // created it.  The oracle is sidecar bytes plus a real close/relaunch, never
 // pixels or debounce duration alone.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -15,6 +15,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
+const XDOTOOL = process.env.E2E_XDOTOOL || "xdotool";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4540);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4541);
 const TMP = path.join(os.tmpdir(), `tine-pdf-ownership-e2e-${process.pid}`);
@@ -48,6 +49,7 @@ fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({
     { name: "graph-b", path: GRAPH_B },
   ],
   last_graph_path: GRAPH_A,
+  native_window_frame: true,
 }, null, 2));
 
 const env = {
@@ -56,26 +58,99 @@ const env = {
   XDG_DATA_HOME: path.join(TMP, "xdg", "data"),
   XDG_CONFIG_HOME: path.join(TMP, "xdg", "config"),
   XDG_CACHE_HOME: path.join(TMP, "xdg", "cache"),
+  XDG_CONFIG_DIRS: process.env.XDG_CONFIG_DIRS || "/etc/xdg",
+  XDG_DATA_DIRS: process.env.XDG_DATA_DIRS || "/usr/local/share:/usr/share",
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const log = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
+const xdoEnv = process.env.E2E_XDOTOOL_LIB
+  ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
+  : env;
+const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xdoEnv }).trim();
 let driver;
 let browser;
+let appPid;
+let wm;
+let driverLog;
+let wmLog;
+
+function geometry(id) {
+  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
+  // in this environment. xwininfo reports the client origin that
+  // _NET_FRAME_EXTENTS is defined around.
+  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
+  const read = (label) => {
+    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
+    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
+    return Number(value);
+  };
+  return {
+    X: read("Absolute upper-left X"),
+    Y: read("Absolute upper-left Y"),
+    WIDTH: read("Width"),
+    HEIGHT: read("Height"),
+  };
+}
+
+function windowIds() {
+  try {
+    // xdotool uses POSIX extended regular expressions (no `(?:...)`).
+    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
+      .split(/\s+/)
+      .filter(Boolean)
+      // Tauri/Openbox can also expose a tiny same-title helper surface. The
+      // graph window is the largest visible match and owns the real frame.
+      .sort((a, b) => {
+        try {
+          const ga = geometry(a);
+          const gb = geometry(b);
+          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
+        } catch {
+          return 0;
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+function frameExtents(id) {
+  const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS", "_GTK_FRAME_EXTENTS"], { encoding: "utf8", env });
+  const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
+  if (!values) throw new Error(`window manager exposed malformed frame extents: ${raw.trim()}`);
+  const [left, right, top, bottom] = values;
+  return { left, right, top, bottom };
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
 
 function startDriver() {
   driver = spawn(TD, [
     "--port", String(DRIVER_PORT),
     "--native-port", String(NATIVE_PORT),
     "--native-driver", WD,
-  ], { env, stdio: ["ignore", log, log], detached: true });
+  ], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
 }
 
-function stopDriver() {
-  try { if (driver?.pid) process.kill(-driver.pid, "SIGKILL"); } catch {}
+async function stopDriver() {
+  const current = driver;
   driver = undefined;
+  try { if (current?.pid) process.kill(-current.pid, "SIGKILL"); } catch {}
+  if (current?.pid) {
+    await waitForNode(
+      () => current.exitCode !== null || !processAlive(current.pid),
+      "tauri-driver did not exit during cleanup",
+    );
+  }
 }
 
 async function connect() {
@@ -95,6 +170,10 @@ async function connect() {
     },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
+  const windowId = await waitForNode(() => windowIds()[0], "Tine native window did not appear");
+  const pid = Number(xdo("getwindowpid", windowId));
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`xdotool returned invalid Tine PID ${JSON.stringify(pid)}`);
+  appPid = pid;
 }
 
 async function waitForNode(predicate, message, timeoutMs = 12_000) {
@@ -105,6 +184,61 @@ async function waitForNode(predicate, message, timeoutMs = 12_000) {
     await sleep(50);
   }
   throw new Error(message);
+}
+
+function windowManagerReady() {
+  try {
+    return /_NET_SUPPORTING_WM_CHECK.*window id/i.test(
+      execFileSync("xprop", ["-root", "_NET_SUPPORTING_WM_CHECK"], { encoding: "utf8", env }),
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function closeTineNatively() {
+  const id = await waitForNode(() => windowIds()[0], "Tine window did not appear for native close");
+  const pid = Number(xdo("getwindowpid", id));
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`xdotool returned invalid Tine PID ${JSON.stringify(pid)}`);
+  appPid = pid;
+  const extents = frameExtents(id);
+  if (extents.top < 1) throw new Error(`Tine native frame is not decorated: ${JSON.stringify(extents)}`);
+  const g = geometry(id);
+  // X/Y describe the client-area origin. The native close button lives in the
+  // top-right of the window-manager frame, above that client area.
+  const closeX = g.X + g.WIDTH - Math.max(10, Math.floor(extents.right / 2));
+  const closeY = g.Y - Math.max(1, Math.floor(extents.top / 2));
+  xdo("mousemove", "--sync", String(closeX), String(closeY));
+  xdo("click", "1");
+  await waitForNode(
+    () => windowIds().length === 0 && !processAlive(pid),
+    `native close did not terminate Tine; geometry=${JSON.stringify(g)} extents=${JSON.stringify(extents)} click=${closeX},${closeY}`,
+  );
+  appPid = undefined;
+}
+
+async function stopApp() {
+  const pid = appPid;
+  appPid = undefined;
+  try { if (pid && processAlive(pid)) process.kill(pid, "SIGKILL"); } catch {}
+  if (pid) {
+    await waitForNode(
+      () => !processAlive(pid),
+      "Tine application process did not exit during cleanup",
+    );
+  }
+}
+
+async function stopWindowManager() {
+  const current = wm;
+  wm = undefined;
+  try { if (current?.pid) process.kill(-current.pid, "SIGKILL"); } catch {}
+  if (current?.pid) {
+    await waitForNode(
+      () => current.exitCode !== null || !processAlive(current.pid),
+      "window manager did not exit during cleanup",
+    );
+  }
 }
 
 function sidecar(graph) {
@@ -154,6 +288,15 @@ async function switchGraph(graph) {
 
 const receipt = { graphSwitch: {}, safeClose: {} };
 try {
+  wmLog = fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w");
+  driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
+  wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], {
+    env, stdio: ["ignore", wmLog, wmLog], detached: true,
+  });
+  await waitForNode(
+    () => wm.exitCode === null && windowManagerReady(),
+    "window manager did not become ready for native close",
+  );
   await connect();
   const originalB = fs.readFileSync(sidecar(GRAPH_B));
   await openSharedPdf();
@@ -187,15 +330,14 @@ try {
   await openSharedPdf();
   await browser.$('button[title="Zoom in"]').click();
   const closeScheduledZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
-  await browser.closeWindow();
+  await closeTineNatively();
   await waitForNode(
     () => Math.abs(sidecarScale(GRAPH_A) - closeScheduledZoom) < 0.0001,
     "safe close did not persist the pending PDF position",
   );
   try { await browser.deleteSession(); } catch {}
   browser = undefined;
-  stopDriver();
-  await sleep(800);
+  await stopDriver();
 
   await connect();
   await openSharedPdf();
@@ -212,6 +354,9 @@ try {
   console.log(`PASS: PDF graph-switch and safe-close ownership are filesystem-stable: ${JSON.stringify(receipt)}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  stopDriver();
-  fs.closeSync(log);
+  try { await stopApp(); } catch {}
+  try { await stopDriver(); } catch {}
+  try { await stopWindowManager(); } catch {}
+  try { if (driverLog !== undefined) fs.closeSync(driverLog); } catch {}
+  try { if (wmLog !== undefined) fs.closeSync(wmLog); } catch {}
 }
