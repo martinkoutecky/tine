@@ -9,6 +9,7 @@ export default defineConfig({
   define: {
     __BUILD_TIME__: JSON.stringify("1970-01-01T00:00:00.000Z"),
     __GIT_COMMIT__: JSON.stringify(""),
+    __TINE_COMMUNITY_REGISTRY__: JSON.stringify(true),
   },
   test: {
     environment: "node",

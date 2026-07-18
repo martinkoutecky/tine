@@ -1,0 +1,6 @@
+Added: below 640 px sidebars behave as modal drawers (overlay, scrim,
+Android Back). Fixed: split-pane Back/Forward stay with the focused pane;
+PDF highlights offer Copy ref and Linked references; empty search tabs;
+future-dated journals no longer displace today; mobile fold controls stop
+stealing text taps; bare `/` defaults to page reference; page/tag
+completion uses OG's adaptive ordering.

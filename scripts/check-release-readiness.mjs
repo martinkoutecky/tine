@@ -27,6 +27,20 @@ const problems = [];
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
 if (!fs.existsSync(impactPath)) problems.push(`missing docs/releases/v${version}-impact.json`);
 
+// F-Droid fastlane changelogs: one file per Android versionCode, hard 500-char
+// store limit (F-Droid reviewer request on the inclusion MR, 2026-07-15).
+const versionCode = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"))
+  .bundle?.android?.versionCode;
+const changelogsDir = path.join(root, "fastlane/metadata/android/en-US/changelogs");
+if (!Number.isInteger(versionCode)) problems.push("tauri.conf.json lacks bundle.android.versionCode");
+else if (!fs.existsSync(path.join(changelogsDir, `${versionCode}.txt`))) {
+  problems.push(`missing fastlane changelog changelogs/${versionCode}.txt for this release`);
+}
+for (const file of fs.existsSync(changelogsDir) ? fs.readdirSync(changelogsDir) : []) {
+  const length = fs.readFileSync(path.join(changelogsDir, file), "utf8").length;
+  if (length > 500) problems.push(`fastlane changelog ${file} is ${length} chars (F-Droid limit is 500)`);
+}
+
 if (section && fs.existsSync(impactPath)) {
   const impact = JSON.parse(fs.readFileSync(impactPath, "utf8"));
   if (impact.schemaVersion !== 1) problems.push("impact schemaVersion must be 1");

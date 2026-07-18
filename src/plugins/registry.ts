@@ -15,6 +15,14 @@ import { applyTheme, selectedGalleryTheme } from "../themeGallery";
 
 export const COMMUNITY_REGISTRY_URL =
   "https://raw.githubusercontent.com/martinkoutecky/tine-plugin-registry/main/index.json";
+
+// The network-backed community registry is compiled out of F-Droid builds
+// (vite `define`, set false when TINE_COMMUNITY_REGISTRY=0): F-Droid's inclusion
+// policy forbids fetching executable code at runtime, and the registry downloads
+// plugin wasm. Local sideloading (Settings → "Choose package…") stays available.
+// The Settings UI hides the community catalogue + theme packages when this is
+// false, and refreshCommunityRegistry() below is a no-op.
+export const COMMUNITY_REGISTRY_ENABLED = __TINE_COMMUNITY_REGISTRY__;
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const MAX_WASM_BYTES = 8 * 1024 * 1024;
 const MAX_AUDIT_BYTES = 256 * 1024;
@@ -513,6 +521,7 @@ async function applyLiveSnapshot(
 export async function refreshCommunityRegistry(
   options: { timeoutMs?: number } = {}
 ): Promise<void> {
+  if (!COMMUNITY_REGISTRY_ENABLED) return;
   const generation = ++refreshGeneration;
   setRegistryState("loading");
   try {
