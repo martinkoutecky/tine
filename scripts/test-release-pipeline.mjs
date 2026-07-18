@@ -180,8 +180,8 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /Snapshot Windows E2E candidate inputs[\s\S]*?Write Windows E2E candidate receipt[\s\S]*?release-e2e-receipt-windows-x64[\s\S]*?TINE_E2E_BUILD_RECEIPT=[\s\S]*?TINE_E2E_MODE: release/,
-  "the advisory release Windows E2E run does not receive an exact receipt in release mode"
+  /Snapshot Windows E2E candidate inputs[\s\S]*?--tauri-manifest-normalization[\s\S]*?Write Windows E2E candidate receipt[\s\S]*?release-e2e-receipt-windows-x64[\s\S]*?TINE_E2E_BUILD_RECEIPT=[\s\S]*?TINE_E2E_MODE: release/,
+  "the advisory release Windows E2E run does not normalize the exact Tauri manifest before receiving its receipt in release mode"
 );
 assert.match(
   releaseWorkflow,

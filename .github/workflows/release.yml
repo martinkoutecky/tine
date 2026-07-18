@@ -172,7 +172,7 @@ jobs:
 
       - name: Snapshot Windows E2E candidate inputs
         if: matrix.lane == 'windows-x64'
-        run: node scripts/build-e2e-receipt.mjs before --snapshot target/release/tine.exe.build.before.json
+        run: node scripts/build-e2e-receipt.mjs before --tauri-manifest-normalization --snapshot target/release/tine.exe.build.before.json
 
       - name: Build signed Tauri bundles
         env:

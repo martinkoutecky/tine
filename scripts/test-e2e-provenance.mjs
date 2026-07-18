@@ -39,6 +39,7 @@ try {
   fs.mkdirSync(path.join(fixture, "dist"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "src-tauri/gen/schemas"), { recursive: true });
+  fs.mkdirSync(path.join(fixture, "node_modules/@tauri-apps/cli"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "tests/ui-regressions"), { recursive: true });
   fs.copyFileSync(helper, path.join(fixture, "scripts/build-e2e-receipt.mjs"));
   fs.copyFileSync(inputHelper, path.join(fixture, "scripts/build-e2e-inputs.mjs"));
@@ -46,6 +47,16 @@ try {
   fs.copyFileSync(capabilities, path.join(fixture, "scripts/e2e-capabilities.mjs"));
   fs.copyFileSync(contracts, path.join(fixture, "tests/ui-regressions/e2e-contracts.json"));
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
+  const fixtureManifest = path.join(fixture, "src-tauri/Cargo.toml");
+  const originalManifest = "[build-dependencies]\ntauri-build = { version = \"2\", features = [] }\n\n[dependencies]\ntauri = { version = \"2\", features = [\"image-png\"] }\n";
+  const normalizedManifest = originalManifest.replace('features = []', 'features = ["isolation"]');
+  fs.writeFileSync(fixtureManifest, originalManifest);
+  fs.writeFileSync(path.join(fixture, "node_modules/@tauri-apps/cli/tauri.js"), [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const manifest = path.join(process.cwd(), 'src-tauri', 'Cargo.toml');",
+    "fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace('features = []', 'features = [\\\"isolation\\\"]'));",
+  ].join("\n"));
   fs.writeFileSync(path.join(fixture, "src-tauri/gen/schemas/desktop-schema.json"), "{\"schema\":\"before\"}\n");
   fs.writeFileSync(path.join(fixture, "dist", "index.html"), `<script src="${asset}"></script>\n`);
   const fixtureApp = path.join(fixture, process.platform === "win32" ? "tine.exe" : "tine");
@@ -74,6 +85,32 @@ try {
   assert.equal(writtenReceipt.appSha256, crypto.createHash("sha256").update(fs.readFileSync(fixtureApp)).digest("hex"));
   assert.match(writtenReceipt.buildInputDigest, /^[a-f0-9]{64}$/);
   assert.equal(writtenReceipt.buildInputsDirty, false);
+
+  const normalizedSnapshot = path.join(temporary, "fixture-tauri-normalized-before.json");
+  const normalizedReceipt = path.join(temporary, "fixture-tauri-normalized-receipt.json");
+  runChecked(process.execPath, [helper, "before", "--tauri-manifest-normalization", "--snapshot", normalizedSnapshot], { cwd: fixture });
+  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "the Tauri manifest probe must restore the checkout before building");
+  const normalization = JSON.parse(fs.readFileSync(normalizedSnapshot, "utf8")).tauriManifestNormalization;
+  assert.equal(normalization.path, "src-tauri/Cargo.toml");
+  assert.equal(Buffer.from(normalization.originalContentBase64, "base64").toString("utf8"), originalManifest);
+  assert.equal(Buffer.from(normalization.normalizedContentBase64, "base64").toString("utf8"), normalizedManifest);
+  fs.writeFileSync(fixtureManifest, normalizedManifest);
+  runChecked(process.execPath, [helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", normalizedReceipt], { cwd: fixture });
+  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "the accepted Tauri rewrite must be restored before the receipt is written");
+
+  fs.writeFileSync(fixtureManifest, originalManifest.replace('version = "2"', 'version = "999"'));
+  const changedCargo = runNode([helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", path.join(temporary, "changed-cargo-receipt.json")], { cwd: fixture });
+  assert.notEqual(changedCargo.status, 0);
+  assert.match(changedCargo.stderr, /refusing receipt: src-tauri\/Cargo\.toml diverged from the exact Tauri manifest normalization/);
+  fs.writeFileSync(fixtureManifest, originalManifest);
+
+  fs.writeFileSync(fixtureManifest, normalizedManifest);
+  fs.writeFileSync(path.join(fixture, "source.txt"), "changed alongside the Tauri rewrite\n");
+  const changedSourceAlongsideNormalization = runNode([helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", path.join(temporary, "changed-source-alongside-normalization-receipt.json")], { cwd: fixture });
+  assert.notEqual(changedSourceAlongsideNormalization.status, 0);
+  assert.match(changedSourceAlongsideNormalization.stderr, /refusing receipt: build-input state changed while building/);
+  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "a rejected source mutation must not leave the expected Tauri rewrite behind");
+  fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
 
   fs.writeFileSync(path.join(fixture, "source.txt"), "after\n");
   const changedSourceState = buildInputState(fixture);
