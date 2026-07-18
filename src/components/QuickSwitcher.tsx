@@ -144,8 +144,9 @@ export function QuickSwitcher(): JSX.Element {
         t: "page",
         name: r.name,
         pageKind: r.kind,
+        path: r.path,
         adaptiveClass: "exact",
-        adaptiveIdentity: `page:${r.kind}:${r.name.toLocaleLowerCase()}`,
+        adaptiveIdentity: `page:${r.kind}:${r.path || r.name.toLocaleLowerCase()}`,
         adaptiveFavorite: isFavorite(r.name),
       }));
       if (recents.length) out.push({ header: "Recent", items: recents });

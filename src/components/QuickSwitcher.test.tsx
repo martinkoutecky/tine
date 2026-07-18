@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openSwitcher, pageInventoryRev, rightSidebar, setRightSidebar, setRightSidebarOpen, toasts } from "../ui";
+import { closeSwitcher, openSwitcher, pageInventoryRev, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen, toasts } from "../ui";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
@@ -10,6 +10,7 @@ import type { PageDto } from "../types";
 
 afterEach(() => {
   closeSwitcher();
+  setRecentPages([]);
   setRightSidebar([]);
   setRightSidebarOpen(false);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
@@ -18,6 +19,43 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("opens an empty-query pathful Recent result at its exact physical owner", async () => {
+    const sharedName = "Twin";
+    const canonicalPath = "pages/client-a/Twin.md";
+    const exactPath = "pages/client-b/Twin.md";
+    const canonical: PageDto = {
+      name: sharedName,
+      kind: "page",
+      title: sharedName,
+      path: canonicalPath,
+      pre_block: null,
+      blocks: [{ id: "canonical-twin", raw: "Canonical sibling unchanged", collapsed: false, children: [] }],
+    };
+    loadSingle(canonical);
+    setRecentPages([{ name: sharedName, kind: "page", path: exactPath }]);
+
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    try {
+      await vi.waitFor(() => {
+        const rows = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')];
+        expect(rows).toHaveLength(1);
+        expect(rows[0].textContent).toContain(sharedName);
+      });
+
+      root.querySelector<HTMLInputElement>(".switcher-input")!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter", bubbles: true, cancelable: true,
+      }));
+
+      expect(route()).toEqual({ kind: "page", name: sharedName, pageKind: "page", path: exactPath });
+      expect(canonical.blocks[0].raw).toBe("Canonical sibling unchanged");
+    } finally {
+      dispose();
+    }
+  });
+
   it("opens a selected page in the right sidebar on Shift-only Enter", async () => {
     const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{
