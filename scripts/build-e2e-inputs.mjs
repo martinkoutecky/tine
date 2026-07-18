@@ -19,10 +19,16 @@ function zeroDelimited(buffer) {
   return buffer.toString("utf8").split("\0").filter(Boolean);
 }
 
+const generatedTauriSchemaPathspec = ":(exclude)src-tauri/gen/schemas/**";
+
+function buildInputPathspecs() {
+  return ["--", ".", generatedTauriSchemaPathspec];
+}
+
 // This exact Git list and digest bind an E2E candidate to its build inputs.
 export function buildInputState(root) {
-  const statusRaw = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], null);
-  const files = zeroDelimited(git(root, ["ls-files", "-co", "--exclude-standard", "-z"], null));
+  const statusRaw = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", ...buildInputPathspecs()], null);
+  const files = zeroDelimited(git(root, ["ls-files", "-co", "--exclude-standard", "-z", ...buildInputPathspecs()], null));
   const entries = files.map((relativePath) => {
     const file = path.resolve(root, relativePath);
     if (file !== root && !file.startsWith(`${root}${path.sep}`)) throw new Error(`Git returned a path outside the worktree: ${relativePath}`);
@@ -37,7 +43,7 @@ export function buildInputState(root) {
       throw error;
     }
   });
-  const changes = git(root, ["status", "--porcelain=v1", "--untracked-files=all"])
+  const changes = git(root, ["status", "--porcelain=v1", "--untracked-files=all", ...buildInputPathspecs()])
     .split(/\r?\n/)
     .filter(Boolean);
   return {

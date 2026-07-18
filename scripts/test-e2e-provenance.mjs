@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildInputState } from "./build-e2e-inputs.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts/build-e2e-receipt.mjs");
@@ -37,6 +38,7 @@ try {
   const fixture = path.join(temporary, "fixture");
   fs.mkdirSync(path.join(fixture, "dist"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(fixture, "src-tauri/gen/schemas"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "tests/ui-regressions"), { recursive: true });
   fs.copyFileSync(helper, path.join(fixture, "scripts/build-e2e-receipt.mjs"));
   fs.copyFileSync(inputHelper, path.join(fixture, "scripts/build-e2e-inputs.mjs"));
@@ -44,6 +46,7 @@ try {
   fs.copyFileSync(capabilities, path.join(fixture, "scripts/e2e-capabilities.mjs"));
   fs.copyFileSync(contracts, path.join(fixture, "tests/ui-regressions/e2e-contracts.json"));
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
+  fs.writeFileSync(path.join(fixture, "src-tauri/gen/schemas/desktop-schema.json"), "{\"schema\":\"before\"}\n");
   fs.writeFileSync(path.join(fixture, "dist", "index.html"), `<script src="${asset}"></script>\n`);
   const fixtureApp = path.join(fixture, process.platform === "win32" ? "tine.exe" : "tine");
   const launchProbe = path.join(temporary, "app-launched");
@@ -60,6 +63,10 @@ try {
   const snapshot = path.join(temporary, "fixture-before.json");
   const receipt = path.join(temporary, "fixture-receipt.json");
   runChecked(process.execPath, [helper, "before", "--snapshot", snapshot], { cwd: fixture });
+  const beforeGeneratedSchemas = buildInputState(fixture);
+  fs.writeFileSync(path.join(fixture, "src-tauri/gen/schemas/desktop-schema.json"), "{\"schema\":\"after\"}\n");
+  fs.writeFileSync(path.join(fixture, "src-tauri/gen/schemas/x86_64-pc-windows-msvc-schema.json"), "{\"schema\":\"created\"}\n");
+  assert.deepEqual(buildInputState(fixture), beforeGeneratedSchemas, "Tauri-generated schema output must not change the build-input state");
   runChecked(process.execPath, [helper, "after", "--snapshot", snapshot, "--app", fixtureApp, "--receipt", receipt], { cwd: fixture });
   const writtenReceipt = JSON.parse(fs.readFileSync(receipt, "utf8"));
   assert.equal(writtenReceipt.sourceRevision, git(fixture, ["rev-parse", "HEAD"]));
@@ -69,6 +76,10 @@ try {
   assert.equal(writtenReceipt.buildInputsDirty, false);
 
   fs.writeFileSync(path.join(fixture, "source.txt"), "after\n");
+  const changedSourceState = buildInputState(fixture);
+  assert.notEqual(changedSourceState.digest, beforeGeneratedSchemas.digest, "ordinary tracked source changes must alter the build-input state");
+  assert.equal(changedSourceState.dirty, true);
+  assert.ok(changedSourceState.changes.some((change) => change.endsWith("source.txt")));
   const artifacts = path.join(temporary, "changed-input-artifacts");
   const changed = runNode([path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph"], {
     cwd: fixture,
