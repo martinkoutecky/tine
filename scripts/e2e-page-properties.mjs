@@ -175,6 +175,77 @@ async function nativeSelectAll() {
   await browser.releaseActions();
 }
 
+async function pageArrowDownCapsule(phase) {
+  return browser.execute((failurePhase) => {
+    const describeEditor = (element) => {
+      if (!(element instanceof HTMLTextAreaElement)) return null;
+      const block = element.closest("[data-block-id]");
+      const surface = element.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
+      return {
+        value: element.value,
+        selection: [element.selectionStart, element.selectionEnd],
+        blockId: block?.getAttribute("data-block-id") ?? null,
+        surfaceId: surface?.getAttribute("data-pane-id")
+          ?? surface?.getAttribute("data-sidebar-surface")
+          ?? surface?.getAttribute("data-surface-id")
+          ?? null,
+      };
+    };
+    const active = document.activeElement;
+    return {
+      phase: failurePhase,
+      preKey: window.__tinePageArrowDownPreKey ?? null,
+      keyWitness: window.__tinePageArrowDownKeyWitness ?? null,
+      active: {
+        tag: active?.tagName ?? null,
+        editor: describeEditor(active),
+      },
+      editors: [...document.querySelectorAll(".page-blocks textarea")].map(describeEditor),
+    };
+  }, phase);
+}
+
+async function preparePageHeaderArrowDown(expectedValue) {
+  return browser.execute((expected) => {
+    const header = document.querySelector(".page-blocks textarea.block-editor");
+    if (header instanceof HTMLTextAreaElement) {
+      header.focus();
+      header.setSelectionRange(header.value.length, header.value.length);
+    }
+    const active = document.activeElement;
+    const preKey = {
+      isPageHeader: active === header,
+      value: active instanceof HTMLTextAreaElement ? active.value : null,
+      selection: active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null,
+      expectedValue: expected,
+      expectedSelection: [expected.length, expected.length],
+    };
+    window.__tinePageArrowDownPreKey = preKey;
+    window.__tinePageArrowDownKeyWitness = null;
+    document.addEventListener("keydown", (event) => {
+      const target = event.target;
+      const textarea = target instanceof HTMLTextAreaElement ? target : null;
+      const block = textarea?.closest("[data-block-id]");
+      const surface = textarea?.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
+      const witness = {
+        key: event.key,
+        target: textarea ? {
+          value: textarea.value,
+          blockId: block?.getAttribute("data-block-id") ?? null,
+          surfaceId: surface?.getAttribute("data-pane-id")
+            ?? surface?.getAttribute("data-sidebar-surface")
+            ?? surface?.getAttribute("data-surface-id")
+            ?? null,
+        } : null,
+      };
+      queueMicrotask(() => {
+        window.__tinePageArrowDownKeyWitness = { ...witness, defaultPrevented: event.defaultPrevented };
+      });
+    }, { capture: true, once: true });
+    return preKey;
+  }, expectedValue);
+}
+
 async function replaceHeaderLikeUser(editor, replacement, selection = null) {
   // WebdriverIO's setValue() first clears the textarea as a separate WebDriver
   // command. Clearing an existing header and blurring is a real delete action,
@@ -320,16 +391,29 @@ try {
   if ((await headerEditor.getValue()) !== editedHeader) {
     throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
   }
-  await browser.execute(() => {
-    const editor = document.querySelector(".page-blocks textarea.block-editor");
-    editor?.focus();
-    if (editor instanceof HTMLTextAreaElement) editor.setSelectionRange(editor.value.length, editor.value.length);
-  });
-  await browser.keys(["ArrowDown"]);
-  await browser.waitUntil(async () => (await browser.$(".page-blocks textarea.block-editor").getValue()) === "Example content block", {
-    timeout: 5_000,
-    timeoutMsg: "Arrow Down did not cross from the page header into the first body block",
-  });
+  const arrowDownPreKey = await preparePageHeaderArrowDown(editedHeader);
+  if (
+    !arrowDownPreKey.isPageHeader
+    || arrowDownPreKey.value !== editedHeader
+    || arrowDownPreKey.selection?.[0] !== editedHeader.length
+    || arrowDownPreKey.selection?.[1] !== editedHeader.length
+  ) {
+    throw new Error(JSON.stringify(await pageArrowDownCapsule("pre-key")));
+  }
+  try {
+    await browser.keys(["ArrowDown"]);
+    await browser.waitUntil(() => browser.execute(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLTextAreaElement
+        && active.closest(".page-blocks") !== null
+        && active.classList.contains("block-editor")
+        && active.value === "Example content block";
+    }), {
+      timeout: 5_000,
+    });
+  } catch {
+    throw new Error(JSON.stringify(await pageArrowDownCapsule("post-key")));
+  }
   await browser.execute(() => {
     const editor = document.querySelector(".page-blocks textarea.block-editor");
     editor?.focus();

@@ -80,6 +80,9 @@ try {
   assert.notEqual(changedSourceState.digest, beforeGeneratedSchemas.digest, "ordinary tracked source changes must alter the build-input state");
   assert.equal(changedSourceState.dirty, true);
   assert.ok(changedSourceState.changes.some((change) => change.endsWith("source.txt")));
+  const changedReceipt = runNode([helper, "after", "--snapshot", snapshot, "--app", fixtureApp, "--receipt", path.join(temporary, "changed-input-receipt.json")], { cwd: fixture });
+  assert.notEqual(changedReceipt.status, 0);
+  assert.match(changedReceipt.stderr, /refusing receipt: build-input state changed while building\n?build-input status delta:\n  \+  M source\.txt/);
   const artifacts = path.join(temporary, "changed-input-artifacts");
   const changed = runNode([path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph"], {
     cwd: fixture,

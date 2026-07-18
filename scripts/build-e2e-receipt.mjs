@@ -87,6 +87,26 @@ function sameFileStat(before, after) {
   return before.dev === after.dev && before.ino === after.ino && before.size === after.size && before.mtimeMs === after.mtimeMs;
 }
 
+function describeBuildInputDelta(beforeChanges, afterChanges) {
+  const before = new Set(beforeChanges);
+  const after = new Set(afterChanges);
+  const added = afterChanges.filter((change) => !before.has(change)).map((change) => `+ ${change}`);
+  const removed = beforeChanges.filter((change) => !after.has(change)).map((change) => `- ${change}`);
+  // A build can alter an input that was already dirty before its snapshot. In
+  // that case Git's short-status line persists, but naming it is still the
+  // smallest useful diagnostic for the digest mismatch.
+  const unchanged = afterChanges.filter((change) => before.has(change)).map((change) => `~ ${change}`);
+  const entries = [...added, ...removed, ...unchanged];
+  const limit = 20;
+  if (entries.length === 0) return "build-input status delta: no paths reported by Git";
+  const remaining = entries.length - limit;
+  return [
+    "build-input status delta:",
+    ...entries.slice(0, limit).map((entry) => `  ${entry}`),
+    ...(remaining > 0 ? [`  ... ${remaining} more path${remaining === 1 ? "" : "s"}`] : []),
+  ].join("\n");
+}
+
 function createReceipt(root, before, app, dist) {
   const afterRevision = git(root, ["rev-parse", "HEAD"]).trim();
   if (afterRevision !== before.sourceRevision) {
@@ -94,7 +114,7 @@ function createReceipt(root, before, app, dist) {
   }
   const afterState = buildInputState(root);
   if (afterState.digest !== before.buildInputDigest) {
-    throw new Error("refusing receipt: build-input state changed while building");
+    throw new Error(`refusing receipt: build-input state changed while building\n${describeBuildInputDelta(before.buildInputChanges, afterState.changes)}`);
   }
   const beforeStat = fs.statSync(app);
   const bytes = fs.readFileSync(app);
