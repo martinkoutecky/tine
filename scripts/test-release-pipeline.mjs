@@ -156,7 +156,8 @@ assert.match(
   /buildInputState[\s\S]*?refusing receipt: HEAD changed while building[\s\S]*?build-input state changed while building[\s\S]*?binary does not embed current production frontend[\s\S]*?buildInputDigest/,
   "the receipt helper does not bind a build to its pre-build source state and embedded frontend"
 );
-assert.match(buildInputs, /export function buildInputState[\s\S]*?ls-files[\s\S]*?digest/);
+assert.match(buildInputs, /export function buildInputState\(/, "buildInputState is not exported");
+assert.match(buildInputs, /ls-files[\s\S]*?digest/, "build-input state is not bound to git ls-files and a digest");
 assert.match(
   e2eRunner,
   /buildInputState[\s\S]*?const e2eMode = process\.env\.TINE_E2E_MODE \?\? "ordinary";[\s\S]*?buildInputDigest[\s\S]*?build receipt is required at/,
