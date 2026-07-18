@@ -2350,59 +2350,6 @@ impl Graph {
         }
     }
 
-    /// Locate a page in the parsed-doc cache by logical `(kind, name)` without
-    /// scanning the Vec on warm paths. Callers must already hold either
-    /// `cache.read()` or `cache.write()`; this function only touches the companion
-    /// index, preserving the lock order cache -> cache_index.
-    fn cached_page_index(
-        &self,
-        pages: &[(PageEntry, Arc<Document>)],
-        kind: PageKind,
-        name: &str,
-    ) -> Option<usize> {
-        let key = page_cache_key(kind, name);
-        {
-            let guard = self.cache_index.read().unwrap();
-            if let Some(index) = guard.as_ref() {
-                if let Some(&i) = index.by_name.get(&key) {
-                    if pages.get(i).is_some_and(|(e, _)| {
-                        e.kind == kind && crate::refs::same_page(&e.name, name)
-                    }) {
-                        return Some(i);
-                    }
-                    // A mismatched slot means a previous mutation dropped/shifted
-                    // entries without rebuilding. Rebuild below rather than
-                    // serving whatever the stale slot now points at.
-                } else {
-                    return None;
-                }
-            }
-        }
-
-        let mut guard = self.cache_index.write().unwrap();
-        let rebuild = match guard.as_ref() {
-            Some(index) => index.by_name.get(&key).is_some_and(|&i| {
-                !pages
-                    .get(i)
-                    .is_some_and(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
-            }),
-            None => true,
-        };
-        if rebuild {
-            #[cfg(test)]
-            count_cache_linear_scan(pages.len());
-            *guard = Some(build_page_cache_index(pages));
-        }
-        guard
-            .as_ref()
-            .and_then(|index| index.by_name.get(&key).copied())
-            .filter(|&i| {
-                pages
-                    .get(i)
-                    .is_some_and(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
-            })
-    }
-
     /// Locate a page in the parsed-doc cache by its resolved physical path.
     /// Callers must already hold either `cache.read()` or `cache.write()`; this
     /// function only touches the companion index, preserving the lock order
