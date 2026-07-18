@@ -55,6 +55,30 @@ async function openPlugins(page) {
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
 }
 
+async function dismissInitialMobileDrawer(page) {
+  if (PLATFORM === "desktop") return;
+
+  const app = page.locator(".app-container");
+  await app.waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector(".app-container")?.getAttribute("data-mobile-drawer-mode") === "true"
+  );
+
+  const activeDrawer = await app.getAttribute("data-active-drawer");
+  if (!activeDrawer) return;
+  if (activeDrawer !== "left") {
+    throw new Error(`unexpected initial ${activeDrawer} mobile drawer`);
+  }
+
+  await page.locator('[data-mobile-drawer-panel="left"]').waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Close navigation sidebar", exact: true }).click();
+  await page.waitForFunction(() => {
+    const container = document.querySelector(".app-container");
+    return container?.getAttribute("data-active-drawer") === ""
+      && !document.querySelector("[data-mobile-drawer-scrim]");
+  });
+}
+
 async function installLocal(page, root, wasmName) {
   const manifest = JSON.parse(await readFile(`${root}/manifest.json`, "utf8"));
   await page.locator('input[type="file"]').setInputFiles([
@@ -105,6 +129,7 @@ try {
 
   await page.goto(url);
   await page.waitForSelector(".page-title");
+  await dismissInitialMobileDrawer(page);
   for (const root of [BULLET_SHOTS, QUERY_SHOTS, HEADING_SHOTS]) mkdirSync(root, { recursive: true });
   await openPlugins(page);
   await installLocal(page, BULLET_ROOT, "tine_plugin_bullet_threading.wasm");
