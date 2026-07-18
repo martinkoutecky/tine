@@ -1,29 +1,29 @@
 {
   "schemaVersion": 1,
   "version": "0.6.0",
-  "sourceFingerprint": "30f4f5d63ab28bc560e11dbb20ffb437922a8a17481b5d606ac7acc4287de002",
+  "sourceFingerprint": "fb239404989cab97c80263e1f4a009e91fed0ccc1a5120dadf21e107266ee2cf",
   "areas": [
     {
       "id": "data-safety-security-privacy",
-      "reportSha256": "1d25db3fc4e215451598a8f59f0c998c0d344e42d5e328fb1a193990217dbe86",
+      "reportSha256": "ae33239542081a4da4a8c9670fc1d5f3cd866465502b2b5f5ad2174168babd02",
       "critical": 0,
       "high": 0
     },
     {
       "id": "behavior-compatibility",
-      "reportSha256": "cbb02788a88c8f95835f939b4be7125a7deb6b51096ffce312e821fd9d4c6627",
+      "reportSha256": "8ccf13b90f4ba714aa350b19d81b921eed4ee72d42e99e21197d629f79b47c0d",
       "critical": 0,
       "high": 0
     },
     {
       "id": "performance-resources",
-      "reportSha256": "c56f19a166500bfd4e684693220a146fbde32e883acba9028adb339b760d9a76",
+      "reportSha256": "10e6e34803c17bc82f34f44d3011d57e3a4252129e68250867adcbbf17ef0593",
       "critical": 0,
       "high": 0
     },
     {
       "id": "focused-change-cluster",
-      "reportSha256": "e598991c06659a7d2df4878e8c9b849bdbd4084c79146ac0788228c22855881d",
+      "reportSha256": "5a40479dd6f14f487b27ba88a57fbe5bd75d10c5ef310c50209fa17e359157a3",
       "critical": 0,
       "high": 0
     }
