@@ -405,7 +405,7 @@
     },
     {
       "section": "Fixed",
-      "text": "**Ctrl-K page and block results now keep their exact physical file owner.** Current, alternate, background-tab, and right-sidebar activation preserve the selected graph-relative path, including duplicate-name sidebar restore and block-reference persistence, without breaking older pathless sessions.",
+      "text": "**Explicitly selected pages and blocks now keep their exact physical file owner through follow-on actions.** Ctrl-K, page titles, block zoom, sidebar, tabs, Recent, friendly query results, menus, and session restore preserve the selected graph-relative path. Stale or ambiguous rename/delete targets fail closed instead of touching a same-name sibling, while older logical/pathless links, Favorites, and sessions remain compatible.",
       "userVisible": true,
       "regressions": [
         "UI-SEARCH-EXACT-STORAGE-IDENTITY-001"
@@ -423,6 +423,83 @@
         "refs": [
           "website/index.html"
         ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Signed plugin registry cache updates are now failure-atomic and revocations remain durable.** The verified index and signature share one native envelope, legacy split keys migrate through a guarded transaction, torn or unreadable cache state holds guest activation, and cached/live revocations clear the installed enable bit before any guest bytes or runtime can be used.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-STARTUP-REVOCATION-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "The feature inventory and plugin threat model already state the signed-revocation and guarded-startup contract; this hardens its cache transaction without changing the documented workflow.",
+        "refs": [
+          "docs/FEATURES.md",
+          "docs/plugins/threat-model.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The Plugins page already presents signed revocation and disabled-by-default activation; cache-envelope implementation details do not need a separate website treatment.",
+        "refs": [
+          "website/plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Delayed plugin results now stay with the graph and editor that invoked them.** Switching or refreshing a graph while a command or slash completion is pending drops the stale result, even when the new graph contains the same block UUID and text, without disabling the healthy plugin worker.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PLUGIN-GRAPH-EFFECT-OWNER-001"
+      ],
+      "docs": {
+        "status": "current",
+        "reason": "The plugin API and threat model already promise host-owned, graph-generation-guarded effects and stale-result rejection; the repair restores that existing contract.",
+        "refs": [
+          "docs/plugins/README.md",
+          "docs/plugins/threat-model.md"
+        ]
+      },
+      "website": {
+        "status": "current",
+        "reason": "The Plugins page already describes host-owned bounded effects; graph/editor generation enforcement is an implementation safety repair rather than a new website feature.",
+        "refs": [
+          "website/plugins.html"
+        ]
+      },
+      "blog": {
+        "status": "current",
+        "reason": "The mandatory v0.6.0 Reddit and human-blog synchronization is tracked by its separate release evidence; this item needs no additional standalone blog edit.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Plugin launch verification now works from a standalone Tine checkout.** Documentation launchers use the checkout's own Vite and bundled community plugins instead of depending on an untracked sibling development repository.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "This repairs internal CI fixture and path resolution without changing a documented user or plugin-author command.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Standalone CI launcher path ownership is release infrastructure and adds no public website behavior.",
+        "refs": []
       },
       "blog": {
         "status": "current",
