@@ -3,7 +3,7 @@ import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePage
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
-  zoomedBlock, isFavorite, toggleFavorite,
+  isFavorite, toggleFavorite,
   graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
   agendaQuery, contextMenu, dataRev, isConflicted, renamePageInNavigation,
 } from "../ui";
@@ -395,8 +395,13 @@ export function PageView(): JSX.Element {
   };
   const zoomValid = () => {
     const r = currentRoute();
-    const z = r.kind === "page" ? r.block ?? null : zoomedBlock();
-    return z && doc.byId[z] ? z : null;
+    if (r.kind !== "page" || !r.block) return null;
+    const block = doc.byId[r.block];
+    const owner = block ? pageByName(block.page) : undefined;
+    const target = pageTargetFromRoute(r);
+    return block && owner && target && pageTargetMatchesLoaded(target, owner)
+      ? r.block
+      : null;
   };
   const contentReady = () => {
     const r = loadedRoute();

@@ -781,6 +781,55 @@ describe("page actions entry point", () => {
 });
 
 describe("page route loading", () => {
+  it("fails closed when a shared zoom UUID is loaded from a different exact owner", async () => {
+    const sharedId = "77777777-7777-4777-8777-777777777777";
+    const sharedRaw = "Same copied UUID and content";
+    const pathA = "pages/client-a/Twin.md";
+    const pathB = "pages/client-b/Twin.md";
+    const dto: PageDto = {
+      name: "Twin",
+      kind: "page",
+      title: "Twin",
+      path: pathB,
+      pre_block: null,
+      blocks: [{ id: sharedId, raw: sharedRaw, collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [sharedId]: node(sharedId, sharedRaw, dto.name) },
+      pages: [{ ...page(dto.name, "page", [sharedId]), path: pathB }],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    mainPaneRouter.openFile(pathB, dto.name, dto.kind, { inPlace: true });
+    focusBlock(sharedId);
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".zoomed-page")).not.toBeNull();
+      expect(root.textContent).toContain(sharedRaw);
+
+      // The name-keyed working-set slot is replaced by A. Its copied UUID/raw
+      // must not satisfy a zoom route that still claims exact owner B.
+      setDoc({
+        byId: { [sharedId]: node(sharedId, sharedRaw, dto.name) },
+        pages: [{ ...page(dto.name, "page", [sharedId]), path: pathA }],
+        feed: [],
+        loaded: true,
+      });
+      await tick();
+
+      expect(root.querySelector(".zoomed-page")).toBeNull();
+      expect(root.querySelector(".zoom-breadcrumb")).toBeNull();
+      expect(root.querySelector(".block-content")).toBeNull();
+      expect(root.textContent).not.toContain(sharedRaw);
+    } finally {
+      dispose();
+    }
+  });
+
   it("adopts the existing page's canonical case for a mixed-case page route", async () => {
     clearRecent();
     const dto: PageDto = {
