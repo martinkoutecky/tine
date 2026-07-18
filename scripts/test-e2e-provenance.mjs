@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildInputState } from "./build-e2e-inputs.mjs";
+import { buildInputState, deriveTauriManifest, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts/build-e2e-receipt.mjs");
@@ -46,6 +46,7 @@ try {
   fs.copyFileSync(runner, path.join(fixture, "scripts/run-e2e.mjs"));
   fs.copyFileSync(capabilities, path.join(fixture, "scripts/e2e-capabilities.mjs"));
   fs.copyFileSync(contracts, path.join(fixture, "tests/ui-regressions/e2e-contracts.json"));
+  fs.writeFileSync(path.join(fixture, "scripts/e2e-multigraph.mjs"), "// Provenance validation reached the selected scenario.\n");
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
   const fixtureManifest = path.join(fixture, "src-tauri/Cargo.toml");
   const originalManifest = "[build-dependencies]\ntauri-build = { version = \"2\", features = [] }\n\n[dependencies]\ntauri = { version = \"2\", features = [\"image-png\"] }\n";
@@ -92,16 +93,55 @@ try {
   assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "the Tauri manifest probe must restore the checkout before building");
   const normalization = JSON.parse(fs.readFileSync(normalizedSnapshot, "utf8")).tauriManifestNormalization;
   assert.equal(normalization.path, "src-tauri/Cargo.toml");
-  assert.equal(Buffer.from(normalization.originalContentBase64, "base64").toString("utf8"), originalManifest);
   assert.equal(Buffer.from(normalization.normalizedContentBase64, "base64").toString("utf8"), normalizedManifest);
   fs.writeFileSync(fixtureManifest, normalizedManifest);
   runChecked(process.execPath, [helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", normalizedReceipt], { cwd: fixture });
-  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "the accepted Tauri rewrite must be restored before the receipt is written");
+  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), normalizedManifest, "the receipt must preserve the target-native Tauri rewrite it hashes");
+  const normalizedWrittenReceipt = JSON.parse(fs.readFileSync(normalizedReceipt, "utf8"));
+  assert.deepEqual(normalizedWrittenReceipt.tauriManifestNormalization, normalization, "the receipt must carry the build-proven canonical manifest");
+
+  const expectedNormalizedManifest = Buffer.from(normalization.normalizedContentBase64, "base64");
+  assert.deepEqual(deriveTauriManifest(fixture), expectedNormalizedManifest, "normalizing an already-normalized manifest must be idempotent");
+  fs.writeFileSync(fixtureManifest, originalManifest);
+  assert.deepEqual(deriveTauriManifest(fixture), expectedNormalizedManifest, "a pristine checkout must derive the build-produced manifest");
+  assert.equal(
+    normalizedBuildInputState(fixture, expectedNormalizedManifest).digest,
+    normalizedWrittenReceipt.buildInputDigest,
+    "producer and consumer must compute the same shared normalized digest",
+  );
+
+  const pristineArtifacts = path.join(temporary, "pristine-normalized-receipt-artifacts");
+  const pristineConsumer = runNode([path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only"], {
+    cwd: fixture,
+    env: {
+      ...process.env,
+      TINE_APP: fixtureApp,
+      TINE_E2E_BUILD_RECEIPT: normalizedReceipt,
+      TINE_E2E_LAUNCH_PROBE: launchProbe,
+      E2E_ARTIFACT_DIR: pristineArtifacts,
+    },
+  });
+  assert.equal(pristineConsumer.status, 0, pristineConsumer.stderr || pristineConsumer.stdout);
+  assert.equal(fs.existsSync(pristineArtifacts), false, "receipt-only validation must not start E2E artifact work");
 
   fs.writeFileSync(fixtureManifest, originalManifest.replace('version = "2"', 'version = "999"'));
+  const changedCargoArtifacts = path.join(temporary, "changed-cargo-artifacts");
+  const changedCargoConsumer = runNode([path.join(fixture, "scripts/run-e2e.mjs"), "linux-smoke", "--scenario=multigraph", "--validate-build-receipt-only"], {
+    cwd: fixture,
+    env: {
+      ...process.env,
+      TINE_APP: fixtureApp,
+      TINE_E2E_BUILD_RECEIPT: normalizedReceipt,
+      TINE_E2E_LAUNCH_PROBE: launchProbe,
+      E2E_ARTIFACT_DIR: changedCargoArtifacts,
+    },
+  });
+  assert.notEqual(changedCargoConsumer.status, 0);
+  assert.match(changedCargoConsumer.stderr, /built from different build inputs than the current checkout/);
+  assert.equal(fs.existsSync(changedCargoArtifacts), false, "run-e2e started artifact work before rejecting changed Cargo.toml");
   const changedCargo = runNode([helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", path.join(temporary, "changed-cargo-receipt.json")], { cwd: fixture });
   assert.notEqual(changedCargo.status, 0);
-  assert.match(changedCargo.stderr, /refusing receipt: src-tauri\/Cargo\.toml diverged from the exact Tauri manifest normalization/);
+  assert.match(changedCargo.stderr, /refusing receipt: src-tauri\/Cargo\.toml diverged from the exact target-native Tauri manifest normalization/);
   fs.writeFileSync(fixtureManifest, originalManifest);
 
   fs.writeFileSync(fixtureManifest, normalizedManifest);
@@ -109,7 +149,8 @@ try {
   const changedSourceAlongsideNormalization = runNode([helper, "after", "--snapshot", normalizedSnapshot, "--app", fixtureApp, "--receipt", path.join(temporary, "changed-source-alongside-normalization-receipt.json")], { cwd: fixture });
   assert.notEqual(changedSourceAlongsideNormalization.status, 0);
   assert.match(changedSourceAlongsideNormalization.stderr, /refusing receipt: build-input state changed while building/);
-  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), originalManifest, "a rejected source mutation must not leave the expected Tauri rewrite behind");
+  assert.equal(fs.readFileSync(fixtureManifest, "utf8"), normalizedManifest, "receipt validation must preserve the build-produced Tauri rewrite");
+  fs.writeFileSync(fixtureManifest, originalManifest);
   fs.writeFileSync(path.join(fixture, "source.txt"), "before\n");
 
   fs.writeFileSync(path.join(fixture, "source.txt"), "after\n");

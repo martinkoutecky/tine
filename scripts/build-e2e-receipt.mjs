@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { buildInputState } from "./build-e2e-inputs.mjs";
+import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 
 // Keeps every native E2E candidate tied to the source state that built it.
 
@@ -62,50 +62,17 @@ function decoded(value, label) {
   return bytes;
 }
 
-function tauriManifestPath(root) {
-  return path.join(root, "src-tauri", "Cargo.toml");
-}
-
-// `tauri inspect wix-upgrade-code` resolves the Windows config and constructs
-// the same Rust AppInterface as `tauri build`, including rewrite_manifest,
-// without starting the frontend or Rust build. Record its exact byte result,
-// but restore the checkout so the real build remains the only build input.
-function probeTauriManifestNormalization(root, initialState) {
-  const manifestPath = tauriManifestPath(root);
-  const original = fs.readFileSync(manifestPath);
-  const cli = path.join(root, "node_modules", "@tauri-apps", "cli", "tauri.js");
-  let result;
-  let normalized;
-  try {
-    result = spawnSync(process.execPath, [cli, "inspect", "wix-upgrade-code"], {
-      cwd: root,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    normalized = fs.readFileSync(manifestPath);
-  } finally {
-    fs.writeFileSync(manifestPath, original);
-  }
-  if (result?.status !== 0) {
-    throw result?.error || new Error(`Tauri manifest normalization probe failed: ${String(result?.stderr || "").trim()}`);
-  }
-  if (!normalized) throw new Error("Tauri manifest normalization probe did not produce Cargo.toml");
-  const restoredState = buildInputState(root);
-  if (restoredState.digest !== initialState.digest) {
-    throw new Error("Tauri manifest normalization probe changed build inputs before the snapshot");
-  }
+function normalizationDescriptor(normalized) {
   return {
     path: "src-tauri/Cargo.toml",
-    originalContentBase64: encoded(original),
     normalizedContentBase64: encoded(normalized),
-    originalSha256: sha256(original),
     normalizedSha256: sha256(normalized),
   };
 }
 
 function snapshot(root, tauriManifestNormalization) {
-  const state = buildInputState(root);
-  const normalization = tauriManifestNormalization ? probeTauriManifestNormalization(root, state) : undefined;
+  const state = tauriManifestNormalization ? normalizedBuildInputState(root) : buildInputState(root);
+  const normalization = tauriManifestNormalization ? normalizationDescriptor(state.tauriManifest) : undefined;
   return {
     schemaVersion: 1,
     kind: "tine-e2e-build-input-snapshot",
@@ -140,13 +107,11 @@ function readSnapshot(file) {
   if (value.tauriManifestNormalization !== undefined) {
     const normalization = value.tauriManifestNormalization;
     if (!normalization || Array.isArray(normalization) || normalization.path !== "src-tauri/Cargo.toml"
-      || !/^[a-f0-9]{64}$/i.test(normalization.originalSha256 || "")
       || !/^[a-f0-9]{64}$/i.test(normalization.normalizedSha256 || "")) {
       throw new Error(`invalid build-input snapshot ${file}`);
     }
-    const original = decoded(normalization.originalContentBase64, `build-input snapshot ${file}`);
     const normalized = decoded(normalization.normalizedContentBase64, `build-input snapshot ${file}`);
-    if (sha256(original) !== normalization.originalSha256 || sha256(normalized) !== normalization.normalizedSha256) {
+    if (sha256(normalized) !== normalization.normalizedSha256) {
       throw new Error(`invalid build-input snapshot ${file}`);
     }
   }
@@ -185,18 +150,20 @@ function describeBuildInputDelta(beforeChanges, afterChanges) {
   ].join("\n");
 }
 
-function restoreExpectedTauriManifestNormalization(root, before) {
+function normalizedAfterBuildState(root, before) {
   const normalization = before.tauriManifestNormalization;
-  if (!normalization) return;
-  const manifestPath = tauriManifestPath(root);
-  const original = decoded(normalization.originalContentBase64, "Tauri manifest normalization");
+  if (!normalization) return buildInputState(root);
   const normalized = decoded(normalization.normalizedContentBase64, "Tauri manifest normalization");
+  const manifestPath = path.join(root, "src-tauri", "Cargo.toml");
   const actual = fs.readFileSync(manifestPath);
-  if (actual.equals(original)) return;
   if (!actual.equals(normalized)) {
-    throw new Error("refusing receipt: src-tauri/Cargo.toml diverged from the exact Tauri manifest normalization");
+    throw new Error("refusing receipt: src-tauri/Cargo.toml diverged from the exact target-native Tauri manifest normalization");
   }
-  fs.writeFileSync(manifestPath, original);
+  try {
+    return normalizedBuildInputState(root, normalized);
+  } catch (error) {
+    throw new Error(`refusing receipt: ${error.message}`);
+  }
 }
 
 function createReceipt(root, before, app, dist) {
@@ -204,8 +171,7 @@ function createReceipt(root, before, app, dist) {
   if (afterRevision !== before.sourceRevision) {
     throw new Error(`refusing receipt: HEAD changed while building (${before.sourceRevision} -> ${afterRevision})`);
   }
-  restoreExpectedTauriManifestNormalization(root, before);
-  const afterState = buildInputState(root);
+  const afterState = normalizedAfterBuildState(root, before);
   if (afterState.digest !== before.buildInputDigest) {
     throw new Error(`refusing receipt: build-input state changed while building\n${describeBuildInputDelta(before.buildInputChanges, afterState.changes)}`);
   }
@@ -226,6 +192,7 @@ function createReceipt(root, before, app, dist) {
     buildInputDigest: before.buildInputDigest,
     buildInputsDirty: before.buildInputsDirty,
     buildInputChanges: before.buildInputChanges,
+    ...(before.tauriManifestNormalization ? { tauriManifestNormalization: before.tauriManifestNormalization } : {}),
   };
 }
 

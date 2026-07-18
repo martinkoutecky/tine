@@ -7,7 +7,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildInputState } from "./build-e2e-inputs.mjs";
+import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -211,9 +211,16 @@ function loadBuildReceipt() {
   return receipt;
 }
 
+function strictBase64(value) {
+  if (typeof value !== "string") return undefined;
+  const bytes = Buffer.from(value, "base64");
+  return bytes.toString("base64") === value ? bytes : undefined;
+}
+
 function validateBuildReceiptInputs() {
   const receipt = loadBuildReceipt();
   const schemaProblems = [];
+  let normalizedTauriManifest;
   if (receipt.schemaVersion !== 1) schemaProblems.push("schemaVersion must be 1");
   if (typeof receipt.sourceRevision !== "string" || !receipt.sourceRevision) schemaProblems.push("sourceRevision must be a non-empty string");
   if (typeof receipt.builtAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(receipt.builtAt) || Number.isNaN(Date.parse(receipt.builtAt))) {
@@ -229,10 +236,27 @@ function validateBuildReceiptInputs() {
   if (typeof receipt.buildInputsDirty === "boolean" && Array.isArray(receipt.buildInputChanges) && receipt.buildInputsDirty !== (receipt.buildInputChanges.length > 0)) {
     schemaProblems.push("buildInputsDirty must agree with buildInputChanges");
   }
+  if (receipt.tauriManifestNormalization !== undefined) {
+    const normalization = receipt.tauriManifestNormalization;
+    normalizedTauriManifest = strictBase64(normalization?.normalizedContentBase64);
+    if (!normalization || Array.isArray(normalization) || normalization.path !== "src-tauri/Cargo.toml"
+      || !/^[a-f0-9]{64}$/i.test(normalization.normalizedSha256 || "") || !normalizedTauriManifest
+      || crypto.createHash("sha256").update(normalizedTauriManifest || Buffer.alloc(0)).digest("hex") !== normalization.normalizedSha256) {
+      schemaProblems.push("tauriManifestNormalization must contain the exact normalized src-tauri/Cargo.toml bytes");
+    }
+  }
   if (schemaProblems.length) {
     throw receiptRemediation(`invalid build receipt ${receiptPath}: ${schemaProblems.join(", ")}`);
   }
-  if (receipt.buildInputDigest !== buildInputState(root).digest) {
+  let checkoutDigest;
+  try {
+    checkoutDigest = normalizedTauriManifest
+      ? normalizedBuildInputState(root, normalizedTauriManifest).digest
+      : buildInputState(root).digest;
+  } catch {
+    throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout`);
+  }
+  if (receipt.buildInputDigest !== checkoutDigest) {
     throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout`);
   }
   if (receipt.sourceRevision !== checkoutRevision) {
@@ -484,6 +508,10 @@ if (!fs.existsSync(app)) {
 const frontendAsset = validateEmbeddedFrontend();
 const appSha256 = sha256(app);
 const buildProvenance = validateBuildReceiptArtifact(receipt, appSha256, frontendAsset);
+if (process.argv.includes("--validate-build-receipt-only")) {
+  console.log(`PASS build receipt ${receiptPath}`);
+  process.exit(0);
+}
 const selectedContracts = loadSelectedContracts(scenarios);
 fs.rmSync(artifactRoot, { recursive: true, force: true });
 fs.mkdirSync(artifactRoot, { recursive: true });
