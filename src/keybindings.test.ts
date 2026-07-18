@@ -5,7 +5,7 @@ import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, set
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, doc, loadSingle, moveSelection, resetStore, selectBlock, setDoc } from "./store";
+import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc } from "./store";
 import { endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import * as router from "./router";
@@ -559,6 +559,58 @@ describe("pane-select Esc cascade", () => {
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(paneSel()).toEqual({ kind: "pane", paneId: "main" });
+    dispose();
+  });
+
+  it("restores block selection and Arrow navigation after activating a pane", () => {
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "first", raw: "First", collapsed: false, children: [] },
+        { id: "second", raw: "Second", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("first");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    expect(hasSelection()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Enter", code: "Enter" }).event);
+
+    expect(hasSelection()).toBe(true);
+    expect(selectedIds()).toEqual(["first"]);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowDown", code: "ArrowDown" }).event);
+    expect(selectedIds()).toEqual(["second"]);
+    dispose();
+  });
+
+  it("restores block selection and Arrow navigation after dismissing pane-select", () => {
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "first", raw: "First", collapsed: false, children: [] },
+        { id: "second", raw: "Second", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("first");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    expect(hasSelection()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+
+    expect(hasSelection()).toBe(true);
+    expect(selectedIds()).toEqual(["first"]);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowDown", code: "ArrowDown" }).event);
+    expect(selectedIds()).toEqual(["second"]);
     dispose();
   });
 

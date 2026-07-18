@@ -36,6 +36,7 @@ import {
   selectBlock,
   selectedIds,
   moveSelection,
+  deleteSelection,
   cycleSelectionTasks,
   moveSelectionItems,
   moveBlockFeed,
@@ -409,6 +410,35 @@ describe("move selection (mod+up/down in block-select)", () => {
     moveSelection(1, true); // extend to C → selection [B, C]
     moveSelectionItems(-1);
     expect(shape()).toEqual([["B"], ["C"], ["A"]]);
+  });
+});
+
+describe("delete selection survivor", () => {
+  it("selects the next visible block after deleting a selection", () => {
+    const dto = load([blk("A"), blk("B"), blk("C")]);
+    selectBlock(dto.blocks[1].id);
+
+    deleteSelection();
+
+    expect(selectedIds()).toEqual([dto.blocks[2].id]);
+  });
+
+  it("selects the previous visible block after deleting the last block", () => {
+    const dto = load([blk("A"), blk("B"), blk("C")]);
+    selectBlock(dto.blocks[2].id);
+
+    deleteSelection();
+
+    expect(selectedIds()).toEqual([dto.blocks[1].id]);
+  });
+
+  it("clears selection after deleting the only block", () => {
+    const dto = load([blk("A")]);
+    selectBlock(dto.blocks[0].id);
+
+    deleteSelection();
+
+    expect(selectedIds()).toEqual([]);
   });
 });
 

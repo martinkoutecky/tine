@@ -56,6 +56,9 @@ import {
   selectedIds,
   blockIsGridView,
   doc,
+  pageVisibleOrder,
+  selectBlock,
+  visibleOrder,
 } from "./store";
 import { editingId, startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
@@ -70,6 +73,7 @@ import {
   layoutPaneIds,
   layoutRoot,
   moveActiveTabToPane,
+  paneRouter,
   splitPane,
   splitPaneAtSeam,
   splitRootAtEdge,
@@ -82,6 +86,8 @@ import {
   paneSel,
   previousPaneSelectionTarget,
   readingOrderPanes,
+  rememberBlockSelectionForPaneReturn,
+  takeBlockSelectionForPaneReturn,
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
@@ -159,6 +165,19 @@ function enterPaneSelectFromFocus() {
   enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
+function firstVisibleBlockInFocusedPane(): string | null {
+  const currentRoute = paneRouter(focusedPaneId()).route();
+  return currentRoute.kind === "page"
+    ? pageVisibleOrder(currentRoute.name)[0] ?? null
+    : visibleOrder()[0] ?? null;
+}
+
+function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
+  if (hasSelection()) return;
+  const target = previous && doc.byId[previous] ? previous : firstVisibleBlockInFocusedPane();
+  if (target) selectBlock(target);
+}
+
 // Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8
 // ruling): Enter = a plain MIRROR split (the new pane keeps the duplicated
 // content, no dialog — the quick "same thing side by side"); typing = an
@@ -215,12 +234,16 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
       return true;
     }
     case "dismiss":
+      const previous = takeBlockSelectionForPaneReturn();
       exitPaneSelect();
+      restoreBlockSelectionAfterPaneReturn(previous);
       return true;
     case "activate":
       if (target.kind === "pane") {
+        const previous = takeBlockSelectionForPaneReturn();
         exitPaneSelect();
         focusPane(target.paneId);
+        restoreBlockSelectionAfterPaneReturn(previous);
       } else {
         materializePaneSelection(null); // Enter on a seam/edge = mirror split
       }
@@ -848,6 +871,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         return;
       }
       if (hasSelection()) {
+        const previous = selectedIds().at(-1) ?? null;
+        if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();
         // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to
         // pane-select — the old "cleared but nothing selected" state between

@@ -720,7 +720,7 @@ export function visibleOrder(): string[] {
 // that aren't part of the main routed view, e.g. the quick-capture scratch page,
 // whose roots never appear in mainPages(). Without this, prevVisible/nextVisible
 // (and therefore Backspace-merge and Up/Down nav) are dead in the capture window.
-function pageVisibleOrder(pageName: string): string[] {
+export function pageVisibleOrder(pageName: string): string[] {
   const order: string[] = [];
   const page = doc.pages.find((p) => p.name === pageName);
   if (!page) return order;
@@ -2394,6 +2394,19 @@ function topSelected(): string[] {
   });
 }
 
+function selectionRemovalSurvivor(): string | null {
+  const selected = selectedIds();
+  const first = selected[0];
+  const last = selected.at(-1);
+  if (!first || !last) return null;
+  return nextVisible(last) ?? prevVisible(first) ?? doc.byId[first]?.parent ?? null;
+}
+
+function reselectSurvivingBlock(id: string | null) {
+  if (id && doc.byId[id]) selectBlock(id);
+  else clearSelection();
+}
+
 export function indentSelection() {
   const ids = topSelected();
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
@@ -2437,6 +2450,7 @@ export function outdentSelection() {
 }
 
 export function deleteSelection() {
+  const survivor = selectionRemovalSurvivor();
   const ids = topSelected();
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const pages = new Set<string>();
@@ -2471,7 +2485,7 @@ export function deleteSelection() {
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
   for (const p of pages) markDirty(p);
-  clearSelection();
+  reselectSurvivingBlock(survivor);
 }
 
 export function selectionMarkdown(): string {
