@@ -12,6 +12,18 @@ describe("structuredHtmlOutline", () => {
     ]);
   });
 
+  it("keeps literal square brackets instead of backslash-escaping them (GH: Martin)", () => {
+    // Multi-block matches outlineToHtml's own output for a multi-line block copy,
+    // so the single-node plain-text bypass does not apply and the outline is asserted.
+    expect(structuredHtmlOutline(
+      "<ul><li>see [ref] here</li><li>and [two]</li></ul>",
+      "see [ref] here\nand [two]",
+    )).toEqual([
+      { raw: "see [ref] here", children: [] },
+      { raw: "and [two]", children: [] },
+    ]);
+  });
+
   it("keeps headings, quotes, links, emphasis, and fenced code", () => {
     const outline = structuredHtmlOutline([
       "<h2>Heading</h2>",

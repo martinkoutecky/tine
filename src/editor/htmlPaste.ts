@@ -53,6 +53,12 @@ export function structuredHtmlOutline(html: string, plain: string): OutlineNode[
     strongDelimiter: "**",
   });
   service.use(gfm);
+  // Tine's clipboard HTML is round-tripped Markdown (our own block copy, or a
+  // rendered Logseq block), so Turndown's default text-node escaping would
+  // double-escape already-literal punctuation — e.g. `a [b] c` -> `a \[b\] c`
+  // (GH: Martin). Keep `[ ] * _ \` # ~` literal; real structure (headings,
+  // lists, links, code) is emitted by dedicated rules, not this text escaper.
+  service.escape = (value: string) => value;
   let markdown: string;
   try {
     markdown = service.turndown(doc.body).replace(/\n{3,}/g, "\n\n").trim();
