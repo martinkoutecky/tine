@@ -313,6 +313,8 @@ pub(crate) async fn open_graph_window(
                 Ok(window) => {
                     #[cfg(target_os = "linux")]
                     crate::linux_window_identity::apply_to_window(&window);
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    crate::native_mouse_history::install(&window);
                     let _ = window.set_focus();
                 }
                 Err(error) => {

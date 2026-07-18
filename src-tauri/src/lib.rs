@@ -13,6 +13,7 @@ mod graph;
 mod linux_window_identity;
 mod migrate_identifier;
 mod media_protocol;
+mod native_mouse_history;
 mod platform;
 mod plugins;
 mod settings;
@@ -627,6 +628,10 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("capture") {
                     linux_window_identity::apply_to_window(&window);
                 }
+            }
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if let Some(window) = app.get_webview_window("main") {
+                native_mouse_history::install(&window);
             }
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());

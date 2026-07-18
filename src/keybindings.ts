@@ -962,6 +962,21 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (!cellSel()) return;
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
+  type MouseHistoryDirection = "back" | "forward";
+  type MouseHistorySource = "dom" | "native";
+  let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
+  const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
+    const now = performance.now();
+    // A platform that exposes both its native command and DOM auxclick must not
+    // advance twice for one physical release. Repeated events from the same
+    // source remain distinct clicks and are never collapsed.
+    if (lastMouseHistory?.direction === direction && lastMouseHistory.source !== source && now - lastMouseHistory.at < 100) {
+      return;
+    }
+    lastMouseHistory = { direction, source, at: now };
+    if (direction === "back") goBack();
+    else goForward();
+  };
   // Mouse side buttons: X1 (DOM button 3) navigates back, X2 (button 4) forward,
   // reusing the same history ops as Alt+Left / Alt+Right (GH #156). `auxclick`
   // fires once per non-primary button release, so a single listener never
@@ -970,12 +985,33 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   const mouseNav = (e: MouseEvent) => {
     if (e.button === 3) {
       e.preventDefault();
-      goBack();
+      navigateMouseHistory("back", "dom");
     } else if (e.button === 4) {
       e.preventDefault();
-      goForward();
+      navigateMouseHistory("forward", "dom");
     }
   };
+
+  let disposed = false;
+  let unlistenNativeMouseHistory = () => {};
+  if ("__TAURI_INTERNALS__" in window) {
+    void Promise.all([import("@tauri-apps/api/event"), import("@tauri-apps/api/window")]).then(
+      async ([{ listen }, { getCurrentWindow }]) => {
+        const target = getCurrentWindow().label;
+        const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
+          "history-navigate",
+          (e) => {
+            if (e.payload?.target !== target) return;
+            if (e.payload.direction === "back" || e.payload.direction === "forward") {
+              navigateMouseHistory(e.payload.direction, "native");
+            }
+          },
+        );
+        if (disposed) unlisten();
+        else unlistenNativeMouseHistory = unlisten;
+      },
+    );
+  }
 
   window.addEventListener("keydown", handler, true);
   window.addEventListener("paste", pasteHandler, true);
@@ -984,6 +1020,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   window.addEventListener("blur", clearSuper);
   window.addEventListener("auxclick", mouseNav, true);
   return () => {
+    disposed = true;
+    unlistenNativeMouseHistory();
     window.removeEventListener("keydown", handler, true);
     window.removeEventListener("paste", pasteHandler, true);
     window.removeEventListener("keydown", superTracker, true);
