@@ -300,6 +300,83 @@ describe("installed plugin lifecycle", () => {
       error: undefined,
     });
   });
+
+  it("makes a successful held enable the selected durable intent so disable can clear it", async () => {
+    const api = backend();
+    const id = "page.tine.held-enable-disable";
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{
+      ...record(id, "Held enable disable"),
+      selected: false,
+      enabled: false,
+    }]);
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    const writes: boolean[] = [];
+    vi.spyOn(api, "setPluginEnabled").mockImplementation(async (_id, _version, enabled) => {
+      writes.push(enabled);
+    });
+
+    const manager = new PluginManager();
+    await manager.initialize(new Set(), true);
+    await manager.enable(id, "1.0.0");
+    expect(installedPlugins().find((item) => item.manifest.id === id)).toMatchObject({
+      selected: true,
+      enabled: true,
+      running: false,
+    });
+
+    await manager.disable(id);
+
+    expect(writes).toEqual([true, false]);
+    expect(installedPlugins().find((item) => item.manifest.id === id)).toMatchObject({
+      selected: true,
+      enabled: false,
+      running: false,
+      error: undefined,
+    });
+  });
+
+  it("starts exactly once when a non-revoking hold release passes a pending held enable", async () => {
+    const api = backend();
+    const id = "page.tine.held-enable-release";
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{
+      ...record(id, "Held enable release"),
+      selected: false,
+      enabled: false,
+    }]);
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    let finishTrue!: () => void;
+    const writes: boolean[] = [];
+    const setEnabled = vi.spyOn(api, "setPluginEnabled").mockImplementation(async (_id, _version, enabled) => {
+      writes.push(enabled);
+      if (enabled) await new Promise<void>((resolve) => { finishTrue = resolve; });
+    });
+    const readEntry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    const runtime = { invoke: vi.fn().mockResolvedValue({ effects: [] }), dispose: vi.fn() };
+    const createRuntime = vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+
+    const manager = new PluginManager();
+    await manager.initialize(new Set(), true);
+    const enabling = manager.enable(id, "1.0.0");
+    await vi.waitFor(() => expect(setEnabled).toHaveBeenCalledWith(id, "1.0.0", true));
+
+    await manager.setActivationHold(false);
+    expect(readEntry).not.toHaveBeenCalled();
+    finishTrue();
+    await enabling;
+
+    expect(writes).toEqual([true]);
+    expect(readEntry).toHaveBeenCalledTimes(1);
+    expect(createRuntime).toHaveBeenCalledTimes(1);
+    expect(runtime.invoke).toHaveBeenCalledTimes(1);
+    expect(installedPlugins().find((item) => item.manifest.id === id)).toMatchObject({
+      selected: true,
+      enabled: true,
+      running: true,
+      error: undefined,
+    });
+  });
 });
 
 describe("plugin invocation ownership", () => {

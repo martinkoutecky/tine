@@ -204,7 +204,10 @@ export class PluginManager {
     if (this.activationHeld) {
       const persisted = await this.persistEnabledIntent(plugin, intent);
       if (persisted && this.intentIsCurrent(key, intent, true)) {
-        this.patch(id, version, { enabled: true, running: false, error: undefined });
+        this.patchSelectedEnabledIntent(id, version);
+        if (!this.activationHeld && !this.revoked.has(key) && this.intentIsCurrent(key, intent, true)) {
+          await this.start(id, version, false, intent);
+        }
       }
       return;
     }
@@ -752,6 +755,20 @@ export class PluginManager {
           : plugin
       )
     );
+  }
+
+  private patchSelectedEnabledIntent(id: string, version: string) {
+    setInstalledPlugins((current) => current.map((plugin) => {
+      if (plugin.manifest.id !== id) return plugin;
+      const selected = plugin.manifest.version === version;
+      return {
+        ...plugin,
+        selected,
+        enabled: selected,
+        running: false,
+        ...(selected ? { error: undefined } : {}),
+      };
+    }));
   }
 
   private settingsStorageKey(id: string): string {
