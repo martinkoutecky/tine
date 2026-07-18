@@ -61,6 +61,7 @@ jobs:
           node scripts/check-flatpak-cargo-sources.mjs
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
 
       - name: lsdoc generated artifacts are current
         run: |
@@ -107,6 +108,7 @@ jobs:
         run: |
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
 
       - name: Performance baseline policy is current
         env:

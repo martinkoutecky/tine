@@ -76,7 +76,9 @@ jobs:
       - name: lsdoc oracle bytes and cross-platform EOL policy are current
         run: node scripts/check-lsdoc-oracle-sync.mjs
       - name: Release pipeline contract fixtures
-        run: node scripts/test-release-pipeline.mjs
+        run: |
+          node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
 
   # Reuse the actual privileged, network-disabled Flatpak bundle build. It runs
   # in parallel with the platform packages but is a hard publication dependency.
