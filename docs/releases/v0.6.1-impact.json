@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.1",
+  "baseTag": "v0.6.0",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.6.1 is a patch release of bounded correctness fixes (mouse side-button navigation, paste bracket escaping, block-selection survivor) with no new subsystem, write path, or platform integration; no focused change-cluster audit is required."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Mouse side buttons (back/forward, also called buttons 4/5) now navigate page history.",
+      "userVisible": true,
+      "regressions": [
+        "UI-NAV-MOUSE-SIDE-BUTTONS-001"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Copy-pasting block text that contains square brackets no longer backslash- escapes them (`[ref]` stays `[ref]` instead of becoming `\\[ref\\]`).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PASTE-BRACKET-LITERAL-001"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Deleting a block selection, and returning to a pane from pane-selection, now keep a block selected (and keyboard-navigable) instead of clearing it.",
+      "userVisible": true,
+      "regressions": [
+        "UI-BLOCK-SELECTION-SURVIVOR-001"
+      ],
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Behavior fix to existing editor/navigation behavior; no documented feature, marketing page, or blog topic changes.",
+        "refs": []
+      }
+    }
+  ]
+}

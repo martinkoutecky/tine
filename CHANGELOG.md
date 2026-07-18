@@ -8,8 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-18
+
 ### Fixed
 
+- Mouse side buttons (back/forward, also called buttons 4/5) now navigate page
+  history.
 - Copy-pasting block text that contains square brackets no longer backslash-
   escapes them (`[ref]` stays `[ref]` instead of becoming `\[ref\]`).
 - Deleting a block selection, and returning to a pane from pane-selection, now
