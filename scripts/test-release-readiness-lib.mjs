@@ -53,10 +53,11 @@ try {
   }
 
   write("community-plugins/example/target/release/example.wasm", "ignored build output\n");
+  write("fixtures/plugin-revocation/sentinel-src/target/release/sentinel.wasm", "ignored fixture build output\n");
   assert.equal(
     auditableSourceFingerprint(temporary),
     baseline,
-    "generated plugin build output must not invalidate the audit fingerprint",
+    "generated plugin and fixture build output must not invalidate the audit fingerprint",
   );
 
   for (const [relative, original] of releaseEvidence) {

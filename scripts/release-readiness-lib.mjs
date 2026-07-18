@@ -66,9 +66,10 @@ export function auditableSourceFingerprint(root) {
     if (!fs.existsSync(absolute)) return;
     const stat = fs.lstatSync(absolute);
     if (stat.isDirectory()) {
-      const pluginBuildOutput = path.basename(relative) === "target"
-        && pluginRoots.some((pluginRoot) => relative.startsWith(`${pluginRoot}${path.sep}`));
-      if (pluginBuildOutput) return;
+      // Cargo build output is local evidence, never audited source. This applies
+      // both to community plugins and to Rust-backed fixtures; otherwise a
+      // warmed developer checkout hashes differently from a clean CI checkout.
+      if (path.basename(relative) === "target") return;
       for (const name of fs.readdirSync(absolute).sort()) walk(path.join(relative, name));
     } else if (stat.isFile()) {
       const normalized = relative.replaceAll(path.sep, "/");
