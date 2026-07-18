@@ -105,6 +105,7 @@ import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import {
+  COMMUNITY_REGISTRY_ENABLED,
   communityPlugins,
   communityThemes,
   installCommunityPlugin,
@@ -711,6 +712,7 @@ function PluginsTab(): JSX.Element {
         </div>
       </div>
 
+      <Show when={COMMUNITY_REGISTRY_ENABLED}>
       <div class="settings-section">Community catalogue</div>
       <div class="settings-hint">
         Signed registry · automated deterministic and no-tools AI audits · immutable version digests.
@@ -866,6 +868,7 @@ function PluginsTab(): JSX.Element {
             );
           }}
         </For>
+      </Show>
       </Show>
 
       </Show>
@@ -1162,6 +1165,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         Themes recolor Tine using Logseq's <code>--ls-*</code> variables. If you keep your own <code>logseq/custom.css</code>, it still takes priority.
       </div>
 
+      <Show when={COMMUNITY_REGISTRY_ENABLED}>
       <div class="settings-section">Theme packages</div>
       <Show when={communityThemes().length > 0}>
         <div class="settings-hint theme-gallery-hint">Signed community themes · inert token manifests · immutable audit digests.</div>
@@ -1195,6 +1199,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
             );
           }}
         </For>
+      </Show>
       </Show>
       <div class="settings-row">
         <div>

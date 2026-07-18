@@ -79,6 +79,11 @@ export default defineConfig({
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
     __GIT_COMMIT__: JSON.stringify(GIT_COMMIT),
+    // The network-backed community plugin/theme registry. Disabled when the
+    // build sets TINE_COMMUNITY_REGISTRY=0 — the F-Droid recipe does this so the
+    // published build never fetches executable plugin code at runtime (F-Droid
+    // inclusion policy). Local sideloading is unaffected. Default: enabled.
+    __TINE_COMMUNITY_REGISTRY__: JSON.stringify(process.env.TINE_COMMUNITY_REGISTRY !== "0"),
   },
   clearScreen: false,
   server: {
