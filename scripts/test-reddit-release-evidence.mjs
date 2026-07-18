@@ -193,6 +193,27 @@ assert.throws(
   assert.deepEqual(sleeps, [3_000, 2_000]);
 }
 {
+  const sleeps = [];
+  let calls = 0;
+  const client = createRedditJsonClient({
+    author: manifest.author,
+    sleepFn: async (ms) => sleeps.push(ms),
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return response({}, {
+          status: 429,
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "30" },
+        });
+      }
+      return response({ recovered: true });
+    },
+  });
+  assert.deepEqual(await client.getJson(redditAuthorFeedUrl(manifest.author)), { recovered: true });
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [30_000], "the retry itself must wait for the advertised quota reset");
+}
+{
   let calls = 0;
   const client = createRedditJsonClient({
     author: manifest.author,

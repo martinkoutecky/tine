@@ -110,8 +110,12 @@ export function createRedditJsonClient({
 
       if (attempt === 3) break;
       const headerDelay = response ? retryAfterMs(response.headers, nowFn()) : null;
-      const delay = boundedWait(headerDelay ?? 2 ** attempt * 1_000);
+      // A retry is itself the next Reddit request. Honor an exhausted-quota
+      // reset before that retry, even when exponential backoff is shorter.
+      const rateDelay = pendingRateWaitMs;
+      const delay = boundedWait(Math.max(headerDelay ?? 2 ** attempt * 1_000, rateDelay));
       if (retryWaitTotal + delay > 120_000) break;
+      if (rateDelay > 0) pendingRateWaitMs = 0;
       retryWaitTotal += delay;
       await sleepFn(delay);
     }
