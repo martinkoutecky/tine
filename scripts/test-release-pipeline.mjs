@@ -81,6 +81,11 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
+  /test:\n    name: Full CI \/ Linux tests and release contracts[\s\S]*?uses: dtolnay\/rust-toolchain@stable\n        with:\n          targets: wasm32-unknown-unknown[\s\S]*?name: Standalone plugin template builds and conforms\n        run: npm run plugin:template-check/,
+  "the Linux full-CI plugin-template check does not install the WASM target"
+);
+assert.match(
+  ciWorkflow,
   /windows-compile:[\s\S]*?inputs\.scope == 'full'[\s\S]*?inputs\.scope == 'windows'/,
   "the Windows lane cannot distinguish full and focused dispatches"
 );
@@ -214,10 +219,37 @@ assert.match(
   /TAURI_DRIVER: process\.env\.TAURI_DRIVER \|\| \(process\.platform === "win32" \? "msedgedriver\.exe" : "tauri-driver"\)/,
   "Windows scenarios still route native WebView2 through the unnecessary Tauri proxy"
 );
-assert.ok(
-  e2eRunner.includes("return /BadWindow \\(invalid Window parameter\\)/.test(combined)")
-    && e2eRunner.includes("xdo_get_active_window reported an error"),
-  "the release runner does not retry a hosted Quick Capture active-window race"
+const nativeHarnessFailureSource = e2eRunner.match(
+  /function isRetryableNativeHarnessFailure\(id, output, errors, timedOut\) \{[\s\S]*?\n\}/
+);
+assert.ok(nativeHarnessFailureSource, "the release runner is missing its Quick Capture native-harness retry predicate");
+const isRetryableNativeHarnessFailure = new Function(
+  `${nativeHarnessFailureSource[0]}\nreturn isRetryableNativeHarnessFailure;`
+)();
+assert.equal(
+  isRetryableNativeHarnessFailure(
+    "capture",
+    "BadWindow (invalid Window parameter)\nxdo_get_active_window reported an error",
+    "",
+    false
+  ),
+  true,
+  "the legacy GTK BadWindow active-window race is not retried"
+);
+assert.equal(
+  isRetryableNativeHarnessFailure(
+    "capture",
+    "XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)\nxdo_get_active_window reported an error",
+    "",
+    false
+  ),
+  true,
+  "the demonstrated xdotool active-window race is not retried"
+);
+assert.equal(
+  isRetryableNativeHarnessFailure("capture", "cold-restart autocomplete assertion failed", "", false),
+  false,
+  "arbitrary Quick Capture assertion failures must not be retried"
 );
 assert.match(
   printSecurity,

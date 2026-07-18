@@ -308,8 +308,11 @@ function isRetryableNativeHarnessFailure(id, output, errors, timedOut) {
   // a frame destroyed during the short single-instance forwarder's teardown.
   // Retry the entire isolated scenario once; the second run must still prove
   // first-show native + DOM focus and save real keyboard input.
-  return /BadWindow \(invalid Window parameter\)/.test(combined)
-    && /(xdo_get_active_window reported an error|XGetWindowProperty\[_NET_ACTIVE_WINDOW\] failed)/.test(combined);
+  const badWindow = /BadWindow \(invalid Window parameter\)/.test(combined);
+  const xdotoolActiveWindowFailure = /xdo_get_active_window reported an error/.test(combined);
+  const xGetActiveWindowFailure = /XGetWindowProperty\[_NET_ACTIVE_WINDOW\] failed/.test(combined);
+  return (badWindow && (xdotoolActiveWindowFailure || xGetActiveWindowFailure))
+    || (xdotoolActiveWindowFailure && xGetActiveWindowFailure);
 }
 
 function relativeArtifactPath(file) {
