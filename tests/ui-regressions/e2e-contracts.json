@@ -171,7 +171,7 @@
       ],
       "acceptableVariations": ["Plugin command presentation and graph-switch animation may evolve while stale effects stay inert and the current-graph positive control persists normally."],
       "nonRequirements": ["Exact worker delay, DOM nesting, switch timing, or plugin cancellation."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-print-security.mjs": {
       "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Page-menu PDF export creates only a static, script-disabled print frame.", "blocking": true, "authority": "Tine print-export script isolation contract" }],
