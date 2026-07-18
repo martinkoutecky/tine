@@ -88,7 +88,9 @@ try {
     return "started";
   }, B);
   if (raced !== "started") throw new Error(`could not start graph-switch race: ${raced}`);
-  await browser.waitUntil(async () => (await browser.$(".graph-switch-name").getText()) === "graph-b", {
+  await browser.waitUntil(() => browser.execute((name) =>
+    document.querySelector(".graph-switch-name")?.textContent?.trim() === name,
+  "graph-b"), {
     timeout: 20_000, timeoutMsg: "graph B did not bind",
   });
   await sleep(600);
