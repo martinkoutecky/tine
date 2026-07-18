@@ -107,6 +107,7 @@ const suites = {
     ["media", "scripts/e2e-media.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["pdf-ownership", "scripts/e2e-pdf-ownership.mjs", {}],
+    ["plugin-revocation", "scripts/e2e-plugin-revocation.mjs", {}],
     ["plugin-graph-ownership", "scripts/e2e-plugin-graph-ownership.mjs", {}],
     ["external-assets", "scripts/e2e-external-assets.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],

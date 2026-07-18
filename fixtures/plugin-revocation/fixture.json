@@ -5,5 +5,6 @@
   "wasmSha256": "be8035e6e648b3b7e3bb09e1299926ad8213656471701256fb19ee0bec7fad56",
   "controlIndexSha256": "f666bdd1510f6f90ddec07e4480d97db18f31a935da476c3b1c711832e4397ee",
   "revokedIndexSha256": "559e97fc455ee38fad9cdeeb0e4035fbb5cd7175741402d755927bcd578aeb30",
-  "publicKeySha256": "c00dd3b538b33cc13bd4f5e6aa608ddead3a828baca842cf4e1950aebb0a5f2a"
+  "publicKeySha256": "c00dd3b538b33cc13bd4f5e6aa608ddead3a828baca842cf4e1950aebb0a5f2a",
+  "revokedSignatureSha256": "91f1c726e616cb0888280aa6db3be403f724f251a8a4b6aac913c963825aa02e"
 }

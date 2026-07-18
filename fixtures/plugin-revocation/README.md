@@ -38,24 +38,19 @@ The committed byte identities are recorded in `fixture.json`. The sentinel WASM
 is 12,989 bytes and has SHA-256
 `be8035e6e648b3b7e3bb09e1299926ad8213656471701256fb19ee0bec7fad56`.
 
-## Deliberate one-signature handoff
+## Completed one-signature handoff
 
-`revoked-index.json.sig` is deliberately absent. A production keyholder must run
-the same Ed25519/OpenSSL primitive used by the narrow registry publisher, without
-copying the key into this checkout:
+`revoked-index.json.sig` is the independently verified offline production
+Ed25519 signature for `revoked-index.json`. Its committed byte identity is
+recorded as `revokedSignatureSha256` in `fixture.json`.
 
-```bash
-openssl pkeyutl -sign -rawin -inkey "$TINE_REGISTRY_SIGNING_KEY" -in fixtures/plugin-revocation/revoked-index.json | (openssl base64 -A; printf '\n') > fixtures/plugin-revocation/revoked-index.json.sig
-```
-
-Then run:
+The fixture checker verifies the signature under the committed production public
+key and confirms that `plugin-revocation` is registered in `linux-release`:
 
 ```bash
 npm run plugin:revocation-fixture:check
 ```
 
-That command fails closed until the signature verifies under the committed
-production public key. Once it verifies, it also fails until the
-`plugin-revocation` scenario is registered in the `linux-release` suite. Only
-then run the native journey and unchanged-binary burn-in. Until those steps are
-complete, this fixture is preparation, not release evidence.
+The remaining work is to run the registered native revocation journey and the
+manager-owned unchanged-binary burn-in. Until those steps are complete, this
+fixture is not release evidence.
