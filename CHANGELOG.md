@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Editing inside an existing `[[page]]` or `((block))` reference — for example
+  inserting a word in front of the current text — and accepting a completion now
+  rewrites the whole reference instead of leaving a stray `]]`/`))`, matching
+  Logseq (GH #199).
 - Android versions below 11 (API < 30) no longer crash on launch with an
   `UnsatisfiedLinkError` for `renameat2` (GH #192).
 - Linked and Unlinked References now match Logseq: Unicode-canonical (NFC) page

@@ -5,6 +5,7 @@ import {
   commandScore,
   detectTrigger,
   applyCompletion,
+  refCompletionEnd,
   withRefCompletionSpace,
   autoPairEdit,
   fullWidthRefReplace,
@@ -267,6 +268,41 @@ describe("applyCompletion", () => {
   it("tag with spaces uses #[[...]]", () => {
     expect(tagInsert("multi word")).toBe("#[[multi word]]");
     expect(tagInsert("simple")).toBe("#simple");
+  });
+});
+
+describe("refCompletionEnd (OG accept-range parity)", () => {
+  it("swallows the next page-ref closer when completing mid-ref", () => {
+    expect(refCompletionEnd("[[first second]]", 8, "[[first]]")).toBe(16);
+  });
+
+  it("swallows a page-ref closer immediately after the caret", () => {
+    expect(refCompletionEnd("[[first second]]", 14, "[[first second]]")).toBe(16);
+  });
+
+  it("leaves an unclosed page ref unchanged", () => {
+    expect(refCompletionEnd("[[first", 7, "[[first]]")).toBe(7);
+  });
+
+  it("swallows the next block-ref closer when completing mid-ref", () => {
+    expect(refCompletionEnd("((abcabc))", 6, "((u))")).toBe(10);
+  });
+
+  it("does not swallow a closer on the next line", () => {
+    expect(refCompletionEnd("[[fir\nx]]", 5, "[[first]]")).toBe(5);
+  });
+
+  it("leaves non-ref completions unchanged", () => {
+    expect(refCompletionEnd("/tod", 4, "TODO ")).toBe(4);
+  });
+
+  it("replaces the full reporter-case ref instead of leaving a stray closer", () => {
+    // Necessity gate (verified pre-fix): end = 8 (the immediate-only range)
+    // produces "[[first]]second]]", so this assertion fails without this helper.
+    const raw = "[[first second]]";
+    const insert = pageInsert("first");
+    const result = applyCompletion(raw, 0, refCompletionEnd(raw, 8, insert), insert);
+    expect(result.raw).toBe("[[first]]");
   });
 });
 

@@ -197,6 +197,22 @@ export function applyCompletion(
   };
 }
 
+/** OG accept-range parity (GH #199): when a completion ends in a ref closer
+ *  (`]]`/`))`/`}}`), the replacement must extend past the caret to swallow that
+ *  closer even when the user typed text between the caret and it (editing inside
+ *  an existing ref). Scans the CURRENT LINE only, forward from `end`. Returns the
+ *  index just past the closer, or `end` unchanged when there is no matching closer
+ *  ahead on this line. */
+export function refCompletionEnd(value: string, end: number, insertedText: string): number {
+  for (const pair of ["]]", "))", "}}"] as const) {
+    if (!insertedText.endsWith(pair)) continue;
+    const lineEnd = value.indexOf("\n", end);
+    const closer = value.indexOf(pair, end);
+    return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + pair.length : end;
+  }
+  return end;
+}
+
 /** Build the inserted text for a page reference (`[[Name]]`). */
 export function pageInsert(name: string): string {
   return `[[${name}]]`;
