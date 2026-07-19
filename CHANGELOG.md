@@ -10,6 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Clicking an external Markdown link on Linux now opens your default browser
+  instead of misrouting the URL to a file handler (the KDE "Choose Application" /
+  KIOExec error): the browser opener no longer inherits Tine's bundle/loader
+  environment scrub meant for media players (GH #195).
+- Editing inside an existing `[[page]]` or `((block))` reference — for example
+  inserting a word in front of the current text — and accepting a completion now
+  rewrites the whole reference instead of leaving a stray `]]`/`))`, matching
+  Logseq (GH #199).
+- Linked References no longer show a redundant "1 mention" label and jump button
+  on a block that mentions the page only once; the occurrence count and
+  jump-to-occurrence controls now appear only when a block mentions the page more
+  than once, matching Logseq (GH #200).
 - Android versions below 11 (API < 30) no longer crash on launch with an
   `UnsatisfiedLinkError` for `renameat2` (GH #192).
 - Linked and Unlinked References now match Logseq: Unicode-canonical (NFC) page

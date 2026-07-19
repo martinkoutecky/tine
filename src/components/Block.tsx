@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import {
   detectTrigger,
   applyCompletion,
+  refCompletionEnd,
   withRefCompletionSpace,
   autoPairEdit,
   fullWidthRefReplace,
@@ -1391,18 +1392,13 @@ export function Editor(props: { id: string }): JSX.Element {
 
   // Insert `text` in place of the active trigger and restore the caret. If the
   // completion ends with a closing pair (`]]`/`))`/`}}`) and the same pair
-  // already sits right after the caret (e.g. from a `[[ ]]` autopair or editing
-  // inside an existing ref), swallow it so we don't end up with `[[name]]]]`.
+  // sits at or later on this line after the caret (e.g. from a `[[ ]]` autopair
+  // or editing inside an existing ref), swallow it so we don't end up with stray
+  // ref text or `[[name]]]]`.
   const replaceTrigger = (text: string, caret?: number) => {
     const t = ac();
     if (!t) return;
-    let end = t.end;
-    for (const pair of ["]]", "))", "}}"]) {
-      if (text.endsWith(pair) && ref.value.slice(t.end, t.end + 2) === pair) {
-        end = t.end + 2;
-        break;
-      }
-    }
+    const end = refCompletionEnd(ref.value, t.end, text);
     const r = applyCompletion(ref.value, t.start, end, text, caret);
     // GH #35: after a page/block-ref completion whose caret lands at the natural end
     // (right after the closing `]]`/`))`), optionally insert a trailing space so the
