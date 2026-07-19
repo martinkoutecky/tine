@@ -57,7 +57,9 @@ if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.entries)) {
       problems.push(`${entry.id}: exemption needs substitute evidence and a reason`);
     }
     for (const test of entry.coverage.tests) {
-      const file = test.split("#", 1)[0];
+      // Accept `path`, `path#anchor`, or Rust-style `path::fn` (a real path never
+      // contains `::` or `#`) so the file, not a `path::fn` string, is validated.
+      const file = test.split(/::|#/, 1)[0];
       if (!fs.existsSync(path.join(root, file))) problems.push(`${entry.id}: missing test file ${file}`);
     }
   }

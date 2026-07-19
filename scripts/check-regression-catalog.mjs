@@ -61,7 +61,10 @@ if (index.schemaVersion !== 1 || !Array.isArray(index.inventories) || index.inve
         if (!Number.isInteger(issue) || issue < 1) problems.push(`${entry.id}: invalid issue ${issue}`);
       }
       for (const test of entry.coverage?.tests ?? []) {
-        const file = test.split("#", 1)[0];
+        // A coverage entry is `path`, `path#anchor`, or Rust-style `path::fn`
+        // (a real path never contains `::` or `#`). Strip the symbol suffix so
+        // we validate the actual file, not `path::fn` as a bogus filename.
+        const file = test.split(/::|#/, 1)[0];
         if (!fs.existsSync(path.join(root, file))) problems.push(`${entry.id}: missing test file ${file}`);
       }
     }
