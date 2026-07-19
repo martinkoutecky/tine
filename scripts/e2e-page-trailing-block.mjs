@@ -141,16 +141,20 @@ try {
   const renderedCopies = await browser.execute(() => (document.body.textContent?.match(/native trailing text/g) || []).length);
   if (renderedCopies !== 1) throw new Error("reloaded page did not render exactly one persisted text copy");
 
-  // The first activation after typed content creates one blank root; the next
-  // must reuse it rather than stacking another blank bullet.
+  // GH #158: the trailing target ALWAYS adds a new writable block, even when the
+  // page already ends in an empty bullet (stacking empty last blocks is allowed).
+  // A user whose last block is empty — especially an indented one — must always be
+  // able to get a fresh block below it, not silently re-focus the existing empty one.
   await (await target()).click();
   const blank = await activeEditorReceipt("new-empty-tail");
   await browser.keys("Tab");
-  const rootsBeforeReuse = await browser.$$('[data-block-id]');
+  const rootsBeforeAdd = (await browser.$$('[data-block-id]')).length;
   await (await target()).click();
-  const reused = await activeEditorReceipt("reused-empty-tail");
-  const rootsAfterReuse = await browser.$$('[data-block-id]');
-  if (reused.id !== blank.id || rootsAfterReuse.length !== rootsBeforeReuse.length) throw new Error("existing empty tail was not reused exactly once");
+  const added = await activeEditorReceipt("added-empty-tail");
+  const rootsAfterAdd = (await browser.$$('[data-block-id]')).length;
+  if (added.id === blank.id || rootsAfterAdd !== rootsBeforeAdd + 1) {
+    throw new Error(`trailing target did not add a new block after an empty tail: before=${rootsBeforeAdd} after=${rootsAfterAdd} sameId=${added.id === blank.id}`);
+  }
   await browser.keys("Tab");
 
   // Keyboard accessibility is a separate native path: focus the actual target,
@@ -167,7 +171,7 @@ try {
   await browser.keys("Tab");
 
   fs.writeFileSync(path.join(ARTIFACTS, "persisted-page.md"), fs.readFileSync(PAGE_FILE, "utf8"));
-  console.log("PASS: routed page trailing target supports pointer, immediate native typing, persistence, reuse, Enter, and Space");
+  console.log("PASS: routed page trailing target supports pointer, immediate native typing, persistence, adding a new block after an empty tail, Enter, and Space");
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(ARTIFACTS, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(ARTIFACTS, "persisted-page.md"), fs.readFileSync(PAGE_FILE, "utf8")); } catch {}

@@ -128,7 +128,7 @@
       "stability": "stable"
     },
     "scripts/e2e-page-trailing-block.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content focuses or creates exactly one writable trailing block.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content always adds a new writable trailing block, even when the page already ends in an empty (possibly indented) bullet.", "blocking": true }],
       "acceptableVariations": ["Target affordance styling and scroll position may evolve."],
       "nonRequirements": ["Exact target height, cursor blink timing, or focus-ring style."],
       "stability": "stable"

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- The page-bottom "+ Add block" target now always adds a new writable block, even
+  when the page already ends in an empty bullet. Previously it re-focused the
+  existing trailing empty block, so if that block was indented you could never get
+  a fresh unindented block below it and clicking appeared to do nothing. Stacking
+  empty last blocks is now allowed (GH #158).
 - Editing inside an existing `[[page]]` or `((block))` reference — for example
   inserting a word in front of the current text — and accepting a completion now
   rewrites the whole reference instead of leaving a stray `]]`/`))`, matching

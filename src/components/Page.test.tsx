@@ -532,7 +532,7 @@ describe("zoomed block view", () => {
 });
 
 describe("trailing page block target", () => {
-  it("creates one focused root, accepts immediate input, then reuses its empty trailing leaf", async () => {
+  it("creates one focused root, accepts immediate input, then adds another empty root on the next click", async () => {
     const dto = {
       name: "Continue",
       kind: "page" as const,
@@ -568,8 +568,52 @@ describe("trailing page block target", () => {
       endEdit("blur");
       target.click();
       await tick();
-      expect(doc.pages[0].roots).toEqual(["last", created]);
+      // GH #158: the trailing target always adds a NEW root the user can write in
+      // (stacking empty last blocks is allowed) rather than silently reusing the
+      // previous empty one — so a user whose last block is empty (and possibly
+      // indented) can always get a fresh unindented block below it.
+      expect(doc.pages[0].roots).toHaveLength(3);
+      const second = doc.pages[0].roots[2];
+      expect(second).not.toBe(created);
+      expect(doc.byId[second].parent).toBeNull();
+      expect(editingId()).toBe(second);
+    } finally { dispose(); }
+  });
+
+  it("adds a new unindented root when the last visible block is an empty indented child (GH #158)", async () => {
+    const dto = {
+      name: "Indented tail",
+      kind: "page" as const,
+      title: "Indented tail",
+      pre_block: null,
+      blocks: [{
+        id: "parent",
+        raw: "Parent text",
+        collapsed: false,
+        children: [{ id: "kid", raw: "", collapsed: false, children: [] }],
+      }],
+    };
+    setDoc({
+      byId: {
+        parent: node("parent", "Parent text", dto.name, null, ["kid"]),
+        kid: node("kid", "", dto.name, "parent"),
+      },
+      pages: [page(dto.name, "page", ["parent"])], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      (root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
+      await tick();
+      // Must NOT reuse the indented empty child; must create a fresh root-level block.
+      expect(editingId()).not.toBe("kid");
+      expect(doc.pages[0].roots).toHaveLength(2);
+      const created = doc.pages[0].roots[1];
+      expect(doc.byId[created].parent).toBeNull();
       expect(editingId()).toBe(created);
+      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
     } finally { dispose(); }
   });
 

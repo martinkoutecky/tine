@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, trailingVisibleEmptyLeaf, isBlockMoving, isDirty, isSaving, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, type FeedPage } from "../store";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -501,10 +501,10 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const focusTrailing = () => {
     const root = doc.byId[props.id];
     if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
-    const leaf = trailingVisibleEmptyLeaf({ roots: [props.id], forceExpandedRoot: props.id });
-    const id = leaf
-      ? leaf
-      : insertEmptyChildBlock(props.id, root.children.length);
+    // GH #158: always append a fresh child (never reuse the trailing empty leaf), so
+    // the affordance can always add a new last block even when the current last one
+    // is an empty, possibly deeper-nested, bullet.
+    const id = insertEmptyChildBlock(props.id, root.children.length);
     if (id) startEditing(id, 0, null, editSurface());
   };
 
@@ -593,10 +593,11 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       if (id) startEditing(id, 0, null, editSurface());
       return;
     }
-    const leaf = trailingVisibleEmptyLeaf({ roots });
-    const id = leaf
-      ? leaf
-      : insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
+    // GH #158: always add a fresh root-level block (never reuse the trailing empty
+    // leaf). Reuse stranded users whose last block is an empty *indented* bullet —
+    // clicking could only ever re-focus that indented block, never give them a new
+    // unindented last block. Stacking empty last blocks is intentionally allowed.
+    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
     startEditing(id, 0, null, editSurface());
   };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
