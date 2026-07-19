@@ -8777,6 +8777,44 @@ mod tests {
     }
 
     #[test]
+    fn gh198_canonical_preamble_dto_resaves_cleanly_over_existing_preamble() {
+        // GH #198 persistence-boundary complement. The store fix (pageToDto folds
+        // a flagless properties-only first bullet into pre_block) makes the frontend
+        // emit pre_block=properties + no bullet. Prove that this corrected DTO
+        // shape resaves without tripping the GH #163 preservation firewall even
+        // when disk already carries the identical unbulleted preamble — the exact
+        // second-save that previously jammed the queue with "will retry".
+        let dir = scratch("gh198-canonical-resave");
+        let path = dir.join("pages").join("The Nazi Mind.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "title:: The Nazi Mind\ntags:: books\n").unwrap();
+        let g = Graph::open(&dir);
+        let loaded = g.load_named("The Nazi Mind", PageKind::Page).unwrap().unwrap();
+        assert_eq!(loaded.pre_block.as_deref(), Some("title:: The Nazi Mind\ntags:: books"));
+        assert!(loaded.blocks.is_empty());
+
+        let dto = PageDto {
+            name: "The Nazi Mind".into(),
+            kind: PageKind::Page,
+            title: "The Nazi Mind".into(),
+            pre_block: Some("title:: The Nazi Mind\ntags:: books".into()),
+            blocks: vec![],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+            path: String::new(),
+            guide: false,
+        };
+        g.save_page(&dto, loaded.rev.as_deref())
+            .expect("corrected canonical-preamble DTO must save over an existing preamble");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "title:: The Nazi Mind\ntags:: books\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
         assert!(page_header_properties_only("alias:: book\n\ne\u{301}/plugin.key::value"));
         for invalid in [

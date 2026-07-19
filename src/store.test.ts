@@ -125,6 +125,52 @@ describe("properties-only first block", () => {
     expect(doc.byId[properties.id].raw).toContain("tags:: blah, reference");
   });
 
+  it("folds a flagless properties-only first bullet into pre_block for persistence (GH #198)", () => {
+    // The reporter's stuck save: page-header properties represented as the
+    // flagless properties-only first bullet (empty preBlock, no
+    // originatedFromPageHeader). pageToDto used to emit pre_block=null +
+    // first-root-properties, relying on the Rust promote branch — but once disk
+    // already carries the promoted preamble, the GH #163 firewall refuses that
+    // DTO and jams the save queue ("Couldn't save … will retry" forever). The
+    // DTO must instead carry the properties in pre_block.
+    const properties = blk("title:: The Nazi Mind\ntags:: books");
+    const body = blk("Reading list");
+    load([properties, body]);
+    expect(doc.pages[0].preBlock).toBeNull();
+    const dto = pageToDto("Test")!;
+    expect(dto.pre_block).toBe("title:: The Nazi Mind\ntags:: books");
+    expect(dto.blocks.map((b) => b.raw)).toEqual(["Reading list"]);
+  });
+
+  it("folds a properties-only page with no other content into pre_block, emitting no bullet (GH #198)", () => {
+    const properties = blk("tags:: books");
+    load([properties]);
+    const dto = pageToDto("Test")!;
+    expect(dto.pre_block).toBe("tags:: books");
+    expect(dto.blocks).toEqual([]);
+  });
+
+  it("does NOT fold a properties-only first bullet that carries an id:: (real referenced block) (GH #198)", () => {
+    // An id-bearing properties block is a real outline block, not a header:
+    // Rust's promotability rule and firewall both leave it as a bullet, so the
+    // frontend must not reclassify it into the preamble either.
+    const withId = blk("id:: 66aa\nfoo:: bar");
+    load([withId, blk("Body")]);
+    const dto = pageToDto("Test")!;
+    expect(dto.pre_block).toBeNull();
+    expect(dto.blocks.map((b) => b.raw)).toEqual(["id:: 66aa\nfoo:: bar", "Body"]);
+  });
+
+  it("does NOT fold when a real pre_block already exists (GH #198)", () => {
+    loadSingle({
+      name: "Test", kind: "page", title: "Test", pre_block: "icon:: 📚",
+      blocks: [blk("foo:: bar"), blk("Body")], format: "md",
+    });
+    const dto = pageToDto("Test")!;
+    expect(dto.pre_block).toBe("icon:: 📚");
+    expect(dto.blocks.map((b) => b.raw)).toEqual(["foo:: bar", "Body"]);
+  });
+
   it("opens an existing header as a representation-only ordinary root and canonicalizes it for persistence", () => {
     const body = blk("Reading list");
     loadSingle({

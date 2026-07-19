@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Pages whose page-header properties came from an older version (e.g. a page that
+  is only `title::`/`tags::` metadata) no longer get stuck with a repeating
+  "Couldn't save … — will retry. (refusing to drop an existing page preamble
+  while authoring page-header properties)" error. The data-preservation firewall
+  was misfiring on the legitimate save of such a page once its properties had been
+  canonicalized to disk; the page now saves normally with no change to the file on
+  disk. Restarting is no longer needed to clear the error (GH #198).
 - The page-bottom "+ Add block" target now always adds a new writable block, even
   when the page already ends in an empty bullet. Previously it re-focused the
   existing trailing empty block, so if that block was indented you could never get

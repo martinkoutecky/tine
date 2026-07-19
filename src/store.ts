@@ -30,7 +30,7 @@ import {
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
-import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, isPageHeaderPropertiesOnly, splitPagePreamble } from "./editor/properties";
+import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine, splitPagePreamble } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
@@ -586,6 +586,18 @@ function toDto(id: string): BlockDto {
   return { id: n.id, raw: trimBlockTrailingSpace(n.raw), collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
+/** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
+ *  first root whose raw is exactly canonical page-header properties and carries
+ *  no `id::` line (an id-bearing block is a real referenced outline block, not a
+ *  header, and the Rust promote branch/firewall both leave it as a bullet). */
+function isPromotablePageHeaderRoot(node: Node): boolean {
+  return (
+    node.children.length === 0 &&
+    isPageHeaderPropertiesOnly(node.raw) &&
+    !node.raw.split("\n").some((line) => parsePageHeaderPropertyLine(line)?.key.toLowerCase() === "id")
+  );
+}
+
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
@@ -601,6 +613,18 @@ export function pageToDto(pageName: string): PageDto | null {
     // page-header value or its separator trivia. An empty draft deletes the
     // header and emits no stray outline bullet.
     preBlock = first.raw ? first.raw + (p.preBlock ?? "") : p.preBlock;
+    rootIds = rootIds.slice(1);
+  } else if (first && !p.preBlock && isPromotablePageHeaderRoot(first)) {
+    // GH #198: a flagless "properties-only first bullet" (empty preBlock) IS the
+    // page header — the same shape setPageProperty/beginPageHeaderEdit already
+    // treat as the header. Fold it into pre_block so the DTO is honest, instead
+    // of leaning on the Rust promote branch: once disk already carries the
+    // promoted preamble, the GH #163 preservation firewall refuses the
+    // pre_block=None + first-root-properties DTO and jams the save queue with a
+    // "will retry" toast forever. Folding here emits pre_block=properties, so
+    // the firewall precondition (empty pre_block) is false and the save writes
+    // the identical canonical preamble. Mirrors Rust's promotability rule.
+    preBlock = first.raw;
     rootIds = rootIds.slice(1);
   }
   let blocks = rootIds.map(toDto);
