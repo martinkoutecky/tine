@@ -518,6 +518,20 @@
         "scenario": "references.honest-occurrence-total-under-cap",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-EXTERNAL-LINK-BROWSER-ENV-001",
+      "title": "Clicking a Markdown external link on Linux opens the browser with desktop/session environment intact while only bundle/loader variables are scrubbed",
+      "family": "external-links",
+      "sources": { "issues": [195], "commits": [] },
+      "platforms": ["linux"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src-tauri/src/platform.rs"],
+        "scenario": "external-links.browser-opener-env",
+        "failBefore": "source-proven"
+      }
     }
   ]
 }
