@@ -532,6 +532,20 @@
         "scenario": "external-links.browser-opener-env",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-ORG-CONTAINER-OUTLINE-ROUNDTRIP-001",
+      "title": "Terminated org container bodies with list markers remain one outline block and round-trip byte-exactly",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/doc.rs::org_container_outline_tests"],
+        "scenario": "reader.org-container-outline-round-trip",
+        "failBefore": "proven"
+      }
     }
   ]
 }

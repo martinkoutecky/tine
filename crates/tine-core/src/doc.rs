@@ -673,6 +673,89 @@ pub(crate) fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char
     }
 }
 
+/// mldoc `Parsers.is_space`: space, tab, SUB, or form feed.
+fn mldoc_is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | 0x1a | 0x0c)
+}
+
+fn mldoc_spaces_len(s: &str) -> usize {
+    s.as_bytes()
+        .iter()
+        .take_while(|&&b| mldoc_is_space(b))
+        .count()
+}
+
+fn mldoc_trim_spaces_start(s: &str) -> &str {
+    &s[mldoc_spaces_len(s)..]
+}
+
+/// lsdoc's line-local `ocaml_start`: space, tab, or form feed, but not SUB.
+fn ocaml_spaces_len(s: &str) -> usize {
+    s.as_bytes()
+        .iter()
+        .take_while(|&&b| matches!(b, b' ' | b'\t' | 0x0c))
+        .count()
+}
+
+// Transcribed from lsdoc v2 `block_begin_name`: after mldoc-space trimming,
+// BEGIN is ASCII-case-insensitive and the non-empty name ends at mldoc space.
+fn block_begin_name(s: &str) -> Option<String> {
+    let t = mldoc_trim_spaces_start(s);
+    if !t.get(..8)?.eq_ignore_ascii_case("#+BEGIN_") {
+        return None;
+    }
+    let rest = &t[8..];
+    let mut end = 0usize;
+    let bytes = rest.as_bytes();
+    while end < bytes.len() && !mldoc_is_space(bytes[end]) {
+        end += 1;
+    }
+    (end > 0).then(|| rest[..end].to_string())
+}
+
+fn starts_ci(s: &str, prefix: &str) -> bool {
+    let p = prefix.as_bytes();
+    let b = s.as_bytes();
+    b.len() >= p.len() && b[..p.len()].eq_ignore_ascii_case(p)
+}
+
+// Transcribed from lsdoc v2 `block_end_matches_name` / EndTrie: the first
+// later END suffix with the opener name as an ASCII-case-insensitive prefix
+// closes the region; no boundary after the name is required.
+fn block_end_matches_name(text: &str, name: &str) -> bool {
+    let t = &text[ocaml_spaces_len(text)..];
+    let Some(suffix) = t.get(6..) else {
+        return false;
+    };
+    starts_ci(t, "#+END_")
+        && suffix.len() >= name.len()
+        && suffix.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+}
+
+/// Prove that an org opener's first compatible END is in the same physical
+/// continuation lane before a bullet that would fold the opener frame.
+fn has_bounded_org_closer(following: &[&str], content_start: usize, name: &str) -> bool {
+    let mut fence = None;
+    for line in following {
+        // A bullet shallower than the opener block's content lane is a genuine
+        // child/sibling and bounds the lookahead. A bullet inside an inner fence
+        // remains literal.
+        if fence.is_none() && bullet(line).is_some_and(|(bullet_col, _)| bullet_col < content_start)
+        {
+            return false;
+        }
+
+        // mldoc takes the first name-compatible END. It is safe to rescue this
+        // outline region only when that same END is in the block-content lane.
+        if block_end_matches_name(line, name) {
+            return ocaml_spaces_len(line) == content_start;
+        }
+
+        fence = next_fence(fence, line);
+    }
+    false
+}
+
 fn markdown_property_line(line: &str) -> bool {
     let Some((key, _)) = line.trim().split_once("::") else {
         return false;
@@ -787,6 +870,10 @@ pub fn parse(content: &str) -> Document {
         /// a marker of the SAME char and at least the opener's length, so a ````
         /// fence containing ``` (or `~~~`) round-trips correctly.
         fence: Option<(char, usize)>,
+        /// The lowercased name of a terminated `#+BEGIN_<name>` region. This is
+        /// independent of `fence`: an org closer is honored inside an inner code
+        /// fence, and fence state keeps updating while the org region is open.
+        org_block: Option<String>,
     }
     // fence_marker / next_fence are module-level (shared with property_lines /
     // visible_lines so "is this line inside a code fence" has ONE implementation).
@@ -815,21 +902,29 @@ pub fn parse(content: &str) -> Document {
         }
     }
 
-    for line in block_lines {
-        let in_code = stack.last().map(|f| f.fence.is_some()).unwrap_or(false);
-        // A `- ` line starts a new block only when we're NOT inside a fenced code
-        // block of the current top frame; inside a fence it's literal content.
-        if !in_code {
+    for (line_idx, line) in block_lines.iter().enumerate() {
+        let in_literal = stack
+            .last()
+            .map(|f| f.fence.is_some() || f.org_block.is_some())
+            .unwrap_or(false);
+        // A `- ` line starts a new block only when we're outside both literal
+        // region kinds of the current top frame.
+        if !in_literal {
             if let Some((col, content)) = bullet(line) {
                 // New block: fold every block at this column or deeper, so the
                 // remaining stack top (shallower column) becomes the parent.
                 fold_to(&mut stack, &mut roots, col);
+                let org_block = block_begin_name(content).and_then(|name| {
+                    has_bounded_org_closer(&block_lines[line_idx + 1..], col + 2, &name)
+                        .then(|| name.to_ascii_lowercase())
+                });
                 stack.push(Frame {
                     col,
                     content_start: col + 2,
                     raw: content.to_string(),
                     children: Vec::new(),
                     fence: next_fence(None, content), // bullet line may open a fence
+                    org_block,
                 });
                 continue;
             }
@@ -839,6 +934,19 @@ pub fn parse(content: &str) -> Document {
             let stripped = strip_n_ws(line, top.content_start);
             top.raw.push('\n');
             top.raw.push_str(stripped);
+
+            if let Some(name) = top.org_block.as_deref() {
+                // END indexing is independent of fence context in mldoc.
+                if block_end_matches_name(stripped, name) {
+                    top.org_block = None;
+                }
+            } else if top.fence.is_none() {
+                // An already-open code fence suppresses BEGIN recognition.
+                top.org_block = block_begin_name(stripped).and_then(|name| {
+                    has_bounded_org_closer(&block_lines[line_idx + 1..], top.content_start, &name)
+                        .then(|| name.to_ascii_lowercase())
+                });
+            }
             top.fence = next_fence(top.fence, stripped);
         }
         // (A continuation before any bullet can't happen: it'd be pre-block.)
@@ -1047,6 +1155,220 @@ mod property_fence_tests {
         );
         assert_eq!(SerializeOpts::detect(Some("- a\r\n")).trailing_newlines, 1);
         assert_eq!(SerializeOpts::detect(Some("- a\n\n")).trailing_newlines, 2);
+    }
+}
+
+#[cfg(test)]
+mod org_container_outline_tests {
+    use super::*;
+
+    fn parse_round_trip(input: &str) -> Document {
+        let doc = parse(input);
+        assert_eq!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(input))),
+            input,
+            "org-container fixture must round-trip byte-exactly"
+        );
+        doc
+    }
+
+    #[test]
+    fn quote_list_body_stays_in_one_block() {
+        let input = "- #+BEGIN_QUOTE\n  - Today\n  - Tomorrow\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n- Today\n- Tomorrow\n#+END_QUOTE"
+        );
+    }
+
+    #[test]
+    fn example_nested_space_indents_stay_in_one_block() {
+        let input = "- #+BEGIN_EXAMPLE\n      - a\n         - b\n            - c\n            - d\n  #+END_EXAMPLE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_EXAMPLE\n    - a\n       - b\n          - c\n          - d\n#+END_EXAMPLE"
+        );
+    }
+
+    #[test]
+    fn end_name_prefix_closes_container() {
+        let input = "- #+BEGIN_QUOTE\n  - x\n  #+END_QUOTE_EXTRA trailing";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n- x\n#+END_QUOTE_EXTRA trailing"
+        );
+    }
+
+    #[test]
+    fn begin_and_end_recognition_matches_mldoc_spaces_case_and_name_run() {
+        let input = "-   #+begin_note options\n    - x\n  #+eNd_NoTeSuffix trailing";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "  #+begin_note options\n  - x\n#+eNd_NoTeSuffix trailing"
+        );
+    }
+
+    #[test]
+    fn malformed_closers_and_empty_begin_name_open_no_region() {
+        let malformed = "- #+BEGIN_QUOTE\n  #+END\n  - x\n  #+END_\n  - y\n  text #+END_QUOTE\n  - z\n  #+END_QUOTE";
+        let doc = parse_round_trip(malformed);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n#+END\n- x\n#+END_\n- y\ntext #+END_QUOTE\n- z\n#+END_QUOTE"
+        );
+
+        let empty_name = "- #+BEGIN_ \n  x\n  #+END_\n  - child";
+        let doc = parse_round_trip(empty_name);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_ \nx\n#+END_");
+        assert_eq!(doc.roots[0].children[0].raw, "child");
+    }
+
+    #[test]
+    fn unterminated_begin_keeps_existing_outline_shape() {
+        let input = "- #+BEGIN_QUOTE\n  - a\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "a");
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn continuation_begin_cannot_swallow_same_lane_sibling() {
+        let input = "- parent\n  #+BEGIN_QUOTE\n- sibling\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "parent\n#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[1].raw, "sibling\n#+END_QUOTE");
+        assert!(doc.roots.iter().all(|block| block.children.is_empty()));
+    }
+
+    #[test]
+    fn nested_child_closer_lane_does_not_open_region() {
+        let tabbed = "- #+BEGIN_QUOTE\n\t- child\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(tabbed);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+
+        let spaced = "- #+BEGIN_QUOTE\n  - child\n    #+END_QUOTE";
+        let doc = parse_round_trip(spaced);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn tab_child_before_matching_end_opens_no_region() {
+        let input = "- \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn continuation_opener_before_tab_child_opens_no_region() {
+        let input = "- p\n  \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn sub_prefixed_end_opens_no_region() {
+        let input = "-    #+BEGIN_QUOTE\n  - x\n    \x1a#+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "   #+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n\x1a#+END_QUOTE");
+    }
+
+    #[test]
+    fn first_compatible_end_closes_without_depth_counting() {
+        let input = "- #+BEGIN_QUOTE\n  #+BEGIN_QUOTE\n  #+END_QUOTE\n- outside\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n#+BEGIN_QUOTE\n#+END_QUOTE"
+        );
+        assert_eq!(doc.roots[1].raw, "outside\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn org_close_is_honored_while_inner_fence_is_open() {
+        let input = "- #+BEGIN_QUOTE\n  ```\n  #+END_QUOTE\n  ```\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n```\n#+END_QUOTE\n```");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn begin_inside_code_fence_opens_no_org_region() {
+        let input = "- ```\n  #+BEGIN_QUERY\n  - literal\n  #+END_QUERY\n  ```\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(
+            doc.roots[0].raw,
+            "```\n#+BEGIN_QUERY\n- literal\n#+END_QUERY\n```"
+        );
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn src_body_and_nested_query_stay_literal() {
+        let input =
+            "- #+BEGIN_SRC\n  - x\n  #+BEGIN_QUERY\n  - y\n  #+END_QUERY\n  #+END_SRC\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_SRC\n- x\n#+BEGIN_QUERY\n- y\n#+END_QUERY\n#+END_SRC"
+        );
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn lone_cr_org_container_decision_is_a_known_lsdoc_parity_gap() {
+        let old_mac = "- #+BEGIN_QUOTE\r  - x\r  #+END_QUOTE";
+        let doc = parse(old_mac);
+        assert_eq!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
+            "- #+BEGIN_QUOTE  - x  #+END_QUOTE"
+        );
+        assert_ne!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
+            old_mac
+        );
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
     }
 }
 
