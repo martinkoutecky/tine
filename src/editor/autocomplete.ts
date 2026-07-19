@@ -236,7 +236,7 @@ export interface NamedAutocompleteItem<T> {
 }
 
 function canonicalName(name: string): string {
-  return name.normalize("NFKC").toLowerCase();
+  return name.normalize("NFC").toLowerCase();
 }
 
 function canonicalCompare<T extends NamedAutocompleteItem<unknown>>(a: T, b: T): number {

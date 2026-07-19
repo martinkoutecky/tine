@@ -296,6 +296,7 @@ export type QueryHit =
       block: BlockDto;
       display_text: string;
       evidence: MatchEvidence[];
+      score?: number;
       match_class?: ObjectiveMatchClass;
     };
 

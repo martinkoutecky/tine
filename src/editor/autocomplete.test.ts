@@ -110,6 +110,15 @@ describe("orderAcItems (autocomplete default action)", () => {
     expect(orderAcItems(aliasHits, { name: "alias", item: "create" }, { query: "alias", policy: "existing" }))
       .toEqual(["zulu", "alpha", "create"]);
   });
+
+  it("uses NFC identity without compatibility-folding fullwidth names", () => {
+    const widthDistinct = [
+      { name: "\uff21", item: "fullwidth" },
+      { name: "Alpha", item: "alpha" },
+    ];
+    expect(orderAcItems(widthDistinct, { name: "a", item: "create" }, { query: "a", policy: "adaptive" }))
+      .toEqual(["alpha", "create", "fullwidth"]);
+  });
 });
 
 describe("detectTrigger", () => {

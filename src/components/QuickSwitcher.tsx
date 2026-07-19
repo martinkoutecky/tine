@@ -31,12 +31,13 @@ interface Section {
   loadMore?: () => void;
 }
 
-// Initial page size per backend-capped section, and how many more each "Load
-// more" pulls in. We fetch one MORE than the current limit; getting it back
-// means "there are still more" (the search stops at the limit, so this never
-// walks the whole graph just to count) → show the limit, offer "Load more".
-const PAGE_CAP = 12;
-const BLOCK_CAP = 50;
+// Match OG's globally-ranked provider pools while keeping Tine's existing
+// shorter initial presentation. "Load more" reveals another display chunk from
+// the already-ranked pool; it does not widen a traversal-ordered backend scan.
+const PAGE_POOL = 100;
+const BLOCK_POOL = 100;
+const PAGE_CHUNK = 12;
+const BLOCK_CHUNK = 50;
 
 // Ctrl-K: grouped search (Pages / Create / Commands / Blocks), command palette
 // (⌘⇧P, commands-only), and recents on an empty query — mirroring OG's cmdk.
@@ -46,12 +47,12 @@ export function QuickSwitcher(): JSX.Element {
   const [syntaxOpen, setSyntaxOpen] = createSignal(false);
   // How many page/block results to show right now; "Load more" grows these. They
   // reset to the base size whenever the query text changes (a fresh search).
-  const [pageLimit, setPageLimit] = createSignal(PAGE_CAP);
-  const [blockLimit, setBlockLimit] = createSignal(BLOCK_CAP);
+  const [pageLimit, setPageLimit] = createSignal(PAGE_CHUNK);
+  const [blockLimit, setBlockLimit] = createSignal(BLOCK_CHUNK);
   createEffect(() => {
     query();
-    setPageLimit(PAGE_CAP);
-    setBlockLimit(BLOCK_CAP);
+    setPageLimit(PAGE_CHUNK);
+    setBlockLimit(BLOCK_CHUNK);
   });
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
@@ -84,21 +85,20 @@ export function QuickSwitcher(): JSX.Element {
     qTimer = setTimeout(() => setDebouncedQuery(q), 110);
   });
   onCleanup(() => clearTimeout(qTimer));
-  // Fetch limit+1 so we can tell "there are more" without counting the whole
-  // graph. The +1 row is never displayed. Re-fetches when the query OR the
-  // (Load-more-grown) limit changes; the early-stop scan keeps each fetch cheap.
+  // Fetch OG's complete ranked pools once per query. Presentation paging below
+  // changes only the rendered slice and therefore does not trigger another scan.
   const [graphResults] = createResource(
     () => (commandsOnly() ? null : {
       q: debouncedQuery(),
-      pages: currentPageOnly() ? 0 : pageLimit(),
-      blocks: blockLimit(),
+      pages: currentPageOnly() ? 0 : PAGE_POOL,
+      blocks: BLOCK_POOL,
       scope: currentPageScope(),
     }),
     (s) => s && s.q.trim()
       ? backend().runGraphSearch(
           s.q,
-          s.pages + (s.scope ? 0 : 1),
-          s.blocks + 1,
+          s.pages,
+          s.blocks,
           s.scope ? "quick-switch:current-page" : "quick-switch",
           false,
           s.scope ?? undefined,
@@ -179,7 +179,7 @@ export function QuickSwitcher(): JSX.Element {
         header: "Pages",
         items: pageItems,
         more: morePages,
-        loadMore: morePages ? () => setPageLimit((n) => n + PAGE_CAP) : undefined,
+        loadMore: morePages ? () => setPageLimit((n) => Math.min(PAGE_POOL, n + PAGE_CHUNK)) : undefined,
       });
 
     // Create page (when no exact match exists).
@@ -213,7 +213,7 @@ export function QuickSwitcher(): JSX.Element {
         onCur: currentPageOnly() || !!(cur && hit.page === cur),
       });
     }
-    // We asked for blockLimit + 1; getting past the limit means more remain.
+    // Reveal the ranked pool in presentation-sized chunks.
     const rankedBlocks = rankLauncherItems(
       graphMeta()?.root ?? "",
       q,
@@ -240,7 +240,7 @@ export function QuickSwitcher(): JSX.Element {
       // more" sits at the very bottom of the results.
       const last = blockSecs[blockSecs.length - 1];
       last.more = moreBlocks;
-      if (moreBlocks) last.loadMore = () => setBlockLimit((n) => n + BLOCK_CAP);
+      if (moreBlocks) last.loadMore = () => setBlockLimit((n) => Math.min(BLOCK_POOL, n + BLOCK_CHUNK));
       out.push(...blockSecs);
     }
 

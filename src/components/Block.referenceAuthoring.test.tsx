@@ -70,7 +70,7 @@ describe("reference authoring", () => {
   });
 
   it("accepts a visible page row against the current trigger span before the debounced refresh", async () => {
-    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([entry("Parity Target")]);
+    const quickSwitch = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([entry("Parity Target")]);
     loadSingle(page("[[P]]"));
     startEditing("reference-authoring", 3);
     const { root, dispose } = mount(() => (
@@ -80,6 +80,7 @@ describe("reference authoring", () => {
       const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
+      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100);
 
       // Type the rest and accept immediately, before the 90 ms backend debounce.
       // The visible row is still legitimate, but replacement must use the live
@@ -90,6 +91,28 @@ describe("reference authoring", () => {
       await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe("[[Parity Target]] "));
       expect(textarea.value).toBe("[[Parity Target]] ");
       expect(document.body.querySelector(".autocomplete")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("requests OG's 20-result inline block-reference pool", async () => {
+    const search = vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source",
+      kind: "page",
+      blocks: [{ id: "needle-block", raw: "needle", collapsed: false, children: [] }],
+      evidence: [],
+    }]);
+    loadSingle(page("((needle))"));
+    startEditing("reference-authoring", 8);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((needle))", 8);
+      await vi.waitFor(() => expect(search).toHaveBeenCalled());
+      expect(search).toHaveBeenLastCalledWith("needle", 20, "block-picker");
     } finally {
       dispose();
     }

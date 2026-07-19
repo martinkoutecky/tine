@@ -1283,7 +1283,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // `((` → full-text search for a block to reference, grouped by page. An
       // empty query (bare `((`) returns nothing — the popup stays hidden until
       // the user types. Selecting inserts `((uuid))` (see selectAc).
-      const groups = await backend().search(t.query, 8, "block-picker");
+      const groups = await backend().search(t.query, 20, "block-picker");
       const cur = ac();
       if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
       const items: AcItem[] = [];
@@ -1306,7 +1306,7 @@ export function Editor(props: { id: string }): JSX.Element {
       setAcItems([]);
       return;
     }
-    const pages = await (cap ? cap.quickSwitch(t.query, 8) : backend().quickSwitch(t.query, 8));
+    const pages = await (cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100));
     const cur = ac();
     if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
     const pageItem = (name: string): AcItem =>

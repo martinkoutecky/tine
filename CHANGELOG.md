@@ -19,6 +19,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #137).
 - Reference panels now show result truncation ("showing N of M") and a bounded
   error state instead of an empty panel when limits are exceeded (GH #137).
+- Autocomplete and Ctrl+K search now rank all matching blocks globally before
+  applying result caps, so a strong block match is no longer omitted because of
+  where the block sits in the graph; inline and Ctrl+K pools match Logseq's
+  sizes, and autocomplete ordering uses the same Unicode (NFC) identity as the
+  rest of search (GH #186).
 
 ## [0.6.1] - 2026-07-18
 

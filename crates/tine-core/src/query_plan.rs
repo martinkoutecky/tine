@@ -180,6 +180,10 @@ pub enum QueryHit {
         /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
         display_text: String,
         evidence: Vec<MatchEvidence>,
+        /// Objective block relevance. The match class is the primary band;
+        /// this score summarizes boundary, offset, length, and occurrence
+        /// quality inside that band.
+        score: i32,
         match_class: ObjectiveMatchClass,
     },
 }
@@ -860,6 +864,282 @@ fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredP
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BlockRelevance {
+    match_class: ObjectiveMatchClass,
+    word_boundary: bool,
+    first_offset: usize,
+    text_len: usize,
+    occurrences: usize,
+    positive: bool,
+}
+
+impl BlockRelevance {
+    fn neutral() -> Self {
+        Self {
+            match_class: ObjectiveMatchClass::Exact,
+            word_boundary: true,
+            first_offset: 0,
+            text_len: 0,
+            occurrences: 0,
+            positive: false,
+        }
+    }
+
+    /// Greater means objectively better. Keep the components explicit so very
+    /// large blocks cannot collapse distinct offsets or lengths into one
+    /// saturated scalar score.
+    fn cmp_quality(&self, other: &Self) -> Ordering {
+        self.match_class
+            .rank()
+            .cmp(&other.match_class.rank())
+            .then_with(|| self.word_boundary.cmp(&other.word_boundary))
+            .then_with(|| other.first_offset.cmp(&self.first_offset))
+            .then_with(|| other.text_len.cmp(&self.text_len))
+            .then_with(|| other.occurrences.cmp(&self.occurrences))
+    }
+
+    fn score(self) -> i32 {
+        let offset_penalty = self.first_offset.min(50_000) as i32;
+        let length_penalty = self.text_len.min(40_000) as i32;
+        let occurrence_penalty = self.occurrences.saturating_sub(1).min(9_999) as i32;
+        self.match_class.rank() * 1_000_000 + i32::from(self.word_boundary) * 100_000
+            - offset_penalty
+            - length_penalty
+            - occurrence_penalty
+    }
+}
+
+#[derive(Debug)]
+struct ScoredBlock<'a> {
+    relevance: BlockRelevance,
+    index: usize,
+    page: &'a PageEntry,
+    block: &'a DocBlock,
+    breadcrumb: Vec<String>,
+}
+
+impl ScoredBlock<'_> {
+    fn is_better_than(&self, other: &Self) -> bool {
+        let quality = self.relevance.cmp_quality(&other.relevance);
+        quality == Ordering::Greater || (quality == Ordering::Equal && self.index < other.index)
+    }
+}
+
+impl PartialEq for ScoredBlock<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.relevance.cmp_quality(&other.relevance) == Ordering::Equal && self.index == other.index
+    }
+}
+impl Eq for ScoredBlock<'_> {}
+impl PartialOrd for ScoredBlock<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ScoredBlock<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Max-heap root is the WORST retained candidate, ready for eviction.
+        other
+            .relevance
+            .cmp_quality(&self.relevance)
+            .then_with(|| self.index.cmp(&other.index))
+    }
+}
+
+fn push_block<'a>(
+    heap: &mut BinaryHeap<ScoredBlock<'a>>,
+    limit: usize,
+    candidate: ScoredBlock<'a>,
+) {
+    if heap.len() < limit {
+        heap.push(candidate);
+    } else if heap
+        .peek()
+        .is_some_and(|worst| candidate.is_better_than(worst))
+    {
+        *heap.peek_mut().unwrap() = candidate;
+    }
+}
+
+fn starts_at_word_boundary(value: &str, byte_offset: usize) -> bool {
+    byte_offset == 0
+        || value[..byte_offset]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
+}
+
+fn text_predicate_relevance(
+    plan: &QueryPlan,
+    pred: &TextPredicate,
+    original: &str,
+    lower: &str,
+) -> Option<BlockRelevance> {
+    let text_len = original.encode_utf16().count();
+    let (match_class, word_boundary, first_offset, occurrences) = match pred.mode {
+        TextMatchMode::Contains | TextMatchMode::Phrase => {
+            let mut matches = lower.match_indices(&pred.value);
+            let (first, _) = matches.next()?;
+            let occurrences = 1 + matches.count();
+            let match_class = if lower == pred.value {
+                ObjectiveMatchClass::Exact
+            } else if first == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            (
+                match_class,
+                starts_at_word_boundary(lower, first),
+                lower[..first].encode_utf16().count(),
+                occurrences,
+            )
+        }
+        TextMatchMode::Regex => {
+            let regex = plan.regexes.get(&pred.clause_id)?;
+            let mut matches = regex.find_iter(original);
+            let first = matches.next()?;
+            let occurrences = 1 + matches.count();
+            let match_class = if first.start() == 0 && first.end() == original.len() {
+                ObjectiveMatchClass::Exact
+            } else if first.start() == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            (
+                match_class,
+                starts_at_word_boundary(original, first.start()),
+                original[..first.start()].encode_utf16().count(),
+                occurrences,
+            )
+        }
+        TextMatchMode::Fuzzy => {
+            let (_, match_class) = fuzzy_name_score(lower, &pred.value)?;
+            let first = lower.find(&pred.value).unwrap_or(0);
+            (
+                match_class,
+                starts_at_word_boundary(lower, first),
+                lower[..first].encode_utf16().count(),
+                1,
+            )
+        }
+    };
+    Some(BlockRelevance {
+        match_class,
+        word_boundary,
+        first_offset,
+        text_len,
+        occurrences,
+        positive: true,
+    })
+}
+
+fn block_relevance(
+    plan: &QueryPlan,
+    expr: &QueryExpr,
+    original: &str,
+    lower: &str,
+) -> Option<BlockRelevance> {
+    match expr {
+        QueryExpr::Never => None,
+        QueryExpr::Text(pred) if pred.field != TextField::VisibleContent => None,
+        QueryExpr::Text(pred) => text_predicate_relevance(plan, pred, original, lower),
+        QueryExpr::And(children) => {
+            let mut combined = BlockRelevance::neutral();
+            for child in children {
+                let relevance = block_relevance(plan, child, original, lower)?;
+                if !relevance.positive {
+                    continue;
+                }
+                if !combined.positive {
+                    combined = relevance;
+                    continue;
+                }
+                if relevance.match_class.rank() < combined.match_class.rank() {
+                    combined.match_class = relevance.match_class;
+                }
+                combined.word_boundary &= relevance.word_boundary;
+                combined.first_offset =
+                    combined.first_offset.saturating_add(relevance.first_offset);
+                combined.occurrences = combined.occurrences.saturating_add(relevance.occurrences);
+            }
+            combined.positive.then_some(combined)
+        }
+        QueryExpr::Or(children) => {
+            let mut best: Option<BlockRelevance> = None;
+            for child in children {
+                let Some(relevance) = block_relevance(plan, child, original, lower) else {
+                    continue;
+                };
+                if !relevance.positive {
+                    continue;
+                }
+                if best
+                    .as_ref()
+                    .is_none_or(|current| relevance.cmp_quality(current) == Ordering::Greater)
+                {
+                    best = Some(relevance);
+                }
+            }
+            best
+        }
+        QueryExpr::Not(child) => block_relevance(plan, child, original, lower)
+            .is_none()
+            .then_some(BlockRelevance::neutral()),
+    }
+}
+
+fn eval_ranked_block_expr(
+    plan: &QueryPlan,
+    expr: &QueryExpr,
+    original: &str,
+    lower: &str,
+) -> Option<EvalMatch> {
+    match expr {
+        QueryExpr::Never => None,
+        QueryExpr::Text(pred) => {
+            if pred.field != TextField::VisibleContent {
+                return None;
+            }
+            match_text(plan, pred, original).map(|evidence| EvalMatch {
+                evidence: vec![evidence],
+            })
+        }
+        QueryExpr::And(children) => {
+            let mut evidence = Vec::new();
+            for child in children {
+                evidence.extend(eval_ranked_block_expr(plan, child, original, lower)?.evidence);
+            }
+            Some(EvalMatch { evidence })
+        }
+        QueryExpr::Or(children) => {
+            let mut best: Option<(BlockRelevance, EvalMatch)> = None;
+            for child in children {
+                let Some(relevance) = block_relevance(plan, child, original, lower) else {
+                    continue;
+                };
+                let Some(matched) = eval_ranked_block_expr(plan, child, original, lower) else {
+                    continue;
+                };
+                if best
+                    .as_ref()
+                    .is_none_or(|(current, _)| relevance.cmp_quality(current) == Ordering::Greater)
+                {
+                    best = Some((relevance, matched));
+                }
+            }
+            best.map(|(_, matched)| matched)
+        }
+        QueryExpr::Not(child) => eval_ranked_block_expr(plan, child, original, lower)
+            .is_none()
+            .then_some(EvalMatch {
+                evidence: Vec::new(),
+            }),
+    }
+}
+
 fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, ObjectiveMatchClass)> {
     if lower_query.is_empty() {
         Some((0, ObjectiveMatchClass::Fuzzy))
@@ -1135,12 +1415,9 @@ fn execute_blocks(
         return Some(Vec::new());
     }
     graph.with_pages(|pages| {
-        let mut hits = Vec::new();
-        let mut remaining = branch.limit;
+        let mut heap = BinaryHeap::new();
+        let mut index = 0usize;
         for (entry, doc) in pages {
-            if remaining == 0 {
-                break;
-            }
             if cancelled() {
                 return None;
             }
@@ -1157,36 +1434,38 @@ fn execute_blocks(
             }
             let mut ancestors = Vec::new();
             walk_blocks(&doc.roots, &mut ancestors, &mut |block, path| {
-                if remaining == 0 || cancelled() {
+                if cancelled() {
                     return false;
                 }
+                let candidate_index = index;
+                index = index.saturating_add(1);
                 let projection = block.projection();
                 let visible = &projection.visible;
-                if eval_expr_fast(
-                    plan,
-                    &branch.predicate,
-                    TextField::VisibleContent,
-                    visible,
-                    &projection.visible_lower,
-                ) {
-                    let matched =
-                        eval_expr(plan, &branch.predicate, TextField::VisibleContent, visible)
-                            .expect("fast and evidence evaluators must agree");
-                    // Search hits are result identities, not independent copies
-                    // of their entire descendant trees. The source page owns the
-                    // hierarchy and live consumers hydrate it once per page.
-                    let mut dto = crate::model::block_to_shallow_dto(block);
-                    dto.breadcrumb = path.iter().map(|ancestor| crumb_line(ancestor)).collect();
-                    hits.push(QueryHit::Block {
-                        page: entry.name.clone(),
-                        kind: entry.kind,
-                        path: entry.rel_path.clone(),
-                        block: dto,
-                        display_text: visible.clone(),
-                        evidence: matched.evidence,
-                        match_class: ObjectiveMatchClass::BodyEvidence,
-                    });
-                    remaining -= 1;
+                if let Some(relevance) =
+                    block_relevance(plan, &branch.predicate, visible, &projection.visible_lower)
+                {
+                    let retain = heap.len() < branch.limit
+                        || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
+                            relevance.cmp_quality(&worst.relevance) == Ordering::Greater
+                                || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
+                                    && candidate_index < worst.index)
+                        });
+                    if retain {
+                        push_block(
+                            &mut heap,
+                            branch.limit,
+                            ScoredBlock {
+                                relevance,
+                                index: candidate_index,
+                                page: entry,
+                                block,
+                                breadcrumb: path
+                                    .iter()
+                                    .map(|ancestor| crumb_line(ancestor))
+                                    .collect(),
+                            },
+                        );
+                    }
                 }
                 true
             });
@@ -1194,13 +1473,49 @@ fn execute_blocks(
                 return None;
             }
         }
-        Some(hits)
+        let mut winners = heap.into_vec();
+        winners.sort_by(|a, b| {
+            b.relevance
+                .cmp_quality(&a.relevance)
+                .then_with(|| a.index.cmp(&b.index))
+        });
+        Some(
+            winners
+                .into_iter()
+                .map(|winner| {
+                    let projection = winner.block.projection();
+                    let matched = eval_ranked_block_expr(
+                        plan,
+                        &branch.predicate,
+                        &projection.visible,
+                        &projection.visible_lower,
+                    )
+                    .expect("rank and evidence evaluators must agree");
+                    // Search hits are result identities, not independent copies
+                    // of their entire descendant trees. The source page owns the
+                    // hierarchy and live consumers hydrate it once per page.
+                    let mut dto = crate::model::block_to_shallow_dto(winner.block);
+                    dto.breadcrumb = winner.breadcrumb;
+                    QueryHit::Block {
+                        page: winner.page.name.clone(),
+                        kind: winner.page.kind,
+                        path: winner.page.rel_path.clone(),
+                        block: dto,
+                        display_text: projection.visible.clone(),
+                        evidence: matched.evidence,
+                        score: winner.relevance.score(),
+                        match_class: winner.relevance.match_class,
+                    }
+                })
+                .collect(),
+        )
     })
 }
 
 /// Convert typed block hits back to the exact grouped shape used by existing
-/// search/query consumers.  Input is in page/document order, so adjacent groups
-/// are sufficient and preserve traversal order.
+/// search/query consumers. Hits arrive in global relevance order; only contiguous
+/// hits from the same page are coalesced, so flattening the groups preserves that
+/// order even when a page appears in more than one group.
 pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<crate::model::RefGroup> {
     let mut groups: Vec<crate::model::RefGroup> = Vec::new();
     for hit in hits {
@@ -1773,7 +2088,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_block_search_adapter_matches_the_prior_matcher_for_every_dialect_form() {
+    fn legacy_block_search_adapter_preserves_matcher_membership_and_ranked_topk() {
         let (dir, graph) = fixture();
         for query in [
             "",
@@ -1786,10 +2101,16 @@ mod tests {
             "/[A-Z]{3}/",
             "/(unclosed/",
         ] {
+            let full = block_fingerprint(crate::query::search(&graph, query, usize::MAX));
+            let mut full_membership = full.clone();
+            full_membership.sort();
+            let mut reference = reference_search(&graph, query, usize::MAX);
+            reference.sort();
+            assert_eq!(full_membership, reference, "query={query:?}");
             for limit in [0, 1, 2, 20] {
                 assert_eq!(
                     block_fingerprint(crate::query::search(&graph, query, limit)),
-                    reference_search(&graph, query, limit),
+                    full.iter().take(limit).cloned().collect::<Vec<_>>(),
                     "query={query:?} limit={limit}"
                 );
             }

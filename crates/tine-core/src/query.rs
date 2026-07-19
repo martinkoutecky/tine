@@ -4265,6 +4265,108 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn block_search_topk_keeps_late_best_match_and_ranks_it_first() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-block-search-topk-best-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/aa-weak.md"),
+            "- a long weak interior needle match\n- another long weak interior needle match\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/zz-best.md"), "- needle\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let ranked = search(&graph, "needle", 2)
+            .into_iter()
+            .flat_map(|group| {
+                group
+                    .blocks
+                    .into_iter()
+                    .map(move |block| (group.page.clone(), block.raw))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0], ("zz-best".into(), "needle".into()));
+        assert!(ranked.iter().any(|(page, _)| page == "zz-best"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn block_search_topk_uses_stable_traversal_ties() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-block-search-topk-ties-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        for name in ["aa", "bb", "cc", "dd"] {
+            fs::write(
+                dir.join("pages").join(format!("{name}.md")),
+                "- tied needle\n",
+            )
+            .unwrap();
+        }
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let pages = search(&graph, "needle", 3)
+            .into_iter()
+            .flat_map(|group| std::iter::repeat_n(group.page, group.blocks.len()))
+            .collect::<Vec<_>>();
+        assert_eq!(pages, ["aa", "bb", "cc"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn block_search_groups_preserve_interleaved_global_rank() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-block-search-ranked-groups-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/aa.md"), "- needle\n- xneedle\n").unwrap();
+        fs::write(dir.join("pages/bb.md"), "- needle plus\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let groups = search(&graph, "needle", 3);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.page.as_str())
+                .collect::<Vec<_>>(),
+            ["aa", "bb", "aa"]
+        );
+        assert_eq!(
+            groups
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+                .collect::<Vec<_>>(),
+            ["needle", "needle plus", "xneedle"]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// OG 1.0.0 (`query_dsl.cljs` + the `:page-ref` rule) evaluates a bare
     /// `[[Page]]` simple-query clause against `:block/path-refs`. That relation
     /// includes both explicit references and the page the block physically
