@@ -247,6 +247,9 @@ export interface ReferenceOccurrence {
 export interface ReferenceBlockEvidence {
   block_id: string;
   occurrences: ReferenceOccurrence[];
+  /** Total matches in the block before the bounded jump-target list is capped. */
+  total?: number;
+  truncated?: boolean;
 }
 
 export interface MatchSpan {

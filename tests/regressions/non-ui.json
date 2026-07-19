@@ -483,6 +483,41 @@
         "scenario": "android.renameat2-syscall-no-api-gated-symbol",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-REF-ALIAS-COMPONENT-001",
+      "title": "Linked and Unlinked References count every alias-connected page (transitive, order-independent), matching OG page-alias-set, so duplicate-alias and chained-alias owners are never dropped or resolved by filesystem layout",
+      "family": "references-correctness",
+      "sources": { "issues": [137], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/issue137_investigation.rs::issue137_alias_component_is_transitive_and_unions_duplicate_owners",
+          "crates/tine-core/tests/issue137_investigation.rs::issue137_fail_before_duplicate_alias_is_deterministic"
+        ],
+        "scenario": "references.alias-transitive-connected-component",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-REF-OCCURRENCE-COUNT-HONEST-001",
+      "title": "A block mentioning a page more than the per-block occurrence cap reports its true mention total instead of silently undercounting at the bound",
+      "family": "references-correctness",
+      "sources": { "issues": [137], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/issue137_investigation.rs::issue137_fail_before_occurrence_count_is_not_silently_truncated",
+          "crates/tine-core/src/reference_evidence.rs::tests::occurrence_cap_reports_total_and_truncation",
+          "src/components/UnlinkedReferences.test.tsx"
+        ],
+        "scenario": "references.honest-occurrence-total-under-cap",
+        "failBefore": "proven"
+      }
     }
   ]
 }

@@ -35,10 +35,11 @@ export function OccurrenceControls(props: {
   evidence: ReferenceBlockEvidence;
   onOccurrence: (offset: number) => void;
 }): JSX.Element {
+  const total = () => props.evidence.total ?? props.evidence.occurrences.length;
   return (
     <span class="reference-occurrence-controls">
       <span class="reference-mention-count">
-        {props.evidence.occurrences.length} {props.evidence.occurrences.length === 1 ? "mention" : "mentions"}
+        {total()} {total() === 1 ? "mention" : "mentions"}
       </span>
       <For each={props.evidence.occurrences}>
         {(occurrence, index) => (
@@ -46,7 +47,7 @@ export function OccurrenceControls(props: {
             type="button"
             class="reference-occurrence-jump"
             title={`Jump to ${occurrence.kind} mention ${index() + 1}`}
-            aria-label={`Jump to mention ${index() + 1} of ${props.evidence.occurrences.length}`}
+            aria-label={`Jump to mention ${index() + 1} of ${total()}`}
             onClick={() => props.onOccurrence(occurrence.span.start)}
           >
             {index() + 1}

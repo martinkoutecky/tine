@@ -511,8 +511,8 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
 fn sorted_alias_owners(
     mut owned: Vec<(std::path::PathBuf, String, String)>,
 ) -> Vec<(String, String)> {
-    // Alias fallback is first-wins, so sort the physical owners before dropping
-    // their paths. This makes the winner independent of read_dir/cache order.
+    // Keep every owner for duplicate aliases. Sorting makes the public alias
+    // relation stable without collapsing edges needed by component resolution.
     owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     owned
         .into_iter()
@@ -555,42 +555,70 @@ pub(crate) fn real_page_names(graph: &Graph) -> RealPageNames {
     })
 }
 
-/// Resolve a requested page/alias to its canonical display name and all
-/// normalized names that identify that page. The normalized list is shared by
-/// backlinks, unlinked references, and their scoped-invalidation predicates so
-/// those paths cannot drift.
+/// Resolve a requested page/alias to its canonical display name, the complete
+/// alias-connected component, and the real page to exclude as self. The
+/// normalized component is shared by backlinks, unlinked references, and their
+/// scoped-invalidation predicates so those paths cannot drift.
 fn equivalent_page_names(
     real_pages: &RealPageNames,
     aliases: &[(String, String)],
     target: &str,
-) -> (String, Vec<String>) {
-    let target_norm = refs::normalize(target);
-    let canonical = real_pages
-        .get(&target_norm)
-        .map(|(_, name)| name.clone())
-        .or_else(|| {
-            aliases
-                .iter()
-                .find(|(alias, _)| refs::page_key(alias) == target_norm)
-                .map(|(_, canonical)| canonical.clone())
-        })
-        .unwrap_or_else(|| target.to_string());
-    let canonical_norm = refs::page_key(&canonical);
-    let mut names = vec![canonical_norm.clone()];
-    for (alias, alias_target) in aliases {
+) -> (String, Vec<String>, String) {
+    let target_norm = refs::page_key(target);
+    let mut neighbors = std::collections::HashMap::<String, Vec<String>>::new();
+    let mut original_names = vec![(target_norm.clone(), target.to_string())];
+    for (alias, owner) in aliases {
         let alias_norm = refs::page_key(alias);
-        if refs::page_key(alias_target) == canonical_norm && !names.contains(&alias_norm) {
-            names.push(alias_norm);
+        let owner_norm = refs::page_key(owner);
+        neighbors
+            .entry(alias_norm.clone())
+            .or_default()
+            .push(owner_norm.clone());
+        neighbors
+            .entry(owner_norm.clone())
+            .or_default()
+            .push(alias_norm.clone());
+        original_names.push((alias_norm, alias.clone()));
+        original_names.push((owner_norm, owner.clone()));
+    }
+
+    let mut component = std::collections::BTreeSet::new();
+    let mut pending = vec![target_norm.clone()];
+    while let Some(name) = pending.pop() {
+        if !component.insert(name.clone()) {
+            continue;
+        }
+        if let Some(adjacent) = neighbors.get(&name) {
+            pending.extend(adjacent.iter().cloned());
         }
     }
-    (canonical, names)
+
+    let canonical = component
+        .iter()
+        .filter_map(|name| real_pages.get(name).map(|(_, stored)| stored))
+        .min()
+        .cloned()
+        .or_else(|| {
+            original_names
+                .iter()
+                .filter(|(key, _)| component.contains(key))
+                .map(|(_, original)| original)
+                .min()
+                .cloned()
+        })
+        .unwrap_or_else(|| target.to_string());
+    let self_page = real_pages
+        .get(&target_norm)
+        .map(|(_, stored)| stored.clone())
+        .unwrap_or_else(|| canonical.clone());
+    (canonical, component.into_iter().collect(), self_page)
 }
 
 fn graph_equivalent_page_names(
     graph: &Graph,
     aliases: &[(String, String)],
     target: &str,
-) -> (String, Vec<String>) {
+) -> (String, Vec<String>, String) {
     equivalent_page_names(&real_page_names(graph), aliases, target)
 }
 
@@ -680,12 +708,14 @@ fn block_has_reference(
 fn collect_reference_occurrences(
     graph: &Graph,
     canonical: &str,
+    self_page: &str,
     names_norm: &[String],
     kind: ReferenceKind,
 ) -> Vec<RefGroup> {
     collect_reference_occurrences_bounded(
         graph,
         canonical,
+        self_page,
         names_norm,
         kind,
         usize::MAX,
@@ -697,12 +727,13 @@ fn collect_reference_occurrences(
 fn collect_reference_occurrences_bounded(
     graph: &Graph,
     canonical: &str,
+    self_page: &str,
     names_norm: &[String],
     kind: ReferenceKind,
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let exclude = refs::normalize(canonical);
+    let exclude = refs::page_key(self_page);
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     let groups = graph.with_pages(|pages| {
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -818,8 +849,15 @@ fn collect_reference_occurrences_bounded(
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
-    let (canonical, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
-    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Explicit)
+    let (canonical, names_norm, self_page) =
+        graph_equivalent_page_names(graph, &aliases, target);
+    collect_reference_occurrences(
+        graph,
+        &canonical,
+        &self_page,
+        &names_norm,
+        ReferenceKind::Explicit,
+    )
 }
 
 pub fn backlinks_bounded(
@@ -829,10 +867,12 @@ pub fn backlinks_bounded(
     max_bytes: usize,
 ) -> BoundedGroups {
     let aliases = graph.page_aliases();
-    let (canonical, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) =
+        graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
+        &self_page,
         &names_norm,
         ReferenceKind::Explicit,
         max_rows,
@@ -957,7 +997,7 @@ pub fn backlink_filter_context(
     targets: &[BacklinkFilterTarget],
 ) -> BacklinkFilterContext {
     let aliases = graph.page_aliases();
-    let (_, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, &aliases, target);
     let excluded_refs = names_norm.into_iter().collect::<std::collections::HashSet<_>>();
     let mut requested = std::collections::HashMap::<
         (PageKind, String),
@@ -1102,8 +1142,15 @@ pub fn block_referrers_bounded(
 /// with the corresponding occurrence evidence.
 pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
-    let (canonical, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
-    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Plain)
+    let (canonical, names_norm, self_page) =
+        graph_equivalent_page_names(graph, &aliases, target);
+    collect_reference_occurrences(
+        graph,
+        &canonical,
+        &self_page,
+        &names_norm,
+        ReferenceKind::Plain,
+    )
 }
 
 pub fn unlinked_refs_bounded(
@@ -1113,10 +1160,12 @@ pub fn unlinked_refs_bounded(
     max_bytes: usize,
 ) -> BoundedGroups {
     let aliases = graph.page_aliases();
-    let (canonical, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) =
+        graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
+        &self_page,
         &names_norm,
         ReferenceKind::Plain,
         max_rows,
@@ -1129,8 +1178,9 @@ pub fn unlinked_refs_bounded(
 /// projection-cache drift visible. No launcher history is read or returned.
 pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostics {
     let aliases = graph.page_aliases();
-    let (canonical, names_norm) = graph_equivalent_page_names(graph, &aliases, target);
-    let excluded_page = refs::normalize(&canonical);
+    let (canonical, names_norm, self_page) =
+        graph_equivalent_page_names(graph, &aliases, target);
+    let excluded_page = refs::page_key(&self_page);
     let mut traces = graph.with_pages(|pages| {
         let mut traces = Vec::new();
         for (entry, document) in pages {
@@ -1458,7 +1508,7 @@ pub(crate) fn page_affects_backlinks(
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (canonical, names_norm) = equivalent_page_names(real_pages, aliases, target);
+    let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
             block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Explicit)
@@ -1488,7 +1538,7 @@ pub(crate) fn page_affects_unlinked(
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (canonical, names_norm) = equivalent_page_names(real_pages, aliases, target);
+    let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
             block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Plain)
@@ -4825,15 +4875,15 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_alias_owner_is_lowest_path_even_when_input_is_reversed() {
+    fn duplicate_alias_component_keeps_all_edges_and_uses_lexical_canonical() {
         let owned = vec![
             (
-                std::path::PathBuf::from("pages/z/B.md"),
+                std::path::PathBuf::from("pages/a/B.md"),
                 "z".to_string(),
                 "B".to_string(),
             ),
             (
-                std::path::PathBuf::from("pages/a/A.md"),
+                std::path::PathBuf::from("pages/z/A.md"),
                 "z".to_string(),
                 "A".to_string(),
             ),
@@ -4842,10 +4892,10 @@ mod tests {
         assert_eq!(
             aliases,
             vec![
-                ("z".to_string(), "A".to_string()),
                 ("z".to_string(), "B".to_string()),
+                ("z".to_string(), "A".to_string()),
             ],
-            "alias ownership must be path-sorted, not inherited from enumeration order"
+            "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
             equivalent_page_names(&RealPageNames::new(), &aliases, "Z").0,

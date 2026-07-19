@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #137).
 - Reference panels now show result truncation ("showing N of M") and a bounded
   error state instead of an empty panel when limits are exceeded (GH #137).
+- Linked and Unlinked References now use the complete transitive, bidirectional
+  alias component, including every owner of a duplicate alias (GH #137).
+- Per-block reference labels now report the true mention total while keeping
+  the occurrence jump-target list bounded (GH #137).
 - Autocomplete and Ctrl+K search now rank all matching blocks globally before
   applying result caps, so a strong block match is no longer omitted because of
   where the block sits in the graph; inline and Ctrl+K pools match Logseq's

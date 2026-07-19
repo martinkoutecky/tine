@@ -95,6 +95,9 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     await tick();
     await tick();
     expect(root.querySelector(".reference-truncation")?.textContent).toContain("Showing 1 of 70");
+    expect(root.querySelector(".reference-mention-count")?.textContent).toContain("70 mentions");
+    expect(root.querySelector(".reference-occurrence-jump")?.getAttribute("aria-label"))
+      .toBe("Jump to mention 1 of 70");
     dispose();
   });
 
