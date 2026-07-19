@@ -732,8 +732,16 @@ fn rename_noreplace_between(
         use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
         let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
         let to = std::ffi::CString::new(to.as_bytes())?;
+        // Invoke the renameat2 SYSCALL directly instead of libc's `renameat2`
+        // wrapper. The wrapper is a bionic symbol only exported from Android
+        // API 30, so linking it leaves libtine_lib.so with an unresolved
+        // `renameat2` that fails `dlopen` at launch on Android 9 / API 28
+        // (GH #192). The syscall itself has existed since Linux 3.15 (present on
+        // Android's kernel), and `syscall` is exported since API 1, so no
+        // API-gated symbol remains. Behaviour and errno handling are unchanged.
         let result = unsafe {
-            libc::renameat2(
+            libc::syscall(
+                libc::SYS_renameat2,
                 from_dir.as_raw_fd(),
                 from.as_ptr(),
                 to_dir.as_raw_fd(),

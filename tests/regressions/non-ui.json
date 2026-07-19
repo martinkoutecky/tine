@@ -467,6 +467,22 @@
         "scenario": "performance.bounded-result-evidence-and-scoped-family-cache",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-ANDROID-RENAMEAT2-DLOPEN-001",
+      "title": "Android 9 / API 28 launches Tine without an unresolved renameat2 symbol in libtine_lib.so",
+      "family": "android-platform-lifecycle",
+      "sources": { "issues": [192], "commits": [] },
+      "platforms": ["android"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src-tauri/src/backup.rs"
+        ],
+        "scenario": "android.renameat2-syscall-no-api-gated-symbol",
+        "failBefore": "source-proven"
+      }
     }
   ]
 }

@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Android versions below 11 (API < 30) no longer crash on launch with an
+  `UnsatisfiedLinkError` for `renameat2` (GH #192).
+
 ## [0.6.1] - 2026-07-18
 
 ### Fixed
