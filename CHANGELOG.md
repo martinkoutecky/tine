@@ -26,6 +26,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   rest of search (GH #186).
 - Settings now scroll on narrow and mobile viewports, so lower settings are
   reachable instead of being clipped by the modal.
+- The mobile sidebar drawer can now be closed by swiping it toward its edge, in
+  addition to the existing back gesture/button and close button.
 
 ## [0.6.1] - 2026-07-18
 

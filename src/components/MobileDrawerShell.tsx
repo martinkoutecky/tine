@@ -55,6 +55,65 @@ export function MobileDrawerPanel(props: {
   children: JSX.Element;
 }): JSX.Element {
   const modal = () => mobileDrawerMode() && activeDrawer() === props.side;
+
+  // Swipe-to-close: dragging the drawer toward its own closed edge dismisses it,
+  // matching native drawers (GH: Martin). We distinguish a horizontal close-ward
+  // drag from a vertical scroll on the first ~10px of movement, so scrolling
+  // inside the drawer is never captured. Reuses the `back` dismiss reason (this
+  // is the gesture equivalent of the OS back the drawer already honors).
+  const DECIDE_PX = 10; // movement before committing to horizontal vs vertical
+  const MIN_CLOSE_PX = 56; // absolute floor so a tiny panel still needs a real drag
+  const CLOSE_FRACTION = 0.3; // fraction of panel width that triggers a close
+  // Positive result = movement toward this side's closed edge (left closes left).
+  const towardClose = (dx: number) => (props.side === "left" ? -dx : dx);
+  let startX = 0;
+  let startY = 0;
+  let width = 1;
+  let tracking = false;
+  let decided = false;
+  let swiping = false;
+  const onTouchStart = (event: TouchEvent) => {
+    if (!modal() || event.touches.length !== 1) {
+      tracking = false;
+      return;
+    }
+    const touch = event.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+    width = (event.currentTarget as HTMLElement).offsetWidth || 1;
+    tracking = true;
+    decided = false;
+    swiping = false;
+  };
+  const onTouchMove = (event: TouchEvent) => {
+    if (!tracking || event.touches.length !== 1) return;
+    if (decided) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    if (Math.abs(dx) < DECIDE_PX && Math.abs(dy) < DECIDE_PX) return;
+    decided = true;
+    // Only a horizontal-dominant drag toward the closed edge is a close gesture;
+    // anything vertical (or opening-ward) is left to normal scrolling.
+    swiping = Math.abs(dx) > Math.abs(dy) && towardClose(dx) > 0;
+  };
+  const onTouchEnd = (event: TouchEvent) => {
+    if (!tracking) return;
+    tracking = false;
+    if (!swiping) return;
+    swiping = false;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const closeDistance = towardClose(touch.clientX - startX);
+    if (closeDistance >= Math.max(MIN_CLOSE_PX, width * CLOSE_FRACTION)) {
+      dismiss("back");
+    }
+  };
+  const onTouchCancel = () => {
+    tracking = false;
+    swiping = false;
+  };
+
   return (
     <div
       class={props.class}
@@ -66,6 +125,10 @@ export function MobileDrawerPanel(props: {
       onKeyDown={(event) => {
         if (modal() && event.key === "Tab") trapDrawerTab(event, event.currentTarget);
       }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchCancel}
       style={props.style}
     >
       {props.children}

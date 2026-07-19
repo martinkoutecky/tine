@@ -240,6 +240,54 @@ describe("GH #161 mounted responsive drawer shell", () => {
     cleanup = undefined;
   });
 
+  it("closes the drawer on a horizontal swipe toward its closed edge, but leaves vertical scrolls, short drags, and opening-ward drags alone (GH: Martin)", async () => {
+    const harness = installHarness(true);
+    const opener = document.createElement("button");
+    document.body.append(opener);
+
+    const makeTouch = (type: string, x: number, y: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const point = { clientX: x, clientY: y };
+      Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : [point] });
+      Object.defineProperty(event, "changedTouches", { value: [point] });
+      return event;
+    };
+    const swipe = async (from: [number, number], to: [number, number]) => {
+      const panel = harness.root.querySelector<HTMLElement>(".left-sidebar")!;
+      panel.dispatchEvent(makeTouch("touchstart", from[0], from[1]));
+      panel.dispatchEvent(makeTouch("touchmove", to[0], to[1]));
+      panel.dispatchEvent(makeTouch("touchend", to[0], to[1]));
+      await settle();
+    };
+
+    // Horizontal drag left (toward the left drawer's closed edge) closes it.
+    setLeftSidebarOpen(true, opener);
+    await settle();
+    expect(activeDrawer()).toBe("left");
+    await swipe([220, 300], [120, 300]);
+    expect(activeDrawer()).toBeNull();
+
+    // A vertical drag (scroll) must NOT close the drawer.
+    setLeftSidebarOpen(true, opener);
+    await settle();
+    await swipe([220, 300], [220, 200]);
+    expect(activeDrawer()).toBe("left");
+
+    // A short horizontal drag (below the close threshold) must NOT close it.
+    await swipe([220, 300], [196, 300]);
+    expect(activeDrawer()).toBe("left");
+
+    // An opening-ward drag (rightward, away from the left edge) must NOT close it.
+    await swipe([220, 300], [320, 300]);
+    expect(activeDrawer()).toBe("left");
+
+    dismissDrawerAndRestore("explicit");
+    await settle();
+    opener.remove();
+    harness.teardown();
+    cleanup = undefined;
+  });
+
   it("uses the same semantics for the right drawer and restores or safely falls back by reason", async () => {
     const harness = installHarness(true);
     const connected = document.createElement("button");
