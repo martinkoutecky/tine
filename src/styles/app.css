@@ -284,6 +284,123 @@ textarea {
   min-width: 0;
 }
 
+.workspace-switcher {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.workspace-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  max-width: 180px;
+  padding: 0 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.workspace-switcher-btn:hover,
+.workspace-switcher-btn[aria-expanded="true"] {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.workspace-switcher-btn:disabled { opacity: .55; cursor: default; }
+.workspace-switcher-mark {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  background: var(--link-color);
+  color: var(--bg-primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+.workspace-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workspace-switcher-caret { flex: none; font-size: 9px; opacity: .7; }
+.workspace-quick-menu,
+.workspace-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(440px, calc(100vh - 72px));
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+}
+.workspace-quick-row,
+.workspace-new-btn,
+.workspace-menu-name,
+.workspace-menu-action {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.workspace-quick-row,
+.workspace-new-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 5px;
+}
+.workspace-quick-row:hover,
+.workspace-new-btn:hover,
+.workspace-menu-row:hover { background: var(--bg-secondary); }
+.workspace-quick-row.active,
+.workspace-menu-row.active { color: var(--text-title); font-weight: 600; }
+.workspace-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 5px;
+}
+.workspace-menu-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-menu-action {
+  padding: 5px 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.workspace-menu-action:hover { color: var(--text-title); }
+.workspace-menu-action.danger:hover { color: var(--danger, #c44); }
+.workspace-edit-form {
+  display: flex;
+  gap: 5px;
+  padding: 5px 4px 2px;
+}
+.workspace-edit-input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 /* macOS: the native traffic-light buttons float in the window's top-left, over our
    content (the Overlay title bar — see nativeChrome.ts). Reserve room so they don't
    sit on top of interactive chrome:

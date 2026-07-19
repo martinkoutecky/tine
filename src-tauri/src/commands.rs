@@ -13,6 +13,23 @@ use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 
+#[tauri::command]
+pub(crate) fn load_workspaces(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    crate::settings::load_workspaces(app, state)
+}
+
+#[tauri::command]
+pub(crate) fn save_workspaces(
+    data: String,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    crate::settings::save_workspaces(data, app, state)
+}
+
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const QUERY_EXPORT_MAX_QUERIES: usize = 64;

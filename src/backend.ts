@@ -453,6 +453,10 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
+  /** Load the current graph's device-local named-workspace registry JSON. */
+  loadWorkspaces(): Promise<string>;
+  /** Atomically persist the current graph's complete named-workspace registry. */
+  saveWorkspaces(data: string): Promise<void>;
   /** True exactly ONCE if this launch migrated the app-data dir left by the
    *  desktop identifier rename chain dev.tine.app / page.tine.app ->
    *  page.tine.Tine (so the UI can explain that some app-level prefs may need
@@ -1004,6 +1008,12 @@ class TauriBackend implements Backend {
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
+  }
+  loadWorkspaces() {
+    return this.call<string>("load_workspaces");
+  }
+  saveWorkspaces(data: string) {
+    return this.call<void>("save_workspaces", { data });
   }
   takeIdentifierMigrationNotice() {
     return this.call<boolean>("take_identifier_migration_notice");

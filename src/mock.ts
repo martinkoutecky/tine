@@ -435,6 +435,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+let mockWorkspaces: string | null = null;
 let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
@@ -1505,6 +1506,23 @@ export function mockBackend(): Backend {
     },
     async saveSession(data: string): Promise<void> {
       mockSession = data;
+    },
+    async loadWorkspaces(): Promise<string> {
+      if (!mockWorkspaces) {
+        const blob = mockSession ? JSON.parse(mockSession) : {
+          tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
+          activeIndex: 0,
+        };
+        mockWorkspaces = JSON.stringify({
+          version: 1,
+          activeId: "default",
+          workspaces: [{ id: "default", name: "", blob }],
+        });
+      }
+      return mockWorkspaces;
+    },
+    async saveWorkspaces(data: string): Promise<void> {
+      mockWorkspaces = data;
     },
     async takeIdentifierMigrationNotice(): Promise<boolean> {
       return false;

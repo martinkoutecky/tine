@@ -28,8 +28,8 @@ use commands::{
     empty_asset_trash, export_query_subtrees, get_backlink_filter_context, get_backlinks, get_page,
     get_page_by_path, get_unlinked_refs, graph_source_files, guide_pages, import_asset,
     import_native_capture, journal_content_days, journal_feed_page, list_journal_conflicts,
-    list_orphan_assets, list_pages, list_sync_conflicts, list_templates, merge_pages, open_asset,
-    open_page_file, open_pdf, page_aliases, page_icons, page_print_html, preview_block,
+    list_orphan_assets, list_pages, list_sync_conflicts, list_templates, load_workspaces, merge_pages,
+    open_asset, open_page_file, open_pdf, page_aliases, page_icons, page_print_html, preview_block,
     publish_html, query_facets, quick_switch, read_asset, read_custom_css, read_highlights,
     read_journal_file, read_local_image, read_text_file, rename_file_to_page, rename_page,
     resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_graph_search,
@@ -37,7 +37,7 @@ use commands::{
     set_favorites, set_guide_announced, set_journal_title_format, set_preferred_format,
     set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
     stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
-    trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
+    save_workspaces, trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
@@ -823,6 +823,8 @@ pub fn run() {
             restore_backup,
             load_session,
             save_session,
+            load_workspaces,
+            save_workspaces,
             list_known_graphs,
             forget_known_graph,
             install_plugin,

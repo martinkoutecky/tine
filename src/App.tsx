@@ -9,6 +9,7 @@ const KeyedPdfViewer = lazy(() =>
   import("./components/PdfViewer").then((m) => ({ default: m.KeyedPdfViewer }))
 );
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { ContextMenu } from "./components/ContextMenu";
 import { Toasts, Lightbox } from "./components/Toasts";
 import { AudioOverlay } from "./components/AudioOverlay";
@@ -1000,6 +1001,9 @@ export function App(): JSX.Element {
               </svg>
             </button>
           </div>
+          {/* Workspaces own the whole window context. Keep this one instance in
+              window chrome, before every pane-scoped TabBar. */}
+          <WorkspaceSwitcher />
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
               flex spacer so the right-side icons stay pinned to the edge. */}

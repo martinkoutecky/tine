@@ -306,22 +306,34 @@ export function scheduleSessionSave() {
 }
 
 export async function restoreSession(): Promise<void> {
-  let raw: string | null = null;
   try {
-    raw = await backend().loadSession();
-  } catch {
-    return;
+    let raw: string | null = null;
+    try {
+      raw = await backend().loadSession();
+    } catch {
+      return;
+    }
+    if (!raw) {
+      setRecentPages(legacyRecentPages());
+      return;
+    }
+    const parsed = parsePersistedSession(raw);
+    if (!parsed) return;
+    applySidebarSession(parsed.sidebar);
+    setRecentPages(parsed.recent);
+    if (!pristineDefault()) return;
+    applyParsedSession(parsed);
+  } finally {
+    // The registry is graph-scoped, so the early pre-bind restore may fail and
+    // the post-bind restore in graph.ts retries it. Keep startup best-effort just
+    // like the existing session restore; a bad registry must not block the app.
+    try {
+      const { initializeWorkspaces } = await import("./workspaces");
+      await initializeWorkspaces();
+    } catch {
+      // unavailable before graph binding, older backend, or invalid registry
+    }
   }
-  if (!raw) {
-    setRecentPages(legacyRecentPages());
-    return;
-  }
-  const parsed = parsePersistedSession(raw);
-  if (!parsed) return;
-  applySidebarSession(parsed.sidebar);
-  setRecentPages(parsed.recent);
-  if (!pristineDefault()) return;
-  applyParsedSession(parsed);
 }
 
 installSessionPersistence({

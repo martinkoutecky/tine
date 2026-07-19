@@ -357,6 +357,145 @@ fn session_path(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBu
         .map(|d| d.join("sessions").join(session_id(root)))
 }
 
+fn workspaces_path(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
+    let id = session_id(root);
+    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("sessions").join(format!("{stem}-workspaces.json")))
+}
+
+fn blank_session_json() -> serde_json::Value {
+    serde_json::json!({
+        "tabs": [{
+            "history": [{ "kind": "journals" }],
+            "pos": 0,
+            "pinned": false
+        }],
+        "activeIndex": 0
+    })
+}
+
+fn migrated_workspaces_json(session: Option<&str>) -> String {
+    let blob = session
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .unwrap_or_else(blank_session_json);
+    serde_json::to_string(&serde_json::json!({
+        "version": 1,
+        "activeId": "default",
+        "workspaces": [{ "id": "default", "name": "", "blob": blob }]
+    }))
+    .expect("workspace migration JSON is serializable")
+}
+
+fn validate_workspaces_json(data: &str) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(data).map_err(|e| e.to_string())?;
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("workspace registry version must be 1".into());
+    }
+    let active = value
+        .get("activeId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or("workspace registry requires an activeId")?;
+    let entries = value
+        .get("workspaces")
+        .and_then(serde_json::Value::as_array)
+        .filter(|entries| !entries.is_empty())
+        .ok_or("workspace registry requires at least one workspace")?;
+    if !entries.iter().any(|entry| {
+        entry.get("id").and_then(serde_json::Value::as_str) == Some(active)
+            && entry
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+            && entry.get("blob").is_some_and(serde_json::Value::is_object)
+    }) {
+        return Err("active workspace is missing or invalid".into());
+    }
+    Ok(())
+}
+
+static WORKSPACES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn atomic_write_workspaces(path: &std::path::Path, data: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or("workspace registry has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("workspaces.json");
+    let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(data.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result.map_err(|e| e.to_string())
+}
+
+fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Result<String, String> {
+    let _guard = WORKSPACES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match std::fs::read_to_string(path) {
+        Ok(data) => {
+            validate_workspaces_json(&data)?;
+            Ok(data)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let legacy = std::fs::read_to_string(session).ok();
+            let data = migrated_workspaces_json(legacy.as_deref());
+            atomic_write_workspaces(path, &data)?;
+            Ok(data)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn save_workspaces_at(path: &std::path::Path, data: &str) -> Result<(), String> {
+    validate_workspaces_json(data)?;
+    let _guard = WORKSPACES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    atomic_write_workspaces(path, data)
+}
+
+pub(crate) fn load_workspaces(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    let session = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    load_workspaces_at(&path, &session)
+}
+
+pub(crate) fn save_workspaces(
+    data: String,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    save_workspaces_at(&path, &data)
+}
+
 static SESSION_MIGRATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tauri::command]
@@ -439,6 +578,66 @@ mod tests {
             session_id(std::path::Path::new("/one/graph")),
             session_id(std::path::Path::new("/two/graph"))
         );
+    }
+
+    #[test]
+    fn workspace_migration_preserves_the_session_and_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("graph.json");
+        let registry = temp.path().join("graph-workspaces.json");
+        let prior = r#"{"tabs":[{"history":[{"kind":"page","name":"Prior","pageKind":"page"}],"pos":0,"pinned":true}],"activeIndex":0}"#;
+        std::fs::write(&session, prior).unwrap();
+
+        let first = load_workspaces_at(&registry, &session).unwrap();
+        let first_value: serde_json::Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(first_value["activeId"], "default");
+        assert_eq!(first_value["workspaces"][0]["name"], "");
+        assert_eq!(
+            first_value["workspaces"][0]["blob"],
+            serde_json::from_str::<serde_json::Value>(prior).unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(&session).unwrap(), prior);
+
+        let bytes = std::fs::read(&registry).unwrap();
+        let modified = std::fs::metadata(&registry).unwrap().modified().unwrap();
+        let second = load_workspaces_at(&registry, &session).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(std::fs::read(&registry).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&registry).unwrap().modified().unwrap(),
+            modified
+        );
+        assert_eq!(std::fs::read_to_string(&session).unwrap(), prior);
+    }
+
+    #[test]
+    fn workspace_registry_full_cycle_keeps_graph_page_bytes_and_mtime_identical() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("tine-test");
+        let pages = graph.join("pages");
+        std::fs::create_dir_all(&pages).unwrap();
+        let page = pages.join("byte-identical.md");
+        std::fs::write(&page, "- original graph bytes\n").unwrap();
+        let before_bytes = std::fs::read(&page).unwrap();
+        let before_modified = std::fs::metadata(&page).unwrap().modified().unwrap();
+
+        let registry = temp
+            .path()
+            .join("app-data/sessions/tine-test-workspaces.json");
+        let states = [
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"One","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"two","workspaces":[{"id":"one","name":"One","blob":blank_session_json()},{"id":"two","name":"Two","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"Renamed","blob":blank_session_json()},{"id":"two","name":"Two","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"Renamed","blob":blank_session_json()}]}),
+        ];
+        for state in states {
+            save_workspaces_at(&registry, &state.to_string()).unwrap();
+            assert_eq!(std::fs::read(&page).unwrap(), before_bytes);
+            assert_eq!(
+                std::fs::metadata(&page).unwrap().modified().unwrap(),
+                before_modified
+            );
+        }
     }
 
     #[test]

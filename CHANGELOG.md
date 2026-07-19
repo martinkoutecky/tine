@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Named workspaces can save and switch the complete window context in place,
+  persist per graph across restarts, and leave graph files untouched (GH #104).
 - Show brackets around page references can now be toggled in Appearance settings
   or with `mod+c mod+b`, with the OG-compatible value saved to the graph's
   `logseq/config.edn`.
