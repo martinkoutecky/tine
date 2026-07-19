@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-19
+
 ### Added
 
 - Named workspaces can save and switch the complete window context in place,

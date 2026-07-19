@@ -329,6 +329,13 @@ within a column; merged cells are still v2+.
   multiple note panes. Each pane has its own tab strip, active tab, back/forward
   stack, scroll position, and focused-pane indicator; the layout is saved in the
   session and restored on launch.
+- ⊕ **Named workspaces** — save the whole window context (split layout, every
+  pane's tabs and back/forward history, both sidebars, and Recent) as a named
+  workspace and switch between them in place from the switcher at the far left of
+  the tab bar (hover for a quick switch, click for New / Rename / Delete). Each
+  graph keeps its own set and the active one persists across restarts. Workspaces
+  are device-local session state — saving, switching, or deleting one never writes
+  to your graph.
 - **Default split bindings:** `Mod+Alt+\` splits right and duplicates the current
   tab; `Mod+Alt+Shift+\` splits down. The *Close pane* command is available from
   the command palette.
@@ -615,6 +622,10 @@ within a column; merged cells are still v2+.
   docs live in one place.
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via
   `config.edn :shortcuts`.
+- **Show brackets** — toggle the `[[ ]]` / `(( ))` brackets around page and block
+  references on or off, from Appearance settings or with `Mod+C Mod+B`. The choice
+  is saved to your graph's `logseq/config.edn` as `:ui/show-brackets?`, matching
+  Logseq's default (on).
 - **Help improve Tine** (Settings tab) — runs Tine's parser (lsdoc) against
   Logseq's own parser (mldoc) over your graph, locally, and reports any place they
   disagree plus a parse-speed comparison. Every divergence snippet is **anonymized**

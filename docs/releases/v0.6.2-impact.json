@@ -1,0 +1,433 @@
+{
+ "schemaVersion": 1,
+ "version": "0.6.2",
+ "baseTag": "v0.6.1",
+ "focusedAudit": {
+  "required": false,
+  "reason": "0.6.2 is a patch. Its one new subsystem/write path is Named Workspaces, which was adversarially spec-verified (the multi-window variant was rejected and dropped to 0.7) and proven by a byte/mtime-identity test plus frontend savePage-never-called assertions to write only device-local app-data session state, reusing the existing audited atomic session-write path; it adds no graph-write path or platform integration, so no focused change-cluster audit is required."
+ },
+ "items": [
+  {
+   "section": "Added",
+   "text": "Named workspaces can save and switch the complete window context in place, persist per graph across restarts, and leave graph files untouched (GH #104).",
+   "userVisible": true,
+   "regressions": [
+    "UI-WORKSPACES-001"
+   ],
+   "docs": {
+    "status": "update",
+    "reason": "New user-facing feature; the full feature list documents it.",
+    "refs": [
+     "docs/FEATURES.md"
+    ]
+   },
+   "website": {
+    "status": "current",
+    "reason": "Marketing homepage already positions Tine's outliner/session capabilities; no dedicated patch-feature page is required.",
+    "refs": [
+     "website/index.html"
+    ]
+   },
+   "blog": {
+    "status": "current",
+    "reason": "Patch release; no new blog entry required (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "Show brackets around page references can now be toggled in Appearance settings or with `mod+c mod+b`, with the OG-compatible value saved to the graph's `logseq/config.edn`.",
+   "userVisible": true,
+   "regressions": [
+    "UI-SETTINGS-SHOW-BRACKETS-001"
+   ],
+   "docs": {
+    "status": "update",
+    "reason": "New user-facing feature; the full feature list documents it.",
+    "refs": [
+     "docs/FEATURES.md"
+    ]
+   },
+   "website": {
+    "status": "current",
+    "reason": "Marketing homepage already positions Tine's outliner/session capabilities; no dedicated patch-feature page is required.",
+    "refs": [
+     "website/index.html"
+    ]
+   },
+   "blog": {
+    "status": "current",
+    "reason": "Patch release; no new blog entry required (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "Linked/Unlinked/query reference groups prune their per-group collapse state only when the result set actually changes, instead of re-walking the entire reference subtree on every structural edit anywhere inside it. Collapse behavior is unchanged; large reference sections do less bookkeeping work while you edit (GH #185).",
+   "userVisible": true,
+   "regressions": [
+    "UI-LIVEREFGROUP-COLLAPSE-PRUNE-185"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Property names now fold to lowercase with spaces and underscores shown and matched as `-`, matching Logseq while preserving the file's original bytes.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PROPERTY-NAME-NORMALIZE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "`#+BEGIN_QUOTE`/`#+BEGIN_EXAMPLE` (and other org container) blocks whose body contains a `- ` list were split into separate blocks \u2014 corrupting the block structure on save and leaking the raw delimiters in rendering; they now stay one block.",
+   "userVisible": true,
+   "regressions": [
+    "REG-ORG-CONTAINER-OUTLINE-ROUNDTRIP-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Pages whose page-header properties came from an older version (e.g. a page that is only `title::`/`tags::` metadata) no longer get stuck with a repeating \"Couldn't save \u2026 \u2014 will retry. (refusing to drop an existing page preamble while authoring page-header properties)\" error. The data-preservation firewall was misfiring on the legitimate save of such a page once its properties had been canonicalized to disk; the page now saves normally with no change to the file on disk. Restarting is no longer needed to clear the error (GH #198).",
+   "userVisible": true,
+   "regressions": [
+    "UI-PAGE-PROPERTY-RESAVE-198"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The page-bottom \"+ Add block\" target now always adds a new writable block, even when the page already ends in an empty bullet. Previously it re-focused the existing trailing empty block, so if that block was indented you could never get a fresh unindented block below it and clicking appeared to do nothing. Stacking empty last blocks is now allowed (GH #158).",
+   "userVisible": true,
+   "regressions": [
+    "UI-PAGE-TRAILING-BLOCK-TARGET-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Editing inside an existing `[[page]]` or `((block))` reference \u2014 for example inserting a word in front of the current text \u2014 and accepting a completion now rewrites the whole reference instead of leaving a stray `]]`/`))`, matching Logseq (GH #199).",
+   "userVisible": true,
+   "regressions": [
+    "UI-PAGEREF-ACCEPT-RANGE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Linked References no longer show a redundant \"1 mention\" label and jump button on a block that mentions the page only once; the occurrence count and jump-to-occurrence controls now appear only when a block mentions the page more than once, matching Logseq (GH #200).",
+   "userVisible": true,
+   "regressions": [
+    "UI-BACKLINK-OCCURRENCE-CONTROLS-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Clicking a Markdown external link on Linux now opens the browser with a browser-appropriate environment instead of failing with a KIOExec file error; only bundle/loader environment variables are scrubbed, desktop/session state is preserved (GH #195).",
+   "userVisible": true,
+   "regressions": [
+    "REG-EXTERNAL-LINK-BROWSER-ENV-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Android versions below 11 (API < 30) no longer crash on launch with an `UnsatisfiedLinkError` for `renameat2` (GH #192).",
+   "userVisible": true,
+   "regressions": [
+    "REG-ANDROID-RENAMEAT2-DLOPEN-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Linked and Unlinked References now match Logseq: Unicode-canonical (NFC) page and alias identity, plain (unbracketed) property text counted as an unlinked mention, same-named pages from different folders merged into one reference group, and a real page title no longer shadowed by another page's alias (GH #137).",
+   "userVisible": true,
+   "regressions": [
+    "UI-REFERENCE-OG-PARITY-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Reference panels now show result truncation (\"showing N of M\") and a bounded error state instead of an empty panel when limits are exceeded (GH #137).",
+   "userVisible": true,
+   "regressions": [
+    "UI-REFERENCE-EVIDENCE-CONTRACT-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Linked and Unlinked References now use the complete transitive, bidirectional alias component, including every owner of a duplicate alias (GH #137).",
+   "userVisible": true,
+   "regressions": [
+    "REG-REF-ALIAS-COMPONENT-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Per-block reference labels now report the true mention total while keeping the occurrence jump-target list bounded (GH #137).",
+   "userVisible": true,
+   "regressions": [
+    "REG-REF-OCCURRENCE-COUNT-HONEST-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Autocomplete and Ctrl+K search now rank all matching blocks globally before applying result caps, so a strong block match is no longer omitted because of where the block sits in the graph; inline and Ctrl+K pools match Logseq's sizes, and autocomplete ordering uses the same Unicode (NFC) identity as the rest of search (GH #186).",
+   "userVisible": true,
+   "regressions": [
+    "UI-SEARCH-GLOBAL-BLOCK-RANK-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Settings now scroll on narrow and mobile viewports, so lower settings are reachable instead of being clipped by the modal.",
+   "userVisible": true,
+   "regressions": [
+    "UI-SETTINGS-MOBILE-SCROLL-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The mobile sidebar drawer can now be closed by swiping it toward its edge, in addition to the existing back gesture/button and close button.",
+   "userVisible": true,
+   "regressions": [
+    "UI-DRAWER-SWIPE-CLOSE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Behavior/compatibility fix to existing functionality; no documented feature, marketing page, or blog topic changes.",
+    "refs": []
+   }
+  }
+ ]
+}
