@@ -70,6 +70,15 @@ describe("renderInlines", () => {
     expect(h).toContain("My Page");
   });
 
+  it("treats a nested page ref as one target when show-brackets is off", () => {
+    // Tine's parser keeps `[[Outer [[Inner]] tail]]` as one page_ref, so there
+    // is no separately rendered nested outer link whose brackets stay visible.
+    setGraphMeta({ show_brackets: false } as never);
+    const h = html(() => InlineText({ text: "[[Outer [[Inner]] tail]]" }) as JSX.Element);
+    expect(h).not.toContain('class="bracket"');
+    expect(h).toContain("Outer [[Inner]] tail");
+  });
+
   it("page ref with alias label", () => {
     const h = inl([{ k: "link", url: { type: "page_ref", v: "Target" }, full: "[[Target][alias]]", label: [{ k: "plain", text: "alias" }] }]);
     expect(h).toContain('class="page-ref"');

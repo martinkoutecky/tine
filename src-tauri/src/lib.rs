@@ -35,9 +35,9 @@ use commands::{
     resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_graph_search,
     run_query, save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
     set_favorites, set_guide_announced, set_journal_title_format, set_preferred_format,
-    set_preferred_workflow, set_start_of_week, set_timetracking_enabled, stream_asset_path,
-    sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
-    trash_sync_conflict, write_highlights, write_pdf_view_state,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
+    trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
@@ -763,6 +763,7 @@ pub fn run() {
             set_favorites,
             set_preferred_workflow,
             set_timetracking_enabled,
+            set_show_brackets,
             set_guide_announced,
             set_preferred_format,
             set_journal_title_format,

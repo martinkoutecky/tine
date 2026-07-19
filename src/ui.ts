@@ -54,6 +54,17 @@ export function changeTimetrackingEnabled(enabled: boolean) {
   void backend().setTimetrackingEnabled(enabled).catch(() => {});
 }
 
+export function showBrackets(): boolean {
+  return graphMeta()?.show_brackets ?? true;
+}
+
+export function changeShowBrackets(on: boolean) {
+  const m = graphMeta();
+  if (m && m.show_brackets === on) return;
+  if (m) setGraphMeta({ ...m, show_brackets: on });
+  void backend().setShowBrackets(on).catch(() => {});
+}
+
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
 function loadStr(key: string): string | null {
   try {

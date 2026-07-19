@@ -839,6 +839,18 @@ pub(crate) fn set_timetracking_enabled(
 }
 
 #[tauri::command]
+pub(crate) fn set_show_brackets(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_show_brackets(enabled).map_err(|e| e.to_string())
+    })?;
+    refresh_graph(&state)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn set_guide_announced(announced: bool, state: GraphContext<'_>) -> Result<(), String> {
     with_graph(&state, |g| {
         g.set_guide_announced(announced).map_err(|e| e.to_string())

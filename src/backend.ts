@@ -261,6 +261,8 @@ export interface Backend {
   setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
   /** Persist `:feature/enable-timetracking?` (default on when absent). */
   setTimetrackingEnabled(enabled: boolean): Promise<void>;
+  /** Persist `:ui/show-brackets?` (default on when absent). */
+  setShowBrackets(enabled: boolean): Promise<void>;
   /** Persist the format new pages/journals are created in to config.edn
    *  `:preferred-format` ("md" | "org"). */
   setPreferredFormat(format: "md" | "org"): Promise<void>;
@@ -709,6 +711,9 @@ class TauriBackend implements Backend {
   }
   setTimetrackingEnabled(enabled: boolean) {
     return this.call<void>("set_timetracking_enabled", { enabled });
+  }
+  setShowBrackets(enabled: boolean) {
+    return this.call<void>("set_show_brackets", { enabled });
   }
   setPreferredFormat(format: "md" | "org") {
     return this.call<void>("set_preferred_format", { format });

@@ -8,7 +8,7 @@ import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, dataRev, graphEpoch, graphMeta, pushToast } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, dataRev, graphEpoch, graphMeta, pushToast, showBrackets } from "../ui";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
@@ -307,7 +307,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
         </Show>
         <Show when={props.tag} fallback={
-          <Show when={props.alias} fallback={<><span class="bracket">[[</span>{props.name}<span class="bracket">]]</span></>}>
+          <Show when={props.alias} fallback={<><Show when={showBrackets()}><span class="bracket">[[</span></Show>{props.name}<Show when={showBrackets()}><span class="bracket">]]</span></Show></>}>
             {props.alias}
           </Show>
         }>

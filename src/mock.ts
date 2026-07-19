@@ -647,6 +647,7 @@ export function mockBackend(): Backend {
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
         enable_timetracking: true,
+        show_brackets: true,
         logbook_with_second_support: true,
         logbook_enabled_in_timestamped_blocks: true,
         logbook_enabled_in_all_blocks: false,
@@ -1059,6 +1060,9 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async setTimetrackingEnabled(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setShowBrackets(): Promise<void> {
       // no-op in the browser mock
     },
     async setPreferredFormat(): Promise<void> {

@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Show brackets around page references can now be toggled in Appearance settings
+  or with `mod+c mod+b`, with the OG-compatible value saved to the graph's
+  `logseq/config.edn`.
+
 ### Changed
 
 - Linked/Unlinked/query reference groups prune their per-group collapse state

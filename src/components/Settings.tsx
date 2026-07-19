@@ -14,6 +14,8 @@ import {
   changeWorkflow,
   timetrackingEnabled,
   changeTimetrackingEnabled,
+  showBrackets,
+  changeShowBrackets,
   changePreferredFormat,
   changeJournalTitleFormat,
   graphMeta,
@@ -171,6 +173,7 @@ const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
   { tab: "appearance", label: "Wide mode", description: "reading width" },
   { tab: "appearance", label: "Document mode", description: "hide bullets prose" },
+  { tab: "appearance", label: "Show brackets", description: "page references config shortcut" },
   { tab: "appearance", label: "Typographic replacements", description: "arrows dashes glyphs" },
   { tab: "appearance", label: "Auto-pair brackets & quotes", description: "closers selections backspace" },
   { tab: "appearance", label: "Space after inserting a reference", description: "page block autocomplete spacing" },
@@ -1315,6 +1318,13 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
       <Field label="Document mode" hint="Hides bullets and indent guides for a cleaner prose view.">
         <Toggle on={documentMode()} onClick={toggleDocumentMode} />
+      </Field>
+
+      <Field
+        label="Show brackets"
+        hint={<>Show the <code>[[ ]]</code> around page references. Saved to <code>:ui/show-brackets?</code> in <code>config.edn</code>; toggle with <code>mod+c mod+b</code>.</>}
+      >
+        <Toggle on={showBrackets()} onClick={() => changeShowBrackets(!showBrackets())} />
       </Field>
 
       <Field

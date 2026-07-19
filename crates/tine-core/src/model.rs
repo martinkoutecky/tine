@@ -889,6 +889,8 @@ pub struct GraphMeta {
     pub macros: std::collections::HashMap<String, String>,
     /// `:feature/enable-timetracking?` effective value; default true.
     pub enable_timetracking: bool,
+    /// `:ui/show-brackets?` effective value; default true.
+    pub show_brackets: bool,
     /// `:logbook/settings :with-second-support?` effective value; default true.
     pub logbook_with_second_support: bool,
     /// `:logbook/settings :enabled-in-timestamped-blocks` effective value.
@@ -1099,6 +1101,7 @@ impl Graph {
             preferred_format: self.config.preferred_format.ext().to_string(),
             macros: self.config.macros.clone(),
             enable_timetracking: self.config.enable_timetracking,
+            show_brackets: self.config.show_brackets,
             logbook_with_second_support: self.config.logbook.with_second_support,
             logbook_enabled_in_timestamped_blocks: self
                 .config

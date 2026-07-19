@@ -62,6 +62,9 @@ pub struct Config {
     /// `:feature/enable-timetracking?` — OG default ON; only explicit false
     /// disables marker-driven CLOCK entries.
     pub enable_timetracking: bool,
+    /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
+    /// brackets around page references.
+    pub show_brackets: bool,
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
     /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
@@ -124,6 +127,7 @@ impl Default for Config {
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
             enable_timetracking: true,
+            show_brackets: true,
             logbook: LogbookSettings::default(),
             guide_announced: false,
         }
@@ -191,8 +195,8 @@ impl Config {
             _ => FileNameFormat::Legacy,
         };
         cfg.macros = parse_macros(edn);
-        cfg.enable_timetracking =
-            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
         cfg.logbook = LogbookSettings {
             with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
                 .unwrap_or(true),
@@ -301,6 +305,32 @@ impl Graph {
     /// but writing the explicit boolean keeps the Settings toggle reversible.
     pub fn set_timetracking_enabled(&self, enabled: bool) -> io::Result<()> {
         let key = ":feature/enable-timetracking?";
+        let val = if enabled { "true" } else { "false" };
+        let path = config_path_for_write(self)?;
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist `:ui/show-brackets?`. OG treats an absent key as ON, but writing
+    /// the explicit boolean keeps the Settings toggle reversible.
+    pub fn set_show_brackets(&self, enabled: bool) -> io::Result<()> {
+        let key = ":ui/show-brackets?";
         let val = if enabled { "true" } else { "false" };
         let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
@@ -1061,6 +1091,37 @@ mod tests {
         assert!(!Graph::open(&dir).config.enable_timetracking);
         Graph::open(&dir).set_timetracking_enabled(true).unwrap();
         assert!(Graph::open(&dir).config.enable_timetracking);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn show_brackets_defaults_parses_and_round_trips() {
+        use crate::model::Graph;
+
+        assert!(Config::parse("{}").show_brackets);
+        assert!(!Config::parse("{:ui/show-brackets? false}").show_brackets);
+
+        let dir = std::env::temp_dir().join(format!("tine-cfgbrackets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"\n ;; preserve this comment\n :start-of-week 0}\n",
+        )
+        .unwrap();
+
+        Graph::open(&dir).set_show_brackets(false).unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(
+            after.contains(":ui/show-brackets? false"),
+            "not written: {after}"
+        );
+        assert!(after.contains(":start-of-week 0"), "other keys preserved");
+        assert!(
+            after.contains(";; preserve this comment"),
+            "comments preserved"
+        );
+        assert!(!Graph::open(&dir).config.show_brackets);
         let _ = fs::remove_dir_all(&dir);
     }
 

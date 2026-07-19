@@ -19,6 +19,7 @@ function meta(root: string): GraphMeta {
     preferred_format: "md",
     macros: {},
     enable_timetracking: true,
+    show_brackets: true,
     logbook_with_second_support: true,
     logbook_enabled_in_timestamped_blocks: false,
     logbook_enabled_in_all_blocks: false,
