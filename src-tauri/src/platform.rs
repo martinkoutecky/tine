@@ -242,15 +242,12 @@ pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), St
     {
         let _ = &app;
         #[cfg(target_os = "linux")]
-        let prog = "xdg-open";
+        let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
         #[cfg(target_os = "macos")]
-        let prog = "open";
+        let mut command = opener_command("open");
         #[cfg(target_os = "windows")]
-        let prog = "explorer";
-        opener_command(prog)
-            .arg(&url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut command = opener_command("explorer");
+        command.arg(&url).spawn().map_err(|e| e.to_string())?;
         Ok(())
     }
     // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
@@ -276,18 +273,40 @@ pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), St
 /// and good hygiene; no-op on non-Linux.
 #[cfg(desktop)]
 pub(crate) fn opener_command(prog: &str) -> std::process::Command {
+    #[cfg(target_os = "linux")]
+    return opener_command_env(prog, OpenerEnvPolicy::Media);
+
+    #[cfg(not(target_os = "linux"))]
+    opener_command_env(prog)
+}
+
+#[cfg(all(desktop, target_os = "linux"))]
+enum OpenerEnvPolicy {
+    Media,
+    Browser,
+}
+
+#[cfg(desktop)]
+fn opener_command_env(
+    prog: &str,
+    #[cfg(target_os = "linux")] policy: OpenerEnvPolicy,
+) -> std::process::Command {
     let mut cmd = std::process::Command::new(prog);
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
-        // Start from a small desktop-session allowlist. AppImage runtimes inject
-        // more variables than a blacklist can safely anticipate; one leaked
-        // GStreamer/GIO/GTK loader path is enough to make a host VLC process load
-        // incompatible bundled libraries and exit immediately.
-        cmd.env_clear().envs(sanitized_opener_env(
-            std::env::vars_os(),
-            std::env::var_os("APPDIR"),
-        ));
+        let appdir = std::env::var_os("APPDIR");
+        let env = match policy {
+            // Start media players from a small desktop-session allowlist.
+            // AppImage runtimes inject more variables than a blacklist can safely
+            // anticipate; one leaked GStreamer/GIO/GTK loader path is enough to
+            // make a host VLC process load incompatible bundled libraries.
+            OpenerEnvPolicy::Media => sanitized_opener_env(std::env::vars_os(), appdir),
+            // Browser scheme resolution needs the full desktop session env, so
+            // remove only bundle and loader state that can poison host programs.
+            OpenerEnvPolicy::Browser => sanitized_browser_env(std::env::vars_os(), appdir),
+        };
+        cmd.env_clear().envs(env);
         // Create a new session, not merely a new process group. This prevents an
         // external player from inheriting Tine's controlling-terminal/session
         // lifetime. `setsid` is async-signal-safe and this closure runs after
@@ -428,9 +447,72 @@ fn sanitized_opener_env(
         .collect()
 }
 
+#[cfg(target_os = "linux")]
+fn sanitized_browser_env(
+    vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    appdir: Option<std::ffi::OsString>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    const DROP: &[&str] = &[
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "GTK_PATH",
+        "GTK_EXE_PREFIX",
+        "GTK_DATA_PREFIX",
+        "GTK_IM_MODULE_FILE",
+        "GIO_MODULE_DIR",
+        "GIO_EXTRA_MODULES",
+        "GST_PLUGIN_SYSTEM_PATH",
+        "GST_PLUGIN_SYSTEM_PATH_1_0",
+        "GST_PLUGIN_PATH",
+        "GST_PLUGIN_PATH_1_0",
+        "GST_PLUGIN_SCANNER",
+        "GST_REGISTRY",
+        "GST_REGISTRY_1_0",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GDK_PIXBUF_MODULEDIR",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "PERLLIB",
+        "PERL5LIB",
+        "FONTCONFIG_PATH",
+        "FONTCONFIG_FILE",
+        "GDK_BACKEND",
+        "WEBKIT_DISABLE_DMABUF_RENDERER",
+        "WEBKIT_DISABLE_COMPOSITING_MODE",
+        "APPDIR",
+        "APPIMAGE",
+        "ARGV0",
+        "OWD",
+    ];
+    let appdir = appdir.map(std::path::PathBuf::from);
+    vars.into_iter()
+        .filter_map(|(key, value)| {
+            let key_text = key.to_string_lossy();
+            if DROP.contains(&key_text.as_ref()) {
+                return None;
+            }
+            let value = if matches!(key_text.as_ref(), "PATH" | "XDG_DATA_DIRS") {
+                if let Some(appdir) = &appdir {
+                    let clean = std::env::split_paths(&value)
+                        .filter(|part| !part.starts_with(appdir))
+                        .collect::<Vec<_>>();
+                    std::env::join_paths(clean).ok()?
+                } else {
+                    value
+                }
+            } else {
+                value
+            };
+            Some((key, value))
+        })
+        .collect()
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod opener_tests {
-    use super::sanitized_opener_env;
+    use super::{sanitized_browser_env, sanitized_opener_env};
     use std::ffi::OsString;
 
     #[test]
@@ -475,6 +557,52 @@ mod opener_tests {
         assert_eq!(clean.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
         assert!(!clean.contains_key("LD_LIBRARY_PATH"));
         assert!(!clean.contains_key("GST_PLUGIN_PATH"));
+        assert!(!clean.contains_key("APPIMAGE"));
+    }
+
+    #[test]
+    fn browser_keeps_desktop_state_but_drops_bundle_loader_state() {
+        let vars = vec![
+            ("PATH", "/tmp/.mount_tine/bin:/usr/bin"),
+            ("XDG_CONFIG_DIRS", "/etc/xdg"),
+            ("XDG_SESSION_DESKTOP", "KDE"),
+            ("GTK_USE_PORTAL", "1"),
+            ("BROWSER", "firefox"),
+            ("LD_LIBRARY_PATH", "/tmp/.mount_tine/lib"),
+            ("GIO_MODULE_DIR", "/tmp/.mount_tine/gio"),
+            ("GST_PLUGIN_SYSTEM_PATH", "/tmp/.mount_tine/gstreamer"),
+            ("APPDIR", "/tmp/.mount_tine"),
+            ("APPIMAGE", "/tmp/Tine.AppImage"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)));
+
+        let clean = sanitized_browser_env(vars, Some(OsString::from("/tmp/.mount_tine")));
+        let clean = clean
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(clean.get("PATH").map(String::as_str), Some("/usr/bin"));
+        assert_eq!(
+            clean.get("XDG_CONFIG_DIRS").map(String::as_str),
+            Some("/etc/xdg")
+        );
+        assert_eq!(
+            clean.get("XDG_SESSION_DESKTOP").map(String::as_str),
+            Some("KDE")
+        );
+        assert_eq!(clean.get("GTK_USE_PORTAL").map(String::as_str), Some("1"));
+        assert_eq!(clean.get("BROWSER").map(String::as_str), Some("firefox"));
+        assert!(!clean.contains_key("LD_LIBRARY_PATH"));
+        assert!(!clean.contains_key("GIO_MODULE_DIR"));
+        assert!(!clean.contains_key("GST_PLUGIN_SYSTEM_PATH"));
+        assert!(!clean.contains_key("APPDIR"));
         assert!(!clean.contains_key("APPIMAGE"));
     }
 }
