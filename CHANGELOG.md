@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-20
+
 ### Fixed
 
 - Ctrl+K search now tells you when more matches exist beyond its bounded result
