@@ -387,7 +387,24 @@ try {
   await typeKeys(browser, "arity Tar");
   await waitForActiveAutocomplete(browser, "Parity Target", "adaptive page completion did not activate the shortest prefix match");
   receipt.observations.adaptivePrefixOgSpacing = await popupSnapshot(browser);
+  // Temporary Windows diagnostic: record the exact completion acceptance path.
+  // The fixture writes the OG spacing preference before launch, while the UI
+  // loads that preference asynchronously after its initial default is rendered.
+  const adaptiveAcceptanceTrace = {
+    path: "browser.keys(['Enter'])",
+    fixturePreference: JSON.parse(fs.readFileSync(SETTINGS, "utf8")).space_after_ref_completion,
+    backendPreference: await browser.execute(async () => window.__TAURI_INTERNALS__.invoke("get_app_bool", {
+      key: "space_after_ref_completion",
+      default: true,
+    })),
+    before: await editorState(browser),
+  };
   await browser.keys(["Enter"]);
+  adaptiveAcceptanceTrace.immediate = await editorState(browser);
+  await sleep(100);
+  adaptiveAcceptanceTrace.after100ms = await editorState(browser);
+  receipt.observations.adaptiveAcceptanceTrace = adaptiveAcceptanceTrace;
+  fs.writeFileSync(`${ARTIFACTS}/adaptive-acceptance-trace.json`, `${JSON.stringify(adaptiveAcceptanceTrace, null, 2)}\n`);
   await expectEditor(browser, "[[Parity Target]]", 17, "adaptive page completion did not preserve OG byte spacing");
   await browser.keys(["Escape"]);
 

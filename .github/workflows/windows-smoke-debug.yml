@@ -1,0 +1,84 @@
+name: Windows smoke debug
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Advisory Windows smoke scenario to run
+        required: true
+        default: windows-core
+        type: choice
+        options:
+          - windows-core
+          - og-parity-references
+          - page-properties
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ inputs.scenario }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          # Cargo's workspace and target directory both live at repository root.
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      - name: Snapshot Windows E2E build inputs
+        run: node scripts/build-e2e-receipt.mjs before --tauri-manifest-normalization --snapshot target/release/tine.exe.build.before.json
+
+      - name: Build Windows app
+        # The smoke harness runs the compiled portable executable directly; it
+        # does not exercise the signed updater/NSIS artifacts. Avoid requiring
+        # release-only updater credentials while producing that exact executable.
+        run: npm run tauri build -- --features custom-protocol --no-bundle
+
+      - name: Write Windows E2E build receipt
+        shell: pwsh
+        run: |
+          $exe = @("target/release/tine.exe", "target/release/Tine.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "built Tine executable not found" }
+          node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.exe.build.before.json --app $exe --receipt "$env:RUNNER_TEMP\tine-receipt\tine.exe.build.json"
+          "TINE_APP=$((Resolve-Path $exe).Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TINE_E2E_BUILD_RECEIPT=$env:RUNNER_TEMP\tine-receipt\tine.exe.build.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Edge WebDriver matching the hosted browser
+        shell: pwsh
+        run: |
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
+          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
+          $driverDir = "$env:RUNNER_TEMP\edgedriver"
+          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $driverDir -Force
+          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$driverDir\msedgedriver.exe" --version
+
+      - name: Run selected real-app Windows scenario
+        env:
+          TINE_E2E_MODE: release
+        run: npm run e2e:windows:smoke -- --scenario=${{ inputs.scenario }}
+
+      - name: Upload Windows E2E evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-debug-${{ inputs.scenario }}
+          path: test-results/e2e/windows-smoke
+          if-no-files-found: warn
+          retention-days: 14
