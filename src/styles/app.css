@@ -490,7 +490,11 @@ textarea {
 }
 
 @container topbar (max-width: 760px) {
-  .topbar > .tab-bar,
+  /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
+     .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
+     clips the fixed clusters and must stay reachable on a narrow desktop window.
+     Only the fixed-width low-priority action buttons overflow into the "…" menu.
+     (Real mobile already hides tabs via the isMobilePlatform Show + spacer.) */
   .topbar .topbar-navigation-action,
   .topbar .topbar-optional-action {
     display: none;
