@@ -191,7 +191,7 @@ assert.match(
 );
 assert.match(
   uiE2eWorkflow,
-  /windows_scenario == 'all'[\s\S]*?\["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"\]/,
+  /windows_scenario == 'all'[\s\S]*?\["windows-core","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"\]/,
   "the focused UI workflow cannot fan out all Windows scenarios explicitly"
 );
 assert.doesNotMatch(
