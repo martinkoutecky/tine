@@ -159,24 +159,31 @@ const toggleReferenceSpacing = async (browser) => {
 const waitForReferenceSpacing = async (browser, expected) => {
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
-  const row = await browser.$('[data-setting-label="Space after inserting a reference"]');
-  await row.waitForExist({ timeout: 5000 });
-  const toggle = await row.$(".settings-toggle");
+  const toggleSelector = '[data-setting-label="Space after inserting a reference"] .settings-toggle';
+  await browser.$(toggleSelector).waitForExist({ timeout: 5000 });
   let last = null;
   await browser.waitUntil(async () => {
-    const checked = await toggle.getAttribute("aria-checked");
-    const backend = await browser.execute(async () => {
-      try {
-        return await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
-          key: "space_after_ref_completion",
-          default: true,
-        });
-      } catch (error) {
-        return `invoke failed: ${String(error)}`;
-      }
-    });
-    last = { checked, backend };
-    return checked === String(expected) && backend === expected;
+    try {
+      // initRefCompletionSettings replaces this reactive settings subtree when
+      // the persisted value arrives, so retain no WebDriver element across
+      // polls. A stale cached toggle otherwise hides the actual fixture state.
+      const checked = await browser.$(toggleSelector).getAttribute("aria-checked");
+      const backend = await browser.execute(async () => {
+        try {
+          return await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
+            key: "space_after_ref_completion",
+            default: true,
+          });
+        } catch (error) {
+          return `invoke failed: ${String(error)}`;
+        }
+      });
+      last = { checked, backend };
+      return checked === String(expected) && backend === expected;
+    } catch (error) {
+      last = { error: String(error) };
+      return false;
+    }
   }, {
     timeout: 10_000,
     timeoutMsg: `reference spacing fixture did not initialize to ${expected}; last=${JSON.stringify(last)}`,
