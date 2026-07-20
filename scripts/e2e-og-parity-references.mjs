@@ -204,7 +204,22 @@ const ensureParityPage = async (browser) => {
     // title is presentation text and WebView2 has intermittently failed to
     // resolve its quoted-prefix selector while the toolbar is rendering.
     const search = await browser.$("button[data-search-trigger]");
-    await search.waitForExist({ timeout: 20_000 });
+    try {
+      await search.waitForExist({ timeout: 20_000 });
+    } catch (error) {
+      await browser.saveScreenshot(`${ARTIFACTS}/parity-route-missing-search.png`).catch(() => {});
+      const state = await browser.execute(() => ({
+        readyState: document.readyState,
+        url: location.href,
+        appContainers: document.querySelectorAll(".app-container").length,
+        topbars: document.querySelectorAll(".topbar").length,
+        searchTriggers: document.querySelectorAll("[data-search-trigger]").length,
+        pageTitles: document.querySelectorAll("h1.page-title").length,
+        blocks: document.querySelectorAll(".ls-block").length,
+        body: document.body?.innerHTML.slice(0, 1000) ?? "",
+      })).catch((stateError) => ({ stateError: String(stateError) }));
+      throw new Error(`parity routing reached a block without its global search control; state=${JSON.stringify(state)}`, { cause: error });
+    }
     await search.click();
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5000 });
