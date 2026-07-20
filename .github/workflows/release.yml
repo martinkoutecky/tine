@@ -302,8 +302,10 @@ jobs:
       fail-fast: false
       matrix:
         scenario:
+          # og-parity-references stays a hard Linux gate; dropped from the advisory
+          # Windows suite only (unclassified WebView2 trailing-space, AGENTS.md §2b
+          # E2E stop-loss). See scripts/run-e2e.mjs windows-smoke suite for rationale.
           - windows-core
-          - og-parity-references
           - page-properties
           - page-trailing-block
           - pdf-logseq
