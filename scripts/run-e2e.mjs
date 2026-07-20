@@ -248,16 +248,21 @@ function validateBuildReceiptInputs() {
   if (schemaProblems.length) {
     throw receiptRemediation(`invalid build receipt ${receiptPath}: ${schemaProblems.join(", ")}`);
   }
-  let checkoutDigest;
+  let checkoutState;
   try {
-    checkoutDigest = normalizedTauriManifest
-      ? normalizedBuildInputState(root, normalizedTauriManifest).digest
-      : buildInputState(root).digest;
-  } catch {
-    throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout`);
+    checkoutState = normalizedTauriManifest
+      ? normalizedBuildInputState(root, normalizedTauriManifest)
+      : buildInputState(root);
+  } catch (error) {
+    throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout (${error.message})`);
   }
-  if (receipt.buildInputDigest !== checkoutDigest) {
-    throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout`);
+  if (receipt.buildInputDigest !== checkoutState.digest) {
+    // Name the stray/changed working-tree entries — a download into the worktree
+    // (untracked, non-ignored) is the usual culprit, and the bare message hid it.
+    const stray = checkoutState.changes?.length
+      ? ` Working-tree entries not in the built inputs: ${checkoutState.changes.slice(0, 12).join(", ")}${checkoutState.changes.length > 12 ? ", …" : ""}.`
+      : "";
+    throw receiptRemediation(`build receipt ${receiptPath} was built from different build inputs than the current checkout.${stray}`);
   }
   if (receipt.sourceRevision !== checkoutRevision) {
     throw receiptRemediation(`build receipt ${receiptPath} was built from ${receipt.sourceRevision}, not checkout ${checkoutRevision}`);

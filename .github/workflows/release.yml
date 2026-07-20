@@ -321,7 +321,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-windows-x64
-          path: release-windows-x64
+          # Stage OUTSIDE the worktree. The E2E build receipt binds the app to the
+          # clean-checkout build-input digest (git ls-files -co --untracked=all).
+          # A download into the worktree adds untracked, non-ignored files that
+          # poison that digest and make every advisory Windows scenario fail with
+          # "built from different build inputs" — the Linux E2E runs inside the
+          # build job, so it never hit this. `dist/` below is fine: it is gitignored.
+          path: ${{ runner.temp }}/release-windows-x64
       - name: Download the exact embedded frontend proof
         uses: actions/download-artifact@v4
         with:
@@ -335,7 +341,7 @@ jobs:
       - name: Extract the exact staged portable app
         shell: pwsh
         run: |
-          $zip = Get-ChildItem release-windows-x64 -Filter '*-portable.zip' | Select-Object -First 1
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\release-windows-x64" -Filter '*-portable.zip' | Select-Object -First 1
           if (-not $zip) { throw "staged Windows portable zip is missing" }
           Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\tine-portable" -Force
           $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
