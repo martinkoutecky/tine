@@ -20,11 +20,17 @@ function zeroDelimited(buffer) {
 }
 
 const generatedTauriSchemaPathspec = ":(exclude)src-tauri/gen/schemas/**";
+// Documentation never affects the compiled app binary, so it is not a build
+// input for the E2E provenance digest. Excluding it (like the generated Tauri
+// schemas above) keeps a docs-only working-tree change — e.g. a Windows checkout
+// flipping docs/UI-REGRESSION-TESTING.md — from marking the tree "dirty" and
+// failing the advisory Windows smoke, without weakening the binary↔source bind.
+const docsPathspec = ":(exclude)docs/**";
 const tauriManifestRelativePath = "src-tauri/Cargo.toml";
 const tauriManifestPathspec = `:(exclude)${tauriManifestRelativePath}`;
 
 function buildInputPathspecs(excludeTauriManifest = false) {
-  return ["--", ".", generatedTauriSchemaPathspec, ...(excludeTauriManifest ? [tauriManifestPathspec] : [])];
+  return ["--", ".", generatedTauriSchemaPathspec, docsPathspec, ...(excludeTauriManifest ? [tauriManifestPathspec] : [])];
 }
 
 function inputState(root, normalizedTauriManifest) {
