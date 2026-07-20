@@ -158,13 +158,17 @@ const toggleReferenceSpacing = async (browser) => {
 };
 const ensureParityPage = async (browser) => {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  // A visible block can mount while the shell toolbar is still reconciling on
+  // WebView2. The route switcher below is a real user control, so wait for its
+  // own mount rather than treating that earlier content node as app readiness.
+  await browser.$(".app-container").waitForExist({ timeout: 20_000 });
   const current = await browser.$("h1.page-title").getText().catch(() => "");
   if (current.trim() !== "OG Parity References") {
     // WebView2 attach does not itself transfer native focus to the WebView.
     // Fixture navigation is not a shortcut assertion, so enter the same
     // switcher through its visible application control.
     const search = await browser.$('button[title^="Search (Ctrl+K)"]');
-    await search.waitForExist({ timeout: 5000 });
+    await search.waitForExist({ timeout: 20_000 });
     await search.click();
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5000 });
