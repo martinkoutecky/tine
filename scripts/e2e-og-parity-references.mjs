@@ -156,6 +156,36 @@ const toggleReferenceSpacing = async (browser) => {
   });
   await browser.keys(["Escape"]);
 };
+const waitForReferenceSpacing = async (browser, expected) => {
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
+  const row = await browser.$('[data-setting-label="Space after inserting a reference"]');
+  await row.waitForExist({ timeout: 5000 });
+  const toggle = await row.$(".settings-toggle");
+  let last = null;
+  await browser.waitUntil(async () => {
+    const checked = await toggle.getAttribute("aria-checked");
+    const backend = await browser.execute(async () => {
+      try {
+        return await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
+          key: "space_after_ref_completion",
+          default: true,
+        });
+      } catch (error) {
+        return `invoke failed: ${String(error)}`;
+      }
+    });
+    last = { checked, backend };
+    return checked === String(expected) && backend === expected;
+  }, {
+    timeout: 10_000,
+    timeoutMsg: `reference spacing fixture did not initialize to ${expected}; last=${JSON.stringify(last)}`,
+  });
+  await browser.keys(["Escape"]);
+  await browser.$(".settings-modal").waitForExist({ reverse: true, timeout: 5000 });
+  await sleep(50);
+  return last;
+};
 const ensureParityPage = async (browser) => {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
   const current = await browser.$("h1.page-title").getText().catch(() => "");
@@ -296,6 +326,10 @@ try {
     throw new Error(`running app version ${receipt.appIdentity.version} disagrees with checkout declaration ${receipt.appIdentity.declaredVersion}`);
   }
   await ensureParityPage(browser);
+  // The fixture seeds the OG setting OFF. App preferences load asynchronously,
+  // so prove both the native read and the live Settings control reached that
+  // value before attributing completion bytes to the editor.
+  receipt.observations.referenceSpacingOg = await waitForReferenceSpacing(browser, false);
 
   const content = await browser.$(`[data-block-id="${EDITOR}"] .block-content`);
   await content.click();
