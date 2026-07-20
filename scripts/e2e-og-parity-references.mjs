@@ -160,26 +160,26 @@ const waitForReferenceSpacing = async (browser, expected) => {
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
   const toggleSelector = '[data-setting-label="Space after inserting a reference"] .settings-toggle';
-  await browser.$(toggleSelector).waitForExist({ timeout: 5000 });
   let last = null;
   await browser.waitUntil(async () => {
     try {
-      // initRefCompletionSettings replaces this reactive settings subtree when
-      // the persisted value arrives, so retain no WebDriver element across
-      // polls. A stale cached toggle otherwise hides the actual fixture state.
-      const checked = await browser.$(toggleSelector).getAttribute("aria-checked");
-      const backend = await browser.execute(async () => {
+      // WebDriver element commands can hang while this reactive subtree is
+      // replaced. Read both values in the live document instead, so each poll
+      // reflects the same UI turn as the native preference read.
+      const state = await browser.execute(async (selector) => {
+        const checked = document.querySelector(selector)?.getAttribute("aria-checked") ?? null;
         try {
-          return await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
+          const backend = await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
             key: "space_after_ref_completion",
             default: true,
           });
+          return { checked, backend };
         } catch (error) {
-          return `invoke failed: ${String(error)}`;
+          return { checked, backend: `invoke failed: ${String(error)}` };
         }
-      });
-      last = { checked, backend };
-      return checked === String(expected) && backend === expected;
+      }, toggleSelector);
+      last = state;
+      return state.checked === String(expected) && state.backend === expected;
     } catch (error) {
       last = { error: String(error) };
       return false;
