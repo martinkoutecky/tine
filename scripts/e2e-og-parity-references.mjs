@@ -165,18 +165,17 @@ const waitForReferenceSpacing = async (browser, expected) => {
     try {
       // WebDriver element commands can hang while this reactive subtree is
       // replaced. Read both values in the live document instead, so each poll
-      // reflects the same UI turn as the native preference read.
-      const state = await browser.execute(async (selector) => {
+      // reflects the same UI turn as the native preference read. Return the
+      // Tauri promise directly: WebView2's execute endpoint does not settle an
+      // async script function here.
+      const state = await browser.execute((selector) => {
         const checked = document.querySelector(selector)?.getAttribute("aria-checked") ?? null;
-        try {
-          const backend = await window.__TAURI_INTERNALS__.invoke("get_app_bool", {
+        return window.__TAURI_INTERNALS__.invoke("get_app_bool", {
             key: "space_after_ref_completion",
             default: true,
-          });
-          return { checked, backend };
-        } catch (error) {
-          return { checked, backend: `invoke failed: ${String(error)}` };
-        }
+          })
+          .then((backend) => ({ checked, backend }))
+          .catch((error) => ({ checked, backend: `invoke failed: ${String(error)}` }));
       }, toggleSelector);
       last = state;
       return state.checked === String(expected) && state.backend === expected;
