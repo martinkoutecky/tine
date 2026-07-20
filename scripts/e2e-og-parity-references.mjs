@@ -116,6 +116,23 @@ const popupSnapshot = (browser) => browser.execute(() => ({
   labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
   rows: document.querySelectorAll(".autocomplete .ac-item").length,
 }));
+const waitForReferenceCompletionSettings = async (browser, expectedSpace) => {
+  let last = null;
+  await browser.waitUntil(async () => {
+    last = await browser.execute(() => {
+      const app = document.querySelector(".app-container");
+      return {
+        ready: app?.getAttribute("data-ref-completion-settings-ready") ?? null,
+        space: app?.getAttribute("data-ref-completion-space") ?? null,
+      };
+    });
+    return last.ready === "true" && last.space === String(expectedSpace);
+  }, {
+    timeout: 20_000,
+    interval: 50,
+    timeoutMsg: `reference completion settings did not initialize to space=${expectedSpace}; last=${JSON.stringify(last)}`,
+  });
+};
 const selectSetting = async (browser, value) => {
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
@@ -300,6 +317,10 @@ try {
     throw new Error(`running app version ${receipt.appIdentity.version} disagrees with checkout declaration ${receipt.appIdentity.declaredVersion}`);
   }
   await ensureParityPage(browser);
+  // Startup settings are asynchronous. Wait for the mounted editor's actual
+  // reference-completion policy rather than opening Settings or accepting a
+  // sacrificial completion while the default is still live.
+  await waitForReferenceCompletionSettings(browser, false);
 
   const content = await browser.$(`[data-block-id="${EDITOR}"] .block-content`);
   await content.click();
@@ -391,24 +412,7 @@ try {
   await typeKeys(browser, "arity Tar");
   await waitForActiveAutocomplete(browser, "Parity Target", "adaptive page completion did not activate the shortest prefix match");
   receipt.observations.adaptivePrefixOgSpacing = await popupSnapshot(browser);
-  // Temporary Windows diagnostic: record the exact completion acceptance path.
-  // The fixture writes the OG spacing preference before launch, while the UI
-  // loads that preference asynchronously after its initial default is rendered.
-  const adaptiveAcceptanceTrace = {
-    path: "browser.keys(['Enter'])",
-    fixturePreference: JSON.parse(fs.readFileSync(SETTINGS, "utf8")).space_after_ref_completion,
-    backendPreference: await browser.execute(async () => window.__TAURI_INTERNALS__.invoke("get_app_bool", {
-      key: "space_after_ref_completion",
-      default: true,
-    })),
-    before: await editorState(browser),
-  };
   await browser.keys(["Enter"]);
-  adaptiveAcceptanceTrace.immediate = await editorState(browser);
-  await sleep(100);
-  adaptiveAcceptanceTrace.after100ms = await editorState(browser);
-  receipt.observations.adaptiveAcceptanceTrace = adaptiveAcceptanceTrace;
-  fs.writeFileSync(`${ARTIFACTS}/adaptive-acceptance-trace.json`, `${JSON.stringify(adaptiveAcceptanceTrace, null, 2)}\n`);
   await expectEditor(browser, "[[Parity Target]]", 17, "adaptive page completion did not preserve OG byte spacing");
   await browser.keys(["Escape"]);
 

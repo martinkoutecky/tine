@@ -99,7 +99,7 @@ import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
-import { initRefCompletionSettings } from "./refCompletionSettings";
+import { initRefCompletionSettings, refCompletionSettingsReady, spaceAfterRefCompletion } from "./refCompletionSettings";
 import { initNavSettings } from "./navSettings";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
@@ -882,6 +882,8 @@ export function App(): JSX.Element {
       class="app-container"
       data-mobile-drawer-mode={mobileDrawerMode() ? "true" : "false"}
       data-active-drawer={activeDrawer() ?? ""}
+      data-ref-completion-settings-ready={refCompletionSettingsReady() ? "true" : "false"}
+      data-ref-completion-space={spaceAfterRefCompletion() ? "true" : "false"}
       classList={{
         "sidebar-collapsed": !sidebarOpen(),
         "wide-mode": wideMode(),

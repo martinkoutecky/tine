@@ -14,11 +14,14 @@ import { backend } from "./backend";
 const KEY = "space_after_ref_completion";
 
 const [spaceAfter, setSpaceAfterSig] = createSignal(true);
+const [settingsReady, setSettingsReady] = createSignal(false);
 
 /** Reactive: insert a space after `]]`/`))` when accepting a page/block-ref
  *  completion? ON = Tine default (GH #35); OFF = Logseq (caret right after the
  *  closing brackets, no space). */
 export const spaceAfterRefCompletion = spaceAfter;
+/** True once the persisted reference-completion preference has been read. */
+export const refCompletionSettingsReady = settingsReady;
 
 export function setSpaceAfterRefCompletion(on: boolean): void {
   setSpaceAfterSig(on);
@@ -31,5 +34,7 @@ export async function initRefCompletionSettings(): Promise<void> {
     setSpaceAfterSig(await backend().getAppBool(KEY, true));
   } catch {
     /* default on */
+  } finally {
+    setSettingsReady(true);
   }
 }
