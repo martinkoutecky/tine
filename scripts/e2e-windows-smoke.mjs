@@ -48,12 +48,22 @@ try {
     connectionRetryTimeout: 60000,
   });
   await browser.$(".ls-block").waitForExist({ timeout: 30000 });
-  const overscroll = await browser.execute(() => ({
-    html: getComputedStyle(document.documentElement).overscrollBehavior,
-    body: getComputedStyle(document.body).overscrollBehavior,
-    shell: getComputedStyle(document.querySelector(".app-container")).overscrollBehavior,
-    mainOverflow: getComputedStyle(document.querySelector(".main-content")).overflowY,
-  }));
+  // The first journal block can paint before the application shell's reactive
+  // content subtree is mounted on WebView2. The styles below are the actual
+  // scroll-containment contract, so wait for both required elements rather than
+  // passing a transient null to getComputedStyle().
+  await browser.$(".app-container").waitForExist({ timeout: 10_000 });
+  await browser.$(".main-content").waitForExist({ timeout: 10_000 });
+  const overscroll = await browser.execute(() => {
+    const shell = document.querySelector(".app-container");
+    const main = document.querySelector(".main-content");
+    return {
+      html: getComputedStyle(document.documentElement).overscrollBehavior,
+      body: getComputedStyle(document.body).overscrollBehavior,
+      shell: shell instanceof Element ? getComputedStyle(shell).overscrollBehavior : null,
+      mainOverflow: main instanceof Element ? getComputedStyle(main).overflowY : null,
+    };
+  });
   if (overscroll.html !== "none" || overscroll.body !== "none" || overscroll.shell !== "none") {
     throw new Error(`viewport scroll chain is not contained: ${JSON.stringify(overscroll)}`);
   }
