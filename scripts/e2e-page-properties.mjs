@@ -386,7 +386,11 @@ try {
     connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
-  await browser.$(".page-title").waitForExist({ timeout: 20_000 });
+  // This fixture starts on today's journal so it has a durable navigation
+  // source for the seeded pages. Journals render blocks (and a journal title),
+  // not a named-page `.page-title`; waiting for the latter prevented openPage()
+  // from ever exercising the routed page-properties journey on WebView2.
+  await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
   // The graph page index warms asynchronously after first paint. Wait for the
   // complete list before using Ctrl+K, otherwise a cold run offers only the
   // misleading "Create page" row for an already-existing file.
