@@ -41,7 +41,10 @@ jobs:
         run: node scripts/build-e2e-receipt.mjs before --tauri-manifest-normalization --snapshot target/release/tine.exe.build.before.json
 
       - name: Build Windows app
-        run: npm run tauri build -- --features custom-protocol
+        # The smoke harness runs the compiled portable executable directly; it
+        # does not exercise the signed updater/NSIS artifacts. Avoid requiring
+        # release-only updater credentials while producing that exact executable.
+        run: npm run tauri build -- --features custom-protocol --no-bundle
 
       - name: Write Windows E2E build receipt
         shell: pwsh
