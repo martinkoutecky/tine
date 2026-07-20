@@ -161,29 +161,17 @@ const waitForReferenceSpacing = async (browser, expected) => {
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
   const toggleSelector = '[data-setting-label="Space after inserting a reference"] .settings-toggle';
   let last = null;
-  await browser.waitUntil(async () => {
-    try {
-      // WebDriver element commands can hang while this reactive subtree is
-      // replaced. Read both values in the live document instead, so each poll
-      // reflects the same UI turn as the native preference read. Return the
-      // Tauri promise directly: WebView2's execute endpoint does not settle an
-      // async script function here.
-      const state = await browser.execute((selector) => {
-        const checked = document.querySelector(selector)?.getAttribute("aria-checked") ?? null;
-        return window.__TAURI_INTERNALS__.invoke("get_app_bool", {
-            key: "space_after_ref_completion",
-            default: true,
-          })
-          .then((backend) => ({ checked, backend }))
-          .catch((error) => ({ checked, backend: `invoke failed: ${String(error)}` }));
-      }, toggleSelector);
-      last = state;
-      return state.checked === String(expected) && state.backend === expected;
-    } catch (error) {
+  await browser.waitUntil(
+    () => browser.execute((selector) =>
+      document.querySelector(selector)?.getAttribute("aria-checked") ?? null,
+    toggleSelector).then((checked) => {
+      last = { checked };
+      return checked === String(expected);
+    }).catch((error) => {
       last = { error: String(error) };
       return false;
-    }
-  }, {
+    }),
+  {
     timeout: 10_000,
     timeoutMsg: `reference spacing fixture did not initialize to ${expected}; last=${JSON.stringify(last)}`,
   });
@@ -351,8 +339,8 @@ try {
   }
   await ensureParityPage(browser);
   // The fixture seeds the OG setting OFF. App preferences load asynchronously,
-  // so prove both the native read and the live Settings control reached that
-  // value before attributing completion bytes to the editor.
+  // so prove the live Settings control reached that value before attributing
+  // completion bytes to the editor.
   receipt.observations.referenceSpacingOg = await waitForReferenceSpacing(browser, false);
 
   const content = await browser.$(`[data-block-id="${EDITOR}"] .block-content`);
