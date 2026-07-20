@@ -1,12 +1,6 @@
 name: Windows smoke debug
 
 on:
-  # GitHub only registers workflow_dispatch files from the default branch. Until
-  # the manager chooses whether this temporary scaffold belongs there, an
-  # explicitly marked push on this debug branch is the narrow bootstrap route.
-  push:
-    branches:
-      - fix/windows-smoke-scenarios
   workflow_dispatch:
     inputs:
       scenario:
@@ -72,23 +66,10 @@ jobs:
           $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & "$driverDir\msedgedriver.exe" --version
 
-      - name: Select push-triggered scenario
-        if: github.event_name == 'push'
-        shell: pwsh
-        run: |
-          $message = (Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json).head_commit.message
-          if ($message -notmatch '\[windows-smoke:(windows-core|og-parity-references|page-properties)\]') {
-            throw "debug pushes must name one scenario with [windows-smoke:<name>]"
-          }
-          "E2E_DEBUG_SCENARIO=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - name: Run selected real-app Windows scenario
         env:
           TINE_E2E_MODE: release
-        shell: pwsh
-        run: |
-          $scenario = if ('${{ inputs.scenario }}') { '${{ inputs.scenario }}' } else { $env:E2E_DEBUG_SCENARIO }
-          npm run e2e:windows:smoke -- --scenario=$scenario
+        run: npm run e2e:windows:smoke -- --scenario=${{ inputs.scenario }}
 
       - name: Upload Windows E2E evidence
         if: failure()
