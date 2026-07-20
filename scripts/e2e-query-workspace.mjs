@@ -513,8 +513,12 @@ await withApp(2, async (browser) => {
         .map((item) => item.textContent?.replace(/\s+/g, "").trim()),
     };
   });
+  // jumps === 2: the "Linked source" group has one multi-occurrence block
+  // ([[Query parity]] twice → 2 occurrence jumps) and one single-occurrence
+  // block ("source-collapsed witness"), whose per-block jump control is hidden
+  // for single-mention backlinks (GH #200). Was 3 before #200 hid it.
   if (linkedProof.groupCount !== 3 || linkedProof.totalRoots !== 4
-    || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 3
+    || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 2
     || !linkedProof.taggedPresent
     || JSON.stringify(linkedProof.breadcrumbs) !== JSON.stringify(["…›Ancestortwo›Ancestorthree›Ancestorfour"])) {
     throw new Error(`linked reference evidence is incomplete: ${JSON.stringify(linkedProof)}`);
