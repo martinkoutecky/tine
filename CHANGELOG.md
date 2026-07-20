@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- One page containing unsupported search-index syntax can no longer make its
+  whole cache worker shard disappear silently; other pages remain searchable and
+  the skipped page is reported as an indexing failure (GH #209).
 - The mobile/narrow top bar no longer pushes action buttons off-screen: the
   workspace switcher now lives in the left-sidebar header (with a compact one-tap
   fallback in the toolbar when the sidebar is closed), and lower-priority toolbar

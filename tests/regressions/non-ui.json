@@ -560,6 +560,20 @@
         "scenario": "persistence.page-header-enter-trailing-newline",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-SEARCH-PAGE-PANIC-ISOLATION-001",
+      "title": "One un-indexable page no longer removes other pages' blocks from search and the indexing failure is reported",
+      "family": "search-reliability",
+      "sources": { "issues": [209], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/model.rs::tests::search_cache_isolates_one_page_projection_panic"],
+        "scenario": "search.page-panic-isolation-and-diagnostic",
+        "failBefore": "proven"
+      }
     }
   ]
 }

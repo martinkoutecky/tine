@@ -444,6 +444,10 @@ pub struct Graph {
     // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
     // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
     cache: RwLock<Option<Arc<Vec<(PageEntry, Arc<Document>)>>>>,
+    /// Graph-relative paths of pages skipped by the latest whole-graph cache
+    /// build because their parse/projection panicked. Kept retrievable so an
+    /// lsdoc ownership gap can never degrade search completeness invisibly.
+    page_index_failures: RwLock<Vec<String>>,
     /// Companion indexes for `cache`: the logical `(kind, page_key(name)) -> Vec
     /// slot` index preserves deterministic first-wins lookup, while the exact-path
     /// index keeps cache ownership physical. The Vec stays the source of truth for
@@ -540,6 +544,43 @@ pub struct Graph {
 struct PageCacheIndex {
     by_name: std::collections::HashMap<(PageKind, String), usize>,
     by_path: std::collections::HashMap<PathBuf, usize>,
+}
+
+#[derive(Default)]
+struct PageCacheBuild {
+    pages: Vec<ParsedPage>,
+    failures: Vec<String>,
+}
+
+type ParsedPage = (PageEntry, Document, String);
+type PageParseResult = Result<Option<ParsedPage>, String>;
+
+impl PageCacheBuild {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            pages: Vec::with_capacity(capacity),
+            failures: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, mut other: Self) {
+        self.pages.append(&mut other.pages);
+        self.failures.append(&mut other.failures);
+    }
+
+    fn collect(&mut self, parsed: PageParseResult) -> bool {
+        match parsed {
+            Ok(Some(page)) => {
+                self.pages.push(page);
+                true
+            }
+            Ok(None) => false,
+            Err(path) => {
+                self.failures.push(path);
+                false
+            }
+        }
+    }
 }
 
 fn page_cache_key(kind: PageKind, name: &str) -> (PageKind, String) {
@@ -1032,6 +1073,7 @@ impl Graph {
             config,
             journal_format,
             cache: RwLock::new(None),
+            page_index_failures: RwLock::new(Vec::new()),
             cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             build_lock: std::sync::Mutex::new(()),
@@ -1118,6 +1160,12 @@ impl Graph {
     /// needlessly invalidate everything).
     pub fn cache_generation(&self) -> u64 {
         self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Pages skipped by the latest whole-graph search-cache build because their
+    /// parse/projection panicked. Paths are graph-relative and safe to surface.
+    pub fn page_index_failures(&self) -> Vec<String> {
+        self.page_index_failures.read().unwrap().clone()
     }
 
     pub fn journals_path(&self) -> PathBuf {
@@ -2518,16 +2566,18 @@ impl Graph {
     /// The per-file work (read → content_rev → parse → assign uuids) is independent,
     /// so on a large graph we fan it across cores. Result order is irrelevant: the
     /// cache is searched by `(kind, name)`, never by position.
-    fn load_all_pages(&self) -> Vec<(PageEntry, Document, String)> {
+    fn load_all_pages(&self) -> PageCacheBuild {
         let entries = self.list_pages();
-        let workers = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(8);
+        let entry_count = entries.len();
+        let workers = page_cache_worker_count();
         // Small graphs (or a single core): serial — the parse is fast and thread
         // spawn isn't worth it. Big graphs: split across `workers` threads.
         if workers <= 1 || entries.len() < 64 {
-            return entries.into_iter().filter_map(parse_page_entry).collect();
+            let mut built = PageCacheBuild::with_capacity(entries.len());
+            for entry in entries {
+                built.collect(parse_page_entry_isolated(entry));
+            }
+            return built;
         }
         let per = (entries.len() + workers - 1) / workers;
         // Drain into owned contiguous chunks (no clone of PageEntry).
@@ -2545,24 +2595,35 @@ impl Graph {
                 .into_iter()
                 .map(|chunk| {
                     s.spawn(move || {
-                        chunk
-                            .into_iter()
-                            .filter_map(parse_page_entry)
-                            .collect::<Vec<_>>()
+                        let mut built = PageCacheBuild::with_capacity(chunk.len());
+                        for entry in chunk {
+                            built.collect(parse_page_entry_isolated(entry));
+                        }
+                        built
                     })
                 })
                 .collect();
-            handles
-                .into_iter()
-                .flat_map(|h| h.join().unwrap_or_default())
-                .collect()
+            let mut built = PageCacheBuild::with_capacity(entry_count);
+            for (worker, handle) in handles.into_iter().enumerate() {
+                match handle.join() {
+                    Ok(shard) => built.append(shard),
+                    Err(_) => eprintln!(
+                        "Tine search index worker {worker} panicked after per-page isolation; its shard was not indexed"
+                    ),
+                }
+            }
+            built
         })
     }
 
     /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(&self, built: Vec<(PageEntry, Document, String)>) {
+    fn install_built(&self, built: PageCacheBuild) {
+        let PageCacheBuild {
+            pages: built,
+            failures,
+        } = built;
         let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
             .map(|(e, _, r)| (e.path.clone(), r.clone()))
@@ -2576,6 +2637,7 @@ impl Graph {
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
         *guard = Some(Arc::new(pages));
+        *self.page_index_failures.write().unwrap() = failures;
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = revs;
         drop(guard);
@@ -2663,7 +2725,7 @@ impl Graph {
         // without waiting on our sleeps. If it wins, we discard our work.
         let gen0 = self.cache_gen.load(Ordering::Acquire);
         let entries = self.list_pages();
-        let mut built: Vec<(PageEntry, Document, String)> = Vec::with_capacity(entries.len());
+        let mut built = PageCacheBuild::with_capacity(entries.len());
         // Record each file's mtime BEFORE reading it, so a re-stat before install
         // catches any external edit that landed during the paced parse (external
         // writers don't bump cache_gen, so the gen check below can't see them).
@@ -2675,11 +2737,13 @@ impl Graph {
             }
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             if let Ok(content) = fs::read_to_string(&e.path) {
-                let rev = content_rev(&content);
-                let mut d = parse_doc(&e.path, &content);
-                assign_doc_uuids(&mut d.roots);
-                mtimes.push((e.path.clone(), mtime));
-                built.push((e, d, rev));
+                let path = e.path.clone();
+                let indexed = built.collect(isolate_page_parse(e, |entry| {
+                    Some(parse_page_content(entry, &content))
+                }));
+                if indexed {
+                    mtimes.push((path, mtime));
+                }
             }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
@@ -2716,6 +2780,7 @@ impl Graph {
     pub fn invalidate_cache(&self) {
         let mut guard = self.cache.write().unwrap();
         *guard = None;
+        self.page_index_failures.write().unwrap().clear();
         *self.cache_index.write().unwrap() = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
                                                  // Bump the generation AFTER discarding the cache (under the cache lock), so
@@ -5693,17 +5758,61 @@ fn validate_highlight_edn(raw: &str) -> io::Result<()> {
     }
 }
 
-/// Read + parse one page file into (entry, doc, content_rev), or `None` if the
-/// file is unreadable/gone. Free fn (no `&self`) so `load_all_pages` can run it
-/// across worker threads. The parse helpers it calls are all pure functions of the
-/// file content.
-fn parse_page_entry(e: PageEntry) -> Option<(PageEntry, Document, String)> {
-    let content = fs::read_to_string(&e.path).ok()?;
+/// Parse one page under a page-sized unwind boundary. lsdoc deliberately panics
+/// when its v2 parser does not own an input shape; isolating here preserves that
+/// loud guard while limiting the search-cache blast radius to this page.
+fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
+    isolate_page_parse(e, |entry| {
+        let content = fs::read_to_string(&entry.path).ok()?;
+        Some(parse_page_content(entry, &content))
+    })
+}
+
+fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
     let rev = content_rev(&content);
     let mut d = parse_doc(&e.path, &content);
+    #[cfg(test)]
+    if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
+        panic!("deterministic test sentinel for a page projection panic");
+    }
     assign_doc_uuids(&mut d.roots);
-    Some((e, d, rev))
+    (d, rev)
 }
+
+fn isolate_page_parse(
+    e: PageEntry,
+    parse: impl FnOnce(&PageEntry) -> Option<(Document, String)>,
+) -> PageParseResult {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(&e))) {
+        Ok(Some((doc, rev))) => Ok(Some((e, doc, rev))),
+        Ok(None) => Ok(None),
+        Err(payload) => {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic payload");
+            eprintln!(
+                "Tine search index skipped page {:?}: page parse/projection panicked: {detail}",
+                e.rel_path
+            );
+            Err(e.rel_path)
+        }
+    }
+}
+
+fn page_cache_worker_count() -> usize {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(8);
+    #[cfg(test)]
+    let workers = workers.max(2);
+    workers
+}
+
+#[cfg(test)]
+const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
 
 /// Compound asset extensions that a downstream matcher keys on AS A WHOLE (e.g.
 /// drawio's editable SVG, whose `.drawio.svg` suffix is what surfaces the
@@ -7154,6 +7263,66 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         dir
+    }
+
+    #[test]
+    fn search_cache_isolates_one_page_projection_panic() {
+        let dir = scratch("search-page-panic-isolation");
+        for i in 0..64 {
+            fs::write(
+                dir.join("pages").join(format!("Page {i:02}.md")),
+                format!("- ordinary page {i}\n"),
+            )
+            .unwrap();
+        }
+
+        let g = Graph::open(&dir);
+        let entries = g.list_pages();
+        let workers = page_cache_worker_count();
+        assert!(workers > 1, "test must exercise the parallel cache build");
+        assert!(entries.len() >= 64, "test must cross the parallel threshold");
+        let per = (entries.len() + workers - 1) / workers;
+        assert!(per >= 2, "a worker shard must contain a sibling page");
+
+        // Pick adjacent entries after observing the actual directory-walk order,
+        // guaranteeing both are in the first worker shard on every filesystem.
+        let bad = &entries[0];
+        let sibling = &entries[1];
+        fs::write(
+            &bad.path,
+            format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n"),
+        )
+        .unwrap();
+        let needle = "uniquesameshardsibling";
+        fs::write(&sibling.path, format!("- {needle}\n")).unwrap();
+        let sibling_path = sibling.rel_path.clone();
+        let bad_path = bad.rel_path.clone();
+
+        let execution = g.run_graph_search(needle, 0, 8, false);
+        assert!(
+            execution.hits.iter().any(|hit| matches!(
+                hit,
+                crate::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+            )),
+            "a normal same-shard sibling must remain searchable"
+        );
+        assert_eq!(g.page_index_failures(), vec![bad_path]);
+
+        // Invalidation clears the old diagnostic, and the paced warm-cache path
+        // applies the same page-sized isolation when it rebuilds.
+        g.invalidate_cache();
+        assert!(g.page_index_failures().is_empty());
+        g.warm_cache();
+        assert!(g
+            .run_graph_search(needle, 0, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(
+                hit,
+                crate::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+            )));
+        assert_eq!(g.page_index_failures(), vec![bad.rel_path.clone()]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn reset_list_md_calls() {
