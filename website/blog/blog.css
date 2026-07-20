@@ -145,3 +145,11 @@
   color: var(--ink-faint); font-size: .86rem;
 }
 .method-note code { font-size: .82em; }
+
+/* human-blog: verbatim repost labels + AI-part pointers */
+.repost-meta {
+  font-size: .74rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--accent-deep); margin: 0 0 1rem;
+}
+.prose .ai-note { color: var(--ink-faint); font-size: .92rem; }
+.post-sep { border: 0; border-top: 1px solid var(--line); margin: 2.8rem 0; }
