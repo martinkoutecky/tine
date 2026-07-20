@@ -462,11 +462,11 @@ pub struct Graph {
     /// the graph ONCE, not once per caller. Held only during the build (not the
     /// cache lock), so it never blocks readers of an already-built cache.
     build_lock: std::sync::Mutex<()>,
-    /// Cached `alias:: → canonical` pairs, derived from the page cache. Rebuilt
+    /// Cached `alias:: → canonical + owning path` records, derived from the page cache. Rebuilt
     /// lazily and dropped whenever the page cache mutates (the only time aliases
     /// can change). Avoids re-scanning the whole graph for aliases on every page
     /// load / backlink lookup.
-    alias_cache: RwLock<Option<Vec<(String, String)>>>,
+    alias_cache: RwLock<Option<Vec<(String, String, String)>>>,
     /// `block uuid / id:: → page name` hint, derived from the page cache and keyed
     /// by `cache_gen` so it self-invalidates on any cache mutation (same pattern as
     /// `alias_cache`). Lets `((uuid))` ref / embed resolution jump straight to the
@@ -2322,10 +2322,17 @@ impl Graph {
 
     /// Alias → canonical-page-name pairs (for the UI to resolve links/navigation).
     pub fn page_aliases(&self) -> Vec<(String, String)> {
+        self.page_aliases_with_owners()
+            .into_iter()
+            .map(|(alias, canonical, _)| (alias, canonical))
+            .collect()
+    }
+
+    pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         if let Some(a) = self.alias_cache.read().unwrap().as_ref() {
             return a.clone();
         }
-        let aliases = crate::query::page_aliases(self);
+        let aliases = crate::query::page_aliases_with_owners(self);
         *self.alias_cache.write().unwrap() = Some(aliases.clone());
         aliases
     }
@@ -7715,7 +7722,7 @@ mod tests {
         assert!(
             aliases
                 .iter()
-                .any(|(alias, canon)| alias == "alias one" && canon == "Target"),
+                .any(|(alias, canon, _)| alias == "alias one" && canon == "Target"),
             "alias cache warmed: {aliases:?}"
         );
         let gen = g.cache_generation();

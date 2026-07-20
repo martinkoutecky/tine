@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page aliases are now scoped to the physical file that declares them, so an
+  exact alias search cannot return a same-named sibling file (GH #209).
 - One page containing unsupported search-index syntax can no longer make its
   whole cache worker shard disappear silently; other pages remain searchable and
   the skipped page is reported as an indexing failure (GH #209).

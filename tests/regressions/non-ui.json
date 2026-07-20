@@ -574,6 +574,20 @@
         "scenario": "search.page-panic-isolation-and-diagnostic",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-SEARCH-ALIAS-OWNER-SCOPE-001",
+      "title": "An alias only matches its owning page; a duplicate-named sibling is not falsely returned",
+      "family": "search-reliability",
+      "sources": { "issues": [209], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/query_plan.rs::tests::page_alias_search_is_scoped_to_its_physical_owner"],
+        "scenario": "search.alias-owner-exact-safety-interop",
+        "failBefore": "proven"
+      }
     }
   ]
 }

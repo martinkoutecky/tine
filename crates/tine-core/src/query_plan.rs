@@ -1269,10 +1269,10 @@ fn execute_pages(
         return Some(Vec::new());
     }
     let file_pages = graph.list_pages();
-    let mut aliases_by_page: HashMap<String, Vec<String>> = HashMap::new();
-    for (alias, canonical) in graph.page_aliases() {
-        aliases_by_page
-            .entry(canonical_fold(&canonical))
+    let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
+    for (alias, _, owner_rel_path) in graph.page_aliases_with_owners() {
+        aliases_by_owner
+            .entry(owner_rel_path)
             .or_default()
             .push(alias);
     }
@@ -1281,8 +1281,8 @@ fn execute_pages(
         if cancelled() {
             return None;
         }
-        let aliases = aliases_by_page
-            .get(&canonical_fold(&page.name))
+        let aliases = aliases_by_owner
+            .get(&page.rel_path)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if let Some((base_score, match_class, matched_text, matched_alias)) =
@@ -1314,12 +1314,8 @@ fn execute_pages(
         if have.contains(&key) {
             continue;
         }
-        let aliases = aliases_by_page
-            .get(&canonical_fold(&name))
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
         if let Some((base_score, match_class, matched_text, matched_alias)) =
-            best_page_match(plan, &branch.predicate, &name, aliases)
+            best_page_match(plan, &branch.predicate, &name, &[])
         {
             let score = base_score - name.len() as i32;
             push_page(
@@ -1885,6 +1881,94 @@ mod tests {
                 if display_text == "Re\u{301}sume\u{301}"
                     && evidence[0].spans == vec![MatchSpan { start: 0, end: 8 }]
         ));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn page_alias_search_is_scoped_to_its_physical_owner() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "tine-query-plan-alias-owner-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("pages").join("sub")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages").join("Foo.md"),
+            "alias:: bar\n\n- declaring page\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("sub").join("Foo.md"),
+            "- same-named sibling\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Unique.md"),
+            "alias:: quux\n\n- unique alias owner\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+
+        let alias_hits = graph
+            .run_graph_search("bar", 10, 0, false)
+            .hits
+            .into_iter()
+            .filter_map(|hit| match hit {
+                QueryHit::Page {
+                    page,
+                    match_class,
+                    matched_alias,
+                    ..
+                } if !page.rel_path.is_empty() => {
+                    Some((page.rel_path, match_class, matched_alias))
+                }
+                QueryHit::Page { .. } => None,
+                QueryHit::Block { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            alias_hits,
+            vec![(
+                "pages/Foo.md".to_string(),
+                ObjectiveMatchClass::Exact,
+                Some("bar".to_string()),
+            )],
+            "a duplicate-named sibling must not inherit another file's alias"
+        );
+
+        let unique_hits = graph
+            .run_graph_search("quux", 10, 0, false)
+            .hits
+            .into_iter()
+            .filter_map(|hit| match hit {
+                QueryHit::Page {
+                    page,
+                    match_class,
+                    matched_alias,
+                    ..
+                } if !page.rel_path.is_empty() => {
+                    Some((page.rel_path, match_class, matched_alias))
+                }
+                QueryHit::Page { .. } => None,
+                QueryHit::Block { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unique_hits,
+            vec![(
+                "pages/Unique.md".to_string(),
+                ObjectiveMatchClass::Exact,
+                Some("quux".to_string()),
+            )],
+            "a unique page name must retain ordinary alias matching"
+        );
+
         fs::remove_dir_all(dir).unwrap();
     }
 

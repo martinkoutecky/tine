@@ -533,6 +533,27 @@ pub fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
     })
 }
 
+pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, String)> {
+    graph.with_pages(|pages| {
+        let mut owned = Vec::new();
+        for (entry, doc) in pages {
+            for alias in document_aliases(doc) {
+                owned.push((
+                    entry.path.clone(),
+                    alias,
+                    entry.name.clone(),
+                    entry.rel_path.clone(),
+                ));
+            }
+        }
+        owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        owned
+            .into_iter()
+            .map(|(_, alias, owner, owner_rel_path)| (alias, owner, owner_rel_path))
+            .collect()
+    })
+}
+
 pub(crate) type RealPageNames =
     std::collections::HashMap<String, (std::path::PathBuf, String)>;
 
