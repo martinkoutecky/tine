@@ -200,8 +200,11 @@ const ensureParityPage = async (browser) => {
     // WebView2 attach does not itself transfer native focus to the WebView.
     // Fixture navigation is not a shortcut assertion, so enter the same
     // switcher through its visible application control.
-    const search = await browser.$('button[title^="Search (Ctrl+K)"]');
-    await search.waitForExist({ timeout: 5000 });
+    // data-search-trigger is the stable application contract. The visible
+    // title is presentation text and WebView2 has intermittently failed to
+    // resolve its quoted-prefix selector while the toolbar is rendering.
+    const search = await browser.$("button[data-search-trigger]");
+    await search.waitForExist({ timeout: 20_000 });
     await search.click();
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5000 });
