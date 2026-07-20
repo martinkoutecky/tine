@@ -4426,6 +4426,34 @@ mod tests {
     }
 
     #[test]
+    fn block_search_topk_ties_sort_rel_path_with_reversed_page_snapshot() {
+        let pages = ["dd", "cc", "bb", "aa"]
+            .into_iter()
+            .map(|name| {
+                let rel_path = format!("pages/{name}.md");
+                (
+                    PageEntry {
+                        name: name.into(),
+                        kind: PageKind::Page,
+                        date_key: None,
+                        rel_path: rel_path.clone(),
+                        path: rel_path.into(),
+                    },
+                    std::sync::Arc::new(crate::doc::parse("- tied needle\n")),
+                )
+            })
+            .collect();
+        let graph = Graph::from_page_snapshot("", pages);
+
+        let pages = search(&graph, "needle", 3)
+            .into_iter()
+            .flat_map(|group| std::iter::repeat_n(group.page, group.blocks.len()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(pages, ["aa", "bb", "cc"]);
+    }
+
+    #[test]
     fn block_search_groups_preserve_interleaved_global_rank() {
         use std::fs;
 

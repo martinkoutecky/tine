@@ -922,13 +922,18 @@ struct ScoredBlock<'a> {
 impl ScoredBlock<'_> {
     fn is_better_than(&self, other: &Self) -> bool {
         let quality = self.relevance.cmp_quality(&other.relevance);
-        quality == Ordering::Greater || (quality == Ordering::Equal && self.index < other.index)
+        quality == Ordering::Greater
+            || (quality == Ordering::Equal
+                && (self.page.rel_path.as_str(), self.index)
+                    < (other.page.rel_path.as_str(), other.index))
     }
 }
 
 impl PartialEq for ScoredBlock<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.relevance.cmp_quality(&other.relevance) == Ordering::Equal && self.index == other.index
+        self.relevance.cmp_quality(&other.relevance) == Ordering::Equal
+            && (self.page.rel_path.as_str(), self.index)
+                == (other.page.rel_path.as_str(), other.index)
     }
 }
 impl Eq for ScoredBlock<'_> {}
@@ -943,7 +948,10 @@ impl Ord for ScoredBlock<'_> {
         other
             .relevance
             .cmp_quality(&self.relevance)
-            .then_with(|| self.index.cmp(&other.index))
+            .then_with(|| {
+                (self.page.rel_path.as_str(), self.index)
+                    .cmp(&(other.page.rel_path.as_str(), other.index))
+            })
     }
 }
 
@@ -1448,7 +1456,8 @@ fn execute_blocks(
                         || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
                             relevance.cmp_quality(&worst.relevance) == Ordering::Greater
                                 || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
-                                    && candidate_index < worst.index)
+                                    && (entry.rel_path.as_str(), candidate_index)
+                                        < (worst.page.rel_path.as_str(), worst.index))
                         });
                     if retain {
                         push_block(
@@ -1477,7 +1486,10 @@ fn execute_blocks(
         winners.sort_by(|a, b| {
             b.relevance
                 .cmp_quality(&a.relevance)
-                .then_with(|| a.index.cmp(&b.index))
+                .then_with(|| {
+                    (a.page.rel_path.as_str(), a.index)
+                        .cmp(&(b.page.rel_path.as_str(), b.index))
+                })
         });
         Some(
             winners
