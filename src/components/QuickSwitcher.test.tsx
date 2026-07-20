@@ -19,6 +19,38 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it.each([
+    [true, true],
+    [false, false],
+  ] as const)("renders the result-window affordance only when page results are truncated (%s)", async (truncated, expected) => {
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [{
+        entity: "page",
+        page: { name: "Needle page", kind: "page", date_key: null, path: "pages/needle.md" },
+        display_text: "Needle page",
+        evidence: [{ clause_id: 1, field: "page_name", mode: "fuzzy", spans: [{ start: 0, end: 6 }] }],
+        score: 100,
+        match_class: "prefix",
+      }],
+      diagnostics: [],
+      explanation: { branches: [] },
+      cancelled: false,
+      has_more: { pages: truncated, blocks: false },
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "Needle";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+
+    await vi.waitFor(() => expect(root.textContent).toContain("Needle page"));
+    expect(root.querySelector('[data-search-truncated="pages"]') !== null).toBe(expected);
+
+    dispose();
+  });
+
   it("opens an empty-query pathful Recent result at its exact physical owner", async () => {
     const sharedName = "Twin";
     const canonicalPath = "pages/client-a/Twin.md";

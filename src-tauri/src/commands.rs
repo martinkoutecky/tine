@@ -755,6 +755,8 @@ pub(crate) async fn run_graph_search(
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
     let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
     let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
+    // QueryExecution carries backward-defaulted per-category `has_more` bits;
+    // returning it directly preserves those bits on the Tauri wire.
     let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
         Some(lane) => graph.run_graph_search_latest_scoped(
             lane,

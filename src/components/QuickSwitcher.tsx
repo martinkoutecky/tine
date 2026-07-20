@@ -29,6 +29,8 @@ interface Section {
   more?: boolean;
   // Fetch the next chunk for this section (grows its limit). Set iff `more`.
   loadMore?: () => void;
+  // The backend top-k window itself is truncated (distinct from local paging).
+  truncated?: "pages" | "blocks";
 }
 
 // Match OG's globally-ranked provider pools while keeping Tine's existing
@@ -103,7 +105,7 @@ export function QuickSwitcher(): JSX.Element {
           false,
           s.scope ?? undefined,
         )
-      : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false })
+      : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
   );
 
   const currentPageName = () => {
@@ -180,6 +182,7 @@ export function QuickSwitcher(): JSX.Element {
         items: pageItems,
         more: morePages,
         loadMore: morePages ? () => setPageLimit((n) => Math.min(PAGE_POOL, n + PAGE_CHUNK)) : undefined,
+        truncated: graphResults()?.has_more?.pages ? "pages" : undefined,
       });
 
     // Create page (when no exact match exists).
@@ -241,6 +244,7 @@ export function QuickSwitcher(): JSX.Element {
       const last = blockSecs[blockSecs.length - 1];
       last.more = moreBlocks;
       if (moreBlocks) last.loadMore = () => setBlockLimit((n) => Math.min(BLOCK_POOL, n + BLOCK_CHUNK));
+      if (graphResults()?.has_more?.blocks) last.truncated = "blocks";
       out.push(...blockSecs);
     }
 
@@ -528,6 +532,11 @@ export function QuickSwitcher(): JSX.Element {
                       }}
                     >
                       Load more results…
+                    </div>
+                  </Show>
+                  <Show when={section.truncated}>
+                    <div class="switcher-truncated" data-search-truncated={section.truncated}>
+                      More matches exist — narrow your query to see them.
                     </div>
                   </Show>
                 </div>

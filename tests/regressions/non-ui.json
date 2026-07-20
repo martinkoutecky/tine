@@ -588,6 +588,20 @@
         "scenario": "search.alias-owner-exact-safety-interop",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-SEARCH-RESULT-TRUNCATION-001",
+      "title": "Graph search reports per-category truncation instead of presenting a bounded result window as complete",
+      "family": "search-reliability",
+      "sources": { "issues": [209], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/query_plan.rs::tests::graph_search_reports_per_category_truncation"],
+        "scenario": "search.per-category-result-truncation",
+        "failBefore": "proven"
+      }
     }
   ]
 }

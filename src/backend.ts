@@ -758,8 +758,12 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope) {
-    return this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null });
+    return {
+      ...execution,
+      has_more: execution.has_more ?? { pages: false, blocks: false },
+    };
   }
   quickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("quick_switch", { query, limit });

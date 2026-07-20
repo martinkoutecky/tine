@@ -307,6 +307,8 @@ export interface QueryExecution {
   hits: QueryHit[];
   diagnostics: QueryDiagnostic[];
   explanation: { branches: QueryExplainNode[] };
+  /** Absent only when talking to an older backend or using an older test fixture. */
+  has_more?: { pages: boolean; blocks: boolean };
   cancelled: boolean;
 }
 

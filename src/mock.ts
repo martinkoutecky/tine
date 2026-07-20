@@ -1127,10 +1127,11 @@ export function mockBackend(): Backend {
         };
       }
       const bare = simpleTerm(matcher);
-      const pages = scope ? [] : all
+      const pageMatches = scope ? [] : all
         .map((page) => ({ page, score: bare ? fuzzyScore(bare, canonicalFold(page.name)) : 0 }))
         .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, canonicalFold(page.name), page.name))
-        .sort((a, b) => b.score - a.score)
+        .sort((a, b) => b.score - a.score);
+      const pages = pageMatches
         .slice(0, pageLimit)
         .map(({ page, score }) => ({
           entity: "page" as const,
@@ -1159,9 +1160,10 @@ export function mockBackend(): Backend {
           ? mockPagePath(page) === scope.path
           : page.kind === scope.pageKind && canonicalFold(page.name) === canonicalFold(scope.name);
       };
-      const blocks = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
+      const blockMatches = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
         .filter(inScope)
-        .flatMap((group) => group.blocks.map((block) => ({ group, block })))
+        .flatMap((group) => group.blocks.map((block) => ({ group, block })));
+      const blocks = blockMatches
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
           const owner = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
@@ -1183,6 +1185,10 @@ export function mockBackend(): Backend {
       return {
         hits: [...pages, ...blocks],
         diagnostics: [],
+        has_more: {
+          pages: pageLimit > 0 && pageMatches.length > pageLimit,
+          blocks: blockLimit > 0 && blockMatches.length > blockLimit,
+        },
         explanation: {
           branches: explain ? [
             { description: bare ? `Page names fuzzily match “${source}”` : `Page names match “${source}”`, children: [] },

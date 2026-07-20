@@ -188,11 +188,22 @@ pub enum QueryHit {
     },
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QueryHasMore {
+    #[serde(default)]
+    pub pages: bool,
+    #[serde(default)]
+    pub blocks: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryExecution {
     pub hits: Vec<QueryHit>,
     pub diagnostics: Vec<QueryDiagnostic>,
     pub explanation: QueryExplanation,
+    /// Per-category top-k truncation, detected during the existing candidate scan.
+    #[serde(default)]
+    pub has_more: QueryHasMore,
     /// A cancelled latest-wins lane returns no partial results.
     pub cancelled: bool,
 }
@@ -423,10 +434,12 @@ impl QueryPlan {
                 hits: Vec::new(),
                 diagnostics: self.diagnostics.clone(),
                 explanation,
+                has_more: QueryHasMore::default(),
                 cancelled: false,
             };
         }
         let mut hits = Vec::new();
+        let mut has_more = QueryHasMore::default();
         for branch in &self.branches {
             if cancelled() {
                 return cancelled_execution(self, explanation);
@@ -435,15 +448,20 @@ impl QueryPlan {
                 QueryTarget::Pages => execute_pages(self, graph, branch, &cancelled),
                 QueryTarget::Blocks => execute_blocks(self, graph, branch, &cancelled),
             };
-            let Some(mut branch_hits) = branch_hits else {
+            let Some((mut branch_hits, branch_has_more)) = branch_hits else {
                 return cancelled_execution(self, explanation);
             };
+            match branch.target {
+                QueryTarget::Pages => has_more.pages |= branch_has_more,
+                QueryTarget::Blocks => has_more.blocks |= branch_has_more,
+            }
             hits.append(&mut branch_hits);
         }
         QueryExecution {
             hits,
             diagnostics: self.diagnostics.clone(),
             explanation,
+            has_more,
             cancelled: false,
         }
     }
@@ -454,6 +472,7 @@ fn cancelled_execution(plan: &QueryPlan, explanation: QueryExplanation) -> Query
         hits: Vec::new(),
         diagnostics: plan.diagnostics.clone(),
         explanation,
+        has_more: QueryHasMore::default(),
         cancelled: true,
     }
 }
@@ -1264,9 +1283,9 @@ fn execute_pages(
     graph: &Graph,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
-) -> Option<Vec<QueryHit>> {
+) -> Option<(Vec<QueryHit>, bool)> {
     if branch.limit == 0 {
-        return Some(Vec::new());
+        return Some((Vec::new(), false));
     }
     let file_pages = graph.list_pages();
     let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
@@ -1277,6 +1296,7 @@ fn execute_pages(
             .push(alias);
     }
     let mut heap = BinaryHeap::new();
+    let mut has_more = false;
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
@@ -1288,6 +1308,7 @@ fn execute_pages(
         if let Some((base_score, match_class, matched_text, matched_alias)) =
             best_page_match(plan, &branch.predicate, &page.name, aliases)
         {
+            has_more |= heap.len() >= branch.limit;
             push_page(
                 &mut heap,
                 branch.limit,
@@ -1317,6 +1338,7 @@ fn execute_pages(
         if let Some((base_score, match_class, matched_text, matched_alias)) =
             best_page_match(plan, &branch.predicate, &name, &[])
         {
+            has_more |= heap.len() >= branch.limit;
             let score = base_score - name.len() as i32;
             push_page(
                 &mut heap,
@@ -1346,7 +1368,7 @@ fn execute_pages(
             .then_with(|| b.score.cmp(&a.score))
             .then_with(|| a.index.cmp(&b.index))
     });
-    Some(
+    Some((
         winners
             .into_iter()
             .map(|winner| {
@@ -1372,7 +1394,8 @@ fn execute_pages(
                 }
             })
             .collect(),
-    )
+        has_more,
+    ))
 }
 
 fn crumb_line(block: &DocBlock) -> String {
@@ -1414,12 +1437,13 @@ fn execute_blocks(
     graph: &Graph,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
-) -> Option<Vec<QueryHit>> {
+) -> Option<(Vec<QueryHit>, bool)> {
     if branch.limit == 0 {
-        return Some(Vec::new());
+        return Some((Vec::new(), false));
     }
     graph.with_pages(|pages| {
         let mut heap = BinaryHeap::new();
+        let mut has_more = false;
         let mut index = 0usize;
         for (entry, doc) in pages {
             if cancelled() {
@@ -1448,6 +1472,7 @@ fn execute_blocks(
                 if let Some(relevance) =
                     block_relevance(plan, &branch.predicate, visible, &projection.visible_lower)
                 {
+                    has_more |= heap.len() >= branch.limit;
                     let retain = heap.len() < branch.limit
                         || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
                             relevance.cmp_quality(&worst.relevance) == Ordering::Greater
@@ -1487,7 +1512,7 @@ fn execute_blocks(
                         .cmp(&(b.page.rel_path.as_str(), b.index))
                 })
         });
-        Some(
+        Some((
             winners
                 .into_iter()
                 .map(|winner| {
@@ -1516,7 +1541,8 @@ fn execute_blocks(
                     }
                 })
                 .collect(),
-        )
+            has_more,
+        ))
     })
 }
 
@@ -1682,6 +1708,25 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn graph_search_reports_per_category_truncation() {
+        let (dir, graph) = fixture();
+
+        let page_truncated = graph.run_graph_search("opdf", 2, 1, false);
+        assert!(page_truncated.has_more.pages);
+        assert!(!page_truncated.has_more.blocks);
+
+        let block_truncated = graph.run_graph_search("foo", 10, 1, false);
+        assert!(!block_truncated.has_more.pages);
+        assert!(block_truncated.has_more.blocks);
+
+        let complete = graph.run_graph_search("foo", 10, 10, false);
+        assert!(!complete.has_more.pages);
+        assert!(!complete.has_more.blocks);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

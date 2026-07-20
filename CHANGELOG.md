@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Ctrl+K search now tells you when more matches exist beyond its bounded result
+  window and prompts you to narrow the query, instead of presenting a truncated
+  list as if it were complete (GH #209).
 - Page aliases are now scoped to the physical file that declares them, so an
   exact alias search cannot return a same-named sibling file (GH #209).
 - One page containing unsupported search-index syntax can no longer make its

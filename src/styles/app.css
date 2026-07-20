@@ -7714,6 +7714,13 @@ img.emoji {
 .switcher-more:hover {
   background: var(--bg-tertiary);
 }
+.switcher-truncated {
+  margin: 3px 12px 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 11px;
+}
 .switcher-kind.create { color: #10b981; }
 .switcher-kind.cmd { color: var(--link-color); }
 .switcher-shortcut {
