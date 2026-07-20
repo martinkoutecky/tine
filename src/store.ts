@@ -591,10 +591,11 @@ function toDto(id: string): BlockDto {
  *  no `id::` line (an id-bearing block is a real referenced outline block, not a
  *  header, and the Rust promote branch/firewall both leave it as a bullet). */
 function isPromotablePageHeaderRoot(node: Node): boolean {
+  const canonicalRaw = node.raw.replace(/\n+$/, "");
   return (
     node.children.length === 0 &&
-    isPageHeaderPropertiesOnly(node.raw) &&
-    !node.raw.split("\n").some((line) => parsePageHeaderPropertyLine(line)?.key.toLowerCase() === "id")
+    isPageHeaderPropertiesOnly(canonicalRaw) &&
+    !canonicalRaw.split("\n").some((line) => parsePageHeaderPropertyLine(line)?.key.toLowerCase() === "id")
   );
 }
 
@@ -605,14 +606,18 @@ export function pageToDto(pageName: string): PageDto | null {
   let preBlock = p.preBlock;
   const first = doc.byId[rootIds[0]];
   if (first?.originatedFromPageHeader) {
-    if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(first.raw))) {
+    // Enter temporarily leaves one or more trailing newlines in the live
+    // page-header editor. Tolerate only that authoring artifact at the disk
+    // firewall; keep the strict shared display predicate and live raw intact.
+    const canonicalRaw = first.raw.replace(/\n+$/, "");
+    if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
       pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
       return null;
     }
     // Exact raw is authoritative here: ordinary toDto trimming must never eat a
     // page-header value or its separator trivia. An empty draft deletes the
     // header and emits no stray outline bullet.
-    preBlock = first.raw ? first.raw + (p.preBlock ?? "") : p.preBlock;
+    preBlock = canonicalRaw ? canonicalRaw + (p.preBlock ?? "") : p.preBlock;
     rootIds = rootIds.slice(1);
   } else if (first && !p.preBlock && isPromotablePageHeaderRoot(first)) {
     // GH #198: a flagless "properties-only first bullet" (empty preBlock) IS the
@@ -624,7 +629,7 @@ export function pageToDto(pageName: string): PageDto | null {
     // "will retry" toast forever. Folding here emits pre_block=properties, so
     // the firewall precondition (empty pre_block) is false and the save writes
     // the identical canonical preamble. Mirrors Rust's promotability rule.
-    preBlock = first.raw;
+    preBlock = first.raw.replace(/\n+$/, "");
     rootIds = rootIds.slice(1);
   }
   let blocks = rootIds.map(toDto);

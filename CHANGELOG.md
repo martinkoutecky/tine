@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Pressing Enter while typing page-header properties no longer shows a validation
+  error or jams later saves for that page; the transient trailing newline remains
+  in the editor while the persisted header stays canonical (GH #210).
+
 ## [0.6.2] - 2026-07-19
 
 ### Added

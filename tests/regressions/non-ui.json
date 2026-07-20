@@ -546,6 +546,20 @@
         "scenario": "reader.org-container-outline-round-trip",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-PAGE-HEADER-ENTER-SAVE-001",
+      "title": "Typing a page property and pressing Enter no longer shows an error or jams subsequent page saves",
+      "family": "persistence-correctness",
+      "sources": { "issues": [210], "commits": [] },
+      "platforms": ["all"],
+      "layer": "store",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src/store.test.ts"],
+        "scenario": "persistence.page-header-enter-trailing-newline",
+        "failBefore": "proven"
+      }
     }
   ]
 }

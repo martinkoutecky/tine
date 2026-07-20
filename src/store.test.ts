@@ -150,6 +150,36 @@ describe("properties-only first block", () => {
     expect(dto.blocks).toEqual([]);
   });
 
+  it.each([
+    ["tags", "blah"],
+    ["icon", "📚"],
+    ["myrandomkey", "anything"],
+  ])("saves a marked %s page-header draft while Enter's trailing newline remains in the editor (GH #210)", (key, value) => {
+    loadSingle({
+      name: "Test", kind: "page", title: "Test", pre_block: `${key}:: ${value}`,
+      blocks: [blk("Body")], format: "md",
+    });
+    const id = beginPageHeaderEdit("Test")!;
+    setRaw(id, `${key}:: ${value}\n`);
+
+    expect(pageToDto("Test")).toMatchObject({
+      pre_block: `${key}:: ${value}`,
+      blocks: [{ raw: "Body" }],
+    });
+    expect(doc.byId[id].raw).toBe(`${key}:: ${value}\n`);
+  });
+
+  it("promotes a fresh properties-only first root while Enter's trailing newline remains in the editor (GH #210)", () => {
+    const properties = blk("foo:: bar\n");
+    load([properties, blk("Body")]);
+
+    expect(pageToDto("Test")).toMatchObject({
+      pre_block: "foo:: bar",
+      blocks: [{ raw: "Body" }],
+    });
+    expect(doc.byId[properties.id].raw).toBe("foo:: bar\n");
+  });
+
   it("does NOT fold a properties-only first bullet that carries an id:: (real referenced block) (GH #198)", () => {
     // An id-bearing properties block is a real outline block, not a header:
     // Rust's promotability rule and firewall both leave it as a bullet, so the
