@@ -1328,12 +1328,20 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
   const pageName = parent.page;
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
+  const format = formatForPage(pageName);
   setDoc(
     produce((s) => {
       const create = (n: OutlineNode, par: string): string => {
         const id = freshId();
         const childIds = n.children.map((c) => create(c, id));
-        s.byId[id] = { id, raw: n.raw, collapsed: false, parent: par, page: pageName, children: childIds };
+        s.byId[id] = {
+          id,
+          raw: rawWithInheritedOrderListType(n.raw, format, parentId),
+          collapsed: false,
+          parent: par,
+          page: pageName,
+          children: childIds,
+        };
         return id;
       };
       const created = nodes.map((n) => create(n, parentId));
@@ -1368,8 +1376,7 @@ export function splitBlock(
   // Ordered-list items propagate: a block split off an ordered item is itself
   // ordered (OG inherits `:logseq.order-list-type`), toggleable per-block later.
   const ordered = isOrdered(id);
-  const withOrdered = (raw: string) =>
-    joinProps(raw, fmt === "org" ? `:${ORDER_KEY}: number` : `${ORDER_KEY}:: number`, fmt);
+  const withOrdered = (raw: string) => rawWithOrderListType(raw, "number", fmt);
   const orderedAfter = ordered ? withOrdered(after) : after;
   const orderedEmpty = ordered ? withOrdered("") : "";
 
@@ -1559,13 +1566,21 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
+  const format = formatForPage(pageName);
   let lastId = afterId;
   setDoc(
     produce((s) => {
       const create = (n: OutlineNode, par: string | null): string => {
         const id = freshId();
         const childIds = n.children.map((c) => create(c, id));
-        s.byId[id] = { id, raw: n.raw, collapsed: false, parent: par, page: pageName, children: childIds };
+        s.byId[id] = {
+          id,
+          raw: rawWithInheritedOrderListType(n.raw, format, afterId),
+          collapsed: false,
+          parent: par,
+          page: pageName,
+          children: childIds,
+        };
         return id;
       };
       const created = nodes.map((n) => create(n, parent));
@@ -1596,7 +1611,8 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
     const create = (outline: OutlineNode, parent: string | null, reuseId?: string): string => {
       const created = reuseId ?? freshId();
       const children = outline.children.map((child) => create(child, created));
-      const raw = reuseId ? joinProps(outline.raw, split.hidden, format) : outline.raw;
+      const sourceRaw = reuseId ? joinProps(outline.raw, split.hidden, format) : outline.raw;
+      const raw = rawWithInheritedOrderListType(sourceRaw, format, id);
       state.byId[created] = { id: created, raw, collapsed: false, parent, page: current.page, children };
       return created;
     };
@@ -1888,6 +1904,73 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 const ORDER_KEY = "logseq.order-list-type";
 function isOrdered(id: string | null | undefined): boolean {
   return !!id && blockProperty(id, ORDER_KEY) === "number";
+}
+
+function orderListTypeFromRaw(raw: string, format: Format): string | null {
+  for (const [key, value] of facetsOf(raw, format).properties) {
+    if (key.toLowerCase() === ORDER_KEY) return value.trim();
+  }
+  return null;
+}
+
+/** The one format-aware raw transform for the block-level list property.
+ * `splitProps`/`joinProps` are the audited metadata path: they preserve visible
+ * body bytes, ignore property lookalikes inside fences, and emit Org drawers.
+ * OG writes both the in-memory property and serialized content at
+ * `src/main/frontend/modules/outliner/core.cljs:420-433` (6e7afa8eb). */
+function rawWithOrderListType(raw: string, value: string | null, format: Format): string {
+  const { visible } = splitProps(raw, (key) => key.toLowerCase() === ORDER_KEY, format);
+  if (value === null) return visible;
+  const property = format === "org" ? `:${ORDER_KEY}: ${value}` : `${ORDER_KEY}:: ${value}`;
+  return joinProps(visible, property, format);
+}
+
+/** Preserve a source's explicit list type; otherwise inherit the target's.
+ * This is OG's common move/insert rule (`outliner/core.cljs:420-433,536-555`
+ * at 6e7afa8eb), shared by drag and every structural outline insertion below. */
+function rawWithInheritedOrderListType(raw: string, format: Format, targetId: string | null | undefined): string {
+  if (orderListTypeFromRaw(raw, format) !== null) return raw;
+  const targetType = targetId ? blockProperty(targetId, ORDER_KEY) : null;
+  return targetType === null ? raw : rawWithOrderListType(raw, targetType, format);
+}
+
+function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string): boolean {
+  const node = doc.byId[id];
+  if (!node || !blockWritable(id)) return false;
+  const format = formatForBlock(id);
+  const base = visibleText === undefined
+    ? node.raw
+    : joinProps(visibleText, splitProps(node.raw, isBuiltinHidden, format).hidden, format);
+  const next = rawWithOrderListType(base, enabled ? "number" : null, format);
+  if (next === node.raw) return false;
+  pushUndo(`own-numbered:${id}`, [node.page]);
+  setDoc("byId", id, "raw", next);
+  markDirty(node.page);
+  return true;
+}
+
+/** Make this block an own numbered-list item. When `visibleText` is supplied,
+ * replacing the editor trigger and writing the property are one store mutation. */
+export function makeOwnNumberedList(id: string, visibleText?: string): boolean {
+  return setOwnNumberedList(id, true, visibleText);
+}
+
+export function removeOwnNumberedList(id: string): boolean {
+  if (!isOrdered(id)) return false;
+  return setOwnNumberedList(id, false);
+}
+
+export function toggleOwnNumberedList(id: string): boolean {
+  return setOwnNumberedList(id, !isOrdered(id));
+}
+
+/** Empty Enter stops only a non-nested own list: an ordered parent keeps the
+ * ordinary insert/inherit path. Transcribed from OG
+ * `src/main/frontend/handler/editor.cljs:2498-2502` (6e7afa8eb). */
+export function stopOwnNumberedListOnEmptyEnter(id: string, visibleText: string): boolean {
+  const node = doc.byId[id];
+  if (!node || visibleText.trim() !== "" || !isOrdered(id) || isOrdered(node.parent)) return false;
+  return removeOwnNumberedList(id);
 }
 function toLetters(n: number): string {
   let s = "";
@@ -2735,7 +2818,8 @@ export async function moveBlock(
   id: string,
   newParent: string | null,
   index: number,
-  targetPage?: string
+  targetPage?: string,
+  dropTargetId?: string,
 ) {
   const node = doc.byId[id];
   if (!node) return;
@@ -2759,6 +2843,14 @@ export async function moveBlock(
     return;
   }
   if (!doc.byId[id]) return; // block vanished during the async flush
+  const sourceFormat = formatForBlock(id);
+  const destinationFormat = formatForPage(newPage);
+  const inheritanceTarget = dropTargetId ?? newParent;
+  // A cross-format move already preserves the source raw verbatim; only a newly
+  // inherited property is emitted in the destination page's syntax.
+  const movedRaw = orderListTypeFromRaw(doc.byId[id].raw, sourceFormat) !== null
+    ? doc.byId[id].raw
+    : rawWithInheritedOrderListType(doc.byId[id].raw, destinationFormat, inheritanceTarget);
   // Drag-move can cross pages → snapshot both source and destination.
   pushUndo("move", [...new Set([oldPage, newPage])]);
   setDoc(
@@ -2770,6 +2862,7 @@ export async function moveBlock(
       const from = oldArr.indexOf(id);
       oldArr.splice(from, 1);
       s.byId[id].parent = newParent;
+      s.byId[id].raw = movedRaw;
       const newArr =
         newParent === null
           ? s.pages[s.pages.findIndex((x) => x.name === newPage)].roots

@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Numbered lists work like Logseq's**: typing `1. ` in an empty block turns
+  it into a numbered-list block; Enter continues the numbering into the new
+  sibling and Enter on an empty item stops the list; Backspace at the start
+  removes just the numbering; and blocks dragged or pasted into a numbered
+  list pick up the numbering automatically (already-numbered blocks keep
+  theirs).
 - **Document-mode Enter**, like Logseq: with Document mode on, plain Enter now
   inserts a line break and Shift+Enter creates a new block (the reverse of
   outline mode), with a config switch

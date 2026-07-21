@@ -30,6 +30,9 @@ import {
   pageByName,
   setRaw,
   setBlockProperty,
+  makeOwnNumberedList,
+  removeOwnNumberedList,
+  stopOwnNumberedListOnEmptyEnter,
   splitBlock,
   indentBlock,
   outdentBlock,
@@ -261,7 +264,7 @@ function beginDrag(id: string, e: MouseEvent) {
       }
       // Pass the target's page so a root-to-root drop across pages (e.g. between
       // journal days) lands on the page it was dropped onto, not the source page.
-      if (ok) void moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1), tgt.page);
+      if (ok) void moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1), tgt.page, ind.id);
     }
     setDragId(null);
     setDropInd(null);
@@ -2256,6 +2259,16 @@ export function Editor(props: { id: string }): JSX.Element {
           ref.setSelectionRange(r.caret, r.caret);
         }
       }
+      // OG's typing trigger is exact: only the complete visible editor value
+      // `1. ` becomes own numbered-list state, then the trigger text disappears
+      // (`src/main/frontend/handler/editor.cljs:1888-1892`, 6e7afa8eb).
+      if (ch === " " && ref.value === "1. " && makeOwnNumberedList(props.id, "")) {
+        ref.value = "";
+        ref.setSelectionRange(0, 0);
+        autosize();
+        refreshAutocompleteAfterInput();
+        return;
+      }
     }
     commit(ref.value);
     autosize();
@@ -2827,6 +2840,11 @@ export function Editor(props: { id: string }): JSX.Element {
         softNewlineCmd();
         return;
       }
+      if (!isAnnot() && stopOwnNumberedListOnEmptyEnter(props.id, raw)) {
+        ref.setSelectionRange(0, 0);
+        autosize();
+        return;
+      }
       // In-block list: Enter on a `+`/`*`/ordered list line CONTINUES the list
       // (new item below, same marker/indent; a checkbox item starts a fresh `[ ]`)
       // instead of splitting the block. To exit, Backspace the empty item down to a
@@ -2878,6 +2896,15 @@ export function Editor(props: { id: string }): JSX.Element {
       if (start === 0) {
         // Never merge a highlight or calc block away (their structure must stay).
         if (isAnnot() || isCalc()) return;
+        // Own-numbered state is a block property, never an in-block `1.` marker.
+        // At offset zero OG removes only that property and preserves the text
+        // (`src/main/frontend/handler/editor.cljs:2752-2764`, 6e7afa8eb).
+        if (removeOwnNumberedList(props.id)) {
+          e.preventDefault();
+          ref.setSelectionRange(0, 0);
+          autosize();
+          return;
+        }
         commit(raw);
         if (mergeWithPrev(props.id, outlineScope, editSurface())) {
           e.preventDefault();

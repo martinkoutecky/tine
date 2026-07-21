@@ -21,6 +21,8 @@ import {
   reloadDisposition,
   setBlockMoving,
   splitBlock,
+  insertOutlineAfter,
+  replaceEmptyBlockWithOutline,
   indentBlock,
   outdentBlock,
   mergeWithPrev,
@@ -337,6 +339,74 @@ describe("ordered list (logseq.order-list-type)", () => {
     const newId = doc.pages[0].roots[1];
     expect(blockProperty(newId, "logseq.order-list-type")).toBe("number");
     expect(orderedListMarker(newId)).toBe("2");
+  });
+
+  it("drag-inherits the drop target's ordered property in memory and the serialized DTO", async () => {
+    const dto = load([blk("source"), blk("untouched bytes"), blk(`target\n${ORD}`)]);
+    const [source, untouched, target] = dto.blocks.map((block) => block.id);
+    const untouchedBefore = pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw;
+
+    await (moveBlock as (...args: unknown[]) => Promise<void>)(source, null, 3, "Test", target);
+
+    expect(blockProperty(source, "logseq.order-list-type")).toBe("number");
+    expect(doc.byId[source].raw).toBe(`source\n${ORD}`);
+    expect(pageToDto("Test")!.blocks.find((block) => block.id === source)!.raw).toBe(`source\n${ORD}`);
+    expect(pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw).toBe(untouchedBefore);
+  });
+
+  it("dragging a numbered source onto a plain target preserves its own property", async () => {
+    const dto = load([blk(`source\n${ORD}`), blk("plain target"), blk("untouched bytes")]);
+    const [source, target, untouched] = dto.blocks.map((block) => block.id);
+    const untouchedBefore = doc.byId[untouched].raw;
+
+    await (moveBlock as (...args: unknown[]) => Promise<void>)(source, null, 2, "Test", target);
+
+    expect(blockProperty(source, "logseq.order-list-type")).toBe("number");
+    expect(doc.byId[source].raw).toBe(`source\n${ORD}`);
+    expect(doc.byId[untouched].raw).toBe(untouchedBefore);
+  });
+
+  it("structural paste after a numbered target uses the same inheritance rule", () => {
+    const dto = load([blk(`target\n${ORD}`), blk("untouched bytes")]);
+    const [target, untouched] = dto.blocks.map((block) => block.id);
+    const untouchedBefore = pageToDto("Test")!.blocks[1].raw;
+
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+
+    expect(blockProperty(pasted, "logseq.order-list-type")).toBe("number");
+    expect(pageToDto("Test")!.blocks.find((block) => block.id === pasted)!.raw).toBe(`pasted\n${ORD}`);
+    expect(pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw).toBe(untouchedBefore);
+  });
+
+  it("empty-target structural paste inherits numbering for every untyped root", () => {
+    const dto = load([blk(ORD), blk("untouched bytes")]);
+    const [target, untouched] = dto.blocks.map((block) => block.id);
+    const untouchedBefore = doc.byId[untouched].raw;
+
+    const last = replaceEmptyBlockWithOutline(target, [
+      { raw: "first", children: [] },
+      { raw: "second", children: [] },
+    ]);
+
+    expect(blockProperty(target, "logseq.order-list-type")).toBe("number");
+    expect(blockProperty(last, "logseq.order-list-type")).toBe("number");
+    expect(doc.byId[untouched].raw).toBe(untouchedBefore);
+  });
+
+  it("uses Org drawers for drag and paste inheritance without touching siblings", async () => {
+    const ORG_ORD = ":PROPERTIES:\n:logseq.order-list-type: number\n:END:";
+    const dto = load([blk("move me"), blk(`target\n${ORG_ORD}`), blk("untouched bytes")], "org");
+    const [source, target, untouched] = dto.blocks.map((block) => block.id);
+    const untouchedBefore = pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw;
+
+    await (moveBlock as (...args: unknown[]) => Promise<void>)(source, null, 2, "Test", target);
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+
+    expect(doc.byId[source].raw).toBe(`move me\n${ORG_ORD}`);
+    expect(doc.byId[pasted].raw).toBe(`pasted\n${ORG_ORD}`);
+    expect(doc.byId[source].raw).not.toContain("logseq.order-list-type::");
+    expect(doc.byId[pasted].raw).not.toContain("logseq.order-list-type::");
+    expect(pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw).toBe(untouchedBefore);
   });
 });
 

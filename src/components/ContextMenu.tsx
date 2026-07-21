@@ -33,6 +33,7 @@ import {
   deleteBlock,
   setBlockProperty,
   toggleBlockProperty,
+  toggleOwnNumberedList,
   blockProperty,
   setHeading,
   setCollapsedDeep,
@@ -1058,7 +1059,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     },
     {
       label: numbered ? "Remove numbered list" : "Numbered list",
-      run: () => toggleBlockProperty(id, "logseq.order-list-type", "number"),
+      run: () => toggleOwnNumberedList(id),
     },
     { label: "Collapse all", run: () => setCollapsedDeep(id, true) },
     { label: "Expand all", run: () => setCollapsedDeep(id, false) },
