@@ -240,8 +240,8 @@ export function SheetTable(props: {
     const formulasSet = formulaFieldSet();
     return [
       ...declared,
-      ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
       ...formulas,
+      ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
     ];
   });
   const formulaHintFields = createMemo(() => {

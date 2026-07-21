@@ -847,14 +847,14 @@ describe("SheetTable", () => {
     expect(doc.byId.table.raw).not.toContain("prop:occurrence");
     expect(doc.byId.table.raw).toContain('if(label == "occurrence", formula.occurrence, 0)');
     expect(doc.byId.r1.raw).toBe("Row\nseverity:: 2\nOCC:: 2\ndetection:: 2\nlabel:: other");
-    expect(cell(root, 0, 5).textContent?.trim()).toBe("8");
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
 
     undo();
     await tick();
     expect(doc.byId.table.raw).toBe(ownerBefore);
     expect(doc.byId.r1.raw).toBe(rowBefore);
     expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim())).toContain("occurrence");
-    expect(cell(root, 0, 5).textContent?.trim()).toBe("8");
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
 
     redo();
     await tick();
@@ -871,7 +871,7 @@ describe("SheetTable", () => {
     expect(doc.byId.r1.raw).not.toContain("occurrence:: 2");
     expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()).filter((label) => label === "OCC"))
       .toHaveLength(1);
-    expect(cell(root, 0, 5).textContent?.trim()).toBe("8");
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
 
     dispose();
   });
@@ -1787,19 +1787,19 @@ describe("SheetTable", () => {
     ));
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
-    expect(headers).toEqual(["Block", "price", "qty", "kind", "due", "ƒtotal", "ƒtyped", "+Add column"]);
-    expect(cell(root, 0, 5).classList.contains("sheet-number-cell")).toBe(true);
-    expect(cell(root, 0, 5).textContent?.trim()).toBe("10");
-    const bool = cell(root, 0, 6).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(headers).toEqual(["Block", "price", "qty", "ƒtotal", "ƒtyped", "kind", "due", "+Add column"]);
+    expect(cell(root, 0, 3).classList.contains("sheet-number-cell")).toBe(true);
+    expect(cell(root, 0, 3).textContent?.trim()).toBe("10");
+    const bool = cell(root, 0, 4).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(bool?.checked).toBe(true);
     expect(bool?.disabled).toBe(true);
-    expect(cell(root, 1, 6).querySelector(".date-chip")?.textContent).toBe("2026-07-09");
-    const error = cell(root, 2, 6).querySelector(".sheet-formula-error") as HTMLElement | null;
+    expect(cell(root, 1, 4).querySelector(".date-chip")?.textContent).toBe("2026-07-09");
+    const error = cell(root, 2, 4).querySelector(".sheet-formula-error") as HTMLElement | null;
     expect(error?.getAttribute("title")).toContain("+ expects");
     expect([...root.querySelectorAll(".sheet-aggregate-value")].map((el) => el.textContent?.trim())).toContain("18");
 
-    doubleClick(cell(root, 0, 5));
-    expect(cell(root, 0, 5).classList.contains("sheet-cell-selected")).toBe(true);
+    doubleClick(cell(root, 0, 3));
+    expect(cell(root, 0, 3).classList.contains("sheet-cell-selected")).toBe(true);
     expect(root.querySelector("input.sheet-prop-input")).toBeNull();
 
     const totalHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
