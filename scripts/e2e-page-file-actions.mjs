@@ -169,7 +169,7 @@ try {
     .map((item) => item.getAttribute("data-page-action-id")));
   const expectedIds = [
     "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-    "copy-page-ref", "copy-page-markdown", "export-pdf",
+    "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
     "show-in-folder", "open-default-app", "page-properties",
     "rename-page", "delete-page",
   ];
