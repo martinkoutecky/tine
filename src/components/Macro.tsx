@@ -101,6 +101,14 @@ export function QueryMacro(props: {
   body: string;
   blockId?: string;
   title?: string;
+  /** Read-only query surfaces can supply page context without a blockId, which
+   * would incorrectly enable editing controls. */
+  currentPage?: string;
+  /** BEGIN_QUERY must never execute a partially understood query or expose its
+   * authored payload in an error. The ordinary {{query}} path keeps its existing
+   * partial-query diagnostics unless these read-only options are requested. */
+  strictAdvanced?: boolean;
+  unsupportedLabel?: string;
   // When set, render nothing at all if the query has no results (used for the
   // app-inserted journal agenda, which should disappear once vacated — unlike a
   // user-authored {{query}} block, which keeps showing "No results" so it stays
@@ -228,7 +236,7 @@ export function QueryMacro(props: {
       </button>
     </span>
   );
-  const currentPage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const currentPage = () => props.currentPage ?? (props.blockId ? doc.byId[props.blockId]?.page : undefined);
   const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
     null
   );
@@ -428,15 +436,23 @@ export function QueryMacro(props: {
   // Hide the whole block when asked and there's nothing to show (advanced
   // queries still render their "unsupported" notice).
   const hidden = () => props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0;
+  const unsupportedAdvanced = () => isAdvanced() && advInfo() && (
+    !advInfo()!.supported || (props.strictAdvanced === true && advInfo()!.ignored.length > 0)
+  );
 
   return (
     <Show when={!hidden()}>
       <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
         <Switch>
-          <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
-            <div class="query-unsupported">
+          <Match when={unsupportedAdvanced()}>
+            <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
               <Show when={props.blockId}>{simpleBackButton()}</Show>
-              Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code>
+              <Show
+                when={props.unsupportedLabel}
+                fallback={<>Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code></>}
+              >
+                {(label) => <>{label()}: query contains unsupported clauses.</>}
+              </Show>
             </div>
           </Match>
           <Match when={true}>

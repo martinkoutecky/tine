@@ -8,8 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- The Copy/export modal gained Logseq's **maximum-depth control** (`Level ≤`
+  all/1..9): descendants deeper than the selected level are omitted from the
+  exported text, in both Rendered and Source modes.
+
 ### Fixed
 
+- **`#+BEGIN_QUERY` advanced query blocks now render** their authored title and
+  a bounded result table — on the page, in Linked References, and in reference
+  previews — instead of showing the raw `#+BEGIN_QUERY … #+END_QUERY` source,
+  like Logseq. The common page-property Datalog form
+  (`[?p :block/properties ?props]` + `[(get ?props :key)]`) is understood;
+  malformed or unsupported queries show a clear "Unsupported BEGIN_QUERY"
+  notice rather than a guessed partial result.
 - **YouTube (and Vimeo) embeds now play** instead of failing with the player's
   "error 153". A `{{youtube …}}`/`{{video …}}` embed — and a pasted raw
   `<iframe>` pointing at a video host — now sends the app origin as its referrer

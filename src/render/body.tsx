@@ -13,6 +13,7 @@ import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, stripPlanningLines } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
+import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -368,6 +369,14 @@ function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
   );
 }
 
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null): JSX.Element {
+  const blocks = bodyBlocks(raw, format === "org");
+  const beginQuery = inspectBeginQuery(raw, format, blocks);
+  return beginQuery
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? doc.byId[blockId]?.page : undefined} />
+    : renderBlocks(blocks, blockId, headingLevel);
+}
+
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
  *  `parseBody`) SYNCHRONOUSLY into lsdoc's AST and renders it (`bodyBlocks` →
  *  `renderBlocks`), skipping the property/planning nodes that Block.tsx renders as
@@ -412,7 +421,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback">{placeholder()}</span>}>
-        {renderBlocks(bodyBlocks(props.raw, props.format === "org"), props.blockId, props.headingLevel)}
+        {renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel)}
       </Show>
     </Show>
   );

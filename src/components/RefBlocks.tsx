@@ -10,6 +10,7 @@ import { InlineText } from "../render/inline";
 import { formatForPage } from "../store";
 import { openBlockInSidebar } from "../ui";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 
 // `page`/`pageKind` (where these blocks live) are threaded through so a
 // shift-click can open the block live in the sidebar.
@@ -40,6 +41,13 @@ function RefBlock(props: {
   const facets = createMemo(() => facetsFromDto(props.block));
   const format = createMemo(() => formatForPage(props.page));
   const lines = createMemo(() => visibleBody(props.block.raw));
+  // Keep the DTO hot path parse-free for ordinary references. Only an exact
+  // whole-block candidate pays for lsdoc confirmation before execution.
+  const beginQuery = createMemo(() =>
+    /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
+      ? inspectBeginQuery(props.block.raw, format())
+      : null
+  );
   const properties = createMemo(() =>
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
@@ -87,16 +95,23 @@ function RefBlock(props: {
             <Show
               when={props.block.page_property}
               fallback={
-                <For each={lines()}>
-                  {(line, i) => (
-                    <>
-                      <Show when={i() > 0}>
-                        <br />
-                      </Show>
-                      <InlineText text={line} format={format()} />
-                    </>
-                  )}
-                </For>
+                <Show
+                  when={beginQuery()}
+                  fallback={
+                    <For each={lines()}>
+                      {(line, i) => (
+                        <>
+                          <Show when={i() > 0}>
+                            <br />
+                          </Show>
+                          <InlineText text={line} format={format()} />
+                        </>
+                      )}
+                    </For>
+                  }
+                >
+                  {(match) => <BeginQuery match={match()} currentPage={props.page} />}
+                </Show>
               }
             >
               <For each={properties()}>
