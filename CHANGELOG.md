@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Undo/redo modes and context restore**, like Logseq: a new palette command
+  "Toggle undo/redo mode" switches between the default Global history and
+  Page-only history (undo/redo affects only the current page's latest change).
+  Undo/redo now also restores where you were — the route/pane, right-sidebar
+  state, and the editing cursor position — instead of just the text.
 - **Property autocomplete**, like Logseq: typing `::` at the start of a line
   (or a typed key ending in `::`) opens a picker of the property names already
   used in your graph; picking one inserts the canonical `key:: ` and

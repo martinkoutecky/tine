@@ -61,6 +61,7 @@ import {
   pageVisibleOrder,
   selectBlock,
   visibleOrder,
+  toggleUndoRedoMode,
 } from "./store";
 import { editingId, startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
@@ -345,6 +346,17 @@ const COMMANDS: CommandDef[] = [
   { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
+  // Palette-only, matching OG's empty binding and mode report at
+  // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
+  // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
+  // (OG commit 6e7afa8eb).
+  {
+    id: "editor/toggle-undo-redo-mode",
+    binding: "",
+    label: "Toggle undo/redo mode",
+    scope: "global",
+    run: () => pushToast(`Undo/redo mode: ${toggleUndoRedoMode()}`),
+  },
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },

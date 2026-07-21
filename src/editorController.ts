@@ -49,6 +49,109 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
 
+export interface HistoryEditorContext {
+  blockId: string;
+  selectionStart: number;
+  selectionEnd: number;
+  owner: string | null;
+  surface: string;
+}
+
+export interface HistoryEditorTarget {
+  blockId: string;
+  owner: string | null;
+  surface: string;
+  selection: () => { start: number; end: number };
+  focused?: () => boolean;
+}
+
+const historyEditorTargets = new Set<HistoryEditorTarget>();
+const [pendingHistoryEditorRestore, setPendingHistoryEditorRestore] =
+  createSignal<HistoryEditorContext | null>(null);
+
+export { pendingHistoryEditorRestore };
+
+export function clearPendingHistoryEditorRestore() {
+  setPendingHistoryEditorRestore(null);
+}
+
+export function registerHistoryEditorTarget(target: HistoryEditorTarget): () => void {
+  historyEditorTargets.add(target);
+  return () => historyEditorTargets.delete(target);
+}
+
+/** Capture the active textarea's exact selection when available. The controller
+ * owns this bridge because a block can have several mounted surface instances. */
+export function captureHistoryEditorContext(): HistoryEditorContext | null {
+  const blockId = editingId();
+  if (!blockId) return null;
+  const owner = editingOwner();
+  const surface = activeSurface();
+  const candidates = [...historyEditorTargets].filter((target) => target.blockId === blockId);
+  const target = candidates.find((candidate) => {
+    try {
+      return candidate.focused?.() ?? false;
+    } catch {
+      return false;
+    }
+  }) ?? candidates.find((candidate) =>
+    candidate.owner === owner && (!surface || candidate.surface === surface)
+  ) ?? candidates.find((candidate) => !surface || candidate.surface === surface) ?? candidates[0];
+  let start = 0;
+  let end = 0;
+  if (target) {
+    try {
+      const selection = target.selection();
+      start = Math.max(0, Math.trunc(selection.start));
+      end = Math.max(start, Math.trunc(selection.end));
+    } catch {
+      // A target can unmount between the edit signal read and selection read.
+    }
+  } else {
+    const caret = caretTarget();
+    if (caret?.id === blockId && typeof caret.offset === "number") start = end = caret.offset;
+  }
+  const targetSurface = target?.surface ?? editingSurface() ?? surface;
+  if (!targetSurface) return null;
+  return {
+    blockId,
+    selectionStart: start,
+    selectionEnd: end,
+    owner: target?.owner ?? owner,
+    surface: targetSurface,
+  };
+}
+
+/** Queue a surface-scoped editor reopen after data replay. The store validates
+ * block existence and supplies the restored text length; this controller clamps
+ * the request before any textarea sees it. */
+export function restoreHistoryEditorContext(
+  context: HistoryEditorContext,
+  restoredTextLength: number | null,
+): boolean {
+  if (restoredTextLength === null || restoredTextLength < 0) {
+    setPendingHistoryEditorRestore(null);
+    return false;
+  }
+  const end = Math.min(Math.max(0, context.selectionEnd), restoredTextLength);
+  const start = Math.min(Math.max(0, context.selectionStart), end);
+  const pending = { ...context, selectionStart: start, selectionEnd: end };
+  setPendingHistoryEditorRestore(pending);
+  pendingFocusSurface.set(context.blockId, context.surface);
+  startEditing(context.blockId, start, null, context.surface, true);
+  return true;
+}
+
+export function takeHistoryEditorSelectionFor(
+  blockId: string,
+  surface: string,
+): { start: number; end: number } | null {
+  const pending = pendingHistoryEditorRestore();
+  if (!pending || pending.blockId !== blockId || pending.surface !== surface) return null;
+  setPendingHistoryEditorRestore(null);
+  return { start: pending.selectionStart, end: pending.selectionEnd };
+}
+
 export { activeSurface, editingId, editingOwner, editingSurface };
 
 export function takeCaretFor(id: string): CaretPos | null {
@@ -79,7 +182,9 @@ export function startEditing(
   offset: CaretPos = 0,
   owner: string | null = null,
   surface: string | null = null,
+  preserveHistoryRestore = false,
 ) {
+  if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no
   // deferred raw-text placeholder frame on blur). A just-created block goes
@@ -118,6 +223,7 @@ export function startEditing(
 
 export function endEdit(_reason: EndEditReason) {
   batch(() => {
+    setPendingHistoryEditorRestore(null);
     setEditingId(null);
     setEditingOwner(null);
     setEditingSurface(null);

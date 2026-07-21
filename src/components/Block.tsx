@@ -76,8 +76,10 @@ import {
   endEdit,
   focusSurfaceFor,
   noteSurfaceFocused,
+  registerHistoryEditorTarget,
   startEditing,
   takeCaretFor,
+  takeHistoryEditorSelectionFor,
 } from "../editorController";
 import { parseOutline } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
@@ -2107,9 +2109,16 @@ export function Editor(props: { id: string }): JSX.Element {
   };
 
   const focusNow = () => {
+    const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
     ref.focus();
     const v = ref.value;
+    if (historySelection) {
+      const end = Math.min(historySelection.end, v.length);
+      const start = Math.min(historySelection.start, end);
+      ref.setSelectionRange(start, end);
+      return;
+    }
     let offset: number;
     if (want == null) {
       offset = editorValue().length;
@@ -2136,6 +2145,14 @@ export function Editor(props: { id: string }): JSX.Element {
     ref.setSelectionRange(o, o);
   };
   onMount(() => {
+    const unregisterHistoryTarget = registerHistoryEditorTarget({
+      blockId: props.id,
+      owner: editingOwner(),
+      surface: surfaceKey,
+      selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+      focused: () => typeof document !== "undefined" && document.activeElement === ref,
+    });
+    onCleanup(unregisterHistoryTarget);
     // If this block is rendered in several surfaces at once (main pane + sidebar),
     // an unscoped edit (split / keyboard nav) mounts an editor in each. Only the
     // surface that was stamped (the one that had the caret) focuses; the others

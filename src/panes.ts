@@ -5,6 +5,7 @@ import {
   installPaneRouterRegistry,
   installLastTabCloseHandler,
   installNavigationInterceptor,
+  historyRouteContextAdapter,
   mainPaneRouter,
   tabRoute,
   type AdoptedTab,
@@ -15,7 +16,13 @@ import {
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
-import { clearSelection, doc, pageByName, registerPaneRouteProvider } from "./store";
+import {
+  clearSelection,
+  doc,
+  pageByName,
+  registerPaneRouteProvider,
+  installHistoryRouteContextAdapter,
+} from "./store";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import { nearestPane } from "./paneSelect";
@@ -472,7 +479,17 @@ export function restorePaneLayout(
   setFocusedPaneId(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
-installPaneRouterRegistry({ focusedRouter, mainRouter });
+installPaneRouterRegistry({
+  focusedRouter,
+  mainRouter,
+  routerForPane: (paneId) => routers.get(paneId),
+  activatePane: (paneId) => {
+    if (!layoutPaneIds().includes(paneId) || !routers.has(paneId)) return false;
+    setFocusedPaneId(paneId);
+    return true;
+  },
+});
+installHistoryRouteContextAdapter(historyRouteContextAdapter);
 installLastTabCloseHandler((paneId) => closePane(paneId));
 installNavigationInterceptor((paneId, r) => {
   if (r.kind !== "journals") return false;

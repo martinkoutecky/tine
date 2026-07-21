@@ -10,7 +10,12 @@ import {
   pushRecent,
   resolveAlias,
 } from "./ui";
-import { doc, persistentBlockRef, extendFeedForScroll } from "./store";
+import {
+  doc,
+  persistentBlockRef,
+  extendFeedForScroll,
+  type HistoryRouteContext,
+} from "./store";
 import { backend } from "./backend";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";
@@ -988,13 +993,20 @@ export const mainPaneRouter = createPaneRouter("main");
 
 let focusedRouterProvider: () => PaneRouter = () => mainPaneRouter;
 let mainRouterProvider: () => PaneRouter = () => mainPaneRouter;
+let routerForPaneProvider: (paneId: string) => PaneRouter | undefined = (paneId) =>
+  paneId === "main" ? mainPaneRouter : undefined;
+let activatePaneProvider: (paneId: string) => boolean = (paneId) => paneId === "main";
 
 export function installPaneRouterRegistry(registry: {
   focusedRouter: () => PaneRouter;
   mainRouter: () => PaneRouter;
+  routerForPane?: (paneId: string) => PaneRouter | undefined;
+  activatePane?: (paneId: string) => boolean;
 }) {
   focusedRouterProvider = registry.focusedRouter;
   mainRouterProvider = registry.mainRouter;
+  if (registry.routerForPane) routerForPaneProvider = registry.routerForPane;
+  if (registry.activatePane) activatePaneProvider = registry.activatePane;
 }
 
 function focusedRouterInstance(): PaneRouter {
@@ -1004,6 +1016,33 @@ function focusedRouterInstance(): PaneRouter {
 function mainRouterInstance(): PaneRouter {
   return mainRouterProvider();
 }
+
+function captureHistoryRouteContext(): HistoryRouteContext {
+  const router = focusedRouterInstance();
+  return { paneId: router.paneId, route: { ...router.route() } };
+}
+
+function restoreHistoryRouteContext(context: HistoryRouteContext): boolean {
+  const router = routerForPaneProvider(context.paneId);
+  if (!router) return false;
+  const route = context.route;
+  if (route.kind === "page") {
+    const page = doc.pages.find((candidate) =>
+      candidate.name === route.name
+      && candidate.kind === route.pageKind
+      && (route.path === undefined || candidate.path === route.path)
+    );
+    if (!page) return false;
+  }
+  if (!activatePaneProvider(context.paneId)) return false;
+  router.replaceActiveRoute({ ...route });
+  return true;
+}
+
+export const historyRouteContextAdapter = {
+  capture: captureHistoryRouteContext,
+  restore: restoreHistoryRouteContext,
+};
 
 export const tabs: Accessor<Tab[]> = () => focusedRouterInstance().tabs();
 export const activeId: Accessor<string> = () => focusedRouterInstance().activeId();

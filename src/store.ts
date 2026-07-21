@@ -27,6 +27,9 @@ import {
   removeDeletedBlocksFromSidebar,
   bumpDataRev,
   bumpPageInventoryRev,
+  captureHistorySidebarContext,
+  restoreHistorySidebarContext,
+  type HistorySidebarContext,
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
@@ -34,7 +37,14 @@ import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltin
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
-import { editingId, endEdit, startEditing } from "./editorController";
+import {
+  editingId,
+  endEdit,
+  startEditing,
+  captureHistoryEditorContext,
+  restoreHistoryEditorContext,
+  type HistoryEditorContext,
+} from "./editorController";
 import { notifyModeReset, notifyOutlineSelectionStarted } from "./modeHooks";
 import { sheetConfigFromRaw } from "./sheet/config";
 import { clearMatrixDimensionCache, invalidateAllMatrixDimensions } from "./sheet/matrix";
@@ -872,6 +882,7 @@ interface SnapEntry {
   pageObjs: FeedPage[]; // snapshot of those pages' FeedPage objects
   nodes: Record<string, Node>; // snapshot of nodes living on those pages
   dirty: string[]; // pages to re-save on undo/redo
+  context: HistoryContext;
 }
 interface RawEntry {
   kind: "raw";
@@ -883,12 +894,64 @@ interface RawEntry {
    * Undo can restore it and Redo can remove it again without an extra step. */
   headerRoot?: { node: Node; rootIndex: number };
   removeHeaderOnApply?: boolean;
+  context: HistoryContext;
 }
 type UndoEntry = SnapEntry | RawEntry;
 const undoStack: UndoEntry[] = [];
 let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
 let undoSuppressionDepth = 0;
+
+// Session-scoped and global by default, matching OG's transient app-state flag
+// at `src/main/frontend/state.cljs:304-306` (OG commit 6e7afa8eb).
+let pageOnlyHistoryMode = false;
+
+export function historyPageOnlyMode(): boolean {
+  return pageOnlyHistoryMode;
+}
+
+export function toggleUndoRedoMode(): "Page only" | "Global" {
+  pageOnlyHistoryMode = !pageOnlyHistoryMode;
+  return pageOnlyHistoryMode ? "Page only" : "Global";
+}
+
+export interface HistoryRouteContext {
+  paneId: string;
+  route: Route;
+}
+
+let historyRouteContextAdapter: {
+  capture: () => HistoryRouteContext | null;
+  restore: (context: HistoryRouteContext) => boolean;
+} = {
+  capture: () => null,
+  restore: () => false,
+};
+
+/** Router-owned adapter: keeps store.ts from adding a runtime import back to
+ * router.ts (router already imports the store). */
+export function installHistoryRouteContextAdapter(adapter: typeof historyRouteContextAdapter) {
+  historyRouteContextAdapter = adapter;
+}
+
+interface HistoryContext {
+  route: HistoryRouteContext | null;
+  sidebar: HistorySidebarContext;
+  editor: HistoryEditorContext | null;
+}
+
+/** Capture UI state at the same pre-mutation boundary as the data inverse. OG
+ * stores app state on each history entity and cursor state by transaction at
+ * `src/main/frontend/modules/editor/undo_redo.cljs:261-272` and
+ * `src/main/frontend/modules/outliner/datascript.cljc:152-162`
+ * (OG commit 6e7afa8eb). */
+function captureHistoryContext(): HistoryContext {
+  return {
+    route: historyRouteContextAdapter.capture(),
+    sidebar: captureHistorySidebarContext(),
+    editor: captureHistoryEditorContext(),
+  };
+}
 
 /** Discard all undo/redo history. Called on graph switch/reset so old-graph
  *  snapshots can't be replayed into a different graph. */
@@ -905,6 +968,35 @@ export function clearUndoHistory() {
 function entryTouchesPage(e: UndoEntry, name: string): boolean {
   if (e.kind === "raw") return e.page === name;
   return e.pages === null || e.pages.includes(name);
+}
+
+/** The page owning the active editor wins over the focused pane's route. This is
+ * OG's current/editing-page precedence at
+ * `src/main/frontend/util/page.cljs:14-29` (OG commit 6e7afa8eb). */
+function activeHistoryPage(): string | null {
+  const id = editingId();
+  const edited = id ? doc.byId[id] : undefined;
+  if (edited) return edited.page;
+  const route = historyRouteContextAdapter.capture()?.route;
+  return route?.kind === "page" ? route.name : null;
+}
+
+/** Remove the newest matching entry in place while retaining every other entry
+ * in its original order. This transcribes OG's filtered stack removal at
+ * `src/main/frontend/modules/editor/undo_redo.cljs:81-106,132-156`
+ * (OG commit 6e7afa8eb). */
+function popNewestEntryForPage(stack: UndoEntry[], page: string): UndoEntry | undefined {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (entryTouchesPage(stack[i], page)) return stack.splice(i, 1)[0];
+  }
+  return undefined;
+}
+
+function popHistoryEntry(stack: UndoEntry[]): UndoEntry | undefined {
+  if (!stack.length) return undefined;
+  if (!pageOnlyHistoryMode) return stack.pop();
+  const page = activeHistoryPage();
+  return page ? popNewestEntryForPage(stack, page) : stack.pop();
 }
 
 /** Drop undo/redo entries that reference `name`. Called when a page's on-disk
@@ -939,6 +1031,7 @@ function clonePages(src: FeedPage[]): FeedPage[] {
   return src.map((p) => ({ ...p, roots: p.roots.slice() }));
 }
 function snapEntry(affected?: string[] | null): SnapEntry {
+  const context = captureHistoryContext();
   // null/omitted → snapshot the whole working set (safe fallback). Otherwise just
   // the named pages: their FeedPage objects + every node living on them.
   const names = affected ?? doc.pages.map((p) => p.name);
@@ -961,7 +1054,7 @@ function snapEntry(affected?: string[] | null): SnapEntry {
     if (nameSet.has(p.name)) for (const r of p.roots) visit(r);
   }
   const pageObjs = clonePages(pages.filter((p) => nameSet.has(p.name)));
-  return { kind: "snap", pages: affected ?? null, pageObjs, nodes, dirty: names };
+  return { kind: "snap", pages: affected ?? null, pageObjs, nodes, dirty: names, context };
 }
 
 /** Snapshot before a STRUCTURAL op. Pass the affected page name(s) so both the
@@ -993,6 +1086,7 @@ function pushRawUndo(id: string, prevRaw: string) {
     id,
     raw: prevRaw,
     page: node.page,
+    context: captureHistoryContext(),
     ...(rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
   });
   if (undoStack.length > 200) undoStack.shift();
@@ -1012,6 +1106,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       id: e.id,
       raw: node ? node.raw : "",
       page: e.page,
+      context: captureHistoryContext(),
       ...(node && rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
     };
     if (node) {
@@ -1106,19 +1201,53 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
 }
 
 export function undo() {
-  if (!undoStack.length) return;
-  redoStack.push(applyEntry(undoStack.pop()!));
+  const entry = popHistoryEntry(undoStack);
+  if (!entry) return;
+  redoStack.push(applyEntry(entry));
   lastUndoTag = null;
   endEdit("undo");
   scheduleSave();
+  restoreEntryContext(entry.context);
 }
 
 export function redo() {
-  if (!redoStack.length) return;
-  undoStack.push(applyEntry(redoStack.pop()!));
+  const entry = popHistoryEntry(redoStack);
+  if (!entry) return;
+  undoStack.push(applyEntry(entry));
   lastUndoTag = null;
   endEdit("redo");
   scheduleSave();
+  restoreEntryContext(entry.context);
+}
+
+/** Data replay and opposite-stack insertion are complete before this function is
+ * reached. Each UI step is isolated and best-effort, so a missing pane, route,
+ * sidebar surface, or block cannot undo/reorder the already-applied inverse.
+ * OG's restore order and global-mode app-state gate are at
+ * `src/main/frontend/handler/history.cljs:10-60` (OG commit 6e7afa8eb). */
+function restoreEntryContext(context: HistoryContext) {
+  if (!pageOnlyHistoryMode) {
+    if (context.route) {
+      try {
+        historyRouteContextAdapter.restore(context.route);
+      } catch {
+        // Route restoration is best-effort; content replay has already completed.
+      }
+    }
+    try {
+      restoreHistorySidebarContext(context.sidebar);
+    } catch {
+      // Sidebar restoration is best-effort; content replay has already completed.
+    }
+  }
+  if (context.editor) {
+    try {
+      const node = doc.byId[context.editor.blockId];
+      restoreHistoryEditorContext(context.editor, node ? node.raw.length : null);
+    } catch {
+      // Focus/caret restoration is best-effort; content replay has already completed.
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

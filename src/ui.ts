@@ -984,6 +984,11 @@ export interface SidebarBlock {
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
 
+export interface HistorySidebarContext {
+  open: boolean;
+  items: SidebarItem[];
+}
+
 /** Stable presentation identity for one sidebar collection item. Unlike an
  * array index, it survives closing a neighbor and page renames are re-keyed by
  * renamePageInNavigation. */
@@ -1124,6 +1129,19 @@ export function setRightSidebar(items: SidebarItem[]) {
     // ignore
   }
   scheduleSessionSave(); // durable right-sidebar items (localStorage isn't kept)
+}
+
+/** History captures the same sidebar-open/item app state as OG does at
+ * `src/main/frontend/modules/editor/undo_redo.cljs:261-272`
+ * (OG commit 6e7afa8eb). */
+export function captureHistorySidebarContext(): HistorySidebarContext {
+  return { open: rightSidebarOpen(), items: rightSidebar().map((item) => ({ ...item })) };
+}
+
+export function restoreHistorySidebarContext(context: HistorySidebarContext) {
+  const items = context.items.filter(validSidebarItem).map((item) => ({ ...item }));
+  setRightSidebar(items);
+  setRightSidebarOpen(context.open);
 }
 
 export function openPageInSidebar(target: PageTarget): void;
