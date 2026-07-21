@@ -1,4 +1,4 @@
-// Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, or property
+// Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, `<`, or property
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
@@ -9,6 +9,7 @@ export type TriggerKind =
   | "page"
   | "tag"
   | "command"
+  | "advanced-command"
   | "block"
   | "code-language"
   | "property-name"
@@ -103,8 +104,9 @@ export function detectTrigger(
   caret: number,
   propertyValueKey?: string | null,
 ): Trigger | null {
-  // No trigger spans a newline: the `[[` inner forbids it, and `#tag`/`/command`
-  // are anchored at line start or after whitespace. So only the CURRENT line's
+  // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
+  // are anchored at line start or after whitespace, and `<command` starts its
+  // own logical line. So only the CURRENT line's
   // prefix can matter — slicing just that (not the whole `raw[0..caret]`) avoids
   // an O(block length) allocation per keystroke on long blocks. Returned indices
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
@@ -197,6 +199,15 @@ export function detectTrigger(
   if (cmd) {
     const start = lineStart + before.length - cmd[2].length - 1;
     return { kind: "command", query: cmd[2], start, end: caret };
+  }
+
+  // Advanced BEGIN/END sections — Tine intentionally requires a logical line
+  // start, so ordinary prose such as `word<quote` remains literal. OG opens its
+  // block-command action when `<` is typed (og/src/main/frontend/handler/editor.cljs:1901-1905,
+  // checkout 6e7afa8eb); this narrower boundary is the frozen Tine contract.
+  const advanced = /^<([\w-]*)$/.exec(before);
+  if (advanced) {
+    return { kind: "advanced-command", query: advanced[1], start: lineStart, end: caret };
   }
 
   return null;
@@ -554,4 +565,79 @@ export function filterCommands(query: string): Command[] {
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || a.c.matchTieOrder - b.c.matchTieOrder)
     .map((x) => x.c);
+}
+
+export interface AdvancedBlockCommand {
+  label: string;
+  /** Paired Org section text replacing the active `<query` span. */
+  insert: string;
+  /** Caret position on the deliberately blank middle line. */
+  caret: number;
+  readonly matchTieOrder: number;
+}
+
+type AdvancedBlockDefinition = {
+  label: string;
+  type: string;
+  optional?: string;
+};
+
+function advancedBlockDefinition({ label, type, optional }: AdvancedBlockDefinition): Omit<AdvancedBlockCommand, "matchTieOrder"> {
+  const suffix = optional ? ` ${optional}` : "";
+  const opening = `#+BEGIN_${type}${suffix}\n`;
+  // OG ->block (commands.cljs:175-177): for Src the caret lands at the END of
+  // the opening line (to type the language); every other type lands on the
+  // blank middle line.
+  const caret = type === "SRC" ? opening.length - 1 : opening.length;
+  return { label, insert: `${opening}\n#+END_${type}`, caret };
+}
+
+/** OG ->block (commands.cljs:159-177): on a MARKDOWN page the Src command
+ *  inserts a fenced code block instead of the org-style section; caret after
+ *  the opening fence, ready for the language. All other commands and the org
+ *  format keep the paired BEGIN/END text. */
+export function advancedBlockInsertion(
+  command: AdvancedBlockCommand,
+  format: "md" | "org",
+): { insert: string; caret: number } {
+  if (format === "md" && command.label === "Src") {
+    return { insert: "```\n\n```", caret: 3 };
+  }
+  return { insert: command.insert, caret: command.caret };
+}
+
+// OG parity: og/src/main/frontend/commands.cljs:155-180 builds paired BEGIN/END
+// syntax, and :188-218 defines this exact section-command set at 6e7afa8eb.
+// `Properties` is intentionally absent: OG's org-only row invokes ->properties,
+// not ->block, so it is not a BEGIN/END advanced section.
+export const ADVANCED_BLOCK_COMMANDS: readonly AdvancedBlockCommand[] = Object.freeze([
+  { label: "Quote", type: "QUOTE" },
+  { label: "Src", type: "SRC" },
+  { label: "Query", type: "QUERY" },
+  { label: "Latex export", type: "EXPORT", optional: "latex" },
+  { label: "Note", type: "NOTE" },
+  { label: "Tip", type: "TIP" },
+  { label: "Important", type: "IMPORTANT" },
+  { label: "Caution", type: "CAUTION" },
+  { label: "Pinned", type: "PINNED" },
+  { label: "Warning", type: "WARNING" },
+  { label: "Example", type: "EXAMPLE" },
+  { label: "Export", type: "EXPORT" },
+  { label: "Verse", type: "VERSE" },
+  { label: "Ascii", type: "EXPORT", optional: "ascii" },
+  { label: "Center", type: "CENTER" },
+  { label: "Comment", type: "COMMENT" },
+].map((definition, matchTieOrder) => Object.freeze({
+  ...advancedBlockDefinition(definition),
+  matchTieOrder,
+})));
+
+/** Fuzzy `<` menu matching uses the same OG-style scorer as slash commands. */
+export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand[] {
+  if (!query) return ADVANCED_BLOCK_COMMANDS.slice();
+  return ADVANCED_BLOCK_COMMANDS
+    .map((command) => ({ command, score: fuzzyScore(query, command.label) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.command.matchTieOrder - b.command.matchTieOrder)
+    .map(({ command }) => command);
 }

@@ -12,6 +12,8 @@ import {
   tagInsert,
   orderAcItems,
   COMMANDS,
+  advancedBlockInsertion,
+  filterAdvancedBlockCommands,
   commandScore,
   codeLanguageItems,
   fuzzyScore,
@@ -1293,6 +1295,14 @@ export function Editor(props: { id: string }): JSX.Element {
         // a hand-typed one-line fence stays at the end and Enter behaves normally.
         caret: language.id.length + (ref.value[t.end] === "\n" ? 1 : 0),
       })));
+      return;
+    }
+    if (t.kind === "advanced-command") {
+      const fmt = formatForBlockId(props.id);
+      setAcItems(filterAdvancedBlockCommands(t.query).map((command) => {
+        const insertion = advancedBlockInsertion(command, fmt);
+        return { label: command.label, insert: insertion.insert, caret: insertion.caret };
+      }));
       return;
     }
     if (t.kind === "command") {

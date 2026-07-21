@@ -19,6 +19,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Org image links render as images**, like Logseq: in Org pages, a page
   reference pointing at a local image asset (e.g. `[[../assets/pic.png]]`)
   now shows the image instead of a page link.
+- **Direct Hiccup and raw media render**, like Logseq: a Hiccup form typed
+  directly in a block (e.g. `[:span.highlight "text"]`) now renders as real
+  (sanitized) HTML instead of literal source, and raw HTML `<audio controls>`
+  / `<video controls>` play natively. Scripts, iframes, event handlers, and
+  autoplay remain stripped; base64 `data:` images keep working, matching
+  Logseq's sanitizer exactly.
+- **`<` advanced commands**, like Logseq: typing `<` at the start of a line
+  opens the advanced-section menu (Quote, Src, Query, Note, Tip, Warning,
+  Example, Verse, Center, Export variants, Comment…); picking one inserts the
+  paired `#+BEGIN_…/#+END_…` section with the caret ready to type — and on
+  Markdown pages, Src inserts a ``` code fence, exactly as Logseq does.
 
 ### Fixed
 

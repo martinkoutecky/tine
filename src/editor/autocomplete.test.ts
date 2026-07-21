@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import hljs from "highlight.js/lib/common";
 import {
   COMMANDS,
+  ADVANCED_BLOCK_COMMANDS,
+  advancedBlockInsertion,
   commandScore,
   detectTrigger,
   applyCompletion,
@@ -12,6 +14,7 @@ import {
   pageInsert,
   tagInsert,
   filterCommands,
+  filterAdvancedBlockCommands,
   fuzzyScore,
   orderAcItems,
   codeLanguageItems,
@@ -124,6 +127,33 @@ describe("orderAcItems (autocomplete default action)", () => {
 });
 
 describe("detectTrigger", () => {
+  it("detects a line-start < advanced-section trigger and rejects mid-word <", () => {
+    expect(detectTrigger("<qu", 3)).toEqual({
+      kind: "advanced-command", query: "qu", start: 0, end: 3,
+    });
+    expect(detectTrigger("prose<qu", 8)).toBeNull();
+  });
+
+  it("advanced Src follows OG ->block: md fence, org section, caret on the opening line", () => {
+    const src = ADVANCED_BLOCK_COMMANDS.find((c) => c.label === "Src")!;
+    // OG commands.cljs:159-177 @ 6e7afa8eb: markdown Src becomes a fence.
+    expect(advancedBlockInsertion(src, "md")).toEqual({ insert: "```\n\n```", caret: 3 });
+    const org = advancedBlockInsertion(src, "org");
+    expect(org.insert).toBe("#+BEGIN_SRC\n\n#+END_SRC");
+    expect(org.caret).toBe("#+BEGIN_SRC".length); // end of opening line, not middle
+    const quote = ADVANCED_BLOCK_COMMANDS.find((c) => c.label === "Quote")!;
+    expect(advancedBlockInsertion(quote, "md")).toEqual({
+      insert: quote.insert, caret: "#+BEGIN_QUOTE\n".length, // blank middle line
+    });
+  });
+
+  it("keeps the existing command, fence, ref, and tag trigger families unchanged", () => {
+    expect(detectTrigger("/que", 4)).toEqual({ kind: "command", query: "que", start: 0, end: 4 });
+    expect(detectTrigger("```js", 5)).toEqual({ kind: "code-language", query: "js", start: 3, end: 5 });
+    expect(detectTrigger("see [[log", 9)).toEqual({ kind: "page", query: "log", start: 4, end: 9 });
+    expect(detectTrigger("a #pro", 6)).toEqual({ kind: "tag", query: "pro", start: 2, end: 6 });
+  });
+
   it("opens property-name completion only for a fresh logical property line", () => {
     expect(detectTrigger("::", 2)).toEqual({
       kind: "property-name", query: "", start: 0, end: 2,
@@ -421,6 +451,13 @@ describe("filterCommands", () => {
       "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
       "Template var: today", "Template var: yesterday", "Template var: tomorrow", "Template var: current page", "Template var: time", "Template var: date…",
     ]);
+  });
+});
+
+describe("filterAdvancedBlockCommands", () => {
+  it("keeps OG's Quote and Query matches for <qu", () => {
+    expect(filterAdvancedBlockCommands("qu").map((command) => command.label)).toEqual(["Quote", "Query"]);
+    expect(ADVANCED_BLOCK_COMMANDS.map((command) => command.label)).toContain("Comment");
   });
 });
 
