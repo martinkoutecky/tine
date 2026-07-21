@@ -99,7 +99,6 @@ jobs:
             lane: linux-x64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_amd64.AppImage.zsync"
           # Linux ARM64: built NATIVELY on GitHub's aarch64 runner (free on public
           # repos). No cross-compile — GTK/WebKitGTK are system libs that are
           # painful to cross-compile, so we install the arm64 -dev packages on the
@@ -110,7 +109,6 @@ jobs:
             lane: linux-arm64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_aarch64.AppImage.zsync"
           - platform: macos-latest
             lane: macos-universal
             # one universal binary that runs on both Apple Silicon and Intel
@@ -146,7 +144,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev patchelf \
             build-essential curl wget file libssl-dev libxdo-dev \
-            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync
+            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston
 
       - uses: actions/setup-node@v4
         with:
@@ -195,42 +193,7 @@ jobs:
           # re-add the matching env lines:
           #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
-          # linuxdeploy-plugin-appimage passes this to appimagetool, which embeds
-          # the .upd_info section and creates the matching .zsync metadata.
-          UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
         run: npm run tauri build -- ${{ matrix.args }}
-
-      - name: Verify Linux AppImage update information
-        if: startsWith(matrix.platform, 'ubuntu-')
-        run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          case "${{ matrix.lane }}" in
-            linux-x64) arch=amd64 ;;
-            linux-arm64) arch=aarch64 ;;
-            *) echo "::error::unexpected Linux release lane: ${{ matrix.lane }}"; exit 1 ;;
-          esac
-          appimage_dir=./target/release/bundle/appimage
-          appimage="$appimage_dir/Tine_${version}_${arch}.AppImage"
-          zsync_name="Tine_${version}_${arch}.AppImage.zsync"
-          zsync_source=$(find . -maxdepth 1 -type f -name "$zsync_name" -print -quit)
-          if [ -z "$zsync_source" ]; then
-            zsync_source=$(find "$appimage_dir" -maxdepth 1 -type f -name "$zsync_name" -print -quit)
-          fi
-          if [ -z "$zsync_source" ]; then
-            echo "::error::missing AppImage update metadata: $zsync_name"
-            exit 1
-          fi
-          if [ "$zsync_source" != "$appimage_dir/$zsync_name" ]; then
-            mv "$zsync_source" "$appimage_dir/$zsync_name"
-          fi
-          if [ ! -f "$appimage" ] || [ ! -f "$appimage_dir/$zsync_name" ]; then
-            echo "::error::AppImage or update metadata is not staged beside the bundle"
-            exit 1
-          fi
-          if ! readelf --string-dump=.upd_info "$appimage" | grep -Fq 'gh-releases-zsync|'; then
-            echo "::error::AppImage is missing embedded update information"
-            exit 1
-          fi
 
       - name: Write Linux E2E candidate receipt
         if: matrix.lane == 'linux-x64'
