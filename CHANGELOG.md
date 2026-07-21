@@ -54,6 +54,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page containing a malformed HTML fragment (for example `- <div </div><`)
+  no longer breaks the parser or disappears from search — it loads and stays
+  searchable (GH #221, via the lsdoc 0.5.4 update).
 - The `/Today` command now inserts the date in the journal date format your
   graph is configured with (`:journal/page-title-format`) instead of always
   `MMM do, yyyy`, so the link points at the actual journal page (GH #220).

@@ -979,6 +979,32 @@
         "scenario": "search.page-topk-ties-stable-and-input-order-independent",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "NONUI-GH221-LSDOC-PANIC-INDEX",
+      "title": "A page containing a malformed HTML fragment still loads and stays searchable instead of being silently dropped from the index",
+      "family": "parser-robustness",
+      "sources": {
+        "issues": [
+          221
+        ],
+        "commits": [
+          "70976ac"
+        ]
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native-ui",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/gh221_malformed_html.rs"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "Fixed by the lsdoc v0.5.4 pin bump; the fail-before was reproduced on master (lsdoc v0.5.3), where the same test panicked with 'lsdoc v2 parser does not yet own \"md\" input' and page_index_failures listed pages/test-page.md."
     }
   ]
 }
