@@ -569,9 +569,12 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
-    // through this plugin's platform Intent instead (GH #49). Desktop keeps its
-    // env-scrubbed spawn; the plugin is compiled/registered on mobile only.
-    #[cfg(mobile)]
+    // through this plugin's platform Intent instead (GH #49). Windows uses it
+    // for ShellExecute, because `explorer <url>` opens a File Explorer window
+    // instead of the browser (GH #215). `app.opener()` reads this plugin's
+    // state, so both arms need it registered. Linux/macOS keep their
+    // env-scrubbed spawn and do not compile the plugin at all.
+    #[cfg(any(mobile, target_os = "windows"))]
     let builder = builder.plugin(tauri_plugin_opener::init());
 
     builder
