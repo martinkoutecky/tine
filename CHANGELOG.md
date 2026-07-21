@@ -63,6 +63,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **On phones, a PDF can always be closed again.** The reader took over the
+  screen with a toolbar that pushed its own Close button off the edge, and the
+  Android back gesture ignored it — leaving no way out. The reader now fills
+  the screen deliberately, Close sits at the front of the toolbar, the
+  secondary tools move into the "⋯" menu when space is tight, and both the
+  back gesture and Escape close the reader (any open find bar, settings or
+  outline panel closes first).
 - **Splitting a pane from the journals feed no longer opens a random other
   day's bullet.** Because a second journals pane isn't allowed, the new pane
   was filled with the last page you had visited in that tab — reusing its

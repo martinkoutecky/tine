@@ -8073,11 +8073,25 @@ img.emoji {
 .pdf-pane {
   position: relative;
   flex: 0 0 auto;
+  max-width: 100%;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Android/iOS presents a PDF as a deliberate full-width takeover instead of
+   shrinking the notes pane beside an over-wide fixed reader. */
+.pdf-pane-mobile {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-left: 0;
+}
+
+.pdf-pane-mobile .pdf-pane-resizer {
+  display: none;
 }
 
 .pdf-pane-resizer {
@@ -8169,9 +8183,13 @@ img.emoji {
   padding: 0 12px;
   border-bottom: 1px solid var(--border-color);
   background: var(--pdf-toolbar-bg);
+  container-type: inline-size;
+  container-name: pdftoolbar;
 }
 
 .pdf-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: color-mix(in srgb, var(--pdf-local-text) 78%, transparent);
@@ -8184,6 +8202,13 @@ img.emoji {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Close leads the fixed control cluster, so a constrained reader can never
+   clip its only escape action from the far edge. */
+.pdf-close-btn {
   flex: 0 0 auto;
 }
 
@@ -8292,6 +8317,18 @@ img.emoji {
   background: color-mix(in srgb, var(--link-color) 13%, transparent);
 }
 
+/* The reader follows the topbar's container-query overflow pattern: the
+   lower-priority tools remain available from the existing More menu while the
+   pager, Find, zoom +/- and Close stay in the toolbar. */
+@container pdftoolbar (max-width: 520px) {
+  .pdf-toolbar .pdf-overflow-action {
+    display: none;
+  }
+  .pdf-toolbar .pdf-settings-overflow {
+    display: grid;
+  }
+}
+
 .pdf-settings-menu,
 .pdf-outline-panel {
   position: absolute;
@@ -8308,6 +8345,33 @@ img.emoji {
 .pdf-settings-menu {
   min-width: 210px;
   padding: 10px;
+}
+
+.pdf-settings-overflow {
+  /* Only a collapsed toolbar needs these in the menu; a roomy toolbar shows
+     the same actions inline, so listing them twice would be noise. */
+  display: none;
+  gap: 4px;
+  margin: -2px -2px 10px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pdf-settings-overflow button {
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-settings-overflow button:hover,
+.pdf-settings-overflow button[aria-pressed="true"] {
+  border-color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
 }
 
 .pdf-settings-heading,

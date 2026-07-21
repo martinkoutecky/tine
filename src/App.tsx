@@ -1117,7 +1117,15 @@ export function App(): JSX.Element {
           <PaneSelectHint />
           <PaneTree node={layoutRoot()} path={[]} />
           <Show when={pdfTarget()}>
-        <div class="pdf-pane" data-pane-id="pdf" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
+        <div
+          class="pdf-pane"
+          classList={{ "pdf-pane-mobile": isMobilePlatform }}
+          data-pane-id="pdf"
+          style={{
+            flex: isMobilePlatform ? "1 1 100%" : `0 0 ${pdfPaneWidth()}px`,
+            width: isMobilePlatform ? "100%" : `${pdfPaneWidth()}px`,
+          }}
+        >
           <div
             class="pdf-pane-resizer"
             onMouseDown={(e) => {
