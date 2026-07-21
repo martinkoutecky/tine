@@ -116,6 +116,8 @@ strong{font-weight:650}
 .query-count{background:var(--muted);color:var(--bg);border-radius:8px;padding:0 .45em;margin-left:.3em;font-size:.9em}
 .query-results{padding:.3rem .7rem}
 .query-empty{padding:.5rem .7rem;color:var(--muted);font-size:.9em}
+.query-omitted{padding:.35rem .7rem;color:var(--muted);font-size:.82em;border-top:1px solid var(--line)}
+.query-unsupported{border:1px solid #b91c1c;border-radius:8px;margin:.4rem 0;padding:.5rem .7rem;color:#b91c1c;background:#fdeaea;font-size:.9em}
 .embed{border-left:3px solid var(--line);padding:.1rem 0 .1rem .8rem;margin:.35rem 0}
 /* A block embed is already hosted by one outline li. Remove the embedded ul's
    second bullet/connector and the generic embed border, leaving one root marker. */

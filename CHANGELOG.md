@@ -6,7 +6,7 @@ outliner that reads and writes a real Logseq Markdown (and now Org) graph.
 The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.4] - 2026-07-21
 
 ### Added
 

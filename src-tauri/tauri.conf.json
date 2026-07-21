@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tine",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "identifier": "page.tine.Tine",
   "build": {
     "frontendDist": "../dist",
@@ -45,7 +45,7 @@
     "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
     "createUpdaterArtifacts": true,
     "android": {
-      "versionCode": 6003
+      "versionCode": 6004
     },
     "icon": [
       "icons/32x32.png",
