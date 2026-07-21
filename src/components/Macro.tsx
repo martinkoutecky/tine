@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta, pageIdentityKey } from "../ui";
@@ -800,12 +800,91 @@ function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }
   );
 }
 
+interface YoutubePlayer {
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
+  getCurrentTime(): number;
+  destroy?(): void;
+}
+
+interface YoutubeApi {
+  Player: new (iframeId: string, options: { events?: { onReady?: () => void } }) => YoutubePlayer;
+}
+
+type YoutubeWindow = Window & {
+  YT?: YoutubeApi;
+  onYouTubeIframeAPIReady?: () => void;
+};
+
+const youtubePlayers = new Map<string, YoutubePlayer>();
+let youtubeApiLoading: Promise<YoutubeApi | null> | null = null;
+const YOUTUBE_API_SCRIPT_ID = "tine-youtube-iframe-api";
+
+// The API is intentionally fetched only from a mounted YouTube embed. OG does
+// the same mount-time load/register sequence (og-1.0.0 6e7afa8eb,
+// extensions/video/youtube.cljs:20-27, :45-53).
+function loadYoutubeApi(): Promise<YoutubeApi | null> {
+  if (typeof window === "undefined" || typeof document === "undefined") return Promise.resolve(null);
+  const ytWindow = window as YoutubeWindow;
+  if (ytWindow.YT?.Player) return Promise.resolve(ytWindow.YT);
+  if (youtubeApiLoading) return youtubeApiLoading;
+
+  youtubeApiLoading = new Promise((resolve) => {
+    let settled = false;
+    const settle = (api: YoutubeApi | undefined) => {
+      if (settled) return;
+      settled = true;
+      resolve(api?.Player ? api : null);
+    };
+    const priorReady = ytWindow.onYouTubeIframeAPIReady;
+    ytWindow.onYouTubeIframeAPIReady = () => {
+      try {
+        priorReady?.();
+      } finally {
+        settle(ytWindow.YT);
+      }
+    };
+    let script = document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
+      script.id = YOUTUBE_API_SCRIPT_ID;
+      script.async = true;
+      script.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(script);
+    }
+    script.addEventListener("error", () => settle(undefined), { once: true });
+  });
+  return youtubeApiLoading;
+}
+
+// OG's get-player selects the last YouTube iframe whose DOM position precedes
+// the target (compareDocumentPosition(..., target) has FOLLOWING set), then
+// looks up that iframe's registered handle (og-1.0.0 6e7afa8eb,
+// extensions/video/youtube.cljs:85-101).
+export function youtubePlayerForTarget(target: Node): YoutubePlayer | undefined {
+  if (typeof document === "undefined" || typeof Node === "undefined") return undefined;
+  const iframe = Array.from(document.getElementsByTagName("iframe"))
+    .filter((node) => node.src.includes("youtube.com"))
+    .filter((node) => (node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+    .at(-1);
+  return iframe ? youtubePlayers.get(iframe.id) : undefined;
+}
+
+// The OG generator floors getCurrentTime before it formats the macro; with no
+// registered/ready player it produces NOTHING — the command is a no-op, no
+// macro is inserted (og-1.0.0 6e7afa8eb, extensions/video/youtube.cljs:113-122).
+export function youtubeTimestampMacroFor(target: Node): string | null {
+  const seconds = youtubePlayerForTarget(target)?.getCurrentTime();
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
+  return `{{youtube-timestamp ${Math.max(0, Math.floor(seconds))}}}`;
+}
+
 // A {{video}} / {{youtube}} / {{vimeo}} / {{bilibili}} macro: embeds YouTube,
 // Vimeo or Bilibili as an iframe and direct media files as a <video>. Each of the
 // provider-named macros also accepts a bare id (e.g. `{{vimeo 12345}}`), matching
 // OG; the generic `{{video URL}}` sniffs the provider from the URL. Falls back to a
 // link. (`youtube-timestamp` is a SEPARATE macro — handled before this one.)
 export function VideoMacro(props: { body: string }): JSX.Element {
+  const iframeId = `youtube-player-${createUniqueId()}`;
   const parsed = () => {
     const m = /^(\w+)\s*([\s\S]*)$/.exec(props.body.trim());
     const name = (m?.[1] ?? "video").toLowerCase();
@@ -846,6 +925,31 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       return { allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope" };
     return {};
   };
+  const isYoutubeEmbed = () => /(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(embed() ?? "");
+  let player: YoutubePlayer | undefined;
+  onMount(() => {
+    if (!isYoutubeEmbed()) return;
+    let mounted = true;
+    void loadYoutubeApi().then((api) => {
+      if (!mounted || !api) return;
+      try {
+        const registered = new api.Player(iframeId, { events: { onReady: () => undefined } });
+        if (!mounted) {
+          registered.destroy?.();
+          return;
+        }
+        player = registered;
+        youtubePlayers.set(iframeId, registered);
+      } catch {
+        // Offline, blocked, or malformed API responses leave the timestamp label usable.
+      }
+    });
+    onCleanup(() => {
+      mounted = false;
+      if (youtubePlayers.get(iframeId) === player) youtubePlayers.delete(iframeId);
+      player?.destroy?.();
+    });
+  });
   return (
     <Show
       when={embed()}
@@ -859,7 +963,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       }
     >
       <div class="embed-iframe-wrap">
-        <iframe class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
+        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
       </div>
     </Show>
   );
@@ -876,10 +980,7 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   );
 }
 
-// `{{youtube-timestamp <seconds>}}` — OG makes this seek a sibling on-page YouTube
-// player via the IFrame Player API. Tine embeds YouTube as a bare <iframe> with no
-// player handle, so there's nothing to drive; we degrade to a styled, formatted
-// timestamp label (m:ss / h:mm:ss). Flagged as a known parity gap.
+// `{{youtube-timestamp <seconds>}}` seeks the OG-selected on-page YouTube player.
 export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   const secs = () => {
     const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
@@ -895,9 +996,20 @@ export function YoutubeTimestamp(props: { body: string }): JSX.Element {
     return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
   };
   return (
-    <span class="youtube-ts" title="YouTube-player seeking isn't supported yet (the embed is a bare iframe)">
+    <a
+      class="youtube-ts"
+      title="Seek the preceding YouTube video"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // OG timestamp click stops the event and calls seekTo(seconds, true)
+        // on get-player's result (og-1.0.0 6e7afa8eb,
+        // extensions/video/youtube.cljs:103-111).
+        youtubePlayerForTarget(event.currentTarget)?.seekTo(secs(), true);
+      }}
+    >
       ⏱ {label()}
-    </span>
+    </a>
   );
 }
 

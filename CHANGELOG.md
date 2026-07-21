@@ -25,6 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   / `<video controls>` play natively. Scripts, iframes, event handlers, and
   autoplay remain stripped; base64 `data:` images keep working, matching
   Logseq's sanitizer exactly.
+- **YouTube timestamps**, like Logseq: `{{youtube-timestamp}}` stamps are now
+  clickable and seek the embedded YouTube video, and a new "Embed Youtube
+  timestamp" slash command inserts the current playback time. Works offline
+  too — without a player the stamp stays a plain label.
 - **`<` advanced commands**, like Logseq: typing `<` at the start of a line
   opens the advanced-section menu (Quote, Src, Query, Note, Tip, Warning,
   Example, Verse, Center, Export variants, Comment…); picking one inserts the

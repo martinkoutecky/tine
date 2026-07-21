@@ -379,7 +379,8 @@ export type CommandAction =
   | "heading-1"
   | "heading-2"
   | "heading-3"
-  | "heading-4";
+  | "heading-4"
+  | "youtube-timestamp";
 
 export interface Command {
   label: string;
@@ -448,6 +449,9 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   { label: "Query", insert: "{{query }}", caret: 8 },
   { label: "Query (visual builder)", action: "query-builder" },
   { label: "Embed", insert: "{{embed }}", caret: 8 },
+  // OG's slash entry is named "Embed Youtube timestamp" (og-1.0.0
+  // 6e7afa8eb, commands.cljs:294-300).
+  { label: "Embed Youtube timestamp", action: "youtube-timestamp" },
   { label: "Math block", insert: "$$$$", caret: 2 },
   { label: "Current time", action: "now-time" },
   { label: "Today", action: "today" },
@@ -467,7 +471,7 @@ const BARE_ORDER = new Map<string, number>([
   "Grid", "Table", "Board",
   "Code block", "Calculator", "Quote",
   "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
-  "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
+  "Divider", "Query", "Query (visual builder)", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
 ].map((label, index) => [label, index]));
 
 /** One registry drives rendering, matching, selection and tests. The old

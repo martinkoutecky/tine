@@ -127,7 +127,7 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
-import { QueryMacro, EmbedMacro } from "./Macro";
+import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openInNewTab } from "../router";
@@ -2027,6 +2027,13 @@ export function Editor(props: { id: string }): JSX.Element {
       case "now-time":
         replaceTrigger(timeStamp());
         return;
+      case "youtube-timestamp": {
+        // OG inserts nothing when no player is registered/ready
+        // (youtube.cljs:113-122) — the slash text is still consumed.
+        const macro = youtubeTimestampMacroFor(ref);
+        replaceTrigger(macro ?? "");
+        return;
+      }
       case "page-reference":
         // Page reference is a chained command: no GH #35 continuation space,
         // then the ordinary trigger detector owns the blank page lifecycle.

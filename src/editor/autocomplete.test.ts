@@ -378,7 +378,9 @@ describe("filterCommands", () => {
   const mergedRanking = (query: string): string[] => {
     const showAllTemplates = !!query && "template".startsWith(query.toLowerCase());
     return [
-      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)").map((command) => ({
+      // The fixture predates this deliberately additive command; keep using it
+      // to freeze all of the old command/template rankings.
+      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)" && command.label !== "Embed Youtube timestamp").map((command) => ({
         label: command.label,
         score: commandScore(query, command),
         index: command.matchTieOrder,
@@ -414,6 +416,7 @@ describe("filterCommands", () => {
     // Action commands surface too.
     expect(filterCommands("scheduled").map((c) => c.label)).toEqual(["Scheduled"]);
     expect(filterCommands("upload").map((c) => c.label)).toEqual(["Upload an asset"]);
+    expect(filterCommands("youtube").map((c) => c.label)).toEqual(["Embed Youtube timestamp"]);
   });
 
   it("routes automatic and explicit heading slash commands through heading actions", () => {
@@ -448,7 +451,7 @@ describe("filterCommands", () => {
       "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
       "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
       "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
-      "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
+      "Divider", "Query", "Query (visual builder)", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
       "Template var: today", "Template var: yesterday", "Template var: tomorrow", "Template var: current page", "Template var: time", "Template var: date…",
     ]);
   });
