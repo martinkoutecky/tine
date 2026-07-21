@@ -799,9 +799,12 @@ export function VideoMacro(props: { body: string }): JSX.Element {
   const url = () => parsed().arg;
   const embed = () => {
     const { name, arg } = parsed();
+    // `?enablejsapi=1` matches OG (youtube.cljs:58) and, together with the
+    // referrerpolicy below, is what makes the embed play under WebKitGTK — a bare
+    // src with no referrer is rejected by YouTube's player as error 153.
     const yt = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
-    if (yt) return `https://www.youtube.com/embed/${yt[1]}`;
-    if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}`;
+    if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
+    if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
     const vimeo = /vimeo\.com\/(\d+)/.exec(arg);
     if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
     if (name === "vimeo" && /^\d+$/.test(arg)) return `https://player.vimeo.com/video/${arg}`;
@@ -809,6 +812,23 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     const bvid = bili ? bili[1] : name === "bilibili" && /^BV[0-9A-Za-z]+$/.test(arg) ? arg : null;
     if (bvid) return `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1`;
     return null;
+  };
+  // OG parity (og-1.0.0 6e7afa8eb): the embed iframe's `allow`/`referrerpolicy`.
+  // YouTube (youtube.cljs:54-70) sends a `strict-origin-when-cross-origin`
+  // referrer so the app origin reaches YouTube — without a referrer the player
+  // fails with error 153. Vimeo (block.cljs:1290-1305) gets the same `allow` list
+  // minus picture-in-picture/web-share and NO referrerpolicy; bilibili sets
+  // neither (the `.embed-iframe` class already removes the border).
+  const embedAttrs = (): Record<string, string> => {
+    const src = embed() ?? "";
+    if (/(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(src))
+      return {
+        allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+        referrerpolicy: "strict-origin-when-cross-origin",
+      };
+    if (src.includes("player.vimeo.com"))
+      return { allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope" };
+    return {};
   };
   return (
     <Show
@@ -823,7 +843,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       }
     >
       <div class="embed-iframe-wrap">
-        <iframe class="embed-iframe" src={embed()!} allowfullscreen title="video" />
+        <iframe class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
       </div>
     </Show>
   );

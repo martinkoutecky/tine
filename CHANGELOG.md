@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **YouTube (and Vimeo) embeds now play** instead of failing with the player's
+  "error 153". A `{{youtube …}}`/`{{video …}}` embed — and a pasted raw
+  `<iframe>` pointing at a video host — now sends the app origin as its referrer
+  (`referrerpolicy="strict-origin-when-cross-origin"`) and the standard media
+  `allow` permissions, matching Logseq; YouTube rejects an embed that arrives
+  with no referrer. Raw `<iframe>`s to any other host keep `no-referrer`, so an
+  arbitrary embed still can't see where it was opened from.
 - A bare remote media URL now **renders inline**, like Logseq: a plain
   `https://…/photo.jpg` (or `.png`/`.gif`/`.webp`/…) shows the image, and a bare
   `.mp4`/`.webm`/`.mp3`/… URL shows a video/audio player, instead of a raw link.

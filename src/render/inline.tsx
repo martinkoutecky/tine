@@ -453,11 +453,25 @@ function renderTimestamp(s: TimestampInline): JSX.Element {
   );
 }
 
+// Video-embed hosts (youtube/vimeo/loom/bilibili) that reject an embed when it
+// arrives with no referrer — YouTube in particular fails with error 153. For
+// those we send the app origin (`strict-origin-when-cross-origin`), matching OG
+// (og-1.0.0 youtube.cljs:63). Every other pasted `<iframe>` keeps `no-referrer`
+// so an arbitrary third-party embed still can't see where it was opened from.
+const EMBED_REFERRER_HOSTS =
+  /(?:^|\.)(?:youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|bilibili\.com)$/i;
+function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "no-referrer" {
+  // Extract the host with a regex rather than `new URL()` — the referrer decision
+  // must not depend on a global others can shim, and a malformed src stays private.
+  const host = /^https?:\/\/([^/?#]+)/i.exec(src)?.[1]?.replace(/^[^@]*@/, "").replace(/:.*$/, "") ?? "";
+  return EMBED_REFERRER_HOSTS.test(host) ? "strict-origin-when-cross-origin" : "no-referrer";
+}
+
 // Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
 function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   return (
     <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
-      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer" title="embed" />
+      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title="embed" />
     </span>
   );
 }

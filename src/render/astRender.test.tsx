@@ -271,6 +271,63 @@ describe("renderInlines", () => {
       styleEmbed.dispose();
     }
   });
+
+  // Catalog UI-YOUTUBE-EMBED-153-001 / og-parity youtube-embed-playback.
+  // A YouTube embed iframe that loads with no referrer is rejected by YouTube's
+  // player as error 153; OG (youtube.cljs:54-70) sends the app origin via
+  // referrerpolicy + the allow list + ?enablejsapi=1.
+  const mountIframeEl = (node: () => JSX.Element): { iframe: HTMLIFrameElement; dispose: () => void } => {
+    const div = document.createElement("div");
+    const dispose = render(node, div);
+    const iframe = div.querySelector("iframe");
+    if (!iframe) {
+      dispose();
+      throw new Error(`expected iframe in ${div.innerHTML}`);
+    }
+    return { iframe, dispose };
+  };
+
+  it("youtube macro embed sends a referrer + enablejsapi (no error 153)", () => {
+    const { iframe, dispose } = mountIframeEl(() => renderInlines([{ k: "macro", name: "youtube", args: ["dQw4w9WgXcQ"] }]));
+    try {
+      expect(iframe.getAttribute("src")).toBe("https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1");
+      expect(iframe.getAttribute("referrerpolicy")).toBe("strict-origin-when-cross-origin");
+      expect(iframe.getAttribute("allow")).toContain("encrypted-media");
+      expect(iframe.getAttribute("allow")).toContain("picture-in-picture");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("vimeo macro embed gets the OG allow list and no referrerpolicy", () => {
+    const { iframe, dispose } = mountIframeEl(() => renderInlines([{ k: "macro", name: "vimeo", args: ["123456789"] }]));
+    try {
+      expect(iframe.getAttribute("src")).toBe("https://player.vimeo.com/video/123456789");
+      expect(iframe.getAttribute("allow")).toContain("encrypted-media");
+      expect(iframe.getAttribute("allow")).not.toContain("web-share");
+      expect(iframe.getAttribute("referrerpolicy")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("raw-HTML youtube iframe sends the app origin as referrer, not no-referrer", () => {
+    const { wrap, dispose } = mountedIframeWrap('<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>');
+    try {
+      expect(wrap.querySelector("iframe")!.getAttribute("referrerpolicy")).toBe("strict-origin-when-cross-origin");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("raw-HTML non-video iframe keeps no-referrer (privacy preserved)", () => {
+    const { wrap, dispose } = mountedIframeWrap('<iframe src="https://example.com/widget"></iframe>');
+    try {
+      expect(wrap.querySelector("iframe")!.getAttribute("referrerpolicy")).toBe("no-referrer");
+    } finally {
+      dispose();
+    }
+  });
 });
 
 describe("renderBlocks", () => {
