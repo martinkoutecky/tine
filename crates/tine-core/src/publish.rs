@@ -915,6 +915,277 @@ fn body_blocks(raw: &str) -> Vec<Block> {
         .collect()
 }
 
+struct BeginQuery {
+    title: Option<String>,
+    query: String,
+}
+
+enum BeginQueryInspection {
+    Supported(BeginQuery),
+    Unsupported,
+}
+
+/// Return the authored payload only when `raw` is exactly one terminated
+/// `#+BEGIN_QUERY` container. This mirrors `WHOLE_BEGIN_QUERY` in the frontend:
+/// spaces/tabs are accepted around the delimiters, all three line endings are
+/// accepted, and neither a prefix nor a suffix may share the block.
+fn whole_begin_query_payload(raw: &str) -> Option<&str> {
+    const BEGIN: &str = "#+BEGIN_QUERY";
+    const END: &str = "#+END_QUERY";
+
+    let bytes = raw.as_bytes();
+    let mut begin = 0;
+    while matches!(bytes.get(begin), Some(b' ' | b'\t')) {
+        begin += 1;
+    }
+    let begin_end = begin.checked_add(BEGIN.len())?;
+    if !raw.get(begin..begin_end)?.eq_ignore_ascii_case(BEGIN) {
+        return None;
+    }
+    let mut payload_start = begin_end;
+    while matches!(bytes.get(payload_start), Some(b' ' | b'\t')) {
+        payload_start += 1;
+    }
+    payload_start += match bytes.get(payload_start) {
+        Some(b'\r') if bytes.get(payload_start + 1) == Some(&b'\n') => 2,
+        Some(b'\r' | b'\n') => 1,
+        _ => return None,
+    };
+
+    // JavaScript's terminal `$` accepts one final line ending. Account for it
+    // before locating the closing-delimiter line.
+    let mut closing_end = raw.len();
+    if raw[..closing_end].ends_with("\r\n") {
+        closing_end -= 2;
+    } else if matches!(bytes.get(closing_end.wrapping_sub(1)), Some(b'\r' | b'\n')) {
+        closing_end -= 1;
+    }
+    while closing_end > payload_start && matches!(bytes[closing_end - 1], b' ' | b'\t') {
+        closing_end -= 1;
+    }
+
+    let mut newline_start = closing_end;
+    while newline_start > payload_start && !matches!(bytes[newline_start - 1], b'\r' | b'\n') {
+        newline_start -= 1;
+    }
+    if newline_start == payload_start {
+        return None;
+    }
+    let closing_line_start = newline_start;
+    newline_start -= 1;
+    if bytes[newline_start] == b'\n'
+        && newline_start > payload_start
+        && bytes[newline_start - 1] == b'\r'
+    {
+        newline_start -= 1;
+    }
+    let mut delimiter_start = closing_line_start;
+    while delimiter_start < closing_end && matches!(bytes[delimiter_start], b' ' | b'\t') {
+        delimiter_start += 1;
+    }
+    if !raw
+        .get(delimiter_start..closing_end)?
+        .eq_ignore_ascii_case(END)
+    {
+        return None;
+    }
+    Some(&raw[payload_start..newline_start])
+}
+
+fn skip_edn_trivia(source: &str, mut from: usize) -> usize {
+    while from < source.len() {
+        let c = source[from..].chars().next().expect("in bounds");
+        if c.is_whitespace() || c == ',' {
+            from += c.len_utf8();
+        } else if c == ';' {
+            from += 1;
+            while from < source.len() && !matches!(source.as_bytes()[from], b'\n' | b'\r') {
+                from += 1;
+            }
+        } else {
+            break;
+        }
+    }
+    from
+}
+
+fn edn_string_end(source: &str, from: usize) -> Option<usize> {
+    let mut at = from + 1;
+    while at < source.len() {
+        let c = source[at..].chars().next()?;
+        if c == '\\' {
+            at += 1;
+            let escaped = source.get(at..)?.chars().next()?;
+            at += escaped.len_utf8();
+        } else if c == '"' {
+            return Some(at + 1);
+        } else {
+            at += c.len_utf8();
+        }
+    }
+    None
+}
+
+fn edn_balanced_end(source: &str, from: usize) -> Option<usize> {
+    fn closer(c: char) -> Option<char> {
+        match c {
+            '(' => Some(')'),
+            '[' => Some(']'),
+            '{' => Some('}'),
+            _ => None,
+        }
+    }
+
+    let first = source.get(from..)?.chars().next()?;
+    let mut stack = vec![closer(first)?];
+    let mut at = from + first.len_utf8();
+    while at < source.len() {
+        let c = source[at..].chars().next()?;
+        if c == '"' {
+            at = edn_string_end(source, at)?;
+            continue;
+        }
+        if c == ';' {
+            while at < source.len() && !matches!(source.as_bytes()[at], b'\n' | b'\r') {
+                at += 1;
+            }
+            continue;
+        }
+        if let Some(close) = closer(c) {
+            stack.push(close);
+        } else if matches!(c, ')' | ']' | '}') {
+            if stack.pop() != Some(c) {
+                return None;
+            }
+            if stack.is_empty() {
+                return Some(at + c.len_utf8());
+            }
+        }
+        at += c.len_utf8();
+    }
+    None
+}
+
+fn edn_token_end(source: &str, mut from: usize) -> usize {
+    while from < source.len() {
+        let c = source[from..].chars().next().expect("in bounds");
+        if c.is_whitespace() || c == ',' || matches!(c, '(' | ')' | '[' | ']' | '{' | '}') {
+            break;
+        }
+        from += c.len_utf8();
+    }
+    from
+}
+
+fn edn_value_end(source: &str, from: usize) -> Option<usize> {
+    match source.get(from..)?.chars().next()? {
+        '"' => edn_string_end(source, from),
+        '(' | '[' | '{' => edn_balanced_end(source, from),
+        _ => {
+            let end = edn_token_end(source, from);
+            (end > from).then_some(end)
+        }
+    }
+}
+
+fn unquote_begin_query_title(inner: &str) -> String {
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek().copied() {
+                Some('\n' | '\r') | None => out.push(c),
+                Some(_) => out.push(chars.next().expect("peeked character")),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn has_edn_keyword(source: &str, keyword: &str) -> bool {
+    source.match_indices(keyword).any(|(start, _)| {
+        source[start + keyword.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+    })
+}
+
+fn parse_begin_query_map(payload: &str) -> Option<BeginQuery> {
+    let source = payload.trim();
+    if !source.starts_with('{') {
+        return None;
+    }
+    let map_end = edn_balanced_end(source, 0)?;
+    if skip_edn_trivia(source, map_end) != source.len() {
+        return None;
+    }
+
+    let mut title = None;
+    let mut query = None;
+    let mut at = 1;
+    while at < map_end - 1 {
+        at = skip_edn_trivia(source, at);
+        if at >= map_end - 1 {
+            break;
+        }
+        if source.as_bytes()[at] != b':' {
+            return None;
+        }
+        let key_end = edn_token_end(source, at);
+        let key = &source[at..key_end];
+        at = skip_edn_trivia(source, key_end);
+        let value_end = edn_value_end(source, at)?;
+        if value_end > map_end - 1 {
+            return None;
+        }
+        let value = &source[at..value_end];
+        match key {
+            ":query" if query.is_none() => query = Some(value.to_string()),
+            ":query" => return None,
+            ":title" if title.is_none() && value.starts_with('"') => {
+                title = Some(unquote_begin_query_title(&value[1..value.len() - 1]));
+            }
+            ":title" => return None,
+            _ => {}
+        }
+        at = value_end;
+    }
+
+    let query = query?;
+    if !query.starts_with('[')
+        || !has_edn_keyword(&query, ":find")
+        || !has_edn_keyword(&query, ":where")
+    {
+        return None;
+    }
+    Some(BeginQuery { title, query })
+}
+
+/// Inspect raw authored text and use the parsed AST only as a confirmation that
+/// the whole container is the one custom/query node the frontend would dispatch.
+/// EDN is always sliced from `raw`; rendered/flattened AST text is never rebuilt.
+fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspection> {
+    let payload = whole_begin_query_payload(raw)?;
+    let body = if matches!(
+        blocks.first(),
+        Some(Block::Bullet { .. } | Block::Heading { .. })
+    ) {
+        &blocks[1..]
+    } else {
+        blocks
+    };
+    if !matches!(body, [Block::Custom { name, .. }] if name.eq_ignore_ascii_case("query")) {
+        return Some(BeginQueryInspection::Unsupported);
+    }
+    Some(match parse_begin_query_map(payload) {
+        Some(query) => BeginQueryInspection::Supported(query),
+        None => BeginQueryInspection::Unsupported,
+    })
+}
+
 /// The first visible block's plain text — a `((block ref))`'s shown label when it has none.
 fn ref_target_text(raw: &str) -> String {
     let first: Vec<Block> = body_blocks(raw).into_iter().take(1).collect();
@@ -1165,6 +1436,16 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
 
 /// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
+    render_query_with_title(graph, src, None, ctx, depth)
+}
+
+fn render_query_with_title(
+    graph: &Graph,
+    src: &str,
+    title: Option<&str>,
+    ctx: &Ctx,
+    depth: u8,
+) -> String {
     const STATIC_QUERY_MAX_ROWS: usize = 20_000;
     const STATIC_QUERY_MAX_BYTES: usize = 32 * 1024 * 1024;
     if !crate::query::query_source_within_limit(src) {
@@ -1244,14 +1525,17 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
     // engine, but results from pages outside the pass-1 public capability must
     // never cross into generated HTML. Print export has no page capability and
     // deliberately retains its existing whole-graph behavior.
+    let pre_filter_total: usize = bounded.groups.iter().map(|group| group.blocks.len()).sum();
     let groups: Vec<RefGroup> = bounded
         .groups
         .into_iter()
         .filter(|group| publish_page_allowed(ctx, &group.page))
         .collect();
     let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
+    let omitted = pre_filter_total.saturating_sub(total);
     let mut out = format!(
-        "<div class=\"query\"><div class=\"query-head\">Query <span class=\"query-count\">{}</span></div>",
+        "<div class=\"query\"><div class=\"query-head\">{} <span class=\"query-count\">{}</span></div>",
+        esc(title.unwrap_or("Query")),
         total
     );
     if total == 0 {
@@ -1260,6 +1544,13 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
         out.push_str("<ul class=\"query-results\">");
         render_query_groups(graph, &groups, &mut out, ctx, depth);
         out.push_str("</ul>");
+    }
+    if omitted > 0 {
+        out.push_str(&format!(
+            "<div class=\"query-omitted\">{} result{} on non-public pages omitted.</div>",
+            omitted,
+            if omitted == 1 { "" } else { "s" }
+        ));
     }
     out.push_str("</div>");
     out
@@ -1447,6 +1738,10 @@ fn render_block(
     // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
     // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
     let blocks = body_blocks(&b.raw);
+    // BEGIN_QUERY is a static-site feature. The print context deliberately has
+    // no public-page capability (`pages: None`) and retains its prior rendering
+    // and whole-graph query behavior.
+    let begin_query = ctx.pages.and_then(|_| inspect_begin_query(&b.raw, &blocks));
 
     // Every block gets a stable anchor so a search hit can deep-link straight to it: its
     // `id::` uuid when present, else a generated per-page `b{n}` (never collides with a
@@ -1461,7 +1756,14 @@ fn render_block(
         }
     };
     out.push_str(&format!("<li id=\"{}\">", esc_attr(&anchor)));
-    let text = ast_plain_text(&blocks);
+    // The container payload is executable/configuration source, not visible
+    // page prose. In particular, malformed payload bytes must not be copied to
+    // the publication search index after the visible block fails closed.
+    let text = if begin_query.is_some() {
+        String::new()
+    } else {
+        ast_plain_text(&blocks)
+    };
     if !text.is_empty() {
         index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
     }
@@ -1476,7 +1778,25 @@ fn render_block(
         "<div class=\"b\">"
     });
     emit_header_facets(b.marker(), b.priority(), out);
-    out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
+    match &begin_query {
+        Some(BeginQueryInspection::Supported(begin)) => {
+            if let Some(graph) = ctx.graph {
+                out.push_str(&render_query_with_title(
+                    graph,
+                    &begin.query,
+                    begin.title.as_deref(),
+                    ctx,
+                    0,
+                ));
+            } else {
+                out.push_str("<div class=\"query-unsupported begin-query-unsupported\" role=\"alert\">Unsupported BEGIN_QUERY.</div>");
+            }
+        }
+        Some(BeginQueryInspection::Unsupported) => out.push_str(
+            "<div class=\"query-unsupported begin-query-unsupported\" role=\"alert\">Unsupported BEGIN_QUERY.</div>",
+        ),
+        None => out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0)),
+    }
     out.push_str("</div>");
     emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
     if let (Some(id), Some(reverse)) = (block_id(&b.raw), ctx.reverse_refs) {
@@ -1926,6 +2246,8 @@ strong{font-weight:650}
 .query-count{background:var(--muted);color:var(--bg);border-radius:8px;padding:0 .45em;margin-left:.3em;font-size:.9em}
 .query-results{padding:.3rem .7rem}
 .query-empty{padding:.5rem .7rem;color:var(--muted);font-size:.9em}
+.query-omitted{padding:.35rem .7rem;color:var(--muted);font-size:.82em;border-top:1px solid var(--line)}
+.query-unsupported{border:1px solid #b91c1c;border-radius:8px;margin:.4rem 0;padding:.5rem .7rem;color:#b91c1c;background:#fdeaea;font-size:.9em}
 .embed{border-left:3px solid var(--line);padding:.1rem 0 .1rem .8rem;margin:.35rem 0}
 /* A block embed is already hosted by one outline li. Remove the embedded ul's
    second bullet/connector and the generic embed border, leaving one root marker. */
@@ -2405,9 +2727,12 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // Pass 1: parse every page, keep only the public ones. `entries` is already
+    // Pass 1: parse every page into one immutable query snapshot, while keeping
+    // only authorized pages in the publication projection. `entries` is already
     // sorted by name, so `public` (and hence the slug assignment below) is
-    // deterministic across runs.
+    // deterministic across runs. Queries need the complete fresh snapshot so
+    // the renderer can honestly count matches omitted by the public capability;
+    // result hydration still comes exclusively from `public` below.
     let mut public: Vec<(&str, PageKind, Arc<doc::Document>)> = Vec::new();
     let mut snapshot_pages = Vec::new();
     for e in entries {
@@ -2422,7 +2747,11 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         } else {
             doc::parse(&content)
         };
-        if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
+        let is_public = all_public || page_is_public(parsed.pre_block.as_deref());
+        crate::model::assign_doc_uuids(&mut parsed.roots);
+        let parsed = Arc::new(parsed);
+        snapshot_pages.push((e.clone(), Arc::clone(&parsed)));
+        if !is_public {
             continue;
         }
         if source_identity_counts
@@ -2437,16 +2766,14 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             );
             continue;
         }
-        crate::model::assign_doc_uuids(&mut parsed.roots);
-        let parsed = Arc::new(parsed);
         public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
-        snapshot_pages.push((e.clone(), parsed));
     }
 
     // Every downstream resolver gets the same exact document revision as the
-    // visibility pass. The snapshot graph has an empty private root and a fully
-    // preinstalled cache/page list, so a query/embed/namespace lookup cannot
-    // fall through to the live graph or a stale pre-export cache.
+    // visibility pass. The snapshot graph has a fully preinstalled cache/page
+    // list, so a query cannot fall through to the live graph or a stale
+    // pre-export cache. The render context's public-page map remains the sole
+    // capability for hydrating any query/embed/namespace result into HTML.
     let snapshot = PublicationGraphSnapshot::new(snapshot_pages)?;
 
     // ONE source of truth: a unique, nonempty name→slug map for the exported set.
@@ -3499,6 +3826,122 @@ mod tests {
             !folded.contains("hidden child text"),
             "folded hides collapsed children"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_begin_query_renders_authored_title_and_results() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-begin-query-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Tasks.md"),
+            "- TODO BEGIN_QUERY_PUBLIC_RESULT\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            "- #+BEGIN_QUERY\n  {:title \"Open work\"\n   :query [:find (pull ?b [*]) :where (task ?b \"TODO\")]}\n  #+END_QUERY\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, _) = publish_graph(&graph).unwrap();
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+
+        assert!(
+            dashboard.contains("class=\"query-head\">Open work"),
+            "{dashboard}"
+        );
+        assert!(
+            dashboard.contains("BEGIN_QUERY_PUBLIC_RESULT"),
+            "{dashboard}"
+        );
+        assert!(!dashboard.contains("class=\"query-omitted\""), "{dashboard}");
+        assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
+        assert!(!dashboard.contains("#+END_QUERY"), "{dashboard}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_begin_query_reports_private_rows_without_leaking_them() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-begin-query-private-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            "public:: true\n- #+BEGIN_QUERY\n  {:title \"Private-aware work\"\n   :query [:find (pull ?b [*]) :where (task ?b \"TODO\")]}\n  #+END_QUERY\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Secret.md"),
+            "- TODO PRIVATE_BEGIN_QUERY_RESULT_MUST_NOT_LEAK\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+
+        assert!(dashboard.contains("class=\"query-omitted\""), "{dashboard}");
+        assert!(
+            dashboard.contains("1 result on non-public pages omitted."),
+            "{dashboard}"
+        );
+        assert!(
+            !dashboard.contains("PRIVATE_BEGIN_QUERY_RESULT_MUST_NOT_LEAK"),
+            "{dashboard}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_malformed_begin_query_is_inert_and_hides_its_payload() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-begin-query-malformed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            "public:: true\n- #+BEGIN_QUERY\n  {:title \"MALFORMED_BEGIN_QUERY_PAYLOAD\" :query (task TODO)}\n  #+END_QUERY\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, _) = publish_graph(&graph).unwrap();
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+
+        assert!(
+            dashboard.contains("class=\"query-unsupported begin-query-unsupported\""),
+            "{dashboard}"
+        );
+        assert!(
+            !dashboard.contains("MALFORMED_BEGIN_QUERY_PAYLOAD"),
+            "{dashboard}"
+        );
+        assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
+        assert!(!dashboard.contains("#+END_QUERY"), "{dashboard}");
         let _ = fs::remove_dir_all(&dir);
     }
 

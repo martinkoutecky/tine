@@ -273,6 +273,28 @@
       }
     },
     {
+      "id": "REG-PUBLISH-BEGIN-QUERY-EXEC-001",
+      "title": "Static publish executes #+BEGIN_QUERY blocks (title + bounded results) through the same public-only capability as {{query}}; rows filtered as non-public are reported as a count only, and malformed payloads fail closed (no raw payload in HTML or the search index)",
+      "family": "privacy",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/publish.rs"
+        ],
+        "scenario": "publish.begin-query-execution-public-capability",
+        "failBefore": "proven"
+      },
+      "notes": "Martin-approved Q2 delta (2026-07-21 sweep). Publish already ran {{query}} via render_query with publish_page_allowed filtering; BEGIN_QUERY containers were inert source. Now: whole-container detection mirrors the frontend BeginQuery.tsx contract (delimiters, balanced EDN, :title string, :query vector); the query source is sliced from raw and delegated to the existing bounded/cached render_query; the publication snapshot includes ALL freshly parsed pages so omitted private matches can be counted honestly, while HTML hydration capability remains public-only; a muted query-omitted note reports the count (all-pages-public never shows it); malformed containers render an inert alert and their payload is excluded from the search index; print keeps its whole-graph behavior. Fail-before (worker-run, Sol/high): 2 publish_begin_query tests fail pre-fix. Full publish suite 34 pass + whole tine-core 514 pass (manager-run)."
+    },
+    {
       "id": "REG-PUBLISH-ATOMIC-TREE-REPLACEMENT-001",
       "title": "Republishing retires stale pages and binds staging and recovery writes to directory capabilities",
       "family": "data-safety",
