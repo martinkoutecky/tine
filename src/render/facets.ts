@@ -253,13 +253,17 @@ function tagsOf(blocks: readonly Block[]): string[] {
 const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 
+type PlanningSourceLine = { text: string; hasTrailingBody: boolean };
+
 /** Map an lsdoc span from the re-bulleted parser input (`"- " + raw.trimStart()`)
- *  back to the original raw bytes. Return the spanned source only when it occupies
- *  a whole source line (surrounding horizontal whitespace is allowed). This is the
- *  crucial distinction between a real planning line and mid-text
- *  `Discuss SCHEDULED: <…>`: lsdoc recognizes both as Timestamp, while only the
- *  former belongs in header chrome. */
-function standaloneSourceLine(raw: string, span: readonly [number, number] | undefined): string | null {
+ *  back to the original raw bytes. Return the spanned source only when it starts
+ *  its source line (optional horizontal whitespace may precede it); trailing text
+ *  is ordinary body content. Deliberate OG divergence: a parser-recognized
+ *  mid-text `Discuss SCHEDULED: <…>` remains content in Tine. */
+function standaloneSourceLine(
+  raw: string,
+  span: readonly [number, number] | undefined
+): PlanningSourceLine | null {
   if (!span || span[0] < 2 || span[1] < span[0]) return null;
   const trimmed = raw.trimStart();
   const leading = raw.slice(0, raw.length - trimmed.length);
@@ -275,11 +279,14 @@ function standaloneSourceLine(raw: string, span: readonly [number, number] | und
   while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
   const before = UTF8_DECODER.decode(bytes.slice(lineStart, start));
   const after = UTF8_DECODER.decode(bytes.slice(end, lineEnd));
-  if (before.trim() !== "" || after.trim() !== "") return null;
-  return UTF8_DECODER.decode(bytes.slice(start, end));
+  if (before.trim() !== "") return null;
+  return {
+    text: UTF8_DECODER.decode(bytes.slice(start, end)),
+    hasTrailingBody: after.trim() !== "",
+  };
 }
 
-function planningLineText(i: Inline, raw: string): string | null {
+function planningLineText(i: Inline, raw: string): PlanningSourceLine | null {
   if (i.k !== "timestamp" || (i.ts !== "Scheduled" && i.ts !== "Deadline")) return null;
   return standaloneSourceLine(raw, i.span);
 }
@@ -290,11 +297,10 @@ function angleText(line: string): string | null {
   return lt >= 0 && gt > lt ? line.slice(lt + 1, gt) : null;
 }
 
-/** Remove genuine whole-line planning timestamps from the body AST while preserving
- *  any following text in the SAME paragraph. lsdoc represents
- *  `title\nSCHEDULED\nbody` as a planning Timestamp + Break + body Plain in one
- *  Paragraph, so filtering the whole AST block either leaks the timestamp into the
- *  body or deletes the body. Parser spans let us remove only the source line. */
+/** Remove genuine line-leading planning timestamps from the body AST while
+ *  preserving any following text in the SAME paragraph. lsdoc represents both
+ *  same-line and next-line body text in the planning timestamp's inline flow, so
+ *  filtering the whole AST block either leaks the timestamp or deletes body text. */
 export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
   // Normal blocks must retain the pre-fix one-filter hot path: scrolling a large
   // page mounts thousands of bodies, and allocating a second AST array for every
@@ -303,14 +309,16 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
   if (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:")) return blocks;
   return blocks.map((b) => {
     if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return b;
-    const planning = new Set<number>();
+    const planning = new Map<number, boolean>();
     b.inline.forEach((i, index) => {
-      if (planningLineText(i, raw) !== null) planning.add(index);
+      const line = planningLineText(i, raw);
+      if (line !== null) planning.set(index, line.hasTrailingBody);
     });
     if (planning.size === 0) return b;
 
-    const remove = new Set(planning);
-    for (const index of planning) {
+    const remove = new Set(planning.keys());
+    for (const [index, hasTrailingBody] of planning) {
+      if (hasTrailingBody) continue;
       const next = b.inline[index + 1];
       const prev = b.inline[index - 1];
       if (next?.k === "break" || next?.k === "hardbreak") remove.add(index + 1);
@@ -321,8 +329,8 @@ export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
 }
 
 /** SCHEDULED/DEADLINE display text for date chrome. The Timestamp comes from lsdoc;
- *  its parser-provided byte span proves the token occupies a whole source line, so
- *  mid-text and inline-code lookalikes remain ordinary body content. */
+ *  its parser-provided byte span proves the token starts a source line, so mid-text
+ *  and inline-code lookalikes remain ordinary body content. */
 function planningDates(blocks: Block[], raw: string): { scheduled: string | null; deadline: string | null } {
   let scheduled: string | null = null;
   let deadline: string | null = null;
@@ -331,7 +339,7 @@ function planningDates(blocks: Block[], raw: string): { scheduled: string | null
     for (const i of b.inline) {
       const line = planningLineText(i, raw);
       if (line === null || i.k !== "timestamp") continue;
-      const value = angleText(line);
+      const value = angleText(line.text);
       if (i.ts === "Scheduled" && scheduled === null) scheduled = value;
       if (i.ts === "Deadline" && deadline === null) deadline = value;
     }

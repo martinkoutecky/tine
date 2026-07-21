@@ -2418,10 +2418,22 @@ export function setSchedule(
   const isHeadLine = (l: string) => /^\s*(SCHEDULED|DEADLINE):/.test(l) || PROP_LINE.test(l);
   let headEnd = 1;
   while (headEnd < all.length && isHeadLine(all[headEnd])) headEnd++;
-  const lines = [
-    ...all.slice(0, headEnd).filter((l, i) => i === 0 || !new RegExp(`^${tag}:`).test(l.trim())),
-    ...all.slice(headEnd),
-  ];
+  const targetLine = new RegExp(`^\\s*${tag}:`);
+  const targetTimestamp = new RegExp(`^\\s*${tag}:\\s*<[^>]+>(.*)$`);
+  const keptHead: string[] = [];
+  const trailingBody: string[] = [];
+  for (const line of all.slice(1, headEnd)) {
+    if (!targetLine.test(line)) {
+      keptHead.push(line);
+      continue;
+    }
+    const match = targetTimestamp.exec(line);
+    if (match?.[1].trim()) trailingBody.push(match[1]);
+  }
+  // A glued suffix is user body content, not part of the replaced timestamp.
+  // Keep the canonical planning/property head contiguous and split that suffix
+  // into body lines immediately after it instead of dropping bytes.
+  const lines = [all[0], ...keptHead, ...trailingBody, ...all.slice(headEnd)];
   if (date) {
     const wd = WEEKDAYS[new Date(date.y, date.m, date.d).getDay()];
     const hhmm = time ? normalizeHHmm(time) : null;

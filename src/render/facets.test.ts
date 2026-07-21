@@ -1,5 +1,14 @@
 import { beforeAll, describe, it, expect } from "vitest";
-import { seedFacets, facetsOf, clearSeededFacets, facetsFromDto, EMPTY_FACETS } from "./facets";
+import {
+  seedFacets,
+  facetsOf,
+  clearSeededFacets,
+  facetsFromDto,
+  EMPTY_FACETS,
+  inlineText,
+  parseBody,
+  stripPlanningLines,
+} from "./facets";
 import { initParser } from "./parse";
 
 describe("facet cache (audit P2)", () => {
@@ -51,6 +60,37 @@ describe("planning facets", () => {
   it("does not promote a mid-text planning timestamp to date chrome", () => {
     const raw = "Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after it";
     expect(facetsOf(raw, "md").scheduled).toBeNull();
+  });
+
+  it("keeps line-leading planning facets when same-line body text follows", () => {
+    const bodyText = (raw: string) =>
+      stripPlanningLines(parseBody(raw, "md"), raw)
+        .map((block) => ("inline" in block ? inlineText(block.inline) : ""))
+        .join("\n");
+
+    for (const [tag, field, date] of [
+      ["DEADLINE", "deadline", "2026-07-30 Thu"],
+      ["SCHEDULED", "scheduled", "2026-07-29 Wed"],
+    ] as const) {
+      const raw = `TODO x\n${tag}: <${date}>tail`;
+      expect(facetsOf(raw, "md")[field]).toBe(date);
+      expect(bodyText(raw)).toContain("x");
+      expect(bodyText(raw)).toContain("tail");
+      expect(JSON.stringify(stripPlanningLines(parseBody(raw, "md"), raw))).not.toContain(date);
+      expect(raw).toBe(`TODO x\n${tag}: <${date}>tail`);
+    }
+
+    expect(facetsOf("TODO x\n  DEADLINE: <2026-07-30 Thu>tail", "md").deadline).toBe(
+      "2026-07-30 Thu"
+    );
+
+    // Deliberate OG divergence: only a line-leading timestamp is planning
+    // chrome; a mid-text timestamp remains ordinary body content in Tine.
+    const mid = "Discuss DEADLINE: <2026-07-30 Thu> inline";
+    expect(facetsOf(mid, "md").deadline).toBeNull();
+    expect(JSON.stringify(stripPlanningLines(parseBody(mid, "md"), mid))).toContain('"ts":"Deadline"');
+    expect(facetsOf("`DEADLINE: <2026-07-30 Thu>`", "md").deadline).toBeNull();
+    expect(facetsOf("```\nDEADLINE: <2026-07-30 Thu>\n```", "md").deadline).toBeNull();
   });
 
   it("uses Logseq's heading property for Org blocks", () => {

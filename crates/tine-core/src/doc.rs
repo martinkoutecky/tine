@@ -407,28 +407,40 @@ fn header_facets(
     (marker, priority, heading_level, properties)
 }
 
+struct PlanningSourceLine<'a> {
+    text: &'a str,
+    has_trailing_body: bool,
+}
+
 /// Map a parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
-/// its original raw slice, but only when the span occupies a whole source line.
-/// Horizontal whitespace around the token is allowed. A parser-recognized
-/// `Discuss SCHEDULED: <…> inline` therefore fails this boundary check without
-/// introducing a second planning-line parser.
-fn standalone_source_line<'a>(raw: &'a str, span: &lsdoc::ast::Span) -> Option<&'a str> {
+/// its original raw slice, but only when the span starts its source line (with
+/// optional horizontal whitespace before it). Text after the span is ordinary
+/// body content. Deliberate OG divergence: a parser-recognized mid-text
+/// `Discuss SCHEDULED: <…>` remains content in Tine rather than header chrome.
+fn standalone_source_line<'a>(
+    raw: &'a str,
+    span: &lsdoc::ast::Span,
+) -> Option<PlanningSourceLine<'a>> {
     let lead = raw.len() - raw.trim_start().len();
     let start = span.0.checked_sub(2)?.checked_add(lead)?;
     let end = span.1.checked_sub(2)?.checked_add(lead)?;
     let source = raw.get(start..end)?;
     let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
-    if !raw[line_start..start].trim().is_empty() || !raw[end..line_end].trim().is_empty() {
+    if !raw[line_start..start].trim().is_empty() {
         return None;
     }
-    Some(source)
+    Some(PlanningSourceLine {
+        text: source,
+        has_trailing_body: !raw[end..line_end].trim().is_empty(),
+    })
 }
 
 /// SCHEDULED / DEADLINE display text (`<…>` content) for parser-recognized
-/// Timestamp nodes that occupy a whole source line. lsdoc can put a trailing body
-/// line in the SAME Paragraph as the planning timestamp (#75), so the older
-/// whole-AST-block `is_standalone_planning` check rejected a genuine planning line.
+/// Timestamp nodes that start a source line. lsdoc can put same-line or next-line
+/// trailing body text in the SAME Paragraph as the planning timestamp (#75), so
+/// the older whole-AST-block `is_standalone_planning` check rejected genuine
+/// planning lines.
 fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, Option<String>) {
     use lsdoc::ast::{Block, Inline};
     let mut scheduled = None;
@@ -460,7 +472,7 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
             let Some(line) = standalone_source_line(raw, span) else {
                 continue;
             };
-            *slot = angle_after(line, ts);
+            *slot = angle_after(line.text, ts);
         }
     }
     (scheduled, deadline)
@@ -478,9 +490,10 @@ fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
     inline_is_break(i) || matches!(i, Inline::Plain { text, .. } if text.trim().is_empty())
 }
 
-/// Remove parser-confirmed whole-line planning timestamps from the body AST without
-/// deleting body content that shares their Paragraph (#75). The neighboring line
-/// break is removed with the planning token; mid-text timestamps are untouched.
+/// Remove parser-confirmed line-leading planning timestamps from the body AST
+/// without deleting body content that shares their Paragraph (#75). A neighboring
+/// line break is removed only when the timestamp has no same-line body suffix;
+/// mid-text timestamps are untouched.
 pub(crate) fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
@@ -496,7 +509,7 @@ pub(crate) fn strip_planning_lines(
             | Block::Heading { inline, .. } => inline,
             _ => return true,
         };
-        let planning: Vec<usize> = inlines
+        let planning: Vec<(usize, bool)> = inlines
             .iter()
             .enumerate()
             .filter_map(|(index, i)| match i {
@@ -504,10 +517,8 @@ pub(crate) fn strip_planning_lines(
                     ts,
                     span: Some(span),
                     ..
-                } if (ts == "Scheduled" || ts == "Deadline")
-                    && standalone_source_line(raw, span).is_some() =>
-                {
-                    Some(index)
+                } if ts == "Scheduled" || ts == "Deadline" => {
+                    standalone_source_line(raw, span).map(|line| (index, line.has_trailing_body))
                 }
                 _ => None,
             })
@@ -517,8 +528,11 @@ pub(crate) fn strip_planning_lines(
         }
 
         let mut remove = vec![false; inlines.len()];
-        for index in planning {
+        for (index, has_trailing_body) in planning {
             remove[index] = true;
+            if has_trailing_body {
+                continue;
+            }
             if inlines.get(index + 1).is_some_and(inline_is_break) {
                 remove[index + 1] = true;
             } else if index > 0 && inlines.get(index - 1).is_some_and(inline_is_break) {
@@ -1463,6 +1477,46 @@ mod projection_tests {
         let mid =
             DocBlock::new("Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after the timestamp");
         assert_eq!(mid.scheduled(), None);
+    }
+
+    #[test]
+    fn line_leading_planning_timestamp_keeps_trailing_body_text() {
+        for (tag, date) in [
+            ("DEADLINE", "2026-07-30 Thu"),
+            ("SCHEDULED", "2026-07-29 Wed"),
+        ] {
+            let raw = format!("TODO x\n{tag}: <{date}>tail");
+            let b = DocBlock::new(raw.clone());
+            if tag == "DEADLINE" {
+                assert_eq!(b.deadline(), Some(date));
+            } else {
+                assert_eq!(b.scheduled(), Some(date));
+            }
+            let body = format!(
+                "{:?}",
+                strip_planning_lines(crate::render::parse_block(&raw, false), &raw)
+            );
+            assert!(body.contains("x"), "title remains body content: {body}");
+            assert!(body.contains("tail"), "suffix remains body content: {body}");
+            assert!(
+                !body.contains(date),
+                "timestamp is removed from body: {body}"
+            );
+            assert_eq!(b.raw, raw, "facet projection never rewrites raw");
+        }
+
+        let indented = DocBlock::new("TODO x\n  DEADLINE: <2026-07-30 Thu>tail");
+        assert_eq!(indented.deadline(), Some("2026-07-30 Thu"));
+
+        // Deliberate OG divergence: only a line-leading timestamp is planning
+        // chrome; a mid-text timestamp remains ordinary body content in Tine.
+        let mid = DocBlock::new("Discuss DEADLINE: <2026-07-30 Thu> inline");
+        assert_eq!(mid.deadline(), None);
+
+        let inline_code = DocBlock::new("`DEADLINE: <2026-07-30 Thu>`");
+        assert_eq!(inline_code.deadline(), None);
+        let fenced = DocBlock::new("```\nDEADLINE: <2026-07-30 Thu>\n```");
+        assert_eq!(fenced.deadline(), None);
     }
 
     #[test]

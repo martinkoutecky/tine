@@ -1912,6 +1912,13 @@ describe("setSchedule fence safety (review fix)", () => {
     setSchedule(b.id, "scheduled", null);
     expect(doc.byId[b.id].raw).toBe(raw);
   });
+
+  it("preserves trailing body text when re-picking a glued planning line", () => {
+    const b = blk("Task\nDEADLINE: <2026-07-07 Tue>tail");
+    load([b]);
+    setSchedule(b.id, "deadline", { y: 2026, m: 6, d: 30 });
+    expect(doc.byId[b.id].raw).toBe("Task\nDEADLINE: <2026-07-30 Thu>\ntail");
+  });
 });
 
 describe("blockProperty via the one recognizer (review fix)", () => {

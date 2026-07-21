@@ -54,6 +54,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Typing at the end of a block that ends with a `SCHEDULED:`/`DEADLINE:`
+  line no longer breaks the date.** Clicking at the visual end of such a block
+  puts the caret after the planning line, and the text you typed there used to
+  turn the deadline into ordinary text. The date now keeps working as long as
+  the timestamp starts its line — matching Logseq, which accepts the same
+  shape — and your text stays exactly where you typed it; nothing rewrites the
+  block. Re-picking a date from the calendar also keeps that trailing text
+  instead of deleting it.
 - A page containing a malformed HTML fragment (for example `- <div </div><`)
   no longer breaks the parser or disappears from search — it loads and stays
   searchable (GH #221, via the lsdoc 0.5.4 update).
