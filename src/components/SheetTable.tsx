@@ -92,8 +92,10 @@ type SortKey = { kind: "number"; value: number; text: string } | { kind: "text";
 type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
 type FormulaHome = { kind: "block"; id: string } | { kind: "page"; name: string };
 type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
+type FieldHeaderDrop = { field: FieldId; before: boolean };
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
+const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
   "text",
   "number",
@@ -139,7 +141,11 @@ export function SheetTable(props: {
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
+  const [draggingFieldHeader, setDraggingFieldHeader] = createSignal<FieldId | null>(null);
+  const [fieldHeaderDrop, setFieldHeaderDrop] = createSignal<FieldHeaderDrop | null>(null);
   let sortBeforePotentialHeaderDoubleClick: SortState | undefined;
+  let cancelFieldHeaderDrag: (() => void) | undefined;
+  let suppressFieldHeaderClick = false;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
@@ -234,8 +240,8 @@ export function SheetTable(props: {
     const formulasSet = formulaFieldSet();
     return [
       ...declared,
-      ...formulas,
       ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
+      ...formulas,
     ];
   });
   const formulaHintFields = createMemo(() => {
@@ -465,6 +471,92 @@ export function SheetTable(props: {
     const specs = fields().map((field) => specForField(field)).filter((spec): spec is FieldSpec => !!spec);
     writeSchemaFields(specs);
   };
+  const canDragFieldHeader = (field: FieldId) =>
+    field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
+  const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
+    if (field === dragged) return false;
+    // Formula fields are not serialized in tine.fields. They still make a useful
+    // terminal drop boundary: a property dropped on one is inserted before all
+    // formulas, which are always rendered at the end.
+    if (isFormulaField(field)) return true;
+    return schemaHome() ? schemaFieldSet().has(field) : !!specForField(field);
+  };
+  const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
+    if (!schemaHome()) declareFreshSchema();
+    const next = [...schemaFields()];
+    const from = next.findIndex((spec) => spec.field === field);
+    if (from < 0) return;
+    const [moved] = next.splice(from, 1);
+    const target = next.findIndex((spec) => spec.field === drop.field);
+    // Formula fields do not have schema specs. A drop on one means append to the
+    // property schema, immediately before the pinned formula run.
+    const at = target < 0 ? next.length : target + (drop.before ? 0 : 1);
+    next.splice(at, 0, moved);
+    writeSchemaFields(next);
+  };
+  const beginFieldHeaderDrag = (field: FieldId, event: PointerEvent) => {
+    if (event.button !== 0 || isSheetPointerInteractive(event.target) || !canDragFieldHeader(field)) return;
+    cancelFieldHeaderDrag?.();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragging = false;
+    let active = true;
+
+    const cleanup = () => {
+      if (!active) return;
+      active = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (cancelFieldHeaderDrag === cleanup) cancelFieldHeaderDrag = undefined;
+      setDraggingFieldHeader(null);
+      setFieldHeaderDrop(null);
+    };
+    const ownsPointer = (pointer: PointerEvent) => pointer.pointerId === pointerId;
+    const onMove = (move: PointerEvent) => {
+      if (!ownsPointer(move)) return;
+      if (!dragging && Math.hypot(move.clientX - startX, move.clientY - startY) < FIELD_HEADER_DRAG_THRESHOLD_PX) return;
+      if (!dragging) {
+        dragging = true;
+        setDraggingFieldHeader(field);
+      }
+      move.preventDefault();
+      const header = document.elementFromPoint(move.clientX, move.clientY)
+        ?.closest<HTMLElement>("[data-sheet-field-header]");
+      const target = header?.dataset.sheetField as FieldId | undefined;
+      if (!header || !target || !canDropFieldHeader(target, field)) {
+        setFieldHeaderDrop(null);
+        return;
+      }
+      if (isFormulaField(target)) {
+        setFieldHeaderDrop({ field: target, before: true });
+        return;
+      }
+      const rect = header.getBoundingClientRect();
+      setFieldHeaderDrop({ field: target, before: move.clientX < rect.left + rect.width / 2 });
+    };
+    const onCancel = (cancel: PointerEvent) => {
+      if (ownsPointer(cancel)) cleanup();
+    };
+    const onUp = (up: PointerEvent) => {
+      if (!ownsPointer(up)) return;
+      const drop = fieldHeaderDrop();
+      const didDrag = dragging;
+      cleanup();
+      if (didDrag) {
+        suppressFieldHeaderClick = true;
+        setTimeout(() => (suppressFieldHeaderClick = false), 0);
+      }
+      if (didDrag && drop) reorderFieldHeader(field, drop);
+    };
+
+    cancelFieldHeaderDrag = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  };
+  onCleanup(() => cancelFieldHeaderDrag?.());
   const changeFieldType = (field: FieldId, type: SchemaMenuType) => {
     writeSchemaFields(schemaFields().map((spec) => (spec.field === field ? { ...spec, type } : spec)));
   };
@@ -783,8 +875,20 @@ export function SheetTable(props: {
               classList={{
                 "sheet-col-formula": isFormulaField(field),
                 "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) && !isFormulaField(field),
+                "sheet-header-draggable": canDragFieldHeader(field),
+                "sheet-header-dragging": draggingFieldHeader() === field,
+                "sheet-header-drop-before": fieldHeaderDrop()?.field === field && fieldHeaderDrop()?.before,
+                "sheet-header-drop-after": fieldHeaderDrop()?.field === field && !fieldHeaderDrop()?.before,
               }}
+              data-sheet-field-header
+              data-sheet-field={field}
+              onPointerDown={(e) => beginFieldHeaderDrag(field, e)}
               onClick={(e) => {
+                if (suppressFieldHeaderClick) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
                 if ((e.target as HTMLElement).closest("input")) return;
                 if (e.detail > 1) return;
                 sortBeforePotentialHeaderDoubleClick = sort();

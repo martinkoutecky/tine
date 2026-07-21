@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Drag table columns into the order you want** (GH #217): grab a property
+  column's header in a table view and drop it where it belongs. The order is
+  stored with the sheet, so it survives a restart. Computed formula columns
+  stay pinned at the end.
 - **Cut & paste keeps block identity, and copy & paste is block-exact**, like
   Logseq: cutting blocks (Ctrl/Cmd+X or the context menu) and pasting them
   back now preserves their `id::`, so `((...))` block references and embeds

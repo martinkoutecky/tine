@@ -5727,6 +5727,20 @@ body.file-drop-active::after {
   cursor: pointer;
   user-select: none;
 }
+.sheet-field-header.sheet-header-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-field-header.sheet-header-dragging {
+  cursor: grabbing;
+  opacity: 0.58;
+}
+.sheet-field-header.sheet-header-drop-before {
+  box-shadow: inset 3px 0 0 var(--accent, #4c8bf5);
+}
+.sheet-field-header.sheet-header-drop-after {
+  box-shadow: inset -3px 0 0 var(--accent, #4c8bf5);
+}
 /* The Block/title column's 180px floor used to come from its minmax() track; the
    track is now fit-content()-capped (to wrap long block text), so keep the floor on
    the cells themselves. */
