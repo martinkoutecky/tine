@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On Windows, clicking an external `http(s)`/`mailto` link now opens your default
+  browser/mail client instead of a File Explorer window. The opener no longer
+  hands the URL to `explorer.exe` (which treats it as a shell item); it uses the
+  system URL handler, the same path already used on mobile (GH #215).
+- The top bar no longer collapses its calendar/journals/theme/right-sidebar and
+  history actions into the "…" overflow menu while there is plenty of room for
+  them; the collapse threshold now reflects the actual space the buttons need
+  (GH #205 follow-up).
+- The top bar "…" overflow menu now closes when you click anywhere outside it
+  (GH #205 follow-up).
 - Editing a cell in a field table (`/table`) no longer reorders the columns.
   Updating a block property now keeps the property on its original line instead
   of moving it to the end, so the edited column stays put and the saved file

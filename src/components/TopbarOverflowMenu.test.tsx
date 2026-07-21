@@ -60,4 +60,26 @@ describe("TopbarOverflowMenu", () => {
     expect(host.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("dismisses on a mousedown outside the menu (GH #205 follow-up)", () => {
+    const { host } = mount();
+    const trigger = host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!;
+    trigger.click();
+    expect(host.querySelector('[role="menu"]')).not.toBeNull();
+
+    // A click somewhere else on the page (here: document.body) must close it.
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("a mousedown INSIDE the menu does not dismiss it", () => {
+    const { host } = mount();
+    const trigger = host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!;
+    trigger.click();
+    const item = host.querySelector<HTMLButtonElement>('[data-topbar-overflow-action="theme"]')!;
+    item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(host.querySelector('[role="menu"]')).not.toBeNull();
+  });
 });

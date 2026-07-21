@@ -8,9 +8,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5225;
 const OUT = path.resolve(process.env.TOPBAR_SHOT_DIR || "notes");
+// The collapse breakpoint is @container topbar (max-width: 460px). The fixed
+// clusters (left icons + compact switcher + right icons) only need ~364px, so a
+// mid-width window like 560px has plenty of room and must NOT collapse into the
+// "…" menu (GH #205 follow-up: the old 760px threshold over-collapsed).
 const CASES = [
   { name: "narrow", width: 360, sidebar: "closed", menu: true },
-  { name: "mid", width: 560, sidebar: "closed", menu: true },
+  { name: "collapse-edge", width: 430, sidebar: "closed", menu: true },
+  { name: "mid", width: 560, sidebar: "closed", menu: false },
   { name: "desktop", width: 1280, sidebar: "open", menu: false },
 ];
 

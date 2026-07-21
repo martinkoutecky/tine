@@ -489,7 +489,7 @@ textarea {
   background: var(--border-color);
 }
 
-@container topbar (max-width: 760px) {
+@container topbar (max-width: 460px) {
   /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
      .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
      clips the fixed clusters and must stay reachable on a narrow desktop window.
