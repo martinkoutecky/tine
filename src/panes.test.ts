@@ -15,10 +15,12 @@ import {
   splitPane,
   type LayoutNode,
 } from "./panes";
-import { hasSelection, selectBlock } from "./store";
+import { hasSelection, selectBlock, setDoc } from "./store";
 import { cellSel, setCellSel } from "./sheet/selection";
 import type { PaneSnapshot } from "./router";
 import { clearRecent, recentPages } from "./ui";
+import { journalTitle } from "./journal";
+import { exitPaneSelect, rememberBlockSelectionForPaneReturn } from "./paneSelect";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -32,11 +34,95 @@ const journalsSnapshot = (): PaneSnapshot => ({
 
 beforeEach(() => {
   clearRecent();
+  exitPaneSelect();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
 });
 
+function setJournalFeed(entries: { name: string; blockId?: string }[]) {
+  setDoc({
+    byId: Object.fromEntries(entries.flatMap(({ name, blockId }) => blockId ? [[blockId, {
+      id: blockId, raw: "Journal block", collapsed: false, parent: null, page: name, children: [],
+    }]] : [])),
+    pages: entries.map(({ name, blockId }) => ({
+      name, kind: "journal" as const, title: name, preBlock: null,
+      roots: blockId ? [blockId] : [], format: "md" as const, readOnly: false, guide: false,
+    })),
+    feed: entries.map(({ name }) => name),
+    loaded: true,
+  });
+}
+
 describe("pane layout mutations", () => {
+  it("redirects a journals split to the selected feed day's plain, unpinned page", () => {
+    setJournalFeed([{ name: "Selected journal day", blockId: "selected-feed-block" }]);
+    resetPaneLayoutToSingle({
+      tabs: [{
+        history: [
+          { kind: "page", name: "Different journal day", pageKind: "journal", block: "old-zoomed-block" },
+          { kind: "journals" },
+        ],
+        pos: 1,
+        pinned: true,
+      }],
+      activeIndex: 0,
+    });
+    rememberBlockSelectionForPaneReturn("selected-feed-block");
+
+    const split = splitPane("main", "row")!;
+    const tab = paneRouter(split).snapshot().tabs[0];
+
+    expect(tab).toEqual({
+      history: [{ kind: "page", name: "Selected journal day", pageKind: "journal" }],
+      pos: 0,
+      pinned: false,
+    });
+  });
+
+  it("falls back to today's visible journal, then the first visible feed day", () => {
+    const today = journalTitle(new Date());
+    setJournalFeed([{ name: "Older journal day" }, { name: today }]);
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: true }],
+      activeIndex: 0,
+    });
+
+    const todaySplit = splitPane("main", "row")!;
+    expect(paneRouter(todaySplit).snapshot().tabs[0]).toEqual({
+      history: [{ kind: "page", name: today, pageKind: "journal" }],
+      pos: 0,
+      pinned: false,
+    });
+
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    setJournalFeed([{ name: "First visible feed day" }]);
+
+    const firstVisibleSplit = splitPane("main", "row")!;
+    expect(paneRouter(firstVisibleSplit).snapshot().tabs[0]).toEqual({
+      history: [{ kind: "page", name: "First visible feed day", pageKind: "journal" }],
+      pos: 0,
+      pinned: false,
+    });
+  });
+
+  it("keeps a non-journals split as an exact mirror", () => {
+    const history = [
+      { kind: "page" as const, name: "Source", pageKind: "page" as const },
+      { kind: "page" as const, name: "Zoomed", pageKind: "page" as const, block: "zoomed-block" },
+    ];
+    resetPaneLayoutToSingle({
+      tabs: [{ history, pos: 1, pinned: true }],
+      activeIndex: 0,
+    });
+
+    const split = splitPane("main", "row")!;
+
+    expect(paneRouter(split).snapshot().tabs[0]).toEqual({ history, pos: 1, pinned: true });
+  });
+
   it("promotes the route exposed by creating and focusing a split, but not a background split", () => {
     resetPaneLayoutToSingle(pageSnapshot("Left"));
     clearRecent();

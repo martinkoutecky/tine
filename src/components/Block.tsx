@@ -2239,6 +2239,21 @@ export function Editor(props: { id: string }): JSX.Element {
       });
     }
     resizeNow();
+    // A split can change the editor's wrapping width after this mount-time
+    // measurement. Observe width only so the height write in `resizeNow` cannot
+    // feed an observer loop; `autosize` keeps repeated layout changes to one
+    // measurement per animation frame.
+    if (typeof ResizeObserver !== "undefined") {
+      let observedWidth = ref.clientWidth;
+      const resizeObserver = new ResizeObserver(() => {
+        const width = ref.clientWidth;
+        if (width === observedWidth) return;
+        observedWidth = width;
+        autosize();
+      });
+      resizeObserver.observe(ref);
+      onCleanup(() => resizeObserver.disconnect());
+    }
   });
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;

@@ -54,6 +54,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Splitting a pane from the journals feed no longer opens a random other
+  day's bullet.** Because a second journals pane isn't allowed, the new pane
+  was filled with the last page you had visited in that tab — reusing its
+  zoom and its pinned state, which is why an unrelated day's bullet could
+  appear zoomed and pinned. It now opens the day page of the bullet you had
+  selected, plainly.
+- Editors re-measure their height when a pane split changes their width, so a
+  multiline block clicked in a freshly created pane is no longer clipped.
 - **Typing at the end of a block that ends with a `SCHEDULED:`/`DEADLINE:`
   line no longer breaks the date.** Clicking at the visual end of such a block
   puts the caret after the planning line, and the text you typed there used to
