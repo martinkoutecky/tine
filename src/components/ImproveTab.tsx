@@ -12,7 +12,7 @@ import {
   type ProgressEvent,
 } from "../devtools/lsdoc-diff/orchestrator";
 import type { BenchSummary } from "../devtools/lsdoc-diff/bench";
-import { writeClipboardText } from "../clipboard";
+import { writeClipboardTextStrict } from "../clipboard";
 
 const ISSUES_URL = "https://github.com/martinkoutecky/lsdoc/issues";
 
@@ -48,7 +48,7 @@ export function ImproveTab(): JSX.Element {
 
   const flash = async (text: string, key: string) => {
     try {
-      await writeClipboardText(text);
+      await writeClipboardTextStrict(text);
       setCopied(key);
     } catch {
       setCopied(`fail:${key}`);

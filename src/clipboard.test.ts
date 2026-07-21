@@ -10,6 +10,7 @@ import {
   writeClipboardImage,
   writeClipboardRich,
   writeClipboardText,
+  writeClipboardTextStrict,
   type ClipboardPayloadData,
 } from "./clipboard";
 
@@ -21,6 +22,7 @@ const payload: ClipboardPayloadData = {
 afterEach(() => {
   clearClipboardPayload();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("outlineToHtml (text/html clipboard flavor)", () => {
@@ -70,6 +72,16 @@ describe("private clipboard slot + facade", () => {
     expect(peekClipboardPayload()).toBeNull();
     void copyBlockOutline("copy", "- block", payload);
     void writeClipboardImage(new Uint8Array([1, 2, 3]));
+    expect(peekClipboardPayload()).toBeNull();
+  });
+
+  it("propagates strict text transport failure after synchronously clearing the slot", async () => {
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    await copyBlockOutline("cut", "- block", payload);
+    const failure = new Error("clipboard denied");
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(failure) } });
+
+    await expect(writeClipboardTextStrict("report")).rejects.toBe(failure);
     expect(peekClipboardPayload()).toBeNull();
   });
 

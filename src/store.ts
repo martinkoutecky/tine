@@ -135,7 +135,16 @@ export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: 
 function docHasBlockIdentity(id: string): boolean {
   if (doc.byId[id]) return true;
   const normalized = id.toLowerCase();
-  return Object.keys(doc.byId).some((key) => key.toLowerCase() === normalized && !!doc.byId[key]);
+  if (Object.keys(doc.byId).some((key) => key.toLowerCase() === normalized && !!doc.byId[key])) return true;
+  // setRaw updates a loaded node's raw synchronously without re-keying by a
+  // newly typed/pasted id property. Treat either Markdown or Org id syntax as
+  // live ownership so the final paste/redo checks fail closed in that window.
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rawIdentity = new RegExp(
+    `(?:^|\\r?\\n)[ \\t]*(?:id[ \\t]*::|:id:)[ \\t]*${escaped}(?=[ \\t]*(?:\\r?\\n|$))`,
+    "i",
+  );
+  return Object.values(doc.byId).some((node) => rawIdentity.test(node.raw));
 }
 
 // A generation identifies one exact loaded page instance. It is deliberately

@@ -6,7 +6,8 @@ import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "../clip
 import { setCopyIncludeSubtree } from "../copySettings";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, pageInstanceGeneration, resetStore } from "../store";
+import { AstBody } from "../render/body";
+import { buildClipboardPayload, deleteBlock, doc, ensurePageLoaded, loadSingle, pageByName, resetStore } from "../store";
 import type { BlockDto } from "../types";
 import { setGraphMeta } from "../ui";
 import { Block } from "./Block";
@@ -49,21 +50,31 @@ function seedHost(id: string): void {
 }
 
 describe("private block payload paste necessity", () => {
-  it("preserves a cut id so an existing block reference does not dangle", async () => {
+  it("preserves a cut id and resolves a seeded live reference through the renderer path", async () => {
     const host = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const preserved = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     seedHost(host);
+    ensurePageLoaded({
+      name: "Source", kind: "page", title: "Source", pre_block: null, format: "md",
+      blocks: [{ id: preserved, raw: `identity\nid:: ${preserved}`, collapsed: false, children: [] }],
+    });
+    ensurePageLoaded({
+      name: "References", kind: "page", title: "References", pre_block: null, format: "md",
+      blocks: [{ id: "referrer", raw: `See ((${preserved}))`, collapsed: false, children: [] }],
+    });
     setGraphMeta({ root: "/graph" } as any);
     vi.spyOn(backend(), "writeRich").mockResolvedValue();
-    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([null]);
-    await copyBlockOutline("cut", "- identity", {
-      blocks: [{ raw: `identity\nid:: ${preserved}`, sourceFormat: "md", children: [] }],
-      sourcePages: [{
-        name: "Paste",
-        kind: "page",
-        generation: pageInstanceGeneration("Paste")!,
-      }],
-    });
+    const resolveBlocks = vi.spyOn(backend(), "resolveBlocks")
+      .mockResolvedValueOnce([null])
+      .mockImplementation(async (ids) => ids.map((id) => id === preserved && doc.byId[id]
+        ? {
+            page: doc.byId[id].page,
+            kind: "page" as const,
+            blocks: [{ id, raw: doc.byId[id].raw, collapsed: doc.byId[id].collapsed, children: [] }],
+          }
+        : null));
+    await copyBlockOutline("cut", "- identity", buildClipboardPayload([preserved])!);
+    deleteBlock(preserved);
 
     const { root, dispose } = mount(() => (
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
@@ -76,6 +87,19 @@ describe("private block payload paste necessity", () => {
       });
     } finally {
       dispose();
+    }
+
+    const referenceRaw = doc.byId.referrer.raw;
+    const rendered = mount(() => <AstBody raw={referenceRaw} blockId="referrer" format="md" />);
+    try {
+      await vi.waitFor(() => {
+        expect(rendered.root.querySelector(".block-ref")?.textContent).toBe("identity");
+        expect(rendered.root.querySelector(".block-ref-missing")).toBeNull();
+      });
+      expect(resolveBlocks).toHaveBeenLastCalledWith([preserved]);
+      expect(resolveBlocks).toHaveBeenCalledTimes(2);
+    } finally {
+      rendered.dispose();
     }
   });
 
@@ -203,6 +227,30 @@ describe("private block payload paste necessity", () => {
       paste(textarea, "- payload");
       expect(peekClipboardSlot()?.op).toBe("cut");
       expect(doc.byId["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]).toBeUndefined();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("clears a stale slot on mismatching text pasted inside a syntax-sensitive fence", async () => {
+    const host = "88888888-8888-4888-8888-888888888888";
+    const fenced: BlockDto = { id: host, raw: "```\n\n```", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [fenced], format: "md" });
+    startEditing(host, 4);
+    setGraphMeta({ root: "/graph" } as any);
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    await copyBlockOutline("cut", "- payload", {
+      blocks: [{ raw: `payload\nid:: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb`, sourceFormat: "md", children: [] }],
+      sourcePages: [],
+    });
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")!;
+      textarea.setSelectionRange(4, 4);
+      paste(textarea, "foreign text");
+      expect(peekClipboardSlot()).toBeNull();
     } finally {
       dispose();
     }

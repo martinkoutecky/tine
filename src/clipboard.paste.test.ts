@@ -11,9 +11,12 @@ import {
   buildClipboardPayload,
   deleteBlock,
   doc,
+  ensurePageLoaded,
+  flushPage,
   forgetPage,
   historyPageOnlyMode,
   loadFeed,
+  loadSingle,
   markDirty,
   pageByName,
   pasteClipboardPayload,
@@ -139,6 +142,35 @@ describe("clipboard payload insertion and identity validation", () => {
     expect(roots("Target")).toEqual([ID1, ID2]);
   });
 
+  it("strips identity when an unsaved raw acquires the cut id during validation", async () => {
+    seed([
+      page("Source", [block(ID1, `source\nid:: ${ID1}`)]),
+      page("Collision", [block("collision", "other")]),
+      page("Target", [block(HOST, "")]),
+    ]);
+    const payload = buildClipboardPayload([ID1])!;
+    await record("cut", "- source", payload);
+    deleteBlock(ID1);
+    let release!: (value: null[]) => void;
+    vi.mocked(backend().resolveBlocks).mockReturnValue(new Promise((resolve) => { release = resolve; }));
+
+    const pending = paste();
+    await vi.waitFor(() => expect(backend().resolveBlocks).toHaveBeenCalled());
+    setRaw("collision", `collision\nid:: ${ID1}`);
+    release([null]);
+    await pending;
+    await flushPage("Collision");
+    await flushPage("Target");
+
+    const ownsIdentity = (raw: string) => new RegExp(`^id::\\s*${ID1}$`, "im").test(raw);
+    expect(Object.values(doc.byId).filter((node) => ownsIdentity(node.raw))).toHaveLength(1);
+    const persistedOwners = vi.mocked(backend().savePage).mock.calls.flatMap(([dto]) => {
+      const visit = (candidate: BlockDto): BlockDto[] => [candidate, ...candidate.children.flatMap(visit)];
+      return dto.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
+    });
+    expect(persistedOwners).toHaveLength(1);
+  });
+
   it.each([
     ["duplicate in graph", [ID1], async () => {
       vi.mocked(backend().resolveBlocks).mockResolvedValue([{ page: "Elsewhere", kind: "page", blocks: [] }]);
@@ -206,6 +238,31 @@ describe("clipboard payload insertion and identity validation", () => {
       forgetPage("Source");
       reloadPage(page("Source", [block("replacement", "replacement")], { path: "pages/rebound.md" }));
     });
+  });
+
+  it("strips all ids after the actual working-set cap evicts the cut source", async () => {
+    loadSingle(page("Target", [block(HOST, "")]));
+    ensurePageLoaded(page("Source", [
+      block(ID1, `source\nid:: ${ID1}`, [block(ID2, `child\nid:: ${ID2}`)]),
+    ]));
+    setGraphMeta({ root: "/graph" } as any);
+    const payload = buildClipboardPayload([ID1])!;
+    await record("cut", "- source\n\t- child", payload);
+    deleteBlock(ID1);
+    expect(await flushPage("Source")).toBe(true);
+
+    for (let i = 0; i < 79; i++) {
+      ensurePageLoaded(page(`Eviction ${i}`, [block(`eviction-${i}`, String(i))]));
+    }
+    expect(pageByName("Source")).toBeUndefined();
+
+    await paste();
+
+    expect(doc.byId[ID1]).toBeUndefined();
+    expect(doc.byId[ID2]).toBeUndefined();
+    const pastedRoot = doc.byId[roots("Target")[0]];
+    expect(pastedRoot.raw).toBe("source");
+    expect(doc.byId[pastedRoot.children[0]].raw).toBe("child");
   });
 
   it("strips the whole multi-page payload when only one source flush fails", async () => {

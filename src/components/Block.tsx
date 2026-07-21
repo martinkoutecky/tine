@@ -3146,8 +3146,8 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     const start = ref.selectionStart;
     const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
+    const slot = peekClipboardSlot();
     if (!syntaxSensitive) {
-      const slot = peekClipboardSlot();
       if (slot && text !== "" && normalize(text) === normalize(slot.text)) {
         e.preventDefault();
         // Association is intentionally text-only and can replay the user's last
@@ -3160,10 +3160,11 @@ export function Editor(props: { id: string }): JSX.Element {
           .catch(() => {}); // association failure is a quiet feature miss
         return;
       }
-      // A non-empty observed replacement makes stale private data unusable even
-      // if a later external clipboard happens to restore the old text.
-      if (text !== "") clearClipboardSlot();
     }
+    // A non-empty observed replacement makes stale private data unusable even
+    // if a later external clipboard happens to restore the old text. Matching
+    // text in a syntax-sensitive surface is only a bypass, not a replacement.
+    if (slot && text !== "" && normalize(text) !== normalize(slot.text)) clearClipboardSlot();
     // A structural sheet copy (multiple grid cells) pasted into a block editor
     // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
     // text (Martin's nit). Only fires when the clipboard is exactly our own

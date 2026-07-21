@@ -115,6 +115,16 @@ export function writeClipboardText(text: string): Promise<void> {
   return backend().writeText(text);
 }
 
+/**
+ * Strict text write for UI that reports clipboard rejection to the user.
+ * This preserves ImproveTab's former navigator transport semantics while still
+ * synchronously invalidating private block data at the shared facade boundary.
+ */
+export function writeClipboardTextStrict(text: string): Promise<void> {
+  clearClipboardPayload();
+  return navigator.clipboard.writeText(text);
+}
+
 /** Ordinary rich write: replacing the public clipboard invalidates private data. */
 export function writeClipboardRich(text: string, html: string): Promise<void> {
   clearClipboardPayload();

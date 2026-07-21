@@ -73,7 +73,7 @@ describe("clipboard writer facade guard", () => {
       "src/components/ContextMenu.tsx": /writeClipboardText\(/,
       "src/components/Block.tsx": /writeClipboardText\(/,
       "src/components/PdfViewer.tsx": /writeClipboardText\(/,
-      "src/components/ImproveTab.tsx": /writeClipboardText\(/,
+      "src/components/ImproveTab.tsx": /writeClipboardTextStrict\(/,
     };
     for (const [file, pattern] of Object.entries(expected)) {
       expect(readFileSync(file, "utf8"), file).toMatch(pattern);

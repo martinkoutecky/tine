@@ -12,7 +12,7 @@ import * as router from "./router";
 import type { PaneSnapshot } from "./router";
 import type { GraphMeta } from "./types";
 import { backend } from "./backend";
-import { clearClipboardPayload, peekClipboardPayload } from "./clipboard";
+import { CLIPBOARD_PAYLOAD_MAX_RAW_BYTES, clearClipboardPayload, peekClipboardPayload } from "./clipboard";
 
 const pluginGraphMeta: GraphMeta = {
   root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
@@ -478,6 +478,25 @@ describe("block-selection commands", () => {
     })]);
     expect(payload?.blocks[0].raw).toContain("id:: 33333333-3333-3333-3333-333333333333");
     expect(doc.byId["cut-me"]).toBeUndefined();
+    dispose();
+  });
+
+  it("Mod+C keeps the public write but records no payload when the selection exceeds the raw cap", () => {
+    setGraphMeta(pluginGraphMeta);
+    const raw = "x".repeat(CLIPBOARD_PAYLOAD_MAX_RAW_BYTES + 1);
+    loadSingle({
+      name: "Oversize", kind: "page", title: "Oversize", pre_block: null, format: "md",
+      blocks: [{ id: "oversize", raw, collapsed: false, children: [] }],
+    });
+    selectBlock("oversize");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
+
+    expect(peekClipboardPayload()).toBeNull();
+    expect(write).toHaveBeenCalledWith(`- ${raw}`, expect.any(String));
     dispose();
   });
 
