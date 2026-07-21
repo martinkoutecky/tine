@@ -4,6 +4,7 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
+import { EmojiText } from "./emoji";
 import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
 import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
@@ -81,6 +82,33 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
 // ===========================================================================
 
 const CALLOUT_TYPES = ["note", "tip", "important", "caution", "warning", "pinned"];
+
+// OG 6e7afa8eb ui/admonition maps these six types to svg/note, svg/tip,
+// svg/important, svg/caution, svg/warning, and svg/pinned respectively
+// (og/src/main/frontend/ui.cljs:825-840); block dispatches the same types at
+// og/src/main/frontend/components/block.cljs:3286-3302. Use Tine's existing
+// Twemoji image renderer while preserving that one-distinct-icon-per-type contract.
+const ADMONITION_ICONS: Record<string, string> = {
+  note: "📝",
+  tip: "💡",
+  important: "❗",
+  caution: "⚠️",
+  warning: "🚨",
+  pinned: "📌",
+};
+
+function AdmonitionIcon(props: { type: string }): JSX.Element {
+  return (
+    <span
+      class={`admonition-icon admonition-icon-${props.type}`}
+      role="img"
+      aria-label={`${props.type} icon`}
+      title={`${props.type[0].toUpperCase()}${props.type.slice(1)}`}
+    >
+      <EmojiText text={ADMONITION_ICONS[props.type]} />
+    </span>
+  );
+}
 
 function isInlineFlow(b: AstBlock): boolean {
   return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
@@ -243,7 +271,7 @@ function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string
   if (CALLOUT_TYPES.includes(type)) {
     return (
       <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
-        <div class="callout-title">{type.toUpperCase()}</div>
+        <div class="callout-title"><AdmonitionIcon type={type} />{type.toUpperCase()}</div>
         <Show when={b.children.length > 0}>
           <div class="callout-body">{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</div>
         </Show>
@@ -251,7 +279,9 @@ function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string
     );
   }
   if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
-  return <>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</>;
+  // OG 6e7afa8eb preserves non-special Custom blocks in a div whose class is
+  // the custom name (og/src/main/frontend/components/block.cljs:3309-3313).
+  return <div class={type} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</div>;
 }
 
 function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {

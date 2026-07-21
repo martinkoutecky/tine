@@ -439,6 +439,45 @@ describe("renderBlocks", () => {
     expect(h).toContain("callout-tip");
   });
 
+  it("preserves a verse custom block's semantic wrapper and children", () => {
+    const h = blk([{ kind: "custom", name: "VERSE", children: [{ kind: "paragraph", inline: [{ k: "plain", text: "a measured line" }] }] }]);
+    expect(h).toContain('class="verse"');
+    expect(h).toContain("a measured line");
+  });
+
+  it("gives every Org admonition an accessible, type-specific icon hook", () => {
+    const icons = {
+      note: "📝",
+      tip: "💡",
+      important: "❗",
+      caution: "⚠️",
+      warning: "🚨",
+      pinned: "📌",
+    };
+    for (const [type, icon] of Object.entries(icons)) {
+      const h = blk([{ kind: "custom", name: type.toUpperCase(), children: [] }]);
+      expect(h).toContain(`class="admonition-icon admonition-icon-${type}"`);
+      expect(h).toContain(`aria-label="${type} icon"`);
+      expect(h).toContain(`alt="${icon}"`);
+    }
+  });
+
+  it("preserves an unknown custom block's lowercased semantic wrapper", () => {
+    const h = html(() => <AstBody raw={"#+BEGIN_FOO\nkept body\n#+END_FOO"} format="org" />);
+    expect(h).toContain('class="foo"');
+    expect(h).toContain("kept body");
+  });
+
+  it("keeps comment hidden, Example code, and NOTE body rendering unchanged", () => {
+    expect(blk([{ kind: "comment", text: "do not render" }])).toBe("");
+    const example = blk([{ kind: "example", code: "const example = true;" }]);
+    expect(example).toContain('class="code-block"');
+    expect(example).toContain("const example = true;");
+    const note = blk([{ kind: "custom", name: "NOTE", children: [{ kind: "paragraph", inline: [{ k: "plain", text: "note body" }] }] }]);
+    expect(note).toContain('class="callout-body"');
+    expect(note).toContain("note body");
+  });
+
   it("properties block filters id::, shows user props", () => {
     const h = blk([{ kind: "properties", props: [["id", "x"], ["author", "Martin"]] }]);
     expect(h).toContain("author");

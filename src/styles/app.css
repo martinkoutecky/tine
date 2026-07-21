@@ -6337,6 +6337,16 @@ ol.md-list { list-style: decimal; }
   color: var(--callout-accent, var(--text-secondary));
   margin-bottom: 2px;
 }
+.admonition-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.35em;
+  vertical-align: -0.1em;
+}
+.admonition-icon img.emoji {
+  width: 1em;
+  height: 1em;
+}
 .callout-body {
   color: var(--text-primary);
 }

@@ -25,6 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   / `<video controls>` play natively. Scripts, iframes, event handlers, and
   autoplay remain stripped; base64 `data:` images keep working, matching
   Logseq's sanitizer exactly.
+- **Admonition icons and custom-block styling**, like Logseq: NOTE, TIP,
+  IMPORTANT, CAUTION, WARNING, and PINNED admonitions now show a per-type
+  icon, and other `#+BEGIN_X` blocks (like VERSE) keep a wrapper with their
+  name as a CSS class so themes can style them.
 - **Table v2**, like Logseq: a table in a block with
   `logseq.table.version:: 2` renders Logseq's grid presentation with compact
   mode and header transforms, and the `logseq.table.*` configuration
