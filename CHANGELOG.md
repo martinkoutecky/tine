@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Editing a cell in a field table (`/table`) no longer reorders the columns.
+  Updating a block property now keeps the property on its original line instead
+  of moving it to the end, so the edited column stays put and the saved file
+  keeps a stable property order (GH #216).
+
 ## [0.6.3] - 2026-07-20
 
 ### Fixed

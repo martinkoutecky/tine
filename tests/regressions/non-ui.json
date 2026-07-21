@@ -602,6 +602,20 @@
         "scenario": "search.per-category-result-truncation",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-BLOCK-PROPERTY-UPDATE-ORDER-001",
+      "title": "Editing one field-table cell reorders columns because updating a block property moved its line to the end",
+      "family": "persistence-correctness",
+      "sources": { "issues": [216], "commits": [] },
+      "platforms": ["all"],
+      "layer": "store",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src/store.test.ts", "src/sheet/fields.test.ts"],
+        "scenario": "persistence.block-property-update-preserves-order",
+        "failBefore": "proven"
+      }
     }
   ]
 }

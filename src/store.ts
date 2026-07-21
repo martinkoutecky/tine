@@ -1606,8 +1606,19 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   let j = lines.length;
   while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
   const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
-  const props = lines.slice(planningEnd, propsEnd).filter(notKey);
-  if (value !== null) props.push(`${key}:: ${value}`);
+  // Update an existing key IN PLACE so its line position (and therefore the
+  // field-table column order it drives) is preserved; only a genuinely new key
+  // appends after the others. Re-appending on every edit moved the touched
+  // column to the end (GH #216) and churned the property order on disk.
+  const props = lines.slice(planningEnd, propsEnd);
+  const at = props.findIndex((l) => PROP_LINE.exec(l)?.[1] === key);
+  if (value !== null) {
+    const line = `${key}:: ${value}`;
+    if (at >= 0) props[at] = line;
+    else props.push(line);
+  } else if (at >= 0) {
+    props.splice(at, 1);
+  }
   const out = [
     first,
     ...lines.slice(1, planningEnd), // planning stays before properties (OG order)
@@ -2031,8 +2042,17 @@ function orgRawWithProperty(raw: string, key: string, value: string | null): str
     start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
   const keyRe = new RegExp(`^:${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\s*`, "i");
   if (start >= 0 && end > start) {
-    const inner = lines.slice(start + 1, end).filter((l) => !keyRe.test(l.trim()));
-    if (value !== null) inner.push(`:${key}: ${value}`);
+    // Update in place so an existing drawer key keeps its position (GH #216);
+    // only a new key appends.
+    const inner = lines.slice(start + 1, end);
+    const at = inner.findIndex((l) => keyRe.test(l.trim()));
+    if (value !== null) {
+      const line = `:${key}: ${value}`;
+      if (at >= 0) inner[at] = line;
+      else inner.push(line);
+    } else if (at >= 0) {
+      inner.splice(at, 1);
+    }
     if (inner.length === 0) {
       // Drawer emptied: drop it entirely.
       return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");

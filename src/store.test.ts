@@ -1758,10 +1758,12 @@ describe("setBlockProperty placement & fence safety", () => {
   });
 
   it("replaces an existing head property in place", () => {
+    // In place means the line KEEPS its position — the old writer moved the
+    // edited key to the end, which reordered field-table columns (GH #216).
     const b = blk("Title\na:: 1\nb:: 2\nbody");
     load([b]);
     setBlockProperty(b.id, "a", "9");
-    expect(doc.byId[b.id].raw).toBe("Title\nb:: 2\na:: 9\nbody");
+    expect(doc.byId[b.id].raw).toBe("Title\na:: 9\nb:: 2\nbody");
   });
 
   it("NEVER touches property-looking lines inside a code fence", () => {
@@ -1832,6 +1834,33 @@ describe("blockProperty via the one recognizer (review fix)", () => {
     load([b]);
     expect(blockProperty(b.id, "tine.col-widths")).toBe(null);
     expect(blockProperty(b.id, "tine.view")).toBe("grid");
+  });
+});
+
+describe("setBlockProperty preserves property order on update (GH #216)", () => {
+  it("updating an existing md property keeps its line position (not moved to end)", () => {
+    // Field-table columns are ordered by property-discovery order; if editing a
+    // cell re-appended the edited key, its column jumped to the last position.
+    const b = blk("row\nfirst:: 23\nsecond:: 46\nthird:: 69");
+    load([b]);
+    setBlockProperty(b.id, "second", "90");
+    expect(doc.byId[b.id].raw).toBe("row\nfirst:: 23\nsecond:: 90\nthird:: 69");
+  });
+
+  it("adding a NEW md property still appends after the existing ones", () => {
+    const b = blk("row\nfirst:: 23\nsecond:: 46");
+    load([b]);
+    setBlockProperty(b.id, "third", "69");
+    expect(doc.byId[b.id].raw).toBe("row\nfirst:: 23\nsecond:: 46\nthird:: 69");
+  });
+
+  it("updating an existing org drawer property keeps its position", () => {
+    const b = blk("row\n:PROPERTIES:\n:first: 23\n:second: 46\n:third: 69\n:END:");
+    load([b], "org");
+    setBlockProperty(b.id, "second", "90");
+    expect(doc.byId[b.id].raw).toBe(
+      "row\n:PROPERTIES:\n:first: 23\n:second: 90\n:third: 69\n:END:",
+    );
   });
 });
 
