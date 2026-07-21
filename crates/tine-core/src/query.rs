@@ -701,6 +701,7 @@ fn block_reference_evidence(
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
+    config: &crate::config::Config,
 ) -> Option<ReferenceBlockEvidence> {
     let result = crate::reference_evidence::occurrences_of_kind_bounded(
         &block.raw,
@@ -708,6 +709,7 @@ fn block_reference_evidence(
         canonical,
         names_norm,
         kind,
+        config,
     );
     (!result.occurrences.is_empty()).then(|| ReferenceBlockEvidence {
         block_id: block.uuid.clone(),
@@ -717,12 +719,18 @@ fn block_reference_evidence(
     })
 }
 
-fn block_has_reference(block: &DocBlock, names_norm: &[String], kind: ReferenceKind) -> bool {
+fn block_has_reference(
+    block: &DocBlock,
+    names_norm: &[String],
+    kind: ReferenceKind,
+    config: &crate::config::Config,
+) -> bool {
     crate::reference_evidence::has_occurrence_kind(
         &block.raw,
         &block.projection().reference_source,
         names_norm,
         kind,
+        config,
     )
 }
 
@@ -773,11 +781,11 @@ fn collect_reference_occurrences_bounded(
                 .and_then(|pre| page_property_block(entry, pre))
             {
                 if budget.closed() {
-                    if block_has_reference(&block, names_norm, kind) {
+                    if block_has_reference(&block, names_norm, kind, &graph.config) {
                         budget.deny_match();
                     }
                 } else if let Some(hit) =
-                    block_reference_evidence(&block, canonical, names_norm, kind)
+                    block_reference_evidence(&block, canonical, names_norm, kind, &graph.config)
                 {
                     let mut dto = block_to_shallow_dto(&block);
                     dto.page_property = true;
@@ -798,9 +806,10 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     if construction_closed.get() {
-                        block_has_reference(block, names_norm, kind).then_some(None)
+                        block_has_reference(block, names_norm, kind, &graph.config).then_some(None)
                     } else {
-                        block_reference_evidence(block, canonical, names_norm, kind).map(Some)
+                        block_reference_evidence(block, canonical, names_norm, kind, &graph.config)
+                            .map(Some)
                     }
                 },
                 &mut |block, ancestors, hit| {
@@ -1213,6 +1222,7 @@ pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostic
                     block.is_org,
                     &canonical,
                     &names_norm,
+                    &graph.config,
                 );
                 let raw_lower = block.raw.to_lowercase();
                 let textual_candidate = names_norm.iter().any(|name| raw_lower.contains(name));
@@ -1529,10 +1539,20 @@ pub(crate) fn page_affects_backlinks(
     doc: &Document,
 ) -> bool {
     let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    // Scoped invalidation has no Graph/config parameter. Default-enabled matching
+    // is conservative for disabled/excluded property pages (it may evict an
+    // unaffected cache entry, but cannot retain a stale one).
+    let config = crate::config::Config::default();
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
-            block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Explicit)
-                .is_some()
+            block_reference_evidence(
+                &block,
+                &canonical,
+                &names_norm,
+                ReferenceKind::Explicit,
+                &config,
+            )
+            .is_some()
         })
     }) {
         return true;
@@ -1540,8 +1560,14 @@ pub(crate) fn page_affects_backlinks(
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Explicit)
-                .is_some()
+            && block_reference_evidence(
+                b,
+                &canonical,
+                &names_norm,
+                ReferenceKind::Explicit,
+                &config,
+            )
+            .is_some()
         {
             hit = true;
         }
@@ -1559,10 +1585,17 @@ pub(crate) fn page_affects_unlinked(
     doc: &Document,
 ) -> bool {
     let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    let config = crate::config::Config::default();
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
-            block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Plain)
-                .is_some()
+            block_reference_evidence(
+                &block,
+                &canonical,
+                &names_norm,
+                ReferenceKind::Plain,
+                &config,
+            )
+            .is_some()
         })
     }) {
         return true;
@@ -1570,7 +1603,8 @@ pub(crate) fn page_affects_unlinked(
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Plain).is_some()
+            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Plain, &config)
+                .is_some()
         {
             hit = true;
         }
@@ -5242,6 +5276,150 @@ mod tests {
         assert!(!serde_json::to_string(&diagnostics)
             .unwrap()
             .contains("launcher-ranking"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn property_keys_create_backlink_membership_with_key_evidence() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-property-key-backlinks-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/url.md"),
+            "url:: https://self.example\n\n- target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Key Referrer.md"),
+            "url:: https://referrer.example\n\n- body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Block Referrer.md"),
+            "- body\n  url:: https://block.example\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Value Referrer.md"),
+            "author:: [[url]]\n\n- body\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let refs = backlinks_bounded(&graph, "url", 100, usize::MAX);
+        let pages = refs
+            .groups
+            .iter()
+            .map(|group| group.page.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert!(pages.contains("Key Referrer"), "{pages:?}");
+        assert!(pages.contains("Block Referrer"), "{pages:?}");
+        assert!(pages.contains("Value Referrer"), "{pages:?}");
+        assert!(!pages.contains("url"), "self page must remain excluded");
+
+        let key_group = refs
+            .groups
+            .iter()
+            .find(|group| group.page == "Key Referrer")
+            .unwrap();
+        let occurrence = &key_group.evidence[0].occurrences[0];
+        assert_eq!(occurrence.rule, "explicit_property_key");
+        assert_eq!(
+            occurrence.span,
+            crate::model::ReferenceSpan { start: 0, end: 3 }
+        );
+        assert_eq!(
+            &key_group.blocks[0].raw[occurrence.span.start..occurrence.span.end],
+            "url"
+        );
+        let block_group = refs
+            .groups
+            .iter()
+            .find(|group| group.page == "Block Referrer")
+            .unwrap();
+        let block_occurrence = block_group.evidence[0]
+            .occurrences
+            .iter()
+            .find(|occurrence| occurrence.rule == "explicit_property_key")
+            .unwrap();
+        assert_eq!(
+            &block_group.blocks[0].raw[block_occurrence.span.start..block_occurrence.span.end],
+            "url"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn property_key_membership_uses_canonical_key_fold_and_og_eligibility() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-property-key-eligibility-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:property-pages/excludelist #{:private_key}}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- keys\n  Done_At:: today\n  id:: not-a-reference\n  background-color:: red\n  private-key:: hidden\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        assert_eq!(backlinks(&graph, "done-at")[0].page, "Source");
+        assert!(backlinks(&graph, "id").is_empty());
+        assert!(backlinks(&graph, "background-color").is_empty());
+        assert!(backlinks(&graph, "private-key").is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disabled_property_pages_suppress_only_key_membership() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-property-key-disabled-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:property-pages/enabled? false}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Key Referrer.md"),
+            "url:: https://referrer.example\n\n- body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Value Referrer.md"),
+            "author:: [[url]]\n\n- body\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let refs = backlinks(&graph, "url");
+        assert_eq!(
+            refs.iter()
+                .map(|group| group.page.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Value Referrer"]
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 

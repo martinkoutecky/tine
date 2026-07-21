@@ -26,6 +26,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Property keys now create backlinks**, like Logseq: a page or block with
+  `author:: something` shows up in the `author` page's Linked References even
+  when the value contains no `[[reference]]`. Built-in/hidden properties and
+  the `:property-pages/excludelist` are exempt, and
+  `:property-pages/enabled? false` turns it off — matching Logseq's rules.
+- **Exported HTML sites now run `#+BEGIN_QUERY` blocks** the same way they
+  already run `{{query}}` — showing the authored title and results, restricted
+  to public pages; when matches on non-public pages were filtered out, the
+  query notes how many were omitted instead of silently under-reporting.
 - **Custom macros with rich output now render it**, like Logseq: a `:macros`
   entry whose body is a Hiccup form (e.g. `[:span {:class "x"} "text"]`) shows
   the styled result instead of the literal bracket source — on the page, in

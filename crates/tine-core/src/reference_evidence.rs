@@ -14,6 +14,75 @@ use unicode_normalization::UnicodeNormalization;
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
 
+// Exact OG 1.0.0 property-page exclusions from
+// `logseq.graph-parser.property/editable-built-in-properties` at 6e7afa8eb.
+// Keep source spellings here; `property_key_norm` supplies Tine's canonical
+// property identity (including underscore -> dash).
+const OG_EDITABLE_BUILT_IN_PROPERTIES: &[&str] = &[
+    "title",
+    "icon",
+    "template",
+    "template-including-parent",
+    "public",
+    "filters",
+    "exclude-from-graph-view",
+    "logseq.query/nlp-date",
+    "macro",
+    "filetags",
+    "alias",
+    "aliases",
+    "tags",
+    "logseq.color",
+    "logseq.table.version",
+    "logseq.table.compact",
+    "logseq.table.headers",
+    "logseq.table.hover",
+    "logseq.table.borders",
+    "logseq.table.stripes",
+    "logseq.table.max-width",
+];
+
+// Exact base set from `hidden-built-in-properties`, plus the only registered
+// extension set in that revision (`frontend.extensions.srs`).
+const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
+    "id",
+    "custom-id",
+    "background-color",
+    "background_color",
+    "heading",
+    "collapsed",
+    "created-at",
+    "updated-at",
+    "last-modified-at",
+    "created_at",
+    "last_modified_at",
+    "query-table",
+    "query-properties",
+    "query-sort-by",
+    "query-sort-desc",
+    "ls-type",
+    "hl-type",
+    "hl-page",
+    "hl-stamp",
+    "hl-color",
+    "logseq.macro-name",
+    "logseq.macro-arguments",
+    "logseq.order-list-type",
+    "logseq.tldraw.page",
+    "logseq.tldraw.shape",
+    "todo",
+    "doing",
+    "now",
+    "later",
+    "done",
+    "card-last-interval",
+    "card-repeats",
+    "card-last-reviewed",
+    "card-next-schedule",
+    "card-ease-factor",
+    "card-last-score",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectedPageRef {
     pub name: String,
@@ -297,11 +366,7 @@ fn walk_list_item(
     }
 }
 
-fn property_values(
-    span: Option<&Span>,
-    mapper: SpanMapper,
-    raw: &str,
-) -> Vec<(String, usize, String)> {
+fn property_values(span: Option<&Span>, mapper: SpanMapper, raw: &str) -> Vec<PropertySource> {
     let Some(range) = span.and_then(|span| mapper.map(span, raw.len())) else {
         return Vec::new();
     };
@@ -313,13 +378,55 @@ fn property_values(
     for line in source.split_inclusive('\n') {
         let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
         if let Some((key, value)) = crate::doc::parse_property_line(line_without_newline) {
+            let delimiter = line_without_newline.find("::").unwrap_or_default();
+            let key_source = &line_without_newline[..delimiter];
+            let key_leading = key_source.len() - key_source.trim_start().len();
             if let Some(value_at) = line_without_newline.rfind(&value) {
-                out.push((key, line_offset + value_at, value));
+                out.push(PropertySource {
+                    key,
+                    key_range: line_offset + key_leading
+                        ..line_offset + key_leading + key_source.trim().len(),
+                    value_offset: line_offset + value_at,
+                    value,
+                });
             }
         }
         line_offset += line.len();
     }
     out
+}
+
+struct PropertySource {
+    key: String,
+    key_range: Range<usize>,
+    value_offset: usize,
+    value: String,
+}
+
+fn property_key_eligible(key: &str) -> bool {
+    let key = crate::doc::property_key_norm(key);
+    !key.is_empty()
+        && !OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+            .any(|built_in| crate::doc::property_key_norm(built_in) == key)
+}
+
+fn project_property_key(
+    projection: &mut ReferenceSourceProjection,
+    key: &str,
+    key_range: Range<usize>,
+    raw_len: usize,
+) {
+    if property_key_eligible(key) {
+        push_explicit_range(
+            projection,
+            crate::doc::property_key_norm(key),
+            key_range,
+            raw_len,
+            "explicit_property_key",
+        );
+    }
 }
 
 fn project_implicit_linkable_property(
@@ -414,7 +521,19 @@ fn walk_blocks(
                 }
             }
             Block::Properties { span, .. } => {
-                for (key, offset, value) in property_values(span.as_ref(), mapper, raw) {
+                for property in property_values(span.as_ref(), mapper, raw) {
+                    project_property_key(
+                        projection,
+                        &property.key,
+                        property.key_range.clone(),
+                        raw.len(),
+                    );
+                    let PropertySource {
+                        key,
+                        value_offset: offset,
+                        value,
+                        ..
+                    } = property;
                     if structural_property(&key, raw) {
                         continue;
                     }
@@ -571,21 +690,36 @@ pub(crate) fn occurrence_constructions() -> usize {
     OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
+fn projected_reference_matches(
+    reference: &ProjectedPageRef,
+    names_norm: &[String],
+    config: &crate::config::Config,
+) -> bool {
+    if reference.rule == "explicit_property_key" {
+        return config.property_page_key_enabled(&reference.name)
+            && names_norm.iter().any(|name| {
+                crate::doc::property_key_norm(name)
+                    == crate::doc::property_key_norm(&reference.name)
+            });
+    }
+    names_norm
+        .iter()
+        .any(|name| refs::same_page(name, &reference.name))
+}
+
 pub(crate) fn occurrences_of_kind_bounded(
     raw: &str,
     projection: &ReferenceSourceProjection,
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
+    config: &crate::config::Config,
 ) -> BoundedOccurrences {
     let mut out = Vec::with_capacity(MAX_OCCURRENCES_PER_BLOCK.min(8));
     let mut total = 0usize;
     if kind == ReferenceKind::Explicit {
         for reference in &projection.explicit {
-            if !names_norm
-                .iter()
-                .any(|name| refs::same_page(name, &reference.name))
-            {
+            if !projected_reference_matches(reference, names_norm, config) {
                 continue;
             }
             total = total.saturating_add(1);
@@ -652,8 +786,9 @@ pub(crate) fn occurrences_of_kind(
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
+    config: &crate::config::Config,
 ) -> Vec<ReferenceOccurrence> {
-    occurrences_of_kind_bounded(raw, projection, canonical, names_norm, kind).occurrences
+    occurrences_of_kind_bounded(raw, projection, canonical, names_norm, kind, config).occurrences
 }
 
 /// Cheap membership path used once a result construction budget is closed.
@@ -663,13 +798,13 @@ pub(crate) fn has_occurrence_kind(
     projection: &ReferenceSourceProjection,
     names_norm: &[String],
     kind: ReferenceKind,
+    config: &crate::config::Config,
 ) -> bool {
     if kind == ReferenceKind::Explicit {
-        return projection.explicit.iter().any(|reference| {
-            names_norm
-                .iter()
-                .any(|name| refs::same_page(name, &reference.name))
-        });
+        return projection
+            .explicit
+            .iter()
+            .any(|reference| projected_reference_matches(reference, names_norm, config));
     }
     for name in names_norm {
         for eligible in &projection.plain_ranges {
@@ -694,6 +829,7 @@ pub(crate) fn occurrences(
     projection: &ReferenceSourceProjection,
     canonical: &str,
     names_norm: &[String],
+    config: &crate::config::Config,
 ) -> Vec<ReferenceOccurrence> {
     let mut out = occurrences_of_kind(
         raw,
@@ -701,6 +837,7 @@ pub(crate) fn occurrences(
         canonical,
         names_norm,
         ReferenceKind::Explicit,
+        config,
     );
     out.extend(occurrences_of_kind(
         raw,
@@ -708,6 +845,7 @@ pub(crate) fn occurrences(
         canonical,
         names_norm,
         ReferenceKind::Plain,
+        config,
     ));
     out.sort_by(|a, b| {
         a.span
@@ -728,10 +866,11 @@ pub(crate) fn slow_occurrences(
     is_org: bool,
     canonical: &str,
     names_norm: &[String],
+    config: &crate::config::Config,
 ) -> Vec<ReferenceOccurrence> {
     let parsed = crate::render::parse_projection(raw, is_org);
     let source = project(raw, is_org, &parsed.blocks);
-    occurrences(raw, &source, canonical, names_norm)
+    occurrences(raw, &source, canonical, names_norm, config)
 }
 
 #[cfg(test)]
@@ -749,6 +888,7 @@ mod tests {
                 .iter()
                 .map(|name| refs::normalize(name))
                 .collect::<Vec<_>>(),
+            &crate::config::Config::default(),
         )
     }
 
@@ -814,6 +954,37 @@ mod tests {
     }
 
     #[test]
+    fn property_key_projection_uses_canonical_span_and_exact_og_built_ins() {
+        let raw = "  Done_At:: today";
+        let parsed = crate::render::parse_projection(raw, false);
+        let projected = project(raw, false, &parsed.blocks);
+        let key = projected
+            .explicit
+            .iter()
+            .find(|reference| reference.rule == "explicit_property_key")
+            .unwrap();
+        assert_eq!(key.name, "done-at");
+        assert_eq!(&raw[key.range.clone()], "Done_At");
+
+        for built_in in OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+        {
+            let raw = format!("{built_in}:: value");
+            let parsed = crate::render::parse_projection(&raw, false);
+            let projected = project(&raw, false, &parsed.blocks);
+            assert!(
+                projected
+                    .explicit
+                    .iter()
+                    .all(|reference| reference.rule != "explicit_property_key"),
+                "built-in key projected: {built_in}: {:?}",
+                projected.explicit
+            );
+        }
+    }
+
+    #[test]
     fn explicit_property_syntax_is_not_duplicated_or_promoted_from_custom_values() {
         let raw = "tags:: [[Target]]\nalias:: #Target\ncustom:: Target\naliases:: \"Target\"";
         let parsed = crate::render::parse_projection(raw, false);
@@ -841,6 +1012,7 @@ mod tests {
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,
+            &crate::config::Config::default(),
         );
         assert_eq!(got.len(), MAX_OCCURRENCES_PER_BLOCK);
         assert_eq!(occurrence_constructions(), MAX_OCCURRENCES_PER_BLOCK);
@@ -858,6 +1030,7 @@ mod tests {
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,
+            &crate::config::Config::default(),
         );
         assert_eq!(got.occurrences.len(), MAX_OCCURRENCES_PER_BLOCK);
         assert_eq!(got.total, 70);
@@ -866,11 +1039,11 @@ mod tests {
 
     #[test]
     fn structural_id_property_is_not_plain_reference_text() {
-        let got = evidence(
-            "id:: 6a55b643-1234-5678-9abc-def012345678",
-            &["6a55b643"],
+        let got = evidence("id:: 6a55b643-1234-5678-9abc-def012345678", &["6a55b643"]);
+        assert!(
+            got.is_empty(),
+            "structural id leaked into evidence: {got:?}"
         );
-        assert!(got.is_empty(), "structural id leaked into evidence: {got:?}");
     }
 
     #[test]

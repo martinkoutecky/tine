@@ -32,6 +32,14 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:property-pages/enabled?` — OG creates a page reference from every
+    /// eligible property key unless this is explicitly false. Absent defaults to
+    /// true (`block.cljs`: `(contains? #{true nil} enabled?)`).
+    pub property_pages_enabled: bool,
+    /// `:property-pages/excludelist #{:a :b}` — property keys that do not create
+    /// property-page references. Values retain OG keyword names here and are
+    /// folded with `property_key_norm` when matched.
+    pub property_pages_excludelist: Vec<String>,
     /// `:default-templates {:journals "Name"}` — template applied to a new,
     /// empty journal page.
     pub default_journal_template: Option<String>,
@@ -119,6 +127,8 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            property_pages_enabled: true,
+            property_pages_excludelist: Vec::new(),
             default_journal_template: None,
             favorites: Vec::new(),
             journal_file_name_format: None,
@@ -171,6 +181,8 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        cfg.property_pages_enabled = bool_value(edn, ":property-pages/enabled?").unwrap_or(true);
+        cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
@@ -211,6 +223,13 @@ impl Config {
         };
         cfg.guide_announced = bool_value(edn, ":tine/guide-announced?").unwrap_or(false);
         cfg
+    }
+
+    pub(crate) fn property_page_key_enabled(&self, key: &str) -> bool {
+        self.property_pages_enabled
+            && !self.property_pages_excludelist.iter().any(|excluded| {
+                crate::doc::property_key_norm(excluded) == crate::doc::property_key_norm(key)
+            })
     }
 }
 
@@ -1067,6 +1086,32 @@ mod tests {
         assert!(!cfg.logbook.with_second_support);
         assert!(!cfg.logbook.enabled_in_timestamped_blocks);
         assert!(cfg.logbook.enabled_in_all_blocks);
+    }
+
+    #[test]
+    fn property_pages_default_enabled_and_parse_og_controls() {
+        let defaults = Config::parse("{}");
+        assert!(defaults.property_pages_enabled);
+        assert!(Config::parse("{:property-pages/enabled? nil}").property_pages_enabled);
+        assert!(defaults.property_pages_excludelist.is_empty());
+        assert!(defaults.property_page_key_enabled("url"));
+
+        let configured = Config::parse(
+            "{:property-pages/enabled? true
+              :property-pages/excludelist #{:private_key :duration}}",
+        );
+        assert!(configured.property_pages_enabled);
+        assert_eq!(
+            configured.property_pages_excludelist,
+            vec!["private_key", "duration"]
+        );
+        assert!(!configured.property_page_key_enabled("private-key"));
+        assert!(!configured.property_page_key_enabled("duration"));
+        assert!(configured.property_page_key_enabled("url"));
+
+        let disabled = Config::parse("{:property-pages/enabled? false}");
+        assert!(!disabled.property_pages_enabled);
+        assert!(!disabled.property_page_key_enabled("url"));
     }
 
     #[test]
