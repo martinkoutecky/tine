@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render } from "solid-js/web";
 import { renderInlines, InlineText, expandTemplate, expansionIsBlockLevel } from "./inline";
-import { renderBlocks } from "./body";
+import { AstBody, renderBlocks } from "./body";
 import { initParser, parseBlock } from "./parse";
 import { setGraphMeta } from "../ui";
 import type { JSX } from "solid-js";
@@ -420,6 +420,149 @@ describe("renderBlocks", () => {
 });
 
 describe("user macro helpers", () => {
+  it("renders configured Hiccup as rich output through the main AstBody path", () => {
+    setGraphMeta({ macros: { rich: '[:span {:class "lane-rich"} "Rich macro"]' } } as never);
+    const h = html(() => <AstBody raw="{{rich}}" />);
+    expect(h).toContain('class="lane-rich"');
+    expect(h).toContain("Rich macro");
+    expect(h).not.toContain("[:span");
+  });
+
+  it("threads macro Hiccup mode through block and nested quote rendering", () => {
+    setGraphMeta({
+      macros: {
+        blocks: 'Intro\n[:div.block-rich "Block macro"]',
+        quoted: '> [:span.quote-rich "Quote macro"]',
+      },
+    } as never);
+    const h = html(() => <div><AstBody raw="{{blocks}}" /><AstBody raw="{{quoted}}" /></div>);
+    expect(h).toContain('class="block-rich"');
+    expect(h).toContain('class="quote-rich"');
+    expect(h).toContain("Block macro");
+    expect(h).toContain("Quote macro");
+    expect(h).not.toContain("[:div.block-rich");
+    expect(h).not.toContain("[:span.quote-rich");
+
+    const nestedInline = html(() => renderInlines([{
+      k: "emphasis",
+      emph: "Bold",
+      children: [{ k: "hiccup", v: '[:span.emph-rich "Emphasis macro"]' }],
+    }], undefined, true, true));
+    expect(nestedInline).toContain('class="emph-rich"');
+    expect(nestedInline).not.toContain("[:span.emph-rich");
+  });
+
+  it("keeps adjacent direct inline and block Hiccup literal in the same render", () => {
+    setGraphMeta({ macros: { rich: '[:span.macro-rich "Macro rich"]' } } as never);
+    const h = html(() => (
+      <div>
+        {renderInlines([
+          { k: "macro", name: "rich", args: [] },
+          { k: "plain", text: " / " },
+          { k: "hiccup", v: '[:span.direct-inline "Direct inline"]' },
+        ])}
+        <AstBody raw={'Intro\n[:div.direct-block "Direct block"]'} />
+      </div>
+    ));
+    expect(h).toContain('class="macro-rich"');
+    expect(h).toContain("[:span.direct-inline");
+    expect(h).toContain("[:div.direct-block");
+    expect(h).not.toContain('class="direct-inline"');
+    expect(h).not.toContain('class="direct-block"');
+  });
+
+  it("keeps raw-HTML macro output sanitized", () => {
+    setGraphMeta({
+      macros: { raw: '<span class="raw-rich" onclick="alert(1)">Raw macro</span><script>bad()</script>' },
+    } as never);
+    const h = html(() => <AstBody raw="{{raw}}" />);
+    expect(h).toContain('class="raw-rich"');
+    expect(h).toContain("Raw macro");
+    expect(h).not.toContain("onclick");
+    expect(h).not.toContain("<script");
+  });
+
+  it("sanitizes hostile top-level and nested Hiccup without using the iframe fast-path", () => {
+    setGraphMeta({
+      macros: {
+        script: '[:script "x"]',
+        image: '[:img {:src "https://example.com/x.png" :onerror "x"}]',
+        link: '[:a {:href "javascript:alert(1)"} "link"]',
+        hostile: '[:div [:iframe {:src "https://example.com"} "nested frame"] [:span "<b>literal</b>"]]',
+        frame: '[:iframe {:src "https://example.com"} "top frame"]',
+        breakout: '[:span {:title "x\\" data-breakout=\\"yes><img src=\\"x"} "safe"]',
+      },
+    } as never);
+    const root = document.createElement("div");
+    const dispose = render(() => (
+      <div>
+        <AstBody raw="{{script}}" />
+        <AstBody raw="{{image}}" />
+        <AstBody raw="{{link}}" />
+        <AstBody raw="{{hostile}}" />
+        <AstBody raw="{{frame}}" />
+        <AstBody raw="{{breakout}}" />
+      </div>
+    ), root);
+    try {
+      expect(root.querySelector("script")).toBeNull();
+      expect(root.querySelector("iframe")).toBeNull();
+      expect(root.querySelector("b")).toBeNull();
+      expect(root.querySelector("[data-breakout]")).toBeNull();
+      expect(root.querySelectorAll("img")).toHaveLength(1);
+      expect(root.querySelector("[onerror]")).toBeNull();
+      expect(root.querySelector("a")?.getAttribute("href")).toBeNull();
+      expect(root.textContent).toContain("<b>literal</b>");
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    '[:span',
+    '(fn [] "x")',
+    '[:span symbol]',
+    '[:span #{"set"}]',
+    '[:span #thing "tagged"]',
+    '[:sp@n "bad"]',
+  ])("falls back to literal macro text without crashing: %s", (source) => {
+    setGraphMeta({ macros: { bad: source } } as never);
+    const root = document.createElement("div");
+    const dispose = render(() => <AstBody raw="{{bad}}" />, root);
+    try {
+      expect(root.textContent).toContain(source);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("still dispatches a query nested in a configured macro", async () => {
+    vi.spyOn(backend(), "runQuery").mockResolvedValue([]);
+    setGraphMeta({ root: "/test", macros: { outer: "{{query (task TODO)}}" } } as never);
+    const root = document.createElement("div");
+    const dispose = render(() => <AstBody raw="{{outer}}" />, root);
+    try {
+      await vi.waitFor(() => expect(backend().runQuery).toHaveBeenCalledWith("(task TODO)"));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("still renders nested configured macros and retains the recursion cap", () => {
+    setGraphMeta({
+      macros: {
+        outer: "{{inner}}",
+        inner: '[:strong.nested-rich "Nested macro"]',
+        loop: "{{loop}}",
+      },
+    } as never);
+    const nested = html(() => <AstBody raw="{{outer}}" />);
+    expect(nested).toContain('class="nested-rich"');
+    expect(nested).toContain("Nested macro");
+    expect(() => html(() => <AstBody raw="{{loop}}" />)).not.toThrow();
+    expect(html(() => <AstBody raw="{{loop}}" />)).toContain("{{loop}}");
+  });
+
   it("leaves unfilled placeholders literal", () => {
     expect(expandTemplate("$1 and $5", ["a", "b"])).toBe("a and $5");
   });

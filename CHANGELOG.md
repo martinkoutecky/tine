@@ -21,6 +21,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Custom macros with rich output now render it**, like Logseq: a `:macros`
+  entry whose body is a Hiccup form (e.g. `[:span {:class "x"} "text"]`) shows
+  the styled result instead of the literal bracket source — on the page, in
+  linked references, and in reference previews. Output goes through the same
+  HTML sanitizer as pasted raw HTML; Hiccup typed directly in a note (outside a
+  macro) still renders literally.
 - **`#+BEGIN_QUERY` advanced query blocks now render** their authored title and
   a bounded result table — on the page, in Linked References, and in reference
   previews — instead of showing the raw `#+BEGIN_QUERY … #+END_QUERY` source,
