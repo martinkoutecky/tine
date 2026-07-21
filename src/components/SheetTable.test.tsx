@@ -1253,7 +1253,9 @@ describe("SheetTable", () => {
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     day10!.click();
-    expect(doc.byId.r1.raw).toBe("Task\nstarts:: 2026-07-08 09:30\ndue:: 2026-07-10");
+    // Editing the `due` cell keeps `due` in its original (first) position — a
+    // value edit must not reorder the columns (GH #216).
+    expect(doc.byId.r1.raw).toBe("Task\ndue:: 2026-07-10\nstarts:: 2026-07-08 09:30");
 
     (cell(root, 0, 2).querySelector(".date-chip") as HTMLElement).click();
     const day11 = [...root.querySelectorAll(".date-picker .dp-cell")]
