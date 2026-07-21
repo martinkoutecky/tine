@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- `[[`, `#`, and `((` autocomplete now match what you type **literally**, like
+  Logseq. Previously the in-progress text was run through the Ctrl+K search query
+  language, so typing a bare `OR`, a leading `-`, a quote, or a `/…/` was read as
+  a boolean/negation/regex operator and made valid pages or blocks silently
+  disappear (the "works at 1 char, vanishes at 2, returns at 3" effect). Ctrl+K
+  keeps its full query language (GH #186).
+- Made equal-ranked page autocomplete results **deterministic**: ties now break
+  on a stable key (file path / canonical name) instead of filesystem/enumeration
+  order, so the same query on the same graph always returns the same set and
+  order (GH #186).
 - On Windows, clicking an external `http(s)`/`mailto` link now opens your default
   browser/mail client instead of a File Explorer window. The opener no longer
   hands the URL to `explorer.exe` (which treats it as a shell item); it uses the

@@ -2112,9 +2112,9 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
     }
 }
 
-/// Full-text search: blocks whose visible text matches `query` under the Ctrl-K
-/// search dialect (whitespace=AND, `OR`, `-exclude`, `"phrase"`, `/regex/`; see
-/// [`crate::search_query`]), grouped by page, capped at `limit` total blocks.
+/// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
+/// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
+/// retains the shared search dialect through `QueryPlan::friendly*`.
 pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
     search_cancellable(graph, query, limit, || false)
 }
@@ -2128,7 +2128,7 @@ pub fn search_cancellable(
     limit: usize,
     cancelled: impl Fn() -> bool,
 ) -> Vec<RefGroup> {
-    let plan = crate::query_plan::QueryPlan::block_search(query, limit);
+    let plan = crate::query_plan::QueryPlan::block_search_literal(query, limit);
     let execution = plan.execute(graph, cancelled);
     if execution.cancelled {
         Vec::new()
@@ -4317,6 +4317,181 @@ mod tests {
             .into_iter()
             .map(|e| (e.name, e.kind, e.rel_path))
             .collect()
+    }
+
+    fn graph_from_page_snapshot(pages: &[(&str, &str, &str)]) -> Graph {
+        let pages = pages
+            .iter()
+            .map(|(name, rel_path, source)| {
+                (
+                    PageEntry {
+                        name: (*name).into(),
+                        kind: PageKind::Page,
+                        date_key: None,
+                        rel_path: (*rel_path).into(),
+                        path: (*rel_path).into(),
+                    },
+                    std::sync::Arc::new(crate::doc::parse(source)),
+                )
+            })
+            .collect();
+        Graph::from_page_snapshot("", pages)
+    }
+
+    fn search_block_texts(graph: &Graph, query: &str, limit: usize) -> Vec<String> {
+        search(graph, query, limit)
+            .into_iter()
+            .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+            .collect()
+    }
+
+    fn graph_search_block_texts(
+        execution: crate::query_plan::QueryExecution,
+    ) -> Vec<String> {
+        execution
+            .hits
+            .into_iter()
+            .filter_map(|hit| match hit {
+                crate::query_plan::QueryHit::Block { display_text, .. } => Some(display_text),
+                crate::query_plan::QueryHit::Page { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn autocomplete_page_or_token_is_literal() {
+        let graph = graph_from_page_snapshot(&[
+            ("A", "pages/a.md", "- filler\n"),
+            ("B", "pages/b.md", "- filler\n"),
+            ("ORbit", "pages/orbit.md", "- target\n"),
+            ("a OR b notes", "pages/a-or-b.md", "- literal multi-word target\n"),
+        ]);
+
+        assert_eq!(
+            quick_switch(&graph, "OR", 1)
+                .into_iter()
+                .map(|page| page.name)
+                .collect::<Vec<_>>(),
+            ["ORbit"]
+        );
+        assert_eq!(quick_switch(&graph, "a OR b", 1)[0].name, "a OR b notes");
+    }
+
+    #[test]
+    fn autocomplete_block_or_token_is_literal() {
+        let graph = graph_from_page_snapshot(&[(
+            "Logic",
+            "pages/logic.md",
+            "- logic OR gate\n- unrelated\n",
+        )]);
+
+        assert_eq!(search_block_texts(&graph, "OR", 8), ["logic OR gate"]);
+    }
+
+    #[test]
+    fn autocomplete_negation_token_is_literal() {
+        let graph = graph_from_page_snapshot(&[
+            ("A", "pages/a.md", "- filler\n"),
+            (
+                "-foo page",
+                "pages/minus-foo.md",
+                "- block contains -foo literally\n",
+            ),
+        ]);
+
+        assert_eq!(
+            quick_switch(&graph, "-foo", 1)
+                .into_iter()
+                .map(|page| page.name)
+                .collect::<Vec<_>>(),
+            ["-foo page"]
+        );
+        assert_eq!(
+            search_block_texts(&graph, "-foo", 8),
+            ["block contains -foo literally"]
+        );
+    }
+
+    #[test]
+    fn autocomplete_no_present_absent_present_ladder() {
+        let graph = graph_from_page_snapshot(&[
+            ("A", "pages/a.md", "- filler\n"),
+            ("B", "pages/b.md", "- filler\n"),
+            ("ORbit", "pages/orbit.md", "- target\n"),
+        ]);
+
+        for query in ["O", "OR", "ORb"] {
+            assert!(
+                quick_switch(&graph, query, 1)
+                    .iter()
+                    .any(|page| page.name == "ORbit"),
+                "ORbit disappeared for autocomplete query {query:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrlk_dsl_still_active() {
+        let graph = graph_from_page_snapshot(&[(
+            "Search",
+            "pages/search.md",
+            "- foo safe\n- foo x excluded\n- bar safe\n- unrelated\n",
+        )]);
+
+        let or_hits = graph_search_block_texts(graph.run_graph_search("foo OR bar", 8, 8, false));
+        assert!(or_hits.iter().any(|text| text == "foo safe"));
+        assert!(or_hits.iter().any(|text| text == "bar safe"));
+        assert!(!or_hits.iter().any(|text| text == "unrelated"));
+
+        let excluded = graph_search_block_texts(graph.run_graph_search("foo -x", 8, 8, false));
+        assert_eq!(excluded, ["foo safe"]);
+        assert!(graph.run_graph_search("-x", 8, 8, false).hits.is_empty());
+
+        let scoped = graph_search_block_texts(graph.run_graph_search_latest_scoped(
+            "ctrlk-dsl-current-page",
+            "foo -x",
+            8,
+            8,
+            Some(crate::query_plan::QueryPageScope {
+                name: "Search".into(),
+                page_kind: PageKind::Page,
+                path: Some("pages/search.md".into()),
+            }),
+            false,
+        ));
+        assert_eq!(scoped, ["foo safe"]);
+    }
+
+    #[test]
+    fn page_topk_ties_are_input_order_independent() {
+        let file_forward = graph_from_page_snapshot(&[
+            ("alx", "pages/alx.md", "- file page\n"),
+            ("aly", "pages/aly.md", "- file page\n"),
+        ]);
+        let file_reversed = graph_from_page_snapshot(&[
+            ("aly", "pages/aly.md", "- file page\n"),
+            ("alx", "pages/alx.md", "- file page\n"),
+        ]);
+        for graph in [&file_forward, &file_reversed] {
+            assert_eq!(quick_switch(graph, "al", 1)[0].name, "alx");
+        }
+
+        let refs_forward = graph_from_page_snapshot(&[(
+            "Source",
+            "pages/source.md",
+            "- [[alx]] [[aly]]\n",
+        )]);
+        let refs_reversed = graph_from_page_snapshot(&[(
+            "Source",
+            "pages/source.md",
+            "- [[aly]] [[alx]]\n",
+        )]);
+        for graph in [&refs_forward, &refs_reversed] {
+            let result = quick_switch(graph, "al", 1);
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].name, "alx");
+            assert!(result[0].rel_path.is_empty(), "winner must be reference-only");
+        }
     }
 
     fn quick_switch_reference_full_sort(

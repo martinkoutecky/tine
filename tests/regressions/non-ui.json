@@ -5,8 +5,18 @@
       "id": "REG-QUERY-OG-MEMBERSHIP-BOUNDS-001",
       "title": "Simple query page terms unquoted search and date ranges match OG membership and bounds across presentations",
       "family": "query-correctness",
-      "sources": { "issues": [], "commits": ["b54a331", "8fa8c51", "cb9e749", "83f902b"] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": [
+          "b54a331",
+          "8fa8c51",
+          "cb9e749",
+          "83f902b"
+        ]
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
@@ -24,10 +34,14 @@
       "title": "A graph can use an explicitly approved external assets link without widening filesystem access",
       "family": "filesystem-safety",
       "sources": {
-        "issues": [127],
+        "issues": [
+          127
+        ],
         "commits": []
       },
-      "platforms": ["all"],
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "closed",
       "coverage": {
@@ -46,10 +60,15 @@
       "title": "Backup restore pages journals sidecars and config keep recovery and publication on the live graph filesystem when app data is on another device",
       "family": "backup-recovery",
       "sources": {
-        "issues": [130],
+        "issues": [
+          130
+        ],
         "commits": []
       },
-      "platforms": ["android", "linux"],
+      "platforms": [
+        "android",
+        "linux"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -68,7 +87,9 @@
         "issues": [],
         "commits": []
       },
-      "platforms": ["all"],
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -83,12 +104,20 @@
       "id": "REG-ABSENT-FILE-PUBLISH-NOREPLACE-001",
       "title": "Creating pages PDF artifacts and demo files never replaces an external race winner",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs", "crates/tine-core/src/onboarding.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs",
+          "crates/tine-core/src/onboarding.rs"
+        ],
         "scenario": "filesystem.absent-publish-no-replace",
         "failBefore": "source-proven"
       }
@@ -97,12 +126,20 @@
       "id": "REG-GUIDE-COPY-CONTAINMENT-001",
       "title": "Copy Guide revalidates page and asset targets after managed-directory swaps",
       "family": "filesystem-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs", "crates/tine-core/src/onboarding.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs",
+          "crates/tine-core/src/onboarding.rs"
+        ],
         "scenario": "filesystem.guide-copy-containment",
         "failBefore": "source-proven"
       }
@@ -111,12 +148,19 @@
       "id": "REG-WATCHER-ATOMIC-SAVE-SCOPE-001",
       "title": "Atomic page-save events reconcile incrementally and never rescan unrelated graphs",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["desktop"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "desktop"
+      ],
       "layer": "native",
       "status": "covered",
       "coverage": {
-        "tests": ["src-tauri/src/watcher.rs"],
+        "tests": [
+          "src-tauri/src/watcher.rs"
+        ],
         "scenario": "watcher.atomic-save-incremental-scope",
         "failBefore": "source-proven"
       }
@@ -125,12 +169,20 @@
       "id": "REG-BLOCK-REF-COUNTS-SCOPED-001",
       "title": "Ordinary non-reference edits reuse the block-reference count index",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs", "src-tauri/src/commands.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs",
+          "src-tauri/src/commands.rs"
+        ],
         "scenario": "references.count-index-scoped-invalidation",
         "failBefore": "source-proven"
       }
@@ -139,12 +191,20 @@
       "id": "REG-CONFIG-ABSENT-PUBLISH-NOREPLACE-001",
       "title": "A missing config or device-settings file preserves a concurrent external creator",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs", "src-tauri/src/settings.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs",
+          "src-tauri/src/settings.rs"
+        ],
         "scenario": "settings.absent-publish-no-replace",
         "failBefore": "proven"
       }
@@ -153,12 +213,19 @@
       "id": "REG-GUIDE-TWIN-WITHDRAW-RECOVERY-001",
       "title": "Copy Guide never unlinks a Markdown page replaced during twin withdrawal",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs"
+        ],
         "scenario": "guide.twin-withdraw-recovery",
         "failBefore": "proven"
       }
@@ -167,12 +234,19 @@
       "id": "REG-RENAME-ROLLBACK-DEST-RECOVERY-001",
       "title": "Rename rollback preserves a destination replaced after the rollback check",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs"],
+        "tests": [
+          "crates/tine-core/src/model.rs"
+        ],
         "scenario": "rename.rollback-destination-recovery",
         "failBefore": "proven"
       }
@@ -181,12 +255,19 @@
       "id": "REG-PUBLISH-PUBLIC-MACRO-CAPABILITY-001",
       "title": "Static-publish queries embeds and namespaces can expose only public pages",
       "family": "privacy",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/publish.rs"],
+        "tests": [
+          "crates/tine-core/src/publish.rs"
+        ],
         "scenario": "publish.public-macro-capability",
         "failBefore": "proven"
       }
@@ -195,12 +276,20 @@
       "id": "REG-PUBLISH-ATOMIC-TREE-REPLACEMENT-001",
       "title": "Republishing retires stale pages and binds staging and recovery writes to directory capabilities",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/publish.rs", "crates/tine-core/src/model.rs"],
+        "tests": [
+          "crates/tine-core/src/publish.rs",
+          "crates/tine-core/src/model.rs"
+        ],
         "scenario": "publish.atomic-tree-replacement-and-bound-directories",
         "failBefore": "proven"
       }
@@ -209,12 +298,22 @@
       "id": "REG-BENCH-PREVIOUS-RELEASE-CURRENCY-001",
       "title": "The rolling performance gate always compares with the most recently published release",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "release-process",
       "status": "covered",
       "coverage": {
-        "tests": ["scripts/check-bench-policy.mjs", "scripts/test-release-pipeline.mjs", ".github/workflows/ci.yml", ".github/workflows/release.yml"],
+        "tests": [
+          "scripts/check-bench-policy.mjs",
+          "scripts/test-release-pipeline.mjs",
+          ".github/workflows/ci.yml",
+          ".github/workflows/release.yml"
+        ],
         "scenario": "performance.previous-release-baseline-currency",
         "failBefore": "proven"
       }
@@ -223,12 +322,19 @@
       "id": "REG-BACKUP-RESTORE-RECOVERY-CAPABILITY-001",
       "title": "Backup restore recovery moves stay bound to the graph and approved assets roots",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "native",
       "status": "covered",
       "coverage": {
-        "tests": ["src-tauri/src/backup.rs"],
+        "tests": [
+          "src-tauri/src/backup.rs"
+        ],
         "scenario": "backup.restore-recovery-capability-boundary",
         "failBefore": "proven"
       }
@@ -237,12 +343,21 @@
       "id": "REG-ANDROID-PHOTO-BOUNDED-NATIVE-IMPORT-001",
       "title": "Android photo capture and picking stream a bounded native cache token without base64 amplification",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["android"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
       "layer": "native",
       "status": "covered",
       "coverage": {
-        "tests": ["src/mediaCaptureNative.test.ts", "src-tauri/src/commands.rs", "src-tauri/gen/android/app/src/main/java/page/tine/app/MediaCapturePlugin.kt"],
+        "tests": [
+          "src/mediaCaptureNative.test.ts",
+          "src-tauri/src/commands.rs",
+          "src-tauri/gen/android/app/src/main/java/page/tine/app/MediaCapturePlugin.kt"
+        ],
         "scenario": "media.android-photo-bounded-native-import",
         "failBefore": "proven"
       }
@@ -251,8 +366,13 @@
       "id": "REG-RESULT-SUBTREE-NONOVERLAP-001",
       "title": "Nested query/reference memberships stay complete and shallow while previews and multi-query exports share native construction budgets",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
@@ -271,12 +391,21 @@
       "id": "REG-BENCH-MULTIROUND-RELIABILITY-001",
       "title": "Release performance decisions use interleaved distributions and reject metric-level variance",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["linux"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "linux"
+      ],
       "layer": "release-process",
       "status": "covered",
       "coverage": {
-        "tests": ["scripts/test-bench-ab.mjs", "scripts/test-release-pipeline.mjs", ".github/workflows/ci.yml"],
+        "tests": [
+          "scripts/test-bench-ab.mjs",
+          "scripts/test-release-pipeline.mjs",
+          ".github/workflows/ci.yml"
+        ],
         "scenario": "performance.interleaved-multiround-median-and-spread-gate",
         "failBefore": "proven"
       }
@@ -285,8 +414,13 @@
       "id": "REG-PRINT-SCRIPT-FREE-PRIVILEGE-BOUNDARY-001",
       "title": "PDF export locally renders math and code into a script-free sandbox that cannot inherit app IPC privileges",
       "family": "security",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["desktop"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "desktop"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
@@ -303,8 +437,15 @@
       "id": "REG-HELP-IMPROVE-IRREVERSIBLE-SCRUB-001",
       "title": "Help improve Tine exposes only irreversibly scrubbed parser reproductions and fails closed when privacy-safe tiers lose the mismatch",
       "family": "privacy",
-      "sources": { "issues": [82], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          82
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "frontend-core",
       "status": "covered",
       "coverage": {
@@ -320,12 +461,19 @@
       "id": "REG-PDF-CANVAS-AGGREGATE-BUDGET-001",
       "title": "PDF rendering admits canvases by aggregate backing-store pixels and zeroes evicted allocations",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "frontend",
       "status": "covered",
       "coverage": {
-        "tests": ["src/components/PdfViewer.test.tsx"],
+        "tests": [
+          "src/components/PdfViewer.test.tsx"
+        ],
         "scenario": "performance.pdf-canvas-aggregate-backing-store-budget",
         "failBefore": "source-proven"
       }
@@ -334,8 +482,13 @@
       "id": "REG-PRINT-ASSET-CUMULATIVE-BUDGET-001",
       "title": "PDF export rejects individual and cumulative image bytes before base64 and IPC amplification",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["desktop"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "desktop"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
@@ -351,12 +504,20 @@
       "id": "REG-PUBLISH-CLOSED-CAPABILITY-URL-001",
       "title": "Static publication authorizes exact public source identities and contextualizes every anchor and navigable URL",
       "family": "security-privacy",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-browser",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/publish.rs", "scripts/e2e-publish-security.mjs"],
+        "tests": [
+          "crates/tine-core/src/publish.rs",
+          "scripts/e2e-publish-security.mjs"
+        ],
         "scenario": "publish.exact-source-capability-anchor-and-url-policy",
         "failBefore": "source-proven"
       }
@@ -365,12 +526,19 @@
       "id": "REG-PDF-FIND-BOUNDED-LIFECYCLE-001",
       "title": "PDF Find bounds retained text and occurrences and prevents cancelled searches from admitting stale work",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "frontend",
       "status": "covered",
       "coverage": {
-        "tests": ["src/components/PdfViewer.test.tsx"],
+        "tests": [
+          "src/components/PdfViewer.test.tsx"
+        ],
         "scenario": "performance.pdf-find-text-match-and-cancellation-budgets",
         "failBefore": "source-proven"
       }
@@ -379,12 +547,21 @@
       "id": "REG-GRAPH-BACKGROUND-WORK-BOUND-001",
       "title": "Graph switches cancel stale warm and backup work under process-wide concurrency bounds",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["desktop"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "desktop"
+      ],
       "layer": "native",
       "status": "covered",
       "coverage": {
-        "tests": ["src-tauri/src/graph.rs", "src-tauri/src/backup.rs", "src-tauri/src/state.rs"],
+        "tests": [
+          "src-tauri/src/graph.rs",
+          "src-tauri/src/backup.rs",
+          "src-tauri/src/state.rs"
+        ],
         "scenario": "performance.graph-switch-cancellable-bounded-background-workers",
         "failBefore": "source-proven"
       }
@@ -393,12 +570,19 @@
       "id": "REG-BACKUP-PARTIAL-CLEANUP-001",
       "title": "Failed and crash-abandoned backup staging trees cannot accumulate outside retention",
       "family": "data-safety-performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["desktop"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "desktop"
+      ],
       "layer": "native",
       "status": "covered",
       "coverage": {
-        "tests": ["src-tauri/src/backup.rs"],
+        "tests": [
+          "src-tauri/src/backup.rs"
+        ],
         "scenario": "backup.partial-raii-cleanup-and-scavenge",
         "failBefore": "source-proven"
       }
@@ -407,12 +591,21 @@
       "id": "REG-CLIPBOARD-IMAGE-INGRESS-BOUND-001",
       "title": "Clipboard images are admitted by pixels and bytes before RGBA canvas and base64 amplification",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "frontend-native",
       "status": "covered",
       "coverage": {
-        "tests": ["src/backend.clipboard.test.tsx", "src/components/Block.assetPaste.test.tsx", "src-tauri/src/commands.rs"],
+        "tests": [
+          "src/backend.clipboard.test.tsx",
+          "src/components/Block.assetPaste.test.tsx",
+          "src-tauri/src/commands.rs"
+        ],
         "scenario": "performance.clipboard-image-predecode-and-native-ingress-budgets",
         "failBefore": "source-proven"
       }
@@ -421,12 +614,20 @@
       "id": "REG-RESULT-CONSTRUCTION-BUDGET-001",
       "title": "Queries references facets and export enforce row and byte budgets while constructing results",
       "family": "performance",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/query.rs", "src-tauri/src/commands.rs"],
+        "tests": [
+          "crates/tine-core/src/query.rs",
+          "src-tauri/src/commands.rs"
+        ],
         "scenario": "performance.result-family-construction-time-budgets",
         "failBefore": "source-proven"
       }
@@ -435,8 +636,13 @@
       "id": "REG-QUERY-SOURCE-RESOURCE-BOUNDS-001",
       "title": "Persisted simple and advanced queries fail closed at dialect-aware source-size and nesting-depth limits before parser recursion or cache-key construction, including bounded static-publication memoization",
       "family": "performance-data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native-ui",
       "status": "covered",
       "coverage": {
@@ -454,8 +660,13 @@
       "id": "REG-BOUNDED-RESULT-EVIDENCE-CACHE-001",
       "title": "Bounded query and reference results cap occurrence construction and retain every warm result family across unrelated edits, including pages with unchanged aliases, without preserving stale overflow metadata",
       "family": "performance-correctness",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -472,8 +683,15 @@
       "id": "REG-ANDROID-RENAMEAT2-DLOPEN-001",
       "title": "Android 9 / API 28 launches Tine without an unresolved renameat2 symbol in libtine_lib.so",
       "family": "android-platform-lifecycle",
-      "sources": { "issues": [192], "commits": [] },
-      "platforms": ["android"],
+      "sources": {
+        "issues": [
+          192
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -488,8 +706,15 @@
       "id": "REG-REF-ALIAS-COMPONENT-001",
       "title": "Linked and Unlinked References count every alias-connected page (transitive, order-independent), matching OG page-alias-set, so duplicate-alias and chained-alias owners are never dropped or resolved by filesystem layout",
       "family": "references-correctness",
-      "sources": { "issues": [137], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          137
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -505,8 +730,15 @@
       "id": "REG-REF-OCCURRENCE-COUNT-HONEST-001",
       "title": "A block mentioning a page more than the per-block occurrence cap reports its true mention total instead of silently undercounting at the bound",
       "family": "references-correctness",
-      "sources": { "issues": [137], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          137
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
@@ -523,12 +755,21 @@
       "id": "REG-EXTERNAL-LINK-BROWSER-ENV-001",
       "title": "Clicking a Markdown external link on Linux opens the browser with desktop/session environment intact while only bundle/loader variables are scrubbed",
       "family": "external-links",
-      "sources": { "issues": [195], "commits": [] },
-      "platforms": ["linux"],
+      "sources": {
+        "issues": [
+          195
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "linux"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["src-tauri/src/platform.rs"],
+        "tests": [
+          "src-tauri/src/platform.rs"
+        ],
         "scenario": "external-links.browser-opener-env",
         "failBefore": "source-proven"
       }
@@ -537,12 +778,19 @@
       "id": "REG-ORG-CONTAINER-OUTLINE-ROUNDTRIP-001",
       "title": "Terminated org container bodies with list markers remain one outline block and round-trip byte-exactly",
       "family": "data-safety",
-      "sources": { "issues": [], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/doc.rs::org_container_outline_tests"],
+        "tests": [
+          "crates/tine-core/src/doc.rs::org_container_outline_tests"
+        ],
         "scenario": "reader.org-container-outline-round-trip",
         "failBefore": "proven"
       }
@@ -551,12 +799,21 @@
       "id": "REG-PAGE-HEADER-ENTER-SAVE-001",
       "title": "Typing a page property and pressing Enter no longer shows an error or jams subsequent page saves",
       "family": "persistence-correctness",
-      "sources": { "issues": [210], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          210
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "store",
       "status": "covered",
       "coverage": {
-        "tests": ["src/store.test.ts"],
+        "tests": [
+          "src/store.test.ts"
+        ],
         "scenario": "persistence.page-header-enter-trailing-newline",
         "failBefore": "proven"
       }
@@ -565,12 +822,21 @@
       "id": "REG-SEARCH-PAGE-PANIC-ISOLATION-001",
       "title": "One un-indexable page no longer removes other pages' blocks from search and the indexing failure is reported",
       "family": "search-reliability",
-      "sources": { "issues": [209], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          209
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/model.rs::tests::search_cache_isolates_one_page_projection_panic"],
+        "tests": [
+          "crates/tine-core/src/model.rs::tests::search_cache_isolates_one_page_projection_panic"
+        ],
         "scenario": "search.page-panic-isolation-and-diagnostic",
         "failBefore": "proven"
       }
@@ -579,12 +845,21 @@
       "id": "REG-SEARCH-ALIAS-OWNER-SCOPE-001",
       "title": "An alias only matches its owning page; a duplicate-named sibling is not falsely returned",
       "family": "search-reliability",
-      "sources": { "issues": [209], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          209
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/query_plan.rs::tests::page_alias_search_is_scoped_to_its_physical_owner"],
+        "tests": [
+          "crates/tine-core/src/query_plan.rs::tests::page_alias_search_is_scoped_to_its_physical_owner"
+        ],
         "scenario": "search.alias-owner-exact-safety-interop",
         "failBefore": "proven"
       }
@@ -593,12 +868,21 @@
       "id": "REG-SEARCH-RESULT-TRUNCATION-001",
       "title": "Graph search reports per-category truncation instead of presenting a bounded result window as complete",
       "family": "search-reliability",
-      "sources": { "issues": [209], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          209
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "core-native",
       "status": "covered",
       "coverage": {
-        "tests": ["crates/tine-core/src/query_plan.rs::tests::graph_search_reports_per_category_truncation"],
+        "tests": [
+          "crates/tine-core/src/query_plan.rs::tests::graph_search_reports_per_category_truncation"
+        ],
         "scenario": "search.per-category-result-truncation",
         "failBefore": "proven"
       }
@@ -607,13 +891,70 @@
       "id": "REG-BLOCK-PROPERTY-UPDATE-ORDER-001",
       "title": "Editing one field-table cell reorders columns because updating a block property moved its line to the end",
       "family": "persistence-correctness",
-      "sources": { "issues": [216], "commits": [] },
-      "platforms": ["all"],
+      "sources": {
+        "issues": [
+          216
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
       "layer": "store",
       "status": "covered",
       "coverage": {
-        "tests": ["src/store.test.ts", "src/sheet/fields.test.ts"],
+        "tests": [
+          "src/store.test.ts",
+          "src/sheet/fields.test.ts"
+        ],
         "scenario": "persistence.block-property-update-preserves-order",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-AUTOCOMPLETE-LITERAL-186",
+      "title": "#/[[/(( autocomplete omit valid pages/blocks because literal input (bare OR, -x, quotes, /re/) was parsed as the Ctrl+K search DSL",
+      "family": "search-retrieval-correctness",
+      "sources": {
+        "issues": [
+          186
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-query",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query.rs",
+          "crates/tine-core/src/query_plan.rs"
+        ],
+        "scenario": "search.autocomplete-treats-input-literally-not-as-dsl",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-PAGE-TOPK-DETERMINISM-186",
+      "title": "Equal-score page autocomplete top-K is nondeterministic across builds because ties break on list_pages / referenced_page_names (HashMap) enumeration order",
+      "family": "search-retrieval-correctness",
+      "sources": {
+        "issues": [
+          186
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-query",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query.rs"
+        ],
+        "scenario": "search.page-topk-ties-stable-and-input-order-independent",
         "failBefore": "proven"
       }
     }

@@ -351,46 +351,40 @@ impl QueryPlan {
         }
     }
 
-    /// Legacy quick-switch backend candidates.  Empty/pure-negative input keeps
-    /// the old "all pages" candidate behavior; the authoritative friendly plan
-    /// intentionally treats those inputs as no graph search.
-    pub fn legacy_page_search(query: &str, limit: usize) -> Self {
-        let matcher = Matcher::parse(query);
-        if matches!(matcher, Matcher::InvalidRegex(_)) {
-            return Self {
-                branches: Vec::new(),
-                diagnostics: Vec::new(),
-                page_scope: None,
-                page_exact: None,
-                regexes: HashMap::new(),
-            };
-        }
-        if matches!(matcher, Matcher::Empty) {
-            return Self::page_name_fuzzy("", limit);
-        }
-        let mut next_id = 1;
-        let mut regexes = HashMap::new();
-        let predicate = if let Some(term) = matcher.simple_term() {
-            QueryExpr::Text(TextPredicate {
-                clause_id: take_id(&mut next_id),
-                field: TextField::PageName,
-                mode: TextMatchMode::Fuzzy,
-                value: term.to_string(),
-            })
+    /// Literal block autocomplete for the `((` picker. OG rev 6e7afa8eb's
+    /// `search.cljs:block-search`/`fuzzy-search` normalizes the whole query as
+    /// one literal term. Blank input has no candidates.
+    pub fn block_search_literal(query: &str, limit: usize) -> Self {
+        let branches = if query.is_empty() {
+            Vec::new()
         } else {
-            expr_from_matcher(&matcher, TextField::PageName, &mut next_id, &mut regexes)
+            vec![QueryBranch {
+                target: QueryTarget::Blocks,
+                predicate: QueryExpr::Text(TextPredicate {
+                    clause_id: 1,
+                    field: TextField::VisibleContent,
+                    mode: TextMatchMode::Fuzzy,
+                    value: canonical_fold(query),
+                }),
+                limit,
+            }]
         };
         Self {
-            branches: vec![QueryBranch {
-                target: QueryTarget::Pages,
-                predicate,
-                limit,
-            }],
+            branches,
             diagnostics: Vec::new(),
             page_scope: None,
-            page_exact: (!query.trim().is_empty()).then(|| canonical_fold(query.trim())),
-            regexes,
+            page_exact: None,
+            regexes: HashMap::new(),
         }
+    }
+
+    /// Literal autocomplete for `#`/`[[`. OG rev 6e7afa8eb routes
+    /// `handler/editor.cljs:get-matched-pages` through
+    /// `search.cljs:page-search`/`exact-matched?`; the whole normalized query is
+    /// one ordered-subsequence term, not Ctrl-K's AND/OR/negation/regex DSL.
+    /// Blank input therefore keeps the established all-pages candidate listing.
+    pub fn legacy_page_search(query: &str, limit: usize) -> Self {
+        Self::page_name_fuzzy(query, limit)
     }
 
     pub fn explanation(&self) -> QueryExplanation {
@@ -834,7 +828,7 @@ struct ScoredPage {
     match_class: ObjectiveMatchClass,
     matched_text: String,
     matched_alias: Option<String>,
-    index: usize,
+    tie_key: String,
     candidate: PageCandidate,
 }
 
@@ -843,7 +837,7 @@ impl ScoredPage {
         self.match_class.rank() > other.match_class.rank()
             || (self.match_class == other.match_class
                 && (self.score > other.score
-                    || (self.score == other.score && self.index < other.index)))
+                    || (self.score == other.score && self.tie_key < other.tie_key)))
     }
 }
 
@@ -851,7 +845,7 @@ impl PartialEq for ScoredPage {
     fn eq(&self, other: &Self) -> bool {
         self.match_class == other.match_class
             && self.score == other.score
-            && self.index == other.index
+            && self.tie_key == other.tie_key
     }
 }
 impl Eq for ScoredPage {}
@@ -868,7 +862,7 @@ impl Ord for ScoredPage {
             .rank()
             .cmp(&self.match_class.rank())
             .then_with(|| other.score.cmp(&self.score))
-            .then_with(|| self.index.cmp(&other.index))
+            .then_with(|| self.tie_key.cmp(&other.tie_key))
     }
 }
 
@@ -1317,7 +1311,7 @@ fn execute_pages(
                     match_class,
                     matched_text,
                     matched_alias,
-                    index,
+                    tie_key: page.rel_path.clone(),
                     candidate: PageCandidate::File(index),
                 },
             );
@@ -1327,7 +1321,7 @@ fn execute_pages(
         .iter()
         .map(|page| canonical_fold(&page.name))
         .collect();
-    for (offset, name) in graph.referenced_page_names().into_iter().enumerate() {
+    for name in graph.referenced_page_names() {
         if cancelled() {
             return None;
         }
@@ -1348,7 +1342,7 @@ fn execute_pages(
                     match_class,
                     matched_text,
                     matched_alias,
-                    index: file_pages.len() + offset,
+                    tie_key: crate::refs::page_key(&name),
                     candidate: PageCandidate::Referenced(PageEntry {
                         name,
                         kind: PageKind::Page,
@@ -1366,7 +1360,7 @@ fn execute_pages(
             .rank()
             .cmp(&a.match_class.rank())
             .then_with(|| b.score.cmp(&a.score))
-            .then_with(|| a.index.cmp(&b.index))
+            .then_with(|| a.tie_key.cmp(&b.tie_key))
     });
     Some((
         winners
@@ -1644,17 +1638,21 @@ mod tests {
             .collect()
     }
 
-    fn reference_search(graph: &Graph, query: &str, limit: usize) -> Vec<(String, String)> {
-        let matcher = Matcher::parse(query);
-        if limit == 0 || matches!(matcher, Matcher::Empty | Matcher::InvalidRegex(_)) {
+    fn reference_literal_search(
+        graph: &Graph,
+        query: &str,
+        limit: usize,
+    ) -> Vec<(String, String)> {
+        if limit == 0 || query.is_empty() {
             return Vec::new();
         }
+        let query = canonical_fold(query);
         graph.with_pages(|pages| {
             let mut out = Vec::new();
             fn visit(
                 page: &str,
                 blocks: &[DocBlock],
-                matcher: &Matcher,
+                query: &str,
                 remaining: &mut usize,
                 out: &mut Vec<(String, String)>,
             ) {
@@ -1663,11 +1661,11 @@ mod tests {
                         return;
                     }
                     let projection = block.projection();
-                    if matcher.matches(&projection.visible_lower, &projection.visible) {
+                    if fuzzy_name_score(&projection.visible_lower, query).is_some() {
                         out.push((page.to_string(), block.raw.clone()));
                         *remaining -= 1;
                     }
-                    visit(page, &block.children, matcher, remaining, out);
+                    visit(page, &block.children, query, remaining, out);
                 }
             }
             let mut remaining = limit;
@@ -1675,7 +1673,7 @@ mod tests {
                 visit(
                     &entry.name,
                     &document.roots,
-                    &matcher,
+                    &query,
                     &mut remaining,
                     &mut out,
                 );
@@ -2229,7 +2227,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_block_search_adapter_preserves_matcher_membership_and_ranked_topk() {
+    fn literal_block_search_adapter_preserves_fuzzy_membership_and_ranked_topk() {
         let (dir, graph) = fixture();
         for query in [
             "",
@@ -2245,7 +2243,7 @@ mod tests {
             let full = block_fingerprint(crate::query::search(&graph, query, usize::MAX));
             let mut full_membership = full.clone();
             full_membership.sort();
-            let mut reference = reference_search(&graph, query, usize::MAX);
+            let mut reference = reference_literal_search(&graph, query, usize::MAX);
             reference.sort();
             assert_eq!(full_membership, reference, "query={query:?}");
             for limit in [0, 1, 2, 20] {
