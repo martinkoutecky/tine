@@ -5,7 +5,7 @@ export interface TopbarOverflowMenuProps {
   onCalendar: () => void;
   onJournals: () => void;
   onToggleTheme: () => void;
-  onToggleRightSidebar: () => void;
+  onToggleRightSidebar: (trigger?: HTMLElement | null) => void;
   onBack: () => void;
   onForward: () => void;
   canGoBack: () => boolean;
@@ -41,7 +41,11 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
   });
 
   const run = (action: () => void) => {
-    close();
+    // Restore focus to the "···" trigger before invoking the action. This is
+    // correct menu a11y on its own, and it also makes the trigger the opener an
+    // action-opened overlay (e.g. the right sidebar drawer) restores focus to on
+    // close — instead of focus falling back to the document body (GH #205).
+    close(true);
     action();
   };
 
@@ -63,7 +67,7 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
           <button type="button" role="menuitem" data-topbar-overflow-action="calendar" onClick={() => run(props.onCalendar)}>Calendar</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="journals" onClick={() => run(props.onJournals)}>Journals</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="theme" onClick={() => run(props.onToggleTheme)}>Toggle theme</button>
-          <button type="button" role="menuitem" data-topbar-overflow-action="right-sidebar" onClick={() => run(props.onToggleRightSidebar)}>Toggle right sidebar</button>
+          <button type="button" role="menuitem" data-topbar-overflow-action="right-sidebar" onClick={() => run(() => props.onToggleRightSidebar(trigger))}>Toggle right sidebar</button>
           <div class="topbar-overflow-sep" role="separator" />
           <button type="button" role="menuitem" data-topbar-overflow-action="back" disabled={!props.canGoBack()} onClick={() => run(props.onBack)}>Back</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="forward" disabled={!props.canGoForward()} onClick={() => run(props.onForward)}>Forward</button>
