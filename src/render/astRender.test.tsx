@@ -85,6 +85,53 @@ describe("renderInlines", () => {
     expect(h).toContain("alias");
   });
 
+  it("renders an Org local-image Page_ref through AssetImage in Block/AstBody, RefBlocks/InlineText, and SheetGrid/AstBody", async () => {
+    // Block and SheetGrid both use AstBody; RefBlocks uses InlineText. Exercise the
+    // format-aware shared renderer rather than duplicating those caller surfaces.
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:org-page-ref-image"),
+      revokeObjectURL: vi.fn(),
+    });
+    const host = document.createElement("div");
+    const dispose = render(() => (
+      <>
+        <AstBody raw="[[../assets/visible.png]]" format="org" />
+        <InlineText text="[[../assets/visible.png]]" format="org" />
+        <AstBody raw="[[../assets/visible.png]]" format="org" />
+      </>
+    ), host);
+    try {
+      await vi.waitFor(() => expect(host.querySelectorAll("img.inline-image")).toHaveLength(3));
+      expect(host.querySelector(".page-ref")).toBeNull();
+    } finally {
+      dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("control: Markdown local-image Page_ref remains a PageRef", () => {
+    const h = html(() => <AstBody raw="[[../assets/visible.png]]" format="md" />);
+    expect(h).toContain('class="page-ref"');
+    expect(h).not.toContain("inline-image");
+  });
+
+  it("keeps an ordinary Org Page_ref as a PageRef", () => {
+    const h = html(() => <AstBody raw="[[Some Page]]" format="org" />);
+    expect(h).toContain('class="page-ref"');
+    expect(h).not.toContain("inline-image");
+  });
+
+  it.each(["../assets/clip.mp4", "../assets/paper.pdf"])(
+    "keeps Org Page_ref %s on the non-image route",
+    (target) => {
+      const h = html(() => <AstBody raw={`[[${target}]]`} format="org" />);
+      expect(h).toContain('class="page-ref"');
+      expect(h).not.toContain("inline-image");
+    },
+  );
+
   it("tag renders #name", () => {
     const h = inl([{ k: "tag", children: [{ k: "plain", text: "project" }] }]);
     expect(h).toContain('class="tag"');

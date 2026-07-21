@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Full calculator language in ` ```calc ` blocks**, like Logseq: hex/octal/
+  binary numbers in and out (`:hex`, `:oct`, `:bin`, `:decimal`), scientific
+  and mixed-number literals (`3 1/2`), inverse trig and factorial, output
+  format directives (`:format fix/sci/normal/fractions/improper`), exact
+  decimal arithmetic (`0.1 + 0.2 = 0.3`), and Logseq's error-to-`last`
+  behavior. Tine's `floor`/`ceil`/`round` keep working as an extension.
+- **Org image links render as images**, like Logseq: in Org pages, a page
+  reference pointing at a local image asset (e.g. `[[../assets/pic.png]]`)
+  now shows the image instead of a page link.
 - **Automatic headings**, like Logseq: a new "Auto" option (context menu and
   `/Heading (Auto)`) sizes the heading by the block's nesting depth and updates
   live on indent/outdent; explicit H1–H6 still win, and switching between the

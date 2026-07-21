@@ -4,7 +4,7 @@
 
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { mediaKind } from "../media";
+import { extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
@@ -74,12 +74,33 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[]): JS
   return <span class="macro">{`{{${raw}}}`}</span>;
 }
 
-/** Render a parsed inline run (lsdoc `Inline[]`) to interactive DOM. */
-export function renderInlines(inlines: Inline[], blockId?: string, spanMode = true, macroExpansion = false): JSX.Element {
-  return <For each={inlines}>{(s) => renderInline(s, blockId, spanMode, macroExpansion)}</For>;
+// OG @ 6e7afa8eb: `show-link?` accepts Org local assets (`^[./]*assets`) or a
+// media extension (components/block.cljs:989-1011; graph_parser/config.cljs:18-21;
+// graph_parser/config.cljs:66-68; frontend/config.cljs:116-127). Its Page_ref
+// branch deliberately keeps only pdf/mp4/ogg/webm out of image-link
+// (components/block.cljs:1135-1159). Keep the original extension sets and the
+// query/fragment-at-end rule instead of treating every Page_ref as an image.
+const OG_ORG_PAGE_REF_MEDIA_SUFFIX = /\.(?:gif|svg|jpeg|ico|png|jpg|bmp|webp|mp3|ogg|mpeg|wav|m4a|flac|wma|aac|mp4|webm|mov|flv|avi|mkv)(?:\?[^#]*)?(?:#.*)?$/i;
+const OG_ORG_PAGE_REF_IMAGE_EXCLUSIONS = new Set(["pdf", "mp4", "ogg", "webm"]);
+
+function isOgOrgPageRefImageTarget(target: string): boolean {
+  const isLocalAsset = /^[./]*assets/.test(target);
+  return (isLocalAsset || OG_ORG_PAGE_REF_MEDIA_SUFFIX.test(target))
+    && !OG_ORG_PAGE_REF_IMAGE_EXCLUSIONS.has(extOf(target));
 }
 
-function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansion = false): JSX.Element {
+/** Render a parsed inline run (lsdoc `Inline[]`) to interactive DOM. */
+export function renderInlines(
+  inlines: Inline[],
+  blockId?: string,
+  spanMode = true,
+  macroExpansion = false,
+  format?: Format,
+): JSX.Element {
+  return <For each={inlines}>{(s) => renderInline(s, blockId, spanMode, macroExpansion, format)}</For>;
+}
+
+function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansion = false, format?: Format): JSX.Element {
   switch (s.k) {
     case "plain": {
       // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
@@ -107,7 +128,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       // and a soft `break` is exactly such an in-block newline — match that look.
       return <br {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})} />;
     case "emphasis": {
-      const inner = renderInlines(s.children, blockId, spanMode, macroExpansion);
+      const inner = renderInlines(s.children, blockId, spanMode, macroExpansion, format);
       const attrs = (spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {};
       switch (s.emph) {
         case "Bold": return <strong {...attrs}>{inner}</strong>;
@@ -119,11 +140,11 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return inner;
     }
     case "subscript":
-      return <sub {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode, macroExpansion)}</sub>;
+      return <sub {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode, macroExpansion, format)}</sub>;
     case "superscript":
-      return <sup {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode, macroExpansion)}</sup>;
+      return <sup {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode, macroExpansion, format)}</sup>;
     case "link":
-      return renderLink(s, blockId, spanMode, macroExpansion);
+      return renderLink(s, blockId, spanMode, macroExpansion, format);
     case "nested_link":
       // Logseq `[[a [[b]] c]]` — best-effort: route the whole inner as a page ref.
       return <PageRef name={s.content} blockId={blockId} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
@@ -366,11 +387,20 @@ export function CopyButton(props: { text: string; title: string; class?: string 
   );
 }
 
-function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMode = true, macroExpansion = false): JSX.Element {
+function renderLink(
+  s: Extract<Inline, { k: "link" }>,
+  blockId?: string,
+  spanMode = true,
+  macroExpansion = false,
+  format?: Format,
+): JSX.Element {
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   if (url.type === "page_ref") {
-    const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode, macroExpansion) : undefined;
+    if (format === "org" && isOgOrgPageRefImageTarget(url.v)) {
+      return <AssetImage url={url.v} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+    }
+    const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode, macroExpansion, format) : undefined;
     return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
   }
   if (url.type === "block_ref") {
@@ -410,7 +440,7 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
         {...(spanAttrs ?? {})}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
       >
-        <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion)}</Show>
+        <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
       <CopyButton text={dest} title="Copy link" class="copy-inline" />
     </span>
@@ -1056,7 +1086,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   );
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
-      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false)}
+      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format)}
     </Show>
   );
 }
