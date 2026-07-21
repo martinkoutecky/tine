@@ -13,6 +13,7 @@ import type { Format } from "../render/ast";
 // spaces  = indentation preserved with spaces, NO bullet (portable indented text).
 // no-indent = flat: no indentation, no bullet (plain lines).
 export type IndentStyle = "dashes" | "spaces" | "no-indent";
+export type MaxDepth = "all" | number;
 
 // rendered = the text as displayed (glyphs, no markup markers) — lsdoc-AST
 //            flattening via render/renderedText.ts, never a regex re-scan.
@@ -22,6 +23,7 @@ export type ExportContent = "rendered" | "source";
 export interface ExportOptions {
   content: ExportContent;
   indent: IndentStyle;
+  maxDepth?: MaxDepth;
   stripLinks: boolean; // [[Foo]] -> Foo
   removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped (source mode only — rendered has none)
   removeTags: boolean; // #tag and #[[tag]] removed
@@ -41,6 +43,9 @@ export interface ExportOptions {
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   content: "rendered",
   indent: "dashes",
+  // OG 1.0.0 defaults its `:keep-only-level<=N` export option to `:all`
+  // (handler/export/common.cljs:45-54).
+  maxDepth: "all",
   stripLinks: false,
   removeEmphasis: false,
   removeTags: false,
@@ -120,7 +125,14 @@ export function exportOutline(nodes: ExportNode[], opts: ExportOptions): string 
     }
 
     if (opts.newlineAfterBlock) out.push("");
-    for (const c of n.children) walk(c, level + 1);
+    // Export roots count as depth 1, while `level` remains the zero-based
+    // indentation level. OG 1.0.0 applies its shared depth filter before
+    // serialization, retaining accepted headings and suppressing their deeper
+    // descendants (handler/export/common.cljs:547-565).
+    const maxDepth = opts.maxDepth ?? "all";
+    if (maxDepth === "all" || level + 1 < maxDepth) {
+      for (const c of n.children) walk(c, level + 1);
+    }
   };
   for (const n of nodes) walk(n, 0);
   while (out.length && out[out.length - 1] === "") out.pop();

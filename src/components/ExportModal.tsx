@@ -14,6 +14,7 @@ import {
   type ExportNode,
   type ExportOptions,
   type IndentStyle,
+  type MaxDepth,
 } from "../editor/exportText";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
@@ -50,6 +51,8 @@ const INDENT_STYLES: { value: IndentStyle; label: string; hint: string }[] = [
   { value: "spaces", label: "Spaces", hint: "indent, no bullets" },
   { value: "no-indent", label: "No indent", hint: "flat, no bullets" },
 ];
+
+const MAX_DEPTHS: MaxDepth[] = ["all", 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 // `sourceOnly` toggles are moot in rendered mode (the markers are already gone).
 const TOGGLES: { key: keyof ExportOptions; label: string; sourceOnly?: boolean; renderedOnly?: boolean }[] = [
@@ -477,6 +480,20 @@ function Modal(props: { ids: string[] }): JSX.Element {
               )}
             </For>
           </div>
+          <label class="export-opt-row export-indent">
+            <span class="export-opt-label">Level ≤</span>
+            <select
+              value={opts().maxDepth}
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                update({ maxDepth: value === "all" ? "all" : Number(value) });
+              }}
+            >
+              <For each={MAX_DEPTHS}>
+                {(depth) => <option value={depth}>{depth}</option>}
+              </For>
+            </select>
+          </label>
           <div class="export-opt-row export-toggles">
             <For each={TOGGLES}>
               {(t) => (

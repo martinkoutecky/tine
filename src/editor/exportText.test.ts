@@ -29,6 +29,23 @@ describe("exportOutline", () => {
     expect(exportOutline(tree, opt({ indent: "no-indent" }))).toBe("parent\nchild\ngrand");
   });
 
+  it("maximum depth 1 keeps export roots and omits descendants", () => {
+    expect(exportOutline(tree, opt({ indent: "dashes", maxDepth: 1 }))).toBe("- parent");
+  });
+
+  it("maximum depth 2 keeps children but omits grandchildren", () => {
+    expect(exportOutline(tree, opt({ indent: "dashes", maxDepth: 2 }))).toBe("- parent\n\t- child");
+  });
+
+  it('maximum depth "all" retains the entire forest', () => {
+    expect(exportOutline(tree, opt({ indent: "dashes", maxDepth: "all" }))).toBe("- parent\n\t- child\n\t\t- grand");
+  });
+
+  it("applies maximum depth before each indentation mode serializes", () => {
+    expect(exportOutline(tree, opt({ indent: "spaces", maxDepth: 2 }))).toBe("parent\n  child");
+    expect(exportOutline(tree, opt({ indent: "no-indent", maxDepth: 2 }))).toBe("parent\nchild");
+  });
+
   it("strips [[links]] to text", () => {
     const n: ExportNode[] = [{ raw: "see [[Foo Bar]] now", children: [] }];
     expect(exportOutline(n, opt({ indent: "no-indent", stripLinks: true }))).toBe("see Foo Bar now");
