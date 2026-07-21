@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Property autocomplete**, like Logseq: typing `::` at the start of a line
+  (or a typed key ending in `::`) opens a picker of the property names already
+  used in your graph; picking one inserts the canonical `key:: ` and
+  immediately offers that property's known values. `::` inside ordinary prose,
+  references, or code fences never triggers it.
 - The Copy/export modal gained Logseq's **maximum-depth control** (`Level ≤`
   all/1..9): descendants deeper than the selected level are omitted from the
   exported text, in both Rendered and Source modes.

@@ -16,6 +16,7 @@ import {
   orderAcItems,
   codeLanguageItems,
   COMMON_CODE_LANGUAGES,
+  propertyKeyFold,
 } from "./autocomplete";
 import slashFixtureManifest from "./fixtures/slash-ranking-prefix-base-15bbddc/manifest.json";
 import slashFixturePart1 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-1.json";
@@ -123,6 +124,30 @@ describe("orderAcItems (autocomplete default action)", () => {
 });
 
 describe("detectTrigger", () => {
+  it("opens property-name completion only for a fresh logical property line", () => {
+    expect(detectTrigger("::", 2)).toEqual({
+      kind: "property-name", query: "", start: 0, end: 2,
+    });
+    expect(detectTrigger("before\nAlpha_value::", 20)).toEqual({
+      kind: "property-name", query: "Alpha_value", start: 7, end: 20,
+    });
+
+    expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
+    expect(detectTrigger("[[reference]]::", 15)).toBeNull();
+    expect(detectTrigger("```\n::", 6)).toBeNull();
+  });
+
+  it("keeps a chosen canonical property's value span separate from its key and delimiter", () => {
+    expect(detectTrigger("alpha:: ", 8, "alpha")).toEqual({
+      kind: "property-value", query: "", start: 8, end: 8, property: "alpha",
+    });
+    expect(detectTrigger("alpha:: one", 11, "alpha")).toEqual({
+      kind: "property-value", query: "one", start: 8, end: 11, property: "alpha",
+    });
+    expect(detectTrigger("other:: one", 11, "alpha")).toBeNull();
+    expect(detectTrigger("alpha:: one", 11)).toBeNull();
+  });
+
   it("detects language text only on opening backtick and tilde fences", () => {
     expect(detectTrigger("```j", 4)).toEqual({ kind: "code-language", query: "j", start: 3, end: 4 });
     expect(detectTrigger("~~~~py", 6)).toEqual({ kind: "code-language", query: "py", start: 4, end: 6 });
@@ -219,6 +244,12 @@ describe("detectTrigger", () => {
     expect(detectTrigger(raw, raw.length)).toEqual({
       kind: "block", query: "blk", start: 7, end: raw.length,
     });
+  });
+});
+
+describe("propertyKeyFold", () => {
+  it("uses the established property identity for new keys", () => {
+    expect(propertyKeyFold("  Alpha value_name  ")).toBe("alpha-value-name");
   });
 });
 

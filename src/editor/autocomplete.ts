@@ -1,10 +1,18 @@
-// Pure autocomplete logic for the block editor: detect a `[[`, `#`, or `/`
+// Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, or property
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
 import { isBareTagPrefix, tagRef } from "../tags";
+import { propertyKeyNorm } from "../render/block";
 
-export type TriggerKind = "page" | "tag" | "command" | "block" | "code-language";
+export type TriggerKind =
+  | "page"
+  | "tag"
+  | "command"
+  | "block"
+  | "code-language"
+  | "property-name"
+  | "property-value";
 
 export interface CodeLanguageItem {
   /** Canonical highlight.js/common identifier written to the fence. */
@@ -63,7 +71,12 @@ export interface Trigger {
   start: number;
   /** Index in `raw` where the query ends (the caret). */
   end: number;
+  /** Canonical key owning a property-value query. */
+  property?: string;
 }
+
+/** Existing canonical property identity, re-exported for editor authoring. */
+export const propertyKeyFold = propertyKeyNorm;
 
 /** True when the current line starts inside a preceding Markdown fence. A
  * fence-looking line inside code is content/closing syntax, never an opening
@@ -85,7 +98,11 @@ function insideFenceBefore(raw: string, lineStart: number): boolean {
 }
 
 /** Detect an active completion trigger immediately before `caret`. */
-export function detectTrigger(raw: string, caret: number): Trigger | null {
+export function detectTrigger(
+  raw: string,
+  caret: number,
+  propertyValueKey?: string | null,
+): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, and `#tag`/`/command`
   // are anchored at line start or after whitespace. So only the CURRENT line's
   // prefix can matter — slicing just that (not the whole `raw[0..caret]`) avoids
@@ -93,6 +110,47 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
+
+  // Property completion is line syntax, never inline prose/reference/fence
+  // syntax. A value lifecycle exists only after this editor selected its key;
+  // merely moving into an existing `key:: value` line must not pop a menu.
+  // OG parity: handler/editor.cljs:1907-1924 (name trigger) and :2211-2226
+  // (chosen key immediately transitions to value search), checkout 6e7afa8eb.
+  if (!insideFenceBefore(raw, lineStart)) {
+    if (propertyValueKey) {
+      const delimiter = before.indexOf("::");
+      if (delimiter > 0) {
+        const sourceKey = before.slice(0, delimiter);
+        if (
+          /^[A-Za-z0-9_./-]+$/.test(sourceKey) &&
+          propertyKeyFold(sourceKey) === propertyKeyFold(propertyValueKey)
+        ) {
+          const afterDelimiter = delimiter + 2;
+          const valueOffset = afterDelimiter + (before[afterDelimiter] === " " ? 1 : 0);
+          const query = before.slice(valueOffset);
+          return {
+            kind: "property-value",
+            query,
+            start: lineStart + valueOffset,
+            end: caret,
+            property: propertyKeyFold(propertyValueKey),
+          };
+        }
+      }
+    }
+
+    // Match the persisted parser's property-key alphabet. In particular, a
+    // whitespace-separated prose phrase ending in `::` is not property syntax.
+    const propertyName = /^([A-Za-z0-9_./-]*)::$/.exec(before);
+    if (propertyName) {
+      return {
+        kind: "property-name",
+        query: propertyName[1],
+        start: lineStart,
+        end: caret,
+      };
+    }
+  }
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
   // by hand (Enter keeps its established behavior); one language character is

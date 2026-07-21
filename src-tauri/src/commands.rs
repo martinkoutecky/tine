@@ -32,6 +32,8 @@ pub(crate) fn save_workspaces(
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const AUTOCOMPLETE_FACET_MAX_ITEMS: usize = 2_000;
+const AUTOCOMPLETE_FACET_MAX_BYTES: usize = 2 * 1024 * 1024;
 const QUERY_EXPORT_MAX_QUERIES: usize = 64;
 const QUERY_EXPORT_REQUEST_MAX_QUERIES: usize = 1_024;
 const QUERY_EXPORT_MAX_QUERY_BYTES: usize = 64 * 1024;
@@ -798,8 +800,22 @@ pub(crate) fn run_advanced_query(
 }
 
 #[tauri::command]
-pub(crate) fn query_facets(state: GraphContext<'_>) -> Result<Vec<(String, Vec<String>)>, String> {
+pub(crate) fn query_facets(
+    state: GraphContext<'_>,
+    autocomplete: Option<bool>,
+) -> Result<Vec<(String, Vec<String>)>, String> {
     with_graph(&state, |g| {
+        if autocomplete.unwrap_or(false) {
+            // The editor's OG policy intentionally differs from query-builder
+            // facets; use a separately bounded collector without changing the
+            // default command behavior.
+            return Ok(tine_core::query::autocomplete_property_facets_bounded(
+                g,
+                AUTOCOMPLETE_FACET_MAX_ITEMS,
+                AUTOCOMPLETE_FACET_MAX_BYTES,
+            )
+            .0);
+        }
         let (facets, exceeded) = tine_core::query::property_facets_bounded(
             g,
             RESULT_BRIDGE_MAX_ROWS,

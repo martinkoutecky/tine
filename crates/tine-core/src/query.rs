@@ -2329,6 +2329,117 @@ pub fn property_facets_bounded(
     (facets, exceeded)
 }
 
+/// OG-visible property names and their distinct values for editor completion.
+/// Unlike query-builder facets, this includes page preambles and editable
+/// built-ins such as `template`/`title`, while applying graph-configured hidden
+/// keys. OG sources: db/model.cljs:1394-1405,1422-1443; search.cljs:184-215;
+/// util/property.cljs:18-24 at checkout 6e7afa8eb.
+const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
+    "id",
+    "custom-id",
+    "background-color",
+    "background_color",
+    "heading",
+    "collapsed",
+    "created-at",
+    "updated-at",
+    "last-modified-at",
+    "created_at",
+    "last_modified_at",
+    "query-table",
+    "query-properties",
+    "query-sort-by",
+    "query-sort-desc",
+    "ls-type",
+    "hl-type",
+    "hl-page",
+    "hl-stamp",
+    "hl-color",
+    "logseq.macro-name",
+    "logseq.macro-arguments",
+    "logseq.order-list-type",
+    "logseq.tldraw.page",
+    "logseq.tldraw.shape",
+    "todo",
+    "doing",
+    "now",
+    "later",
+    "done",
+];
+
+pub fn autocomplete_property_facets_bounded(
+    graph: &Graph,
+    max_items: usize,
+    max_bytes: usize,
+) -> (Vec<(String, Vec<String>)>, bool) {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+    let hidden: HashSet<String> = OG_AUTOCOMPLETE_HIDDEN_PROPS
+        .iter()
+        .map(|key| property_key_norm(key))
+        .chain(
+            graph
+                .config
+                .block_hidden_properties
+                .iter()
+                .map(|key| property_key_norm(key.trim_start_matches(':'))),
+        )
+        .collect();
+    let mut items = 0usize;
+    let mut bytes = 0usize;
+    let mut exceeded = false;
+
+    let facets = graph.with_pages(|pages| {
+        let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut offer = |source_key: String, source_value: String| {
+            let key = property_key_norm(&source_key);
+            if key.is_empty() || hidden.contains(&key) {
+                return;
+            }
+
+            if !map.contains_key(&key) {
+                let key_bytes = key.len().saturating_add(64);
+                if items >= max_items || bytes.saturating_add(key_bytes) > max_bytes {
+                    exceeded = true;
+                    return;
+                }
+                items += 1;
+                bytes = bytes.saturating_add(key_bytes);
+                map.insert(key.clone(), BTreeSet::new());
+            }
+
+            let value = source_value.trim();
+            if value.is_empty() || map.get(&key).is_some_and(|values| values.contains(value)) {
+                return;
+            }
+            let value_bytes = value.len().saturating_add(64);
+            if items >= max_items || bytes.saturating_add(value_bytes) > max_bytes {
+                exceeded = true;
+                return;
+            }
+            items += 1;
+            bytes = bytes.saturating_add(value_bytes);
+            map.entry(key).or_default().insert(value.to_string());
+        };
+
+        for (_entry, doc) in pages {
+            for (key, value) in page_facets(doc.pre_block.as_deref()).0 {
+                offer(key, value);
+            }
+            walk(&doc.roots, &mut |block| {
+                for (key, value) in block.properties() {
+                    offer(key, value);
+                }
+            });
+        }
+
+        map.into_iter()
+            .map(|(key, values)| (key, values.into_iter().collect()))
+            .collect()
+    });
+    (facets, exceeded)
+}
+
 #[cfg(test)]
 struct ScoredQuickSwitchCand {
     score: i32,
@@ -4331,6 +4442,50 @@ mod tests {
                 vec!["one".to_string(), "two".to_string()]
             )]
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn autocomplete_property_facets_follow_og_visibility_sources_and_budget() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-property-autocomplete-facets-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:block-hidden-properties #{:hidden_config}}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Properties.md"),
+            "Page_Only:: preamble\nTitle:: Page title\nhidden_config:: secret\n\n- first\n  alpha:: one\n  Alpha_Value:: two\n  template:: My template\n  id:: hidden\n  background_color:: hidden too\n  hidden_config:: block secret\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        assert_eq!(
+            autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX),
+            (
+                vec![
+                    ("alpha".to_string(), vec!["one".to_string()]),
+                    ("alpha-value".to_string(), vec!["two".to_string()]),
+                    ("page-only".to_string(), vec!["preamble".to_string()]),
+                    ("template".to_string(), vec!["My template".to_string()]),
+                    ("title".to_string(), vec!["Page title".to_string()]),
+                ],
+                false,
+            )
+        );
+
+        let (bounded, exceeded) = autocomplete_property_facets_bounded(&graph, 3, usize::MAX);
+        assert!(exceeded);
+        assert!(bounded.len() + bounded.iter().map(|(_, values)| values.len()).sum::<usize>() <= 3);
         let _ = fs::remove_dir_all(&dir);
     }
 

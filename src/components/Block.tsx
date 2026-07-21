@@ -1,6 +1,6 @@
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { backend } from "../backend";
+import { autocompleteFacets, backend } from "../backend";
 import {
   detectTrigger,
   applyCompletion,
@@ -15,6 +15,7 @@ import {
   commandScore,
   codeLanguageItems,
   fuzzyScore,
+  propertyKeyFold,
   type Trigger,
 } from "../editor/autocomplete";
 import { pluginManager } from "../plugins/manager";
@@ -920,6 +921,10 @@ interface AcItem {
   templateNodes?: import("../types").BlockDto[];
   /** A `((block reference))` candidate: insert `((uuid))` and persist id::. */
   blockRef?: { uuid: string; page: string; kind: import("../types").PageKind };
+  /** Canonical property-name candidate, or a newly folded typed key. */
+  propertyName?: string;
+  /** Existing or newly typed value for the active canonical property. */
+  propertyValue?: string;
 }
 
 /** Nearest ancestor that actually scrolls vertically — used to pin the scroll
@@ -1145,6 +1150,8 @@ export function Editor(props: { id: string }): JSX.Element {
   const [ac, setAc] = createSignal<Trigger | null>(null);
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);
   const [acIndex, setAcIndex] = createSignal(0);
+  const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
+  let propertyFacets: [string, string[]][] = [];
   let acListRef: HTMLDivElement | undefined;
   // Keep the highlighted autocomplete item scrolled into view during arrow nav.
   createEffect(() => {
@@ -1194,13 +1201,33 @@ export function Editor(props: { id: string }): JSX.Element {
     setAc(null);
     setAcItems([]);
     setAcIndex(0);
+    setPropertyValueKey(null);
   };
   const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
     left !== null &&
     left.kind === right.kind &&
     left.query === right.query &&
     left.start === right.start &&
-    left.end === right.end;
+    left.end === right.end &&
+    left.property === right.property;
+  const detectEditorTrigger = (value = ref.value, caret = ref.selectionStart): Trigger | null =>
+    isCalc() || isAnnot() || !!sheetCell
+      ? null
+      : detectTrigger(value, caret, propertyValueKey());
+  const propertyValueItems = (key: string, query: string): AcItem[] => {
+    const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
+    const q = query.trim();
+    const ranked = values
+      .map((value, index) => ({ value, index, score: q ? fuzzyScore(q, value) : 1 }))
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score || left.index - right.index)
+      .slice(0, 100)
+      .map(({ value }) => ({ label: value, propertyValue: value }));
+    if (q && !values.some((value) => value.toLowerCase() === q.toLowerCase())) {
+      ranked.push({ label: `Create "${q}"`, propertyValue: q });
+    }
+    return ranked;
+  };
   // Page/block/tag/command/code completion is a real transient above its editor
   // and, on mobile, above the drawer. One Escape peels only this popup.
   createEffect(() => {
@@ -1215,13 +1242,36 @@ export function Editor(props: { id: string }): JSX.Element {
   });
 
   const updateAutocomplete = async () => {
-    const t = detectTrigger(ref.value, ref.selectionStart);
+    const t = detectEditorTrigger();
     if (!t) {
       closeAc();
       return;
     }
     setAc(t);
     setAcIndex(0);
+    if (t.kind === "property-name") {
+      const facets = await autocompleteFacets();
+      const cur = ac();
+      if (!sameAcTrigger(cur, t)) return;
+      propertyFacets = facets;
+      const q = t.query.trim();
+      const ranked = facets
+        .map(([key], index) => ({ key, index, score: q ? fuzzyScore(q, key) : 1 }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score || left.index - right.index)
+        .slice(0, 100)
+        .map(({ key }) => ({ label: key, propertyName: key }));
+      const created = propertyKeyFold(t.query);
+      if (created && !facets.some(([key]) => key === created)) {
+        ranked.push({ label: `Create "${created}"`, propertyName: created });
+      }
+      setAcItems(ranked);
+      return;
+    }
+    if (t.kind === "property-value") {
+      setAcItems(propertyValueItems(t.property!, t.query));
+      return;
+    }
     if (t.kind === "code-language") {
       setAcItems(codeLanguageItems(t.query).map((language) => ({
         label: language.label,
@@ -1755,6 +1805,34 @@ export function Editor(props: { id: string }): JSX.Element {
   const selectAc = (item: AcItem) => {
     const t = ac();
     if (!t) return;
+    if (item.propertyName) {
+      const key = propertyKeyFold(item.propertyName);
+      const inserted = `${key}:: `;
+      const result = applyCompletion(ref.value, t.start, t.end, inserted);
+      const valueTrigger: Trigger = {
+        kind: "property-value",
+        query: "",
+        start: result.caret,
+        end: result.caret,
+        property: key,
+      };
+      commit(result.raw);
+      setPropertyValueKey(key);
+      setAc(valueTrigger);
+      setAcIndex(0);
+      setAcItems(propertyValueItems(key, ""));
+      queueMicrotask(() => {
+        ref.value = result.raw;
+        ref.setSelectionRange(result.caret, result.caret);
+        ref.focus();
+        autosize();
+      });
+      return;
+    }
+    if (item.propertyValue !== undefined) {
+      replaceTrigger(item.propertyValue);
+      return;
+    }
     if (item.blockRef) {
       // Insert `((uuid))` now (resolves in-session via the in-memory uuid), then
       // durably stamp the target's id:: in the background so it survives restart.
@@ -1792,7 +1870,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const capturedSurfaceKey = surfaceKey;
       const trigger = { ...t };
       const editorIsCurrent = () => {
-        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart);
+        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart, propertyValueKey());
         const liveNode = doc.byId[props.id];
         return editorMounted
           && token === pluginSlashInvocation
@@ -2091,7 +2169,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // Close the popup synchronously when the trigger ends (instant), but debounce
     // the page/template IPC fetch so holding down a key doesn't fire a backend
     // round-trip per character.
-    const next = detectTrigger(ref.value, ref.selectionStart);
+    const next = detectEditorTrigger();
     if (!next) {
       clearTimeout(acTimer);
       closeAc();

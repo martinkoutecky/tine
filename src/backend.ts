@@ -250,7 +250,7 @@ export interface Backend {
   runAdvancedQuery(query: string, currentPage?: string): Promise<AdvancedQueryResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
-  queryFacets(): Promise<[string, string[]][]>;
+  queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
   /** `alias::` → canonical page name pairs. */
   pageAliases(): Promise<[string, string][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
@@ -698,8 +698,11 @@ class TauriBackend implements Backend {
   runAdvancedQuery(query: string, currentPage?: string) {
     return this.call<AdvancedQueryResult>("run_advanced_query", { query, currentPage });
   }
-  queryFacets() {
-    return this.call<[string, string[]][]>("query_facets");
+  queryFacets(autocomplete = false) {
+    return this.call<[string, string[]][]>(
+      "query_facets",
+      autocomplete ? { autocomplete: true } : undefined,
+    );
   }
   pageAliases() {
     return this.call<[string, string][]>("page_aliases");
@@ -1064,4 +1067,10 @@ export function backend(): Backend {
     _backend = isTauri() ? new TauriBackend() : mockBackend();
   }
   return _backend;
+}
+
+/** OG-visible graph property keys/values for the block editor. Kept separate
+ * from query-builder facets even though both share the registered IPC command. */
+export function autocompleteFacets(): Promise<[string, string[]][]> {
+  return backend().queryFacets(true);
 }
