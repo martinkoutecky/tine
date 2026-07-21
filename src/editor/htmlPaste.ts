@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import type { Format } from "../types";
 import { parseOutline, type OutlineNode } from "./outline";
 
 export const HTML_PASTE_LIMITS = {
@@ -14,10 +15,10 @@ const TAGS = [
   "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6",
   "ul", "ol", "li", "blockquote", "pre", "code", "a", "strong", "b",
   "em", "i", "del", "s", "strike", "hr", "table", "thead", "tbody",
-  "tfoot", "tr", "th", "td", "caption", "span",
+  "tfoot", "tr", "th", "td", "caption", "span", "img",
 ];
-const ATTRS = ["href", "title", "colspan", "rowspan"];
-const STRUCTURAL = "p,h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,pre,table";
+const ATTRS = ["href", "title", "colspan", "rowspan", "src", "alt"];
+const STRUCTURAL = "p,h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,pre,table,img";
 
 function withinDomBounds(root: ParentNode): boolean {
   let count = 0;
@@ -33,7 +34,7 @@ function withinDomBounds(root: ParentNode): boolean {
 
 /** Deterministically preserve explicit clipboard HTML structure. Returns null
  * when HTML is absent, unsafe/oversized, or no richer than the plain flavor. */
-export function structuredHtmlOutline(html: string, plain: string): OutlineNode[] | null {
+export function structuredHtmlOutline(html: string, plain: string, format: Format = "md"): OutlineNode[] | null {
   if (!html.trim() || new TextEncoder().encode(html).byteLength > HTML_PASTE_LIMITS.inputBytes) return null;
   const safe = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: TAGS,
@@ -53,6 +54,19 @@ export function structuredHtmlOutline(html: string, plain: string): OutlineNode[
     strongDelimiter: "**",
   });
   service.use(gfm);
+  service.addRule("safeImage", {
+    filter: "img",
+    replacement: (_content, node) => {
+      const src = node.getAttribute("src") ?? "";
+      const alt = node.getAttribute("alt") ?? "";
+      // OG 6e7afa8eb src/main/frontend/extensions/html_parser.cljs:149-158:
+      // decline non-base64 `data:` images (URL-/UTF-8-encoded SVG included),
+      // while retaining ordinary sources and base64 data URLs.
+      const unsafeDataUrl = src.startsWith("data:") && !/^data:.*?;base64,/.test(src);
+      if (!src || unsafeDataUrl) return "";
+      return format === "org" ? `[[${src}][${alt}]]` : `![${alt}](${src})`;
+    },
+  });
   // Tine's clipboard HTML is round-tripped Markdown (our own block copy, or a
   // rendered Logseq block), so Turndown's default text-node escaping would
   // double-escape already-literal punctuation — e.g. `a [b] c` -> `a \[b\] c`

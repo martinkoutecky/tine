@@ -91,6 +91,7 @@ import {
   insertLink,
   wrapLink,
   isPasteableUrl,
+  videoPasteMacro,
   killLineBefore,
   killLineAfter,
   wordForward,
@@ -1549,18 +1550,18 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const MAX_BYTE_CLIPBOARD_FILE = 64 * 1024 * 1024;
   const MAX_CLIPBOARD_FILES = 32;
-  let pasteMultilineInline = false;
-  let pasteMultilineInlineToken = 0;
-  let pasteMultilineInlineTimer: number | undefined;
-  const clearPasteMultilineInline = () => {
-    pasteMultilineInline = false;
-    pasteMultilineInlineToken += 1;
-    if (pasteMultilineInlineTimer !== undefined) {
-      window.clearTimeout(pasteMultilineInlineTimer);
-      pasteMultilineInlineTimer = undefined;
+  let pasteRaw = false;
+  let pasteRawToken = 0;
+  let pasteRawTimer: number | undefined;
+  const clearPasteRaw = () => {
+    pasteRaw = false;
+    pasteRawToken += 1;
+    if (pasteRawTimer !== undefined) {
+      window.clearTimeout(pasteRawTimer);
+      pasteRawTimer = undefined;
     }
   };
-  onCleanup(clearPasteMultilineInline);
+  onCleanup(clearPasteRaw);
 
   /** Import file-manager paths without materializing their bytes in the WebView.
    * If a platform exposes only browser File objects, save those sequentially so
@@ -2628,21 +2629,20 @@ export function Editor(props: { id: string }): JSX.Element {
     // phase (notably Android/WebKit's legacy keyCode 229 path).
     if (e.key === "Escape" && (e.isComposing || e.keyCode === 229)) return;
 
-    // Ctrl/Cmd+Shift+V is Logseq's "paste as plain text" gesture: multiline
-    // clipboard text stays inside this block instead of becoming an outline.
+    // Ctrl/Cmd+Shift+V is Logseq's universal raw-paste gesture.
     // ClipboardEvent does not expose modifier keys, so remember the preceding
     // keydown briefly and consume it in onPaste. Do not preventDefault: the
     // platform still has to perform the native clipboard read and dispatch paste.
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "v") {
-      clearPasteMultilineInline();
-      pasteMultilineInline = true;
-      const token = ++pasteMultilineInlineToken;
-      pasteMultilineInlineTimer = window.setTimeout(() => {
-        if (pasteMultilineInlineToken === token) clearPasteMultilineInline();
+      clearPasteRaw();
+      pasteRaw = true;
+      const token = ++pasteRawToken;
+      pasteRawTimer = window.setTimeout(() => {
+        if (pasteRawToken === token) clearPasteRaw();
       }, 1_000);
       return;
     }
-    if (pasteMultilineInline) clearPasteMultilineInline();
+    if (pasteRaw) clearPasteRaw();
 
     // Autocomplete popup takes priority for navigation/selection keys.
     if (ac() && acItems().length) {
@@ -2978,7 +2978,7 @@ export function Editor(props: { id: string }): JSX.Element {
   };
 
   const onBlur = () => {
-    clearPasteMultilineInline();
+    clearPasteRaw();
     unregisterFocusedEditor();
     if (sheetCanceling) return;
     // A block-move reorder blurs us momentarily — stay in edit mode (the move
@@ -3037,9 +3037,28 @@ export function Editor(props: { id: string }): JSX.Element {
   const onPaste = (e: ClipboardEvent) => {
     // Consume the modifier latch on EVERY paste, including file/image pastes.
     // Otherwise an intercepted shortcut could affect a later context-menu paste.
-    const inlineMultiline = pasteMultilineInline;
-    clearPasteMultilineInline();
+    const rawPaste = pasteRaw;
+    clearPasteRaw();
     const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (rawPaste) {
+      e.preventDefault();
+      // Empty text explicitly claims the gesture but leaves the block untouched;
+      // never fall through to an HTML/file flavor.
+      if (!text) return;
+      // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:262-271 deletes the
+      // selection and inserts exactly the clipboard text, bypassing every
+      // formatted/file/block branch.
+      const start = ref.selectionStart;
+      const newRaw = ref.value.slice(0, start) + text + ref.value.slice(ref.selectionEnd);
+      commit(newRaw);
+      const pos = start + text.length;
+      queueMicrotask(() => {
+        ref.value = newRaw;
+        ref.setSelectionRange(pos, pos);
+        autosize();
+      });
+      return;
+    }
     const html = e.clipboardData?.getData("text/html") ?? "";
     // File managers commonly include path text alongside the real file-list
     // clipboard flavor. Claim the paste synchronously so those paths never land
@@ -3060,19 +3079,6 @@ export function Editor(props: { id: string }): JSX.Element {
       void pasteClipboardFiles(eventFiles);
       return;
     }
-    if (inlineMultiline && text.includes("\n")) {
-      e.preventDefault();
-      const start = ref.selectionStart;
-      const newRaw = ref.value.slice(0, start) + text + ref.value.slice(ref.selectionEnd);
-      commit(newRaw);
-      const pos = start + text.length;
-      queueMicrotask(() => {
-        ref.value = newRaw;
-        ref.setSelectionRange(pos, pos);
-        autosize();
-      });
-      return;
-    }
     // A structural sheet copy (multiple grid cells) pasted into a block editor
     // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
     // text (Martin's nit). Only fires when the clipboard is exactly our own
@@ -3090,7 +3096,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // insertion semantics.
     const start = ref.selectionStart;
     const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
-    const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text);
+    const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
     if (htmlNodes) {
       e.preventDefault();
       const wasEmpty = ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
@@ -3153,6 +3159,20 @@ export function Editor(props: { id: string }): JSX.Element {
         return;
       }
     }
+    // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:49-57,164-166 wraps
+    // recognized bare video URLs only after selected-URL handling has declined.
+    const videoMacro = videoPasteMacro(text);
+    if (videoMacro && ref.selectionStart === ref.selectionEnd) {
+      e.preventDefault();
+      const start = ref.selectionStart;
+      applyEdit({
+        text: ref.value.slice(0, start) + videoMacro + ref.value.slice(ref.selectionEnd),
+        start: start + videoMacro.length,
+        end: start + videoMacro.length,
+      });
+      queueMicrotask(updateSel);
+      return;
+    }
     // Single-line/no text: maybe an image on the OS clipboard. Two paths:
     //   1) The paste event's OWN image data (a DataTransferItem of kind "file",
     //      type image/*). Chromium (Windows WebView2) and WKWebView (macOS)
@@ -3201,7 +3221,7 @@ export function Editor(props: { id: string }): JSX.Element {
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {
-          if (e.key.toLowerCase() === "v") clearPasteMultilineInline();
+          if (e.key.toLowerCase() === "v") clearPasteRaw();
         }}
         onFocus={() => {
           noteSurfaceFocused(surfaceKey);

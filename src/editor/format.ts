@@ -140,6 +140,20 @@ export function isPasteableUrl(text: string): boolean {
   return PASTE_URL_RE.test(text.trim());
 }
 
+// Exact OG video-provider patterns, transcribed from 6e7afa8eb
+// src/main/frontend/util/text.cljs:12-23. Keep handler/paste.cljs:137-146's
+// selected-URL branch ahead of this bare-URL normalization at the call site.
+const VIDEO_PASTE_RE = [
+  /^((?:https?:)?\/\/)?((?:www).)?((?:bilibili.com))(\/(?:video\/)?)([\w-]+)(\?p=(\d+))?(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www).)?((?:loom.com))(\/(?:share\/|embed\/))([\w-]+)(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www).)?((?:player.vimeo.com|vimeo.com))(\/(?:video\/)?)([\w-]+)(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www|m).)?((?:youtube.com|youtu.be|y2u.be|youtube-nocookie.com))(\/(?:[\w-]+\?v=|embed\/|v\/)?)([\w-]+)([\S^?]+)?$/,
+];
+
+export function videoPasteMacro(text: string): string | null {
+  return VIDEO_PASTE_RE.some((pattern) => pattern.test(text)) ? `{{video ${text}}}` : null;
+}
+
 /** Wrap a selection as a link around a pasted `url`. Format-aware: markdown
  *  `[sel](url)`, org `[[url][sel]]` (org puts the target first, label second —
  *  the inverse of markdown). The caret lands just after the inserted link. */

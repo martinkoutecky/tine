@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Paste parity with Logseq**: Ctrl/Cmd+Shift+V now pastes the literal
+  clipboard text for every payload (not just multiline) — rich HTML and URLs
+  included, with no formatting applied; formatted paste keeps HTML images
+  (`![alt](src)`, org equivalent, unsafe `data:` URLs declined safely); and
+  pasting a bare YouTube/Loom/Vimeo/Bilibili link inserts a playable
+  `{{video}}` embed.
 - **Numbered lists work like Logseq's**: typing `1. ` in an empty block turns
   it into a numbered-list block; Enter continues the numbering into the new
   sibling and Enter on an empty item stops the list; Backspace at the start

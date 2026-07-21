@@ -58,6 +58,36 @@ describe("structuredHtmlOutline", () => {
     expect(raw).not.toMatch(/steal|script|style|onclick|javascript/i);
   });
 
+  it("keeps surrounding text while converting safe images and declining unsafe encoded data URLs", () => {
+    const outline = structuredHtmlOutline(
+      [
+        "<p>Before ",
+        "<img src='https://example.com/cat.png' alt='Cat'>",
+        " middle ",
+        "<img src='data:image/svg+xml,%3Csvg%3E%3C/svg%3E' alt='Unsafe'>",
+        " after.</p>",
+      ].join(""),
+      "Before Cat middle Unsafe after.",
+    );
+    const raw = outline?.map((node) => node.raw).join("\n") ?? "";
+    expect(raw).toContain("Before");
+    expect(raw).toContain("![Cat](https://example.com/cat.png)");
+    expect(raw).toContain("middle");
+    expect(raw).toContain("after.");
+    expect(raw).not.toMatch(/data:image|Unsafe/);
+  });
+
+  it.each([
+    ["md", "![Diagram](https://example.com/diagram.png)"],
+    ["org", "[[https://example.com/diagram.png][Diagram]]"],
+  ] as const)("converts an image-only %s payload with format-aware syntax", (format, expected) => {
+    expect(structuredHtmlOutline(
+      "<img src='https://example.com/diagram.png' alt='Diagram'>",
+      "Diagram",
+      format,
+    )).toEqual([{ raw: expected, children: [] }]);
+  });
+
   it("falls back for non-semantic, malformed, deep, and oversized payloads", () => {
     expect(structuredHtmlOutline("<span>plain</span>", "plain")).toBeNull();
     expect(() => structuredHtmlOutline("<ul><li>broken", "broken")).not.toThrow();

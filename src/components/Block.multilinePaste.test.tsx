@@ -166,4 +166,178 @@ describe("multiline paste into editor-visible empty blocks", () => {
       dispose();
     }
   });
+
+  it("raw-pastes single-line rich clipboard text byte-for-byte over a selection", async () => {
+    const block: BlockDto = {
+      id: "77777777-7777-4777-8777-777777777777",
+      raw: "πrefix SELECT suffix🧪",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const start = textarea.value.indexOf("SELECT");
+      textarea.setSelectionRange(start, start + "SELECT".length);
+      keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
+      const plain = "literal [plain](https://plain.test)";
+      const event = paste(textarea, plain, "<ul><li>HTML</li><li>Outline</li></ul>");
+      await Promise.resolve();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`πrefix ${plain} suffix🧪`);
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+        start + plain.length,
+        start + plain.length,
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("raw-pastes a selected bare URL literally instead of wrapping a link", async () => {
+    const block: BlockDto = {
+      id: "88888888-8888-4888-8888-888888888888",
+      raw: "before selected after",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const start = textarea.value.indexOf("selected");
+      textarea.setSelectionRange(start, start + "selected".length);
+      keydown(textarea, { key: "v", code: "KeyV", metaKey: true, shiftKey: true });
+      const url = "https://youtu.be/dQw4w9WgXcQ";
+      const event = paste(textarea, url);
+      await Promise.resolve();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`before ${url} after`);
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+        start + url.length,
+        start + url.length,
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("claims an empty raw clipboard flavor without deleting the selection", () => {
+    const block: BlockDto = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      raw: "before selected after",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const start = textarea.value.indexOf("selected");
+      textarea.setSelectionRange(start, start + "selected".length);
+      keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
+      const event = paste(textarea, "", "<p>HTML fallback must not run</p>");
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe("before selected after");
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://y2u.be/dQw4w9WgXcQ",
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+    "https://www.loom.com/share/1234-abcd",
+    "https://player.vimeo.com/video/123456789",
+    "https://www.bilibili.com/video/BV1xx411c7mD",
+  ])("normalizes a bare OG video-host URL as {{video URL}}: %s", (url) => {
+    const block: BlockDto = {
+      id: "99999999-9999-4999-8999-999999999999",
+      raw: "before ",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, block.raw.length);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      const event = paste(textarea, url);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(doc.byId[block.id].raw).toBe(`before {{video ${url}}}`);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps selected-URL wrapping ahead of video normalization", () => {
+    const block: BlockDto = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      raw: "before selected after",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const start = textarea.value.indexOf("selected");
+      textarea.setSelectionRange(start, start + "selected".length);
+      const url = "https://youtu.be/dQw4w9WgXcQ";
+      const event = paste(textarea, url);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(doc.byId[block.id].raw).toBe(`before [selected](${url}) after`);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves a non-video bare URL to the existing native paste path", () => {
+    const block: BlockDto = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      raw: "before ",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, block.raw.length);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      const event = paste(textarea, "https://example.com/watch?v=dQw4w9WgXcQ");
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(doc.byId[block.id].raw).toBe("before ");
+    } finally {
+      dispose();
+    }
+  });
 });
