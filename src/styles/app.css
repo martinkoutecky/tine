@@ -261,6 +261,9 @@ textarea {
 }
 
 .topbar {
+  position: relative;
+  /* Keep topbar popovers above the content plane, below transient overlays. */
+  z-index: 45;
   height: var(--ls-headbar-height);
   flex: 0 0 var(--ls-headbar-height);
   min-width: 0;
@@ -495,7 +498,6 @@ textarea {
      clips the fixed clusters and must stay reachable on a narrow desktop window.
      Only the fixed-width low-priority action buttons overflow into the "…" menu.
      (Real mobile already hides tabs via the isMobilePlatform Show + spacer.) */
-  .topbar .topbar-navigation-action,
   .topbar .topbar-optional-action {
     display: none;
   }
@@ -503,6 +505,27 @@ textarea {
     margin-left: auto;
   }
   .topbar .topbar-overflow {
+    display: block;
+  }
+  /* Back/Forward remain inline through the first tier, so do not duplicate
+     them in the overflow menu. The four optional actions keep it non-empty. */
+  .topbar .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar .topbar-overflow .topbar-overflow-sep {
+    display: none;
+  }
+}
+
+/* At this floor the ~76px Back/Forward pair no longer has reliable room beside
+   the fixed toolbar controls. At 390px, the measured budget retains ~75px of
+   slack after the pair, so phones keep navigation as the higher priority. */
+@container topbar (max-width: 300px) {
+  .topbar .topbar-navigation-action {
+    display: none;
+  }
+  .topbar .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar .topbar-overflow .topbar-overflow-sep {
     display: block;
   }
 }

@@ -121,6 +121,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **The back and forward buttons now stay on the top bar on phones.** The bar
+  used to move them into the "…" menu at the same width as the calendar,
+  journals, theme and right-sidebar buttons; navigation now keeps its place and
+  only collapses on extremely narrow windows (GH #205).
 - **Multiline plain-text paste now matches Logseq**: pasted text only becomes
   multiple blocks when it looks like an outline (`-`/`+`/`*`/`#` lines, org
   stars) or contains blank-line-separated paragraphs; ordinary prose —
