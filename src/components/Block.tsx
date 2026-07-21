@@ -1,6 +1,7 @@
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
+import { clearClipboardSlot, normalize, peekClipboardSlot, writeClipboardText } from "../clipboard";
 import {
   detectTrigger,
   applyCompletion,
@@ -50,6 +51,7 @@ import {
   insertOutlineAfter,
   replaceEmptyBlockWithOutline,
   insertOutlineChildren,
+  pasteClipboardPayload,
   deleteBlock,
   moveBlock,
   moveBlockFeed,
@@ -2798,7 +2800,7 @@ export function Editor(props: { id: string }): JSX.Element {
       commit(raw);
       void ensureBlockId(props.id).then((uuid) => {
         if (uuid) {
-          void backend().writeText(`((${uuid}))`);
+          void writeClipboardText(`((${uuid}))`);
           pushToast("Copied block ref", "success");
         } else {
           pushToast("Couldn't save the block id — reference not copied.", "error");
@@ -3142,6 +3144,26 @@ export function Editor(props: { id: string }): JSX.Element {
       void pasteClipboardFiles(eventFiles);
       return;
     }
+    const start = ref.selectionStart;
+    const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
+    if (!syntaxSensitive) {
+      const slot = peekClipboardSlot();
+      if (slot && text !== "" && normalize(text) === normalize(slot.text)) {
+        e.preventDefault();
+        // Association is intentionally text-only and can replay the user's last
+        // private block copy when a foreign clipboard happens to contain equal
+        // normalized text. Identity remains separately one-shot and validated.
+        void pasteClipboardPayload(props.id, slot)
+          .then((lastId) => {
+            if (lastId && doc.byId[lastId]) startEditing(lastId, doc.byId[lastId].raw.length);
+          })
+          .catch(() => {}); // association failure is a quiet feature miss
+        return;
+      }
+      // A non-empty observed replacement makes stale private data unusable even
+      // if a later external clipboard happens to restore the old text.
+      if (text !== "") clearClipboardSlot();
+    }
     // A structural sheet copy (multiple grid cells) pasted into a block editor
     // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
     // text (Martin's nit). Only fires when the clipboard is exactly our own
@@ -3157,8 +3179,6 @@ export function Editor(props: { id: string }): JSX.Element {
     // Shift-paste above remains the literal/plain escape hatch, and editor
     // surfaces whose contents are syntax-sensitive retain their native text
     // insertion semantics.
-    const start = ref.selectionStart;
-    const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
     const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
     if (htmlNodes) {
       e.preventDefault();

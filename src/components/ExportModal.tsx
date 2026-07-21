@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, 
 import { exportModal, closeExportModal, pushToast, typographyMode, graphMeta } from "../ui";
 import { exportNodesFor, formatForPage } from "../store";
 import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
 import { expandTemplate } from "../render/inline";
 import { visibleBody } from "../render/block";
@@ -418,7 +419,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
 
   const copy = () => {
     if (format() === "text" && opts().content === "rendered" && warming()) return;
-    void backend().writeText(payload());
+    void writeClipboardText(payload());
     pushToast("Copied to clipboard", "success");
     closeExportModal();
   };

@@ -45,6 +45,7 @@ import {
   selectedIds,
   blockPageReadOnly,
   pageByName,
+  buildClipboardPayload,
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
@@ -53,7 +54,7 @@ import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel 
 import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
 import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
-import { copyOutline } from "../clipboard";
+import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -66,7 +67,7 @@ async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: st
     pushToast("Couldn't save the block id — reference not copied (resolve the conflict first).", "error");
     return;
   }
-  await backend().writeText(fmt(uuid));
+  await writeClipboardText(fmt(uuid));
   pushToast(okMsg, "success");
 }
 
@@ -655,11 +656,11 @@ function BlockRefMenu(props: {
     { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
     {
       label: "Copy block ref",
-      run: () => { void backend().writeText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
+      run: () => { void writeClipboardText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
     },
     {
       label: "Copy block embed",
-      run: () => { void backend().writeText(`{{embed ((${props.uuid}))}}`); pushToast("Copied block embed", "success"); },
+      run: () => { void writeClipboardText(`{{embed ((${props.uuid}))}}`); pushToast("Copied block embed", "success"); },
     },
   ];
   return (
@@ -829,7 +830,7 @@ function PageMenu(props: {
     { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
     { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
-    { id: "copy-page-ref", label: "Copy page ref", run: () => { void backend().writeText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
+    { id: "copy-page-ref", label: "Copy page ref", run: () => { void writeClipboardText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
     {
       id: "copy-export",
       label: "Copy / export as…",
@@ -854,7 +855,7 @@ function PageMenu(props: {
           : backend().getPage(props.name, props.pageKind);
         void request
           .then((p) => {
-            if (p) backend().writeText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
+            if (p) void writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
             pushToast("Copied page as Markdown", "success");
           });
       },
@@ -1025,7 +1026,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     return [
       { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
       { label: "Zoom into block", run: () => zoomInto(id) },
-      { label: "Copy block", run: () => { void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed())); pushToast("Copied block", "success"); } },
+      { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
       {
         label: "Copy / export as…",
         run: () => {
@@ -1040,7 +1041,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => { void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed())); pushToast("Copied block", "success"); } },
+    { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
@@ -1056,7 +1057,8 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     {
       label: "Cut block",
       run: () => {
-        void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()));
+        const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+        void copyBlockOutline("cut", text, buildClipboardPayload([id]));
         deleteBlock(id);
       },
     },

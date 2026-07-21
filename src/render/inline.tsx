@@ -24,6 +24,7 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
@@ -368,8 +369,7 @@ export function CopyButton(props: { text: string; title: string; class?: string 
   const onCopy = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    void backend()
-      .writeText(props.text)
+    void writeClipboardText(props.text)
       .then(() => pushToast("Copied to clipboard", "success"))
       .catch(() => pushToast("Couldn’t copy to clipboard", "error"));
   };

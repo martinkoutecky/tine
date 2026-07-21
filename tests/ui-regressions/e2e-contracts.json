@@ -37,6 +37,12 @@
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"
     },
+    "scripts/e2e-clipboard-roundtrip.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "app's own block copy is recognized on paste (private payload association)", "blocking": false }],
+      "acceptableVariations": ["any OS/engine transformation that normalize() equates"],
+      "nonRequirements": ["Payload insertion behavior, exact clipboard flavor order, or clipboard-manager implementation details."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-caret.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Arrow navigation preserves a usable caret across wrapped blocks and journal entries.", "blocking": true }],
       "acceptableVariations": ["Line wrapping may differ with fonts and viewport width while visual-row caret navigation remains correct."],

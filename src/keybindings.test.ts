@@ -11,6 +11,8 @@ import { pluginManager } from "./plugins/manager";
 import * as router from "./router";
 import type { PaneSnapshot } from "./router";
 import type { GraphMeta } from "./types";
+import { backend } from "./backend";
+import { clearClipboardPayload, peekClipboardPayload } from "./clipboard";
 
 const pluginGraphMeta: GraphMeta = {
   root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
@@ -158,6 +160,7 @@ const journalsSnapshot = (): PaneSnapshot => ({
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clearClipboardPayload();
   endEdit("blur");
   resetStore();
   clearTransientLayersForTest();
@@ -421,6 +424,63 @@ describe("find-in-page routing", () => {
 });
 
 describe("block-selection commands", () => {
+  it("Mod+C preserves public flavors and records the exact full private subtree", () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", path: "pages/tasks.md",
+      blocks: [{
+        id: "parent", raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111", collapsed: true,
+        children: [{ id: "child", raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", collapsed: false, children: [] }],
+      }],
+    });
+    selectBlock("parent");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
+
+    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    expect(write).toHaveBeenCalledWith(
+      "- Parent",
+      "<ul><li>Parent</li></ul>",
+    );
+    expect(peekClipboardPayload()).toMatchObject({
+      op: "copy",
+      graph: "/plugin-test",
+      text: "- Parent",
+      blocks: [{
+        raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
+        sourceFormat: "md",
+        children: [{ raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", sourceFormat: "md" }],
+      }],
+    });
+    dispose();
+  });
+
+  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, path: "pages/tasks.md",
+      blocks: [{ id: "cut-me", raw: "Cut me\nid:: 33333333-3333-3333-3333-333333333333", collapsed: false, children: [] }],
+    });
+    selectBlock("cut-me");
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+
+    const payload = peekClipboardPayload();
+    expect(payload?.op).toBe("cut");
+    expect(payload?.sourcePages).toEqual([expect.objectContaining({
+      name: "Tasks", kind: "page", path: "pages/tasks.md", generation: expect.any(Number),
+    })]);
+    expect(payload?.blocks[0].raw).toContain("id:: 33333333-3333-3333-3333-333333333333");
+    expect(doc.byId["cut-me"]).toBeUndefined();
+    dispose();
+  });
+
   it("routes a remapped cycle-todo command before generic Enter (GH #136)", () => {
     resetStore();
     setWorkflow("todo");

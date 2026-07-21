@@ -62,9 +62,10 @@ import {
   selectBlock,
   visibleOrder,
   toggleUndoRedoMode,
+  buildClipboardPayload,
 } from "./store";
 import { editingId, startEditing } from "./editorController";
-import { copyOutline } from "./clipboard";
+import { copyBlockOutline } from "./clipboard";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -800,9 +801,16 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "c") return void copyOutline(selectionMarkdown()), true;
+  if (mod && e.key.toLowerCase() === "c") {
+    const ids = selectedIds();
+    const text = selectionMarkdown();
+    void copyBlockOutline("copy", text, buildClipboardPayload(ids));
+    return true;
+  }
   if (mod && e.key.toLowerCase() === "x") {
-    void copyOutline(selectionMarkdown());
+    const ids = selectedIds();
+    const text = selectionMarkdown();
+    void copyBlockOutline("cut", text, buildClipboardPayload(ids));
     deleteSelection();
     return true;
   }

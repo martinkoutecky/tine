@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Cut & paste keeps block identity, and copy & paste is block-exact**, like
+  Logseq: cutting blocks (Ctrl/Cmd+X or the context menu) and pasting them
+  back now preserves their `id::`, so `((...))` block references and embeds
+  pointing at them keep working. Pasting your own copied blocks inside Tine
+  is now a true block-level paste — exact text, hidden properties like
+  `collapsed::`, and the full subtree survive — while plain-text pastes into
+  other apps are unchanged. Copy-paste never duplicates block ids, nothing
+  about block identity is written to the OS clipboard, and pasting can never
+  create two blocks with the same id.
 - **Full calculator language in ` ```calc ` blocks**, like Logseq: hex/octal/
   binary numbers in and out (`:hex`, `:oct`, `:bin`, `:decimal`), scientific
   and mixed-number literals (`3 1/2`), inverse trig and factorial, output

@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup, o
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
 import { closePdf, pushToast, isConflicted, activePane, requestBlockReferences, type PdfTarget } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
 import { openPage, openPageAtBlock } from "../router";
@@ -431,7 +432,7 @@ export function PdfViewer(props: {
   };
 
   const copyCreatedHighlightRef = async (id: string) => {
-    await backend().writeText(`((${id}))`);
+    await writeClipboardText(`((${id}))`);
     pushToast("Copied highlight ref", "success");
   };
   // An OG/externally-created sidecar can outlive or predate its annotation

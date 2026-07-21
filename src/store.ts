@@ -9,6 +9,12 @@
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, Format, PageDto, PageKind, RefGroup } from "./types";
+import type { ClipboardBlock, ClipboardPayloadData, ClipboardPayloadSlot, ClipboardSourcePage } from "./clipboard";
+import {
+  CLIPBOARD_PAYLOAD_MAX_BLOCKS,
+  CLIPBOARD_PAYLOAD_MAX_RAW_BYTES,
+  consumeCutGrant,
+} from "./clipboard";
 import type { Route } from "./router";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
@@ -20,6 +26,8 @@ import {
   conflicts,
   pushToast,
   graphMeta,
+  graphEpoch,
+  graphTransitioning,
   workflow,
   timetrackingEnabled,
   logbookWithSecondSupport,
@@ -34,7 +42,7 @@ import {
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
-import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine, splitPagePreamble } from "./editor/properties";
+import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, hideAll, isPropertiesOnly, isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine, splitPagePreamble } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
@@ -68,6 +76,8 @@ import {
   isSaving,
   holdSourcesForDest,
   trackAssetWrite,
+  flushCutSourcePages,
+  cutSourcePagesRetired,
 } from "./persistence";
 // The debounced persistence engine lives in persistence.ts; re-exported here so
 // the rest of the app keeps importing the save API from the store.
@@ -121,6 +131,38 @@ interface DocState {
 }
 
 export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
+
+function docHasBlockIdentity(id: string): boolean {
+  if (doc.byId[id]) return true;
+  const normalized = id.toLowerCase();
+  return Object.keys(doc.byId).some((key) => key.toLowerCase() === normalized && !!doc.byId[key]);
+}
+
+// A generation identifies one exact loaded page instance. It is deliberately
+// frontend-only and monotonic across resets: a later page with the same name and
+// path must never satisfy a cut payload captured from an evicted/deleted/rebound
+// instance. Stage B uses this at its durable-retirement boundary.
+let pageInstanceClock = 0;
+const pageInstanceGenerations = new Map<string, number>();
+
+function activatePageInstance(name: string): number {
+  const generation = ++pageInstanceClock;
+  pageInstanceGenerations.set(name, generation);
+  return generation;
+}
+
+function retirePageInstance(name: string): void {
+  ++pageInstanceClock;
+  pageInstanceGenerations.delete(name);
+}
+
+/** Current exact loaded-page generation, or null when that page is absent. */
+export function pageInstanceGeneration(name: string): number | null {
+  if (!pageByName(name)) return null;
+  // Direct setDoc page seeding is supported by model tests and small embedded
+  // surfaces; lazily bind it to the same invariant as loader-created pages.
+  return pageInstanceGenerations.get(name) ?? activatePageInstance(name);
+}
 
 // name → index into `doc.pages`, rebuilt only when the working set's membership
 // changes (add / remove / rename / evict), NOT on a keystroke. Turns the O(pages)
@@ -296,6 +338,7 @@ function upsertPage(dto: PageDto) {
       else s.pages.push(fp);
     })
   );
+  activatePageInstance(dto.name);
   invalidateAllMatrixDimensions();
   if (replacing) invalidateUndoForPage(dto.name);
 }
@@ -366,6 +409,7 @@ export function forgetPage(name: string) {
       if (fi >= 0) s.feed.splice(fi, 1);
     })
   );
+  retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }
 
@@ -455,6 +499,7 @@ export async function reloadHlsIfLoaded(name: string): Promise<void> {
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
+  const evicted: string[] = [];
   setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
@@ -466,9 +511,11 @@ function evictIfNeeded() {
         }
         purgePageNodes(s, name);
         s.pages.splice(i, 1);
+        evicted.push(name);
       }
     })
   );
+  for (const name of evicted) retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }
 
@@ -489,6 +536,7 @@ export function resetStore() {
   // across the switch (audit P2).
   clearSeededFacets();
   clearMatrixDimensionCache();
+  for (const name of pageInstanceGenerations.keys()) retirePageInstance(name);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   endEdit("graph-switch");
   notifyModeReset();
@@ -884,6 +932,8 @@ interface SnapEntry {
   nodes: Record<string, Node>; // snapshot of nodes living on those pages
   dirty: string[]; // pages to re-save on undo/redo
   context: HistoryContext;
+  /** Identity-bearing clipboard paste whose redo must fail on a live conflict. */
+  preservedIds?: string[];
 }
 interface RawEntry {
   kind: "raw";
@@ -896,6 +946,7 @@ interface RawEntry {
   headerRoot?: { node: Node; rootIndex: number };
   removeHeaderOnApply?: boolean;
   context: HistoryContext;
+  preservedIds?: string[];
 }
 type UndoEntry = SnapEntry | RawEntry;
 const undoStack: UndoEntry[] = [];
@@ -1031,7 +1082,7 @@ function cloneNode(n: Node): Node {
 function clonePages(src: FeedPage[]): FeedPage[] {
   return src.map((p) => ({ ...p, roots: p.roots.slice() }));
 }
-function snapEntry(affected?: string[] | null): SnapEntry {
+function snapEntry(affected?: string[] | null, preservedIds?: readonly string[]): SnapEntry {
   const context = captureHistoryContext();
   // null/omitted → snapshot the whole working set (safe fallback). Otherwise just
   // the named pages: their FeedPage objects + every node living on them.
@@ -1055,7 +1106,15 @@ function snapEntry(affected?: string[] | null): SnapEntry {
     if (nameSet.has(p.name)) for (const r of p.roots) visit(r);
   }
   const pageObjs = clonePages(pages.filter((p) => nameSet.has(p.name)));
-  return { kind: "snap", pages: affected ?? null, pageObjs, nodes, dirty: names, context };
+  return {
+    kind: "snap",
+    pages: affected ?? null,
+    pageObjs,
+    nodes,
+    dirty: names,
+    context,
+    ...(preservedIds?.length ? { preservedIds: [...preservedIds] } : {}),
+  };
 }
 
 /** Snapshot before a STRUCTURAL op. Pass the affected page name(s) so both the
@@ -1064,9 +1123,9 @@ function snapEntry(affected?: string[] | null): SnapEntry {
  *  but O(loaded pages)). The affected set MUST include every page whose nodes the
  *  op changes, including a cross-page move's source AND destination, or undo
  *  would miss a page. `tag` resets the typing-coalesce marker. */
-function pushUndo(tag: string, affected?: string[]) {
+function pushUndo(tag: string, affected?: string[], preservedIds?: readonly string[]) {
   if (undoSuppressionDepth > 0) return;
-  undoStack.push(snapEntry(affected));
+  undoStack.push(snapEntry(affected, preservedIds));
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
@@ -1109,6 +1168,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       page: e.page,
       context: captureHistoryContext(),
       ...(node && rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
+      ...(e.preservedIds?.length ? { preservedIds: [...e.preservedIds] } : {}),
     };
     if (node) {
       if (e.removeHeaderOnApply && node.originatedFromPageHeader) {
@@ -1136,7 +1196,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
     return inverse;
   }
   // Capture the CURRENT state of the same page scope as the inverse (for redo).
-  const inverse = snapEntry(e.pages);
+  const inverse = snapEntry(e.pages, e.preservedIds);
   if (e.pages === null) {
     // Whole-working-set snapshot (fallback): replace byId + pages wholesale so the
     // store is always internally consistent. (A page loaded AFTER the snapshot is
@@ -1214,6 +1274,14 @@ export function undo() {
 export function redo() {
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
+  if (entry.preservedIds?.some(docHasBlockIdentity)) {
+    // The selected prerequisite is already popped. A later redo snapshot cannot
+    // remain valid without it, including in page-only mode where the tagged
+    // entry may have been selected from the middle of the global stack.
+    redoStack = [];
+    pushToast("Redo skipped: a block with the same id now exists", "error");
+    return;
+  }
   undoStack.push(applyEntry(entry));
   lastUndoTag = null;
   endEdit("redo");
@@ -1627,6 +1695,212 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   }));
   markDirty(current.page);
   return lastId;
+}
+
+type ClipboardProperty = { key: string; value: string };
+
+function clipboardProperties(raw: string, format: Format): ClipboardProperty[] {
+  const hidden = splitProps(raw, hideAll, format).hidden;
+  if (!hidden) return [];
+  const properties: ClipboardProperty[] = [];
+  for (const line of hidden.split("\n")) {
+    const match = format === "org"
+      ? /^\s*:([A-Za-z0-9_@./-]+):\s*(.*)$/.exec(line)
+      : /^\s*([A-Za-z0-9_./-]+)::\s*(.*)$/.exec(line);
+    if (match) properties.push({ key: match[1], value: match[2] });
+  }
+  return properties;
+}
+
+function clipboardIdsForBlock(block: ClipboardBlock): string[] {
+  return clipboardProperties(block.raw, block.sourceFormat)
+    .filter((property) => property.key.toLowerCase() === "id")
+    .map((property) => property.value.trim());
+}
+
+function clipboardRawForTarget(
+  block: ClipboardBlock,
+  targetFormat: Format,
+  preserveIds: boolean,
+): string {
+  if (block.sourceFormat === targetFormat) {
+    return preserveIds
+      ? block.raw
+      : splitProps(block.raw, (key) => key.toLowerCase() === "id", block.sourceFormat).visible;
+  }
+
+  // splitProps/joinProps classify metadata but deliberately do not translate
+  // syntax. Map the ordered key/value stream explicitly so every property keeps
+  // its relative order across Markdown `key:: value` and Org drawer forms.
+  const visible = splitProps(block.raw, hideAll, block.sourceFormat).visible;
+  const properties = clipboardProperties(block.raw, block.sourceFormat)
+    .filter((property) => preserveIds || property.key.toLowerCase() !== "id");
+  const translated = properties.map(({ key, value }) =>
+    targetFormat === "org" ? `:${key}: ${value}` : `${key}:: ${value}`
+  ).join("\n");
+  return joinProps(visible, translated, targetFormat);
+}
+
+function clipboardCollapsed(block: ClipboardBlock): boolean {
+  return clipboardProperties(block.raw, block.sourceFormat)
+    .some(({ key, value }) => key.toLowerCase() === "collapsed" && value.trim().toLowerCase() === "true");
+}
+
+function liveDocReferences(id: string): boolean {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const reference = new RegExp(`\\(\\(${escaped}\\)\\)`, "i");
+  return Object.values(doc.byId).some((node) => reference.test(node.raw));
+}
+
+interface ClipboardPasteAuthority {
+  epoch: number;
+  root: string;
+  targetId: string;
+  targetNode: Node;
+  targetPage: string;
+  targetGeneration: number;
+}
+
+function captureClipboardPasteAuthority(targetId: string): ClipboardPasteAuthority | null {
+  const target = doc.byId[targetId];
+  if (!target || graphTransitioning()) return null;
+  const targetGeneration = pageInstanceGeneration(target.page);
+  if (targetGeneration === null) return null;
+  return {
+    epoch: graphEpoch(),
+    root: graphMeta()?.root ?? "",
+    targetId,
+    targetNode: unwrap(target),
+    targetPage: target.page,
+    targetGeneration,
+  };
+}
+
+function clipboardPasteAuthorityCurrent(authority: ClipboardPasteAuthority): boolean {
+  const target = doc.byId[authority.targetId];
+  return !graphTransitioning()
+    && graphEpoch() === authority.epoch
+    && (graphMeta()?.root ?? "") === authority.root
+    && !!target
+    && unwrap(target) === authority.targetNode
+    && target.page === authority.targetPage
+    && pageInstanceGeneration(authority.targetPage) === authority.targetGeneration;
+}
+
+function insertClipboardBlocksSync(
+  targetId: string,
+  blocks: readonly ClipboardBlock[],
+  preserveIds: boolean,
+  preservedIds: readonly string[],
+): string | null {
+  const target = doc.byId[targetId];
+  if (!blocks.length || !target || !blockWritable(targetId)) return null;
+  const targetFormat = formatForPage(target.page);
+  const prepared = blocks.map(function prepare(block): {
+    id: string;
+    raw: string;
+    collapsed: boolean;
+    children: ReturnType<typeof prepare>[];
+  } {
+    const sourceIds = clipboardIdsForBlock(block);
+    return {
+      id: preserveIds && sourceIds.length === 1 ? sourceIds[0].toLowerCase() : freshId(),
+      raw: clipboardRawForTarget(block, targetFormat, preserveIds),
+      collapsed: clipboardCollapsed(block),
+      children: block.children.map(prepare),
+    };
+  });
+  const visible = splitProps(target.raw, isBuiltinHidden, targetFormat).visible;
+  const replaceHost = target.children.length === 0
+    && visible.trim() === ""
+    && existingBlockId(target.raw, targetFormat) === null
+    && !liveDocReferences(targetId);
+  const parent = target.parent;
+  const pageName = target.page;
+  let lastId: string | null = null;
+
+  pushUndo("clipboard-paste", [pageName], preserveIds ? preservedIds : []);
+  setDoc(produce((state) => {
+    const create = (block: typeof prepared[number], blockParent: string | null): string => {
+      const children = block.children.map((child) => create(child, block.id));
+      state.byId[block.id] = {
+        id: block.id,
+        raw: block.raw,
+        collapsed: block.collapsed,
+        parent: blockParent,
+        page: pageName,
+        children,
+      };
+      return block.id;
+    };
+    const created = prepared.map((block) => create(block, parent));
+    const siblings = parent === null
+      ? state.pages[state.pages.findIndex((page) => page.name === pageName)].roots
+      : state.byId[parent].children;
+    const at = siblings.indexOf(targetId);
+    if (replaceHost) {
+      siblings.splice(at, 1, ...created);
+      delete state.byId[targetId];
+    } else {
+      siblings.splice(at + 1, 0, ...created);
+    }
+    lastId = created[created.length - 1] ?? null;
+  }));
+  markDirty(pageName);
+  return lastId;
+}
+
+/** Associate an already-captured private clipboard slot with one target. The
+ * wrapper is intentionally non-async: a cut grant is consumed synchronously,
+ * before the returned continuation can reach retirement or any other await. */
+export function pasteClipboardPayload(
+  targetId: string,
+  slot: ClipboardPayloadSlot,
+): Promise<string | null> {
+  const authority = captureClipboardPasteAuthority(targetId);
+  const grant = slot.op === "cut" ? consumeCutGrant(slot.generation) : null;
+  if (!authority) return Promise.resolve(null);
+
+  const idLists: string[][] = [];
+  const visit = (block: ClipboardBlock) => {
+    idLists.push(clipboardIdsForBlock(block));
+    block.children.forEach(visit);
+  };
+  slot.blocks.forEach(visit);
+  const ids = idLists.flat();
+  const normalizedIds = ids.map((id) => id.toLowerCase());
+  const idsValid = idLists.every((blockIds) => blockIds.length <= 1)
+    && ids.every((id) => UUID_RE.test(id))
+    && new Set(normalizedIds).size === normalizedIds.length;
+
+  return (async () => {
+    let preserveIds = !!grant
+      && ids.length > 0
+      && idsValid
+      && slot.graph === authority.root;
+
+    if (preserveIds) {
+      preserveIds = await flushCutSourcePages(grant!.sourcePages);
+      if (preserveIds && !clipboardPasteAuthorityCurrent(authority)) return null;
+    }
+    if (preserveIds) {
+      try {
+        const resolved = await backend().resolveBlocks(normalizedIds);
+        preserveIds = resolved.length === normalizedIds.length && resolved.every((block) => block === null);
+      } catch {
+        preserveIds = false;
+      }
+    }
+
+    // Final JS-single-thread section: every authority and retirement check is
+    // synchronous and insertion follows immediately with no await boundary.
+    if (!clipboardPasteAuthorityCurrent(authority)) return null;
+    if (preserveIds) {
+      preserveIds = cutSourcePagesRetired(grant!.sourcePages)
+        && normalizedIds.every((id) => !docHasBlockIdentity(id));
+    }
+    return insertClipboardBlocksSync(targetId, slot.blocks, preserveIds, preserveIds ? normalizedIds : []);
+  })();
 }
 
 /** Append a quick-capture (Logseq outline markdown, as produced by the capture
@@ -2459,6 +2733,67 @@ export function blockSubtreeMarkdown(
     out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed, onlySelected));
   }
   return out.join("\n");
+}
+
+/**
+ * Build the private clipboard forest from selection roots. Unlike the public
+ * text flavor this always includes the complete subtree and exact raw strings,
+ * including id::/collapsed:: and hidden properties. Returns null (without
+ * affecting the public copy) when the bounded in-memory payload is too large.
+ */
+export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | null {
+  const selected = new Set(ids.filter((id) => !!doc.byId[id]));
+  const hasSelectedAncestor = (id: string): boolean => {
+    let parent = doc.byId[id]?.parent ?? null;
+    while (parent !== null) {
+      if (selected.has(parent)) return true;
+      parent = doc.byId[parent]?.parent ?? null;
+    }
+    return false;
+  };
+  const roots = [...selected].filter((id) => !hasSelectedAncestor(id));
+  if (roots.length === 0) return null;
+
+  let blockCount = 0;
+  let rawBytes = 0;
+  const encoder = new TextEncoder();
+  const pages = new Map<string, ClipboardSourcePage>();
+
+  const build = (id: string): ClipboardBlock | null => {
+    const node = doc.byId[id];
+    if (!node) return null;
+    blockCount++;
+    rawBytes += encoder.encode(node.raw).byteLength;
+    if (blockCount > CLIPBOARD_PAYLOAD_MAX_BLOCKS || rawBytes > CLIPBOARD_PAYLOAD_MAX_RAW_BYTES) return null;
+
+    const page = pageByName(node.page);
+    const generation = pageInstanceGeneration(node.page);
+    if (!page || generation === null) return null;
+    if (!pages.has(page.name)) {
+      pages.set(page.name, {
+        name: page.name,
+        kind: page.kind,
+        ...(page.path ? { path: page.path } : {}),
+        generation,
+      });
+    }
+
+    const children: ClipboardBlock[] = [];
+    for (const child of node.children) {
+      const built = build(child);
+      if (!built) return null;
+      children.push(built);
+    }
+    return { raw: node.raw, children, sourceFormat: page.format };
+  };
+
+  const blocks: ClipboardBlock[] = [];
+  for (const id of roots) {
+    const built = build(id);
+    if (!built) return null;
+    blocks.push(built);
+  }
+  return { blocks, sourcePages: [...pages.values()] };
 }
 
 /** Build an ExportNode forest (raw + children) for the given block ids and their
