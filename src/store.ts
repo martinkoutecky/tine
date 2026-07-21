@@ -1693,6 +1693,40 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
+/** Pure Markdown property rewrite for one compound store mutation. It scans only
+ * the canonical head (title, planning, contiguous properties) plus the legacy
+ * trailing property block, so a `key::` lookalike in body text or a code fence is
+ * never touched or reordered. Existing property order is retained. */
+function markdownRawWithProperty(raw: string, key: string, value: string | null): string {
+  const lines = raw.split("\n");
+  const first = lines[0] ?? "";
+  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
+  let i = 1;
+  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
+  const planningEnd = i;
+  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
+  const propsEnd = i;
+  let j = lines.length;
+  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
+  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
+  const props = lines.slice(planningEnd, propsEnd);
+  const at = props.findIndex((l) => PROP_LINE.exec(l)?.[1] === key);
+  if (value !== null) {
+    const line = `${key}:: ${value}`;
+    if (at >= 0) props[at] = line;
+    else props.push(line);
+  } else if (at >= 0) {
+    props.splice(at, 1);
+  }
+  return [
+    first,
+    ...lines.slice(1, planningEnd),
+    ...props,
+    ...lines.slice(propsEnd, j),
+    ...lines.slice(j).filter(notKey),
+  ].join("\n");
+}
+
 /** Current value of a block property, read through the ONE lsdoc-backed
  *  recognizer (facetsOf) — a raw line scan here returned property-lookalikes
  *  from code fences/body text and silently suppressed real config writes
@@ -1744,43 +1778,10 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
     markDirty(node.page);
     return;
   }
-  const lines = node.raw.split("\n");
-  const first = lines[0] ?? "";
-  // Canonical block shape: first line, planning lines, property lines, body.
-  // Scan ONLY the canonical head region (stop at the first body line) plus the
-  // legacy trailing property block (the old writer appended at the end), so a
-  // `key::`-looking line inside body text or a code fence is never touched or
-  // reordered — this regex is fence-unaware and must not reach into the body.
-  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
-  let i = 1;
-  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
-  const planningEnd = i;
-  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
-  const propsEnd = i;
-  let j = lines.length;
-  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
-  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
-  // Update an existing key IN PLACE so its line position (and therefore the
-  // field-table column order it drives) is preserved; only a genuinely new key
-  // appends after the others. Re-appending on every edit moved the touched
-  // column to the end (GH #216) and churned the property order on disk.
-  const props = lines.slice(planningEnd, propsEnd);
-  const at = props.findIndex((l) => PROP_LINE.exec(l)?.[1] === key);
-  if (value !== null) {
-    const line = `${key}:: ${value}`;
-    if (at >= 0) props[at] = line;
-    else props.push(line);
-  } else if (at >= 0) {
-    props.splice(at, 1);
-  }
-  const out = [
-    first,
-    ...lines.slice(1, planningEnd), // planning stays before properties (OG order)
-    ...props,
-    ...lines.slice(propsEnd, j), // body untouched
-    ...lines.slice(j).filter(notKey), // legacy trailing props: only the key is removed
-  ];
-  setDoc("byId", id, "raw", out.join("\n"));
+  // Canonical head-region placement plus legacy trailing-property cleanup lives
+  // in the shared pure writer so compound mutations (heading transitions) can
+  // remain one undo-safe raw rewrite.
+  setDoc("byId", id, "raw", markdownRawWithProperty(node.raw, key, value));
   markDirty(node.page);
 }
 
@@ -2038,16 +2039,41 @@ export function toggleListItemAtIndex(id: string, lineIndex: number) {
   markDirty(node.page);
 }
 
-/** Set the block's heading level via the markdown `#` prefix (null clears it). */
-export function setHeading(id: string, level: number | null) {
+export type HeadingState = number | true | null;
+
+const MARKDOWN_HEADING = /^#+\s+/;
+const clearMarkdownHeading = (raw: string): string => raw.replace(MARKDOWN_HEADING, "");
+const setMarkdownHeading = (raw: string, level: number): string => {
+  const prefix = `${"#".repeat(level)} `;
+  return MARKDOWN_HEADING.test(raw)
+    ? raw.replace(MARKDOWN_HEADING, prefix)
+    : prefix + raw.trimStart();
+};
+
+/** Switch between boolean automatic headings and explicit numeric headings.
+ * Markdown writes ATX prefixes for numeric state and `heading:: true` for auto;
+ * Org writes both states through its property drawer. Each transition clears the
+ * incompatible representation. OG parity:
+ * `src/main/frontend/handler/editor.cljs:3822-3862` and
+ * `src/main/frontend/commands.cljs:623-638` at `6e7afa8eb`; the format-aware
+ * property writer is `handler/editor.cljs:888-904` at the same commit. */
+export function setHeading(id: string, state: HeadingState) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
+  const level = typeof state === "number" && state >= 1 && state <= 6 ? state : null;
+  let next: string;
+  if (formatForBlock(id) === "org") {
+    next = orgRawWithProperty(node.raw, "heading", state === true ? "true" : level === null ? null : String(level));
+  } else if (state === true) {
+    next = markdownRawWithProperty(clearMarkdownHeading(node.raw), "heading", "true");
+  } else if (level !== null) {
+    next = setMarkdownHeading(markdownRawWithProperty(node.raw, "heading", null), level);
+  } else {
+    next = markdownRawWithProperty(clearMarkdownHeading(node.raw), "heading", null);
+  }
+  if (next === node.raw) return;
   pushUndo(`heading:${id}`, [node.page]);
-  const lines = node.raw.split("\n");
-  let first = (lines[0] ?? "").replace(/^#{1,6} /, "");
-  if (level && level >= 1 && level <= 6) first = `${"#".repeat(level)} ${first}`;
-  lines[0] = first;
-  setDoc("byId", id, "raw", lines.join("\n"));
+  setDoc("byId", id, "raw", next);
   markDirty(node.page);
 }
 

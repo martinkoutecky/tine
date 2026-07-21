@@ -363,7 +363,12 @@ export type CommandAction =
   | "priority-b"
   | "priority-c"
   | "page-reference"
-  | "insert-link";
+  | "insert-link"
+  | "heading-auto"
+  | "heading-1"
+  | "heading-2"
+  | "heading-3"
+  | "heading-4";
 
 export interface Command {
   label: string;
@@ -408,10 +413,11 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   // "Kanban" alias: the fuzzy matcher scores label + key, so /kanban (and /kan)
   // surfaces the Board command even though its display name stays "Board".
   { label: "Board", action: "sheet-board", key: "Kanban" },
-  { label: "Heading 1", insert: "# " },
-  { label: "Heading 2", insert: "## " },
-  { label: "Heading 3", insert: "### " },
-  { label: "Heading 4", insert: "#### " },
+  { label: "Heading (Auto)", action: "heading-auto" },
+  { label: "Heading 1", action: "heading-1" },
+  { label: "Heading 2", action: "heading-2" },
+  { label: "Heading 3", action: "heading-3" },
+  { label: "Heading 4", action: "heading-4" },
   { label: "Page reference", action: "page-reference" },
   { label: "Link", action: "insert-link" },
   { label: "Upload an asset", action: "upload-asset" },
@@ -443,7 +449,7 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
 
 const BARE_ORDER = new Map<string, number>([
   "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
-  "Heading 1", "Heading 2", "Heading 3", "Heading 4",
+  "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4",
   "Today", "Current time",
   "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
   "Priority A", "Priority B", "Priority C",

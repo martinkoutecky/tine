@@ -4,7 +4,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { pageProperties, visibleBody } from "../render/block";
-import { facetsFromDto } from "../render/facets";
+import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
 import { formatForPage } from "../store";
@@ -18,10 +18,18 @@ export function RefBlocks(props: {
   blocks: BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  depth?: number;
 }): JSX.Element {
   return (
     <For each={props.blocks}>
-      {(b) => <RefBlock block={b} page={props.page} pageKind={props.pageKind} />}
+      {(b) => (
+        <RefBlock
+          block={b}
+          page={props.page}
+          pageKind={props.pageKind}
+          depth={props.depth ?? b.breadcrumb?.length ?? 0}
+        />
+      )}
     </For>
   );
 }
@@ -30,6 +38,7 @@ function RefBlock(props: {
   block: BlockDto;
   page?: string;
   pageKind?: "journal" | "page";
+  depth: number;
 }): JSX.Element {
   // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
   // DTOs were seeded); the visible body lines via the shared body-text extractor.
@@ -39,6 +48,7 @@ function RefBlock(props: {
   // computed these). Ref/linked/unlinked panels render hundreds of rows; parsing each
   // was a real hot-path cost and churned the facet cache (audit P3).
   const facets = createMemo(() => facetsFromDto(props.block));
+  const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
   const lines = createMemo(() => visibleBody(props.block.raw));
   // Keep the DTO hot path parse-free for ordinary references. Only an exact
@@ -52,8 +62,8 @@ function RefBlock(props: {
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
   return (
-    <div class="ls-block ref-block" classList={{ "page-property-reference": !!props.block.page_property }}>
-      <div class="block-main">
+    <div class="ls-block ref-block" data-block-id={props.block.id} classList={{ "page-property-reference": !!props.block.page_property }}>
+      <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
         <div class="block-controls">
           <span
             class="bullet-container"
@@ -73,7 +83,10 @@ function RefBlock(props: {
           </span>
         </div>
         <div class="block-content-wrapper">
-          <div class="block-content" classList={{ done: facets().done }}>
+          <div
+            class="block-content"
+            classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
+          >
             <Show when={taskCheckboxState(facets().marker) !== null}>
               {/* Read-only here (references/embeds/query results aren't edited in
                   place); it mirrors the live block's checkbox look. */}
@@ -104,7 +117,14 @@ function RefBlock(props: {
                           <Show when={i() > 0}>
                             <br />
                           </Show>
-                          <InlineText text={line} format={format()} />
+                          <Show
+                            when={i() === 0 && headingLevel() != null}
+                            fallback={<InlineText text={line} format={format()} />}
+                          >
+                            <span class={`heading-text h${headingLevel()}`}>
+                              <InlineText text={line} format={format()} />
+                            </span>
+                          </Show>
                         </>
                       )}
                     </For>
@@ -136,7 +156,7 @@ function RefBlock(props: {
       <Show when={props.block.children.length}>
         <div class="block-children-container">
           <div class="block-children">
-            <RefBlocks blocks={props.block.children} page={props.page} pageKind={props.pageKind} />
+            <RefBlocks blocks={props.block.children} page={props.page} pageKind={props.pageKind} depth={props.depth + 1} />
           </div>
         </div>
       </Show>

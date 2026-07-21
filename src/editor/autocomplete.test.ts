@@ -348,7 +348,7 @@ describe("filterCommands", () => {
   const mergedRanking = (query: string): string[] => {
     const showAllTemplates = !!query && "template".startsWith(query.toLowerCase());
     return [
-      ...COMMANDS.map((command) => ({
+      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)").map((command) => ({
         label: command.label,
         score: commandScore(query, command),
         index: command.matchTieOrder,
@@ -377,12 +377,19 @@ describe("filterCommands", () => {
       "Heading 2",
       "Heading 3",
       "Heading 4",
+      "Heading (Auto)",
     ]);
     // Exact/shorter "Query" ranks ahead of the longer "Query (visual builder)".
     expect(filterCommands("query").map((c) => c.label)).toEqual(["Query", "Query (visual builder)"]);
     // Action commands surface too.
     expect(filterCommands("scheduled").map((c) => c.label)).toEqual(["Scheduled"]);
     expect(filterCommands("upload").map((c) => c.label)).toEqual(["Upload an asset"]);
+  });
+
+  it("routes automatic and explicit heading slash commands through heading actions", () => {
+    expect(COMMANDS.find((command) => command.label === "Heading (Auto)")?.action).toBe("heading-auto");
+    expect(COMMANDS.find((command) => command.label === "Heading 1")?.action).toBe("heading-1");
+    expect(COMMANDS.find((command) => command.label === "Heading 1")?.insert).toBeUndefined();
   });
 
   it("ranks best matches first (OG-style); /A surfaces Priority A", () => {
@@ -407,7 +414,7 @@ describe("filterCommands", () => {
     const all = filterCommands("");
     expect(all.map((command) => command.label)).toEqual([
       "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
-      "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "Current time",
+      "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "Current time",
       "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
       "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
       "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",

@@ -67,6 +67,8 @@ import {
   blockIsGridView,
   trackAssetWrite,
   formatForBlock,
+  depthOf,
+  setHeading,
   collapsibleDescendantIds,
   setCollapsedDescendants,
   type OutlineScope,
@@ -108,7 +110,7 @@ import {
   type SelectionAction,
 } from "../editor/selectionActions";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
-import { facetsOf } from "../render/facets";
+import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
 import { InlineText } from "../render/inline";
 import { editorOffsetFromRenderedRange } from "../render/spans";
@@ -377,7 +379,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   });
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it.
-  const headingLevel = createMemo(() => blockFacets()?.headingLevel ?? null);
+  const headingLevel = createMemo(() => {
+    const facets = blockFacets();
+    return facets ? effectiveHeadingLevel(facets, depthOf(props.id)) : null;
+  });
   const editorVisibleValue = createMemo(() => {
     const n = node();
     if (!n) return "";
@@ -678,6 +683,7 @@ function Rendered(props: {
   // ONE lsdoc parse — read from the cache the store seeded from the backend DTO (no
   // parse on load), recomputed from a single wasm parse only for the edited block.
   const facets = createMemo(() => facetsOf(node().raw, fmt()));
+  const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), depthOf(props.id)));
   const clock = createMemo((): LogbookInfo | null => {
     if (!timetrackingEnabled()) return null;
     const marker = facets().marker;
@@ -742,7 +748,7 @@ function Rendered(props: {
   };
 
   const body = (
-    <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={facets().headingLevel} />}>
+    <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} />}>
       <AnnotationBody
         highlightId={props.id}
         color={annotation()!.color}
@@ -772,7 +778,7 @@ function Rendered(props: {
     <div
       ref={contentRef}
       class="block-content"
-      classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${facets().headingLevel ?? ""}`]: facets().headingLevel != null }}
+      classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
     >
@@ -1095,7 +1101,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
     if (visible.includes("\n")) return null;
-    return facetsOf(visible, pageFmt()).headingLevel;
+    return effectiveHeadingLevel(facetsOf(visible, pageFmt()), depthOf(props.id));
   });
   // Live calc preview: when this editor opened on a ```calc fence, show the SAME
   // results panel as the rendered view, recomputed on every keystroke (onInput
@@ -1951,6 +1957,30 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     switch (item.action) {
+      case "heading-auto":
+      case "heading-1":
+      case "heading-2":
+      case "heading-3":
+      case "heading-4": {
+        const state = item.action === "heading-auto"
+          ? true
+          : Number(item.action.slice("heading-".length)) as 1 | 2 | 3 | 4;
+        const removed = applyCompletion(ref.value, t.start, t.end, "");
+        withUndoUnit(`heading:${props.id}`, [node().page], () => {
+          commit(removed.raw);
+          setHeading(props.id, state);
+        });
+        closeAc();
+        queueMicrotask(() => {
+          const visible = splitProps(node().raw, hideFn(), pageFmt()).visible;
+          ref.value = visible;
+          const caret = Math.min(visible.length, removed.caret + (state === true ? 0 : state + 1));
+          ref.setSelectionRange(caret, caret);
+          ref.focus();
+          autosize();
+        });
+        return;
+      }
       case "scheduled":
       case "deadline": {
         // Drop the "/scheduled" trigger text, then open the calendar popup

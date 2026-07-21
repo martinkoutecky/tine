@@ -21,6 +21,7 @@ export interface Facets {
   done: boolean;
   priority: "A" | "B" | "C" | null;
   headingLevel: number | null;
+  headingAuto: boolean;
   scheduled: string | null;
   deadline: string | null;
   tags: string[];
@@ -32,6 +33,7 @@ const EMPTY: Facets = {
   done: false,
   priority: null,
   headingLevel: null,
+  headingAuto: false,
   scheduled: null,
   deadline: null,
   tags: [],
@@ -72,16 +74,41 @@ export function facetsFromDto(d: {
 }): Facets {
   const marker = d.marker ?? null;
   const p = d.priority;
+  const headingProperty = headingPropertyState(d.properties ?? []);
   return {
     marker,
     done: marker != null && DONE_MARKERS.has(marker),
     priority: p === "A" || p === "B" || p === "C" ? p : null,
-    headingLevel: d.heading_level ?? null,
+    headingLevel: d.heading_level ?? headingProperty.level,
+    headingAuto: headingProperty.auto,
     scheduled: d.scheduled ?? null,
     deadline: d.deadline ?? null,
     tags: d.tags ?? [],
     properties: d.properties ?? [],
   };
+}
+
+function headingPropertyState(properties: readonly [string, string][]): {
+  level: number | null;
+  auto: boolean;
+} {
+  const value = properties
+    .find(([key]) => propertyKeyNorm(key) === "heading")?.[1]
+    ?.trim()
+    .toLowerCase();
+  return {
+    level: value && /^[1-6]$/.test(value) ? Number(value) : null,
+    auto: value === "true",
+  };
+}
+
+/** One heading-level invariant for every frontend renderer. Explicit ATX or
+ * numeric-property state wins; boolean auto state is derived from the current
+ * tree depth and is never persisted as a computed number. OG parity:
+ * `src/main/frontend/components/block.cljs:1948-1959` at `6e7afa8eb`. */
+export function effectiveHeadingLevel(facets: Pick<Facets, "headingLevel" | "headingAuto">, depth: number): number | null {
+  if (facets.headingLevel !== null) return facets.headingLevel;
+  return facets.headingAuto ? Math.min(Math.max(0, depth) + 1, 6) : null;
 }
 
 /** Seed the never-evicted tier from the backend-computed facets — no parse. */
@@ -130,17 +157,15 @@ function deriveFacets(raw: string, format: Format): Facets {
   }
   const properties: [string, string][] = [];
   for (const b of blocks) if (b.kind === "properties") properties.push(...b.props);
-  if (headingLevel == null) {
-    const heading = properties.find(([key]) => propertyKeyNorm(key) === "heading")?.[1]?.trim().toLowerCase();
-    if (heading === "true") headingLevel = 1;
-    else if (heading && /^[1-6]$/.test(heading)) headingLevel = Number(heading);
-  }
+  const headingProperty = headingPropertyState(properties);
+  if (headingLevel == null) headingLevel = headingProperty.level;
   const { scheduled, deadline } = planningDates(blocks, raw);
   return {
     marker,
     done: marker != null && DONE_MARKERS.has(marker),
     priority,
     headingLevel,
+    headingAuto: headingProperty.auto,
     scheduled,
     deadline,
     tags: tagsOf(blocks),

@@ -333,6 +333,9 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
 
         {/* Heading row */}
         <div class="ctx-row ctx-headings">
+          <button class="ctx-h" title="Automatic heading" onClick={() => { setHeading(props.id, true); props.close(); }}>
+            Auto
+          </button>
           <For each={[1, 2, 3, 4, 5, 6]}>
             {(h) => (
               <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setHeading(props.id, h); props.close(); }}>

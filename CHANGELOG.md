@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Automatic headings**, like Logseq: a new "Auto" option (context menu and
+  `/Heading (Auto)`) sizes the heading by the block's nesting depth and updates
+  live on indent/outdent; explicit H1–H6 still win, and switching between the
+  two cleans up the other representation in both Markdown and Org.
 - **Paste parity with Logseq**: Ctrl/Cmd+Shift+V now pastes the literal
   clipboard text for every payload (not just multiline) — rich HTML and URLs
   included, with no formatting applied; formatted paste keeps HTML images

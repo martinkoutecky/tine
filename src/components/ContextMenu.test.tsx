@@ -234,6 +234,18 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it("offers Auto beside explicit heading levels and uses the shared transition", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+
+    const auto = document.querySelector<HTMLButtonElement>('[title="Automatic heading"]');
+    expect(auto).not.toBeNull();
+    auto!.click();
+    expect(blockProperty("leaf", "heading")).toBe("true");
+    dispose();
+  });
+
   it("offers only view/copy actions on a read-only page", () => {
     load(true);
     const dispose = mount(() => <ContextMenu />);
