@@ -37,6 +37,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   shows Logseq's option set (cleanup + max depth for OPML/HTML; the full set
   for Text); OPML/HTML always omit property lines.
 
+### Changed
+
+- Parser updated to **lsdoc v0.5.4**: correctness, panic, and performance
+  fixes from the GH #209 audit (split-title math chains, latex-env tails,
+  raw-HTML scanning, 32-bit cookie/timestamp bounds, refs-indexing parity).
+
 ### Fixed
 
 - **Property keys now create backlinks**, like Logseq: a page or block with
