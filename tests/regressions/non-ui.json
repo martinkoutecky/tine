@@ -981,7 +981,7 @@
       }
     },
     {
-      "id": "NONUI-GH221-LSDOC-PANIC-INDEX",
+      "id": "REG-LSDOC-MALFORMED-HTML-INDEX-221",
       "title": "A page containing a malformed HTML fragment still loads and stays searchable instead of being silently dropped from the index",
       "family": "parser-robustness",
       "sources": {

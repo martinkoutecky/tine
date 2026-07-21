@@ -332,7 +332,7 @@
    "text": "A page containing a malformed HTML fragment (for example `- <div </div><`) no longer breaks the parser or disappears from search — it loads and stays searchable (GH #221, via the lsdoc 0.5.4 update).",
    "userVisible": true,
    "regressions": [
-    "NONUI-GH221-LSDOC-PANIC-INDEX"
+    "REG-LSDOC-MALFORMED-HTML-INDEX-221"
    ],
    "docs": {
     "status": "not-applicable",
@@ -658,7 +658,7 @@
    "text": "Parser updated to **lsdoc v0.5.4**: correctness, panic, and performance fixes from the GH #209 audit (split-title math chains, latex-env tails, raw-HTML scanning, 32-bit cookie/timestamp bounds, refs-indexing parity).",
    "userVisible": true,
    "regressions": [
-    "NONUI-GH221-LSDOC-PANIC-INDEX"
+    "REG-LSDOC-MALFORMED-HTML-INDEX-221"
    ],
    "docs": {
     "status": "not-applicable",
