@@ -19,6 +19,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Org image links render as images**, like Logseq: in Org pages, a page
   reference pointing at a local image asset (e.g. `[[../assets/pic.png]]`)
   now shows the image instead of a page link.
+
+### Fixed
+
+- PDF annotation files written by Tine now match Logseq's exact field shape
+  (text highlights omit the empty `:image` key; area highlights write
+  Logseq's `"[:span]"` text sentinel), so a graph annotated in Tine looks
+  byte-familiar to Logseq and vice versa. Deleting an area highlight now
+  also moves its cropped image to the graph's recoverable trash (Logseq
+  deletes it outright; Tine previously left it orphaned) — only after the
+  annotation save fully commits, and never when another highlight still
+  references the image.
 - **Automatic headings**, like Logseq: a new "Auto" option (context menu and
   `/Heading (Auto)`) sizes the heading by the block's nesting depth and updates
   live on indent/outdent; explicit H1–H6 still win, and switching between the

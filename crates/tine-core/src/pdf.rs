@@ -178,10 +178,11 @@ fn highlight_from(e: &Edn) -> Option<Highlight> {
         .and_then(Edn::as_str)
         .map(String::from);
     let image = content.and_then(|c| c.get("image")).and_then(Edn::as_i64);
-    // OG writes an explicit empty text value for area highlights. Keep Tine's
-    // internal `None` representation stable while preserving the OG bytes on
-    // serialization.
-    if image.is_some() && text.as_deref() == Some("") {
+    // OG writes the "[:span]" sentinel for a new area highlight
+    // (`extensions/pdf/core.cljs:491-506` at OG 6e7afa8eb). Older Tine sidecars
+    // used an empty string. Neither is presentation text, so normalize both to
+    // Tine's stable internal `None` representation.
+    if image.is_some() && matches!(text.as_deref(), Some("" | "[:span]")) {
         text = None;
     }
     Some(Highlight {
@@ -207,9 +208,15 @@ fn highlight_to(h: &Highlight) -> Edn {
     if let Some(t) = &h.text {
         content_pairs.push((kw("text"), Edn::Str(t.clone())));
     } else if h.image.is_some() {
-        content_pairs.push((kw("text"), Edn::Str(String::new())));
+        // OG's new area map uses this exact sentinel
+        // (`extensions/pdf/core.cljs:491-506` at OG 6e7afa8eb).
+        content_pairs.push((kw("text"), Edn::Str("[:span]".to_string())));
     }
-    content_pairs.push((kw("image"), h.image.map(Edn::Int).unwrap_or(Edn::Nil)));
+    if let Some(image) = h.image {
+        content_pairs.push((kw("image"), Edn::Int(image)));
+    }
+    // OG's new text map contains only :text, with no nil :image key
+    // (`extensions/pdf/core.cljs:636-653` at OG 6e7afa8eb).
     Edn::Map(vec![
         (kw("id"), id_to(&h.id)),
         (kw("page"), Edn::Int(h.page)),
@@ -750,6 +757,23 @@ mod tests {
     }
 
     #[test]
+    fn new_text_highlight_omits_nil_image_key() {
+        let out = write_highlights(&[sample()], "");
+        let root = edn::parse_strict(&out).unwrap();
+        let stored = &root.get("highlights").and_then(Edn::as_vec).unwrap()[0];
+        let content = stored.get("content").unwrap();
+        assert_eq!(
+            content.get("text").and_then(Edn::as_str),
+            Some("some highlighted text")
+        );
+        assert_eq!(
+            content.get("image"),
+            None,
+            "new OG-shaped text highlight: {out}"
+        );
+    }
+
+    #[test]
     fn write_preserves_foreign_edn() {
         // audit C#4: editing a highlight must NOT drop Logseq's root :extra / other root
         // keys / unknown per-highlight fields.
@@ -848,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn area_highlight_writes_og_empty_text_and_empty_rect_list() {
+    fn new_area_highlight_writes_og_span_sentinel_and_empty_rect_list() {
         let mut h = sample();
         h.text = None;
         h.image = Some(1659920114630);
@@ -857,8 +881,12 @@ mod tests {
         let root = edn::parse_strict(&out).unwrap();
         let stored = &root.get("highlights").and_then(Edn::as_vec).unwrap()[0];
         assert_eq!(
-            stored.get("content").unwrap().get("text").and_then(Edn::as_str),
-            Some("")
+            stored
+                .get("content")
+                .unwrap()
+                .get("text")
+                .and_then(Edn::as_str),
+            Some("[:span]")
         );
         assert!(stored
             .get("position")

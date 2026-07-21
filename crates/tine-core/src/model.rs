@@ -4418,6 +4418,91 @@ impl Graph {
         Ok(format!("{key}/{name}"))
     }
 
+    /// After the highlight sidecar + hls page pair is durably committed, move
+    /// deleted area crops to recoverable asset trash. OG removes this exact crop
+    /// with its highlight (`extensions/pdf/core.cljs:155-159` and
+    /// `extensions/pdf/assets.cljs:137-147` at OG 6e7afa8eb); Tine keeps the same
+    /// lifecycle without introducing OG's hard delete.
+    ///
+    /// Cleanup is deliberately best-effort and compare-guarded: the paired save
+    /// is already committed, so a cleanup failure must not make the frontend
+    /// restore stale state. Any sidecar change before or immediately after a move
+    /// aborts cleanup, rolling that move back when possible.
+    fn trash_deleted_pdf_area_images(
+        &self,
+        source_key: &str,
+        edn_path: &Path,
+        committed_edn: &str,
+        source_sidecar_guard: Option<(&Path, &str)>,
+        deleted: &[crate::pdf::Highlight],
+    ) {
+        if deleted.is_empty() {
+            return;
+        }
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
+        for highlight in deleted {
+            let Some(stamp) = highlight.image else {
+                continue;
+            };
+            let Ok(Some(current_edn)) = read_optional_text(edn_path) else {
+                return;
+            };
+            if current_edn != committed_edn {
+                return;
+            }
+            if source_sidecar_guard.is_some_and(|(path, baseline)| {
+                read_optional_text(path)
+                    .map(|raw| raw.as_deref() != Some(baseline))
+                    .unwrap_or(true)
+            }) {
+                return;
+            }
+            if crate::pdf::parse_highlights(&current_edn)
+                .iter()
+                .any(|remaining| remaining.image == Some(stamp))
+            {
+                continue;
+            }
+
+            let name = format!("{}_{}_{}.png", highlight.page, highlight.id, stamp);
+            if top_level_asset_name(&name).is_err() {
+                continue;
+            }
+            let source = self.assets_path().join(source_key).join(&name);
+            if !source.is_file()
+                || self.ensure_asset_write_target(&source).is_err()
+                || self.ensure_write_target(&trash).is_err()
+                || fs::create_dir_all(&trash).is_err()
+            {
+                continue;
+            }
+            let trash_name = format!("{}__pdf-area__{}__{name}", trash_stamp(), source_key);
+            if top_level_asset_name(&trash_name).is_err() {
+                continue;
+            }
+            let destination = trash.join(trash_name);
+            if move_to_trash(&source, &destination, &trash).is_err() {
+                continue;
+            }
+
+            // A non-cooperating writer can change the sidecar between the
+            // last-moment read and rename. Put the crop back if that happened.
+            let primary_unchanged = read_optional_text(edn_path)
+                .map(|raw| raw.as_deref() == Some(committed_edn))
+                .unwrap_or(false);
+            let source_unchanged = source_sidecar_guard.is_none_or(|(path, baseline)| {
+                read_optional_text(path)
+                    .map(|raw| raw.as_deref() == Some(baseline))
+                    .unwrap_or(false)
+            });
+            if primary_unchanged && source_unchanged {
+                continue;
+            }
+            let _ = move_file_noreplace(&destination, &source);
+            return;
+        }
+    }
+
     /// Read highlights for a PDF from `assets/<key>.edn`.
     ///
     /// If the OG-compatible key's file is absent but a file under Tine's old
@@ -4728,16 +4813,28 @@ impl Graph {
             if let Some(raw) = existing_edn {
                 validate_highlight_edn(raw)?;
             }
+            let disk_highlights = existing_edn
+                .map(|raw| crate::pdf::parse_highlights(raw))
+                .unwrap_or_default();
             let have: std::collections::HashSet<&str> =
                 highlights.iter().map(|h| h.id.as_str()).collect();
             let mut merged = highlights.to_vec();
-            if let Some(raw) = existing_edn {
-                for h in crate::pdf::parse_highlights(raw) {
-                    if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
-                        merged.push(h);
-                    }
+            for h in &disk_highlights {
+                if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
+                    merged.push(h.clone());
                 }
             }
+            let merged_ids: std::collections::HashSet<&str> =
+                merged.iter().map(|h| h.id.as_str()).collect();
+            let deleted_areas: Vec<crate::pdf::Highlight> = disk_highlights
+                .into_iter()
+                .filter(|h| h.image.is_some() && !merged_ids.contains(h.id.as_str()))
+                .collect();
+            let area_source_key = if primary_baseline.is_none() && legacy_baseline.is_some() {
+                legacy_key.as_str()
+            } else {
+                key.as_str()
+            };
             let next =
                 crate::pdf::write_highlights(&merged, existing_edn.map_or("", String::as_str));
             let primary_now = read_optional_text(&edn_path)?;
@@ -4769,16 +4866,29 @@ impl Graph {
                 }
                 Err(error) => return Err(error),
             }
-            committed_sidecar = Some((merged, primary_baseline, legacy_baseline, next));
+            committed_sidecar = Some((
+                merged,
+                primary_baseline,
+                legacy_baseline,
+                next,
+                area_source_key.to_string(),
+                deleted_areas,
+            ));
             break;
         }
-        let (merged, committed_primary_edn_baseline, committed_legacy_edn_baseline, committed_edn) =
-            committed_sidecar.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "highlight sidecar changed repeatedly during update",
-                )
-            })?;
+        let (
+            merged,
+            committed_primary_edn_baseline,
+            committed_legacy_edn_baseline,
+            committed_edn,
+            area_source_key,
+            deleted_areas,
+        ) = committed_sidecar.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "highlight sidecar changed repeatedly during update",
+            )
+        })?;
 
         // Upsert into the existing hls page, preserving note children by id.
         // (`page_path` + its lock were taken at the top of this fn.) Prefer the
@@ -4838,6 +4948,17 @@ impl Graph {
         // Drop the self-write marker now the write is published + cached (see
         // write_page / drop_self_write_marker).
         self.drop_self_write_marker(&page_path, &page_rev);
+        let source_sidecar_guard = (area_source_key == legacy_key)
+            .then(|| legacy_edn.as_deref())
+            .flatten()
+            .zip(committed_legacy_edn_baseline.as_deref());
+        self.trash_deleted_pdf_area_images(
+            &area_source_key,
+            &edn_path,
+            &committed_edn,
+            source_sidecar_guard,
+            &deleted_areas,
+        );
         // Migrate-on-write cleanup is compare-and-recover: only retire a legacy
         // artifact if it still equals the exact bytes we merged. A concurrent
         // legacy update stays at its original path. Unchanged files are moved to
