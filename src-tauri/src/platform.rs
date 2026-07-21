@@ -238,17 +238,30 @@ pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), St
     if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return Err("unsupported url scheme".into());
     }
-    #[cfg(desktop)]
+    // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
+    // the env-scrubbed browser policy; see opener_command_env).
+    #[cfg(all(desktop, not(target_os = "windows")))]
     {
         let _ = &app;
         #[cfg(target_os = "linux")]
         let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
         #[cfg(target_os = "macos")]
         let mut command = opener_command("open");
-        #[cfg(target_os = "windows")]
-        let mut command = opener_command("explorer");
         command.arg(&url).spawn().map_err(|e| e.to_string())?;
         Ok(())
+    }
+    // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
+    // mailto argument as a shell item and frequently opens a File Explorer
+    // window instead of handing the URL to the default browser/mail client
+    // (GH #215). Route the open through the opener plugin, which calls
+    // ShellExecute — the canonical Windows "open this URL" API and the same
+    // path mobile already uses successfully.
+    #[cfg(all(desktop, target_os = "windows"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())
     }
     // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
     // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
