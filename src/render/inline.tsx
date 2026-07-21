@@ -385,6 +385,17 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
     return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
   }
+  // OG parity (og-1.0.0 block.cljs:989-1011 show-link? -> :1213 media-link;
+  // util/text.cljs:31 media-link?): a BARE http(s) URL ending in a media
+  // extension auto-renders inline as media. Keyed on s.full (OG full_text) so a
+  // labeled [text](x.png) — full_text not http-prefixed — stays a plain link.
+  if (!s.image && /^https?:\/\//i.test(s.full.trimStart())) {
+    const k = mediaKind(dest);
+    if (k === "image")
+      return <AssetImage url={dest} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+    if (k === "video" || k === "audio")
+      return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+  }
   return (
     <span class="link-copy-wrap">
       <a

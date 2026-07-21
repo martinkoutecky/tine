@@ -102,6 +102,48 @@ describe("renderInlines", () => {
     expect(h).toContain("inline-image");
   });
 
+  it("bare_remote_image_url_renders_img", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/pic.jpg" }, full: "https://host/pic.jpg", image: false }]);
+    expect(h).toContain("<img");
+    expect(h).not.toContain('class="external-link"');
+  });
+
+  it("bare_remote_image_url_with_query_renders_img", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/pic.png?w=200#x" }, full: "https://host/pic.png?w=200#x", image: false }]);
+    expect(h).toContain("<img");
+    expect(h).not.toContain('class="external-link"');
+  });
+
+  it("bare_remote_video_url_renders_player", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/clip.mp4" }, full: "https://host/clip.mp4", image: false }]);
+    expect(h).toContain("<video");
+    expect(h).not.toContain('class="external-link"');
+  });
+
+  it("bare_remote_audio_url_renders_player", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/song.mp3" }, full: "https://host/song.mp3", image: false }]);
+    expect(h).toContain("<audio");
+    expect(h).not.toContain('class="external-link"');
+  });
+
+  it("labeled_media_link_stays_a_link", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/pic.jpg" }, full: "[click](https://host/pic.jpg)", image: false, label: [{ k: "plain", text: "click" }] }]);
+    expect(h).toContain('class="external-link"');
+    expect(h).toContain("click");
+    expect(h).not.toContain("<img");
+  });
+
+  it("markdown_image_still_renders", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "host/pic.jpg" }, full: "![](https://host/pic.jpg)", image: true }]);
+    expect(h).toContain("<img");
+  });
+
+  it("plain_nonmedia_link_stays_a_link", () => {
+    const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "example.com/page" }, full: "https://example.com/page", image: false }]);
+    expect(h).toContain('class="external-link"');
+    expect(h).not.toContain("<img");
+  });
+
   it("releases a pending local-image lease when unmounted before the read finishes", async () => {
     let resolveRead!: (bytes: Uint8Array) => void;
     vi.spyOn(backend(), "readAsset").mockReturnValue(

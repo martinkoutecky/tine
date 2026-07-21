@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A bare remote media URL now **renders inline**, like Logseq: a plain
+  `https://…/photo.jpg` (or `.png`/`.gif`/`.webp`/…) shows the image, and a bare
+  `.mp4`/`.webm`/`.mp3`/… URL shows a video/audio player, instead of a raw link.
+  Labeled links (`[text](…)`) and non-media links are unchanged.
 - `[[`, `#`, and `((` autocomplete now match what you type **literally**, like
   Logseq. Previously the in-progress text was run through the Ctrl+K search query
   language, so typing a bare `OR`, a leading `-`, a quote, or a `/…/` was read as
