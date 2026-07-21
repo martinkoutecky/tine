@@ -184,12 +184,13 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
     case "comment":
       return null; // org drawers / `#+KEY:` keywords / `# comment` — not rendered
     case "hiccup":
-      if (macroExpansion) {
-        const html = hiccupToHtml(b.v);
-        if (html !== null) return renderSanitizedHtml(html, coarseSpanAttrs(b.span));
-      }
-      // Direct Clojure-Hiccup remains literal; only configured macro expansions
-      // opt into the bounded transcriber + sanitizer path.
+      // OG 6e7afa8eb inserts direct block Hiccup only after safe-read,
+      // serialization, and sanitization
+      // (src/main/frontend/components/block.cljs:1554-1562 and
+      // src/main/frontend/components/block.cljs:3266-3271). Tine's bounded
+      // transcriber is the safe-read equivalent.
+      const html = hiccupToHtml(b.v);
+      if (html !== null) return renderSanitizedHtml(html, coarseSpanAttrs(b.span));
       return <span class="ast-hiccup" {...(coarseSpanAttrs(b.span) ?? {})}>{b.v}</span>;
   }
 }

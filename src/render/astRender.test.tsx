@@ -294,9 +294,23 @@ describe("renderInlines", () => {
     expect(inl([{ k: "fnref", name: "1" }])).toContain('class="footnote-ref"');
   });
 
-  // lsdoc v0.1.4: inline Clojure-hiccup renders its raw bracket text literally.
-  it("inline hiccup renders raw text literally", () => {
-    expect(inl([{ k: "hiccup", v: "[:span \"y\"]" }])).toContain("[:span");
+  it.each(["md", "org"] as const)("direct inline hiccup renders an element in %s", (format) => {
+    const h = html(() => renderInlines(
+      [{ k: "hiccup", v: '[:span.parity-hiccup "inline"]' }],
+      undefined,
+      true,
+      false,
+      format,
+    ));
+    expect(h).toContain('<span class="parity-hiccup">inline</span>');
+    expect(h).not.toContain("[:span.parity-hiccup");
+  });
+
+  it.each(["md", "org"] as const)("invalid direct inline hiccup stays literal in %s", (format) => {
+    const source = '[:span "unterminated"';
+    const h = html(() => renderInlines([{ k: "hiccup", v: source }], undefined, true, false, format));
+    expect(h).toContain(source);
+    expect(h).not.toContain("<span>unterminated</span>");
   });
 
   it("uses iframe width and height from attrs or style", () => {
@@ -439,11 +453,66 @@ describe("renderBlocks", () => {
     expect(blk([{ kind: "comment", text: "c" }])).not.toContain("c");
   });
 
-  // lsdoc v0.1.4: Clojure-hiccup blocks render their raw bracket text literally.
-  it("hiccup block renders raw text literally", () => {
-    const h = blk([{ kind: "hiccup", v: "[:div.note \"hi\"]" }]);
-    expect(h).toContain("ast-hiccup");
-    expect(h).toContain("[:div.note");
+  it.each(["md", "org"] as const)("direct block hiccup renders an element in %s", (format) => {
+    const h = html(() => renderBlocks(
+      [{ kind: "hiccup", v: '[:div.parity-hiccup "block"]' }],
+      undefined,
+      undefined,
+      false,
+      format,
+    ));
+    expect(h).toContain('<div class="parity-hiccup">block</div>');
+    expect(h).not.toContain("[:div.parity-hiccup");
+  });
+
+  it.each(["md", "org"] as const)("invalid direct block hiccup stays literal in %s", (format) => {
+    const source = '[:div "unterminated"';
+    const h = html(() => renderBlocks(
+      [{ kind: "hiccup", v: source }],
+      undefined,
+      undefined,
+      false,
+      format,
+    ));
+    expect(h).toContain(source);
+    expect(h).not.toContain("<div>unterminated</div>");
+  });
+
+  it("raw block HTML preserves native audio and video elements", () => {
+    const root = document.createElement("div");
+    const dispose = render(() => renderBlocks([
+      { kind: "raw_html", text: '<audio controls src="https://media.example/audio.ogg"></audio>' },
+      { kind: "raw_html", text: '<video controls src="https://media.example/video.mp4"></video>' },
+    ]), root);
+    try {
+      const audio = root.querySelector("audio");
+      const video = root.querySelector("video");
+      expect(audio).not.toBeNull();
+      expect(audio?.hasAttribute("controls")).toBe(true);
+      expect(audio?.getAttribute("src")).toBe("https://media.example/audio.ogg");
+      expect(video).not.toBeNull();
+      expect(video?.hasAttribute("controls")).toBe(true);
+      expect(video?.getAttribute("src")).toBe("https://media.example/video.mp4");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("sanitizes hostile direct Hiccup through the shared insertion path", () => {
+    const root = document.createElement("div");
+    const dispose = render(() => renderBlocks([{
+      kind: "hiccup",
+      v: '[:div [:script "bad"] [:img {:src "javascript:bad()" :onerror "bad()"}] [:iframe {:src "https://evil.example"}]]',
+    }]), root);
+    try {
+      expect(root.querySelector("script")).toBeNull();
+      expect(root.querySelector("iframe")).toBeNull();
+      expect(root.querySelector("[onerror]")).toBeNull();
+      expect(root.innerHTML).not.toContain("javascript:");
+      expect(root.innerHTML).not.toContain("bad()");
+    } finally {
+      dispose();
+    }
   });
 
   // A `# heading` block's size applies ONLY to its first (heading) line — a `> quote`
@@ -499,7 +568,7 @@ describe("user macro helpers", () => {
     expect(nestedInline).not.toContain("[:span.emph-rich");
   });
 
-  it("keeps adjacent direct inline and block Hiccup literal in the same render", () => {
+  it("renders adjacent macro, direct inline, and direct block Hiccup through the shared path", () => {
     setGraphMeta({ macros: { rich: '[:span.macro-rich "Macro rich"]' } } as never);
     const h = html(() => (
       <div>
@@ -512,10 +581,10 @@ describe("user macro helpers", () => {
       </div>
     ));
     expect(h).toContain('class="macro-rich"');
-    expect(h).toContain("[:span.direct-inline");
-    expect(h).toContain("[:div.direct-block");
-    expect(h).not.toContain('class="direct-inline"');
-    expect(h).not.toContain('class="direct-block"');
+    expect(h).toContain('class="direct-inline"');
+    expect(h).toContain('class="direct-block"');
+    expect(h).not.toContain("[:span.direct-inline");
+    expect(h).not.toContain("[:div.direct-block");
   });
 
   it("keeps raw-HTML macro output sanitized", () => {

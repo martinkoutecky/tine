@@ -167,12 +167,13 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
     case "entity":
       return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.unicode}</span> : <>{s.unicode}</>;
     case "hiccup":
-      if (macroExpansion) {
-        const html = hiccupToHtml(s.v);
-        if (html !== null) return renderSanitizedHtml(html, spanMode ? coarseSpanAttrs(s.span) : undefined);
-      }
-      // Direct Clojure-Hiccup remains literal; only configured macro expansions
-      // opt into the bounded transcriber + sanitizer path.
+      // OG 6e7afa8eb inserts direct inline Hiccup only after safe-read,
+      // serialization, and sanitization
+      // (src/main/frontend/components/block.cljs:1554-1562 and
+      // src/main/frontend/components/block.cljs:1617-1621). Tine's bounded
+      // transcriber is the safe-read equivalent.
+      const html = hiccupToHtml(s.v);
+      if (html !== null) return renderSanitizedHtml(html, spanMode ? coarseSpanAttrs(s.span) : undefined);
       return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.v}</span> : <>{s.v}</>;
   }
 }

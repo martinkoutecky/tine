@@ -42,6 +42,13 @@ const TAGS: &[&str] = &[
     "summary",
     "a",
     "img",
+    // OG 6e7afa8eb's raw-HTML DOMPurify path preserves native playback elements
+    // (src/main/frontend/security.cljs:5-11 and
+    // src/main/frontend/components/block.cljs:3258-3261). Keep this bounded to
+    // media, not embedded browsing/plugin contexts such as iframe/object/embed.
+    "audio",
+    "video",
+    "source",
 ];
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
@@ -58,8 +65,32 @@ pub fn sanitize(html: &str) -> String {
         "img",
         ["src", "alt", "width", "height"].into_iter().collect(),
     );
+    // User-driven playback plus inert playback state/fetch/layout metadata.
+    // `autoplay` remains absent; `src`/`poster` are checked by ammonia against
+    // the safe scheme set below. Mirror RAW_HTML_ATTRS in the live renderer.
+    tag_attrs.insert(
+        "audio",
+        ["src", "controls", "loop", "muted", "preload"]
+            .into_iter()
+            .collect(),
+    );
+    tag_attrs.insert(
+        "video",
+        [
+            "src", "controls", "loop", "muted", "preload", "poster", "width", "height",
+        ]
+        .into_iter()
+        .collect(),
+    );
+    tag_attrs.insert("source", ["src", "type"].into_iter().collect());
     tag_attrs.insert("details", ["open"].into_iter().collect());
 
+    // `data:` stays allowed for media payloads (base64-embedded images etc.) —
+    // DOMPurify (= OG's sanitizer, security.cljs:5-11) permits `data:` on its
+    // DATA_URI_TAGS (img/audio/video/source). `javascript:` was never admitted.
+    // OG/DOMPurify do NOT allow `data:` in link hrefs, so strip it there via
+    // the attribute filter below (this tightens a pre-existing looseness where
+    // the global scheme set let `<a href="data:...">` through).
     let schemes: HashSet<&str> = ["https", "http", "mailto", "tel", "data"]
         .into_iter()
         .collect();
@@ -69,6 +100,21 @@ pub fn sanitize(html: &str) -> String {
         .generic_attributes(generic)
         .tag_attributes(tag_attrs)
         .url_schemes(schemes)
+        .attribute_filter(|element, attribute, value| {
+            let is_data = value
+                .trim_start_matches(|c: char| c.is_ascii_control() || c == ' ')
+                .to_ascii_lowercase()
+                .starts_with("data:");
+            // DOMPurify permits data: only in media-tag data-URI attributes
+            // (src); it strips data: from link hrefs and from `poster`. Mirror
+            // both exclusions so live render and static export agree.
+            let deny = (element == "a" && attribute == "href") || attribute == "poster";
+            if deny && is_data {
+                None
+            } else {
+                Some(value.into())
+            }
+        })
         .link_rel(Some("noopener noreferrer"))
         .clean(html)
         .to_string()
@@ -116,5 +162,75 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn native_media_policy_matches_the_live_renderer() {
+        let out = sanitize(
+            r#"<audio controls loop muted preload="metadata" src="https://media.example/audio.ogg">
+                 <source src="https://media.example/audio.opus" type="audio/ogg">
+               </audio>
+               <video controls loop muted preload="none" poster="https://media.example/poster.jpg"
+                      width="640" height="360" src="https://media.example/video.mp4">
+                 <source src="https://media.example/video.webm" type="video/webm">
+               </video>"#,
+        );
+
+        for needle in [
+            "<audio",
+            "<video",
+            "<source",
+            "controls",
+            "loop",
+            "muted",
+            "preload=\"metadata\"",
+            "poster=\"https://media.example/poster.jpg\"",
+            "width=\"640\"",
+            "height=\"360\"",
+            "type=\"audio/ogg\"",
+            "type=\"video/webm\"",
+        ] {
+            assert!(out.contains(needle), "expected {needle:?} in {out:?}");
+        }
+    }
+
+    #[test]
+    fn executable_media_and_external_request_primitives_stay_dead() {
+        let out = sanitize(
+            r#"<script>steal()</script>
+               <img src="https://media.example/x.png" onerror="steal()">
+               <audio autoplay src="javascript:steal()"></audio>
+               <video autoplay poster="data:image/png;base64,AAAA" src="data:video/mp4;base64,AAAA"></video>
+               <source src="javascript:steal()" type="video/mp4">
+               <iframe src="https://evil.example"></iframe>
+               <object data="https://evil.example"></object>
+               <embed src="https://evil.example">"#,
+        );
+
+        for needle in [
+            "<script",
+            "onerror",
+            "autoplay",
+            "javascript:",
+            "<iframe",
+            "<object",
+            "<embed",
+        ] {
+            assert!(
+                !out.contains(needle),
+                "did not expect {needle:?} in {out:?}"
+            );
+        }
+        // data: in media `src` survives (DOMPurify/OG DATA_URI_TAGS); data: in
+        // `poster` is stripped, matching DOMPurify's live-render behavior.
+        assert!(!out.contains("data:image"), "poster kept: {out:?}");
+        assert!(out.contains("data:video/mp4;base64,AAAA"), "src: {out:?}");
+    }
+
+    #[test]
+    fn data_href_on_links_is_stripped_like_dompurify() {
+        let out = sanitize(r#"<a href="data:text/html,<script>steal()</script>">x</a>"#);
+        assert!(!out.contains("data:"), "{out:?}");
+        assert!(out.contains(">x</a>"), "{out:?}");
     }
 }
