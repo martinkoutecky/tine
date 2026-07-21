@@ -118,6 +118,9 @@ class Reader {
       this.skipWhitespace();
       if (this.peek() === "}") break;
       if (this.index >= this.source.length) this.fail();
+      // Every attribute entry consumes node budget, or a large supported
+      // attribute map would bypass MAX_NODES entirely.
+      this.bumpNode();
       const name = this.readAttrName();
       if (!TOKEN.test(name)) this.fail();
       this.skipWhitespace();

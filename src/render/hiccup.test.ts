@@ -55,6 +55,14 @@ describe("hiccupToHtml", () => {
     expect(hiccupToHtml(withNodeCount(2049))).toBeNull();
   });
 
+  it("counts supported attribute entries while parsing: 2047 attrs (2048 nodes) accepted, 2048 attrs falls back", () => {
+    const attrMap = (entries: number) =>
+      `[:span {${Array.from({ length: entries }, (_, i) => `:a${i} ${i}`).join(" ")}} ]`;
+    // The element itself is one node, so k attribute entries cost 1 + k nodes.
+    expect(hiccupToHtml(attrMap(2047))).not.toBeNull();
+    expect(hiccupToHtml(attrMap(2048))).toBeNull();
+  });
+
   it("counts unsupported attribute forms while parsing before dropping the attribute", () => {
     const oversizedValue = Array.from({ length: 2049 }, () => "true").join(" ");
     expect(hiccupToHtml(`[:span {:title (${oversizedValue})} "x"]`)).toBeNull();
