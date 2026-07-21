@@ -32,6 +32,10 @@ export const RENDER_HIDDEN_PROPS: ReadonlySet<string> = new Set([
 export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
   const normalized = propertyKeyNorm(key);
   return normalized.startsWith("tine.")
+    // Table v2 reads this configuration from the block rather than presenting it
+    // as content. OG likewise resolves `logseq.table.*` view props from the block
+    // property map (og/deps/shui/src/logseq/shui/table/v2.cljs:37-50).
+    || normalized.startsWith("logseq.table.")
     || RENDER_HIDDEN_PROPS.has(normalized)
     || userHidden.some((k) => propertyKeyNorm(k) === normalized);
 }

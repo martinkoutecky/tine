@@ -25,6 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   / `<video controls>` play natively. Scripts, iframes, event handlers, and
   autoplay remain stripped; base64 `data:` images keep working, matching
   Logseq's sanitizer exactly.
+- **Table v2**, like Logseq: a table in a block with
+  `logseq.table.version:: 2` renders Logseq's grid presentation with compact
+  mode and header transforms, and the `logseq.table.*` configuration
+  properties no longer show as visible text.
 - **YouTube timestamps**, like Logseq: `{{youtube-timestamp}}` stamps are now
   clickable and seek the embedded YouTube video, and a new "Embed Youtube
   timestamp" slash command inserts the current playback time. Works offline

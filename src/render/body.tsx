@@ -11,6 +11,7 @@ import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
+import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, stripPlanningLines } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
@@ -107,6 +108,7 @@ export function renderBlocks(
   headingLevel?: number | null,
   macroExpansion = false,
   format: Format = "md",
+  tableOptions?: TableV2Options,
 ): JSX.Element {
   const content = (
     <For each={blocks}>
@@ -119,8 +121,8 @@ export function renderBlocks(
               first inline-flow node), NOT to continuation constructs in the same block
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
-          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId, macroExpansion, format)}>
-            <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId, macroExpansion, format)}</span>
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId, macroExpansion, format, tableOptions)}>
+            <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId, macroExpansion, format, tableOptions)}</span>
           </Show>
         </>
       )}
@@ -134,7 +136,7 @@ export function renderBlocks(
   );
 }
 
-function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
+function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   switch (b.kind) {
     case "paragraph":
     case "bullet":
@@ -156,13 +158,13 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
     case "example":
       return <CodeBlock code={b.code} lang="" spanAttrs={coarseSpanAttrs(b.span)} />;
     case "quote":
-      return renderQuote(b, blockId, macroExpansion, format);
+      return renderQuote(b, blockId, macroExpansion, format, tableOptions);
     case "custom":
-      return renderCustom(b, blockId, macroExpansion, format);
+      return renderCustom(b, blockId, macroExpansion, format, tableOptions);
     case "list":
-      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} />;
+      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
     case "table":
-      return renderTable(b, blockId, macroExpansion, format);
+      return renderTable(b, blockId, macroExpansion, format, tableOptions);
     case "properties":
       return renderProps(b, blockId, macroExpansion, format);
     case "hr":
@@ -198,7 +200,7 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
 // A `> [!NOTE]` callout (GitHub-flavoured) arrives as a `quote` whose first
 // paragraph's leading plain text is `[!TYPE] …` — re-detect it. (Org `#+BEGIN_NOTE`
 // is a `custom` block, handled in renderCustom.) Otherwise render a blockquote.
-function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
+function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   const first = b.children[0];
   if (first && first.kind === "paragraph") {
     const lead = first.inline[0];
@@ -227,32 +229,46 @@ function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string, 
                 {renderInlines(titleMarkup, blockId, true, macroExpansion, format)}
               </Show>
             </div>
-            <div class="callout-body">{renderBlocks(bodyChildren, blockId, undefined, macroExpansion, format)}</div>
+            <div class="callout-body">{renderBlocks(bodyChildren, blockId, undefined, macroExpansion, format, tableOptions)}</div>
           </div>
         );
       }
     }
   }
-  return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format)}</blockquote>;
+  return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
 }
 
-function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
+function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   const type = b.name.toLowerCase();
   if (CALLOUT_TYPES.includes(type)) {
     return (
       <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
         <div class="callout-title">{type.toUpperCase()}</div>
         <Show when={b.children.length > 0}>
-          <div class="callout-body">{renderBlocks(b.children, blockId, undefined, macroExpansion, format)}</div>
+          <div class="callout-body">{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</div>
         </Show>
       </div>
     );
   }
-  if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format)}</blockquote>;
-  return <>{renderBlocks(b.children, blockId, undefined, macroExpansion, format)}</>;
+  if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
+  return <>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</>;
 }
 
-function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
+function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
+  // OG dispatches table v2 only when the resolved component version is 2
+  // (`og/src/main/frontend/components/block.cljs:3075-3079`). The
+  // block-property resolver is built from the same parsed body that supplies
+  // this table.
+  if (tableOptions?.version === 2) {
+    return (
+      <TableV2
+        table={b}
+        options={tableOptions}
+        spanAttrs={coarseSpanAttrs(b.span)}
+        renderCell={(cell) => renderInlines(cell, blockId, true, macroExpansion, format)}
+      />
+    );
+  }
   const al = (i: number) => {
     const align = b.aligns[i] ?? null;
     return align ? { "text-align": align } : undefined;
@@ -322,7 +338,7 @@ function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
 // An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
 // depth-first list of checkbox items, shared across nested AstLists so each
 // checkbox knows its global index.
-function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format }): JSX.Element {
+function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -352,9 +368,9 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
             <Show when={item.name && item.name.length > 0}>
               <span class="md-list-term">{renderInlines(item.name!, props.blockId, true, props.macroExpansion ?? false, props.format)}</span>{" "}
             </Show>
-            {renderBlocks(item.content, props.blockId, undefined, props.macroExpansion ?? false, props.format)}
+            {renderBlocks(item.content, props.blockId, undefined, props.macroExpansion ?? false, props.format, props.tableOptions)}
             <Show when={item.items.length > 0}>
-              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} macroExpansion={props.macroExpansion} format={props.format} />
+              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
             </Show>
           </li>
         )}
@@ -370,8 +386,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
  *  renders markerless automatically. A planning `Timestamp` only ever appears on a
  *  standalone planning line (lsdoc never makes one mid-text), so dropping any block
  *  that contains one drops exactly the badge lines. */
-function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
-  const parsed = parseBody(raw, isOrg ? "org" : "md");
+function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   if (isQuarantined(parsed)) return parsed;
   // Drop `properties` (chips in chrome), then remove only the parser-confirmed
   // whole-line planning timestamp from its inline flow. A trailing body line can
@@ -382,11 +397,16 @@ function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
 }
 
 function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false): JSX.Element {
-  const blocks = bodyBlocks(raw, format === "org");
+  // One parse supplies both the visible body and its property-dependent table
+  // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
+  const parsed = parseBody(raw, format);
+  const properties: [string, string][] = [];
+  for (const b of parsed) if (b.kind === "properties") properties.push(...b.props);
+  const blocks = bodyBlocks(parsed, raw);
   const beginQuery = inspectBeginQuery(raw, format, blocks);
   return beginQuery
     ? <BeginQuery match={beginQuery} currentPage={blockId ? doc.byId[blockId]?.page : undefined} />
-    : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format);
+    : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties));
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
