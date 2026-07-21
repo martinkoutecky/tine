@@ -87,6 +87,7 @@ import {
   dataRev,
   pageInventoryRev,
   setWorkflow,
+  setGraphMeta,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -299,6 +300,7 @@ beforeEach(() => {
   counter = 0;
   resetStore();
   setWorkflow("now");
+  setGraphMeta(null);
   resetPaneLayoutToSingle({
     tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
     activeIndex: 0,
@@ -468,6 +470,20 @@ describe("outdent (Shift+Tab)", () => {
     outdentBlock(a, 0);
     // a moves out after p, and b,c become a's children
     expect(shape()).toEqual([["p"], ["a", [["b"], ["c"]]]]);
+  });
+
+  it("keeps following siblings in place when logical outdenting is enabled", () => {
+    setGraphMeta({ logical_outdenting: true } as never);
+    const dto = load([blk("p", [blk("a"), blk("b"), blk("c")])]);
+    const a = dto.blocks[0].children[0].id;
+    // b and c are not moved by logical outdenting, so their serialized DTO bytes
+    // are preserved exactly while a becomes p's following sibling.
+    const untouchedChildren = JSON.stringify(pageToDto("Test")!.blocks[0].children.slice(1));
+
+    outdentBlock(a, 0);
+
+    expect(shape()).toEqual([["p", [["b"], ["c"]]], ["a"]]);
+    expect(JSON.stringify(pageToDto("Test")!.blocks[0].children)).toBe(untouchedChildren);
   });
 });
 

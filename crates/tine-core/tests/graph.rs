@@ -1403,6 +1403,41 @@ fn config_reader_preserves_semicolon_in_string_values() {
 }
 
 #[test]
+fn editor_structure_preferences_round_trip_through_config_edn() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-editor-structure-config-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let config = root.join("logseq").join("config.edn");
+    std::fs::write(&config, "{:unrelated true}\n").unwrap();
+
+    let graph = Graph::open(&root);
+    assert!(!graph.meta().doc_mode_enter_for_new_block);
+    assert!(!graph.meta().logical_outdenting);
+    graph.set_doc_mode_enter_for_new_block(true).unwrap();
+    graph.set_logical_outdenting(true).unwrap();
+
+    let reopened = Graph::open(&root);
+    assert!(reopened.meta().doc_mode_enter_for_new_block);
+    assert!(reopened.meta().logical_outdenting);
+    let persisted = std::fs::read_to_string(&config).unwrap();
+    assert!(persisted.contains(":shortcut/doc-mode-enter-for-new-block? true"));
+    assert!(persisted.contains(":editor/logical-outdenting? true"));
+    assert!(persisted.contains(":unrelated true"));
+
+    reopened.set_doc_mode_enter_for_new_block(false).unwrap();
+    reopened.set_logical_outdenting(false).unwrap();
+    let reopened_again = Graph::open(&root);
+    assert!(!reopened_again.meta().doc_mode_enter_for_new_block);
+    assert!(!reopened_again.meta().logical_outdenting);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn set_preferred_workflow_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("logseq")).unwrap();

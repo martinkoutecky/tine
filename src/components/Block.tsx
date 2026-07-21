@@ -120,7 +120,7 @@ import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
@@ -2762,13 +2762,27 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
 
-    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // OG maps document-mode Enter to newline and Shift+Enter to new-block before
+    // it reaches the existing new-block handler, unless its escape hatch is set
+    // (`src/main/frontend/handler/editor.cljs:2521-2533`,
+    // `src/main/frontend/state.cljs:714-717` at `6e7afa8eb`).
+    // Select between the existing mutation paths here; the structural branch
+    // below intentionally retains every current code-fence/list/etc. exception.
+    const docModeEnterForNewLine = documentMode() && !docModeEnterForNewBlock();
+    const mappedToSoftNewline =
+      e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey && (
+        (!docModeEnterForNewLine && e.shiftKey) || (docModeEnterForNewLine && !e.shiftKey)
+      );
+    if (mappedToSoftNewline) {
       e.preventDefault();
       softNewlineCmd();
       return;
     }
 
-    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    if (
+      e.key === "Enter" && !e.ctrlKey && !e.metaKey &&
+      (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
+    ) {
       const inFence = !isAnnot() && caretInFence(raw, start);
       const inPageProperties = !isAnnot() && isFirstPagePropertiesBlock(raw);
       // Double-Enter escape: the first Enter creates a trailing blank line; the

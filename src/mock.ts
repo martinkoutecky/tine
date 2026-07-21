@@ -649,6 +649,8 @@ export function mockBackend(): Backend {
         preferred_format: "md",
         enable_timetracking: true,
         show_brackets: true,
+        doc_mode_enter_for_new_block: false,
+        logical_outdenting: false,
         logbook_with_second_support: true,
         logbook_enabled_in_timestamped_blocks: true,
         logbook_enabled_in_all_blocks: false,
@@ -1064,6 +1066,12 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async setShowBrackets(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setDocModeEnterForNewBlock(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setLogicalOutdenting(): Promise<void> {
       // no-op in the browser mock
     },
     async setPreferredFormat(): Promise<void> {

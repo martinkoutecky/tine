@@ -28,6 +28,10 @@ import {
   toggleWideMode,
   documentMode,
   toggleDocumentMode,
+  docModeEnterForNewBlock,
+  changeDocModeEnterForNewBlock,
+  logicalOutdenting,
+  changeLogicalOutdenting,
   typographyMode,
   setTypographyMode,
   autoPairing,
@@ -173,6 +177,7 @@ const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
   { tab: "appearance", label: "Wide mode", description: "reading width" },
   { tab: "appearance", label: "Document mode", description: "hide bullets prose" },
+  { tab: "appearance", label: "Document-mode Enter creates a new block", description: "Enter Shift Enter internal newline config" },
   { tab: "appearance", label: "Show brackets", description: "page references config shortcut" },
   { tab: "appearance", label: "Typographic replacements", description: "arrows dashes glyphs" },
   { tab: "appearance", label: "Auto-pair brackets & quotes", description: "closers selections backspace" },
@@ -182,6 +187,7 @@ const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Smooth scrolling (experimental)", description: "animated journal scrolling WebKit", aliases: ["scroll animation"], level: "advanced" },
   { tab: "appearance", label: "System title bar & window controls", description: "native frame chrome" },
   { tab: "editor", label: "File format", description: "new pages Markdown Org" },
+  { tab: "editor", label: "Logical outdenting", description: "Shift Tab following siblings Roam config" },
   { tab: "editor", label: "Link autocomplete default", description: "OG adaptive existing typed page tag completion", level: "advanced" },
   { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
   { tab: "editor", label: "Learn Ctrl+K choices", description: "adaptive launcher ranking reset history", level: "advanced" },
@@ -1321,6 +1327,16 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
+        label="Document-mode Enter creates a new block"
+        hint={<>Keep the normal Enter = new block and Shift + Enter = line break mapping while Document mode is on. Off (the default) swaps them, like Logseq. Saved to <code>:shortcut/doc-mode-enter-for-new-block?</code> in <code>config.edn</code>.</>}
+      >
+        <Toggle
+          on={docModeEnterForNewBlock()}
+          onClick={() => changeDocModeEnterForNewBlock(!docModeEnterForNewBlock())}
+        />
+      </Field>
+
+      <Field
         label="Show brackets"
         hint={<>Show the <code>[[ ]]</code> around page references. Saved to <code>:ui/show-brackets?</code> in <code>config.edn</code>; toggle with <code>mod+c mod+b</code>.</>}
       >
@@ -1539,6 +1555,13 @@ function EditorTab(props: { search: string }): JSX.Element {
         }
       >
         <Toggle on={spellcheckEnabled()} onClick={() => setSpellcheckEnabled(!spellcheckEnabled())} />
+      </Field>
+
+      <Field
+        label="Logical outdenting"
+        hint={<>Move an outdented block after its parent while leaving following siblings in place. Off (the default) reparents those siblings beneath the moved block. Saved to <code>:editor/logical-outdenting?</code> in <code>config.edn</code>.</>}
+      >
+        <Toggle on={logicalOutdenting()} onClick={() => changeLogicalOutdenting(!logicalOutdenting())} />
       </Field>
 
       <Show when={spellcheckEnabled()}>

@@ -73,6 +73,12 @@ pub struct Config {
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
+    /// `:shortcut/doc-mode-enter-for-new-block?` — when document mode is on,
+    /// retain the normal Enter = new block mapping. Absent defaults to false.
+    pub doc_mode_enter_for_new_block: bool,
+    /// `:editor/logical-outdenting?` — leave following siblings under the old
+    /// parent when a block is outdented. Absent defaults to OG's false.
+    pub logical_outdenting: bool,
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
     /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
@@ -138,6 +144,8 @@ impl Default for Config {
             macros: HashMap::new(),
             enable_timetracking: true,
             show_brackets: true,
+            doc_mode_enter_for_new_block: false,
+            logical_outdenting: false,
             logbook: LogbookSettings::default(),
             guide_announced: false,
         }
@@ -209,6 +217,9 @@ impl Config {
         cfg.macros = parse_macros(edn);
         cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
+        cfg.doc_mode_enter_for_new_block =
+            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
+        cfg.logical_outdenting = bool_value(edn, ":editor/logical-outdenting?").unwrap_or(false);
         cfg.logbook = LogbookSettings {
             with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
                 .unwrap_or(true),
@@ -350,6 +361,43 @@ impl Graph {
     /// the explicit boolean keeps the Settings toggle reversible.
     pub fn set_show_brackets(&self, enabled: bool) -> io::Result<()> {
         let key = ":ui/show-brackets?";
+        let val = if enabled { "true" } else { "false" };
+        let path = config_path_for_write(self)?;
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist the document-mode escape hatch. OG declares the equivalent key in
+    /// `src/main/frontend/schema/handler/common_config.cljc:41` at `6e7afa8eb`.
+    pub fn set_doc_mode_enter_for_new_block(&self, enabled: bool) -> io::Result<()> {
+        self.set_config_bool(":shortcut/doc-mode-enter-for-new-block?", enabled)
+    }
+
+    /// Persist logical (Roam-like) outdenting. OG declares the equivalent key in
+    /// `src/main/frontend/schema/handler/common_config.cljc:83` at `6e7afa8eb`.
+    pub fn set_logical_outdenting(&self, enabled: bool) -> io::Result<()> {
+        self.set_config_bool(":editor/logical-outdenting?", enabled)
+    }
+
+    /// Write one graph-portable boolean through the existing config.edn atomic
+    /// update path, preserving unrelated keys, comments, and formatting.
+    fn set_config_bool(&self, key: &str, enabled: bool) -> io::Result<()> {
         let val = if enabled { "true" } else { "false" };
         let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {

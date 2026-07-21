@@ -23,6 +23,7 @@ import {
   workflow,
   timetrackingEnabled,
   logbookWithSecondSupport,
+  logicalOutdenting,
   removeDeletedPageFromNavigation,
   removeDeletedBlocksFromSidebar,
   bumpDataRev,
@@ -1473,10 +1474,18 @@ export function outdentBlock(id: string, caretOffset: number) {
     produce((s) => {
       const parent = s.byId[parentId];
       const idx = parent.children.indexOf(id);
-      const following = parent.children.splice(idx);
-      following.shift(); // drop id
-      for (const f of following) s.byId[f].parent = id;
-      s.byId[id].children.push(...following);
+      // OG only reparents the following siblings for traditional outdenting;
+      // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
+      // at `6e7afa8eb`). Keep this decision inside the shared store operation so
+      // keyboard, mobile, and any future caller all use the same mode.
+      if (logicalOutdenting()) {
+        parent.children.splice(idx, 1);
+      } else {
+        const following = parent.children.splice(idx);
+        following.shift(); // drop id
+        for (const f of following) s.byId[f].parent = id;
+        s.byId[id].children.push(...following);
+      }
       s.byId[id].parent = grandParent;
       const gArr = grandParent === null
         ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots

@@ -412,14 +412,14 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     id: "builtin/editor/enter",
     scope: "editor",
     binding: "enter",
-    label: "New block or continue list",
-    details: "Splits the current block, continues an in-block list, or adds a sibling note under PDF annotations.",
+    label: "New block (or newline in Document mode)",
+    details: "Normally splits the current block, continues an in-block list, or adds a sibling note under PDF annotations. In Document mode it inserts a newline unless the Document-mode Enter setting keeps this structural behavior.",
   },
   {
     id: "builtin/editor/soft-newline",
     scope: "editor",
     binding: "shift+enter",
-    label: "Insert a newline inside the block",
+    label: "Insert a newline inside the block (or new block in Document mode)",
   },
   {
     id: "builtin/editor/escape",

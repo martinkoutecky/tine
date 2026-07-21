@@ -263,6 +263,10 @@ export interface Backend {
   setTimetrackingEnabled(enabled: boolean): Promise<void>;
   /** Persist `:ui/show-brackets?` (default on when absent). */
   setShowBrackets(enabled: boolean): Promise<void>;
+  /** Persist document-mode Enter's structural escape hatch to config.edn. */
+  setDocModeEnterForNewBlock(enabled: boolean): Promise<void>;
+  /** Persist `:editor/logical-outdenting?` (default off when absent). */
+  setLogicalOutdenting(enabled: boolean): Promise<void>;
   /** Persist the format new pages/journals are created in to config.edn
    *  `:preferred-format` ("md" | "org"). */
   setPreferredFormat(format: "md" | "org"): Promise<void>;
@@ -721,6 +725,12 @@ class TauriBackend implements Backend {
   }
   setShowBrackets(enabled: boolean) {
     return this.call<void>("set_show_brackets", { enabled });
+  }
+  setDocModeEnterForNewBlock(enabled: boolean) {
+    return this.call<void>("set_doc_mode_enter_for_new_block", { enabled });
+  }
+  setLogicalOutdenting(enabled: boolean) {
+    return this.call<void>("set_logical_outdenting", { enabled });
   }
   setPreferredFormat(format: "md" | "org") {
     return this.call<void>("set_preferred_format", { format });

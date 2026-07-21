@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Document-mode Enter**, like Logseq: with Document mode on, plain Enter now
+  inserts a line break and Shift+Enter creates a new block (the reverse of
+  outline mode), with a config switch
+  (`:shortcut/doc-mode-enter-for-new-block?`) to keep the outline mapping.
+- **Logical outdenting**, like Logseq: a new Editor setting; when on, Shift+Tab
+  moves a block out one level and leaves its following siblings where they are
+  (Roam-style) instead of nesting them under it. Both settings live in the
+  graph's `config.edn`, so they travel with the graph.
 - **Undo/redo modes and context restore**, like Logseq: a new palette command
   "Toggle undo/redo mode" switches between the default Global history and
   Page-only history (undo/redo affects only the current page's latest change).

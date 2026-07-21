@@ -65,6 +65,34 @@ export function changeShowBrackets(on: boolean) {
   void backend().setShowBrackets(on).catch(() => {});
 }
 
+/** In document mode, should plain Enter retain the ordinary structural split?
+ *  The default false follows OG's `:shortcut/doc-mode-enter-for-new-block?`
+ *  switch (`src/main/frontend/state.cljs:714-717` at `6e7afa8eb`). */
+export function docModeEnterForNewBlock(): boolean {
+  return graphMeta()?.doc_mode_enter_for_new_block ?? false;
+}
+
+export function changeDocModeEnterForNewBlock(on: boolean) {
+  const m = graphMeta();
+  if (m && m.doc_mode_enter_for_new_block === on) return;
+  if (m) setGraphMeta({ ...m, doc_mode_enter_for_new_block: on });
+  void backend().setDocModeEnterForNewBlock(on).catch(() => {});
+}
+
+/** Logical (Roam-like) outdenting leaves following siblings under their current
+ *  parent. OG uses `:editor/logical-outdenting?` for this (`src/main/frontend/modules/outliner/core.cljs:835-852`
+ *  at `6e7afa8eb`). */
+export function logicalOutdenting(): boolean {
+  return graphMeta()?.logical_outdenting ?? false;
+}
+
+export function changeLogicalOutdenting(on: boolean) {
+  const m = graphMeta();
+  if (m && m.logical_outdenting === on) return;
+  if (m) setGraphMeta({ ...m, logical_outdenting: on });
+  void backend().setLogicalOutdenting(on).catch(() => {});
+}
+
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
 function loadStr(key: string): string | null {
   try {

@@ -932,6 +932,10 @@ pub struct GraphMeta {
     pub enable_timetracking: bool,
     /// `:ui/show-brackets?` effective value; default true.
     pub show_brackets: bool,
+    /// `:shortcut/doc-mode-enter-for-new-block?` effective value; default false.
+    pub doc_mode_enter_for_new_block: bool,
+    /// `:editor/logical-outdenting?` effective value; default false.
+    pub logical_outdenting: bool,
     /// `:logbook/settings :with-second-support?` effective value; default true.
     pub logbook_with_second_support: bool,
     /// `:logbook/settings :enabled-in-timestamped-blocks` effective value.
@@ -1144,6 +1148,8 @@ impl Graph {
             macros: self.config.macros.clone(),
             enable_timetracking: self.config.enable_timetracking,
             show_brackets: self.config.show_brackets,
+            doc_mode_enter_for_new_block: self.config.doc_mode_enter_for_new_block,
+            logical_outdenting: self.config.logical_outdenting,
             logbook_with_second_support: self.config.logbook.with_second_support,
             logbook_enabled_in_timestamped_blocks: self
                 .config

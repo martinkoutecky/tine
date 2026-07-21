@@ -886,6 +886,32 @@ pub(crate) fn set_show_brackets(
 }
 
 #[tauri::command]
+pub(crate) fn set_doc_mode_enter_for_new_block(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_doc_mode_enter_for_new_block(enabled)
+            .map_err(|e| e.to_string())
+    })?;
+    refresh_graph(&state)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn set_logical_outdenting(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_logical_outdenting(enabled)
+            .map_err(|e| e.to_string())
+    })?;
+    refresh_graph(&state)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn set_guide_announced(announced: bool, state: GraphContext<'_>) -> Result<(), String> {
     with_graph(&state, |g| {
         g.set_guide_announced(announced).map_err(|e| e.to_string())
