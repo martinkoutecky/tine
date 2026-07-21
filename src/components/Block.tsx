@@ -86,7 +86,7 @@ import {
   takeCaretFor,
   takeHistoryEditorSelectionFor,
 } from "../editorController";
-import { parseOutline } from "../editor/outline";
+import { parseOutline, type OutlineNode } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
@@ -1568,6 +1568,30 @@ export function Editor(props: { id: string }): JSX.Element {
     }
   };
   onCleanup(clearPasteRaw);
+
+  const pasteLiteralText = (text: string) => {
+    const start = ref.selectionStart;
+    const newRaw = ref.value.slice(0, start) + text + ref.value.slice(ref.selectionEnd);
+    commit(newRaw);
+    const pos = start + text.length;
+    queueMicrotask(() => {
+      ref.value = newRaw;
+      ref.setSelectionRange(pos, pos);
+      autosize();
+    });
+  };
+
+  // Transcribed from OG 6e7afa8eb src/main/frontend/handler/paste.cljs:101-107:
+  // Markdown recognizes only -, +, *, and ATX headings; Org recognizes stars.
+  const plainTextLooksLikeBlocks = (text: string) =>
+    pageFmt() === "org"
+      ? /^\s*\*+\s+/m.test(text)
+      : /^\s*(?:[-+*]|#+)\s+/m.test(text);
+
+  // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:34-47,173-174 splits on
+  // two-or-more newlines and trims each whole paragraph before block parsing.
+  const segmentedPlainText = (text: string): OutlineNode[] =>
+    text.split(/(?:\r?\n){2,}/).map((paragraph) => ({ raw: paragraph.trim(), children: [] }));
 
   /** Import file-manager paths without materializing their bytes in the WebView.
    * If a platform exposes only browser File objects, save those sequentially so
@@ -3078,15 +3102,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:262-271 deletes the
       // selection and inserts exactly the clipboard text, bypassing every
       // formatted/file/block branch.
-      const start = ref.selectionStart;
-      const newRaw = ref.value.slice(0, start) + text + ref.value.slice(ref.selectionEnd);
-      commit(newRaw);
-      const pos = start + text.length;
-      queueMicrotask(() => {
-        ref.value = newRaw;
-        ref.setSelectionRange(pos, pos);
-        autosize();
-      });
+      pasteLiteralText(text);
       return;
     }
     const html = e.clipboardData?.getData("text/html") ?? "";
@@ -3139,22 +3155,22 @@ export function Editor(props: { id: string }): JSX.Element {
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }
-    // Multiline text pastes as a block outline (Logseq behavior).
+    // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:168-177 parses only
+    // block-looking text, segments blank-line-separated prose, and otherwise
+    // replaces the selection literally inside the current block.
     if (text.includes("\n")) {
       e.preventDefault();
-      const end = ref.selectionEnd;
       if (syntaxSensitive) {
-        const newRaw = ref.value.slice(0, start) + text + ref.value.slice(end);
-        commit(newRaw);
-        const pos = start + text.length;
-        queueMicrotask(() => {
-          ref.value = newRaw;
-          ref.setSelectionRange(pos, pos);
-          autosize();
-        });
+        pasteLiteralText(text);
         return;
       }
-      const nodes = parseOutline(text);
+      if (!plainTextLooksLikeBlocks(text) && !/(?:\r?\n){2,}/.test(text)) {
+        pasteLiteralText(text);
+        return;
+      }
+      const nodes = plainTextLooksLikeBlocks(text)
+        ? parseOutline(text)
+        : segmentedPlainText(text);
       if (!nodes.length) return;
       const wasEmpty =
         ref.value.trim() === "" && doc.byId[props.id].children.length === 0;

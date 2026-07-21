@@ -55,6 +55,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **Multiline plain-text paste now matches Logseq**: pasted text only becomes
+  multiple blocks when it looks like an outline (`-`/`+`/`*`/`#` lines, org
+  stars) or contains blank-line-separated paragraphs; ordinary prose —
+  addresses, log excerpts, indented text — stays in one block, replacing the
+  selection literally. (Previously every multiline paste was split into
+  blocks.)
 - Parser updated to **lsdoc v0.5.4**: correctness, panic, and performance
   fixes from the GH #209 audit (split-title math chains, latex-env tails,
   raw-HTML scanning, 32-bit cookie/timestamp bounds, refs-indexing parity).

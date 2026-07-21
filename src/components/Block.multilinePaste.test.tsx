@@ -99,10 +99,153 @@ describe("multiline paste into editor-visible empty blocks", () => {
       keydown(textarea, { key: "v", code: "KeyV", ctrlKey: true, shiftKey: true });
       textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "v", code: "KeyV", bubbles: true }));
       paste(textarea, "first\nsecond");
-      expect(pageByName("Paste")!.roots).toHaveLength(2);
-      expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["first", "second"]);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe("first\nsecond");
     } finally {
       dispose();
+    }
+  });
+
+  it("keeps plain prose with single newlines inside the current selection", async () => {
+    const block: BlockDto = {
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      raw: "πrefix SELECT suffix🧪",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const start = textarea.value.indexOf("SELECT");
+      textarea.setSelectionRange(start, start + "SELECT".length);
+      const plain = "line1\nline2\nline3";
+      const event = paste(textarea, plain);
+      await Promise.resolve();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`πrefix ${plain} suffix🧪`);
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+        start + plain.length,
+        start + plain.length,
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("turns blank-line-separated plain paragraphs into trimmed blocks", () => {
+    const block: BlockDto = { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement, "  a\n\nb\n\n\n c  ");
+      expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["a", "b", "c"]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps indented unbulleted lines literal inside the current block", () => {
+    const block: BlockDto = { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", raw: "before after", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 7);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(7, 7);
+      paste(textarea, "  indented\n    deeper");
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe("before   indented\n    deeperafter");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("parses Markdown ATX headings as blocks", () => {
+    const block: BlockDto = { id: "12121212-1212-4212-8212-121212121212", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement, "# heading\nbody");
+      expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["# heading", "body"]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not treat numbered Markdown lines as block-looking text", () => {
+    const block: BlockDto = { id: "13131313-1313-4313-8313-131313131313", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const numbered = "1. first\n2. second";
+      paste(root.querySelector("textarea") as HTMLTextAreaElement, numbered);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(numbered);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("uses Org star detection while keeping Org prose literal", () => {
+    const headingBlock: BlockDto = { id: "14141414-1414-4414-8414-141414141414", raw: "", collapsed: false, children: [] };
+    loadSingle({
+      name: "Org Paste",
+      kind: "page",
+      title: "Org Paste",
+      pre_block: null,
+      format: "org",
+      blocks: [headingBlock],
+    });
+    startEditing(headingBlock.id, 0);
+    const first = mount(() => (
+      <For each={pageByName("Org Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(first.root.querySelector("textarea") as HTMLTextAreaElement, "* first\n* second");
+      expect(pageByName("Org Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["first", "second"]);
+    } finally {
+      first.dispose();
+    }
+
+    resetStore();
+    document.body.innerHTML = "";
+    const proseBlock: BlockDto = { id: "15151515-1515-4515-8515-151515151515", raw: "", collapsed: false, children: [] };
+    loadSingle({
+      name: "Org Prose",
+      kind: "page",
+      title: "Org Prose",
+      pre_block: null,
+      format: "org",
+      blocks: [proseBlock],
+    });
+    startEditing(proseBlock.id, 0);
+    const second = mount(() => (
+      <For each={pageByName("Org Prose")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const prose = "line one\nline two";
+      paste(second.root.querySelector("textarea") as HTMLTextAreaElement, prose);
+      expect(pageByName("Org Prose")!.roots).toEqual([proseBlock.id]);
+      expect(doc.byId[proseBlock.id].raw).toBe(prose);
+    } finally {
+      second.dispose();
     }
   });
 
