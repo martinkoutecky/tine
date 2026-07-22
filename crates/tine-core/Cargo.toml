@@ -8,6 +8,7 @@ license.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+sha2 = "0.10"
 slotmap = { version = "1", features = ["serde"] }
 ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.4" }

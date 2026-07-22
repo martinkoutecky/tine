@@ -3899,6 +3899,7 @@ mod tests {
         .unwrap();
 
         let graph = Graph::open(&dir);
+        let runtime_id = graph.backlinks("Target")[0].blocks[0].id.clone();
         let context = backlink_filter_context(
             &graph,
             "Target",
@@ -3906,14 +3907,14 @@ mod tests {
                 BacklinkFilterTarget {
                     page: "Source".into(),
                     kind: PageKind::Page,
-                    block_id: ROOT.into(),
+                    block_id: runtime_id.clone(),
                 },
                 // Defensive duplicate input must not make a complete response
                 // look truncated or duplicate its payload.
                 BacklinkFilterTarget {
                     page: "Source".into(),
                     kind: PageKind::Page,
-                    block_id: ROOT.into(),
+                    block_id: runtime_id,
                 },
             ],
         );
@@ -4269,7 +4270,7 @@ mod tests {
         let graph = Graph::open(&dir);
         let ids = run_query(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])")
             .into_iter()
-            .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+            .flat_map(|group| group.blocks.into_iter().map(persisted_dto_id))
             .collect::<Vec<_>>();
         assert_eq!(
             ids,
@@ -4592,6 +4593,15 @@ mod tests {
             })
             .collect();
         Graph::from_page_snapshot("", pages)
+    }
+
+    fn persisted_dto_id(block: BlockDto) -> String {
+        block
+            .properties
+            .into_iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("id"))
+            .map(|(_, value)| value)
+            .expect("fixture block has persisted id::")
     }
 
     fn search_block_texts(graph: &Graph, query: &str, limit: usize) -> Vec<String> {
@@ -4976,7 +4986,7 @@ mod tests {
         let ids = |query: &str| {
             run_query(&graph, query)
                 .into_iter()
-                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .flat_map(|group| group.blocks.into_iter().map(persisted_dto_id))
                 .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -5036,7 +5046,7 @@ mod tests {
         let ids = |query: &str| {
             run_query(&graph, query)
                 .into_iter()
-                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .flat_map(|group| group.blocks.into_iter().map(persisted_dto_id))
                 .collect::<Vec<_>>()
         };
         assert_eq!(

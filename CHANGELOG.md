@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **File-backed block rows now keep stable runtime identity** (GH #232) across cold loads, cache rebuilds, references, merges, and publish snapshots without adding synthetic `id::` properties.
 - **IME composition now commits finalized block text once** (GH #237), avoiding
   intermediate graph writes and duplicate trailing-input commits.
 - **Template date expressions now understand natural language** (GH #226), so

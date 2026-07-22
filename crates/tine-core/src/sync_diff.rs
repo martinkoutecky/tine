@@ -677,9 +677,7 @@ mod tests {
     use crate::doc;
 
     fn parse(s: &str) -> doc::Document {
-        let mut d = doc::parse(s);
-        crate::model::assign_doc_uuids(&mut d.roots);
-        d
+        doc::parse(s)
     }
 
     fn kinds(rows: &[DiffRow]) -> Vec<(String, RowKind)> {

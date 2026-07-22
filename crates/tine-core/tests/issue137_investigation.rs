@@ -172,11 +172,7 @@ fn issue137_current_contract_snapshot_uses_real_parser_and_engine() {
 }
 
 #[test]
-// OG also regenerates id-less block UUIDs per parse via
-// `get-custom-id-or-new-id` -> `d/squuid`. Stable incremental-rename/diff-merge
-// identity remains a documented follow-up, not part of GH #137.
-#[ignore = "documented-open: cache rebuild regenerates implicit block identities"]
-fn issue137_fail_before_cache_rebuild_preserves_block_identity() {
+fn issue232_cache_rebuild_preserves_block_identity() {
     let fixture = Fixture::new("cache-identity");
     fixture.page("Target", "- target\n");
     fixture.page("Source", "- [[Target]] then Target\n");
@@ -192,6 +188,121 @@ fn issue137_fail_before_cache_rebuild_preserves_block_identity() {
         first,
         serde_json::to_string(graph.backlinks("Target").as_ref()).unwrap()
     );
+}
+
+#[test]
+fn issue232_cold_page_cache_and_reference_rows_share_runtime_ids() {
+    let fixture = Fixture::new("cold-cache-reference-identity");
+    fixture.page("Target", "- target\n");
+    fixture.page("Source", "- [[Target]] then Target\n");
+    let graph = fixture.graph();
+    let source = graph.find_entry("Source", PageKind::Page).unwrap();
+
+    let cold_id = graph.load_page(&source).unwrap().blocks[0].id.clone();
+    let linked = graph.backlinks("Target");
+    let linked_source = linked.iter().find(|group| group.page == "Source").unwrap();
+    assert_eq!(linked_source.blocks[0].id, cold_id);
+    assert_eq!(linked_source.evidence[0].block_id, cold_id);
+    let unlinked = graph.unlinked_refs("Target");
+    let unlinked_source = unlinked
+        .iter()
+        .find(|group| group.page == "Source")
+        .unwrap();
+    assert_eq!(unlinked_source.blocks[0].id, cold_id);
+    assert_eq!(graph.load_page(&source).unwrap().blocks[0].id, cold_id);
+}
+
+#[test]
+fn issue232_runtime_ids_distinguish_structure_and_physical_owner() {
+    const UNIQUE: &str = "11111111-1111-4111-8111-111111111111";
+    const DUPLICATE: &str = "22222222-2222-4222-8222-222222222222";
+    let fixture = Fixture::new("structural-owner-identity");
+    fixture.page(
+        "Identity",
+        &format!(
+            "- same\n- same\n- unique\n  id:: {UNIQUE}\n- duplicate one\n  id:: {DUPLICATE}\n- duplicate two\n  id:: {DUPLICATE}\n"
+        ),
+    );
+    fixture.nested_page("client-a", "Foo", "- same\n");
+    fixture.nested_page("client-b", "Foo", "- same\n");
+    let graph = fixture.graph();
+
+    let identity = graph.load_by_path("pages/Identity.md").unwrap().unwrap();
+    let ids = identity
+        .blocks
+        .iter()
+        .map(|block| block.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(ids.len(), identity.blocks.len());
+    assert_ne!(identity.blocks[0].id, identity.blocks[1].id);
+    assert_ne!(identity.blocks[2].id, UNIQUE);
+    assert_ne!(identity.blocks[3].id, identity.blocks[4].id);
+    assert_ne!(identity.blocks[3].id, DUPLICATE);
+    assert_ne!(identity.blocks[4].id, DUPLICATE);
+
+    let resolved = graph.resolve_block(UNIQUE).unwrap();
+    assert_eq!(resolved.blocks[0].raw.lines().next(), Some("unique"));
+    assert_eq!(resolved.blocks[0].id, identity.blocks[2].id);
+
+    let a = graph
+        .load_by_path("pages/client-a/Foo.md")
+        .unwrap()
+        .unwrap();
+    let b = graph
+        .load_by_path("pages/client-b/Foo.md")
+        .unwrap()
+        .unwrap();
+    assert_ne!(a.blocks[0].id, b.blocks[0].id);
+}
+
+#[test]
+fn issue232_merge_output_matches_destination_reload_identity() {
+    let fixture = Fixture::new("merge-destination-identity");
+    fixture.page("Source", "- moved one\n- moved two\n");
+    fixture.page("Destination", "- kept\n");
+    let graph = fixture.graph();
+    graph.warm_cache();
+    let destination = graph
+        .find_entry("Destination", PageKind::Page)
+        .unwrap();
+
+    graph
+        .merge_pages("pages/Source.md", "pages/Destination.md")
+        .unwrap();
+    let merged_ids = graph
+        .load_page(&destination)
+        .unwrap()
+        .blocks
+        .into_iter()
+        .map(|block| block.id)
+        .collect::<Vec<_>>();
+    assert_eq!(merged_ids.len(), 3);
+
+    graph.invalidate_cache();
+    let reloaded_ids = graph
+        .load_page(&destination)
+        .unwrap()
+        .blocks
+        .into_iter()
+        .map(|block| block.id)
+        .collect::<Vec<_>>();
+    assert_eq!(merged_ids, reloaded_ids);
+}
+
+#[test]
+fn issue232_runtime_ids_never_serialize_as_synthetic_id_properties() {
+    let fixture = Fixture::new("runtime-id-not-serialized");
+    let original = "- first\n\t- child\n- second\n";
+    fixture.page("Roundtrip", original);
+    let graph = fixture.graph();
+    let entry = graph.find_entry("Roundtrip", PageKind::Page).unwrap();
+    let dto = graph.load_page(&entry).unwrap();
+    assert!(dto.blocks.iter().all(|block| !block.id.is_empty()));
+
+    graph.save_page(&dto, dto.rev.as_deref()).unwrap();
+    let persisted = fs::read_to_string(fixture.root.join("pages/Roundtrip.md")).unwrap();
+    assert_eq!(persisted, original);
+    assert!(!persisted.contains("id::"));
 }
 
 #[test]

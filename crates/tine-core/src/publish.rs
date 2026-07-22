@@ -2748,7 +2748,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             doc::parse(&content)
         };
         let is_public = all_public || page_is_public(parsed.pre_block.as_deref());
-        crate::model::assign_doc_uuids(&mut parsed.roots);
+        crate::model::assign_doc_runtime_ids(&mut parsed.roots, &e.rel_path);
         let parsed = Arc::new(parsed);
         snapshot_pages.push((e.clone(), Arc::clone(&parsed)));
         if !is_public {
@@ -3357,6 +3357,39 @@ mod tests {
             "the block embed must resolve from the same fresh snapshot: {dashboard}"
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publication_snapshot_uses_live_file_runtime_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-runtime-identity-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- [[Target]] from source\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let live_id = graph.backlinks("Target")[0].blocks[0].id.clone();
+        let mut snapshot_pages = Vec::new();
+        for entry in graph.list_pages() {
+            let content = fs::read_to_string(&entry.path).unwrap();
+            let mut parsed = doc::parse(&content);
+            crate::model::assign_doc_runtime_ids(&mut parsed.roots, &entry.rel_path);
+            snapshot_pages.push((entry, Arc::new(parsed)));
+        }
+        let snapshot = PublicationGraphSnapshot::new(snapshot_pages).unwrap();
+        assert_eq!(snapshot.graph.backlinks("Target")[0].blocks[0].id, live_id);
+
+        drop(snapshot);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -3,13 +3,14 @@
 //!
 //! For M0/M1 the canonical state is the on-disk files; Rust loads a page into a
 //! [`PageDto`] tree and writes it back from one. The frontend owns the live
-//! editing tree (see plan). UUIDs are assigned fresh per load and only
-//! persisted as `id::` once a block is referenced (a later milestone).
+//! editing tree (see plan). File-backed runtime UUIDs are deterministic structural
+//! locators; persisted `id::` values remain a separate external reference identity.
 
 use crate::config::{Config, FileNameFormat};
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -1102,8 +1103,11 @@ impl Graph {
     /// mix these documents with a later revision from the live graph.
     pub(crate) fn from_page_snapshot(
         root: impl AsRef<Path>,
-        pages: Vec<(PageEntry, Arc<Document>)>,
+        mut pages: Vec<(PageEntry, Arc<Document>)>,
     ) -> Graph {
+        for (entry, document) in &mut pages {
+            assign_doc_runtime_ids(&mut Arc::make_mut(document).roots, &entry.rel_path);
+        }
         let graph = Graph::open(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
         let index = build_page_cache_index(&pages);
@@ -1701,10 +1705,8 @@ impl Graph {
             (Err(e), _) | (_, Err(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             (Err(e), _) | (_, Err(e)) => return Err(e),
         };
-        let mut mine = parse_doc(&win, &win_c);
-        let mut theirs = parse_doc(&conf, &conf_c);
-        assign_doc_uuids(&mut mine.roots);
-        assign_doc_uuids(&mut theirs.roots);
+        let mine = parse_doc(&win, &win_c);
+        let theirs = parse_doc(&conf, &conf_c);
         let mut diff = crate::sync_diff::diff_docs(&mine, &theirs);
         diff.base_rev = content_rev(&win_c);
         diff.conflict_rev = content_rev(&conf_c);
@@ -1778,10 +1780,8 @@ impl Graph {
                 "an org file in this pair does not round-trip; not merging",
             ));
         }
-        let mut mine_doc = parse_doc(&win, &win_content);
-        let mut theirs_doc = parse_doc(&conf, &conf_content);
-        assign_doc_uuids(&mut mine_doc.roots);
-        assign_doc_uuids(&mut theirs_doc.roots);
+        let mine_doc = parse_doc(&win, &win_content);
+        let theirs_doc = parse_doc(&conf, &conf_content);
         let merged_roots =
             crate::sync_diff::merge_blocks(&mine_doc.roots, &theirs_doc.roots, decisions);
         let pre_block = match pre_choice {
@@ -1797,7 +1797,7 @@ impl Graph {
             pre_block,
             roots: merged_roots,
         };
-        assign_doc_uuids(&mut merged.roots);
+        assign_doc_runtime_ids(&mut merged.roots, &win_entry.rel_path);
         let dto = page_dto(&win_entry, &merged);
         let win_cacheable = self.path_is_cacheable(&win);
         // Stage-before-commit (L5): move the conflict copy out first, then write the
@@ -1971,7 +1971,7 @@ impl Graph {
             }
         }
         merged.roots.extend(src_doc.roots);
-        assign_doc_uuids(&mut merged.roots);
+        assign_doc_runtime_ids(&mut merged.roots, &dst_entry.rel_path);
         let dto = page_dto(&dst_entry, &merged);
         let dst_cacheable = self.path_is_cacheable(&dst);
         // L5: stage `src` into the trash BEFORE committing the merged `dst`. The old
@@ -2528,7 +2528,7 @@ impl Graph {
         // error if it failed).
         let content = read?;
         let mut doc = parse_doc(&entry.path, &content);
-        assign_doc_uuids(&mut doc.roots);
+        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
         let mut dto = page_dto(entry, &doc);
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
@@ -2557,7 +2557,7 @@ impl Graph {
             Err(e) => return Err(e),
         };
         let mut doc = parse_doc(&abs, &content);
-        assign_doc_uuids(&mut doc.roots);
+        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
         let mut dto = page_dto(&entry, &doc);
         dto.read_only = read_only_org(&abs, &content);
         dto.rev = Some(content_rev(&content));
@@ -2568,7 +2568,9 @@ impl Graph {
     /// Read and parse a page file into a [`Document`].
     pub fn read_document(&self, entry: &PageEntry) -> io::Result<Document> {
         let content = fs::read_to_string(&entry.path)?;
-        Ok(parse_doc(&entry.path, &content))
+        let mut doc = parse_doc(&entry.path, &content);
+        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
+        Ok(doc)
     }
 
     /// Read+parse every page from disk (skipping unreadable files). Used to build
@@ -2815,9 +2817,10 @@ impl Graph {
     /// exact on-disk bytes `doc` was produced from (the freshness key — see
     /// `disk_revs`).
     fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk_rev: String) {
-        // Fill uuids for any block that lacks one (e.g. PDF-highlight writes);
-        // blocks saved from the frontend already carry their ids, which are kept.
-        assign_doc_uuids(&mut doc.roots);
+        // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
+        // from this physical owner. Blocks saved from the frontend already carry
+        // live ids, which are deliberately kept through the in-memory save path.
+        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
         // Only the alias map needs dropping when an `alias::` was added/changed/
         // removed — invalidating on every save would make a normal edit an O(P)
         // alias rescan on the next navigation.
@@ -5650,9 +5653,7 @@ impl Graph {
                 if reparsed == doc {
                     doc
                 } else {
-                    let mut d = reparsed;
-                    assign_doc_uuids(&mut d.roots);
-                    d
+                    reparsed
                 }
             } else {
                 doc
@@ -5909,7 +5910,7 @@ fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
     if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a page projection panic");
     }
-    assign_doc_uuids(&mut d.roots);
+    assign_doc_runtime_ids(&mut d.roots, &e.rel_path);
     (d, rev)
 }
 
@@ -6159,42 +6160,86 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
     })
 }
 
-/// Assign uuids across a whole document's roots, sharing ONE `seen` set so a
-/// persisted `id::` duplicated across blocks (copy-paste of raw text, or a sync
-/// conflict) doesn't make two nodes share a uuid. The first occurrence keeps the
-/// id (so `((id))` refs still resolve); later duplicates get a fresh internal
-/// uuid. The raw `id::` line is left untouched — we only fix in-memory identity,
-/// which otherwise collides in the frontend's global byId map and can duplicate
-/// or drop a block's content on save.
-pub fn assign_doc_uuids(roots: &mut [DocBlock]) {
-    let mut seen = std::collections::HashSet::new();
-    for b in roots {
-        assign_uuids_rec(b, &mut seen);
+/// Versioned namespace for file-mode runtime block locators. These UUIDs are
+/// store/UI keys only: persisted `id::` remains the external `((id))` identity.
+const FILE_BLOCK_RUNTIME_NAMESPACE_V1: Uuid =
+    Uuid::from_u128(0x1e0c_5a13_9b42_5da4_a73c_0be5_8f6a_2320);
+
+fn normalized_runtime_owner(owner: &str) -> String {
+    let owner = owner.replace('\\', "/");
+    let mut parts = Vec::new();
+    for part in owner.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => panic!("runtime identity owner must be graph-relative"),
+            _ => parts.push(part),
+        }
+    }
+    assert!(!parts.is_empty(), "runtime identity owner must not be empty");
+    parts.join("/")
+}
+
+fn deterministic_runtime_uuid(namespace: Uuid, name: &[u8]) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(namespace.as_bytes());
+    hasher.update((name.len() as u64).to_be_bytes());
+    hasher.update(name);
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // RFC 9562 variant + version 8 (application-defined deterministic UUID).
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+fn runtime_owner_namespace(domain: &str, owner: &str) -> Uuid {
+    let owner = normalized_runtime_owner(owner);
+    let mut name = Vec::with_capacity(domain.len() + owner.len() + 16);
+    name.extend_from_slice(&(domain.len() as u64).to_be_bytes());
+    name.extend_from_slice(domain.as_bytes());
+    name.extend_from_slice(&(owner.len() as u64).to_be_bytes());
+    name.extend_from_slice(owner.as_bytes());
+    deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, &name)
+}
+
+fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
+    for (sibling_index, block) in blocks.iter_mut().enumerate() {
+        // Hierarchical derivation is equivalent to hashing the full sibling-index
+        // path, while doing constant work per node (O(blocks)).
+        let structural =
+            deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
+        if block.uuid.is_empty() {
+            block.uuid = structural.to_string();
+        }
+        assign_runtime_ids_rec(&mut block.children, structural);
     }
 }
 
-fn assign_uuids_rec(b: &mut DocBlock, seen: &mut std::collections::HashSet<String>) {
-    if b.uuid.is_empty() {
-        b.uuid = match b.property("id") {
-            // Reuse the persisted id only if no earlier block already claimed it.
-            Some(id) if !id.is_empty() && !seen.contains(&id) => id,
-            _ => Uuid::new_v4().to_string(),
-        };
-    }
-    seen.insert(b.uuid.clone());
-    for c in &mut b.children {
-        assign_uuids_rec(c, seen);
-    }
+/// Seed missing runtime keys for a graph-backed document from its normalized,
+/// graph-relative physical owner. Existing live keys survive ordinary saves.
+pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
+    let owner = runtime_owner_namespace("file-block-runtime-v1", owner_rel_path);
+    assign_runtime_ids_rec(roots, owner);
+}
+
+fn assign_virtual_doc_runtime_ids(roots: &mut [DocBlock], domain: &str, owner: &str) {
+    let owner = runtime_owner_namespace(domain, owner);
+    assign_runtime_ids_rec(roots, owner);
+}
+
+fn block_runtime_id(b: &DocBlock) -> String {
+    assert!(
+        !b.uuid.is_empty(),
+        "DocBlock must have an explicit runtime owner before DTO projection"
+    );
+    b.uuid.clone()
 }
 
 /// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
-        id: if b.uuid.is_empty() {
-            Uuid::new_v4().to_string()
-        } else {
-            b.uuid.clone()
-        },
+        id: block_runtime_id(b),
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
@@ -6220,11 +6265,7 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
 /// amplification in queries, references, search, or batched resolution.
 pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
-        id: if b.uuid.is_empty() {
-            Uuid::new_v4().to_string()
-        } else {
-            b.uuid.clone()
-        },
+        id: block_runtime_id(b),
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: Vec::new(),
@@ -6274,7 +6315,8 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
 /// Used by the bundled in-app Guide so it reuses the same document parser and
 /// DTO projection as normal graph pages.
 pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> PageDto {
-    let doc = doc::parse(markdown);
+    let mut doc = doc::parse(markdown);
+    assign_virtual_doc_runtime_ids(&mut doc.roots, "bundled-markdown-v1", name);
     PageDto {
         name: name.to_string(),
         kind: PageKind::Page,
@@ -7018,24 +7060,39 @@ mod tests {
     }
 
     #[test]
-    fn assign_doc_uuids_dedups_duplicate_ids() {
-        // Two blocks persisting the SAME id:: (copy-paste of raw text, or a sync
-        // conflict) must NOT end up sharing a uuid — that collides in the
-        // frontend's global byId map and duplicates/drops content on save.
+    fn runtime_ids_are_owner_structural_and_separate_from_explicit_ids() {
+        // Equal-text siblings, including duplicate persisted ids, are distinct
+        // runtime nodes. Persisted ids remain content used by external resolution.
         let mut roots = vec![
             DocBlock::new("first\nid:: dup-1234"),
-            DocBlock::new("second\nid:: dup-1234"),
+            DocBlock::new("first\nid:: dup-1234"),
         ];
-        assign_doc_uuids(&mut roots);
-        assert_eq!(roots[0].uuid, "dup-1234", "first occurrence keeps the id");
-        assert_ne!(roots[1].uuid, "dup-1234", "duplicate gets a fresh uuid");
-        assert!(!roots[1].uuid.is_empty());
+        assign_doc_runtime_ids(&mut roots, "pages/client-a/Foo.md");
+        assert_ne!(roots[0].uuid, roots[1].uuid);
+        assert_ne!(roots[0].uuid, "dup-1234");
+        assert_ne!(roots[1].uuid, "dup-1234");
 
-        // A nested duplicate is caught too.
+        let first_ids = roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>();
+        let mut same = vec![
+            DocBlock::new("first\nid:: dup-1234"),
+            DocBlock::new("first\nid:: dup-1234"),
+        ];
+        assign_doc_runtime_ids(&mut same, "pages/client-a/Foo.md");
+        assert_eq!(
+            first_ids,
+            same.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
+        );
+
+        let mut other_owner = vec![DocBlock::new("first\nid:: dup-1234")];
+        assign_doc_runtime_ids(&mut other_owner, "pages/client-b/Foo.md");
+        assert_ne!(roots[0].uuid, other_owner[0].uuid);
+
+        // A nested duplicate derives from its structural child path.
         let mut parent = DocBlock::new("p\nid:: x");
         parent.children.push(DocBlock::new("c\nid:: x"));
-        assign_doc_uuids(std::slice::from_mut(&mut parent));
-        assert_eq!(parent.uuid, "x");
+        assign_doc_runtime_ids(std::slice::from_mut(&mut parent), "pages/tree.md");
+        assert_ne!(parent.uuid, parent.children[0].uuid);
+        assert_ne!(parent.uuid, "x");
         assert_ne!(parent.children[0].uuid, "x");
     }
 

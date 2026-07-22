@@ -43,12 +43,12 @@ pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
     pub raw: String,
     pub children: Vec<DocBlock>,
-    /// Stable identity assigned once when the block enters the in-memory cache
-    /// (the persisted `id::` if any, else a generated uuid). It is the handle
-    /// every surface (main view, sidebar, query result, ref) uses to address the
-    /// block, and round-trips through save so it stays stable across edits. It is
-    /// NOT part of block *content*, so it is excluded from equality — otherwise
-    /// the conflict guard (`parse(disk) == cached`) would always see a "change".
+    /// Runtime/store identity assigned from the document's physical owner and
+    /// structural sibling-index path. Persisted `id::` is a separate external
+    /// reference identity. This key round-trips through an in-memory save but is
+    /// never serialized. It is NOT part of block *content*, so it is excluded
+    /// from equality — otherwise the conflict guard (`parse(disk) == cached`)
+    /// would always see a "change".
     #[serde(default)]
     pub uuid: String,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
