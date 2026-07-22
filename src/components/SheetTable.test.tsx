@@ -6,7 +6,7 @@ import { ContextMenu } from "./ContextMenu";
 import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, readPageProperty, resetStore, setDoc, setRaw, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, doc, pageByName, readPageProperty, redo, resetStore, setDoc, setRaw, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { setWorkflow } from "../ui";
 import {
   cellSel,
@@ -19,6 +19,7 @@ import {
 } from "../sheet/selection";
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
+import { installKeybindings } from "../keybindings";
 
 beforeAll(async () => {
   await initParser();
@@ -84,6 +85,25 @@ function pointerLeave(target: EventTarget): Event {
   return event;
 }
 
+function fieldHeader(root: HTMLElement, label: string): HTMLElement {
+  const header = [...root.querySelectorAll<HTMLElement>(".sheet-field-header")].find((el) => el.textContent?.trim() === label);
+  if (!header) throw new Error(`missing ${label} field header`);
+  return header;
+}
+
+function dragFieldHeader(source: HTMLElement, target: HTMLElement, before = true): void {
+  const elementFromPoint = document.elementFromPoint;
+  document.elementFromPoint = () => target;
+  try {
+    source.dispatchEvent(pointer("pointerdown", 0, 0));
+    const x = before ? -10 : 10;
+    window.dispatchEvent(pointer("pointermove", x, 0));
+    window.dispatchEvent(pointer("pointerup", x, 0));
+  } finally {
+    document.elementFromPoint = elementFromPoint;
+  }
+}
+
 function cell(root: HTMLElement, row: number, col: number, gridId = "table"): HTMLElement {
   const el = root.querySelector(
     `.sheet-cell[data-sheet-grid-id="${gridId}"][data-row="${row}"][data-col="${col}"]`
@@ -130,6 +150,29 @@ function loadTableDoc() {
 }
 
 describe("SheetTable", () => {
+  it("routes real window Arrow keys from a clicked Table cell (GH #113)", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    const disposeKeys = installKeybindings();
+    try {
+      cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 5, 5));
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 0, col: 0 });
+
+      const right = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+      window.dispatchEvent(right);
+      expect(right.defaultPrevented).toBe(true);
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 0, col: 1 });
+
+      const down = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+      window.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 1, col: 1 });
+    } finally {
+      disposeKeys();
+      dispose();
+    }
+  });
+
   it("keeps a same-UUID journal twin DTO-only when the page twin is preloaded", async () => {
     const shared = "same-id";
     setDoc({
@@ -555,6 +598,139 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("materializes the current visual schema before reordering a first property drag", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "TODO Task\nowner:: Martin\nestimate:: 2", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const initial = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+
+    dragFieldHeader(fieldHeader(initial.root, "estimate"), fieldHeader(initial.root, "owner"));
+
+    expect(blockProperty("table", "tine.fields")).toBe("state=state;estimate=text;owner=text");
+    expect([...initial.root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()))
+      .toEqual(["Block", "State", "estimate", "owner", "+Add column"]);
+    initial.dispose();
+
+    const restarted = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    expect([...restarted.root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()))
+      .toEqual(["Block", "State", "estimate", "owner", "+Add column"]);
+    restarted.dispose();
+  });
+
+  it("reorders declared fields without absorbing undeclared columns into the schema", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: b=number;a=text", null, ["r1"]),
+        r1: node("r1", "Row\na:: first\nb:: 2\nx:: kept\ny:: kept too", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+
+    dragFieldHeader(fieldHeader(root, "a"), fieldHeader(root, "b"));
+
+    expect(blockProperty("table", "tine.fields")).toBe("a=text;b=number");
+    expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()))
+      .toEqual(["Block", "a", "b", "x", "y", "+Add column"]);
+    dispose();
+  });
+
+  it("keeps formula columns pinned after a property is dropped on them", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: a=text;b=text\ntine.formula.total:: a + b",
+          null,
+          ["r1"]
+        ),
+        r1: node("r1", "Row\na:: 1\nb:: 2", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+
+    dragFieldHeader(fieldHeader(root, "a"), fieldHeader(root, "ƒtotal"), false);
+
+    expect(blockProperty("table", "tine.fields")).toBe("b=text;a=text");
+    expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()))
+      .toEqual(["Block", "b", "a", "ƒtotal", "+Add column"]);
+    dispose();
+  });
+
+  it("round-trips reordered schemas through block and page schema homes", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: first=text;second=number", null, ["r1"]),
+        r1: node("r1", "Row\nfirst:: one\nsecond:: 2", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const block = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    dragFieldHeader(fieldHeader(block.root, "second"), fieldHeader(block.root, "first"));
+    expect(blockProperty("table", "tine.fields")).toBe("second=number;first=text");
+    block.dispose();
+
+    const blockRestarted = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    expect([...blockRestarted.root.querySelectorAll(".sheet-field-header")].map((h) => h.textContent?.trim()))
+      .toEqual(["second", "first"]);
+    blockRestarted.dispose();
+    document.body.innerHTML = "";
+
+    setDoc({
+      byId: { row: node("row", "Tagged #Tag\nfirst:: one\nsecond:: 2", null) },
+      pages: [page(["row"], "tine.fields:: first=text;second=number")], feed: ["Sheet"], loaded: true,
+    });
+    const groups: RefGroup[] = [{
+      page: "Sheet",
+      kind: "page",
+      blocks: [{
+        id: "row",
+        raw: doc.byId.row.raw,
+        collapsed: false,
+        children: [],
+        tags: ["Tag"],
+        properties: [["first", "one"], ["second", "2"]],
+      }],
+    }];
+    const pageSchema = () => <SheetTable ownerId="tag-page:Tag" rowSource="query" groups={groups} schemaPage="Sheet" />;
+    const pageHome = mount(pageSchema);
+    dragFieldHeader(fieldHeader(pageHome.root, "second"), fieldHeader(pageHome.root, "first"));
+    expect(readPageProperty("Sheet", "tine.fields")).toBe("second=number;first=text");
+    pageHome.dispose();
+
+    const pageRestarted = mount(pageSchema);
+    expect([...pageRestarted.root.querySelectorAll(".sheet-field-header")].map((h) => h.textContent?.trim()).slice(0, 2))
+      .toEqual(["second", "first"]);
+    pageRestarted.dispose();
+  });
+
+  it("keeps a header click as a sort when pointer movement stays below the drag threshold", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: score=number", null, ["r1", "r2"]),
+        r1: node("r1", "Beta\nscore:: 2", "table"),
+        r2: node("r2", "Alpha\nscore:: 1", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    const score = fieldHeader(root, "score");
+
+    score.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 2, 0));
+    window.dispatchEvent(pointer("pointerup", 2, 0));
+    score.click();
+
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim()))
+      .toEqual(["Alpha", "Beta"]);
+    dispose();
+  });
+
   it("field header menu changes declared prop types and removes schema entries", () => {
     setDoc({
       byId: {
@@ -590,6 +766,259 @@ describe("SheetTable", () => {
     clickMenuItem("Remove from schema");
     expect(doc.byId.table.raw).toBe("Table\ntine.view:: table");
 
+    dispose();
+  });
+
+  it("offers field rename for a declared children-backed property (GH #175)", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: occurrence=number", null, ["r1"]),
+        r1: node("r1", "Row\noccurrence:: 2", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+    const header = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("occurrence")
+    ) as HTMLElement;
+
+    contextMenu(header);
+    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toContain("Rename field…");
+
+    dispose();
+  });
+
+  it("renames the GH #175 schema, rows, formulas, filter, grouping, and aggregates as one Undo unit", async () => {
+    const ownerBefore = [
+      "Table",
+      "tine.view:: table",
+      "tine.fields:: severity=number;occurrence=number;detection=number",
+      'tine.formula.rpn:: severity * occurrence * detection + if(label == "occurrence", formula.occurrence, 0)',
+      "tine.filter:: occurrence > 1",
+      "tine.group-by:: prop:occurrence",
+      "tine.col-aggregates:: prop:occurrence=sum;prop:severity=max",
+    ].join("\n");
+    const rowBefore = "Row\nseverity:: 2\noccurrence:: 2\ndetection:: 2\nlabel:: other";
+    setDoc({
+      byId: {
+        table: node("table", ownerBefore, null, ["r1"]),
+        r1: node("r1", rowBefore, "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+    const header = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("occurrence")
+    ) as HTMLElement;
+
+    contextMenu(header);
+    clickMenuItem("Rename field…");
+    const rename = root.querySelector<HTMLInputElement>('.sheet-header-rename-input[aria-label="Rename occurrence field"]')!;
+    rename.value = "OCC";
+    input(rename);
+    keydown(rename, "Enter");
+    await tick();
+
+    const headersAfter = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headersAfter.filter((label) => label === "OCC")).toHaveLength(1);
+    expect(headersAfter).not.toContain("occurrence");
+    expect(doc.byId.table.raw).toContain("tine.fields:: severity=number;OCC=number;detection=number");
+    expect(doc.byId.table.raw).toContain('tine.formula.rpn:: severity * OCC * detection + if(label == "occurrence", formula.occurrence, 0)');
+    expect(doc.byId.table.raw).toContain("tine.filter:: OCC > 1");
+    expect(doc.byId.table.raw).toContain("tine.group-by:: prop:OCC");
+    expect(doc.byId.table.raw).toContain("tine.col-aggregates:: prop:OCC=sum;prop:severity=max");
+    expect(doc.byId.table.raw).not.toContain("occurrence=number");
+    expect(doc.byId.table.raw).not.toContain("severity * occurrence * detection");
+    expect(doc.byId.table.raw).not.toContain("tine.filter:: occurrence > 1");
+    expect(doc.byId.table.raw).not.toContain("prop:occurrence");
+    expect(doc.byId.table.raw).toContain('if(label == "occurrence", formula.occurrence, 0)');
+    expect(doc.byId.r1.raw).toBe("Row\nseverity:: 2\nOCC:: 2\ndetection:: 2\nlabel:: other");
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
+
+    undo();
+    await tick();
+    expect(doc.byId.table.raw).toBe(ownerBefore);
+    expect(doc.byId.r1.raw).toBe(rowBefore);
+    expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim())).toContain("occurrence");
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
+
+    redo();
+    await tick();
+    expect(doc.byId.table.raw).toContain("tine.fields:: severity=number;OCC=number;detection=number");
+    expect(doc.byId.table.raw).toContain('tine.formula.rpn:: severity * OCC * detection + if(label == "occurrence", formula.occurrence, 0)');
+    expect(doc.byId.table.raw).toContain("tine.filter:: OCC > 1");
+    expect(doc.byId.table.raw).toContain("tine.group-by:: prop:OCC");
+    expect(doc.byId.table.raw).toContain("tine.col-aggregates:: prop:OCC=sum;prop:severity=max");
+    expect(doc.byId.table.raw).not.toContain("occurrence=number");
+    expect(doc.byId.table.raw).not.toContain("severity * occurrence * detection");
+    expect(doc.byId.table.raw).not.toContain("tine.filter:: occurrence > 1");
+    expect(doc.byId.table.raw).not.toContain("prop:occurrence");
+    expect(doc.byId.r1.raw).toContain("OCC:: 2");
+    expect(doc.byId.r1.raw).not.toContain("occurrence:: 2");
+    expect([...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim()).filter((label) => label === "OCC"))
+      .toHaveLength(1);
+    expect(cell(root, 0, 4).textContent?.trim()).toBe("8");
+
+    dispose();
+  });
+
+  it("starts the same rename editor on header double-click", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: occurrence=number", null, ["r1"]),
+        r1: node("r1", "Row\noccurrence:: 2", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    const header = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    doubleClick(header);
+    const rename = root.querySelector<HTMLInputElement>('.sheet-header-rename-input[aria-label="Rename occurrence field"]')!;
+    expect(rename.value).toBe("occurrence");
+    rename.value = "OCC";
+    keydown(rename, "Enter");
+    expect(blockProperty("table", "tine.fields")).toBe("OCC=number");
+    expect(blockProperty("r1", "OCC")).toBe("2");
+    dispose();
+  });
+
+  it("explains disabled rename for query-backed and inherited-schema tables", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Row\noccurrence:: 2", "table"),
+      },
+      pages: [page(["table"], "tine.fields:: occurrence=number")], feed: ["Sheet"], loaded: true,
+    });
+    const inherited = mount(() => <>
+      <SheetTable ownerId="table" rowSource="children" schemaPage="Sheet" />
+      <ContextMenu />
+    </>);
+    const inheritedHeader = [...inherited.root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(inheritedHeader);
+    expect([...document.querySelectorAll(".ctx-disabled")].map((el) => el.textContent?.trim()))
+      .toContain("Rename field… (page-inherited fields cannot be renamed here)");
+    inherited.dispose();
+
+    document.body.innerHTML = "";
+    setRaw("table", "Table\ntine.view:: table\ntine.fields:: occurrence=number", { timetracking: false });
+    const groups: RefGroup[] = [{ page: "Sheet", kind: "page", blocks: [{
+      id: "r1", raw: doc.byId.r1.raw, collapsed: false, children: [], properties: [["occurrence", "2"]],
+    }] }];
+    const query = mount(() => <>
+      <SheetTable ownerId="table" rowSource="query" groups={groups} />
+      <ContextMenu />
+    </>);
+    const queryHeader = [...query.root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(queryHeader);
+    expect([...document.querySelectorAll(".ctx-disabled")].map((el) => el.textContent?.trim()))
+      .toContain("Rename field… (only children-backed tables can rename fields)");
+    query.dispose();
+  });
+
+  it("leaves every raw block byte-identical when late preflight finds an affected page-owned formula", () => {
+    const ownerRaw = "Table\ntine.view:: table\ntine.fields:: occurrence=number";
+    const rowRaw = "Row\noccurrence:: 2";
+    setDoc({
+      byId: { table: node("table", ownerRaw, null, ["r1"]), r1: node("r1", rowRaw, "table") },
+      pages: [page(["table"], "tine.formula.rpn:: occurrence * 2")], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <>
+      <SheetTable ownerId="table" rowSource="children" schemaPage="Sheet" />
+      <ContextMenu />
+    </>);
+    const header = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(header);
+    clickMenuItem("Rename field…");
+    const rename = root.querySelector<HTMLInputElement>(".sheet-header-rename-input")!;
+    rename.value = "OCC";
+    keydown(rename, "Enter");
+    expect(doc.byId.table.raw).toBe(ownerRaw);
+    expect(doc.byId.r1.raw).toBe(rowRaw);
+    expect(pageByName("Sheet")?.preBlock).toBe("tine.formula.rpn:: occurrence * 2");
+    dispose();
+  });
+
+  it("round-trips an Org field rename through parser-recognized drawers", () => {
+    const ownerRaw = [
+      "Table",
+      ":PROPERTIES:",
+      ":tine.view: table",
+      ":tine.fields: occurrence=number",
+      ":tine.formula.rpn: occurrence * 2",
+      ":END:",
+      "body",
+    ].join("\n");
+    const rowRaw = ["Row", ":PROPERTIES:", ":occurrence: 2", ":other: kept", ":END:", "body"].join("\n");
+    setDoc({
+      byId: { table: node("table", ownerRaw, null, ["r1"]), r1: node("r1", rowRaw, "table") },
+      pages: [{ ...page(["table"]), format: "org" }], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <>
+      <SheetTable ownerId="table" rowSource="children" />
+      <ContextMenu />
+    </>);
+    const header = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(header);
+    clickMenuItem("Rename field…");
+    const rename = root.querySelector<HTMLInputElement>(".sheet-header-rename-input")!;
+    rename.value = "OCC";
+    keydown(rename, "Enter");
+
+    expect(doc.byId.table.raw).toBe(ownerRaw
+      .replace(":tine.fields: occurrence=number", ":tine.fields: OCC=number")
+      .replace(":tine.formula.rpn: occurrence * 2", ":tine.formula.rpn: OCC * 2"));
+    expect(doc.byId.r1.raw).toBe(rowRaw.replace(":occurrence:", ":OCC:"));
+    expect(blockProperty("r1", "OCC")).toBe("2");
+    expect(blockProperty("r1", "other")).toBe("kept");
+    dispose();
+  });
+
+  it("keeps one schema column across rename, Undo, and Redo after Add-column then declare", async () => {
+    setDoc({
+      byId: { table: node("table", "Table\ntine.view:: table", null, ["r1"]), r1: node("r1", "Row", "table") },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <>
+      <Block id="table" />
+      <ContextMenu />
+    </>);
+    (root.querySelector(".sheet-add-column-ghost") as HTMLButtonElement).click();
+    const add = root.querySelector(".sheet-add-field-input") as HTMLInputElement;
+    add.value = "occurrence";
+    keydown(add, "Enter");
+    let header = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(header);
+    clickMenuItem("Declare field (text)");
+    header = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.includes("occurrence"))!;
+    contextMenu(header);
+    clickMenuItem("Rename field…");
+    const rename = root.querySelector<HTMLInputElement>(".sheet-header-rename-input")!;
+    rename.value = "OCC";
+    keydown(rename, "Enter");
+    const labels = () => [...root.querySelectorAll(".sheet-field-header")].map((h) => h.textContent?.trim());
+    expect(labels().filter((label) => label === "OCC")).toHaveLength(1);
+
+    undo();
+    await tick();
+    expect(labels().filter((label) => label === "occurrence")).toHaveLength(1);
+    redo();
+    await tick();
+    expect(labels().filter((label) => label === "OCC")).toHaveLength(1);
     dispose();
   });
 
@@ -771,6 +1200,51 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("commits a typed cell before Tab advances so the next value does not overwrite it (GH #176)", async () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: severity=number;occurrence=number\ntine.formula.rpn:: severity * occurrence",
+          null,
+          ["r1"],
+        ),
+        r1: node("r1", "Risk", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    doubleClick(cell(root, 0, 1));
+    const severity = root.querySelector("input.sheet-prop-input") as HTMLInputElement;
+    severity.value = "2";
+    input(severity);
+    const tab = keydown(severity, "Tab");
+    // jsdom does not perform native focus traversal. Mirror the browser blur
+    // only when the component did not take ownership of the Tab gesture.
+    if (!tab.defaultPrevented) severity.dispatchEvent(new FocusEvent("blur"));
+    const afterTab = cellSel();
+
+    expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "3" }))).toBe(true);
+    await tick();
+    const nextDraft = root.querySelector("input.sheet-prop-input") as HTMLInputElement;
+    expect(nextDraft.value).toBe("3");
+    const nextWasFocused = document.activeElement === nextDraft;
+    keydown(nextDraft, "Enter");
+
+    // Assert the literal outcome only after the uninterrupted second edit. On
+    // the pre-fix code, Tab left selection on severity and this exact sequence
+    // produced `severity:: 3` with no occurrence value or formula result.
+    expect(doc.byId.r1.raw).toBe("Risk\nseverity:: 2\noccurrence:: 3");
+    expect(cell(root, 0, 3).textContent).toContain("6");
+    expect(afterTab).toMatchObject({ kind: "cell", gridId: "table", row: 0, col: 2 });
+    expect(nextWasFocused).toBe(true);
+
+    dispose();
+  });
+
   it("checkbox typed cells toggle true and false on single click", async () => {
     setDoc({
       byId: {
@@ -931,7 +1405,9 @@ describe("SheetTable", () => {
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     day10!.click();
-    expect(doc.byId.r1.raw).toBe("Task\nstarts:: 2026-07-08 09:30\ndue:: 2026-07-10");
+    // Editing the `due` cell keeps `due` in its original (first) position — a
+    // value edit must not reorder the columns (GH #216).
+    expect(doc.byId.r1.raw).toBe("Task\ndue:: 2026-07-10\nstarts:: 2026-07-08 09:30");
 
     (cell(root, 0, 2).querySelector(".date-chip") as HTMLElement).click();
     const day11 = [...root.querySelectorAll(".date-picker .dp-cell")]
@@ -1338,6 +1814,7 @@ describe("SheetTable", () => {
 
     contextMenu(totalHeader!);
     expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
+      "Rename field… (formula columns cannot be renamed here)",
       "Edit formula…",
       "Remove formula",
       "Add formula…", // a column header can also start a fresh formula column

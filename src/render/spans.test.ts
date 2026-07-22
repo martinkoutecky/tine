@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
 import {
+  literalSpanAttrs,
   rebulletedSourceByteToRawByte,
   sourceByteFromPlainTextByte,
   typographicPlainSpanAttrs,
@@ -15,6 +16,12 @@ function decodeSm(attrs: { "data-sm"?: string } | undefined): [number, number, n
 }
 
 describe("span offset helpers", () => {
+  it("turns symmetric inline literal delimiters into an exact body span", () => {
+    expect(literalSpanAttrs("code", [10, 16])).toEqual({ "data-so": "11", "data-se": "15" });
+    expect(literalSpanAttrs("文", [4, 11])).toEqual({ "data-so": "6", "data-se": "9" });
+    expect(literalSpanAttrs("code", [10, 17])).toEqual({ "data-so": "10", "data-sce": "17" });
+  });
+
   it("converts UTF-16 offsets to UTF-8 byte offsets for emoji and CJK", () => {
     const text = "a😀文";
     expect(utf16ToUtf8ByteOffset(text, 0)).toBe(0);

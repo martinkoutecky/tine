@@ -83,7 +83,7 @@
     } else {
       results.innerHTML = hits.map(function (h) {
         var e = h.item;
-        var href = e.slug + '.html#' + e.anchor;
+        var href = e.slug + '.html#' + encodeURIComponent(String(e.anchor));
         return '<a class="res" href="' + href + '">' +
           '<span class="res-title">' + esc(e.title) + '</span>' +
           '<span class="res-snip">' + snippet(e, h.matches) + '</span></a>';

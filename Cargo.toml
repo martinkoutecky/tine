@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/tine-core", "src-tauri"]
+members = ["crates/tine-core", "plugin-sdk/rust", "src-tauri"]
 # lsdoc-wasm is built ONLY by `npm run build:wasm` (wasm-pack, wasm32 target) to
 # regenerate the vendored frontend parser. Excluded so normal `cargo build`/`cargo
 # test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
@@ -7,7 +7,7 @@ exclude = ["crates/lsdoc-wasm"]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.6"
+version = "0.6.5"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
@@ -24,3 +24,10 @@ codegen-units = 1
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[patch.crates-io]
+# tao 0.35.3 stops GTK button events at the application-window handler, which
+# also swallows Linux native titlebar controls. This exact upstream merge makes
+# GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.
+# https://github.com/tauri-apps/tao/pull/1218
+tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }

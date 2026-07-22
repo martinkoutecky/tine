@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tine_core::crdt::{CrdtError, CrdtGraph, PageId, PageSnapshot};
+use tine_core::crdt::{CrdtError, CrdtGraph, PageId, PageSnapshot, ProjectionPrecondition};
 use uuid::Uuid;
 
 struct TestDir(PathBuf);
@@ -36,6 +36,13 @@ fn page(id: PageId, raw_pre_block: &str) -> PageSnapshot {
         format: "markdown".into(),
         pre_block: Some(raw_pre_block.into()),
         blocks: vec![],
+    }
+}
+
+fn precondition(path: &str, expected_content: Option<&str>) -> ProjectionPrecondition {
+    ProjectionPrecondition {
+        path: path.into(),
+        expected_content: expected_content.map(str::to_string),
     }
 }
 
@@ -82,6 +89,54 @@ fn files_with_extension(root: &Path, extension: &str) -> Vec<PathBuf> {
     let mut output = Vec::new();
     visit(root, extension, &mut output);
     output
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_store_rejects_an_initial_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let graph = TestDir::new("initial-store-link");
+    let outside = TestDir::new("initial-store-link-outside");
+    symlink(outside.path(), graph.path().join(".tine-sync")).unwrap();
+    assert!(CrdtGraph::initialize(
+        graph.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![page(PageId::new(), "blocked")],
+    )
+    .is_err());
+    assert!(chunk_paths(outside.path()).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_store_keeps_writes_on_its_open_capability_after_parent_retargeting() {
+    use std::os::unix::fs::symlink;
+
+    let graph_dir = TestDir::new("retargeted-store");
+    let outside = TestDir::new("retargeted-store-outside");
+    let page_id = PageId::new();
+    let mut graph = CrdtGraph::initialize(
+        graph_dir.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![page(page_id, "durable")],
+    )
+    .unwrap();
+    let original = graph_dir.path().join(".tine-sync-original");
+    fs::rename(graph_dir.path().join(".tine-sync"), &original).unwrap();
+    symlink(outside.path(), graph_dir.path().join(".tine-sync")).unwrap();
+
+    graph
+        .commit_page(page(page_id, "stays on the opened store"))
+        .unwrap();
+    assert!(chunk_paths(outside.path()).is_empty());
+    assert_eq!(
+        chunk_paths(&original.join("v1")).len(),
+        2,
+        "the update lands in the detached directory capability"
+    );
 }
 
 fn digest_hex(bytes: &[u8]) -> String {
@@ -194,7 +249,17 @@ fn projection_receipt_requires_matching_content_path_and_frontier() {
     let incoming = right.path().join(".tine-sync/v1/incoming");
     fs::create_dir_all(&incoming).unwrap();
     fs::copy(&update, incoming.join(update.file_name().unwrap())).unwrap();
-    right_graph.import_pending().unwrap();
+    let first = right_graph.import_pending().unwrap();
+    assert_eq!(first.imported_chunks, 1);
+    let retry = right_graph.import_pending().unwrap();
+    assert_eq!(retry.imported_chunks, 0);
+    assert_eq!(retry.affected_pages, first.affected_pages);
+    right_graph.acknowledge_pending_projection();
+    assert!(right_graph
+        .import_pending()
+        .unwrap()
+        .affected_pages
+        .is_empty());
     assert!(right_graph
         .is_known_projection("page.md", "- projected\n")
         .unwrap());
@@ -327,6 +392,24 @@ fn resumes_empty_and_claimed_partial_initialization() {
 }
 
 #[test]
+fn activation_residue_with_unowned_artifacts_fails_closed() {
+    let dir = TestDir::new("ambiguous-residue");
+    let store = dir.path().join(".tine-sync/v1");
+    fs::create_dir_all(store.join("projection-intents")).unwrap();
+    fs::write(store.join("projection-intents/orphan.intent"), b"legacy").unwrap();
+
+    assert!(CrdtGraph::store_state(dir.path()).is_err());
+    assert!(CrdtGraph::initialize(
+        dir.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![page(PageId::new(), "must not activate")],
+    )
+    .is_err());
+    assert!(chunk_paths(&store).is_empty());
+}
+
+#[test]
 fn failed_publish_rebuilds_the_last_durable_state() {
     let dir = TestDir::new("failed-publish");
     let page_id = PageId::new();
@@ -343,10 +426,7 @@ fn failed_publish_rebuilds_the_last_durable_state() {
         .join(session.to_string());
     fs::remove_dir(&session_dir).unwrap();
 
-    assert!(matches!(
-        graph.commit_page(page(page_id, "not durable")),
-        Err(CrdtError::Io(_))
-    ));
+    assert!(graph.commit_page(page(page_id, "not durable")).is_err());
     assert_eq!(graph.materialize_page(page_id).unwrap(), Some(original));
 
     fs::create_dir(&session_dir).unwrap();
@@ -360,6 +440,128 @@ fn failed_publish_rebuilds_the_last_durable_state() {
             .as_deref(),
         Some("now durable")
     );
+}
+
+#[test]
+fn failed_update_publish_leaves_no_projection_authorization() {
+    let dir = TestDir::new("failed-authorized-publish");
+    let page_id = PageId::new();
+    let device = Uuid::new_v4();
+    let session = Uuid::new_v4();
+    let mut graph =
+        CrdtGraph::initialize(dir.path(), device, session, vec![page(page_id, "durable")]).unwrap();
+    let session_dir = dir
+        .path()
+        .join(".tine-sync/v1/devices")
+        .join(device.to_string())
+        .join("sessions")
+        .join(session.to_string());
+    fs::remove_dir(&session_dir).unwrap();
+
+    assert!(graph
+        .replace_pages_with_projection_preconditions(
+            vec![page(page_id, "not published")],
+            vec![precondition("page.md", Some("before"))],
+        )
+        .is_err());
+    assert!(files_with_extension(&dir.path().join(".tine-sync/v1"), "intent").is_empty());
+    assert!(!graph
+        .is_projection_authorized("page.md", Some("before"))
+        .unwrap());
+
+    fs::create_dir(&session_dir).unwrap();
+    graph
+        .replace_pages_with_projection_preconditions(
+            vec![page(page_id, "published on retry")],
+            vec![precondition("page.md", Some("before"))],
+        )
+        .unwrap();
+    assert!(graph
+        .is_projection_authorized("page.md", Some("before"))
+        .unwrap());
+    assert!(!graph
+        .is_projection_authorized("page.md", Some("later external bytes"))
+        .unwrap());
+    assert!(!graph.is_projection_authorized("page.md", None).unwrap());
+}
+
+#[test]
+fn published_update_repairs_an_interrupted_projection_intent() {
+    let dir = TestDir::new("intent-recovery");
+    let page_id = PageId::new();
+    let device = Uuid::new_v4();
+    let mut graph = CrdtGraph::initialize(
+        dir.path(),
+        device,
+        Uuid::new_v4(),
+        vec![page(page_id, "before")],
+    )
+    .unwrap();
+    let intents = dir.path().join(".tine-sync/v1/projection-intents");
+    fs::write(&intents, b"blocks intent publication").unwrap();
+
+    assert!(graph
+        .replace_pages_with_projection_preconditions(
+            vec![page(page_id, "after")],
+            vec![precondition("page.md", Some("before bytes"))],
+        )
+        .is_err());
+    assert_eq!(
+        graph
+            .materialize_page(page_id)
+            .unwrap()
+            .unwrap()
+            .pre_block
+            .as_deref(),
+        Some("after"),
+        "the operation chunk is durable even when its intent publish is interrupted"
+    );
+
+    fs::remove_file(&intents).unwrap();
+    let reopened = CrdtGraph::open(dir.path(), device, Uuid::new_v4()).unwrap();
+    assert!(reopened
+        .is_projection_authorized("page.md", Some("before bytes"))
+        .unwrap());
+    assert!(!reopened
+        .is_projection_authorized("page.md", Some("future edit"))
+        .unwrap());
+    assert_eq!(
+        files_with_extension(&dir.path().join(".tine-sync/v1"), "intent").len(),
+        1
+    );
+}
+
+#[test]
+fn no_op_restore_still_publishes_chunk_bound_authorization() {
+    let dir = TestDir::new("no-op-restore-authorization");
+    let snapshot = page(PageId::new(), "already desired");
+    let mut graph = CrdtGraph::initialize(
+        dir.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![snapshot.clone()],
+    )
+    .unwrap();
+    let before = chunk_paths(&dir.path().join(".tine-sync/v1")).len();
+
+    let report = graph
+        .replace_pages_with_projection_preconditions(
+            vec![snapshot],
+            vec![precondition("page.md", None)],
+        )
+        .unwrap();
+    assert!(
+        report.changed,
+        "the durable authorization chunk was published"
+    );
+    assert_eq!(
+        chunk_paths(&dir.path().join(".tine-sync/v1")).len(),
+        before + 1
+    );
+    assert!(graph.is_projection_authorized("page.md", None).unwrap());
+    assert!(!graph
+        .is_projection_authorized("page.md", Some("present"))
+        .unwrap());
 }
 
 #[test]

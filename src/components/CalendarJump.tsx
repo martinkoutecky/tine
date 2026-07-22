@@ -1,8 +1,9 @@
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle } from "../journal";
 import { dataRev, firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
+import { registerTransientLayer } from "../transientLayers";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -13,8 +14,11 @@ const DOW_BASE = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 // Topbar calendar button → a month-grid popup to jump to any date's journal.
 // Custom popup (not a native date input) so it closes on outside-click and
 // honours :start-of-week, matching the scheduled/deadline picker.
-export function CalendarJump(): JSX.Element {
+export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; triggerClass?: string } = {}): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const transientId = `calendar-jump-${createUniqueId()}`;
+  let trigger: HTMLButtonElement | undefined;
+  let overlayRoot: HTMLDivElement | undefined;
   // "today" is REFRESHED each time the popup opens (see `toggle`), not captured once:
   // CalendarJump is mounted permanently in the topbar, so a plain `new Date()` would
   // freeze at the app-launch day and never roll over (issue #11).
@@ -22,13 +26,17 @@ export function CalendarJump(): JSX.Element {
   const [view, setView] = createSignal({ y: today().getFullYear(), m: today().getMonth() });
   const sow = () => firstDayOfWeek();
   // Open/close the popup; on OPEN, snap "today" + the viewed month to the real now.
-  const toggle = () => {
+  const openCalendar = () => {
     if (!open()) {
       const now = new Date();
       setToday(now);
       setView({ y: now.getFullYear(), m: now.getMonth() });
     }
-    setOpen(!open());
+    setOpen(true);
+  };
+  const toggle = () => {
+    if (open()) setOpen(false);
+    else openCalendar();
   };
   const dow = () => DOW_BASE.slice(sow()).concat(DOW_BASE.slice(0, sow()));
 
@@ -62,9 +70,25 @@ export function CalendarJump(): JSX.Element {
   const hasContent = (d: number) =>
     haveContent().has(view().y * 10000 + (view().m + 1) * 100 + d);
 
+  createEffect(() => {
+    if (!open()) return;
+    const unregister = registerTransientLayer({
+      id: transientId,
+      root: () => overlayRoot ?? null,
+      trigger: () => trigger ?? null,
+      dismiss: () => { setOpen(false); return true; },
+    });
+    onCleanup(unregister);
+  });
+
+  onMount(() => {
+    props.onOpenReady?.(openCalendar);
+    onCleanup(() => props.onOpenReady?.(() => {}));
+  });
+
   return (
     <>
-      <button class="icon-btn" title="Go to date" onClick={toggle}>
+      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title="Go to date" onClick={toggle}>
         <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
           <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
           <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
@@ -73,7 +97,7 @@ export function CalendarJump(): JSX.Element {
         </svg>
       </button>
       <Show when={open()}>
-        <div class="dp-overlay" onClick={() => setOpen(false)}>
+        <div ref={overlayRoot} class="dp-overlay" onClick={() => setOpen(false)}>
           <div class="date-picker calendar-jump-pop" onClick={(e) => e.stopPropagation()}>
             <div class="dp-head">
               <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>

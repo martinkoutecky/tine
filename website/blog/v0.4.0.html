@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tine v0.4.0 — The Human's Blog</title>
+<meta name="description" content="Tine reaches Android, adds themes and PDF export, then fills in search, diagrams, previews, media capture, and parity fixes.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="blog.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Tine v0.4.0 — Android, themes, and more">
+<meta property="og:description" content="Android, themes, PDF export, and the v0.4 patch-series follow-up.">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="../" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links"><a href="../">Home</a><a href="../demo/">Demo</a><a href="index.html">Blog</a><a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a></nav>
+</header>
+<main id="top">
+<article class="post">
+  <header class="post-head">
+    <div class="card-meta"><span class="ver-chip">v0.4.0</span><span class="dateline">July 6–8, 2026</span></div>
+    <h1>Android, themes, and more</h1>
+    <p class="dek">The v0.4.0 announcement and its v0.4.6 follow-up, together: first the phone, then a dense round of search, media, parity, and polish.</p>
+  </header>
+  <div class="prose">
+    <p>Tine <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.4.0">v0.4.0</a> is here! And this one has the Android app, and I'm pretty excited about it. The Android app feels absolutely smooth and otherwise is literally the same app, so it can do everything that Tine does on the desktop. I'm very happy with it.</p>
+    <p>Besides Android, we also have:</p>
+    <ul>
+      <li><strong>Themes:</strong> four default flavors in Settings, plus early infrastructure for importing Logseq themes.</li>
+      <li><strong>PDF export:</strong> still rudimentary at this point, but already useful — and a reason to improve the HTML export path too.</li>
+      <li><strong>General polish and parity:</strong> the kind of release where the compressed changelog matters because no single small item tells the story.</li>
+    </ul>
+    <p>The larger v0.4 series brought the mobile editing toolbar, task checkboxes and recurring tasks, in-page find, sync-conflict review, Logseq-compatible time tracking, graph switching, recursive subdirectory scanning, rendered export of queries and embeds, parser crash isolation, and many editing fixes.</p>
+    <p class="pull">The Android app edits the same real Markdown or Org graph. Mobile was not a separate reduced product.</p>
+
+    <h2>The v0.4.6 follow-up</h2>
+    <p>Two days later, <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.4.6">v0.4.6</a> collected the patch series into another substantial update. The headline additions were Ctrl+K search operators, inline draw.io and Excalidraw diagrams using locally installed editors, Logseq-style hover previews, query summaries, desktop voice memos, camera and voice capture on Android, and reproducible Android builds.</p>
+    <p>It also fixed concrete compatibility failures: property queries involving pages and tags, screenshot paste on Windows, color emoji in page names, Linux shutdown crashes, query-builder conversion, Org property drawers, caret placement around links, and missing macOS and Windows ARM64 artifacts.</p>
+    <p>At the time, Tine's F-Droid submission was waiting in the community review queue, and I asked people who wanted to help to test apps in that queue carefully. I was also previewing Sheets — grids, tables, a light database view, kanban, and split panes — for v0.5.0.</p>
+    <p><strong>AI disclaimer:</strong> the release introduction was hand-written; the compressed changelog was AI-generated, as disclosed in the original posts.</p>
+  </div>
+  <div class="post-links">
+    <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.4.0">📦 v0.4.0 release ↗</a>
+    <a href="https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md">📋 Full changelog ↗</a>
+    <a href="https://www.reddit.com/r/TineOutline/comments/1up0qe7/tine_v040_android_themes_and_more/">💬 v0.4.0 post ↗</a>
+    <a href="https://www.reddit.com/r/TineOutline/comments/1ur44vn/tine_v046_many_updates_news_opportunity_to_help/">💬 v0.4.6 follow-up ↗</a>
+  </div>
+</article>
+<section class="convos">
+  <h2>From the discussion</h2>
+  <p class="section-lede">The v0.4 threads were mostly announcements. The useful through-line was not a design argument but the move from “Android exists” to “help test the distribution path,” while Sheets was already visible as the next larger bet.</p>
+  <div class="convo">
+    <p class="convo-topic">A short signal from the room</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/drudge007">drudge007</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1ur44vn/tine_v046_many_updates_news_opportunity_to_help/owf32ot/">full comment ↗</a></div>
+      <p class="said">Was excited by the update and planned to install it on Fedora that evening — exactly the sort of real-platform testing the post was asking for.</p>
+    </div>
+  </div>
+</section>
+<nav class="post-nav"><a href="v0.3.0.html">← Previous: v0.3.0</a><a class="to-index" href="index.html">All notes</a><a href="v0.5.0.html">Next: v0.5.0 →</a></nav>
+<p class="method-note">The two source posts are linked in full. Release prose above preserves the handwritten framing and condenses the generated changelog; comments by other people are summarized and linked.</p>
+</main>
+<footer class="foot"><div class="foot-inner"><div class="foot-brand"><svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg><span>Tine</span></div><nav class="foot-links"><a href="../">Home</a><a href="index.html">Blog</a><a href="https://github.com/martinkoutecky/tine">GitHub</a><a href="https://github.com/martinkoutecky/tine/releases">Releases</a></nav><p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p></div></footer>
+</body>
+</html>

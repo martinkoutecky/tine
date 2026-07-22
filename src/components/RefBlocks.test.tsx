@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { afterEach, beforeAll, describe, it, expect } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { RefBlocks } from "./RefBlocks";
 import { initParser } from "../render/parse";
 import type { BlockDto } from "../types";
+import { rightSidebar, setRightSidebar, setRightSidebarOpen } from "../ui";
 
 // RefBlocks is the read-only renderer for query results / linked references / embeds
 // (the lazy fallback in LiveRefGroup, and the permanent renderer for id-less result
@@ -17,6 +18,12 @@ beforeAll(async () => {
   await initParser();
 });
 
+afterEach(() => {
+  setRightSidebar([]);
+  setRightSidebarOpen(false);
+  document.body.innerHTML = "";
+});
+
 function html(node: () => JSX.Element): { html: string; text: string } {
   const div = document.createElement("div");
   const dispose = render(() => node(), div);
@@ -26,6 +33,13 @@ function html(node: () => JSX.Element): { html: string; text: string } {
   const out = { html: div.innerHTML, text: div.textContent ?? "" };
   dispose();
   return out;
+}
+
+function pageRefLabels(markup: string): string[] {
+  const div = document.createElement("div");
+  div.innerHTML = markup;
+  return [...div.querySelectorAll<HTMLAnchorElement>("a.page-ref")]
+    .map((anchor) => anchor.textContent ?? "");
 }
 
 const dto = (over: Partial<BlockDto>): BlockDto => ({
@@ -77,5 +91,71 @@ describe("RefBlocks task checkbox (parity with <Block>, OG block-checkbox)", () 
       RefBlocks({ blocks: [dto({ raw: "CANCELED dropped", marker: "CANCELED", priority: undefined })] })
     );
     expect(canceled.html).not.toContain("block-task-checkbox");
+  });
+});
+
+describe("RefBlocks page-property references", () => {
+  it("renders synthetic page-property backlinks as parsed keys and linkified values (GH #212)", () => {
+    const out = html(() => RefBlocks({
+      page: "Books",
+      blocks: [dto({
+        id: "page-property:Books",
+        raw: "tags:: blah\nalias:: Reading\nowner:: [[Martin]]",
+        page_property: true,
+        marker: undefined,
+        priority: undefined,
+      })],
+    }));
+    expect(out.html).toContain("page-property-reference");
+    expect(out.text).toContain("tags");
+    expect(out.text).toContain("alias");
+    expect(out.text).toContain("owner");
+    expect(out.text).not.toContain("::");
+    expect(pageRefLabels(out.html)).toEqual(["blah", "Reading", "[[Martin]]"]);
+  });
+
+  it("keeps an ordinary reference block on the existing inline-rendering path", () => {
+    const out = html(() => RefBlocks({
+      page: "Books",
+      blocks: [dto({
+        id: "ordinary-reference",
+        raw: "Read [[blah]] next",
+        marker: undefined,
+        priority: undefined,
+      })],
+    }));
+    expect(out.html).not.toContain("page-property-reference");
+    expect(out.text).toBe("Read [[blah]] next");
+    expect(pageRefLabels(out.html)).toEqual(["[[blah]]"]);
+  });
+});
+
+describe("RefBlocks external identity", () => {
+  it("keeps the runtime DOM id while exposing and opening the authored sidebar reference", () => {
+    const runtimeId = "runtime-ref-block";
+    const authoredId = "authored-ref-block";
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => RefBlocks({
+      page: "Books",
+      blocks: [dto({
+        id: runtimeId,
+        raw: "Read this",
+        properties: [["ID", authoredId]],
+      })],
+    }), root);
+    try {
+      const row = root.querySelector<HTMLElement>(".ref-block")!;
+      expect(row.getAttribute("data-block-id")).toBe(runtimeId);
+      expect(row.getAttribute("data-block-ref")).toBe(authoredId);
+      row.querySelector<HTMLElement>(".bullet-container")!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, shiftKey: true })
+      );
+      expect(rightSidebar()).toEqual([{
+        kind: "block", uuid: authoredId, page: "Books", pageKind: "page",
+      }]);
+    } finally {
+      dispose();
+    }
   });
 });

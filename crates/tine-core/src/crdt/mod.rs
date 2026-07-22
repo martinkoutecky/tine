@@ -11,5 +11,15 @@ mod store;
 pub use graph::CrdtGraph;
 pub use snapshot::{
     AffectedPage, BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport,
-    PageId, PageSelector, PageSnapshot,
+    PageId, PageSelector, PageSnapshot, ProjectionPrecondition,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagedSyncStoreState {
+    Absent,
+    /// Only empty directory scaffolding exists. No device owns activation yet.
+    Unclaimed,
+    /// A durable genesis claim exists, but genesis publication did not finish.
+    Claimed,
+    Initialized,
+}

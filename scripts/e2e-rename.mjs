@@ -12,6 +12,8 @@ const APP = process.env.TINE_APP || `${process.env.HOME}/research/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
   (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 
 function seed() {
   fs.rmSync(G, { recursive: true, force: true });
@@ -59,8 +61,8 @@ console.log("DISPLAY=", process.env.DISPLAY);
 const tdLog = fs.openSync("/tmp/td.log", "w");
 const td = spawn(
   TD,
-  ["--port", "4444", "--native-port", "4445", "--native-driver", "/usr/bin/WebKitWebDriver"],
-  { env, stdio: ["ignore", tdLog, tdLog] }
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
+  { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(3000);
 
@@ -68,7 +70,7 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4444,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     logLevel: "error",
@@ -91,11 +93,13 @@ try {
       break;
     }
   }
-  if (!opened) console.log("!! no [[Pokus2]] link found in feed");
+  if (!opened) throw new Error("no [[Pokus2]] link found in feed");
   await sleep(1800);
 
   const title = await browser.$(".page-title");
-  console.log("PAGE TITLE:", (await title.isExisting()) ? await title.getText() : "(none)");
+  const initialTitle = (await title.isExisting()) ? await title.getText() : "(none)";
+  console.log("PAGE TITLE:", initialTitle);
+  if (initialTitle !== "Pokus2") throw new Error(`expected Pokus2 before rename, got ${initialTitle}`);
   // Let Linked References (LiveRefGroup -> loads Tine, Testtest2, journal) hydrate.
   await sleep(2500);
   const refPages = await browser.$$(".reference-page");
@@ -110,12 +114,16 @@ try {
     await tineRef.click();
     await sleep(1500);
     console.log("opened page:", await (await browser.$(".page-title")).getText());
-    const back = await browser.$("a.page-ref=Pokus2");
-    if (await back.isExisting()) { await back.click(); await sleep(1500); }
-    console.log("back on:", await (await browser.$(".page-title")).getText());
-  } else {
-    console.log("!! no Tine reference-page header to click");
-  }
+    const back = await browser.$('button[title="Go back"]');
+    if (!(await back.isExisting()) || !(await back.isEnabled())) {
+      throw new Error("Tine's Go back button was not available after opening the linked reference");
+    }
+    await back.click();
+    await sleep(1500);
+    const backTitle = await (await browser.$(".page-title")).getText();
+    console.log("back on:", backTitle);
+    if (backTitle !== "Pokus2") throw new Error(`history did not return to Pokus2; got ${backTitle}`);
+  } else throw new Error("no Tine linked-reference header to exercise open-page rename state");
 
   const fillAndEnter = (sel, val) =>
     browser.execute((s, v) => {
@@ -148,7 +156,7 @@ try {
       await fillAndEnter(".ctx-rename-name", "Pokus");
       console.log("ctx rename: set 'Pokus' + Enter");
     } else {
-      console.log("!! ctx rename input never appeared");
+      throw new Error("context-menu rename input never appeared");
     }
   } else {
     // Double-click title rename (SolidJS delegated dblclick).
@@ -164,16 +172,28 @@ try {
       await fillAndEnter(".page-title-input", "Pokus");
       console.log("set name 'Pokus' + Enter via execute");
     } else {
-      console.log("!! rename input never appeared (dblclick didn't reach startRename)");
+      throw new Error("rename input never appeared (dblclick did not reach startRename)");
     }
   }
   await sleep(3000);
   const title2 = await browser.$(".page-title");
-  console.log("PAGE TITLE after:", (await title2.isExisting()) ? await title2.getText() : "(none)");
+  const afterTitle = (await title2.isExisting()) ? await title2.getText() : "(none)";
+  console.log("PAGE TITLE after:", afterTitle);
+  if (afterTitle !== "Pokus") throw new Error(`expected Pokus after rename, got ${afterTitle}`);
+  const pokus = `${G}/pages/Pokus.md`;
+  const old = `${G}/pages/Pokus2.md`;
+  if (!fs.existsSync(pokus) || fs.existsSync(old)) throw new Error("rename did not move Pokus2.md to Pokus.md");
+  if (fs.readFileSync(pokus, "utf8") !== "- Tohle je pokus\n") throw new Error("renamed page content changed");
+  for (const file of [`${G}/pages/Tine.md`, `${G}/pages/Testtest2.md`, `${G}/journals/2026_06_24.md`]) {
+    const body = fs.readFileSync(file, "utf8");
+    if (!body.includes("[[Pokus]]") || body.includes("[[Pokus2]]")) throw new Error(`references not rewritten in ${file}`);
+  }
+  console.log("PASS: renamed intended page and rewrote every reference");
 } catch (e) {
   console.log("E2E ERROR:", String(e).split("\n").slice(0, 4).join(" | "));
+  process.exitCode = 1;
 } finally {
   dump("AFTER");
   try { await browser?.deleteSession(); } catch {}
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
 }

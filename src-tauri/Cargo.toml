@@ -35,17 +35,26 @@ notify = "6"
 # Asset write commands receive bytes as base64 (a single compact string) instead
 # of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).
 base64 = "0.22"
+cap-std = "4.0.2"
+same-file = "1.0.6"
 sha2 = "0.10"
+ed25519-dalek = "2"
+# Handle-relative no-replace restore publication on Unix-family platforms.
+libc = "0.2"
 # Resolve the app-data dir before the Tauri app (and its `path()` API) exists, so
 # the identifier-rename migration can run BEFORE the webview creates its store.
 # `dirs::data_dir()` is the exact base Tauri v2's `app_data_dir()` joins the id onto.
 dirs = "6"
 tine-core = { path = "../crates/tine-core" }
 
-# Mobile only: open http/mailto URLs via the OS (an ACTION_VIEW Intent on
-# Android). Desktop spawns xdg-open/open/explorer directly (env-scrubbed) in
-# platform::open_external, so it doesn't need this. See GH #49.
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+[dev-dependencies]
+tempfile = "3"
+
+# Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on
+# Android (GH #49), ShellExecute on Windows (GH #215; `explorer <url>` opens a
+# File Explorer window instead of the browser). Linux/macOS spawn
+# xdg-open/open directly (env-scrubbed) in platform::open_external.
+[target.'cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))'.dependencies]
 tauri-plugin-opener = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
@@ -65,7 +74,17 @@ tauri-plugin-updater = "2"
 # spellcheck via the textarea attribute alone, so no equivalent dep is needed.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
+# Inspect the actual GTK display backend before deciding whether WebKit's
+# inspector should detach. Native Wayland currently renders detached inspector
+# contents black on Fedora/WebKitGTK, while X11/XWayland does not.
+gtk = "0.18.2"
+# Set xdg_toplevel.app_id per native Wayland window without turning GTK into a
+# competing single-instance router (which would swallow `tine --capture`).
+gdkwayland-sys = { version = "0.18.2", features = ["v3_24_22"] }
+# A secondary X11 launch can initialize GTK/Xlib work on more than one thread
+# while the single-instance plugin forwards `--capture`. XInitThreads must run
+# before any GTK/Xlib call or XCB can abort the short-lived forwarder.
+x11 = { version = "2.21.0", features = ["xlib"] }
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
-libc = "0.2"

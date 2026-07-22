@@ -9,7 +9,18 @@ export interface Edit {
   text: string;
   start: number;
   end: number;
+  /** Preserve which end of a live textarea selection is active. */
+  direction?: "forward" | "backward" | "none";
 }
+
+export type InlineFormat = "bold" | "italic" | "strikethrough" | "highlight";
+
+const INLINE_FORMAT_DELIMITERS: Record<"md" | "org", Record<InlineFormat, string>> = {
+  md: { bold: "**", italic: "*", strikethrough: "~~", highlight: "==" },
+  org: { bold: "*", italic: "/", strikethrough: "+", highlight: "^^" },
+};
+
+const ASCII_WHITESPACE = /[\t\n\v\f\r ]/;
 
 /** Toggle a symmetric inline wrap (e.g. `**` … `**`). Unwraps if the selection
  *  is already wrapped (markers just outside, or included in the selection).
@@ -49,10 +60,66 @@ export function toggleWrap(text: string, start: number, end: number, left: strin
   };
 }
 
-/** Insert a markdown link. With a selection, it becomes the label and the caret
- *  lands inside the (url); with no selection, inserts `[]()` caret in the label. */
-export function insertLink(text: string, start: number, end: number): Edit {
+/** Toggle a parser-recognized inline format. Browser word selection commonly
+ * includes the adjacent space (notably Ctrl+Shift+Left on Windows). OG trims
+ * that outer whitespace before adding delimiters; keep the bytes in place and
+ * retain Tine's live inner selection. Generic wrappers such as page links and
+ * inline code deliberately keep using toggleWrap: their whitespace semantics
+ * are a separate contract. */
+export function toggleInlineFormat(
+  text: string,
+  start: number,
+  end: number,
+  format: "md" | "org",
+  kind: InlineFormat,
+  direction?: "forward" | "backward" | "none",
+): Edit {
+  let innerStart = start;
+  let innerEnd = end;
+  if (start !== end) {
+    while (innerStart < innerEnd && ASCII_WHITESPACE.test(text[innerStart])) innerStart += 1;
+    while (innerEnd > innerStart && ASCII_WHITESPACE.test(text[innerEnd - 1])) innerEnd -= 1;
+    if (innerStart === innerEnd) {
+      const unchanged: Edit = { text, start, end };
+      return direction === undefined ? unchanged : { ...unchanged, direction };
+    }
+  }
+  const edit = toggleWrap(text, innerStart, innerEnd, INLINE_FORMAT_DELIMITERS[format][kind]);
+  return direction === undefined ? edit : { ...edit, direction };
+}
+
+/** Narrow transcription of mldoc-link? for the keyboard/link-toolbar boundary.
+ * This is intentionally not the paste-url regex: page refs, block refs and
+ * already formatted links are link nodes too. It accepts only one complete
+ * inline link form, so surrounding prose is never silently promoted. */
+export function isMldocLink(text: string): boolean {
+  const value = text.trim();
+  if (!value || value !== text) return false;
+  try {
+    const url = new URL(value);
+    if (["http:", "https:", "mailto:"].includes(url.protocol)) return true;
+  } catch {
+    // The remaining mldoc inline forms are grammar-delimited, not URLs.
+  }
+  return /^(?:\[\[[^\]\n]+\]\]|\(\([^()\n]+\)\)|\[[^\]\n]*\]\([^\n)]*\)|\[\[[^\]\n]*\]\[[^\]\n]*\]\])$/u.test(value);
+}
+
+/** Insert a format-aware external link. Selected parser-recognized inline links
+ * become the target with an empty label; ordinary selected text remains the
+ * label. This matches OG's no-argument html-link-format! branches. */
+export function insertLink(text: string, start: number, end: number, format: "md" | "org" = "md"): Edit {
   const sel = text.slice(start, end);
+  const recognizedLink = !!sel && isMldocLink(sel);
+  if (format === "org") {
+    const link = recognizedLink ? `[[${sel}][]]` : sel ? `[[][${sel}]]` : "[[][]]";
+    const caret = recognizedLink ? start + sel.length + 4 : start + 2;
+    const next = text.slice(0, start) + link + text.slice(end);
+    return { text: next, start: caret, end: caret };
+  }
+  if (recognizedLink) {
+    const next = text.slice(0, start) + `[](${sel})` + text.slice(end);
+    return { text: next, start: start + 1, end: start + 1 };
+  }
   if (sel) {
     const out = `[${sel}](`;
     const next = text.slice(0, start) + out + ")" + text.slice(end);
@@ -71,6 +138,20 @@ export function insertLink(text: string, start: number, end: number): Edit {
 const PASTE_URL_RE = /^(?:https?:\/\/|mailto:)\S+$/i;
 export function isPasteableUrl(text: string): boolean {
   return PASTE_URL_RE.test(text.trim());
+}
+
+// Exact OG video-provider patterns, transcribed from 6e7afa8eb
+// src/main/frontend/util/text.cljs:12-23. Keep handler/paste.cljs:137-146's
+// selected-URL branch ahead of this bare-URL normalization at the call site.
+const VIDEO_PASTE_RE = [
+  /^((?:https?:)?\/\/)?((?:www).)?((?:bilibili.com))(\/(?:video\/)?)([\w-]+)(\?p=(\d+))?(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www).)?((?:loom.com))(\/(?:share\/|embed\/))([\w-]+)(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www).)?((?:player.vimeo.com|vimeo.com))(\/(?:video\/)?)([\w-]+)(\S+)?$/,
+  /^((?:https?:)?\/\/)?((?:www|m).)?((?:youtube.com|youtu.be|y2u.be|youtube-nocookie.com))(\/(?:[\w-]+\?v=|embed\/|v\/)?)([\w-]+)([\S^?]+)?$/,
+];
+
+export function videoPasteMacro(text: string): string | null {
+  return VIDEO_PASTE_RE.some((pattern) => pattern.test(text)) ? `{{video ${text}}}` : null;
 }
 
 /** Wrap a selection as a link around a pasted `url`. Format-aware: markdown

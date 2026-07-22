@@ -32,8 +32,8 @@ function blk(id: string, raw: string): BlockDto {
   return { id, raw, collapsed: false, children: [] };
 }
 
-function page(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks };
+function page(name: string, blocks: BlockDto[], opts: Pick<PageDto, "path" | "format"> = {}): PageDto {
+  return { name, kind: "page", title: name, pre_block: null, blocks, ...opts };
 }
 
 function tick(): Promise<void> {
@@ -225,7 +225,69 @@ describe("asset paste durability", () => {
       ]));
       await settle();
       expect(native).toHaveBeenCalledOnce();
-      expect(doc.byId[id].raw).toBe("![](../assets/photo.png)\n[report.pdf](../assets/report.pdf)");
+      expect(doc.byId[id].raw).toBe("![](../assets/photo.png)\n![report.pdf](../assets/report.pdf)");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the source PDF name as its label when the asset template renames it", async () => {
+    loadSingle(page("Nested assets", [blk("asset-renamed-pdf", "")], {
+      path: "pages/projects/Nested assets.md",
+      format: "md",
+    }));
+    const id = pageByName("Nested assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({
+      files: [{ path: "/tmp/Research paper.pdf", name: "Research paper.pdf", size: 3 }],
+      skipped: 0,
+      truncated: false,
+    });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("20300102-paper.pdf");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Nested assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(filePasteEvent([
+        new File([new Uint8Array([1])], "Research paper.pdf", { type: "application/pdf" }),
+      ]));
+      await settle();
+
+      expect(doc.byId[id].raw).toBe(
+        "![Research paper.pdf](../../assets/20300102-paper.pdf)"
+      );
+    } finally {
+      dispose();
+    }
+  });
+
+  it("inserts an Org PDF link on an Org page", async () => {
+    loadSingle(page("Org assets", [blk("asset-org-pdf", "")], {
+      path: "pages/Org assets.org",
+      format: "org",
+    }));
+    const id = pageByName("Org assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({
+      files: [{ path: "/tmp/Paper.pdf", name: "Paper.pdf", size: 3 }],
+      skipped: 0,
+      truncated: false,
+    });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("stored-paper.pdf");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Org assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(filePasteEvent([
+        new File([new Uint8Array([1])], "Paper.pdf", { type: "application/pdf" }),
+      ]));
+      await settle();
+
+      expect(doc.byId[id].raw).toBe("[[../assets/stored-paper.pdf][Paper.pdf]]");
     } finally {
       dispose();
     }
@@ -253,7 +315,7 @@ describe("asset paste durability", () => {
 
       expect(event.defaultPrevented).toBe(true);
       expect(backend().importAsset).toHaveBeenCalledWith("C:\\Users\\me\\report.pdf", "report.pdf");
-      expect(doc.byId[id].raw).toBe("[report.pdf](../assets/report.pdf)");
+      expect(doc.byId[id].raw).toBe("![report.pdf](../assets/report.pdf)");
       expect(doc.byId[id].raw).not.toContain("C:\\Users");
     } finally {
       dispose();
@@ -276,7 +338,7 @@ describe("asset paste durability", () => {
       await settle();
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();
-      await vi.waitFor(() => expect(doc.byId[id].raw).toBe("[notes.pdf](../assets/notes.pdf)"));
+      await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![notes.pdf](../assets/notes.pdf)"));
     } finally {
       dispose();
     }

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "page.tine.heading-level-shortcuts",
+  "name": "Heading level shortcuts",
+  "version": "0.1.0",
+  "apiVersion": "0.2",
+  "description": "Set or clear the focused block's heading level with remappable commands and shortcuts.",
+  "author": "Sol for Tine",
+  "license": "MIT",
+  "source": "https://github.com/martinkoutecky/tine-plugin-heading-level-shortcuts",
+  "entry": "target/wasm32-unknown-unknown/release/tine_plugin_heading_level_shortcuts.wasm",
+  "platforms": ["desktop", "android", "ios"],
+  "capabilities": ["commands.register", "graph.write.block"],
+  "contributions": {
+    "commands": [
+      { "id": "heading-0", "title": "Heading: clear level", "description": "Remove the focused block's heading level.", "defaultBinding": "mod+alt+0" },
+      { "id": "heading-1", "title": "Heading: level 1", "description": "Set the focused block to heading level 1.", "defaultBinding": "mod+alt+1" },
+      { "id": "heading-2", "title": "Heading: level 2", "description": "Set the focused block to heading level 2.", "defaultBinding": "mod+alt+2" },
+      { "id": "heading-3", "title": "Heading: level 3", "description": "Set the focused block to heading level 3.", "defaultBinding": "mod+alt+3" },
+      { "id": "heading-4", "title": "Heading: level 4", "description": "Set the focused block to heading level 4.", "defaultBinding": "mod+alt+4" },
+      { "id": "heading-5", "title": "Heading: level 5", "description": "Set the focused block to heading level 5.", "defaultBinding": "mod+alt+5" },
+      { "id": "heading-6", "title": "Heading: level 6", "description": "Set the focused block to heading level 6.", "defaultBinding": "mod+alt+6" }
+    ]
+  },
+  "portedFrom": {
+    "ecosystem": "logseq",
+    "name": "logseq-plugin-heading-level-shortcuts",
+    "source": "https://github.com/vipzhicheng/logseq-plugin-heading-level-shortcuts",
+    "revision": "40b5a57577d4ab168dea38614eebe3b42085b665",
+    "license": "MIT",
+    "authors": ["Richard Yu (vipzhicheng)"],
+    "relationship": "behavioral-port"
+  },
+  "aiDevelopment": "primary"
+}

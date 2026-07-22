@@ -23,9 +23,17 @@ when one open graph is nested inside another graph's recursively scanned tree.
   every restorable snapshot records that root in a verified manifest.
 - Invalid layouts fail closed with a clear error. Tine never substitutes another
   directory and writes there silently.
+- One compatibility exception is an `assets` symlink/junction whose canonical
+  target is outside the graph. Tine shows that exact resolved directory and
+  requires explicit device-local approval before opening the graph. The grant is
+  keyed by canonical graph root and canonical asset target; retargeting fails
+  closed. Asset reads/writes receive only that separate capability, so approving
+  it cannot widen page, journal, configuration, publish, backup-identity, or
+  other graph-managed paths.
 
 ## Consequences
 
-Safe nested relative directories remain supported. Graphs that intentionally point
-their managed directories outside the selected root must move those files inside
-the graph before Tine will write them.
+Safe nested relative directories remain supported. Apart from the explicitly
+approved external-assets capability above, graphs that intentionally point managed
+directories outside the selected root must move those files inside the graph
+before Tine will write them.

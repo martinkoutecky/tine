@@ -11,12 +11,15 @@ import { cellForBlockId, cellOwner, cellSel, handleCellSelectionKey, resetCellSe
 import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
 import { backend } from "../backend";
+import { installKeybindings } from "../keybindings";
+import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  clearTransientLayersForTest();
   __sheetBoardTestHooks.onGroupingRowWalk = undefined;
   __sheetBoardTestHooks.onPointIndexRow = undefined;
   vi.restoreAllMocks();
@@ -769,9 +772,18 @@ describe("SheetBoard", () => {
     }
   });
 
-  it("shows a floating drag ghost with grabbing cursor state and removes it on Escape", () => {
+  it("shows a floating drag ghost and lets the shared dispatcher cancel it before a lower layer", () => {
     loadBoardDoc();
     const { root, dispose } = mount(() => <Block id="board" />);
+    const uninstall = installKeybindings();
+    let lowerDismissals = 0;
+    const lowerRoot = document.createElement("button");
+    document.body.append(lowerRoot);
+    const unregisterLower = registerTransientLayer({
+      id: "sheet-board-drag-lower",
+      root: () => lowerRoot,
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
     const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
     const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
     const prevElementFromPoint = document.elementFromPoint;
@@ -789,14 +801,51 @@ describe("SheetBoard", () => {
     expect(ghost!.style.transform).toContain("translate(22px, 10px)");
     expect(document.body.classList.contains("sheet-board-dragging")).toBe(true);
 
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    card.dispatchEvent(escape);
 
+    expect(escape.defaultPrevented).toBe(true);
+    expect(lowerDismissals).toBe(0);
     expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
     expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
     expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
     expect(releasePointerCapture).toHaveBeenCalledWith(1);
+    card.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(lowerDismissals).toBe(1);
 
     document.elementFromPoint = prevElementFromPoint;
+    unregisterLower();
+    uninstall();
+    dispose();
+  });
+
+  it.each([
+    ["composing", { composing: true, keyCode: undefined }],
+    ["keyCode 229", { composing: false, keyCode: 229 }],
+  ] as const)("keeps a board drag active for %s Escape", (_name, variant) => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const uninstall = installKeybindings();
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    if (variant.composing) Object.defineProperty(event, "isComposing", { value: true });
+    if (variant.keyCode != null) Object.defineProperty(event, "keyCode", { value: variant.keyCode });
+    card.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+    card.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    document.elementFromPoint = prevElementFromPoint;
+    uninstall();
     dispose();
   });
 
@@ -1175,6 +1224,32 @@ describe("SheetBoard", () => {
 
     expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
     expect(root.textContent).toContain("From query");
+
+    dispose();
+  });
+
+  it("renders exactly one board when text and a query macro share the same line", async () => {
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "Current work {{query (todo TODO)}}\ntine.view:: board\ntine.group-by:: state",
+          null
+        ),
+        todo: node("todo", "TODO From inline query", null),
+      },
+      pages: [page(["query", "todo"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await tick();
+    await tick();
+
+    expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
+    expect(root.textContent).toContain("From inline query");
 
     dispose();
   });

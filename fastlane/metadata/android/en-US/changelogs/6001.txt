@@ -1,0 +1,1 @@
+Tine 0.6.1 fixes: mouse back/forward side buttons now navigate page history (desktop); copy-pasting text that contains square brackets no longer backslash-escapes them; and deleting a block selection or returning to a pane now keeps a block selected and keyboard-navigable.

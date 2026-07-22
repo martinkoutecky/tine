@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Tine was/is built — The Human's Blog</title>
+<meta name="description" content="A process note before Tine v0.6.0: dogfooding, executable oracles, adversarial agents, bounded autonomy, and release evidence.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="blog.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How Tine was — and is — built">
+<meta property="og:description" content="No magic prompt: the constraints, evidence, feedback, and agent workflows behind Tine's first month.">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="../" aria-label="Tine — home"><svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg><span class="brand-word">Tine</span></a>
+  <nav class="nav-links"><a href="../">Home</a><a href="../demo/">Demo</a><a href="index.html">Blog</a><a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a></nav>
+</header>
+<main id="top">
+<article class="post">
+  <header class="post-head">
+    <div class="card-meta"><span class="ver-chip">v0.6.0</span><span class="dateline">July 13, 2026</span><span class="dateline">· process note before the release</span></div>
+    <h1>How Tine was — and is — built</h1>
+    <p class="dek">The first month in retrospect: what mattered once implementation became cheap, and how the process is changing so speed can compound instead of merely accumulating risk.</p>
+  </header>
+  <div class="prose">
+    <p><em>AI disclosure: I asked the agents that built Tine to analyze our development history and draft this post. I read it to check it, but it was written by GPT-5.6-Sol despite being written in the first person. The underlying, more detailed observations are also public in <a href="../development-notes/fable-development-findings.md">Fable's findings</a> and <a href="../development-notes/sol-development-findings.md">Sol's findings</a>.</em></p>
+    <p>A few people have asked how it was possible to build Tine this quickly, and whether I use some special harness, prompt library, or vibe-coding trick. For scale: the first Rust-core commit was on June 14; by July 12 Tine had gone through five feature series, shipped desktop and Android builds, and accumulated 73 cataloged UI regressions. Release count and commit count are poor measures of quality, but this has plainly been a lot of software in 29 days.</p>
+    <p>The short answer is that I have no magic prompt. At the beginning I used ordinary Claude Code in a terminal and talked to it normally. My prompts are often short, conversational, and uncertain: “I may not be understanding,” “what do you think?”, or a description of something that felt wrong while using the app. Most of the implementation bandwidth comes from how capable current models and coding harnesses are.</p>
+    <p>What may be unusual is how I organize judgment, evidence, and feedback around that code. Once implementation becomes cheap, those become the bottlenecks. The process around Tine is mostly an attempt to spend my attention on decisions only I need to make, while making the agents prove as much else as possible.</p>
+
+    <h2>The core loop is use, notice, fix, repeat</h2>
+    <p>For most of the project the practical loop was:</p>
+    <ol>
+      <li>an agent implemented, tested, built, and deployed a production binary;</li>
+      <li>I used that binary on my real graph;</li>
+      <li>I reported the next thing that felt wrong;</li>
+      <li>the agent traced it, added a regression test where possible, and deployed again.</li>
+    </ol>
+    <p>The reports are often tiny interaction details: where the caret lands when it crosses into a multiline block, whether entering edit mode spreads Markdown delimiters apart, what shift-clicking a bullet does, or whether a quick-capture window accepts typing without a preparatory click. These are difficult to derive from a feature checklist, but they make much of the difference between software that merely works and software that feels good.</p>
+    <p>That is why “tests pass” is not done: a fix normally has to be deployed into the copy I actually use. Newer harnesses reduce how often I rediscover old failures; they do not replace dogfooding.</p>
+
+    <h2>Start with constraints strong enough to decide things</h2>
+    <p>Tine did not begin as “make a note-taking app.” The target was a fast, local-first, Logseq-compatible outliner that works directly on an existing Markdown or Org graph. That gives us several non-negotiable constraints:</p>
+    <ul>
+      <li>files remain ordinary, interoperable files;</li>
+      <li>original Logseq is the default behavioral reference;</li>
+      <li>speed is part of the product, not a cleanup task for later;</li>
+      <li>saving is extremely conservative, because one data-loss incident matters more than several missing features.</li>
+    </ul>
+    <p>These are practical decision rules. Logseq compatibility supplies the default answer to many interaction disputes. Plain-file compatibility rules out convenient proprietary-storage shortcuts. A feature that threatens the performance budget can be stopped even if it is otherwise useful.</p>
+    <p>I have a computer-science background, but I rarely tell an agent which class or function to change. I specify observable behavior: moving upward into a wrapped block should land on its bottom visual line; quick capture should mean “press the shortcut, then type”; selecting text and typing a Markdown delimiter should behave like Logseq. The agent finds the mechanism. I preserve the product model and notice when a locally plausible fix violates it.</p>
+    <p>Twenty-two years of using Linux and following open-source software probably matter too. Plain files, honest limitations, ecosystem compatibility, and respect for upstream feel like defaults. When a feature is requested, we compare it with the best relevant prior art instead of assuming either the request or our first design is optimal. Sometimes the useful comparison is surprising — for command search, Gmail can be as relevant as another outliner.</p>
+
+    <h2>Replace opinions with oracles</h2>
+    <p>The most productive recurring idea has been: if there is an authority you can execute or inspect, do not settle an argument from memory.</p>
+    <p>For compatibility, the authority is original Logseq and mldoc, its parser. The agents inspect upstream source and run the same input through both implementations. This is more reliable than trying examples until the output looks right. By July, the new Rust parser lsdoc had an oracle corpus of more than a thousand cases, with known divergences explicit rather than quietly ignored.</p>
+    <p>For performance, the authority is measurement plus an architectural argument. I became suspicious of rolling baselines: if every release may become five percent slower than the previous one, a thirty-percent gate can still permit indefinite decay. Tine now keeps an immutable older baseline as an anchor. I also push back when a benchmark is used to imply a complexity claim. “This input was fast” is not proof that the algorithm is linear.</p>
+    <p>For UI behavior, the authority increasingly is the real application rather than a simulated component. A browser-level unit test can say that a handler produced the right state while missing that WebKit put the caret on the wrong visual line or Plasma never focused a new window. The Linux release gate now launches the production Tauri app under a real window manager, drives it, takes screenshots, and verifies native focus and persistence. Linux remains by far the strongest-tested platform; I would rather say that plainly than pretend the evidence is symmetric.</p>
+    <p>The harness grew out of failures. Caret and collapse regressions became a historical catalog with executable cases. Incomplete releases became artifact-inventory checks. Each failure is expected to leave something stronger than a one-off patch.</p>
+
+    <h2>Use agents adversarially, not only productively</h2>
+    <p>A confident model explanation is cheap, including a confident explanation that a bug is impossible, irrelevant, or already solved. I delegate implementation heavily, but important claims have to become testable.</p>
+    <p>Instead of asking “is this parser linear?”, ask an auditor to disprove linearity and require a scaling family. Instead of accepting that a state is unreachable, have another agent check the proof against the actual program. Instead of fixing only the reported editing bug, audit adjacent transitions that share its state machine. In longer loops, one agent can act as prover and another as verifier.</p>
+    <p>Audits run toward a fixed point rather than as ceremony. An audit only counts for the exact source it examined; a later relevant change invalidates it. This matters particularly for data safety, where an impressive report about yesterday's tree is not evidence about today's fix.</p>
+    <p>This skepticism applies to pleasant news too. When an agent said a performance refactor had improved things, I asked why the benchmark was not faster. When it said it had researched upstream but had not read the source, I changed the process rather than merely asking it to try harder next time.</p>
+
+    <h2>Optimize human round trips, not model labor</h2>
+    <p>The scarce resource is not tokens or agent-hours. It is the number of times I must stop, reconstruct context, decide something, and test the product before a change matures.</p>
+    <p>That changed how we collaborate. We plan batches while I am available; then I say “go” and the agent executes while I am away. Decision packets use short labels so I can answer precisely without quoting paragraphs. Plans and acceptance criteria are written down so they survive context compaction. The aim is to spend my time on product judgment, not on watching builds or reconstructing issue descriptions.</p>
+    <p>Autonomy is bounded by decision type. A clear bug that can be reproduced and regression-tested may be fixed, deployed, and reported as fixed on <code>master</code> without waiting for me. An unclear bug gets a precise request for evidence. A feature or lasting product commitment comes back with research and a recommendation for me to decide. This workflow is recent; it explains how we are reducing the ongoing maintenance burden, not all of the project's early speed.</p>
+    <p>Releases are becoming similarly unattended. The changelog is treated as a list of obligations: what regression proves each item, whether documentation or the website must change, which issue reporters need follow-up, and which artifacts must exist. Slow platform builds run in parallel; publishing uses those exact tested artifacts. A release is not complete merely because a Git tag exists.</p>
+    <p>This operating system did not exist fully formed. Early speed came mostly from capable models, rapid deployment, and intense feedback. The regression catalog, real-app harness, release gates, and delegated issue workflow appeared because the initial process kept showing where it depended too much on my memory and availability.</p>
+
+    <h2>What I would take from this</h2>
+    <p>I do not think the lesson is “learn my prompts.” Copying the visible process wholesale would probably create ceremony around the wrong risks.</p>
+    <p>Decide what must remain true, then make those claims increasingly executable. Give agents broad implementation responsibility but clear product and risk boundaries. Research the best existing behavior before inventing a new one. Use independent agents to attack comforting conclusions. Turn real regressions into durable tests at the lowest layer that can genuinely catch them. Preserve an honest distinction between what passed locally, what passed in a simulated UI, what worked in the real app, and what a user on another platform still needs to confirm.</p>
+    <p class="pull">Modern agents can generate an astonishing amount of working software. The interesting human work shifts upward: choosing invariants, recognizing bad abstractions, deciding what belongs in the product, and designing evidence strong enough that speed can compound.</p>
+  </div>
+  <div class="post-links">
+    <a href="https://www.reddit.com/r/TineOutline/comments/1uvfv62/how_tine_wasis_built/">💬 Original process post ↗</a>
+    <a href="../development-notes/fable-development-findings.md">📝 Fable's findings ↗</a>
+    <a href="../development-notes/sol-development-findings.md">📝 Sol's findings ↗</a>
+    <a href="https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md">📋 Current changelog ↗</a>
+  </div>
+</article>
+<section class="convos">
+  <h2>From the discussion</h2>
+  <p class="section-lede">Checked again on July 18, 2026, this post had not collected a substantive comment thread. The questions that prompted it are summarized in the previous release's discussion.</p>
+</section>
+<nav class="post-nav"><a href="v0.5.0.html">← Previous: v0.5.0</a><a class="to-index" href="index.html">All notes</a><span></span></nav>
+<p class="method-note">This page preserves the Reddit post's full argument with only web-layout editing. It is a process note associated with v0.6.0, not an announcement that the release has shipped.</p>
+</main>
+<footer class="foot"><div class="foot-inner"><div class="foot-brand"><svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg><span>Tine</span></div><nav class="foot-links"><a href="../">Home</a><a href="index.html">Blog</a><a href="https://github.com/martinkoutecky/tine">GitHub</a><a href="https://github.com/martinkoutecky/tine/releases">Releases</a></nav><p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p></div></footer>
+</body>
+</html>

@@ -1,11 +1,65 @@
 use crate::backup::{backup_async, backup_graph_now};
-use crate::settings::remember_graph;
+use crate::settings::{
+    approved_external_assets, remember_external_assets_approval, remember_graph,
+};
 use crate::state::{canonical_graph_root, poke_watcher, slot_for_window, AppState, GraphSlot};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
+use tine_core::crdt::ManagedSyncStoreState;
 use tine_core::model::{Graph, GraphMeta};
+
+pub(crate) fn ensure_managed_sync_safety_snapshot(
+    app: &tauri::AppHandle,
+    graph: &Graph,
+    state: ManagedSyncStoreState,
+    already_complete: bool,
+    suffix: &str,
+) -> Result<bool, String> {
+    if state == ManagedSyncStoreState::Absent || already_complete {
+        return Ok(already_complete);
+    }
+    let (_, complete) = backup_graph_now(app, graph, suffix);
+    if !complete {
+        return Err(
+            "managed sync needs a complete safety snapshot before replay; graph left unchanged"
+                .into(),
+        );
+    }
+    Ok(true)
+}
+
+pub(crate) fn start_managed_sync_after_safety(
+    app: &tauri::AppHandle,
+    graph: &Graph,
+    state: ManagedSyncStoreState,
+) -> Result<(), String> {
+    if state == ManagedSyncStoreState::Absent {
+        return Ok(());
+    }
+    let device_id = crate::settings::managed_sync_device_id(app)?;
+    match state {
+        ManagedSyncStoreState::Absent => unreachable!("handled before reading device identity"),
+        ManagedSyncStoreState::Unclaimed | ManagedSyncStoreState::Claimed => {
+            graph
+                .enable_managed_sync(device_id, uuid::Uuid::new_v4())
+                .map_err(|error| format!("managed sync could not resume activation: {error}"))?;
+        }
+        ManagedSyncStoreState::Initialized => {
+            let started = graph
+                .start_managed_sync(device_id, uuid::Uuid::new_v4())
+                .map_err(|error| format!("managed sync could not start: {error}"))?;
+            if !started {
+                return Err("managed sync store changed while it was being opened".into());
+            }
+        }
+    }
+    graph
+        .project_all_managed_sync()
+        .map_err(|error| format!("managed sync could not project: {error}"))?;
+    Ok(())
+}
 
 /// Reset the warm flag for a new graph load and return the new warm generation
 /// (passed to `warm_cache_async`, which only reports done if still current).
@@ -36,6 +90,10 @@ pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, String> {
+    capture_target_for_state(&state)
+}
+
+fn capture_target_for_state(state: &AppState) -> Result<String, String> {
     let preferred = state.last_focused.lock().unwrap().clone();
     if let Some(label) =
         preferred.filter(|label| state.graphs.read().unwrap().slot(label).is_some())
@@ -53,6 +111,43 @@ pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, Strin
         .ok_or_else(|| "no graph window is open".to_string())
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct CaptureGraphBindingResult {
+    pub(crate) binding_generation: u64,
+}
+
+/// Snapshot the graph selected for a Quick Capture show. Calling this from the
+/// native show path revokes the prior capture lease before a focused, persistent
+/// capture WebView can issue a query against an older graph. The frontend calls
+/// it again to learn the generation it must present with IPC.
+pub(crate) fn refresh_capture_graph_binding(state: &AppState) -> Result<u64, String> {
+    let target = capture_target_for_state(state)?;
+    let slot = slot_for_window(state, &target)?;
+    let binding_generation = slot.binding_generation;
+    state.bind_capture_graph(target, binding_generation);
+    Ok(binding_generation)
+}
+
+/// Return the binding selected by the native capture-show path. This is
+/// intentionally separate from `GraphRegistry::bind`: the capture surface must
+/// never become a second owner/writer for the graph root. Do not choose again
+/// here: the frontend must receive the exact target/generation selected for
+/// this show, so an old asynchronous activation cannot retarget itself.
+#[tauri::command]
+pub(crate) fn capture_graph_binding(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<CaptureGraphBindingResult, String> {
+    if window.label() != "capture" {
+        return Err("capture graph binding is only available to quick capture".into());
+    }
+    let binding_generation = state
+        .capture_graph_binding()
+        .ok_or("no graph bound for quick capture")?
+        .binding_generation;
+    Ok(CaptureGraphBindingResult { binding_generation })
+}
+
 struct LoadedGraph {
     graph: Graph,
     meta: GraphMeta,
@@ -61,9 +156,11 @@ struct LoadedGraph {
 
 fn open_graph_for_load(
     root: &str,
+    approved_assets: Option<&Path>,
     take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
 ) -> Result<LoadedGraph, String> {
-    let graph = Graph::open_checked(root).map_err(|e| format!("unsafe graph layout: {e}"))?;
+    let graph = Graph::open_checked_with_assets(root, approved_assets)
+        .map_err(|e| format!("unsafe graph layout: {e}"))?;
     let meta = graph.meta();
     let needs_migration = graph.has_journal_filename_migrations();
     let (backup_n, backup_complete) = if needs_migration {
@@ -72,16 +169,75 @@ fn open_graph_for_load(
         (0, false)
     };
     let launch_backup_done = backup_n > 0 && backup_complete;
-    if needs_migration && launch_backup_done {
+    let migration_may_run_before_sync = graph
+        .managed_sync_store_state()
+        .is_ok_and(|state| state == ManagedSyncStoreState::Absent);
+    if needs_migration && launch_backup_done && migration_may_run_before_sync {
         // Recover any journals mis-saved under their title (see method docs),
         // but only after the launch snapshot has captured the original names.
-        graph.migrate_journal_filenames();
+        graph
+            .migrate_journal_filenames_checked()
+            .map_err(|error| format!("journal filename migration failed: {error}"))?;
     }
     Ok(LoadedGraph {
         graph,
         meta,
         launch_backup_done,
     })
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct GraphAccessInspection {
+    graph_root: String,
+    external_assets_path: Option<String>,
+    approved: bool,
+}
+
+/// Inspect graph access before binding it to a window. This is intentionally a
+/// separate, read-only command so the frontend can show the resolved external
+/// target and obtain informed consent before any graph/asset operation begins.
+#[tauri::command]
+pub(crate) fn inspect_graph_access(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<GraphAccessInspection, String> {
+    let root = resolve_root(&path)
+        .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
+    let root = canonical_graph_root(&root)?;
+    let external = Graph::external_assets_target(&root).map_err(|error| error.to_string())?;
+    let approved_target =
+        approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
+    let approved = external
+        .as_ref()
+        .is_none_or(|target| approved_target.as_ref() == Some(target));
+    Ok(GraphAccessInspection {
+        graph_root: root.display().to_string(),
+        external_assets_path: external.map(|path| path.display().to_string()),
+        approved,
+    })
+}
+
+/// Persist consent only if the submitted target still exactly matches the
+/// graph's live canonical assets target (TOCTOU/retarget guard).
+#[tauri::command]
+pub(crate) fn approve_external_assets(
+    graph_root: String,
+    assets_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let root = canonical_graph_root(&graph_root)?;
+    let live = Graph::external_assets_target(&root)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "graph no longer uses an external assets directory".to_string())?;
+    let submitted = std::fs::canonicalize(&assets_path)
+        .map_err(|error| format!("couldn't resolve external assets path: {error}"))?;
+    if submitted != live {
+        return Err(format!(
+            "external assets directory changed before approval (now {})",
+            live.display()
+        ));
+    }
+    remember_external_assets_approval(&app, &root, &live)
 }
 
 #[tauri::command]
@@ -117,35 +273,46 @@ pub(crate) fn load_graph_for_label(
             #[cfg(desktop)]
             let _ = existing.unminimize();
             let _ = existing.set_focus();
+            // `FocusedExisting` is an explicit activation request. Update
+            // capture routing now instead of depending solely on a subsequent
+            // OS focus event, which is not guaranteed on every WM/headless
+            // environment.
+            if state.note_focused(&owner) {
+                if let Ok(slot) = slot_for_window(state, &owner) {
+                    let _ = remember_graph(app, &slot.root_key.display().to_string());
+                }
+            }
         }
         return Ok(LoadGraphResult::FocusedExisting {
             window_label: owner,
         });
     }
     let root = root_key.display().to_string();
+    let approved_assets = approved_external_assets(app, &root_key);
     let LoadedGraph {
         graph,
         meta,
         mut launch_backup_done,
-    } = open_graph_for_load(&root, |graph| backup_graph_now(app, graph, ""))?;
-    if graph.managed_sync_configured() {
-        if !launch_backup_done {
-            let (_, complete) = backup_graph_now(app, &graph, "pre-sync-replay");
-            if !complete {
-                return Err(
-                    "managed sync needs a complete safety snapshot before replay; graph left unchanged"
-                        .into(),
-                );
-            }
-            launch_backup_done = true;
-        }
-        let device_id = crate::settings::managed_sync_device_id(app)?;
+    } = open_graph_for_load(&root, approved_assets.as_deref(), |graph| {
+        backup_graph_now(app, graph, "")
+    })?;
+    let managed_state = graph
+        .managed_sync_store_state()
+        .map_err(|error| format!("managed sync store is unsafe or invalid: {error}"))?;
+    if managed_state != ManagedSyncStoreState::Absent {
+        launch_backup_done = ensure_managed_sync_safety_snapshot(
+            app,
+            &graph,
+            managed_state,
+            launch_backup_done,
+            "pre-sync-replay",
+        )?;
+        start_managed_sync_after_safety(app, &graph, managed_state)?;
+    }
+    if launch_backup_done {
         graph
-            .start_managed_sync(device_id, uuid::Uuid::new_v4())
-            .map_err(|error| format!("managed sync could not start: {error}"))?;
-        graph
-            .project_all_managed_sync()
-            .map_err(|error| format!("managed sync could not project: {error}"))?;
+            .migrate_journal_filenames_checked()
+            .map_err(|error| format!("journal filename migration failed: {error}"))?;
     }
     let slot = Arc::new(GraphSlot::new(graph, root_key));
     let warm_generation = begin_warm_cache(&slot);
@@ -154,10 +321,10 @@ pub(crate) fn load_graph_for_label(
         .write()
         .unwrap()
         .bind(window_label.to_string(), slot.clone())?;
-    *state.last_focused.lock().unwrap() = Some(window_label.to_string());
+    state.note_focused(window_label);
     poke_watcher(&state);
     if !launch_backup_done {
-        backup_async(app.clone(), &slot.graph);
+        backup_async(app.clone(), slot.clone());
     }
     remember_graph(app, &meta.root)?;
     if let Some(window) = app.get_webview_window(window_label) {
@@ -208,11 +375,21 @@ pub(crate) async fn open_graph_window(
                 .decorations(true)
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
-            #[cfg(not(target_os = "macos"))]
-            let builder = builder.decorations(false);
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let builder = builder.decorations(crate::settings::native_frame_active());
+            #[cfg(target_os = "windows")]
+            let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
+                builder.additional_browser_args(&arguments)
+            } else {
+                builder
+            };
             let built = builder.build();
             match built {
                 Ok(window) => {
+                    #[cfg(target_os = "linux")]
+                    crate::linux_window_identity::apply_to_window(&window);
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    crate::native_mouse_history::install(&window);
                     let _ = window.set_focus();
                 }
                 Err(error) => {
@@ -325,20 +502,39 @@ pub(crate) fn warm_cache_async(
         // background so the first search / query / `g j` agenda doesn't pay for
         // parsing every file synchronously under the lock.
         std::thread::sleep(std::time::Duration::from_millis(250));
-        if slot.warm_generation.load(Ordering::Acquire) != warm_generation {
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        slot.graph.warm_cache();
+        // At most one process-wide graph warm parses files at a time. Rapid
+        // switches may leave short-lived sleepers, but cannot amplify disk/CPU
+        // work; revoked slots stop between page parses.
+        static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _worker = WARM_WORK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
+            return;
+        }
+        let completed = slot.graph.warm_cache_cancellable(|| {
+            slot.background_cancelled.load(Ordering::Acquire)
+                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        });
+        if !completed {
+            return;
+        }
         let state: State<'_, AppState> = app.state();
-        let still_current = state
-            .graphs
-            .read()
-            .unwrap()
-            .slot(&window_label)
-            .map(|current| Arc::ptr_eq(&current, &slot))
-            .unwrap_or(false);
+        let current = state.graphs.read().unwrap().slot(&window_label);
+        let still_current = current.as_ref().is_some_and(|current| {
+            current.binding_generation == slot.binding_generation
+                && current.root_key == slot.root_key
+        });
         if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
-            slot.warm_done.store(true, Ordering::Release);
+            current.unwrap().warm_done.store(true, Ordering::Release);
             let _ = app.emit_to(&window_label, "warm-cache-done", ());
         }
     });
@@ -414,7 +610,7 @@ mod tests {
         .unwrap();
         let backup = dir.join("backup");
 
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), |g| {
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |g| {
             copy_graph_text_dir(&g.journals_path(), &backup.join("journals"))
         })
         .unwrap();
@@ -439,5 +635,78 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn managed_graph_load_defers_journal_migration_until_it_is_an_operation() {
+        let dir = scratch("managed-journal-migration");
+        std::fs::create_dir_all(dir.join("logseq")).unwrap();
+        std::fs::write(
+            dir.join("logseq/config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        let old = dir.join("journals/Thursday, 25-06-2026.org");
+        let canonical = dir.join("journals/2026_06_25.org");
+        std::fs::write(&old, "* managed journal\n").unwrap();
+        let initial = Graph::open(&dir);
+        initial
+            .enable_managed_sync(uuid::Uuid::new_v4(), uuid::Uuid::new_v4())
+            .unwrap();
+        let original_id = std::fs::read_to_string(&old)
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.split_whitespace().last())
+            .find(|value| uuid::Uuid::parse_str(value).is_ok())
+            .unwrap()
+            .to_string();
+        drop(initial);
+
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |graph| {
+            copy_graph_text_dir(&graph.journals_path(), &dir.join("backup/journals"))
+        })
+        .unwrap();
+        assert!(
+            old.exists(),
+            "the startup layer must not move it before replay"
+        );
+        assert!(!canonical.exists());
+        loaded
+            .graph
+            .start_managed_sync(uuid::Uuid::new_v4(), uuid::Uuid::new_v4())
+            .unwrap();
+        loaded.graph.project_all_managed_sync().unwrap();
+        assert_eq!(loaded.graph.migrate_journal_filenames_checked().unwrap(), 1);
+
+        assert!(!old.exists());
+        let projected = std::fs::read_to_string(&canonical).unwrap();
+        assert_eq!(projected.matches(&original_id).count(), 1);
+        assert_eq!(loaded.graph.managed_sync_status().unwrap().page_count, 1);
+        assert_eq!(
+            count_update_chunks(&dir.join(".tine-sync/v1")),
+            1,
+            "journal migration is one durable update operation"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn count_update_chunks(path: &Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|entry| {
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    count_update_chunks(&entry.path())
+                } else {
+                    usize::from(
+                        entry.path().extension().and_then(|value| value.to_str()) == Some("chunk")
+                            && entry.path().to_string_lossy().contains("/sessions/"),
+                    )
+                }
+            })
+            .sum()
     }
 }

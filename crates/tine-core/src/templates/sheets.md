@@ -54,8 +54,10 @@ icon:: ▦
 - ### Create one yourself — table
 	- 1. On a block, type `/Table` and pick **Table** (or right-click an existing outline and choose **Show children as → Table**).
 	- 2. Use the ghost **+ Add row** and **+ Add column** buttons to build it out. Each row is a child bullet; each column is a property such as `owner::` or `estimate::`, edited right in the cells.
-	- 3. What you should see: each child bullet becomes a row, and properties become editable table columns.
-	- 4. Under the hood: the block carries `tine.view:: table` (with optional `tine.fields::` to type columns and `tine.col-aggregates:: prop:estimate=sum` to total a numeric column in the footer). The ghost buttons write these for you.
+	- 3. Right-click a children-backed column header or double-click its name to rename the field and its dependent filter, group, aggregate, and formula references together. Ambiguous or colliding names are refused.
+	- 4. Press **Tab** after editing a cell to commit its value and move to the next cell.
+	- 5. What you should see: each child bullet becomes a row, and properties become editable table columns.
+	- 6. Under the hood: the block carries `tine.view:: table` (with optional `tine.fields::` to type columns and `tine.col-aggregates:: prop:estimate=sum` to total a numeric column in the footer). The ghost buttons write these for you.
 - ## Typed reading list
   tine.view:: table
   tine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox;owner=ref

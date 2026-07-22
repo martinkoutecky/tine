@@ -1,15 +1,41 @@
-# Checks on every push to master and every PR: frontend/type/Rust tests plus
-# platform compile probes. The probes exist because Linux host tests cannot see
-# Windows-only code or Android-specific libc declarations.
+# Full CI is a release-candidate gate, not a per-push tax. Dispatch `scope=full`
+# only after the candidate SHA is frozen; release.yml independently verifies that
+# this exact SHA has successful evidence from every full job before packaging.
+# Focused scopes remain available between releases for platform/performance work.
+# Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+
 on:
-  push:
-    branches: [master]
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**/*.png"
+      - "docs/**/*.jpg"
+      - "docs/**/*.jpeg"
+      - "docs/**/*.gif"
+      - "docs/**/*.webp"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Full release gate or one focused proof lane
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows
+          - android
+          - performance
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  pr-validation:
+    name: PR validation / Linux unit and contract checks
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +46,53 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      - name: Release and offline-source contract fixtures
+        run: |
+          node scripts/check-flatpak-node-sources.mjs
+          node scripts/check-flatpak-cargo-sources.mjs
+          node scripts/test-release-readiness-lib.mjs
+          node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
+
+      - name: lsdoc generated artifacts are current
+        run: |
+          node scripts/check-wasm-pin.mjs
+          node scripts/check-lsdoc-oracle-sync.mjs
+
+      - name: Typecheck and frontend tests
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      - name: Rust core tests
+        run: cargo test -p tine-core
+
+  test:
+    name: Full CI / Linux tests and release contracts
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -34,7 +107,28 @@ jobs:
         run: node scripts/check-flatpak-cargo-sources.mjs
 
       - name: Release pipeline contract fixtures
-        run: node scripts/test-release-pipeline.mjs
+        run: |
+          node scripts/test-release-readiness-lib.mjs
+          node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
+
+      - name: Performance baseline policy is current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
+
+      - name: Performance A/B multi-round reliability fixtures
+        run: node scripts/test-bench-ab.mjs
+
+      - name: UI regression catalog and release evidence contracts
+        run: |
+          npm run check:regressions
+          npm run check:release-readiness
+
+      - name: Canonical Guide/demo is generated and current
+        run: npm run docs:check
 
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
@@ -54,10 +148,20 @@ jobs:
       - name: Rust core tests
         run: cargo test -p tine-core
 
-  # Compile platform-gated source on every change. Linux host tests do not see
-  # either branch: Windows has its own cfg implementation, while Android's libc
-  # declarations differ from desktop Linux even for the same syscall.
+      - name: Standalone plugin template builds and conforms
+        run: npm run plugin:template-check
+
+      - name: Graph-ownership plugin fixture is reproducible and routes runtime IDs
+        run: npm run plugin:graph-ownership-fixture:check
+
+      - name: Launch plugins build and conform
+        run: ./scripts/build-community-plugins.sh
+
+  # Linux host tests do not see either platform branch: Windows has its own cfg
+  # implementation, while Android's libc declarations differ from desktop Linux.
   windows-compile:
+    name: Full CI / Windows compile and core tests
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,10 +175,14 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
+      - name: Windows core tests (including junction filesystem behavior)
+        run: cargo test -p tine-core
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 
   android-core-compile:
+    name: Full CI / Android core compile
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -87,28 +195,134 @@ jobs:
       - name: Android core compiles against Android libc declarations
         run: cargo check -p tine-core --target aarch64-linux-android
 
-  # Perf regression bench (docs/BENCH.md Tier 3). Performance is the #2 project
-  # priority; without this job a lazy-render/cache regression can land silently.
-  # `continue-on-error` for now: shared-runner noise vs the 30% gate is unproven —
-  # watch a few weeks of runs, then drop the flag to make it gating.
-  bench:
+  plugin-launch-e2e:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - name: Verify launch-plugin paths in a standalone checkout
+        run: npm run plugin:launch-paths-check
+      - name: Install launch-test browser
+        run: npx playwright install --with-deps chromium
+      - name: Build Tine and all launch plugins
+        run: |
+          npm run build
+          ./scripts/build-community-plugins.sh
+      - name: Exercise every launch plugin and capture evidence
+        env:
+          TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs
+        run: npm run plugin:launch-e2e
+      - name: Exercise every launch plugin through the Android host contract
+        env:
+          TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs-android
+        run: npm run plugin:launch-e2e:android
+      - name: Upload launch-plugin evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-launch-e2e-${{ github.run_attempt }}
+          path: test-results/plugin-docs
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload Android-host launch-plugin evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-launch-android-e2e-${{ github.run_attempt }}
+          path: test-results/plugin-docs-android
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Same-machine A/B perf gate. The immutable anchor prevents small release-over-
+  # release slowdowns from ratcheting the baseline; the previous release catches
+  # abrupt regressions. All three builds run on this one runner, so CPU model is
+  # not confused with code performance (docs/BENCH.md).
+  bench:
+    name: Full CI / performance A/B
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the rolling baseline to be the latest published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
+
+      - name: Read performance baseline refs
+        id: perf-policy
+        shell: bash
+        run: |
+          echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
+          echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.perf-policy.outputs.immutable }}
+          path: .bench/immutable
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.perf-policy.outputs.previous }}
+          path: .bench/previous
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      - name: Install candidate and baseline dependencies
+        run: |
+          npm ci
+          npm ci --prefix .bench/immutable
+          npm ci --prefix .bench/previous
 
       - name: Install bench browser (Playwright Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Build (prod — the bench serves dist/)
-        run: npm run build
+      - name: Build candidate and both baseline refs
+        run: |
+          npm run build
+          npm --prefix .bench/immutable run build
+          npm --prefix .bench/previous run build
 
-      - name: Perf bench (non-gating while runner noise is calibrated)
-        continue-on-error: true
-        run: npm run bench
+      - name: Measure immutable baseline, previous release, and candidate in interleaved rounds
+        run: |
+          mkdir -p test-results/perf
+          node scripts/bench-ab.mjs \
+            --policy scripts/bench-policy.json \
+            --candidate-dir . \
+            --immutable-dir .bench/immutable \
+            --previous-dir .bench/previous \
+            --output-dir test-results/perf
+
+      - name: Enforce metric-specific A/B budgets
+        run: |
+          node scripts/check-bench-ab.mjs \
+            --policy scripts/bench-policy.json \
+            --candidate test-results/perf/candidate.json \
+            --immutable test-results/perf/immutable.json \
+            --previous test-results/perf/previous.json
+
+      - name: Upload performance measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-ab-${{ github.run_attempt }}
+          path: |
+            test-results/perf/

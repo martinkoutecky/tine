@@ -220,6 +220,15 @@ pub struct AffectedPage {
     pub paths: Vec<String>,
 }
 
+/// Exact local filesystem state that one explicit operation is allowed to
+/// replace while its projection is being completed after a crash.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectionPrecondition {
+    pub path: String,
+    /// `None` distinguishes an absent path from a present empty file.
+    pub expected_content: Option<String>,
+}
+
 /// Result of a durably published local mutation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommitReport {

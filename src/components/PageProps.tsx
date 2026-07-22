@@ -1,7 +1,8 @@
-import { For, Show, createSignal, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps } from "../ui";
 import { readPageProperty, setPageProperty } from "../store";
 import { PAGE_PROP_SPECS, type PagePropSpec } from "../editor/properties";
+import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 
 // Page-properties panel: labelled fields for the page-level properties that are
 // otherwise only reachable as raw `key:: value` lines (alias, tags, public, …).
@@ -24,6 +25,10 @@ function Panel(props: { name: string; x: number; y: number }): JSX.Element {
   // height so its full content stays on-screen — no scrollbar for normal content.
   const [top, setTop] = createSignal(Math.max(8, Math.min(props.y, h - 380)));
   let el: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "page-properties", root: () => el ?? null, dismiss: () => { closePageProps(); return true; } });
+    onCleanup(unregister);
+  });
   onMount(() => setTop(Math.max(8, Math.min(props.y, h - (el?.offsetHeight ?? 380) - 8))));
   return (
     <div
@@ -88,11 +93,12 @@ function Field(props: { name: string; spec: PagePropSpec }): JSX.Element {
         onInput={(e) => setV(e.currentTarget.value)}
         onKeyDown={(e) => {
           e.stopPropagation();
+          if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Enter") {
             commit();
             closePageProps();
           } else if (e.key === "Escape") {
-            closePageProps();
+            if (dismissTopTransient("escape")) e.preventDefault();
           }
         }}
         onBlur={commit}

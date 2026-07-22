@@ -9,9 +9,14 @@ import type { GraphSourceFile } from "../../backend";
 import { MldocClient, type Format, type Projection } from "./mldoc-client";
 import { lsdocDocumentAvailable, lsdocVersion, parseLsdocDocument } from "./lsdoc-document";
 import { projectionKey } from "./projection";
-import { minimize, toBytes } from "./minimize";
+import { lineNumberForOffset, minimize, toBytes } from "./minimize";
 import { anonymizeAndVerify, anonymizeSourceRel } from "./anonymize";
 import { benchFromResults, summarizeBenchRuns, type BenchRun, type BenchSummary } from "./bench";
+import {
+  isMldocBacktickStateArtifact,
+  mldocBacktickArtifactSourceSpan,
+  shouldQuarantineMldocBacktickStateArtifact,
+} from "./oracle-artifacts";
 
 export interface DiffOptions {
   mode: "diff" | "bench" | "both";
@@ -32,7 +37,14 @@ export type Finding =
         | { ok: false };
     }
   | { type: "mldoc-failure"; rel: string; status: string; detail: string }
-  | { type: "unstable-divergence"; rel: string };
+  | { type: "unstable-divergence"; rel: string }
+  | {
+      type: "mldoc-oracle-artifact";
+      rel: string;
+      lineStart: number;
+      lineEnd: number;
+      detail: string;
+    };
 
 export interface DiffReport {
   tineVersion: string;
@@ -151,7 +163,50 @@ async function runDiff(
     }
     const buf = toBytes(f.text);
     const min = await minimize(buf, f.format, (t, fmt) => parseBothFresh(t, fmt));
-    const anon = await anonymizeAndVerify<Projection>(min.input, (candidate) => parseBothFresh(candidate, f.format));
+    // `contextDependent` means the minimizer could not reproduce the mismatch in
+    // any independently parsed range; every such probe used parseFresh and thus
+    // a brand-new mldoc realm. Suppress only the exact issue #82 one-backtick
+    // Plain/Code ownership shift. Other context-sensitive differences remain
+    // actionable divergences.
+    const artifactSpan = original.lsdocProjection && original.mldocProjection
+      ? mldocBacktickArtifactSourceSpan(original.lsdocProjection, original.mldocProjection)
+      : null;
+    if (
+      original.lsdocProjection
+      && original.mldocProjection
+      && artifactSpan
+      && shouldQuarantineMldocBacktickStateArtifact(
+        min.contextDependent,
+        original.lsdocProjection,
+        original.mldocProjection,
+      )
+    ) {
+      const isolatedText = new TextDecoder().decode(buf.subarray(artifactSpan[0], artifactSpan[1]));
+      const isolated = await parseBothFresh(isolatedText, f.format);
+      if (isolated.ok && !isolated.diverges) {
+        findings.push({
+          type: "mldoc-oracle-artifact",
+          rel,
+          lineStart: lineNumberForOffset(buf, artifactSpan[0]),
+          lineEnd: lineNumberForOffset(buf, Math.max(artifactSpan[0], artifactSpan[1] - 1)),
+          detail: "suppressed: mldoc leaked failed double-backtick parser state; a fresh isolated-block parse agrees",
+        });
+        continue;
+      }
+    }
+    const minimizedOriginal = await parseBothFresh(min.input, f.format);
+    const anon = minimizedOriginal.ok && minimizedOriginal.diverges
+      ? await anonymizeAndVerify<Projection>(
+          min.input,
+          (candidate) => parseBothFresh(candidate, f.format),
+          (parsed) => !(
+            parsed.lsdocProjection
+            && parsed.mldocProjection
+            && isMldocBacktickStateArtifact(parsed.lsdocProjection, parsed.mldocProjection)
+          ),
+          minimizedOriginal,
+        )
+      : { ok: false };
     findings.push({
       type: "divergence",
       rel,

@@ -23,6 +23,7 @@ export function releaseLayout(version) {
       assets: [
         `Tine_${version}_amd64.AppImage`,
         `Tine_${version}_amd64.AppImage.sig`,
+        `Tine_${version}_amd64.AppImage.zsync`,
         `Tine_${version}_amd64.deb`,
         `Tine_${version}_amd64.deb.sig`,
         `Tine-${version}-1.x86_64.rpm`,
@@ -45,6 +46,7 @@ export function releaseLayout(version) {
       assets: [
         `Tine_${version}_aarch64.AppImage`,
         `Tine_${version}_aarch64.AppImage.sig`,
+        `Tine_${version}_aarch64.AppImage.zsync`,
         `Tine_${version}_arm64.deb`,
         `Tine_${version}_arm64.deb.sig`,
         `Tine-${version}-1.aarch64.rpm`,

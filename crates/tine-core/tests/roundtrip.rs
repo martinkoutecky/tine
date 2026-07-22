@@ -116,6 +116,24 @@ fn block_properties() {
 }
 
 #[test]
+fn property_names_fold_for_lookup_without_changing_source_bytes() {
+    let input = concat!(
+        "- task\n",
+        "  Done_At:: 1\n",
+        "- mixed spellings\n",
+        "  done_at:: 2\n",
+        "  done-at:: 3\n",
+    );
+    assert_roundtrip(input);
+
+    let parsed = doc::parse(input);
+    let block = &parsed.roots[0];
+    assert_eq!(block.property("done-at").as_deref(), Some("1"));
+    assert_eq!(block.property("DONE_AT").as_deref(), Some("1"));
+    assert_eq!(block.raw, "task\nDone_At:: 1");
+}
+
+#[test]
 fn page_properties_pre_block() {
     let input = "title:: My Page\ntags:: a, b\nalias:: Other\n\n- first block\n- second\n";
     assert_roundtrip(input);

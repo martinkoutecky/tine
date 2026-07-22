@@ -1,6 +1,10 @@
 use crate::state::{slot_for_context, GraphContext};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tauri::Manager;
+
+pub(crate) const NATIVE_FRAME_KEY: &str = "native_window_frame";
+static NATIVE_FRAME_ACTIVE: OnceLock<bool> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct KnownGraph {
@@ -16,12 +20,64 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         .ok()
         .map(|d| d.join("tine-settings.json"))
 }
+
+fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
+        .unwrap_or(default)
+}
+
+/// Freeze the native-frame preference before Tauri constructs any windows.
+/// Tao does not support changing Linux decorations on an existing window, so
+/// every window created by this process must use the same startup value.
+pub(crate) fn init_native_frame_active() -> bool {
+    *NATIVE_FRAME_ACTIVE.get_or_init(|| {
+        crate::migrate_identifier::current_app_data_dir()
+            .map(|dir| app_bool_at(&dir.join("tine-settings.json"), NATIVE_FRAME_KEY, false))
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn native_frame_active() -> bool {
+    init_native_frame_active()
+}
 /// Serializes ALL device-settings (tine-settings.json) writers; every `set_*` below
 /// goes through `update_settings`, which routes to the shared `tine_core` atomic_update
 /// (audit M1): the JSON is read-modify-written under this lock + atomically (temp +
 /// fsync + rename), so a crash can't truncate it, a concurrent `set_*` can't clobber
 /// another's key, and a transient read error aborts instead of resetting all prefs.
 static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Strict, fallible variant used by the signed registry cache. Unlike the
+/// legacy generic preference writer, this must never rebuild a malformed
+/// settings file from `{}`: doing so could erase unrelated device settings and
+/// turn a cache-storage failure into apparent success.
+pub(crate) fn update_settings_strict_at(
+    path: &std::path::Path,
+    mutate: impl Fn(&mut serde_json::Value) -> Result<(), String>,
+) -> Result<(), String> {
+    tine_core::model::atomic_update(path, &SETTINGS_LOCK, |content| {
+        let mut json: serde_json::Value = serde_json::from_str(content)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        if !json.is_object() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "device settings root is not an object",
+            ));
+        }
+        mutate(&mut json)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        serde_json::to_string_pretty(&json)
+            .map(|mut text| {
+                text.push('\n');
+                text
+            })
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })
+    .map_err(|error| error.to_string())
+}
 
 /// Merge one or more keys into the device-settings JSON, durably. `mutate` edits the
 /// parsed object (an unparseable existing file is treated as `{}`, the prior behavior).
@@ -49,15 +105,26 @@ pub(crate) fn update_settings(
 /// same device stream would violate the one-writer invariant. Loro peer ids are
 /// session-scoped separately; this UUID names the installation directory only.
 pub(crate) fn managed_sync_device_id(app: &tauri::AppHandle) -> Result<uuid::Uuid, String> {
+    let path = settings_path(app).ok_or("no app-data dir")?;
+    managed_sync_device_id_at(&path)
+}
+
+fn managed_sync_device_id_at(path: &std::path::Path) -> Result<uuid::Uuid, String> {
     let chosen = std::sync::Mutex::new(None);
-    update_settings(app, |json| {
-        let id = json
-            .get("managed_sync_device_id")
-            .and_then(|value| value.as_str())
-            .and_then(|value| uuid::Uuid::parse_str(value).ok())
-            .unwrap_or_else(uuid::Uuid::new_v4);
+    update_settings_strict_at(path, |json| {
+        let id = match json.get("managed_sync_device_id") {
+            None => uuid::Uuid::new_v4(),
+            Some(value) => value
+                .as_str()
+                .ok_or_else(|| "managed_sync_device_id must be a UUID string".to_string())
+                .and_then(|value| {
+                    uuid::Uuid::parse_str(value)
+                        .map_err(|_| "managed_sync_device_id is not a valid UUID".to_string())
+                })?,
+        };
         json["managed_sync_device_id"] = serde_json::Value::String(id.to_string());
         *chosen.lock().unwrap() = Some(id);
+        Ok(())
     })?;
     chosen
         .into_inner()
@@ -99,6 +166,55 @@ fn forget_graph_json(json: &mut serde_json::Value, path: &str) {
     let mut graphs = parse_known_graphs(json);
     graphs.retain(|graph| graph.path != path);
     json["known_graphs"] = serde_json::to_value(graphs).unwrap_or_default();
+}
+
+fn external_assets_approvals(
+    json: &serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    json.get("external_assets_approvals")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The trust grant is deliberately device-local and keyed by BOTH canonical
+/// graph root and canonical external target. It never enters graph content, and
+/// a retargeted symlink/junction therefore cannot inherit the old grant.
+pub(crate) fn approved_external_assets(
+    app: &tauri::AppHandle,
+    graph_root: &std::path::Path,
+) -> Option<PathBuf> {
+    let key = graph_root.display().to_string();
+    settings_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|json| {
+            external_assets_approvals(&json)
+                .get(&key)
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+        })
+}
+
+pub(crate) fn remember_external_assets_approval(
+    app: &tauri::AppHandle,
+    graph_root: &std::path::Path,
+    assets_root: &std::path::Path,
+) -> Result<(), String> {
+    let graph = graph_root.display().to_string();
+    let assets = assets_root.display().to_string();
+    update_settings(app, |json| {
+        remember_external_assets_approval_json(json, &graph, &assets)
+    })
+}
+
+fn remember_external_assets_approval_json(json: &mut serde_json::Value, graph: &str, assets: &str) {
+    let mut approvals = external_assets_approvals(json);
+    approvals.insert(
+        graph.to_string(),
+        serde_json::Value::String(assets.to_string()),
+    );
+    json["external_assets_approvals"] = serde_json::Value::Object(approvals);
 }
 
 pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
@@ -205,9 +321,7 @@ pub(crate) fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<()
 #[tauri::command]
 pub(crate) fn get_app_bool(key: String, default: bool, app: tauri::AppHandle) -> bool {
     settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(&key).and_then(|x| x.as_bool()))
+        .map(|path| app_bool_at(&path, &key, default))
         .unwrap_or(default)
 }
 
@@ -243,8 +357,8 @@ pub(crate) fn set_app_string(
 
 /// Path to the persisted UI session (open tabs / active tab / zoom). This is
 /// app-level window state, not graph content, so it lives next to the settings
-/// file in the app-data dir. (WebKitGTK's localStorage is not durably persisted
-/// for this app, so the frontend can't rely on it — it round-trips here.)
+/// file in the app-data dir. The backend owns atomic structured persistence and
+/// makes it independent of a particular WebView's localStorage namespace.
 fn legacy_session_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
@@ -276,6 +390,145 @@ fn session_path(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBu
         .app_data_dir()
         .ok()
         .map(|d| d.join("sessions").join(session_id(root)))
+}
+
+fn workspaces_path(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
+    let id = session_id(root);
+    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("sessions").join(format!("{stem}-workspaces.json")))
+}
+
+fn blank_session_json() -> serde_json::Value {
+    serde_json::json!({
+        "tabs": [{
+            "history": [{ "kind": "journals" }],
+            "pos": 0,
+            "pinned": false
+        }],
+        "activeIndex": 0
+    })
+}
+
+fn migrated_workspaces_json(session: Option<&str>) -> String {
+    let blob = session
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .unwrap_or_else(blank_session_json);
+    serde_json::to_string(&serde_json::json!({
+        "version": 1,
+        "activeId": "default",
+        "workspaces": [{ "id": "default", "name": "", "blob": blob }]
+    }))
+    .expect("workspace migration JSON is serializable")
+}
+
+fn validate_workspaces_json(data: &str) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(data).map_err(|e| e.to_string())?;
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("workspace registry version must be 1".into());
+    }
+    let active = value
+        .get("activeId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or("workspace registry requires an activeId")?;
+    let entries = value
+        .get("workspaces")
+        .and_then(serde_json::Value::as_array)
+        .filter(|entries| !entries.is_empty())
+        .ok_or("workspace registry requires at least one workspace")?;
+    if !entries.iter().any(|entry| {
+        entry.get("id").and_then(serde_json::Value::as_str) == Some(active)
+            && entry
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+            && entry.get("blob").is_some_and(serde_json::Value::is_object)
+    }) {
+        return Err("active workspace is missing or invalid".into());
+    }
+    Ok(())
+}
+
+static WORKSPACES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn atomic_write_workspaces(path: &std::path::Path, data: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or("workspace registry has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("workspaces.json");
+    let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(data.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result.map_err(|e| e.to_string())
+}
+
+fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Result<String, String> {
+    let _guard = WORKSPACES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match std::fs::read_to_string(path) {
+        Ok(data) => {
+            validate_workspaces_json(&data)?;
+            Ok(data)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let legacy = std::fs::read_to_string(session).ok();
+            let data = migrated_workspaces_json(legacy.as_deref());
+            atomic_write_workspaces(path, &data)?;
+            Ok(data)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn save_workspaces_at(path: &std::path::Path, data: &str) -> Result<(), String> {
+    validate_workspaces_json(data)?;
+    let _guard = WORKSPACES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    atomic_write_workspaces(path, data)
+}
+
+pub(crate) fn load_workspaces(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    let session = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    load_workspaces_at(&path, &session)
+}
+
+pub(crate) fn save_workspaces(
+    data: String,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    save_workspaces_at(&path, &data)
 }
 
 static SESSION_MIGRATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -360,5 +613,137 @@ mod tests {
             session_id(std::path::Path::new("/one/graph")),
             session_id(std::path::Path::new("/two/graph"))
         );
+    }
+
+    #[test]
+    fn workspace_migration_preserves_the_session_and_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("graph.json");
+        let registry = temp.path().join("graph-workspaces.json");
+        let prior = r#"{"tabs":[{"history":[{"kind":"page","name":"Prior","pageKind":"page"}],"pos":0,"pinned":true}],"activeIndex":0}"#;
+        std::fs::write(&session, prior).unwrap();
+
+        let first = load_workspaces_at(&registry, &session).unwrap();
+        let first_value: serde_json::Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(first_value["activeId"], "default");
+        assert_eq!(first_value["workspaces"][0]["name"], "");
+        assert_eq!(
+            first_value["workspaces"][0]["blob"],
+            serde_json::from_str::<serde_json::Value>(prior).unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(&session).unwrap(), prior);
+
+        let bytes = std::fs::read(&registry).unwrap();
+        let modified = std::fs::metadata(&registry).unwrap().modified().unwrap();
+        let second = load_workspaces_at(&registry, &session).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(std::fs::read(&registry).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&registry).unwrap().modified().unwrap(),
+            modified
+        );
+        assert_eq!(std::fs::read_to_string(&session).unwrap(), prior);
+    }
+
+    #[test]
+    fn workspace_registry_full_cycle_keeps_graph_page_bytes_and_mtime_identical() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("tine-test");
+        let pages = graph.join("pages");
+        std::fs::create_dir_all(&pages).unwrap();
+        let page = pages.join("byte-identical.md");
+        std::fs::write(&page, "- original graph bytes\n").unwrap();
+        let before_bytes = std::fs::read(&page).unwrap();
+        let before_modified = std::fs::metadata(&page).unwrap().modified().unwrap();
+
+        let registry = temp
+            .path()
+            .join("app-data/sessions/tine-test-workspaces.json");
+        let states = [
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"One","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"two","workspaces":[{"id":"one","name":"One","blob":blank_session_json()},{"id":"two","name":"Two","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"Renamed","blob":blank_session_json()},{"id":"two","name":"Two","blob":blank_session_json()}]}),
+            serde_json::json!({"version":1,"activeId":"one","workspaces":[{"id":"one","name":"Renamed","blob":blank_session_json()}]}),
+        ];
+        for state in states {
+            save_workspaces_at(&registry, &state.to_string()).unwrap();
+            assert_eq!(std::fs::read(&page).unwrap(), before_bytes);
+            assert_eq!(
+                std::fs::metadata(&page).unwrap().modified().unwrap(),
+                before_modified
+            );
+        }
+    }
+
+    #[test]
+    fn external_asset_approvals_are_device_local_and_target_specific() {
+        let mut json = serde_json::json!({ "unrelated": true });
+        remember_external_assets_approval_json(&mut json, "/graphs/a", "/media/one");
+        remember_external_assets_approval_json(&mut json, "/graphs/b", "/media/two");
+        remember_external_assets_approval_json(&mut json, "/graphs/a", "/media/retargeted");
+
+        let approvals = external_assets_approvals(&json);
+        assert_eq!(approvals["/graphs/a"], "/media/retargeted");
+        assert_eq!(approvals["/graphs/b"], "/media/two");
+        assert_eq!(json["unrelated"], true);
+    }
+
+    #[test]
+    fn app_bool_reader_preserves_defaults_for_missing_or_invalid_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-settings-bool-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+
+        assert!(app_bool_at(&path, "frame", true));
+        std::fs::write(&path, "not json").unwrap();
+        assert!(!app_bool_at(&path, "frame", false));
+        std::fs::write(&path, r#"{"frame":true,"other":false}"#).unwrap();
+        assert!(app_bool_at(&path, "frame", false));
+        assert!(app_bool_at(&path, "missing", true));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn managed_sync_device_id_is_stable_and_preserves_other_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        std::fs::write(&path, r#"{"unrelated":true}"#).unwrap();
+
+        let first = managed_sync_device_id_at(&path).unwrap();
+        let second = managed_sync_device_id_at(&path).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(second, first);
+        assert_eq!(persisted["managed_sync_device_id"], first.to_string());
+        assert_eq!(persisted["unrelated"], true);
+    }
+
+    #[test]
+    fn managed_sync_device_id_refuses_to_replace_malformed_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        let malformed = b"not json\n";
+        std::fs::write(&path, malformed).unwrap();
+
+        assert!(managed_sync_device_id_at(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), malformed);
+    }
+
+    #[test]
+    fn managed_sync_device_id_refuses_to_regenerate_an_invalid_existing_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        let invalid = br#"{"managed_sync_device_id":"not-a-uuid","unrelated":true}"#;
+        std::fs::write(&path, invalid).unwrap();
+
+        assert!(managed_sync_device_id_at(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), invalid);
     }
 }

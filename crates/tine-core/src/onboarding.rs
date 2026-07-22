@@ -7,10 +7,10 @@
 //! written here is ordinary Logseq Markdown — the same graph opens in Logseq.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
-use crate::model::{atomic_write, markdown_page_dto, Graph, PageDto, PageKind};
+use crate::model::{atomic_write_new, markdown_page_dto, Graph, PageDto, PageKind};
 
 /// `logseq/config.edn` for the demo graph (triple-lowbar namespace filenames,
 /// the welcome page pinned as a favorite).
@@ -19,26 +19,6 @@ const CONFIG_EDN: &str = include_str!("templates/config.edn");
 /// The capture-window screenshot embedded by the quick-capture page.
 const QUICK_CAPTURE_PNG: &[u8] = include_bytes!("templates/assets/quick-capture.png");
 
-/// (page title, Markdown body) for each page the demo graph ships with. Titles
-/// with a `/` create namespaces (e.g. `Features/Quick capture`).
-const PAGES: &[(&str, &str)] = &[
-    ("Welcome to Tine", include_str!("templates/welcome.md")),
-    ("Tine Guide", include_str!("templates/guide.md")),
-    (
-        "Features/Quick capture",
-        include_str!("templates/quick-capture.md"),
-    ),
-    (
-        "Features/Tips & shortcuts",
-        include_str!("templates/tips.md"),
-    ),
-    ("Features/Sheets", include_str!("templates/sheets.md")),
-    ("Features/Formulas", include_str!("templates/formulas.md")),
-    ("Features/PDF annotation", include_str!("templates/pdf.md")),
-    ("Feature showcase", include_str!("templates/showcase.md")),
-    ("Project/Roadmap", include_str!("templates/roadmap.md")),
-];
-
 /// In-memory namespace for bundled, read-only guide pages. These pages are
 /// rendered live in the running app but are not graph files.
 pub const GUIDE_DISPLAY_PREFIX: &str = "Tine-guide/";
@@ -46,6 +26,9 @@ pub const GUIDE_DISPLAY_PREFIX: &str = "Tine-guide/";
 /// Real graph namespace used only by the explicit guide-copy action.
 pub const GUIDE_COPY_PREFIX: &str = "tine-guide/";
 
+/// One canonical manifest feeds all three Guide surfaces: the onboarding graph,
+/// the in-app read-only Guide, and the generated website demo. Keeping the list
+/// in one place prevents a page from silently disappearing from one surface.
 struct GuideTemplate {
     title: &'static str,
     markdown: &'static str,
@@ -80,6 +63,10 @@ const GUIDE_TEMPLATES: &[GuideTemplate] = &[
     GuideTemplate {
         title: "Features/PDF annotation",
         markdown: include_str!("templates/pdf.md"),
+    },
+    GuideTemplate {
+        title: "Features/Plugins",
+        markdown: include_str!("templates/plugins.md"),
     },
     GuideTemplate {
         title: "Features/Tips & shortcuts",
@@ -216,7 +203,6 @@ fn copy_referenced_guide_assets(graph: &Graph) -> io::Result<Vec<String>> {
     let mut referenced: Vec<String> = referenced.into_iter().collect();
     referenced.sort();
 
-    let assets = graph.assets_path();
     let mut copied = Vec::new();
     for name in referenced {
         if name.contains('/') || name.contains('\\') {
@@ -231,20 +217,8 @@ fn copy_referenced_guide_assets(graph: &Graph) -> io::Result<Vec<String>> {
                 format!("missing bundled guide asset {name}"),
             ));
         };
-        std::fs::create_dir_all(&assets)?;
-        let path = assets.join(&name);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(asset.bytes)?;
-                file.sync_all()?;
-                copied.push(name);
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e),
+        if graph.create_asset_if_absent(&name, asset.bytes)? {
+            copied.push(name);
         }
     }
     Ok(copied)
@@ -284,13 +258,13 @@ pub fn create_demo_graph(root: &Path) -> io::Result<()> {
 
     // Config first, so opening the graph below picks up the triple-lowbar
     // filename encoding the page paths are resolved with.
-    atomic_write(&logseq.join("config.edn"), CONFIG_EDN.as_bytes())?;
-    atomic_write(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
+    atomic_write_new(&logseq.join("config.edn"), CONFIG_EDN.as_bytes())?;
+    atomic_write_new(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
 
     let graph = Graph::open(root);
-    for (title, body) in PAGES {
-        let path = graph.path_for(title, PageKind::Page);
-        atomic_write(&path, body.as_bytes())?;
+    for template in GUIDE_TEMPLATES {
+        let path = graph.path_for(template.title, PageKind::Page);
+        atomic_write_new(&path, template.markdown.as_bytes())?;
     }
     Ok(())
 }
@@ -334,10 +308,11 @@ mod tests {
         // Every page loads by its (namespace-decoded) title, and every page parses.
         let graph = Graph::open(&dir);
         let entries = graph.list_pages();
-        for (title, _) in PAGES {
+        for template in GUIDE_TEMPLATES {
+            let title = template.title;
             let entry = entries
                 .iter()
-                .find(|e| e.name == *title)
+                .find(|e| e.name == title)
                 .unwrap_or_else(|| panic!("page {title:?} not listed"));
             graph
                 .load_page(entry)
@@ -398,7 +373,18 @@ mod tests {
             .find(|p| p.title == "Features/Sheets")
             .expect("sheets guide is bundled");
         assert!(sheets.markdown.contains("Create one yourself"));
-        assert!(sheets.page.blocks.iter().any(|b| b.raw.contains("Positional grid")));
+        assert!(sheets
+            .page
+            .blocks
+            .iter()
+            .any(|b| b.raw.contains("Positional grid")));
+
+        let plugins = pages
+            .iter()
+            .find(|p| p.title == "Features/Plugins")
+            .expect("plugins guide is bundled");
+        assert!(plugins.markdown.contains("installed disabled"));
+        assert!(plugins.markdown.contains("not Logseq or Obsidian plugins"));
     }
 
     /// Bare `[[…]]` link targets in a markdown body (labelled links, embeds, and
@@ -421,16 +407,18 @@ mod tests {
         // Every guide page that another guide page links to must itself be a
         // bundled guide page — otherwise the link dangles in the in-app guide AND
         // in the copied-into-graph copy (the bug that shipped when Welcome/Roadmap
-        // were in PAGES but not GUIDE_TEMPLATES). We flag ONLY targets that are
-        // real demo pages (in PAGES); links to stub pages like [[Martin]] are a
+        // were in the onboarding list but not GUIDE_TEMPLATES). We flag ONLY targets that are
+        // real demo pages (in the manifest); links to stub pages like [[Martin]] are a
         // deliberate Logseq affordance (click-to-create) and stay out of the guide.
         use std::collections::HashSet;
         let guide: HashSet<String> = GUIDE_TEMPLATES
             .iter()
             .map(|t| crate::refs::page_key(t.title))
             .collect();
-        let demo: HashSet<String> =
-            PAGES.iter().map(|(t, _)| crate::refs::page_key(t)).collect();
+        let demo: HashSet<String> = GUIDE_TEMPLATES
+            .iter()
+            .map(|t| crate::refs::page_key(t.title))
+            .collect();
         for t in GUIDE_TEMPLATES {
             for target in extract_page_links(t.markdown) {
                 let key = crate::refs::page_key(&target);
@@ -456,6 +444,7 @@ mod tests {
             "Features/Formulas",
             "Features/Quick capture",
             "Features/PDF annotation",
+            "Features/Plugins",
             "Features/Tips & shortcuts",
             "Feature showcase",
         ];
@@ -518,8 +507,9 @@ mod tests {
             );
         }
 
-        let index = std::fs::read_to_string(graph.path_for("tine-guide/Tine Guide", PageKind::Page))
-            .unwrap();
+        let index =
+            std::fs::read_to_string(graph.path_for("tine-guide/Tine Guide", PageKind::Page))
+                .unwrap();
         assert!(index.contains("[[tine-guide/Features/Sheets]]"));
         assert!(!index.contains("[[Features/Sheets]]"));
         assert!(dir.join("assets/quick-capture.png").is_file());
@@ -564,5 +554,43 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_guide_rejects_pages_directory_symlink_swap() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("tine-guide-pages-swap");
+        let outside = scratch("tine-guide-pages-outside");
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        let graph = Graph::open(&dir);
+        std::fs::remove_dir(dir.join("pages")).unwrap();
+        symlink(&outside, dir.join("pages")).unwrap();
+
+        assert!(copy_guide_into_graph(&graph, "Tine Guide").is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = std::fs::remove_file(dir.join("pages"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_guide_rejects_assets_directory_symlink_swap() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("tine-guide-assets-swap");
+        let outside = scratch("tine-guide-assets-outside");
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let graph = Graph::open(&dir);
+        std::fs::remove_dir(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets")).unwrap();
+
+        assert!(copy_guide_into_graph(&graph, "Tine Guide").is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = std::fs::remove_file(dir.join("assets"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }

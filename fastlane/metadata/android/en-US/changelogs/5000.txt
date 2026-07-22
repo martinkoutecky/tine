@@ -1,7 +1,7 @@
 Added: Sheets — turn a bullet and its children into a spreadsheet-style grid, a
-typed field table, or a Kanban board, with formula columns, filters, aggregates,
-group-by, and CSV/TSV import, all stored as plain Logseq Markdown; Split view with
-per-pane tabs and history; Org-mode graphs; and an in-app Guide. Fixed: backups now
-include nested pages; PDF highlight migration can't overwrite another PDF's data;
-`##` headings render on every line of a multi-line block; typing in a very long
-block no longer jumps the caret to the bottom.
+typed field table, or a Kanban board, with formulas, filters, aggregates,
+group-by, and CSV/TSV import, all stored as plain Logseq Markdown; Split view
+with per-pane tabs and history; Org-mode graphs; and an in-app Guide. Fixed:
+backups now include nested pages; PDF highlight migration can't overwrite
+another PDF's data; `##` headings render on every line; typing in a very long
+block no longer jumps the caret.

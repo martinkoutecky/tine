@@ -1,0 +1,13 @@
+[package]
+name = "my-tine-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tine-plugin-sdk = { git = "https://github.com/martinkoutecky/tine", rev = "daabe817fd5b2e53ad0384a207714cfbc752d733" }

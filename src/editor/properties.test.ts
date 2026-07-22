@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   caretInFence,
+  multilineExitTrim,
   isSheetCellHidden,
   joinProps,
   readPropertyValue,
@@ -8,7 +9,47 @@ import {
   upsertPropertyLine,
   isBuiltinHidden,
   rawOffsetToVisibleOffset,
+  isPageHeaderPropertiesOnly,
+  parsePageHeaderPropertyLine,
+  splitPagePreamble,
 } from "./properties";
+
+describe("canonical Markdown page-header grammar (GH #163)", () => {
+  it("accepts Unicode/plugin keys and preserves internal blank separators", () => {
+    expect(parsePageHeaderPropertyLine("klíč:: hodnota")).toEqual({ key: "klíč", value: " hodnota" });
+    expect(parsePageHeaderPropertyLine("e\u0301/plugin.key::value")).toEqual({ key: "e\u0301/plugin.key", value: "value" });
+    expect(isPageHeaderPropertiesOnly("alias:: book\n\nklíč:: hodnota")).toBe(true);
+    expect(splitPagePreamble("alias:: book\n\nklíč:: hodnota\n\nIntro")).toEqual({
+      properties: "alias:: book\n\nklíč:: hodnota",
+      content: "Intro",
+      remainder: "\n\nIntro",
+    });
+  });
+
+  it("rejects leading whitespace, headings, prose, fences and trailing blanks", () => {
+    for (const raw of [" alias:: x", "#alias:: x", "alias key:: x", "```\na:: b\n```", "alias:: x\nprose", "alias:: x\n"]) {
+      expect(isPageHeaderPropertiesOnly(raw), raw).toBe(false);
+    }
+  });
+});
+
+describe("multilineExitTrim — Enter on a trailing blank line exits a code/calc block", () => {
+  it("fenced: exits only on the blank last content line and keeps the closing fence", () => {
+    expect(multilineExitTrim("```js\ncode\n\n```", 11, "fence")).toBe("```js\ncode\n```");
+    expect(multilineExitTrim("```js\na\n\nb\n```", 8, "fence")).toBeNull();
+    expect(multilineExitTrim("```js\ncode\n```", 8, "fence")).toBeNull();
+  });
+
+  it("calc: exits only on a trailing blank line", () => {
+    expect(multilineExitTrim("1+1\n2+2\n", 8, "calc")).toBe("1+1\n2+2");
+    expect(multilineExitTrim("1+1\n\n2+2", 4, "calc")).toBeNull();
+  });
+
+  it("never exits from the first blank line", () => {
+    expect(multilineExitTrim("\ncode", 0, "calc")).toBeNull();
+    expect(multilineExitTrim("\n```", 0, "fence")).toBeNull();
+  });
+});
 
 describe("sheet-cell property splitting", () => {
   it("hides built-in and tine properties while preserving them byte-exactly on join", () => {
@@ -32,11 +73,11 @@ describe("property line helpers", () => {
 
   it("adds a new property", () => {
     expect(upsertPropertyLine(null, "alias", "Foo")).toBe("alias:: Foo");
-    expect(upsertPropertyLine("tags:: x", "alias", "Foo")).toBe("tags:: x\nalias:: Foo");
+    expect(upsertPropertyLine("tags:: x", "alias", "Foo")).toBe("alias:: Foo\ntags:: x");
   });
 
-  it("replaces an existing property in place-ish and preserves siblings", () => {
-    expect(upsertPropertyLine("alias:: Old\ntags:: x", "alias", "New")).toBe("tags:: x\nalias:: New");
+  it("replaces an existing property in place and preserves siblings", () => {
+    expect(upsertPropertyLine("alias:: Old\ntags:: x", "alias", "New")).toBe("alias:: New\ntags:: x");
   });
 
   it("removes a property when value is null/empty, returning null if none remain", () => {
@@ -45,8 +86,30 @@ describe("property line helpers", () => {
     expect(upsertPropertyLine("alias:: Foo\ntags:: x", "alias", null)).toBe("tags:: x");
   });
 
-  it("trims the value and drops blank lines", () => {
-    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("tags:: x\nalias:: Foo");
+  it("trims the value while preserving blank separators", () => {
+    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("alias:: Foo\n\n\ntags:: x\n\n");
+  });
+
+  it("preserves the issue-163 page-property layout byte-for-byte outside the edited line", () => {
+    const before = [
+      "alias:: Test Record",
+      "ai-prompt:: [[Prompt-Test]]",
+      "usage-frequency:: [[Frequency-High]]",
+      "",
+      "page-level:: [[Level-Two]]",
+      "layout:: [[Layout-Top-Collapsed]]",
+      "component-state:: [[Component-Wide]]",
+      "",
+      "timestamp:: 20250707092601",
+      "observation-target:: [[Object-Test-Page]]",
+      "external-impact::",
+      "--:: --",
+      "methods:: [[Method-A]] [[Method-B]]",
+      "key-conclusion:: [[Conclusion-A]] [[Conclusion-B]]",
+    ].join("\n");
+    const expected = before.replace("alias:: Test Record", "alias:: Updated Record");
+
+    expect(upsertPropertyLine(before, "alias", "Updated Record")).toBe(expected);
   });
 });
 

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tine plugin port gap report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "source", "requestedBehavior", "supportedSubset", "blockers", "recommendation"],
+  "properties": {
+    "format": { "const": "tine-plugin-port-gap/v1" },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ecosystem", "name", "repository", "revision"],
+      "properties": {
+        "ecosystem": { "enum": ["logseq", "obsidian", "other"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "repository": { "type": "string", "pattern": "^https://" },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "requestedBehavior": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "supportedSubset": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "blockers": {
+      "type": "array", "minItems": 1, "maxItems": 50,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["behavior", "missingHostOperation", "whyExistingApiIsInsufficient", "proposedCapability", "securityConsiderations", "reuseCase", "fallback"],
+        "properties": {
+          "behavior": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "missingHostOperation": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{2,100}$" },
+          "whyExistingApiIsInsufficient": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "proposedCapability": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{2,100}$" },
+          "securityConsiderations": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "reuseCase": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "fallback": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    },
+    "recommendation": { "enum": ["ship-reduced-port", "request-api-change", "core-feature", "privileged-integration", "do-not-port"] }
+  }
+}

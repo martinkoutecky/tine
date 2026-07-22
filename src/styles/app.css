@@ -7,6 +7,10 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* WebView2 otherwise propagates an exhausted descendant scroll chain to the
+     viewport and rubber-bands the entire compositor layer, fixed chrome and
+     all. This is a viewport effect, not ordinary content scrolling. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -54,6 +58,10 @@ textarea {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  /* Terminate every pane/sidebar/drawer chain at the common shell. Keeping the
+     rule here (rather than on every nested scroller) preserves normal chaining
+     between nested regions while preventing it from reaching the viewport. */
+  overscroll-behavior: none;
   /* Keep the app shell out from under the system bars on edge-to-edge mobile
      (Android targetSdk 36 forces this): without it the topbar's sidebar/settings
      buttons sit behind the status bar and can't be tapped. All four insets are
@@ -104,6 +112,70 @@ textarea {
   overflow-y: auto;
 }
 
+/* One restrained scrollbar vocabulary for the three primary outline surfaces.
+   Standard properties cover Firefox/current engines. The WebKit fallback avoids
+   setting ::-webkit-scrollbar width/height: doing that turns overlay scrollbars
+   into layout-consuming classic bars on some GTK/macOS configurations. */
+@media (pointer: fine) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-track,
+  .main-content::-webkit-scrollbar-track,
+  .right-sidebar::-webkit-scrollbar-track,
+  .left-sidebar-scroll::-webkit-scrollbar-corner,
+  .main-content::-webkit-scrollbar-corner,
+  .right-sidebar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-thumb,
+  .main-content::-webkit-scrollbar-thumb,
+  .right-sidebar::-webkit-scrollbar-thumb {
+    min-height: 32px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: var(--scrollbar-thumb);
+    background-clip: padding-box;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-thumb:hover,
+  .main-content::-webkit-scrollbar-thumb:hover,
+  .right-sidebar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-button,
+  .main-content::-webkit-scrollbar-button,
+  .right-sidebar::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+
+/* Accessibility and touch take precedence over visual consistency. Native
+   scrollbars retain forced-color contrast and coarse-pointer drag targets. */
+@media (forced-colors: active) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
+}
+
 .sidebar-resizer {
   position: absolute;
   top: 0;
@@ -142,14 +214,68 @@ textarea {
   position: relative;
 }
 
+.drawer-workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* Drawer mode is deliberately driven by App's one reactive width classifier,
+   not by a second CSS media query or a platform/pointer heuristic. */
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar,
+.app-container[data-mobile-drawer-mode="true"] .right-sidebar {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  bottom: env(safe-area-inset-bottom);
+  z-index: 90;
+  width: min(
+    var(--mobile-drawer-width, 320px),
+    calc(100vw - 44px - env(safe-area-inset-left) - env(safe-area-inset-right))
+  ) !important;
+  max-width: calc(100vw - 44px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  flex: none !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
+}
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar { left: env(safe-area-inset-left); right: auto; }
+.app-container[data-mobile-drawer-mode="true"] .right-sidebar { right: env(safe-area-inset-right); left: auto; }
+.app-container[data-mobile-drawer-mode="true"] .sidebar-resizer,
+.app-container[data-mobile-drawer-mode="true"] .rs-resizer,
+.app-container[data-mobile-drawer-mode="true"] .resize-grip { display: none; }
+.mobile-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, .42);
+  touch-action: none;
+}
+.mobile-drawer-close {
+  display: block;
+  margin: 8px 10px 0 auto;
+}
+.drawer-floating-background { display: contents; }
+@media (prefers-reduced-motion: no-preference) {
+  .app-container[data-mobile-drawer-mode="true"] .left-sidebar,
+  .app-container[data-mobile-drawer-mode="true"] .right-sidebar { transition: transform 120ms ease-out; }
+}
+
 .topbar {
+  position: relative;
+  /* Keep topbar popovers above the content plane, below transient overlays. */
+  z-index: 45;
   height: var(--ls-headbar-height);
   flex: 0 0 var(--ls-headbar-height);
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border-color);
+  /* Toolbar density follows the actual available inline width, including
+     browser zoom and fractional-DPI window sizes, not user-agent guesses. */
+  container-type: inline-size;
+  container-name: topbar;
 }
 .topbar-left,
 .topbar-right {
@@ -164,6 +290,127 @@ textarea {
 .topbar-spacer {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.workspace-switcher {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.workspace-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  max-width: 180px;
+  padding: 0 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.workspace-switcher-btn:hover,
+.workspace-switcher-btn[aria-expanded="true"] {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.workspace-switcher-btn:disabled { opacity: .55; cursor: default; }
+.workspace-switcher-mark {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  background: var(--link-color);
+  color: var(--bg-primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+.workspace-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workspace-switcher-caret { flex: none; font-size: 9px; opacity: .7; }
+.workspace-switcher-compact .workspace-switcher-btn {
+  gap: 3px;
+  padding-inline: 5px;
+}
+.workspace-quick-menu,
+.workspace-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 24px));
+  max-height: min(440px, calc(100vh - 72px));
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+}
+.workspace-quick-row,
+.workspace-new-btn,
+.workspace-menu-name,
+.workspace-menu-action {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.workspace-quick-row,
+.workspace-new-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 5px;
+}
+.workspace-quick-row:hover,
+.workspace-new-btn:hover,
+.workspace-menu-row:hover { background: var(--bg-secondary); }
+.workspace-quick-row.active,
+.workspace-menu-row.active { color: var(--text-title); font-weight: 600; }
+.workspace-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 5px;
+}
+.workspace-menu-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-menu-action {
+  padding: 5px 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.workspace-menu-action:hover { color: var(--text-title); }
+.workspace-menu-action.danger:hover { color: var(--danger, #c44); }
+.workspace-edit-form {
+  display: flex;
+  gap: 5px;
+  padding: 5px 4px 2px;
+}
+.workspace-edit-input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 /* macOS: the native traffic-light buttons float in the window's top-left, over our
@@ -194,18 +441,117 @@ textarea {
   background: var(--border-color);
 }
 
+/* Lower-priority toolbar actions collapse into a registry-owned popover when
+   the toolbar's REAL inline space is tight. Essentials stay inline: left
+   sidebar toggle, search, Settings, and (when shown) native window controls. */
+.topbar-overflow {
+  position: relative;
+  display: none;
+}
+.topbar-overflow-trigger {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+.topbar-overflow-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 174px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
+}
+.topbar-overflow-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.topbar-overflow-menu button:hover:not(:disabled),
+.topbar-overflow-menu button:focus-visible {
+  background: var(--bg-tertiary);
+}
+.topbar-overflow-menu button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.topbar-overflow-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-color);
+}
+
+@container topbar (max-width: 460px) {
+  /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
+     .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
+     clips the fixed clusters and must stay reachable on a narrow desktop window.
+     Only the fixed-width low-priority action buttons overflow into the "…" menu.
+     (Real mobile already hides tabs via the isMobilePlatform Show + spacer.) */
+  .topbar .topbar-optional-action {
+    display: none;
+  }
+  .topbar .topbar-right {
+    margin-left: auto;
+  }
+  .topbar .topbar-overflow {
+    display: block;
+  }
+  /* Back/Forward remain inline through the first tier, so do not duplicate
+     them in the overflow menu. The four optional actions keep it non-empty. */
+  .topbar .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar .topbar-overflow .topbar-overflow-sep {
+    display: none;
+  }
+}
+
+/* At this floor the ~76px Back/Forward pair no longer has reliable room beside
+   the fixed toolbar controls. At 390px, the measured budget retains ~75px of
+   slack after the pair, so phones keep navigation as the higher priority. */
+@container topbar (max-width: 300px) {
+  .topbar .topbar-navigation-action {
+    display: none;
+  }
+  .topbar .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar .topbar-overflow .topbar-overflow-sep {
+    display: block;
+  }
+}
+
 /* Tabs live inline in the topbar (between nav arrows and the action icons) to
    avoid wasting a whole row. They take the middle, scrolling if there are many. */
 .tab-bar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible;
+}
+.tab-strip-scroll {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
-.tab-bar::-webkit-scrollbar {
+.tab-strip-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -223,10 +569,12 @@ textarea {
 .tab {
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   height: 26px;
   padding: 0 10px;
+  min-width: 112px;
   max-width: 200px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -296,6 +644,118 @@ textarea {
 .tab-close:hover {
   opacity: 1;
   background: var(--bg-quaternary);
+}
+
+.tab-overview-trigger {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.tab-overview-trigger:hover,
+.tab-overview-trigger:focus-visible,
+.tab-overview-trigger[aria-expanded="true"] {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.tab-overview {
+  position: fixed;
+  z-index: 80;
+  max-height: min(420px, calc(100vh - 80px));
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+.tab-overview-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 5px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.tab-overview-row:hover,
+.tab-overview-row:focus-visible {
+  background: var(--bg-secondary);
+  outline: none;
+}
+.tab-overview-row.active {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.tab-overview-row.tab-overview-dragging {
+  opacity: 0.45;
+}
+.tab-overview-row.tab-overview-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent, var(--link-color));
+}
+.tab-overview-row.tab-overview-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent, var(--link-color));
+}
+.tab-overview-drag-handle {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: grab;
+  font-size: 16px;
+  line-height: 1;
+}
+.tab-overview-drag-handle:hover,
+.tab-overview-drag-handle:focus-visible {
+  background: var(--bg-quaternary);
+  color: var(--text-primary);
+}
+.tab-overview-drag-handle:active {
+  cursor: grabbing;
+}
+.tab-overview-active {
+  flex: 0 0 13px;
+  color: var(--accent, var(--link-color));
+  font-weight: 700;
+  text-align: center;
+}
+.tab-overview-pin {
+  flex: 0 0 auto;
+  display: inline-flex;
+  font-size: 12px;
+}
+.tab-overview-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tab-overview-close {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tab-overview-close:hover,
+.tab-overview-close:focus-visible {
+  background: var(--bg-quaternary);
+  color: var(--text-primary);
 }
 
 /* --- Frameless-window chrome (decorations off; toolbar = title bar) --------- */
@@ -639,8 +1099,11 @@ textarea {
 .document-mode .collapse-toggle {
   visibility: hidden;
 }
-.document-mode .block-children-left-border {
+.document-mode .block-children {
   border-left-color: transparent;
+}
+.document-mode .block-children-left-border {
+  visibility: hidden;
 }
 
 /* Focus mode: hide both sidebars and the topbar for a distraction-free surface
@@ -737,6 +1200,16 @@ textarea {
   padding: 4px 8px 10px;
 }
 
+/* Window-level workspaces belong with the other low-frequency sidebar context
+   controls, above the graph switcher and navigation tree. */
+.workspace-sidebar-header {
+  padding: 12px 16px 2px;
+}
+.workspace-sidebar-header .workspace-switcher,
+.workspace-sidebar-header .workspace-switcher-btn {
+  width: 100%;
+}
+
 .app-logo {
   font-weight: 600;
   color: var(--text-title);
@@ -828,21 +1301,6 @@ textarea {
   color: var(--text-primary);
 }
 
-.nav-search {
-  padding: 0 6px 10px;
-}
-
-.search-input {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-}
-
 .nav-contents {
   flex: 1;
 }
@@ -894,6 +1352,11 @@ textarea {
   display: flex;
   align-items: center;
   gap: 5px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   user-select: none;
 }
@@ -1020,26 +1483,38 @@ textarea {
   opacity: 1;
 }
 
-.page-gear {
+.page-actions-trigger {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 0 4px;
+  min-width: 24px;
+  min-height: 24px;
   display: flex;
   align-items: center;
+  justify-content: center;
   color: var(--text-muted);
   opacity: 0;
   transition: opacity 0.1s;
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
 }
-.page-title-row:hover .page-gear {
+.page-title-row:hover .page-actions-trigger,
+.page-actions-trigger:focus-visible,
+.page-actions-trigger[aria-expanded="true"] {
   opacity: 1;
 }
-.page-gear:hover {
+.page-actions-trigger:hover,
+.page-actions-trigger:focus-visible {
   color: var(--text-primary);
 }
-.gear-icon {
-  width: 17px;
-  height: 17px;
+@media (pointer: coarse) {
+  .page-actions-trigger {
+    min-width: 36px;
+    min-height: 36px;
+    opacity: 1;
+  }
 }
 .tag-table-toggle {
   border: 1px solid var(--border-color);
@@ -1399,6 +1874,12 @@ textarea {
 .settings-pane {
   flex: 1;
   min-width: 0;
+  /* min-height:0 lets this flex child shrink below its content height so the
+     body's overflow scroll actually engages. Without it, in the mobile column
+     layout (.settings-modal flex-direction:column) the pane grows to fit its
+     content and the modal's overflow:hidden clips the overflow, making lower
+     settings unreachable on narrow viewports / Android (GH: Martin). */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1411,8 +1892,42 @@ textarea {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
 }
+.settings-search-input {
+  margin-left: auto;
+  width: min(260px, 40vw);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 6px 9px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.settings-pane-head .icon-btn { margin-left: 10px; }
+.settings-search-results {
+  display: grid;
+  gap: 3px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-search-result {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
+.settings-search-result small { color: var(--text-muted); }
+.settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 6px 20px 18px;
 }
@@ -1509,6 +2024,175 @@ textarea {
   line-height: 1.5;
   max-width: 62ch;
 }
+.plugin-safety-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  margin-top: 7px;
+}
+.plugin-safety-badge,
+.plugin-finding-severity {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  padding: 1px 8px;
+  text-transform: uppercase;
+}
+.plugin-safety-badge.low {
+  color: #25633b;
+  background: rgba(46, 160, 88, 0.14);
+}
+.plugin-safety-badge.manual {
+  color: #805500;
+  background: rgba(217, 147, 10, 0.16);
+}
+.plugin-safety-report {
+  margin-top: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.plugin-safety-report p {
+  margin: 0 0 9px;
+}
+.plugin-safety-manual {
+  margin: 8px 0;
+  padding: 7px 9px;
+  border-left: 3px solid #d9930a;
+  background: rgba(217, 147, 10, 0.08);
+}
+.plugin-safety-findings {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0;
+}
+.plugin-safety-finding {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.plugin-finding-severity {
+  margin-top: 1px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+.plugin-finding-severity.severity-low,
+.plugin-finding-severity.severity-medium {
+  color: #805500;
+  background: rgba(217, 147, 10, 0.16);
+}
+.plugin-finding-severity.severity-high,
+.plugin-finding-severity.severity-critical {
+  color: var(--danger, #b33);
+  background: rgba(190, 45, 45, 0.14);
+}
+.plugin-settings-nav {
+  display: inline-flex;
+  gap: 3px;
+  margin: 2px 0 12px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.plugin-settings-nav button {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.plugin-settings-nav button.active {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.plugin-detail-page {
+  max-width: 760px;
+}
+.plugin-detail-back {
+  margin-bottom: 12px;
+}
+.plugin-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.plugin-detail-heading h2 {
+  margin: 0 0 3px;
+  color: var(--text-primary);
+  font-size: 20px;
+}
+.plugin-origin-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.plugin-settings-list {
+  margin-bottom: 10px;
+}
+.plugin-setting-control {
+  min-width: 180px;
+}
+.plugin-setting-number {
+  width: 88px;
+}
+.plugin-detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .plugin-settings-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  .plugin-settings-nav button {
+    width: 100%;
+  }
+  .plugin-detail-heading,
+  .plugin-settings-list .settings-field-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .plugin-setting-control {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
+.settings-advanced { margin-top: 10px; }
+.settings-advanced-toggle {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-advanced-toggle:hover,.settings-advanced-toggle:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
+.settings-advanced-body { padding: 2px 0 0 12px; border-left: 1px solid var(--border-color); }
 /* Segmented two-option control (e.g. task workflow). */
 .settings-segment {
   display: inline-flex;
@@ -1635,6 +2319,34 @@ textarea {
   border-radius: 3px;
   background: var(--code-bg);
   color: var(--text-primary);
+}
+.installed-theme-list {
+  margin-bottom: 12px;
+}
+.installed-theme-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.installed-theme-swatch {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 17px;
+}
+@media (max-width: 640px) {
+  .installed-theme-row .settings-field-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .installed-theme-row .settings-field-control {
+    justify-content: flex-start;
+  }
 }
 .settings-shortcuts {
   margin-top: 8px;
@@ -1964,6 +2676,9 @@ textarea {
   display: none;
 }
 @media (max-width: 640px) {
+  .main-content-inner {
+    padding: 8px 12px 40vh;
+  }
   .page-title-row {
     gap: 6px;
     min-width: 0;
@@ -1986,7 +2701,6 @@ textarea {
     gap: 4px;
     min-width: 0;
   }
-  .page-title-row:has(.page-carry-actions) .page-gear,
   .page-title-row:has(.page-carry-actions) .fav-star {
     display: none;
   }
@@ -2026,6 +2740,46 @@ textarea {
   .settings-nav-foot {
     padding: 8px 6px 0;
     font-size: 10px;
+  }
+}
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding-top: 2vh;
+  }
+  .settings-modal {
+    width: calc(100vw - 16px);
+    max-width: none;
+    height: 96vh;
+    max-height: none;
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 7px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color);
+    scrollbar-width: thin;
+  }
+  .settings-nav-title,
+  .settings-nav-foot {
+    display: none;
+  }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 7px 9px;
+  }
+  .settings-pane-head {
+    padding: 13px 14px;
+  }
+  .settings-pane-body {
+    padding: 6px 14px 18px;
+  }
+  .settings-row {
+    gap: 12px;
   }
 }
 .settings-shortcut-row {
@@ -2510,6 +3264,20 @@ textarea {
   color: var(--marker-todo);
 }
 
+.ctx-page-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+}
+
+.ctx-page-item:focus-visible {
+  outline: none;
+  background: var(--bg-tertiary);
+}
+
 .ctx-submenu {
   position: relative;
 }
@@ -2838,6 +3606,33 @@ textarea {
   padding-top: 14px;
 }
 
+.page-trailing-block-target {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  margin: 2px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: text;
+  text-align: left;
+  padding-left: 34px;
+}
+.page-trailing-block-target span {
+  opacity: 0;
+  font-size: 11px;
+  transition: opacity .12s ease;
+}
+.page-trailing-block-target:hover span,
+.page-trailing-block-target:focus-visible span {
+  opacity: .65;
+}
+.page-trailing-block-target:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: -2px;
+}
+
 .feed-sentinel {
   height: 1px;
 }
@@ -3063,9 +3858,22 @@ textarea {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -2px;
-  width: 4px;
+  left: -9px;
+  z-index: 1;
+  width: 14px;
+  min-width: 14px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+}
+
+.block-children-left-border:disabled {
+  cursor: default;
 }
 
 /* The guide line is this border-left. It must sit under the *parent* bullet's
@@ -3078,13 +3886,98 @@ textarea {
   padding-left: 3px;
 }
 
-.block-children-container:hover > .block-children {
+.block-children-left-border:not(:disabled):hover + .block-children,
+.block-children-left-border:not(:disabled):focus-visible + .block-children {
   border-left-color: var(--guide-hover);
+}
+
+/* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
+   request this known visual vocabulary but cannot inject CSS or DOM. */
+.plugin-thread-lines > .block-children-container > .block-children > .ls-block > .block-main::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 0;
+  width: calc(var(--ls-block-indent) - 19px);
+  height: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--guide-color) 82%, transparent);
+  border-bottom-left-radius: 6px;
+  pointer-events: none;
+}
+
+/* Active mode follows the focused branch using only host-owned focus state. It
+   does not reveal block contents to the guest or let the guest select DOM. */
+.plugin-thread-lines-active > .block-children-container > .block-children > .ls-block:not(:focus-within) > .block-main::before {
+  display: none;
+}
+
+.plugin-thread-lines-standard > .block-children-container > .block-children > .ls-block > .block-main::before {
+  border-bottom-color: var(--guide-color);
+}
+
+.block-children-left-border:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--ls-link-text-color) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ls-link-text-color) 45%, transparent);
+  border-radius: 3px;
+}
+
+/* On a phone, desktop's 29px step leaves almost no text column after a handful
+   of levels. Keep the hierarchy legible with a 20px step and recover the fold
+   arrow's left-hand width by making it a visible trailing row action. The
+   guide remains centered under the parent bullet instead of drifting with the
+   tighter indentation. Desktop and precise-pointer layouts stay unchanged. */
+@media (max-width: 640px) and (pointer: coarse) {
+  :root {
+    --ls-block-indent: 20px;
+  }
+
+  .block-main {
+    position: relative;
+  }
+
+  .collapse-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    width: 44px;
+    height: 30px;
+  }
+
+  .collapse-toggle.has-children {
+    opacity: 0.62;
+  }
+
+  /* Leaves retain the structural control placeholder for the shared bullet
+     column, but it must not sit invisibly over the last 44px of editable text. */
+  .collapse-toggle:not(.has-children) {
+    pointer-events: none;
+  }
+
+  .ls-block:hover > .block-main > .block-controls > .collapse-toggle.has-children,
+  .collapse-toggle.has-children:focus-visible {
+    opacity: 1;
+  }
+
+  .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
+    padding-right: 44px;
+  }
+
+  .block-children {
+    margin-left: calc(8px - var(--ls-block-indent));
+    padding-left: calc(var(--ls-block-indent) - 8px);
+  }
+
+  .block-children-left-border {
+    left: calc(1px - var(--ls-block-indent));
+  }
 }
 
 /* editor */
 .editor-wrap {
   position: relative;
+  container: editor / inline-size;
 }
 
 .autocomplete {
@@ -3144,6 +4037,40 @@ textarea {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.sel-toolbar-secondary {
+  display: flex;
+  gap: 2px;
+}
+.sel-toolbar .sel-action-page-link {
+  width: auto;
+  min-width: 34px;
+  padding: 0 4px;
+}
+.sel-toolbar > .sel-toolbar-more,
+.sel-toolbar-overflow {
+  display: none;
+}
+.sel-toolbar-overflow {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+@container editor (max-width: 260px) {
+  .sel-toolbar-secondary {
+    display: none;
+  }
+  .sel-toolbar > .sel-toolbar-more,
+  .sel-toolbar-overflow {
+    display: flex;
+  }
 }
 .sel-toolbar button {
   width: 26px;
@@ -4679,9 +5606,17 @@ body.file-drop-active::after {
   width: 14px;
 }
 .sheet-grid-add-row {
-  right: 0;
-  bottom: -14px;
-  left: 0;
+  /* Participate in the grid instead of extending 14px below its scroll box.
+     The old absolute bottom:-14px made WebKit report vertical overflow (and
+     clip the affordance) once an aggregate footer added the final explicit
+     row. An implicit full-width row keeps scrollHeight == clientHeight while
+     preserving the same hover-revealed add target. */
+  position: relative;
+  grid-column: 1 / -1;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: 100%;
   height: 14px;
 }
 .sheet-grid-add-visible {
@@ -4791,6 +5726,20 @@ body.file-drop-active::after {
 .sheet-field-header {
   cursor: pointer;
   user-select: none;
+}
+.sheet-field-header.sheet-header-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-field-header.sheet-header-dragging {
+  cursor: grabbing;
+  opacity: 0.58;
+}
+.sheet-field-header.sheet-header-drop-before {
+  box-shadow: inset 3px 0 0 var(--accent, #4c8bf5);
+}
+.sheet-field-header.sheet-header-drop-after {
+  box-shadow: inset -3px 0 0 var(--accent, #4c8bf5);
 }
 /* The Block/title column's 180px floor used to come from its minmax() track; the
    track is now fit-content()-capped (to wrap long block text), so keep the floor on
@@ -5347,7 +6296,7 @@ body.file-drop-active::after {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 10px;
+  margin: 8px 0 0;
 }
 .ref-filter-chip {
   border: 1px solid var(--border-color);
@@ -5424,6 +6373,16 @@ ol.md-list { list-style: decimal; }
   text-transform: capitalize;
   color: var(--callout-accent, var(--text-secondary));
   margin-bottom: 2px;
+}
+.admonition-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.35em;
+  vertical-align: -0.1em;
+}
+.admonition-icon img.emoji {
+  width: 1em;
+  height: 1em;
 }
 .callout-body {
   color: var(--text-primary);
@@ -5678,6 +6637,100 @@ img.emoji {
   gap: 8px;
 }
 
+.reference-filter-toggle {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.reference-filter-toggle svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.reference-filter-toggle:hover,
+.reference-filter-toggle:focus-visible,
+.reference-filter-toggle.active {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+
+.reference-filter-panel {
+  margin: -3px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.reference-filter-search-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.reference-filter-search {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.reference-filter-search:focus {
+  outline: 1px solid var(--link-color);
+  border-color: var(--link-color);
+}
+
+.reference-filter-clear {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 7px;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reference-filter-clear:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.reference-filter-clear:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.65;
+}
+
+.reference-filter-summary,
+.reference-filter-error,
+.reference-filter-warning {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.reference-filter-error {
+  color: var(--danger, #dc2626);
+}
+
+.reference-filter-warning {
+  color: var(--text-secondary);
+}
+
 .references-count,
 .query-count {
   font-size: 11px;
@@ -5696,6 +6749,120 @@ img.emoji {
   padding: 8px 12px;
 }
 
+.reference-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-group-disclosure,
+.reference-page,
+.reference-bulk-controls button,
+.reference-occurrence-jump,
+.reference-show-full {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.reference-group-disclosure {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.reference-group-disclosure:hover,
+.reference-group-disclosure:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.reference-bulk-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: -2px 0 8px;
+}
+
+.reference-bulk-controls button,
+.reference-show-full {
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.reference-bulk-controls button:hover,
+.reference-show-full:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+
+.reference-excerpt-row {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.reference-excerpt-bullet {
+  color: var(--bullet-color, var(--text-muted));
+  line-height: 1.55;
+}
+
+.reference-excerpt-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.reference-excerpt-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reference-excerpt-text mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  border-radius: 2px;
+}
+
+.reference-excerpt-actions,
+.reference-occurrence-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-excerpt-actions {
+  margin-top: 3px;
+}
+
+.reference-mention-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.reference-occurrence-jump {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.reference-live-evidence {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 4px -2px 28px;
+}
+
 .reference-page,
 .query-page {
   font-weight: 600;
@@ -5703,6 +6870,7 @@ img.emoji {
   cursor: pointer;
   margin-bottom: 4px;
   font-size: 14px;
+  padding: 0;
 }
 
 .reference-page:hover,
@@ -5863,6 +7031,37 @@ img.emoji {
 .query-view-switcher button.active {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.query-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.query-search-hit,
+.query-search-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.query-search-hit:hover,
+.query-search-hit:focus-visible,
+.query-search-page:hover,
+.query-search-page:focus-visible {
+  background: var(--bg-tertiary);
 }
 
 .query-title-editable {
@@ -6253,6 +7452,11 @@ img.emoji {
   font-size: 13px;
   color: var(--text-muted);
 }
+.link-depth-warning {
+  margin: 2px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
 .query-adv-note {
   font-size: 11px;
   color: var(--text-muted);
@@ -6296,6 +7500,28 @@ img.emoji {
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
+}
+
+/* A whole-block block embed is visually the referenced outline, not an empty
+   parent followed by another root. Block.tsx removes only the macro host's
+   controls; the referenced root keeps its real interactive bullet, collapse
+   toggle, zoom/sidebar actions, and editor surface. Removing the wrapper inset
+   puts that surviving bullet on the ordinary outline column. Its descendant
+   guide is slightly heavier to identify the embedded boundary without a box. */
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host {
+  padding: 0;
+}
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block {
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+}
+.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
+  background: var(--block-embed-accent);
+}
+.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
+  border-left-width: 2px;
+  border-left-color: var(--block-embed-accent);
 }
 
 /* video / iframe embeds */
@@ -6431,6 +7657,44 @@ img.emoji {
   cursor: pointer;
 }
 
+.switcher-row.block-result {
+  align-items: flex-start;
+}
+
+.search-result-body {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-result-context {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-primary);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.search-result-excerpt mark {
+  border-radius: 2px;
+  background: rgba(251, 230, 158, 0.55);
+  color: inherit;
+}
+
 .switcher-row.active {
   background: var(--bg-tertiary);
 }
@@ -6497,6 +7761,13 @@ img.emoji {
 .switcher-more:hover {
   background: var(--bg-tertiary);
 }
+.switcher-truncated {
+  margin: 3px 12px 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 11px;
+}
 .switcher-kind.create { color: #10b981; }
 .switcher-kind.cmd { color: var(--link-color); }
 .switcher-shortcut {
@@ -6524,6 +7795,36 @@ img.emoji {
   background: var(--bg-secondary);
   border-radius: 3px;
   padding: 0 4px;
+}
+.switcher-syntax {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+}
+.switcher-syntax-row {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.switcher-syntax-row code {
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.switcher-syntax-toggle {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  cursor: pointer;
+}
+.switcher-syntax-toggle:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: 2px;
 }
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {
@@ -6629,6 +7930,64 @@ img.emoji {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-color);
 }
+.rs-header-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.rs-actions-button,
+.rs-item-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.rs-actions-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+}
+.rs-actions-button:hover,
+.rs-actions-button:focus-visible,
+.rs-item-toggle:hover,
+.rs-item-toggle:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+.rs-actions-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 20px;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.rs-actions-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.rs-actions-menu button:hover,
+.rs-actions-menu button:focus-visible {
+  background: var(--bg-tertiary);
+  outline: none;
+}
 
 .right-sidebar-body {
   padding: 8px;
@@ -6652,12 +8011,30 @@ img.emoji {
 .rs-item-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 5px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border-color);
 }
+.rs-item.collapsed .rs-item-head {
+  border-bottom: 0;
+}
+.rs-item-toggle {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 3px;
+}
+.rs-item-toggle span {
+  transition: transform 0.1s ease;
+}
+.rs-item-toggle[aria-expanded="true"] span {
+  transform: rotate(90deg);
+}
 
 .rs-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   color: var(--link-color);
   cursor: pointer;
@@ -6696,11 +8073,25 @@ img.emoji {
 .pdf-pane {
   position: relative;
   flex: 0 0 auto;
+  max-width: 100%;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Android/iOS presents a PDF as a deliberate full-width takeover instead of
+   shrinking the notes pane beside an over-wide fixed reader. */
+.pdf-pane-mobile {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-left: 0;
+}
+
+.pdf-pane-mobile .pdf-pane-resizer {
+  display: none;
 }
 
 .pdf-pane-resizer {
@@ -6719,9 +8110,54 @@ img.emoji {
 }
 
 .pdf-viewer {
+  --pdf-container-bg: #fff;
+  --pdf-toolbar-bg: #fff;
+  --pdf-page-bg: #fff;
+  --pdf-panel-bg: #fff;
+  --pdf-local-text: #242424;
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
+  color: var(--pdf-local-text);
+  background: var(--pdf-container-bg);
+}
+
+.pdf-viewer[data-theme="light"] {
+  --pdf-container-bg: #fff;
+  --pdf-toolbar-bg: #fff;
+  --pdf-page-bg: #fff;
+  --pdf-panel-bg: #fff;
+  --pdf-local-text: #242424;
+}
+
+.pdf-viewer[data-theme="warm"] {
+  --pdf-container-bg: #f6efdf;
+  --pdf-toolbar-bg: #f6efdf;
+  --pdf-page-bg: #f8eeda;
+  --pdf-panel-bg: #f8eeda;
+  --pdf-local-text: #493e2e;
+}
+
+.pdf-viewer[data-theme="dark"] {
+  --pdf-container-bg: #202124;
+  --pdf-toolbar-bg: #292a2d;
+  --pdf-page-bg: #15171a;
+  --pdf-panel-bg: #292a2d;
+  --pdf-local-text: #e8eaed;
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-page > :is(canvas, .textLayer) {
+  filter: invert(1);
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-hl {
+  mix-blend-mode: screen;
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-hl-area {
+  mix-blend-mode: normal;
+  border-color: #8bc1ff;
 }
 
 .pdf-load-error {
@@ -6746,12 +8182,17 @@ img.emoji {
   justify-content: space-between;
   padding: 0 12px;
   border-bottom: 1px solid var(--border-color);
+  background: var(--pdf-toolbar-bg);
+  container-type: inline-size;
+  container-name: pdftoolbar;
 }
 
 .pdf-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: color-mix(in srgb, var(--pdf-local-text) 78%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6761,6 +8202,13 @@ img.emoji {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Close leads the fixed control cluster, so a constrained reader can never
+   clip its only escape action from the far edge. */
+.pdf-close-btn {
   flex: 0 0 auto;
 }
 
@@ -6776,7 +8224,7 @@ img.emoji {
 }
 .pdf-zoom-level {
   font-size: 11px;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
   min-width: 40px;
   text-align: center;
 }
@@ -6799,8 +8247,8 @@ img.emoji {
   font-size: 12px;
   border: 1px solid var(--border-color);
   border-radius: 5px;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background-color: var(--pdf-panel-bg);
+  color: var(--pdf-local-text);
 }
 .pdf-page-input:focus {
   border-color: var(--link-color);
@@ -6808,7 +8256,7 @@ img.emoji {
 }
 .pdf-page-total {
   font-size: 12px;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
   margin: 0 4px 0 2px;
 }
 .icon-btn.active {
@@ -6851,13 +8299,178 @@ img.emoji {
   padding: 4px 10px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  background: var(--pdf-panel-bg);
+  color: var(--pdf-local-text);
   cursor: pointer;
 }
 
 .pdf-notes-btn:hover {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--link-color) 13%, var(--pdf-panel-bg));
+}
+
+.pdf-toolbar .icon-btn {
+  color: var(--pdf-local-text);
+}
+
+.pdf-toolbar .icon-btn.active {
+  color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+/* The reader follows the topbar's container-query overflow pattern: the
+   lower-priority tools remain available from the existing More menu while the
+   pager, Find, zoom +/- and Close stay in the toolbar. */
+@container pdftoolbar (max-width: 520px) {
+  .pdf-toolbar .pdf-overflow-action {
+    display: none;
+  }
+  .pdf-toolbar .pdf-settings-overflow {
+    display: grid;
+  }
+}
+
+.pdf-settings-menu,
+.pdf-outline-panel {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 210;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--pdf-local-text);
+  background: var(--pdf-panel-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.pdf-settings-menu {
+  min-width: 210px;
+  padding: 10px;
+}
+
+.pdf-settings-overflow {
+  /* Only a collapsed toolbar needs these in the menu; a roomy toolbar shows
+     the same actions inline, so listing them twice would be noise. */
+  display: none;
+  gap: 4px;
+  margin: -2px -2px 10px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pdf-settings-overflow button {
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-settings-overflow button:hover,
+.pdf-settings-overflow button[aria-pressed="true"] {
+  border-color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-settings-heading,
+.pdf-outline-heading {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pdf-theme-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pdf-theme-choice {
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pdf-theme-choice:hover,
+.pdf-theme-choice.active {
+  border-color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-outline-panel {
+  width: min(300px, calc(100% - 16px));
+  max-height: min(480px, calc(100% - 56px));
+  padding: 10px 8px;
+  overflow: auto;
+}
+
+.pdf-outline-loading,
+.pdf-outline-empty {
+  padding: 8px;
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
+  font-size: 12px;
+}
+
+.pdf-outline-list,
+.pdf-outline-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pdf-outline-children {
+  padding-left: 16px;
+}
+
+.pdf-outline-row {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.pdf-outline-disclosure,
+.pdf-outline-disclosure-spacer {
+  flex: 0 0 24px;
+  width: 24px;
+  min-height: 28px;
+}
+
+.pdf-outline-disclosure,
+.pdf-outline-label {
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+}
+
+.pdf-outline-disclosure {
+  padding: 3px;
+  cursor: pointer;
+}
+
+.pdf-outline-label {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-outline-disclosure:hover,
+.pdf-outline-label:not(:disabled):hover {
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-outline-label:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* PDF highlight (annotation) block: colored dot + "P<page>" badge + text,
@@ -6905,6 +8518,7 @@ img.emoji {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background: var(--pdf-container-bg);
   /* Pages are centered via margin-inline:auto on .pdf-page (NOT align-items:center):
      auto margins collapse to 0 when a page is wider than the pane (zoomed in), so it
      left-aligns and its full width stays horizontally scrollable. align-items:center
@@ -6915,7 +8529,7 @@ img.emoji {
   position: relative;
   margin-inline: auto;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-  background: #fff;
+  background: var(--pdf-page-bg);
 }
 
 .pdf-page .textLayer {
@@ -6974,12 +8588,29 @@ img.emoji {
   position: fixed;
   z-index: 200;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   padding: 6px 8px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.pdf-hl-action {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.pdf-hl-action:hover {
+  background: var(--bg-secondary);
 }
 
 .pdf-color-swatch {
@@ -7238,4 +8869,396 @@ img.emoji {
   color: var(--text-secondary);
   font-size: 13px;
   cursor: progress;
+}
+
+/* Search/query workspace --------------------------------------------------
+   A virtual route uses the same pane shell as pages, but keeps its friendly
+   source, presentation, and save action visibly separate from graph content. */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+.query-workspace {
+  width: min(100%, 1120px);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 26px clamp(16px, 3vw, 34px) 48px;
+  box-sizing: border-box;
+  color: var(--text-primary);
+}
+.query-workspace-header {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+.query-workspace-search-row,
+.query-workspace-controls,
+.query-workspace-save,
+.query-advanced-header,
+.query-advanced-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.query-workspace-source-label {
+  flex: 1 1 420px;
+}
+.query-workspace-source,
+.query-workspace-save input,
+.query-friendly-fields input,
+.query-dsl-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.query-workspace-source {
+  min-height: 42px;
+  padding: 9px 12px;
+  font-size: 16px;
+}
+.query-workspace-source:focus,
+.query-workspace-save input:focus,
+.query-friendly-fields input:focus,
+.query-dsl-editor textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.query-workspace button,
+.query-advanced-modal button {
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.query-workspace button:hover,
+.query-advanced-modal button:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border-color));
+  background: var(--bg-tertiary);
+}
+.query-advanced-toggle,
+.query-explain-toggle,
+.query-presentations button,
+.query-workspace-save button,
+.query-advanced-actions button,
+.query-switch-to-dsl {
+  min-height: 34px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.query-workspace-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.query-workspace-controls {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.query-presentations {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+.query-presentations button {
+  min-height: 28px;
+  border-color: transparent;
+  background: transparent;
+}
+.query-presentations button.active {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+  color: var(--accent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+.query-workspace-save {
+  max-width: 560px;
+}
+.query-workspace-save label {
+  flex: 1;
+}
+.query-workspace-save input {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+.query-workspace-save button,
+.query-advanced-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text, white);
+}
+.query-workspace-save button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.query-workspace-save-error,
+.query-advanced-error,
+.query-workspace-diagnostics {
+  color: var(--marker-todo, #c43b3b);
+}
+.query-workspace-save-error,
+.query-advanced-error {
+  margin: 0;
+  font-size: 13px;
+}
+.query-workspace-status {
+  min-height: 22px;
+  padding: 12px 0 4px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.query-workspace-diagnostics {
+  margin: 5px 0 12px;
+  padding: 9px 12px 9px 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-size: 13px;
+}
+.query-workspace-explanation {
+  margin: 8px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+.query-workspace-explanation h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.query-explain-tree {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.query-workspace-empty {
+  padding: 26px 0;
+  color: var(--text-muted);
+}
+.query-results-search,
+.query-results-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  gap: 3px;
+}
+.query-results-search > [role="listitem"] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.query-result-row {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 6px 9px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.query-results-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.query-results-list button {
+  display: grid;
+  grid-template-columns: minmax(110px, 22%) 1fr;
+  gap: 14px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+}
+.query-list-context {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.query-list-text {
+  overflow-wrap: anywhere;
+}
+.query-results-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+}
+.query-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.query-results-table th,
+.query-results-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  vertical-align: top;
+}
+.query-results-table th {
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+.query-results-table td button {
+  padding: 1px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+}
+.query-results-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.query-board-column {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+.query-board-column h2 {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.query-board-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.query-board-card {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 8px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.query-advanced-overlay {
+  align-items: center;
+  padding: 20px;
+}
+.query-advanced-modal {
+  width: min(720px, 100%);
+  max-height: min(720px, 88vh);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 18px 60px color-mix(in srgb, black 32%, transparent);
+}
+.query-advanced-header {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.query-advanced-header h2 {
+  margin: 0 0 3px;
+  font-size: 18px;
+}
+.query-advanced-header p,
+.query-advanced-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.query-advanced-header > button {
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 20px;
+}
+.query-friendly-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.query-friendly-fields label,
+.query-dsl-editor label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.query-friendly-fields input {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+.query-switch-to-dsl {
+  justify-self: start;
+}
+.query-dsl-editor {
+  display: grid;
+  gap: 12px;
+}
+.query-dsl-editor details {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.query-dsl-editor textarea {
+  margin-top: 7px;
+  padding: 9px;
+  resize: vertical;
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+}
+.query-advanced-actions {
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+@media (max-width: 680px) {
+  .query-workspace {
+    padding: 16px 10px 34px;
+  }
+  .query-workspace-search-row,
+  .query-workspace-save {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .query-workspace-source-label {
+    flex-basis: auto;
+  }
+  .query-workspace-search-row > button,
+  .query-workspace-save > button {
+    align-self: flex-start;
+  }
+  .query-friendly-fields {
+    grid-template-columns: 1fr;
+  }
+  .query-results-list button {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
 }

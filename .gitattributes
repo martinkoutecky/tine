@@ -1,1 +1,16 @@
-src/devtools/lsdoc-diff/vendor/refs.mjs text eol=lf
+# Normalize line endings so a Windows CI checkout matches the LF index and the
+# repo is never "dirty" on windows-latest. The E2E build receipt binds the app
+# to a clean-checkout build-input digest and refuses a dirty tree, so a single
+# autocrlf-flipped file (e.g. docs/UI-REGRESSION-TESTING.md) failed every advisory
+# Windows scenario. text=auto lets Git leave real binaries alone.
+* text=auto eol=lf
+
+# Batch scripts are the one class that wants CRLF; renormalized so their blobs
+# are CRLF and they check out clean on Windows too.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Vendored parser assets are byte-pinned LF (redundant with the * rule, kept explicit).
+src/devtools/lsdoc-diff/vendor/*.mjs text eol=lf
+src/devtools/lsdoc-diff/vendor/mldoc.js text eol=lf
+src/devtools/lsdoc-diff/vendor/oracle.source.json text eol=lf

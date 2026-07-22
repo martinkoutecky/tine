@@ -59,6 +59,21 @@ describe("sheet fields", () => {
     ]);
   });
 
+  it("keeps field (column) order stable when a cell value is edited (GH #216)", () => {
+    setDoc({
+      byId: { r: node("r", "row\nfirst:: 23\nsecond:: 46\nthird:: 69") },
+      pages: [page(["r"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const before = fieldIdsForBlocks(["r"]);
+    expect(before).toEqual(["prop:first", "prop:second", "prop:third"]);
+    // Editing the middle cell must not reorder the columns.
+    expect(writeField("r", "prop:second", "90")).toBe(true);
+    expect(readField("r", "prop:second")).toEqual({ text: "90", raw: "90" });
+    expect(fieldIdsForBlocks(["r"])).toEqual(before);
+  });
+
   it("reads field values through facets", () => {
     loadRows();
 

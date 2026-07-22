@@ -3,8 +3,13 @@
 
 import type { Format } from "./ast";
 import { MARKERS } from "../markers";
+import { parsePageHeaderPropertyLine, splitPagePreamble } from "../editor/properties";
 
 export { MARKERS };
+
+export function propertyKeyNorm(key: string): string {
+  return key.trim().toLowerCase().replace(/[ _]/g, "-");
+}
 
 // Property keys NOT shown as rendered chips (id/uuid/collapsed + Logseq internals
 // + display-only keys). Single source for the two render paths — Block.tsx's live
@@ -20,13 +25,19 @@ export const RENDER_HIDDEN_PROPS: ReadonlySet<string> = new Set([
   "background-color", "logseq.order-list-type",
   "heading", "title", "filters", "created-at", "updated-at", "last-modified-at",
   "query-table", "query-properties", "query-sort-by", "query-sort-desc", "logseq.tldraw.shape",
-]);
+].map(propertyKeyNorm));
 
 /** Whether a property key is hidden from the rendered chips: a built-in internal
  *  key (case-insensitive) OR one the user listed in `:block-hidden-properties`. */
 export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
-  const lower = key.toLowerCase();
-  return lower.startsWith("tine.") || RENDER_HIDDEN_PROPS.has(lower) || userHidden.some((k) => k.toLowerCase() === lower);
+  const normalized = propertyKeyNorm(key);
+  return normalized.startsWith("tine.")
+    // Table v2 reads this configuration from the block rather than presenting it
+    // as content. OG likewise resolves `logseq.table.*` view props from the block
+    // property map (og/deps/shui/src/logseq/shui/table/v2.cljs:37-50).
+    || normalized.startsWith("logseq.table.")
+    || RENDER_HIDDEN_PROPS.has(normalized)
+    || userHidden.some((k) => propertyKeyNorm(k) === normalized);
 }
 
 const PROP_RE = /^[A-Za-z0-9_./-]+::\s?.*$/;
@@ -71,11 +82,11 @@ export function pageProperties(
       }
     }
   } else {
-    for (const line of preBlock.split("\n")) {
-      if (isPropertyLine(line)) {
-        const idx = line.indexOf("::");
-        out.push([line.slice(0, idx).trim(), line.slice(idx + 2).trim()]);
-      }
+    const header = splitPagePreamble(preBlock).properties;
+    if (!header) return out;
+    for (const line of header.split("\n")) {
+      const property = parsePageHeaderPropertyLine(line);
+      if (property) out.push([property.key, property.value.trim()]);
     }
   }
   return out;
@@ -87,15 +98,39 @@ export function aliasNames(
   preBlock: string | null | undefined,
   format: Format = "md"
 ): string[] {
+  const out: string[] = [];
   for (const [k, v] of pageProperties(preBlock, format)) {
-    if (k.toLowerCase() === "alias") {
-      return v
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
+    const key = propertyKeyNorm(k);
+    if (key !== "alias" && key !== "aliases") continue;
+    if (isQuotedPagePropertyValue(v)) continue;
+    out.push(...v
+      .split(/[,，]/)
+      .map(normalizeImplicitPageName)
+      .filter(Boolean));
   }
-  return [];
+  return out;
+}
+
+/** Built-in page-property values that Logseq treats as page references even
+ * without explicit `[[...]]` syntax. Custom properties stay ordinary text. */
+export function isImplicitPageRefProperty(key: string): boolean {
+  const normalized = propertyKeyNorm(key);
+  return normalized === "alias" || normalized === "aliases" || normalized === "tags";
+}
+
+/** A whole quoted property value is literal text, including its commas. */
+export function isQuotedPagePropertyValue(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"');
+}
+
+/** Normalize one implicit page value for alias resolution / display. */
+export function normalizeImplicitPageName(value: string): string {
+  let trimmed = value.trim();
+  if (trimmed.startsWith("#[[") && trimmed.endsWith("]]")) trimmed = trimmed.slice(3, -2);
+  else if (trimmed.startsWith("[[") && trimmed.endsWith("]]")) trimmed = trimmed.slice(2, -2);
+  else if (trimmed.startsWith("#")) trimmed = trimmed.slice(1);
+  return trimmed.trim();
 }
 
 const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;

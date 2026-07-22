@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tine.page/schemas/plugin-manifest-v1.json",
+  "title": "Tine plugin manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license", "source", "entry", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$" },
+    "apiVersion": { "const": "0.2" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "author": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "entry": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*\\.wasm$" },
+    "platforms": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["desktop", "android", "ios"] },
+      "default": ["desktop"]
+    },
+    "capabilities": {
+      "type": "array", "uniqueItems": true,
+      "items": { "enum": ["commands.register", "slash-commands.register", "block-decorations.register", "graph.read.visible", "graph.write.block", "settings.read", "settings.write"] }
+    },
+    "aiDevelopment": { "enum": ["none", "assisted", "primary"] },
+    "settings": {
+      "type": "array", "maxItems": 64,
+      "items": { "$ref": "#/$defs/setting" }
+    },
+    "portedFrom": { "$ref": "#/$defs/portedFrom" },
+    "contributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/command" } },
+        "slashCommands": { "type": "array", "items": { "$ref": "#/$defs/slashCommand" } },
+        "blockDecorations": { "type": "array", "items": { "$ref": "#/$defs/decoration" } }
+      }
+    }
+  },
+  "$defs": {
+    "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["desktop", "android", "ios"] } },
+    "command": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "defaultBinding": { "type": "string", "minLength": 1, "maxLength": 80 }, "platforms": { "$ref": "#/$defs/platforms" } }
+    },
+    "slashCommand": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "insertText": { "type": "string" }, "platforms": { "$ref": "#/$defs/platforms" } }
+    },
+    "decoration": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind"],
+      "properties": { "id": { "type": "string" }, "kind": { "enum": ["thread-lines", "badge"] }, "platforms": { "$ref": "#/$defs/platforms" } }
+    },
+    "settingBase": {
+      "type": "object",
+      "required": ["key", "type", "label", "description", "default"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,79}$" },
+        "type": { "enum": ["boolean", "enum", "number", "string"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "default": {}
+      }
+    },
+    "setting": {
+      "oneOf": [
+        {
+          "allOf": [{ "$ref": "#/$defs/settingBase" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": true, "type": { "const": "boolean" }, "label": true, "description": true,
+            "default": { "type": "boolean" }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingBase" }],
+          "additionalProperties": false,
+          "required": ["choices"],
+          "properties": {
+            "key": true, "type": { "const": "enum" }, "label": true, "description": true,
+            "default": { "type": "string" },
+            "choices": {
+              "type": "array", "minItems": 2, "maxItems": 32,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["value", "label"],
+                "properties": {
+                  "value": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$" },
+                  "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingBase" }],
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "key": true, "type": { "const": "number" }, "label": true, "description": true,
+            "default": { "type": "number" }, "min": { "type": "number" }, "max": { "type": "number" },
+            "step": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingBase" }],
+          "additionalProperties": false,
+          "required": ["maxLength"],
+          "properties": {
+            "key": true, "type": { "const": "string" }, "label": true, "description": true,
+            "default": { "type": "string" }, "maxLength": { "type": "integer", "minimum": 1, "maximum": 4096 }
+          }
+        }
+      ]
+    },
+    "portedFrom": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"],
+      "properties": {
+        "ecosystem": { "enum": ["logseq", "obsidian", "other"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "authors": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "relationship": { "enum": ["behavioral-port", "source-derived"] }
+      }
+    }
+  }
+}

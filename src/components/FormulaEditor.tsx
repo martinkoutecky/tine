@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import {
   closeFormulaEditor,
   formulaEditor,
@@ -7,6 +7,7 @@ import {
 } from "../ui";
 import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../store";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
+import { registerTransientLayer } from "../transientLayers";
 
 const STDLIB_CHIPS = [
   "if()",
@@ -180,6 +181,11 @@ export function FormulaEditor(): JSX.Element {
 }
 
 function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element {
+  let root: HTMLFormElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "formula-editor", root: () => root ?? null, dismiss: () => { closeFormulaEditor(); return true; } });
+    onCleanup(unregister);
+  });
   const [name, setName] = createSignal(props.target.mode === "add" ? "" : props.target.name ?? "");
   const [expr, setExpr] = createSignal(props.target.expr);
   const initialParsed = (() => {
@@ -290,18 +296,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
       setWinW(window.innerWidth);
       setWinH(window.innerHeight);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeFormulaEditor();
-      }
-    };
     window.addEventListener("resize", onResize);
-    window.addEventListener("keydown", onKey, true);
     onCleanup(() => {
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("keydown", onKey, true);
     });
   });
 
@@ -315,6 +312,7 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
       }}
     >
       <form
+        ref={root}
         class="formula-editor"
         style={{ left: `${left()}px`, top: `${top()}px` }}
         onClick={(e) => e.stopPropagation()}
@@ -618,6 +616,23 @@ function ValueFace(props: {
   }
 
   const [open, setOpen] = createSignal(false);
+  const transientId = `formula-picker-${createUniqueId()}`;
+  let pickerRoot: HTMLDivElement | undefined;
+  let trigger: HTMLButtonElement | undefined;
+  createEffect(() => {
+    if (!open()) return;
+    const unregister = registerTransientLayer({
+      id: transientId,
+      parentId: "formula-editor",
+      root: () => pickerRoot ?? null,
+      trigger: () => trigger ?? null,
+      dismiss: () => {
+        setOpen(false);
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
   const commit = (next: Ast) => {
     props.onChange(next);
     setOpen(false);
@@ -626,6 +641,9 @@ function ValueFace(props: {
   return (
     <span class="qb-add-wrap formula-builder-value-wrap">
       <button
+        ref={(element) => {
+          trigger = element;
+        }}
         type="button"
         class="qb-chip formula-builder-value-face"
         title="Edit formula value"
@@ -641,6 +659,9 @@ function ValueFace(props: {
           ast={props.ast}
           fields={props.fields}
           formulas={props.formulas}
+          rootRef={(element) => {
+            pickerRoot = element;
+          }}
           onCommit={commit}
         />
       </Show>
@@ -652,10 +673,11 @@ function ValuePicker(props: {
   ast: Ast;
   fields: readonly string[];
   formulas: readonly [string, string][];
+  rootRef: (element: HTMLDivElement) => void;
   onCommit: (ast: Ast) => void;
 }): JSX.Element {
   return (
-    <div class="qb-picker formula-builder-picker" onClick={(e) => e.stopPropagation()}>
+    <div ref={props.rootRef} class="qb-picker formula-builder-picker" onClick={(e) => e.stopPropagation()}>
       <div class="qb-picker-title">Field</div>
       <For each={props.fields}>
         {(field) => (

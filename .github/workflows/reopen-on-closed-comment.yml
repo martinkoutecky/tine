@@ -1,0 +1,27 @@
+name: reopen-on-closed-comment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reopen:
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.issue.state == 'closed' &&
+      github.event.comment.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Reopen reporter follow-up for triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          gh issue reopen "$ISSUE" --repo "$GH_REPO"
+          gh issue edit "$ISSUE" --repo "$GH_REPO" --add-label needs-triage

@@ -59,6 +59,7 @@ const EPS = 1e-9;
 export const [paneSel, setPaneSel] = createSignal<PaneTarget | null>(null);
 
 let previousPaneTarget: string | null = null;
+let previousBlockSelectionTarget: string | null = null;
 
 function samePath(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((n, i) => n === b[i]);
@@ -351,10 +352,21 @@ export function enterPaneSelect(paneId: string): void {
 
 export function exitPaneSelect(): void {
   setPaneSel(null);
+  previousBlockSelectionTarget = null;
 }
 
 export function previousPaneSelectionTarget(): string | null {
   return previousPaneTarget;
+}
+
+export function rememberBlockSelectionForPaneReturn(id: string | null): void {
+  previousBlockSelectionTarget = id;
+}
+
+export function takeBlockSelectionForPaneReturn(): string | null {
+  const target = previousBlockSelectionTarget;
+  previousBlockSelectionTarget = null;
+  return target;
 }
 
 export function movePaneSelection(root: LayoutNode, dir: PaneDirection): PaneTarget {

@@ -4,13 +4,13 @@
 # The metainfo points its screenshots at https://tine.page/img/*.png, which are
 # served from website/img/*.png. If a website change renames/deletes one of those
 # files, the Flathub store screenshots silently break. This job fails when a
-# screenshot the metainfo references no longer exists in website/img/, so it CANNOT
-# be missed — it runs on both flatpak/** and website/img/** changes.
+# screenshot the metainfo references no longer exists in website/img/, so it runs
+# on pull requests that touch flatpak/** or website/img/** and remains dispatchable.
 name: Flatpak metadata
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     paths:
       - "flatpak/**"
       - "website/img/**"

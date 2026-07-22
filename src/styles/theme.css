@@ -21,6 +21,15 @@
   --marker-later: #9b6fd4;
   --marker-done: #5fa37a;
   --marker-waiting: #c08bd0;
+
+  /* A restrained semantic cue for block embeds. It follows both built-in and
+     custom theme tokens, and custom.css may override this token directly. */
+  --block-embed-accent: color-mix(in srgb, var(--accent) 35%, var(--bullet-color));
+
+  /* Quiet shared scrollbar vocabulary. These stay semantic so built-in themes,
+     Logseq-compatible themes, and custom.css inherit the panel text palette. */
+  --scrollbar-thumb: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-secondary) 64%, transparent);
 }
 
 html[data-theme="light"] {

@@ -46,7 +46,7 @@ fn page(id: PageId, path: &str, pre_block: &str, blocks: Vec<BlockSnapshot>) -> 
 }
 
 #[test]
-fn materializes_structure_and_reuses_blocks_for_destination_first_moves() {
+fn destination_only_duplicate_ids_are_not_guessed_as_moves() {
     let dir = TestDir::new("structure");
     let page_a = PageId::new();
     let page_b = PageId::new();
@@ -75,37 +75,30 @@ fn materializes_structure_and_reuses_blocks_for_destination_first_moves() {
     assert_eq!(initial.pre_block.as_deref(), Some("title:: A\n"));
     assert_eq!(initial.blocks[1].parent, Some(root));
 
-    graph
+    assert!(matches!(
+        graph
         .commit_page(page(
             page_b,
             "b.md",
             "alias:: B\n",
             vec![block(child, None, 0, "child")],
-        ))
-        .unwrap();
+        )),
+        Err(CrdtError::DuplicateBlockId(id)) if id == child
+    ));
 
     assert_eq!(
         graph.materialize_page(page_a).unwrap().unwrap().blocks,
-        vec![block(root, None, 0, "root")]
+        vec![
+            block(root, None, 0, "root"),
+            block(child, Some(root), 0, "child")
+        ]
     );
-    assert_eq!(
-        graph.materialize_page(page_b).unwrap().unwrap().blocks,
-        vec![block(child, None, 0, "child")]
-    );
-
-    // A later source-page projection does not delete the globally reused node.
-    graph
-        .commit_page(page(
-            page_a,
-            "a.md",
-            "title:: A\n",
-            vec![block(root, None, 0, "root")],
-        ))
-        .unwrap();
-    assert_eq!(
-        graph.materialize_page(page_b).unwrap().unwrap().blocks[0].id,
-        child
-    );
+    assert!(graph
+        .materialize_page(page_b)
+        .unwrap()
+        .unwrap()
+        .blocks
+        .is_empty());
 }
 
 #[test]

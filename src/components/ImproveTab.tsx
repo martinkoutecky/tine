@@ -12,6 +12,7 @@ import {
   type ProgressEvent,
 } from "../devtools/lsdoc-diff/orchestrator";
 import type { BenchSummary } from "../devtools/lsdoc-diff/bench";
+import { writeClipboardTextStrict } from "../clipboard";
 
 const ISSUES_URL = "https://github.com/martinkoutecky/lsdoc/issues";
 
@@ -42,11 +43,12 @@ export function ImproveTab(): JSX.Element {
   };
 
   const divergences = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "divergence" }> => f.type === "divergence");
-  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence");
+  const oracleArtifacts = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "mldoc-oracle-artifact" }> => f.type === "mldoc-oracle-artifact");
+  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence" && f.type !== "mldoc-oracle-artifact");
 
   const flash = async (text: string, key: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await writeClipboardTextStrict(text);
       setCopied(key);
     } catch {
       setCopied(`fail:${key}`);
@@ -94,7 +96,8 @@ export function ImproveTab(): JSX.Element {
       <p class="settings-hint">
         <b>Privacy:</b> nothing is uploaded. Every divergence snippet shown below is <b>anonymized</b> (page names
         and words replaced; URL schemes kept but hosts and paths scrubbed) and <b>re-checked</b> to confirm it still
-        reproduces the bug — so it's safe to share. Read it before you post anything.
+        reproduces the bug. Tine omits a finding when that privacy-preserving scrub loses the mismatch. Still read
+        every snippet carefully before you choose to share it.
       </p>
 
       <div class="settings-field">
@@ -197,7 +200,9 @@ export function ImproveTab(): JSX.Element {
                   </Show>
                 </div>
                 <Show when={divergences().length === 0}>
-                  <div class="improve-clean">No divergences — lsdoc matched Logseq's parser on every file.</div>
+                  <div class="improve-clean">
+                    No actionable divergences — lsdoc matched Logseq's parser on every file after verified mldoc oracle artifacts were quarantined.
+                  </div>
                 </Show>
                 <For each={divergences()}>
                   {(f) => (
@@ -220,6 +225,18 @@ export function ImproveTab(): JSX.Element {
                     </div>
                   )}
                 </For>
+                <Show when={oracleArtifacts().length > 0}>
+                  <details class="improve-other">
+                    <summary>{oracleArtifacts().length} suppressed mldoc oracle artifact(s)</summary>
+                    <For each={oracleArtifacts()}>
+                      {(f) => (
+                        <div class="settings-hint">
+                          <code>{f.rel}</code> · lines {f.lineStart}-{f.lineEnd} — {f.detail}
+                        </div>
+                      )}
+                    </For>
+                  </details>
+                </Show>
                 <Show when={otherFindings().length > 0}>
                   <details class="improve-other">
                     <summary>{otherFindings().length} non-divergence issue(s)</summary>

@@ -8,6 +8,9 @@ import fs from "node:fs";
 const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
 const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDriver";
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
+const WAIT_TIMEOUT = Number(process.env.E2E_WAIT_TIMEOUT_MS || 60_000);
 const ROOT = "/tmp/tine-multigraph-e2e";
 const A = `${ROOT}/alpha`;
 const B = `${ROOT}/beta`;
@@ -43,11 +46,16 @@ const env = {
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync(`${ROOT}/tauri-driver.log`, "w");
+// Keep the native-driver trace with the suite evidence even when the scenario
+// fails before it can print a useful WebDriver error.
+const tdLogPath = process.env.E2E_ARTIFACT_DIR
+  ? `${process.env.E2E_ARTIFACT_DIR}/tauri-driver.log`
+  : `${ROOT}/tauri-driver.log`;
+const tdLog = fs.openSync(tdLogPath, "w");
 const td = spawn(
   TD,
-  ["--port", "4454", "--native-port", "4455", "--native-driver", WD],
-  { env, stdio: ["ignore", tdLog, tdLog] }
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
+  { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(2500);
 
@@ -56,7 +64,7 @@ const forwarded = [];
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4454,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: {
       browserName: "wry",
@@ -68,9 +76,9 @@ try {
     connectionRetryTimeout: 60000,
   });
 
-  await browser.$(".graph-switch-btn").waitForExist({ timeout: 20000 });
+  await browser.$(".graph-switch-btn").waitForExist({ timeout: WAIT_TIMEOUT });
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("ALPHA_SENTINEL"), {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "alpha graph never painted",
   });
   const initial = await browser.getWindowHandles();
@@ -80,7 +88,7 @@ try {
 
   forwarded.push(spawn(APP, [B], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore" }));
   await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 3, {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "forwarded beta launch did not create a second window",
   });
 
@@ -88,9 +96,9 @@ try {
   const beta = handles.find((handle) => !initial.includes(handle));
   if (!beta) throw new Error("could not identify beta window");
   await browser.switchToWindow(beta);
-  await browser.$(".graph-switch-btn").waitForExist({ timeout: 20000 });
+  await browser.$(".graph-switch-btn").waitForExist({ timeout: WAIT_TIMEOUT });
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("BETA_SENTINEL"), {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "beta graph never painted",
   });
   const betaName = await browser.$(".graph-switch-name").getAttribute("textContent");
@@ -106,16 +114,25 @@ try {
 
   // The last-focused route used by quick capture follows the active graph.
   await browser.$("body").click();
-  await sleep(300);
+  await browser.waitUntil(async () =>
+    (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "graph-1", {
+    timeout: WAIT_TIMEOUT,
+    timeoutMsg: "capture target did not follow beta focus",
+  });
   const betaTarget = await browser.execute(async () =>
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
 
-  // Forwarding alpha focuses its already-open owner. This produces a real OS
-  // focus event (switchToWindow alone only changes WebDriver's target).
+  // Forwarding alpha is an explicit graph activation. Capture routing updates
+  // synchronously in the backend instead of depending on a later OS focus
+  // event, so observe that global state from the still-valid beta webview
+  // before switching WebDriver handles.
   forwarded.push(spawn(APP, [A], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore" }));
-  await sleep(700);
-  await browser.switchToWindow(alpha);
+  await browser.waitUntil(async () =>
+    (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "main", {
+    timeout: WAIT_TIMEOUT,
+    timeoutMsg: "capture target did not follow explicit alpha activation",
+  });
   const alphaTarget = await browser.execute(async () =>
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
@@ -143,6 +160,7 @@ try {
   }
 
   // External changes in alpha are dispatched only to alpha.
+  await browser.switchToWindow(alpha);
   fs.writeFileSync(journalPath(A), "- ALPHA_SENTINEL\n- ALPHA_WATCHER_UPDATE\n");
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("ALPHA_WATCHER_UPDATE"), {
     timeout: 10000,
@@ -167,6 +185,7 @@ try {
     betaName,
     betaTarget,
     alphaTarget,
+    explicitActivationObserved: true,
     duplicateGraphWindowCount: afterDuplicate.length - 1,
     watcherIsolated: true,
     quickCaptureIsolated: true,
@@ -175,6 +194,6 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   for (const child of forwarded) child.kill("SIGKILL");
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
   fs.closeSync(tdLog);
 }

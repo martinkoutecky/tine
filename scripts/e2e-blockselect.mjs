@@ -31,6 +31,8 @@ const TD =
     : fs.existsSync(LOCAL_TAURI_DRIVER)
       ? LOCAL_TAURI_DRIVER
       : "tauri-driver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 
 // Plain single-line blocks placed DIRECTLY in the journal, which the app opens
 // by default → these are unambiguously main-feed blocks (in mainPages()/visibleOrder).
@@ -104,8 +106,8 @@ const env = {
 console.log("DISPLAY=", process.env.DISPLAY, "APP=", APP);
 
 const tdLog = fs.openSync("/tmp/td-bsel.log", "w");
-const td = spawn(TD, ["--port", "4444", "--native-port", "4445", "--native-driver", "/usr/bin/WebKitWebDriver"], {
-  env, stdio: ["ignore", tdLog, tdLog],
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
+  env, stdio: ["ignore", tdLog, tdLog], detached: true,
 });
 await sleep(3000);
 
@@ -166,7 +168,7 @@ const clickBlock = async (blockIdx, selStart) => {
 let browser;
 try {
   browser = await remote({
-    hostname: "127.0.0.1", port: 4444, path: "/",
+    hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
     capabilities: {
       browserName: "wry",
       "wdio:enforceWebDriverClassic": true,
@@ -193,6 +195,69 @@ try {
     else log(`  [no errors @ ${tag}]`);
     return errs;
   };
+
+  // Post-#161 transient closure: drive the real calendar control and prove one
+  // Escape closes only its popup and restores its actual opener.
+  const calendarButton = await browser.$('button[title="Go to date"]');
+  await calendarButton.click();
+  await browser.$(".calendar-jump-pop").waitForExist({ timeout: 5_000 });
+  await browser.keys([Key.Escape]);
+  await browser.$(".calendar-jump-pop").waitForExist({ reverse: true, timeout: 5_000 });
+  const calendarFocus = await browser.execute(() => document.activeElement?.getAttribute("title"));
+  if (calendarFocus !== "Go to date") throw new Error(`calendar Escape restored focus to ${calendarFocus}`);
+
+  // The selection toolbar intentionally keeps focus in the textarea. Its More
+  // menu must peel without collapsing the selected range or exiting editing.
+  // The overflow is driven by the editor container (260px), not the viewport
+  // directly. Use a phone-width viewport so the real responsive layout crosses
+  // that container-query boundary.
+  await browser.setWindowSize(320, 800);
+  await clickBlock(1, "end");
+  const selectedBefore = await browser.execute(() => {
+    const editor = document.activeElement;
+    if (!(editor instanceof HTMLTextAreaElement)) return null;
+    editor.setSelectionRange(0, Math.min(5, editor.value.length), "forward");
+    editor.dispatchEvent(new Event("select", { bubbles: true }));
+    return { value: editor.value, start: editor.selectionStart, end: editor.selectionEnd };
+  });
+  if (!selectedBefore || selectedBefore.start === selectedBefore.end) {
+    throw new Error(`could not prepare selection-overflow proof: ${JSON.stringify(selectedBefore)}`);
+  }
+  // The native window has a desktop minimum width, so WebDriver cannot make
+  // this named container as narrow as a phone/tablet split can. Constrain the
+  // live editor container itself to exercise the production container query.
+  await browser.execute(() => {
+    const editor = document.activeElement;
+    if (!(editor instanceof HTMLTextAreaElement)) return false;
+    const wrap = editor.closest(".editor-wrap");
+    if (!(wrap instanceof HTMLElement)) return false;
+    wrap.style.width = "240px";
+    return true;
+  });
+  const selectionMore = await browser.$(".sel-toolbar-more");
+  await selectionMore.waitForDisplayed({ timeout: 5_000 });
+  await selectionMore.click();
+  await browser.$(".sel-toolbar-overflow").waitForExist({ timeout: 5_000 });
+  await browser.keys([Key.Escape]);
+  await browser.$(".sel-toolbar-overflow").waitForExist({ reverse: true, timeout: 5_000 });
+  const selectedAfter = await browser.execute(() => {
+    const editor = document.activeElement;
+    return editor instanceof HTMLTextAreaElement ? {
+      value: editor.value,
+      start: editor.selectionStart,
+      end: editor.selectionEnd,
+      editing: !!editor.closest(".block-main.editing"),
+    } : null;
+  });
+  if (!selectedAfter || !selectedAfter.editing || selectedAfter.value !== selectedBefore.value
+    || selectedAfter.start !== selectedBefore.start || selectedAfter.end !== selectedBefore.end) {
+    throw new Error(`selection overflow Escape changed its editor: ${JSON.stringify({ selectedBefore, selectedAfter })}`);
+  }
+  await browser.execute(() => {
+    const wrap = document.querySelector(".editor-wrap[style]");
+    if (wrap instanceof HTMLElement) wrap.style.removeProperty("width");
+  });
+  await browser.setWindowSize(1400, 1000);
 
   // Stay on the DEFAULT journal feed — its blocks are main-feed (in visibleOrder).
   log("=== default journal feed (no navigation) ===");
@@ -374,27 +439,34 @@ try {
     return null;
   });
   log(`  live satellite block: ${JSON.stringify(liveSat)}`);
-  if (liveSat) {
-    await clickBlock(liveSat.i, "end");
-    await probe(`after click(sat ${liveSat.i})`);
+  const satellite = liveSat ?? (satIdx >= 0 ? { i: satIdx, text: dmap[satIdx]?.text ?? "" } : null);
+  if (satellite) {
+    await clickBlock(satellite.i, "end");
+    const satEdit = await probe(`after click(sat ${satellite.i})`);
+    if (satEdit.editingIdx.length !== 1 || satEdit.editingIdx[0] !== satellite.i) {
+      throw new Error(`linked-reference satellite ${satellite.i} did not enter its editor`);
+    }
     await browser.keys([Key.Escape]);
     await sleep(600);
-    await probe("satellite after Escape");
-  }
+    const satEscape = await probe("satellite after Escape");
+    if (satEscape.editingIdx.length !== 0 || satEscape.selectedIdx.length !== 1) {
+      throw new Error("linked-reference satellite Escape did not return to one block selection");
+    }
+  } else throw new Error("linked-reference satellite scenario did not find a target");
 
   log(`\nVERDICT-INPUT: see selected-block presence + activeElement across steps above.`);
 } catch (e) {
   log(`\nE2E ERROR: ${String(e).split("\n").slice(0, 8).join(" | ")}`);
   process.exitCode = 1;
 } finally {
-  const notesDir = path.join(ROOT, "subagent-tasks/notes");
+  const notesDir = process.env.E2E_ARTIFACT_DIR || "/tmp/tine-e2e-notes";
   fs.mkdirSync(notesDir, { recursive: true });
-  fs.appendFileSync(
+  fs.writeFileSync(
     path.join(notesDir, "issue2-block-select-raw.md"),
     `\n\n---\n# block-select e2e run (${new Date().toISOString()})\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`\n`
   );
-  console.log(`\nAppended raw log to subagent-tasks/notes/issue2-block-select-raw.md`);
+  console.log(`\nWrote raw log to ${path.join(notesDir, "issue2-block-select-raw.md")}`);
   try { await browser?.deleteSession(); } catch {}
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
   xvfb?.kill("SIGKILL");
 }

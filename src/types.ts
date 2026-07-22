@@ -9,6 +9,8 @@ export interface BlockDto {
   children: BlockDto[];
   /** Ancestor first-lines (search/reference results only). */
   breadcrumb?: string[];
+  /** Synthetic read-only backlink row sourced from page-level properties. */
+  page_property?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
@@ -19,6 +21,35 @@ export interface BlockDto {
   deadline?: string;
   tags?: string[];
   properties?: [string, string][];
+}
+
+/** Node-and-byte-bounded subtree used only for block-reference previews/exports. */
+export interface BlockPreview {
+  group: RefGroup;
+  /** Nodes omitted after the requested preview construction budget. */
+  truncated: number;
+}
+
+/** One rendered query macro requested by a Copy / Export session. */
+export interface QueryExportSpec {
+  key: string;
+  query: string;
+  advanced: boolean;
+}
+
+/** Native hierarchy projection for one query macro. */
+export interface QueryExportResult {
+  key: string;
+  groups: RefGroup[];
+  shown: number;
+  total: number;
+  omitted_nodes: number;
+}
+
+/** Every result in this batch shared one native root/node/byte budget. */
+export interface QueryExportBatch {
+  results: QueryExportResult[];
+  omitted_queries: number;
 }
 
 /** On-disk page format: markdown (default) or org. */
@@ -46,6 +77,15 @@ export interface PageDto {
   /** Bundled in-app Guide page: read-only, ephemeral, and excluded from normal
    *  graph persistence/search/reference surfaces. */
   guide?: boolean;
+}
+
+/** One authoritative Journals-feed transaction.  Cursor fields are ordinal
+ * journal days, never counts of returned DTOs (a selected file may vanish). */
+export interface JournalFeedPage {
+  pages: PageDto[];
+  next_before_day: number | null;
+  done: boolean;
+  as_of_day: number;
 }
 
 export interface GuidePage {
@@ -193,7 +233,114 @@ export type MergeDecision = "mine" | "theirs" | "both";
 export interface RefGroup {
   page: string;
   kind: PageKind;
+  /** Exact owner for path-bearing search presentations; absent for legacy DSL results. */
+  path?: string;
   blocks: BlockDto[];
+  evidence?: ReferenceBlockEvidence[];
+}
+
+export interface BacklinkFilterTarget {
+  page: string;
+  kind: PageKind;
+  block_id: string;
+}
+
+export interface BacklinkFilterEntry extends BacklinkFilterTarget {
+  text: string;
+  facets: string[];
+  truncated?: boolean;
+}
+
+export interface BacklinkFilterContext {
+  entries: BacklinkFilterEntry[];
+  truncated?: boolean;
+}
+
+export type ReferenceKind = "explicit" | "plain";
+
+export interface ReferenceOccurrence {
+  matched_name: string;
+  canonical: string;
+  kind: ReferenceKind;
+  /** UTF-16 offsets into the matching BlockDto.raw. */
+  span: MatchSpan;
+  rule: string;
+}
+
+export interface ReferenceBlockEvidence {
+  block_id: string;
+  occurrences: ReferenceOccurrence[];
+  /** Total matches in the block before the bounded jump-target list is capped. */
+  total?: number;
+  truncated?: boolean;
+}
+
+export interface MatchSpan {
+  /** UTF-16 code-unit offsets into QueryHit.display_text; end is exclusive. */
+  start: number;
+  end: number;
+}
+
+export interface MatchEvidence {
+  clause_id: number;
+  field: "page_name" | "visible_content";
+  mode: "contains" | "phrase" | "regex" | "fuzzy";
+  spans: MatchSpan[];
+  score?: number;
+}
+
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
+
+export interface QueryDiagnostic {
+  code: string;
+  message: string;
+  span?: MatchSpan;
+}
+
+export interface QueryExplainNode {
+  clause_id?: number;
+  description: string;
+  children: QueryExplainNode[];
+}
+
+export type QueryHit =
+  | {
+      entity: "page";
+      page: PageEntry;
+      display_text: string;
+      evidence: MatchEvidence[];
+      score: number;
+      match_class?: ObjectiveMatchClass;
+      matched_alias?: string;
+    }
+  | {
+      entity: "block";
+      page: string;
+      kind: PageKind;
+      /** Exact graph-root-relative file that physically owns this block hit. */
+      path?: string;
+      block: BlockDto;
+      display_text: string;
+      evidence: MatchEvidence[];
+      score?: number;
+      match_class?: ObjectiveMatchClass;
+    };
+
+export interface QueryExecution {
+  hits: QueryHit[];
+  diagnostics: QueryDiagnostic[];
+  explanation: { branches: QueryExplainNode[] };
+  /** Absent only when talking to an older backend or using an older test fixture. */
+  has_more?: { pages: boolean; blocks: boolean };
+  cancelled: boolean;
+}
+
+/** A single routed page used to scope block search. When present, `path` is the
+ * authoritative file identity; otherwise kind plus canonical page name is used. */
+export interface QueryPageScope {
+  name: string;
+  pageKind: PageKind;
+  path?: string;
 }
 
 /** Result of an advanced (datalog) query: matched groups + which clause heads
@@ -220,6 +367,11 @@ export interface GraphMeta {
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
   enable_timetracking: boolean; // :feature/enable-timetracking?, default true
+  show_brackets: boolean; // :ui/show-brackets?, default true
+  /** :shortcut/doc-mode-enter-for-new-block?, false when absent / older backend. */
+  doc_mode_enter_for_new_block?: boolean;
+  /** :editor/logical-outdenting?, false when absent / older backend. */
+  logical_outdenting?: boolean;
   logbook_with_second_support: boolean; // :logbook/settings :with-second-support?, default true
   logbook_enabled_in_timestamped_blocks: boolean;
   logbook_enabled_in_all_blocks: boolean;
@@ -231,6 +383,10 @@ export interface Rect {
   left: number;
   width: number;
   height: number;
+  /** Coordinate-space dimensions from a current Logseq PDF sidecar. Absent on
+   * rectangles written by older Tine versions, which already use page space. */
+  source_width?: number;
+  source_height?: number;
 }
 
 export interface Highlight {
@@ -240,6 +396,12 @@ export interface Highlight {
   color: string;
   text: string | null;
   image: number | null;
+}
+
+export interface PdfState {
+  highlights: Highlight[];
+  page: number | null;
+  scale: number | null;
 }
 
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field

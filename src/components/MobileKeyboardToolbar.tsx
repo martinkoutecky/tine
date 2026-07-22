@@ -126,6 +126,9 @@ export function MobileKeyboardToolbar(): JSX.Element {
     if (isMobilePlatform) queueMicrotask(updateDock);
   });
 
+  const visible = () =>
+    !!focusedEditorCommandBridge() && (keyboardVisible() || focusedFallback());
+
   // Publish the toolbar's on-screen top as a CSS var so the fixed help "?" FAB
   // (and any other bottom-anchored chrome) can lift ABOVE it instead of
   // overlapping. Re-runs when the dock position or visibility changes; measures
@@ -152,8 +155,6 @@ export function MobileKeyboardToolbar(): JSX.Element {
     }
   });
 
-  const visible = () =>
-    !!focusedEditorCommandBridge() && (keyboardVisible() || focusedFallback());
   const style = () => ({
     top: `calc(${Math.max(0, dockTop())}px - env(safe-area-inset-bottom))`,
   });

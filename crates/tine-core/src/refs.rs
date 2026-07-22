@@ -2,22 +2,28 @@
 //! word]]`), and `((block-uuid))`. Used for the backlink index and queries.
 //! UTF-8 safe (advances by char boundaries).
 
-/// The ONE page-name identity key: trimmed + **Unicode** lowercase (the OG/Logseq
-/// fold). Use this — never a bare `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
+use unicode_normalization::UnicodeNormalization;
+
+/// The ONE page-name identity key: trimmed + **Unicode** lowercase + NFC (the
+/// OG/Logseq fold). Use this — never a bare
+/// `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
 /// page name — so the ref/backlink index and the file/cache resolution agree on
 /// identity (a non-ASCII name like `Über` must resolve the same everywhere). Display
 /// uses the original casing.
 pub fn page_key(name: &str) -> String {
-    name.trim().to_lowercase()
+    // Preserve Tine's historical surrounding-whitespace tolerance. Otherwise
+    // this is OG page-name-sanity-lc: lowercase, remove one slash at each
+    // boundary, then NFC (never NFKC or accent folding).
+    let lowered = name.trim().to_lowercase();
+    let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
+    let without_boundaries = without_leading.strip_suffix('/').unwrap_or(without_leading);
+    without_boundaries.nfc().collect()
 }
 
-/// `page_key(a) == page_key(b)` without allocating — the comparison form for hot
-/// cache scans. Unicode case fold (matches `page_key`), NOT `eq_ignore_ascii_case`.
+/// Comparison form for page identity. NFC composition requires allocation; this
+/// deliberately delegates to the canonical key so cache scans cannot drift.
 pub fn same_page(a: &str, b: &str) -> bool {
-    a.trim()
-        .chars()
-        .flat_map(char::to_lowercase)
-        .eq(b.trim().chars().flat_map(char::to_lowercase))
+    page_key(a) == page_key(b)
 }
 
 /// Historical name for the page-identity fold used throughout ref extraction;
@@ -605,9 +611,14 @@ mod tests {
         assert!(!same_page("Uber", "Über")); // u != ü
         assert_ne!(page_key("Uber"), page_key("Über"));
         assert!(!same_page("Cafe", "Café"));
+        assert!(same_page("Café", "Cafe\u{301}"));
+        assert_eq!(page_key("/CAFÉ/"), page_key("Cafe\u{301}"));
         assert_ne!(page_key("Σ"), page_key("S")); // Greek sigma is not Latin S
                                                   // normalize is the same fold as page_key (single source).
         assert_eq!(normalize("Über"), page_key("Über"));
+        // `str::to_lowercase` applies Unicode's contextual final-sigma rule.
+        // The frontend navigation key mirrors this exact result.
+        assert_eq!(page_key(" ΟΣ "), "ος");
     }
 
     #[test]

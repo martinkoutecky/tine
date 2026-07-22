@@ -1,8 +1,9 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
 import { readSchedule, setSchedule } from "../store";
 import { fieldLabel, readField, writeField, type FieldId } from "../sheet/fields";
 import { parseIsoDateLike } from "../sheet/typed";
+import { registerTransientLayer } from "../transientLayers";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -44,6 +45,15 @@ function propDateSelection(bid: string, field: FieldId): { y: number; m: number;
 }
 
 function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({
+      id: "date-picker",
+      root: () => root ?? null,
+      dismiss: () => { closeDatePicker(); return true; },
+    });
+    onCleanup(unregister);
+  });
   const today = new Date();
   const scheduleSel = isScheduleTarget(props.which) ? readSchedule(props.bid, props.which) : null;
   const sel = scheduleSel ?? (isScheduleTarget(props.which) ? null : propDateSelection(props.bid, props.which.field));
@@ -124,27 +134,15 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
       setWinW(window.innerWidth);
       setWinH(window.innerHeight);
     };
-    // Esc closes the picker (capture phase so it beats the editor's own Esc — in
-    // the quick-capture window a bubbling Esc would otherwise dismiss the whole
-    // window and leave the picker open behind it).
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeDatePicker();
-      }
-    };
     window.addEventListener("resize", onResize);
-    window.addEventListener("keydown", onKey, true);
     onCleanup(() => {
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("keydown", onKey, true);
     });
   });
 
   return (
     <div class="dp-overlay" onClick={closeDatePicker} onContextMenu={(e) => { e.preventDefault(); closeDatePicker(); }}>
-      <div class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}>
         <div class="dp-head">
           <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
           <span class="dp-title">

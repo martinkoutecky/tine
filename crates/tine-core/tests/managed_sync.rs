@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tine_core::crdt::{
+    BlockId, BlockSnapshot, CrdtGraph, ManagedSyncStoreState, PageId, PageSnapshot,
+};
 use tine_core::model::{Graph, PageKind};
 use uuid::Uuid;
 
@@ -56,6 +59,99 @@ fn update_chunks(root: &Path) -> Vec<PathBuf> {
     output
 }
 
+fn deliver_update_chunk(source: &Path, target: &Path, chunk_id: &str) {
+    let chunk = update_chunks(source)
+        .into_iter()
+        .find(|path| path.file_stem().and_then(|value| value.to_str()) == Some(chunk_id))
+        .expect("published update chunk exists");
+    let incoming = target.join(".tine-sync/v1/incoming");
+    fs::create_dir_all(&incoming).unwrap();
+    fs::copy(&chunk, incoming.join(chunk.file_name().unwrap())).unwrap();
+}
+
+fn write_genesis_claim(root: &Path, device: Uuid) {
+    let store = root.join(".tine-sync/v1");
+    fs::create_dir_all(store.join("genesis")).unwrap();
+    fs::write(
+        store.join("genesis.claim"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "workspace_id": Uuid::new_v4(),
+            "device_id": device,
+            "session_id": Uuid::new_v4(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn claimed_activation_resumes_only_for_its_device() {
+    let same = TestDir::new("resume-same-device");
+    fs::write(same.path().join("pages/Page.md"), "- resume safely\n").unwrap();
+    let device = Uuid::new_v4();
+    write_genesis_claim(same.path(), device);
+    let graph = Graph::open(same.path());
+    assert_eq!(
+        graph.managed_sync_store_state().unwrap(),
+        ManagedSyncStoreState::Claimed
+    );
+    graph.enable_managed_sync(device, Uuid::new_v4()).unwrap();
+    assert_eq!(
+        graph.managed_sync_store_state().unwrap(),
+        ManagedSyncStoreState::Initialized
+    );
+
+    let foreign = TestDir::new("resume-foreign-device");
+    let path = foreign.path().join("pages/Page.md");
+    fs::write(&path, "- must remain untouched\n").unwrap();
+    write_genesis_claim(foreign.path(), Uuid::new_v4());
+    let graph = Graph::open(foreign.path());
+    assert!(graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .is_err());
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "- must remain untouched\n"
+    );
+    assert_eq!(
+        graph.managed_sync_store_state().unwrap(),
+        ManagedSyncStoreState::Claimed
+    );
+}
+
+#[test]
+fn empty_unclaimed_residue_has_no_device_owner_even_after_id_migration() {
+    let dir = TestDir::new("unclaimed-residue");
+    let durable = Uuid::new_v4();
+    fs::write(
+        dir.path().join("pages/Page.md"),
+        format!("- already migrated\n  id:: {durable}\n"),
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".tine-sync/v1/genesis")).unwrap();
+    assert_eq!(
+        Graph::open(dir.path()).managed_sync_store_state().unwrap(),
+        ManagedSyncStoreState::Unclaimed
+    );
+
+    let graph = Graph::open(dir.path());
+    graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    assert_eq!(
+        durable_id(
+            &graph
+                .load_named("Page", PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .blocks[0]
+                .raw
+        ),
+        durable.to_string()
+    );
+}
+
 #[test]
 fn delivered_operation_projects_to_identical_markdown_on_a_second_graph() {
     let left = TestDir::new("replica-left");
@@ -99,6 +195,55 @@ fn delivered_operation_projects_to_identical_markdown_on_a_second_graph() {
 }
 
 #[test]
+fn failed_multi_page_projection_replays_the_entire_import_on_retry() {
+    let left = TestDir::new("projection-retry-left");
+    let right = TestDir::new("projection-retry-right");
+    fs::write(left.path().join("pages/A.md"), "- old a\n").unwrap();
+    fs::write(left.path().join("pages/B.md"), "- old b\n").unwrap();
+    let left_graph = Graph::open(left.path());
+    left_graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    copy_tree(left.path(), right.path());
+    let right_graph = Graph::open(right.path());
+    right_graph
+        .start_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+
+    let desired_a = fs::read_to_string(left.path().join("pages/A.md"))
+        .unwrap()
+        .replacen("old a", "new a", 1);
+    let desired_b = fs::read_to_string(left.path().join("pages/B.md"))
+        .unwrap()
+        .replacen("old b", "new b", 1);
+    left_graph
+        .commit_managed_restore(&[
+            ("pages/A.md".into(), desired_a.clone()),
+            ("pages/B.md".into(), desired_b.clone()),
+        ])
+        .unwrap();
+    let updates = update_chunks(left.path());
+    assert_eq!(updates.len(), 1);
+    let incoming = right.path().join(".tine-sync/v1/incoming");
+    fs::create_dir_all(&incoming).unwrap();
+    fs::copy(&updates[0], incoming.join(updates[0].file_name().unwrap())).unwrap();
+
+    let blocked = right.path().join("pages/B.md");
+    fs::remove_file(&blocked).unwrap();
+    fs::create_dir(&blocked).unwrap();
+    assert!(right_graph.pull_managed_sync().is_err());
+
+    fs::remove_dir(&blocked).unwrap();
+    let retry = right_graph.pull_managed_sync().unwrap();
+    assert_eq!(retry.imported_chunks, 0, "the chunk was already imported");
+    assert_eq!(
+        fs::read_to_string(right.path().join("pages/A.md")).unwrap(),
+        desired_a
+    );
+    assert_eq!(fs::read_to_string(blocked).unwrap(), desired_b);
+}
+
+#[test]
 fn watcher_imports_external_markdown_and_persists_ids_for_new_blocks() {
     let dir = TestDir::new("external");
     let path = dir.path().join("pages/Page.md");
@@ -119,6 +264,226 @@ fn watcher_imports_external_markdown_and_persists_ids_for_new_blocks() {
     assert!(projected.contains("added externally"));
     assert_eq!(projected.matches("id:: ").count(), 2);
     assert_eq!(update_chunks(dir.path()).len(), before_updates + 1);
+}
+
+fn durable_id(raw: &str) -> &str {
+    raw.lines()
+        .find_map(|line| line.strip_prefix("id:: "))
+        .expect("managed block has a durable id")
+}
+
+#[test]
+fn external_copy_with_retained_ids_preserves_both_pages() {
+    let dir = TestDir::new("external-copy");
+    let source_path = dir.path().join("pages/Source.md");
+    let copy_path = dir.path().join("pages/Copy.md");
+    fs::write(&source_path, "- copied externally\n").unwrap();
+    let graph = Graph::open(dir.path());
+    graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let source_before = graph.load_named("Source", PageKind::Page).unwrap().unwrap();
+    let source_durable = durable_id(&source_before.blocks[0].raw).to_string();
+
+    fs::copy(&source_path, &copy_path).unwrap();
+    graph.sync_file_checked(&copy_path).unwrap();
+    graph.project_all_managed_sync().unwrap();
+
+    let source = graph.load_named("Source", PageKind::Page).unwrap().unwrap();
+    let copy = graph.load_named("Copy", PageKind::Page).unwrap().unwrap();
+    assert_eq!(durable_id(&source.blocks[0].raw), source_durable);
+    assert_ne!(durable_id(&copy.blocks[0].raw), source_durable);
+    assert_ne!(source.blocks[0].id, copy.blocks[0].id);
+    assert_eq!(graph.managed_sync_status().unwrap().page_count, 2);
+    assert!(source_path.exists());
+    assert!(copy_path.exists());
+}
+
+fn copy_first_delete_later_promotes_the_survivor(restart_before_delete: bool) {
+    let dir = TestDir::new(if restart_before_delete {
+        "copy-delete-restart"
+    } else {
+        "copy-delete"
+    });
+    let source_path = dir.path().join("pages/Source.md");
+    let destination_path = dir.path().join("pages/Renamed.md");
+    fs::write(&source_path, "- provider move\n").unwrap();
+    let graph = Graph::open(dir.path());
+    graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let original_id = durable_id(
+        &graph
+            .load_named("Source", PageKind::Page)
+            .unwrap()
+            .unwrap()
+            .blocks[0]
+            .raw,
+    )
+    .to_string();
+
+    fs::copy(&source_path, &destination_path).unwrap();
+    graph.sync_file_checked(&destination_path).unwrap();
+    let provisional_id = durable_id(
+        &graph
+            .load_named("Renamed", PageKind::Page)
+            .unwrap()
+            .unwrap()
+            .blocks[0]
+            .raw,
+    )
+    .to_string();
+    assert_ne!(provisional_id, original_id, "a live copy stays distinct");
+
+    let graph = if restart_before_delete {
+        drop(graph);
+        let reopened = Graph::open(dir.path());
+        reopened
+            .start_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+            .unwrap();
+        reopened
+    } else {
+        graph
+    };
+    fs::remove_file(&source_path).unwrap();
+    graph.sync_deleted_file(&source_path).unwrap();
+
+    assert!(!source_path.exists());
+    let survivor = graph
+        .load_named("Renamed", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable_id(&survivor.blocks[0].raw), original_id);
+    assert_eq!(graph.managed_sync_status().unwrap().page_count, 1);
+}
+
+#[test]
+fn provider_copy_then_delete_is_one_identity_preserving_move() {
+    copy_first_delete_later_promotes_the_survivor(false);
+}
+
+#[test]
+fn provider_copy_then_restart_then_delete_still_preserves_identity() {
+    copy_first_delete_later_promotes_the_survivor(true);
+}
+
+fn delivered_copy_promotion_keeps_live_destination(source_sorts_first: bool) {
+    let ordering = if source_sorts_first {
+        "source-first"
+    } else {
+        "copy-first"
+    };
+    let left = TestDir::new(&format!("promotion-left-{ordering}"));
+    let right = TestDir::new(&format!("promotion-right-{ordering}"));
+    let source_page_id = PageId::from_uuid(Uuid::from_u128(if source_sorts_first { 1 } else { 2 }));
+    let copy_page_id = PageId::from_uuid(Uuid::from_u128(if source_sorts_first { 2 } else { 1 }));
+    let source_block_id = BlockId::from_uuid(Uuid::from_u128(11));
+    let copy_block_id = BlockId::from_uuid(Uuid::from_u128(12));
+    let source = PageSnapshot {
+        id: source_page_id,
+        path: "pages/Source.md".into(),
+        name: "Source".into(),
+        kind: "page".into(),
+        format: "md".into(),
+        pre_block: None,
+        blocks: vec![BlockSnapshot {
+            id: source_block_id,
+            parent: None,
+            order: 0,
+            raw: format!("provider move\nid:: {source_block_id}"),
+        }],
+    };
+    let copy = PageSnapshot {
+        id: copy_page_id,
+        path: "pages/Renamed.md".into(),
+        name: "Renamed".into(),
+        kind: "page".into(),
+        format: "md".into(),
+        pre_block: None,
+        blocks: vec![BlockSnapshot {
+            id: copy_block_id,
+            parent: None,
+            order: 0,
+            raw: format!("provider move\nid:: {copy_block_id}"),
+        }],
+    };
+    let mut promoted = source.clone();
+    promoted.path = copy.path.clone();
+    promoted.name = copy.name.clone();
+
+    let mut producer =
+        CrdtGraph::initialize(left.path(), Uuid::new_v4(), Uuid::new_v4(), vec![source]).unwrap();
+    copy_tree(left.path(), right.path());
+    let receiver = Graph::open(right.path());
+    receiver
+        .start_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    receiver.project_all_managed_sync().unwrap();
+
+    let copied = producer.commit_page(copy).unwrap();
+    deliver_update_chunk(left.path(), right.path(), &copied.chunk_id);
+    assert_eq!(receiver.pull_managed_sync().unwrap().imported_chunks, 1);
+    let provisional = receiver
+        .load_named("Renamed", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        durable_id(&provisional.blocks[0].raw),
+        copy_block_id.to_string()
+    );
+
+    let promotion = producer
+        .promote_copy(source_page_id, copy_page_id, promoted)
+        .unwrap();
+    deliver_update_chunk(left.path(), right.path(), &promotion.chunk_id);
+    assert_eq!(receiver.pull_managed_sync().unwrap().imported_chunks, 1);
+
+    let destination = right.path().join("pages/Renamed.md");
+    assert!(destination.exists(), "destination vanished for {ordering}");
+    assert!(!right.path().join("pages/Source.md").exists());
+    let survivor = receiver
+        .load_named("Renamed", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        durable_id(&survivor.blocks[0].raw),
+        source_block_id.to_string()
+    );
+    assert_eq!(receiver.managed_sync_status().unwrap().page_count, 1);
+
+    let retry = receiver.pull_managed_sync().unwrap();
+    assert_eq!(retry.imported_chunks, 0);
+    assert!(
+        destination.exists(),
+        "retry removed destination for {ordering}"
+    );
+    drop(receiver);
+
+    let reopened = Graph::open(right.path());
+    reopened
+        .start_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    reopened.project_all_managed_sync().unwrap();
+    assert!(
+        destination.exists(),
+        "reopen removed destination for {ordering}"
+    );
+    drop(reopened);
+
+    let replica = CrdtGraph::open(right.path(), Uuid::new_v4(), Uuid::new_v4()).unwrap();
+    let survivor = replica
+        .materialize_page(source_page_id)
+        .unwrap()
+        .expect("original page identity survives");
+    assert_eq!(survivor.path, "pages/Renamed.md");
+    assert_eq!(survivor.blocks[0].id, source_block_id);
+    assert!(replica.materialize_page(copy_page_id).unwrap().is_none());
+}
+
+#[test]
+fn delivered_copy_promotion_cannot_delete_another_live_page_projection() {
+    delivered_copy_promotion_keeps_live_destination(true);
+    delivered_copy_promotion_keeps_live_destination(false);
 }
 
 #[test]
@@ -245,17 +610,102 @@ fn managed_restore_is_durable_before_projection_and_removes_omitted_pages() {
         .unwrap()
         .contains("newer live version"));
 
-    // Even unexplained bytes left at the operation-first crash boundary cannot
-    // undo an explicit, verified restore when startup resumes projection.
-    let unexplained = fs::read_to_string(&page_path).unwrap().replacen(
-        "newer live version",
-        "unexplained local bytes",
-        1,
-    );
-    fs::write(&page_path, unexplained).unwrap();
+    // The exact pre-operation projection is the crash-recovery precondition.
+    // Startup can therefore finish the durable restore without granting this
+    // operation authority over any later bytes.
     graph.project_all_managed_sync().unwrap();
     assert_eq!(fs::read_to_string(&page_path).unwrap(), backup);
     assert!(!omitted_path.exists());
+}
+
+#[test]
+fn restore_intent_does_not_overwrite_a_later_external_edit() {
+    let dir = TestDir::new("restore-bounded-intent");
+    let path = dir.path().join("pages/Page.md");
+    fs::write(&path, "- backup version\n").unwrap();
+    let graph = Graph::open(dir.path());
+    graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let backup = fs::read_to_string(&path).unwrap();
+
+    let mut page = graph.load_named("Page", PageKind::Page).unwrap().unwrap();
+    page.blocks[0].raw = page.blocks[0]
+        .raw
+        .replacen("backup version", "live before restore", 1);
+    graph.save_page(&page, page.rev.as_deref()).unwrap();
+    graph
+        .commit_managed_restore(&[("pages/Page.md".into(), backup)])
+        .unwrap();
+
+    let later = fs::read_to_string(&path).unwrap().replacen(
+        "live before restore",
+        "later external edit",
+        1,
+    );
+    fs::write(&path, later).unwrap();
+    graph.project_all_managed_sync().unwrap();
+
+    assert!(fs::read_to_string(path)
+        .unwrap()
+        .contains("later external edit"));
+}
+
+#[test]
+fn restore_precondition_recovers_operation_first_on_another_replica() {
+    let left = TestDir::new("restore-replica-left");
+    let right = TestDir::new("restore-replica-right");
+    let path = left.path().join("pages/Page.md");
+    fs::write(&path, "- backup version\n").unwrap();
+    let left_graph = Graph::open(left.path());
+    left_graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let backup = fs::read_to_string(&path).unwrap();
+    let mut page = left_graph
+        .load_named("Page", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    page.blocks[0].raw = page.blocks[0]
+        .raw
+        .replacen("backup version", "pre-restore live", 1);
+    left_graph.save_page(&page, page.rev.as_deref()).unwrap();
+
+    copy_tree(left.path(), right.path());
+    fs::remove_dir_all(right.path().join(".tine-sync/v1/projections")).unwrap();
+    let right_graph = Graph::open(right.path());
+    right_graph
+        .start_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let before = update_chunks(left.path()).len();
+    left_graph
+        .commit_managed_restore(&[("pages/Page.md".into(), backup.clone())])
+        .unwrap();
+    let updates = update_chunks(left.path());
+    assert_eq!(updates.len(), before + 1);
+    let restore = updates
+        .iter()
+        .find(|candidate| {
+            !right
+                .path()
+                .join(".tine-sync/v1")
+                .join(
+                    candidate
+                        .strip_prefix(left.path().join(".tine-sync/v1"))
+                        .unwrap(),
+                )
+                .exists()
+        })
+        .unwrap();
+    let incoming = right.path().join(".tine-sync/v1/incoming");
+    fs::create_dir_all(&incoming).unwrap();
+    fs::copy(restore, incoming.join(restore.file_name().unwrap())).unwrap();
+
+    right_graph.pull_managed_sync().unwrap();
+    assert_eq!(
+        fs::read_to_string(right.path().join("pages/Page.md")).unwrap(),
+        backup
+    );
 }
 
 #[test]
@@ -304,13 +754,10 @@ fn watcher_preserves_block_identity_when_an_external_tool_renames_a_file() {
     graph
         .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
         .unwrap();
-    let original_id = graph
-        .load_named("Page", PageKind::Page)
-        .unwrap()
-        .unwrap()
-        .blocks[0]
-        .id
-        .clone();
+    let original_page = graph.load_named("Page", PageKind::Page).unwrap().unwrap();
+    let original_runtime = original_page.blocks[0].id.clone();
+    let original_id = durable_id(&original_page.blocks[0].raw).to_string();
+    assert_ne!(original_runtime, original_id);
 
     fs::rename(&old_path, &new_path).unwrap();
     graph.sync_file_checked(&new_path).unwrap();
@@ -322,5 +769,12 @@ fn watcher_preserves_block_identity_when_an_external_tool_renames_a_file() {
         .load_named("Renamed", PageKind::Page)
         .unwrap()
         .unwrap();
-    assert_eq!(renamed.blocks[0].id, original_id);
+    let renamed_id = renamed.blocks[0]
+        .raw
+        .lines()
+        .find_map(|line| line.strip_prefix("id:: "))
+        .expect("renamed projection retains its durable block id");
+    assert_eq!(renamed_id, original_id);
+    assert_ne!(renamed.blocks[0].id, renamed_id);
+    assert_ne!(renamed.blocks[0].id, original_runtime);
 }

@@ -11,7 +11,7 @@ use super::snapshot::validate_pages;
 use super::store::{chunk_ids, Chunk, ChunkKind, Store};
 use super::{
     AffectedPage, BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport,
-    PageId, PageSelector, PageSnapshot,
+    ManagedSyncStoreState, PageId, PageSelector, PageSnapshot, ProjectionPrecondition,
 };
 
 const GRAPH_TREE: &str = "graph";
@@ -35,10 +35,22 @@ pub struct CrdtGraph {
     doc: LoroDoc,
     store: Store,
     imported_chunks: HashSet<String>,
+    pending_projection: HashMap<PageId, BTreeSet<String>>,
     durability_blocked: Option<String>,
 }
 
 impl CrdtGraph {
+    pub fn store_state(sync_root: impl AsRef<Path>) -> Result<ManagedSyncStoreState, CrdtError> {
+        Store::state(sync_root.as_ref())
+    }
+
+    pub fn validate_resume_device(
+        sync_root: impl AsRef<Path>,
+        device_id: Uuid,
+    ) -> Result<(), CrdtError> {
+        Store::validate_resume_device(sync_root.as_ref(), device_id)
+    }
+
     /// Creates a new workspace and its single genesis chunk.
     ///
     /// `session_id` must be freshly generated for every process. Reusing it is
@@ -69,6 +81,7 @@ impl CrdtGraph {
             doc,
             store,
             imported_chunks: HashSet::from([chunk_id]),
+            pending_projection: HashMap::new(),
             durability_blocked: None,
         })
     }
@@ -83,19 +96,24 @@ impl CrdtGraph {
         let doc = replay_chunks(&chunks, session_id)?;
         // Validate the application schema before exposing the document.
         materialize_pages_from(&doc)?;
+        // An operation chunk is published before its projection intents. Repair
+        // the narrow crash window idempotently from authorization data committed
+        // inside that immutable chunk.
+        store.recover_projection_intents(&chunks)?;
         Ok(Self {
             doc,
             store,
             imported_chunks: chunk_ids(&chunks),
+            pending_projection: HashMap::new(),
             durability_blocked: None,
         })
     }
 
     /// Reconciles and durably records one complete page snapshot.
     ///
-    /// Requested block IDs are resolved globally. This permits a destination
-    /// page to claim an existing block before the source page projection is
-    /// committed, while preserving the block's Loro tree identity and text.
+    /// Existing block IDs remain owned by their current page. Cross-page moves
+    /// must include both source and destination in one `commit_pages` operation;
+    /// a destination-only duplicate is ambiguous with an external file copy.
     pub fn commit_page(&mut self, snapshot: PageSnapshot) -> Result<CommitReport, CrdtError> {
         self.commit_pages(vec![snapshot])
     }
@@ -113,6 +131,7 @@ impl CrdtGraph {
         for snapshot in &snapshots {
             validate_commit_against_doc(&self.doc, snapshot)?;
         }
+        validate_block_claims_against_doc(&self.doc, &snapshots)?;
         let mut affected_pages = Vec::with_capacity(snapshots.len());
         for snapshot in &snapshots {
             let mut paths = BTreeSet::from([snapshot.path.clone()]);
@@ -159,6 +178,14 @@ impl CrdtGraph {
     pub fn replace_pages(
         &mut self,
         snapshots: Vec<PageSnapshot>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.replace_pages_with_projection_preconditions(snapshots, Vec::new())
+    }
+
+    pub fn replace_pages_with_projection_preconditions(
+        &mut self,
+        snapshots: Vec<PageSnapshot>,
+        projection_preconditions: Vec<ProjectionPrecondition>,
     ) -> Result<CommitReport, CrdtError> {
         self.ensure_writable()?;
         validate_pages(&snapshots)?;
@@ -207,28 +234,21 @@ impl CrdtGraph {
             .collect();
         affected_pages.sort_by_key(|page| page.page_id);
         if self.doc.oplog_vv() == before {
-            let affected_page_ids = affected_pages.iter().map(|page| page.page_id).collect();
-            let affected_paths = affected_pages
-                .iter()
-                .flat_map(|page| page.paths.iter().cloned())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            return Ok(CommitReport {
-                changed: false,
-                chunk_id: String::new(),
-                affected_page_ids,
-                affected_paths,
+            // A verified restore authorizes projection even when operation truth
+            // already equals the snapshot. Publish an idempotent full update so
+            // that authorization still has a durable chunk to bind to across a
+            // crash in the following file-copy phase.
+            let payload = self
+                .doc
+                .export(ExportMode::all_updates())
+                .map_err(loro_error)?;
+            return self.persist_payload_with_intents(
+                payload,
                 affected_pages,
-            });
+                projection_preconditions,
+            );
         }
-        let authorized_paths = affected_pages
-            .iter()
-            .flat_map(|page| page.paths.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        self.persist_update_with_intents(before, affected_pages, authorized_paths)
+        self.persist_update_with_intents(before, affected_pages, projection_preconditions)
     }
 
     /// Deletes a page and its currently attached block subtree by ID or path.
@@ -259,13 +279,69 @@ impl CrdtGraph {
         )
     }
 
+    /// Collapse a destination-first external copy into a move after the source
+    /// disappears. The surviving projection is rewritten onto the source page
+    /// and block identities, while the temporary copy page is deleted in the
+    /// same durable operation.
+    pub fn promote_copy(
+        &mut self,
+        source_page_id: PageId,
+        copy_page_id: PageId,
+        promoted: PageSnapshot,
+    ) -> Result<CommitReport, CrdtError> {
+        self.ensure_writable()?;
+        if promoted.id != source_page_id || source_page_id == copy_page_id {
+            return Err(CrdtError::InvalidDocument(
+                "invalid copy promotion identities".into(),
+            ));
+        }
+        validate_pages(std::slice::from_ref(&promoted))?;
+        let source = self
+            .materialize_page(source_page_id)?
+            .ok_or(CrdtError::PageNotFound)?;
+        let copy = self
+            .materialize_page(copy_page_id)?
+            .ok_or(CrdtError::PageNotFound)?;
+        if copy.path != promoted.path {
+            return Err(CrdtError::InvalidDocument(
+                "copy promotion destination changed".into(),
+            ));
+        }
+
+        let before = self.doc.oplog_vv();
+        let tree = tree(&self.doc);
+        let copy_node = find_page_node(&self.doc, PageSelector::Id(copy_page_id))?
+            .ok_or(CrdtError::PageNotFound)?;
+        if let Err(error) = tree.delete(copy_node).map_err(loro_error) {
+            self.recover_after_failed_mutation(&error);
+            return Err(error);
+        }
+        if let Err(error) = apply_pages(&self.doc, std::slice::from_ref(&promoted)) {
+            self.recover_after_failed_mutation(&error);
+            return Err(error);
+        }
+        let affected_pages = vec![
+            AffectedPage {
+                page_id: source_page_id,
+                paths: BTreeSet::from([source.path, promoted.path])
+                    .into_iter()
+                    .collect(),
+            },
+            AffectedPage {
+                page_id: copy_page_id,
+                paths: vec![copy.path],
+            },
+        ];
+        self.persist_update(before, affected_pages)
+    }
+
     /// Imports all newly delivered chunks and reports pages that need projection.
     /// Importing into a fork keeps malformed or incomplete input from partially
     /// changing live state without replaying all historical payloads each time.
     pub fn import_pending(&mut self) -> Result<ImportReport, CrdtError> {
         let new_chunks = self.store.load_new_chunks(&self.imported_chunks)?;
         if new_chunks.is_empty() {
-            return Ok(ImportReport::default());
+            return Ok(self.pending_projection_report(0));
         }
 
         let candidate = self.doc.fork();
@@ -284,21 +360,30 @@ impl CrdtGraph {
         }
         materialize_pages_from(&candidate)?;
 
-        let mut affected: HashMap<PageId, BTreeSet<String>> = HashMap::new();
         for chunk in &new_chunks {
             for page in &chunk.header.affected_pages {
-                affected
+                self.pending_projection
                     .entry(page.page_id)
                     .or_default()
                     .extend(page.paths.iter().cloned());
             }
         }
-        let mut affected_pages: Vec<AffectedPage> = affected
-            .into_iter()
+        let imported_chunks = new_chunks.len();
+        self.doc = candidate;
+        self.imported_chunks
+            .extend(new_chunks.into_iter().map(|chunk| chunk.id));
+        Ok(self.pending_projection_report(imported_chunks))
+    }
+
+    fn pending_projection_report(&self, imported_chunks: usize) -> ImportReport {
+        let mut affected_pages: Vec<AffectedPage> = self
+            .pending_projection
+            .iter()
             .map(|(page_id, paths)| AffectedPage {
-                page_id,
-                paths: paths.into_iter().collect(),
+                page_id: *page_id,
+                paths: paths.iter().cloned().collect(),
             })
+            .into_iter()
             .collect();
         affected_pages.sort_by_key(|page| page.page_id);
         let page_ids = affected_pages.iter().map(|page| page.page_id).collect();
@@ -309,15 +394,18 @@ impl CrdtGraph {
             .into_iter()
             .collect();
         let report = ImportReport {
-            imported_chunks: new_chunks.len(),
+            imported_chunks,
             affected_page_ids: page_ids,
             affected_paths: paths,
             affected_pages,
         };
-        self.doc = candidate;
-        self.imported_chunks
-            .extend(new_chunks.into_iter().map(|chunk| chunk.id));
-        Ok(report)
+        report
+    }
+
+    /// Clear imported-page replay only after the caller has projected the whole
+    /// report successfully. A partial failure intentionally replays all pages.
+    pub fn acknowledge_pending_projection(&mut self) {
+        self.pending_projection.clear();
     }
 
     /// Materializes one current page projection.
@@ -388,9 +476,13 @@ impl CrdtGraph {
             .is_known_projection(path, content, &self.doc.oplog_vv())
     }
 
-    pub fn is_projection_authorized(&self, path: &str) -> Result<bool, CrdtError> {
+    pub fn is_projection_authorized(
+        &self,
+        path: &str,
+        content: Option<&str>,
+    ) -> Result<bool, CrdtError> {
         self.store
-            .is_projection_authorized(path, &self.doc.oplog_vv())
+            .is_projection_authorized(path, content, &self.doc.oplog_vv())
     }
 
     fn ensure_writable(&self) -> Result<(), CrdtError> {
@@ -412,7 +504,7 @@ impl CrdtGraph {
         &mut self,
         before: VersionVector,
         affected_pages: Vec<AffectedPage>,
-        authorized_paths: Vec<String>,
+        projection_preconditions: Vec<ProjectionPrecondition>,
     ) -> Result<CommitReport, CrdtError> {
         let payload = match self.doc.export(ExportMode::updates(&before)) {
             Ok(payload) => payload,
@@ -422,22 +514,46 @@ impl CrdtGraph {
                 return Err(error);
             }
         };
+        self.persist_payload_with_intents(payload, affected_pages, projection_preconditions)
+    }
+
+    fn persist_payload_with_intents(
+        &mut self,
+        payload: Vec<u8>,
+        affected_pages: Vec<AffectedPage>,
+        projection_preconditions: Vec<ProjectionPrecondition>,
+    ) -> Result<CommitReport, CrdtError> {
         let frontier = self.doc.oplog_vv();
-        for path in authorized_paths {
-            if let Err(error) = self
-                .store
-                .publish_projection_intent(&path, frontier.clone())
-            {
-                self.recover_after_failed_mutation(&error);
-                return Err(error);
-            }
-        }
-        match self
-            .store
-            .publish(ChunkKind::Update, affected_pages.clone(), payload)
-        {
+        let publish = if projection_preconditions.is_empty() {
+            self.store
+                .publish(ChunkKind::Update, affected_pages.clone(), payload)
+        } else {
+            self.store.publish_authorized_update(
+                affected_pages.clone(),
+                payload,
+                projection_preconditions.clone(),
+                frontier.clone(),
+            )
+        };
+        match publish {
             Ok(chunk_id) => {
                 self.imported_chunks.insert(chunk_id.clone());
+                for precondition in projection_preconditions {
+                    if let Err(error) = self.store.publish_projection_intent(
+                        &precondition.path,
+                        super::store::ProjectionState::from_content(
+                            precondition.expected_content.as_deref(),
+                        ),
+                        frontier.clone(),
+                        &chunk_id,
+                    ) {
+                        // The operation is already durable. Rebuilding retains it;
+                        // the immutable chunk can recreate this intent on retry or
+                        // restart, while no incomplete intent can authorize bytes.
+                        self.recover_after_failed_mutation(&error);
+                        return Err(error);
+                    }
+                }
                 let affected_page_ids = affected_pages.iter().map(|page| page.page_id).collect();
                 let affected_paths = affected_pages
                     .iter()
@@ -528,6 +644,39 @@ fn validate_commit_against_doc(doc: &LoroDoc, page: &PageSnapshot) -> Result<(),
     for existing in materialize_pages_from(doc)? {
         if existing.id != page.id && existing.path == page.path {
             return Err(CrdtError::DuplicatePagePath(page.path.clone()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_block_claims_against_doc(
+    doc: &LoroDoc,
+    pages: &[PageSnapshot],
+) -> Result<(), CrdtError> {
+    let mut current_owner = HashMap::new();
+    for page in materialize_pages_from(doc)? {
+        for block in page.blocks {
+            current_owner.insert(block.id, page.id);
+        }
+    }
+    let submitted: HashMap<PageId, HashSet<BlockId>> = pages
+        .iter()
+        .map(|page| (page.id, page.blocks.iter().map(|block| block.id).collect()))
+        .collect();
+    for page in pages {
+        for block in &page.blocks {
+            let Some(owner) = current_owner.get(&block.id).copied() else {
+                continue;
+            };
+            if owner == page.id {
+                continue;
+            }
+            let owner_releases_in_same_operation = submitted
+                .get(&owner)
+                .is_some_and(|ids| !ids.contains(&block.id));
+            if !owner_releases_in_same_operation {
+                return Err(CrdtError::DuplicateBlockId(block.id));
+            }
         }
     }
     Ok(())

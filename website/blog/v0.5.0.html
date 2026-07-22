@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tine v0.5.0 — The Human's Blog</title>
+<meta name="description" content="Sheets, split panes, tables, kanban, a new parser, the in-app guide, and the decision that led to Tine plugins.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="blog.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Tine v0.5.0 — Oh Sheet!">
+<meta property="og:description" content="Grids, split panes, table and kanban views, lsdoc v2, and the road to plugins.">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="../" aria-label="Tine — home"><svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg><span class="brand-word">Tine</span></a>
+  <nav class="nav-links"><a href="../">Home</a><a href="../demo/">Demo</a><a href="index.html">Blog</a><a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a></nav>
+</header>
+<main id="top">
+<article class="post">
+  <header class="post-head">
+    <div class="card-meta"><span class="ver-chip">v0.5.0</span><span class="dateline">July 9–11, 2026</span></div>
+    <h1>Oh Sheet!</h1>
+    <p class="dek">One outline, several wider ways to see it: grids, split panes, tables, kanban, and query-backed data views — followed by the decision to make plugins the next minor series.</p>
+  </header>
+  <div class="prose">
+    <p>Tine <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.5.0">v0.5.0</a> came with a cluster of features that have something in common, but absolutely do not have to be used together. The common theme is breadth: most of the time a narrow page or journal column is exactly right; other times you need more context and want to use the whole screen.</p>
+    <p>That is why people love spreadsheets, split screens, kanban boards, and database-like tables. Tine gained all of them without replacing the outline underneath.</p>
+
+    <h2>Grids that remain outlines</h2>
+    <p>I love <a href="https://strlen.com/treesheets/">TreeSheets</a>. Its select/edit navigation makes it intuitive to create cells between cells, and cells can contain subgrids recursively. Tine adopted the same basic idea. A grid can contain subgrids and zooming into a block is also zooming into that subgrid.</p>
+    <p class="pull">The compatibility promise remains: a Tine grid is still an ordinary outline. Open it in Logseq and the important text is still ordinary text.</p>
+    <p>A little <code>tine.*</code> metadata records the view. You can take an existing outline and choose to view it as a grid, then compute aggregates such as sum or average over columns.</p>
+
+    <h2>Split panes you can navigate</h2>
+    <p>The same select/edit model turned into a keyboard model for split panes. Escape leaves block editing; another Escape selects the pane. Arrow keys choose an edge. Enter opens another pane there, while typing invokes page search and opens the chosen page in the new pane. Each pane has its own tab bar.</p>
+    <p>Tables and kanban views use the same principle: a query can show tasks from across the graph as a property table or as a TODO/DOING/DONE board, and edits still change the underlying blocks.</p>
+
+    <h2>The less visible changes</h2>
+    <ul>
+      <li><strong>lsdoc v2:</strong> the parser was rebuilt from scratch around mldoc compatibility instead of continuing to patch the old design. On my graph, mldoc took roughly 4.5 seconds and lsdoc v2 roughly 70 milliseconds.</li>
+      <li><strong>In-app Guide:</strong> the <code>?</code> menu gained read-only guide pages that can be copied into a graph and explored. The same graph drives the website demo.</li>
+      <li><strong>Draw.io editing:</strong> <code>/Draw.io</code> can create a diagram through a locally installed editor.</li>
+      <li><strong>One-time app identifier migration:</strong> the internal identifier moved toward the domain-owned <code>page.tine.*</code> namespace needed by distribution systems.</li>
+    </ul>
+
+    <h2>The v0.5.6 follow-up: why plugins</h2>
+    <p>By <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.5.6">v0.5.6</a>, the immediate priority was bug fixing. I apologized for the roughness of the earlier patch releases and ran a focused debugging loop around both reported and newly discovered failures.</p>
+    <p>The more lasting decision was plugins. Feature requests kept producing the same tension: a suggestion could be useful without being something I was ready to commit to in Tine core. An experimental plugin system gives those requests somewhere real to live while its APIs mature from actual use.</p>
+    <p>The intended ecosystem is deliberately AI-positive. Rather than promise compatibility with Logseq or Obsidian plugins, Tine can provide a small API and strong instructions so an agent can inspect an existing plugin, port it, and submit it to the registry. In that sense, the AI becomes part of the compatibility layer.</p>
+    <p>The same post separated this from sync. Sync affects the graph's identity and storage model, so it is necessarily core work rather than an experimental plugin. That distinction — extension versus product invariant — became part of the way feature requests are triaged.</p>
+    <p>The Flathub submission had also been rejected under its generative-AI policy. Tine was instead available through Flatpark, while the F-Droid submission remained in review.</p>
+  </div>
+  <div class="post-links">
+    <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.5.0">📦 v0.5.0 release ↗</a>
+    <a href="https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md">📋 Full changelog ↗</a>
+    <a href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/">💬 “Oh Sheet!” thread ↗</a>
+    <a href="https://www.reddit.com/r/TineOutline/comments/1utsemo/tine_v056_bugfixes_plans_plugins_sync/">💬 v0.5.6 plans thread ↗</a>
+  </div>
+</article>
+<section class="convos">
+  <h2>From the discussion</h2>
+  <p class="section-lede">The useful threads covered preserving the outline beneath richer views, using issue reports as the feedback loop, the patch series becoming more refined, and explaining how development could move this quickly.</p>
+  <div class="convo">
+    <p class="convo-topic">Keep the data ordinary</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/Upset-Emu7553">Upset-Emu7553</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/ownkhh6/">full comment ↗</a></div>
+      <p class="said">Described using a spreadsheet plugin only for data entry, then exporting the result as Markdown and collapsing the richer UI. Their broader point was that note-taking can become overbuilt.</p>
+    </div>
+    <div class="turn turn-me">
+      <div class="by">Me <span class="op-badge">OP</span><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/ownrecw/">↗</a></div>
+      <div class="said"><p>Right, I agree. If it is cheap to add a certain embed I'm quite open to adding it, because it doesn't make life harder / more complicated for those not using it and might help those who do. But I agree overall.</p></div>
+    </div>
+  </div>
+  <div class="convo">
+    <p class="convo-topic">Reports close the loop</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/drudge007">drudge007</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/own5t6o/">full comment ↗</a></div>
+      <p class="said">Had been testing on Fedora, found several small bugs, and asked whether GitHub was the right place even though they had not filed issues before.</p>
+    </div>
+    <div class="turn turn-me">
+      <div class="by">Me <span class="op-badge">OP</span><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/ownfhti/">↗</a></div>
+      <div class="said"><p>That would be super helpful because Claude sees Github issues and can manage them so this makes life much easier for me. Sorry about the bugs. I'll be now focusing on bug fixes and performance work.</p></div>
+    </div>
+  </div>
+  <div class="convo">
+    <p class="convo-topic">The parser mismatch that disappeared</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/NickK-">NickK-</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/ox1tkk3/">full comment ↗</a></div>
+      <p class="said">Re-ran the divergence scan after upgrading and found none; pages that previously could not be reduced to an anonymized report now rendered correctly too.</p>
+    </div>
+    <div class="turn turn-me">
+      <div class="by">Me <span class="op-badge">OP</span><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/ox23sll/">↗</a></div>
+      <div class="said"><p>Good to hear :) I actually found out that when I swapped in the new parser, the “Help with Tine” panel did not get upgraded and was comparing against an older version of mldoc, while the new parser was built against the newer one, so these could've just been version-skew divergences. I'm glad this part is solved for you now :)</p></div>
+    </div>
+  </div>
+  <div class="convo">
+    <p class="convo-topic">“Write up the process”</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/secretBuffetHero">secretBuffetHero</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1us31lp/tine_v050_oh_sheet/owl4od5/">full comment ↗</a></div>
+      <p class="said">Argued that the development process deserved its own post and might be useful beyond note-taking communities. That request became the next blog entry.</p>
+    </div>
+  </div>
+  <div class="convo">
+    <p class="convo-topic">The patch series felt more settled</p>
+    <div class="turn turn-them">
+      <div class="by"><a href="https://www.reddit.com/user/drudge007">drudge007</a><a class="permalink" href="https://www.reddit.com/r/TineOutline/comments/1utsemo/comment/ox3zp6d/">full comment ↗</a></div>
+      <p class="said">Reported that v0.5.6 felt much more refined on both an Android phone and a Linux laptop, while noting that a few bugs still remained.</p>
+    </div>
+  </div>
+</section>
+<nav class="post-nav"><a href="v0.4.0.html">← Previous: v0.4.0</a><a class="to-index" href="index.html">All notes</a><a href="v0.6.0.html">Next: v0.6.0 →</a></nav>
+<p class="method-note">The two source posts are linked in full. Release prose above condenses them; comments by other people are summarized and linked, while Martin's replies are quoted verbatim.</p>
+</main>
+<footer class="foot"><div class="foot-inner"><div class="foot-brand"><svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true"><g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"><path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/><path d="M16 36 H48"/><path d="M32 36 V70"/></g></svg><span>Tine</span></div><nav class="foot-links"><a href="../">Home</a><a href="index.html">Blog</a><a href="https://github.com/martinkoutecky/tine">GitHub</a><a href="https://github.com/martinkoutecky/tine/releases">Releases</a></nav><p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p></div></footer>
+</body>
+</html>

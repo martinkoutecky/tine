@@ -4,7 +4,7 @@
 // clipboard writer (`copy_image_to_clipboard`). Shared by the lightbox (Toasts)
 // and the inline-asset hover action bar (render/inline.tsx).
 
-import { backend } from "./backend";
+import { writeClipboardImage } from "./clipboard";
 
 export async function copyImageFromSrc(src: string): Promise<void> {
   const img = new Image();
@@ -18,5 +18,5 @@ export async function copyImageFromSrc(src: string): Promise<void> {
   ctx.drawImage(img, 0, 0);
   const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, "image/png"));
   if (!blob) throw new Error("encode failed");
-  await backend().copyImageToClipboard(new Uint8Array(await blob.arrayBuffer()));
+  await writeClipboardImage(new Uint8Array(await blob.arrayBuffer()));
 }

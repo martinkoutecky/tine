@@ -43,12 +43,12 @@ pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
     pub raw: String,
     pub children: Vec<DocBlock>,
-    /// Stable identity assigned once when the block enters the in-memory cache
-    /// (the persisted `id::` if any, else a generated uuid). It is the handle
-    /// every surface (main view, sidebar, query result, ref) uses to address the
-    /// block, and round-trips through save so it stays stable across edits. It is
-    /// NOT part of block *content*, so it is excluded from equality — otherwise
-    /// the conflict guard (`parse(disk) == cached`) would always see a "change".
+    /// Runtime/store identity assigned from the document's physical owner and
+    /// structural sibling-index path. Persisted `id::` is a separate external
+    /// reference identity. This key round-trips through an in-memory save but is
+    /// never serialized. It is NOT part of block *content*, so it is excluded
+    /// from equality — otherwise the conflict guard (`parse(disk) == cached`)
+    /// would always see a "change".
     #[serde(default)]
     pub uuid: String,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
@@ -74,7 +74,8 @@ pub struct BlockProjection {
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
     pub visible: String,
-    /// `visible`, lowercased — for `search` / `(content …)` (hot path, pre-lowered).
+    /// `visible`, lowercased then NFC-normalized — for `search` / `(content …)`
+    /// (hot path, pre-folded without compatibility/accent folding).
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
@@ -107,6 +108,10 @@ pub struct BlockProjection {
     /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
     /// stay separate in `refs_page`; this is only the tag field.
     pub tags: Vec<String>,
+    /// Parser-owned source spans used by both linked and unlinked reference
+    /// surfaces. Kept on the memoized projection so reference queries do not
+    /// parse every block again.
+    pub(crate) reference_source: crate::reference_evidence::ReferenceSourceProjection,
 }
 
 impl BlockProjection {
@@ -179,12 +184,14 @@ impl DocBlock {
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
             let visible = visible_minus_properties(&self.raw, &proj.blocks);
-            let visible_lower = visible.to_lowercase();
+            let visible_lower = crate::search_query::canonical_fold(&visible);
             let refs_page = proj.refs.page;
             let refs_norm = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
+            let reference_source =
+                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             BlockProjection {
                 visible,
                 visible_lower,
@@ -198,6 +205,7 @@ impl DocBlock {
                 scheduled,
                 deadline,
                 tags,
+                reference_source,
             }
         })
     }
@@ -209,10 +217,11 @@ impl DocBlock {
     }
 
     pub fn property(&self, key: &str) -> Option<String> {
+        let key = property_key_norm(key);
         self.projection()
             .properties
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .find(|(k, _)| property_key_norm(k) == key)
             .map(|(_, v)| v.clone())
     }
 
@@ -343,7 +352,9 @@ fn tags_from_blocks(blocks: &[lsdoc::ast::Block]) -> Vec<String> {
                 }
                 collect_tags_from_inline(inline, &mut out, &mut seen);
             }
-            Block::Paragraph { inline, .. } => collect_tags_from_inline(inline, &mut out, &mut seen),
+            Block::Paragraph { inline, .. } => {
+                collect_tags_from_inline(inline, &mut out, &mut seen)
+            }
             _ => {}
         }
     }
@@ -396,28 +407,40 @@ fn header_facets(
     (marker, priority, heading_level, properties)
 }
 
+struct PlanningSourceLine<'a> {
+    text: &'a str,
+    has_trailing_body: bool,
+}
+
 /// Map a parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
-/// its original raw slice, but only when the span occupies a whole source line.
-/// Horizontal whitespace around the token is allowed. A parser-recognized
-/// `Discuss SCHEDULED: <…> inline` therefore fails this boundary check without
-/// introducing a second planning-line parser.
-fn standalone_source_line<'a>(raw: &'a str, span: &lsdoc::ast::Span) -> Option<&'a str> {
+/// its original raw slice, but only when the span starts its source line (with
+/// optional horizontal whitespace before it). Text after the span is ordinary
+/// body content. Deliberate OG divergence: a parser-recognized mid-text
+/// `Discuss SCHEDULED: <…>` remains content in Tine rather than header chrome.
+fn standalone_source_line<'a>(
+    raw: &'a str,
+    span: &lsdoc::ast::Span,
+) -> Option<PlanningSourceLine<'a>> {
     let lead = raw.len() - raw.trim_start().len();
     let start = span.0.checked_sub(2)?.checked_add(lead)?;
     let end = span.1.checked_sub(2)?.checked_add(lead)?;
     let source = raw.get(start..end)?;
     let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
-    if !raw[line_start..start].trim().is_empty() || !raw[end..line_end].trim().is_empty() {
+    if !raw[line_start..start].trim().is_empty() {
         return None;
     }
-    Some(source)
+    Some(PlanningSourceLine {
+        text: source,
+        has_trailing_body: !raw[end..line_end].trim().is_empty(),
+    })
 }
 
 /// SCHEDULED / DEADLINE display text (`<…>` content) for parser-recognized
-/// Timestamp nodes that occupy a whole source line. lsdoc can put a trailing body
-/// line in the SAME Paragraph as the planning timestamp (#75), so the older
-/// whole-AST-block `is_standalone_planning` check rejected a genuine planning line.
+/// Timestamp nodes that start a source line. lsdoc can put same-line or next-line
+/// trailing body text in the SAME Paragraph as the planning timestamp (#75), so
+/// the older whole-AST-block `is_standalone_planning` check rejected genuine
+/// planning lines.
 fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, Option<String>) {
     use lsdoc::ast::{Block, Inline};
     let mut scheduled = None;
@@ -449,7 +472,7 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
             let Some(line) = standalone_source_line(raw, span) else {
                 continue;
             };
-            *slot = angle_after(line, ts);
+            *slot = angle_after(line.text, ts);
         }
     }
     (scheduled, deadline)
@@ -467,9 +490,10 @@ fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
     inline_is_break(i) || matches!(i, Inline::Plain { text, .. } if text.trim().is_empty())
 }
 
-/// Remove parser-confirmed whole-line planning timestamps from the body AST without
-/// deleting body content that shares their Paragraph (#75). The neighboring line
-/// break is removed with the planning token; mid-text timestamps are untouched.
+/// Remove parser-confirmed line-leading planning timestamps from the body AST
+/// without deleting body content that shares their Paragraph (#75). A neighboring
+/// line break is removed only when the timestamp has no same-line body suffix;
+/// mid-text timestamps are untouched.
 pub(crate) fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
@@ -485,7 +509,7 @@ pub(crate) fn strip_planning_lines(
             | Block::Heading { inline, .. } => inline,
             _ => return true,
         };
-        let planning: Vec<usize> = inlines
+        let planning: Vec<(usize, bool)> = inlines
             .iter()
             .enumerate()
             .filter_map(|(index, i)| match i {
@@ -493,10 +517,8 @@ pub(crate) fn strip_planning_lines(
                     ts,
                     span: Some(span),
                     ..
-                } if (ts == "Scheduled" || ts == "Deadline")
-                    && standalone_source_line(raw, span).is_some() =>
-                {
-                    Some(index)
+                } if ts == "Scheduled" || ts == "Deadline" => {
+                    standalone_source_line(raw, span).map(|line| (index, line.has_trailing_body))
                 }
                 _ => None,
             })
@@ -506,8 +528,11 @@ pub(crate) fn strip_planning_lines(
         }
 
         let mut remove = vec![false; inlines.len()];
-        for index in planning {
+        for (index, has_trailing_body) in planning {
             remove[index] = true;
+            if has_trailing_body {
+                continue;
+            }
             if inlines.get(index + 1).is_some_and(inline_is_break) {
                 remove[index + 1] = true;
             } else if index > 0 && inlines.get(index - 1).is_some_and(inline_is_break) {
@@ -596,6 +621,10 @@ fn visible_minus_properties(raw: &str, blocks: &[lsdoc::ast::Block]) -> String {
     out.trim_end_matches('\n').to_string()
 }
 
+pub(crate) fn property_key_norm(key: &str) -> String {
+    key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
+}
+
 pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
     // `key:: value` — key is letters/digits/_/-/. and at least one char.
     let idx = line.find("::")?;
@@ -661,6 +690,89 @@ pub(crate) fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char
             _ => Some((c, n)),                            // still inside
         },
     }
+}
+
+/// mldoc `Parsers.is_space`: space, tab, SUB, or form feed.
+fn mldoc_is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | 0x1a | 0x0c)
+}
+
+fn mldoc_spaces_len(s: &str) -> usize {
+    s.as_bytes()
+        .iter()
+        .take_while(|&&b| mldoc_is_space(b))
+        .count()
+}
+
+fn mldoc_trim_spaces_start(s: &str) -> &str {
+    &s[mldoc_spaces_len(s)..]
+}
+
+/// lsdoc's line-local `ocaml_start`: space, tab, or form feed, but not SUB.
+fn ocaml_spaces_len(s: &str) -> usize {
+    s.as_bytes()
+        .iter()
+        .take_while(|&&b| matches!(b, b' ' | b'\t' | 0x0c))
+        .count()
+}
+
+// Transcribed from lsdoc v2 `block_begin_name`: after mldoc-space trimming,
+// BEGIN is ASCII-case-insensitive and the non-empty name ends at mldoc space.
+fn block_begin_name(s: &str) -> Option<String> {
+    let t = mldoc_trim_spaces_start(s);
+    if !t.get(..8)?.eq_ignore_ascii_case("#+BEGIN_") {
+        return None;
+    }
+    let rest = &t[8..];
+    let mut end = 0usize;
+    let bytes = rest.as_bytes();
+    while end < bytes.len() && !mldoc_is_space(bytes[end]) {
+        end += 1;
+    }
+    (end > 0).then(|| rest[..end].to_string())
+}
+
+fn starts_ci(s: &str, prefix: &str) -> bool {
+    let p = prefix.as_bytes();
+    let b = s.as_bytes();
+    b.len() >= p.len() && b[..p.len()].eq_ignore_ascii_case(p)
+}
+
+// Transcribed from lsdoc v2 `block_end_matches_name` / EndTrie: the first
+// later END suffix with the opener name as an ASCII-case-insensitive prefix
+// closes the region; no boundary after the name is required.
+fn block_end_matches_name(text: &str, name: &str) -> bool {
+    let t = &text[ocaml_spaces_len(text)..];
+    let Some(suffix) = t.get(6..) else {
+        return false;
+    };
+    starts_ci(t, "#+END_")
+        && suffix.len() >= name.len()
+        && suffix.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+}
+
+/// Prove that an org opener's first compatible END is in the same physical
+/// continuation lane before a bullet that would fold the opener frame.
+fn has_bounded_org_closer(following: &[&str], content_start: usize, name: &str) -> bool {
+    let mut fence = None;
+    for line in following {
+        // A bullet shallower than the opener block's content lane is a genuine
+        // child/sibling and bounds the lookahead. A bullet inside an inner fence
+        // remains literal.
+        if fence.is_none() && bullet(line).is_some_and(|(bullet_col, _)| bullet_col < content_start)
+        {
+            return false;
+        }
+
+        // mldoc takes the first name-compatible END. It is safe to rescue this
+        // outline region only when that same END is in the block-content lane.
+        if block_end_matches_name(line, name) {
+            return ocaml_spaces_len(line) == content_start;
+        }
+
+        fence = next_fence(fence, line);
+    }
+    false
 }
 
 fn markdown_property_line(line: &str) -> bool {
@@ -777,6 +889,10 @@ pub fn parse(content: &str) -> Document {
         /// a marker of the SAME char and at least the opener's length, so a ````
         /// fence containing ``` (or `~~~`) round-trips correctly.
         fence: Option<(char, usize)>,
+        /// The lowercased name of a terminated `#+BEGIN_<name>` region. This is
+        /// independent of `fence`: an org closer is honored inside an inner code
+        /// fence, and fence state keeps updating while the org region is open.
+        org_block: Option<String>,
     }
     // fence_marker / next_fence are module-level (shared with property_lines /
     // visible_lines so "is this line inside a code fence" has ONE implementation).
@@ -805,21 +921,29 @@ pub fn parse(content: &str) -> Document {
         }
     }
 
-    for line in block_lines {
-        let in_code = stack.last().map(|f| f.fence.is_some()).unwrap_or(false);
-        // A `- ` line starts a new block only when we're NOT inside a fenced code
-        // block of the current top frame; inside a fence it's literal content.
-        if !in_code {
+    for (line_idx, line) in block_lines.iter().enumerate() {
+        let in_literal = stack
+            .last()
+            .map(|f| f.fence.is_some() || f.org_block.is_some())
+            .unwrap_or(false);
+        // A `- ` line starts a new block only when we're outside both literal
+        // region kinds of the current top frame.
+        if !in_literal {
             if let Some((col, content)) = bullet(line) {
                 // New block: fold every block at this column or deeper, so the
                 // remaining stack top (shallower column) becomes the parent.
                 fold_to(&mut stack, &mut roots, col);
+                let org_block = block_begin_name(content).and_then(|name| {
+                    has_bounded_org_closer(&block_lines[line_idx + 1..], col + 2, &name)
+                        .then(|| name.to_ascii_lowercase())
+                });
                 stack.push(Frame {
                     col,
                     content_start: col + 2,
                     raw: content.to_string(),
                     children: Vec::new(),
                     fence: next_fence(None, content), // bullet line may open a fence
+                    org_block,
                 });
                 continue;
             }
@@ -829,6 +953,19 @@ pub fn parse(content: &str) -> Document {
             let stripped = strip_n_ws(line, top.content_start);
             top.raw.push('\n');
             top.raw.push_str(stripped);
+
+            if let Some(name) = top.org_block.as_deref() {
+                // END indexing is independent of fence context in mldoc.
+                if block_end_matches_name(stripped, name) {
+                    top.org_block = None;
+                }
+            } else if top.fence.is_none() {
+                // An already-open code fence suppresses BEGIN recognition.
+                top.org_block = block_begin_name(stripped).and_then(|name| {
+                    has_bounded_org_closer(&block_lines[line_idx + 1..], top.content_start, &name)
+                        .then(|| name.to_ascii_lowercase())
+                });
+            }
             top.fence = next_fence(top.fence, stripped);
         }
         // (A continuation before any bullet can't happen: it'd be pre-block.)
@@ -1041,6 +1178,220 @@ mod property_fence_tests {
 }
 
 #[cfg(test)]
+mod org_container_outline_tests {
+    use super::*;
+
+    fn parse_round_trip(input: &str) -> Document {
+        let doc = parse(input);
+        assert_eq!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(input))),
+            input,
+            "org-container fixture must round-trip byte-exactly"
+        );
+        doc
+    }
+
+    #[test]
+    fn quote_list_body_stays_in_one_block() {
+        let input = "- #+BEGIN_QUOTE\n  - Today\n  - Tomorrow\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n- Today\n- Tomorrow\n#+END_QUOTE"
+        );
+    }
+
+    #[test]
+    fn example_nested_space_indents_stay_in_one_block() {
+        let input = "- #+BEGIN_EXAMPLE\n      - a\n         - b\n            - c\n            - d\n  #+END_EXAMPLE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_EXAMPLE\n    - a\n       - b\n          - c\n          - d\n#+END_EXAMPLE"
+        );
+    }
+
+    #[test]
+    fn end_name_prefix_closes_container() {
+        let input = "- #+BEGIN_QUOTE\n  - x\n  #+END_QUOTE_EXTRA trailing";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n- x\n#+END_QUOTE_EXTRA trailing"
+        );
+    }
+
+    #[test]
+    fn begin_and_end_recognition_matches_mldoc_spaces_case_and_name_run() {
+        let input = "-   #+begin_note options\n    - x\n  #+eNd_NoTeSuffix trailing";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "  #+begin_note options\n  - x\n#+eNd_NoTeSuffix trailing"
+        );
+    }
+
+    #[test]
+    fn malformed_closers_and_empty_begin_name_open_no_region() {
+        let malformed = "- #+BEGIN_QUOTE\n  #+END\n  - x\n  #+END_\n  - y\n  text #+END_QUOTE\n  - z\n  #+END_QUOTE";
+        let doc = parse_round_trip(malformed);
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n#+END\n- x\n#+END_\n- y\ntext #+END_QUOTE\n- z\n#+END_QUOTE"
+        );
+
+        let empty_name = "- #+BEGIN_ \n  x\n  #+END_\n  - child";
+        let doc = parse_round_trip(empty_name);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_ \nx\n#+END_");
+        assert_eq!(doc.roots[0].children[0].raw, "child");
+    }
+
+    #[test]
+    fn unterminated_begin_keeps_existing_outline_shape() {
+        let input = "- #+BEGIN_QUOTE\n  - a\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "a");
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn continuation_begin_cannot_swallow_same_lane_sibling() {
+        let input = "- parent\n  #+BEGIN_QUOTE\n- sibling\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "parent\n#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[1].raw, "sibling\n#+END_QUOTE");
+        assert!(doc.roots.iter().all(|block| block.children.is_empty()));
+    }
+
+    #[test]
+    fn nested_child_closer_lane_does_not_open_region() {
+        let tabbed = "- #+BEGIN_QUOTE\n\t- child\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(tabbed);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+
+        let spaced = "- #+BEGIN_QUOTE\n  - child\n    #+END_QUOTE";
+        let doc = parse_round_trip(spaced);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn tab_child_before_matching_end_opens_no_region() {
+        let input = "- \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn continuation_opener_before_tab_child_opens_no_region() {
+        let input = "- p\n  \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn sub_prefixed_end_opens_no_region() {
+        let input = "-    #+BEGIN_QUOTE\n  - x\n    \x1a#+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].raw, "   #+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].children.len(), 1);
+        assert_eq!(doc.roots[0].children[0].raw, "x\n\x1a#+END_QUOTE");
+    }
+
+    #[test]
+    fn first_compatible_end_closes_without_depth_counting() {
+        let input = "- #+BEGIN_QUOTE\n  #+BEGIN_QUOTE\n  #+END_QUOTE\n- outside\n  #+END_QUOTE";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_QUOTE\n#+BEGIN_QUOTE\n#+END_QUOTE"
+        );
+        assert_eq!(doc.roots[1].raw, "outside\n#+END_QUOTE");
+    }
+
+    #[test]
+    fn org_close_is_honored_while_inner_fence_is_open() {
+        let input = "- #+BEGIN_QUOTE\n  ```\n  #+END_QUOTE\n  ```\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n```\n#+END_QUOTE\n```");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn begin_inside_code_fence_opens_no_org_region() {
+        let input = "- ```\n  #+BEGIN_QUERY\n  - literal\n  #+END_QUERY\n  ```\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(
+            doc.roots[0].raw,
+            "```\n#+BEGIN_QUERY\n- literal\n#+END_QUERY\n```"
+        );
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn src_body_and_nested_query_stay_literal() {
+        let input =
+            "- #+BEGIN_SRC\n  - x\n  #+BEGIN_QUERY\n  - y\n  #+END_QUERY\n  #+END_SRC\n- sibling";
+        let doc = parse_round_trip(input);
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(
+            doc.roots[0].raw,
+            "#+BEGIN_SRC\n- x\n#+BEGIN_QUERY\n- y\n#+END_QUERY\n#+END_SRC"
+        );
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[1].raw, "sibling");
+    }
+
+    #[test]
+    fn lone_cr_org_container_decision_is_a_known_lsdoc_parity_gap() {
+        let old_mac = "- #+BEGIN_QUOTE\r  - x\r  #+END_QUOTE";
+        let doc = parse(old_mac);
+        assert_eq!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
+            "- #+BEGIN_QUOTE  - x  #+END_QUOTE"
+        );
+        assert_ne!(
+            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
+            old_mac
+        );
+        assert_eq!(doc.roots.len(), 1);
+        assert!(doc.roots[0].children.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod projection_tests {
     use super::*;
 
@@ -1048,7 +1399,7 @@ mod projection_tests {
     fn projection_matches_direct_computation() {
         let b = DocBlock::new("TODO ship [[Foo Bar]] and #tag\nid:: abc\nprop:: secret");
         let p = b.projection();
-        // visible_lower == visible_text(raw).to_lowercase(): property lines dropped
+        // visible_lower == canonical_fold(visible_text(raw)): property lines dropped
         assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
         assert!(
             !p.visible_lower.contains("secret"),
@@ -1126,6 +1477,46 @@ mod projection_tests {
         let mid =
             DocBlock::new("Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after the timestamp");
         assert_eq!(mid.scheduled(), None);
+    }
+
+    #[test]
+    fn line_leading_planning_timestamp_keeps_trailing_body_text() {
+        for (tag, date) in [
+            ("DEADLINE", "2026-07-30 Thu"),
+            ("SCHEDULED", "2026-07-29 Wed"),
+        ] {
+            let raw = format!("TODO x\n{tag}: <{date}>tail");
+            let b = DocBlock::new(raw.clone());
+            if tag == "DEADLINE" {
+                assert_eq!(b.deadline(), Some(date));
+            } else {
+                assert_eq!(b.scheduled(), Some(date));
+            }
+            let body = format!(
+                "{:?}",
+                strip_planning_lines(crate::render::parse_block(&raw, false), &raw)
+            );
+            assert!(body.contains("x"), "title remains body content: {body}");
+            assert!(body.contains("tail"), "suffix remains body content: {body}");
+            assert!(
+                !body.contains(date),
+                "timestamp is removed from body: {body}"
+            );
+            assert_eq!(b.raw, raw, "facet projection never rewrites raw");
+        }
+
+        let indented = DocBlock::new("TODO x\n  DEADLINE: <2026-07-30 Thu>tail");
+        assert_eq!(indented.deadline(), Some("2026-07-30 Thu"));
+
+        // Deliberate OG divergence: only a line-leading timestamp is planning
+        // chrome; a mid-text timestamp remains ordinary body content in Tine.
+        let mid = DocBlock::new("Discuss DEADLINE: <2026-07-30 Thu> inline");
+        assert_eq!(mid.deadline(), None);
+
+        let inline_code = DocBlock::new("`DEADLINE: <2026-07-30 Thu>`");
+        assert_eq!(inline_code.deadline(), None);
+        let fenced = DocBlock::new("```\nDEADLINE: <2026-07-30 Thu>\n```");
+        assert_eq!(fenced.deadline(), None);
     }
 
     #[test]

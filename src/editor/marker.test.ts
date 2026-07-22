@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cycleMarker, nextMarker, leadingMarker } from "./marker";
+import { cycleMarker, nextMarker, leadingMarker, setMarker } from "./marker";
 
 describe("nextMarker", () => {
   it("todo workflow cycle", () => {
@@ -33,5 +33,18 @@ describe("cycleMarker", () => {
   it("detects leading marker", () => {
     expect(leadingMarker("DOING x")).toBe("DOING");
     expect(leadingMarker("plain")).toBe(null);
+  });
+});
+
+describe("setMarker", () => {
+  it("replaces an existing marker while preserving priority, body and properties", () => {
+    expect(setMarker("TODO [#A] Ship it\nowner:: Martin", "DONE"))
+      .toBe("DONE [#A] Ship it\nowner:: Martin");
+  });
+
+  it("adds any supported marker to an unmarked block", () => {
+    for (const marker of ["TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED"]) {
+      expect(setMarker("Ship it", marker)).toBe(`${marker} Ship it`);
+    }
   });
 });

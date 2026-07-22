@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
@@ -40,6 +41,14 @@ const versions = new Map([
 const expected = tauri.version;
 const problems = [];
 
+const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs")], {
+  encoding: "utf8",
+  env: process.env,
+});
+if (benchPolicy.status !== 0) {
+  problems.push(`check-bench-policy.mjs failed:\n${benchPolicy.stderr || benchPolicy.stdout}`);
+}
+
 for (const [source, version] of versions) {
   if (version !== expected) problems.push(`${source} has ${version ?? "no version"}; expected ${expected}`);
 }
@@ -63,6 +72,17 @@ if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\
 if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
   const tag = process.env.GITHUB_REF.slice("refs/tags/".length);
   if (tag !== `v${expected}`) problems.push(`tag ${tag} does not match metadata version v${expected}`);
+}
+
+if (process.env.REQUIRE_RELEASE_READINESS === "1") {
+  for (const [script, args = []] of [
+    ["check-regression-catalog.mjs"],
+    ["check-release-readiness.mjs"],
+    ["build-guide-demo.mjs", ["--check"]],
+  ]) {
+    const result = spawnSync(process.execPath, [path.join(root, "scripts", script), ...args], { encoding: "utf8" });
+    if (result.status !== 0) problems.push(`${script} failed:\n${result.stderr || result.stdout}`);
+  }
 }
 
 if (problems.length) {

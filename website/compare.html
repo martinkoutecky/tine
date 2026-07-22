@@ -64,6 +64,7 @@
   <nav class="nav-links">
     <a href="index.html#why">Same graph</a>
     <a href="index.html#adds">What's new</a>
+    <a href="plugins.html">Plugins</a>
     <a href="compare.html" aria-current="page">vs Logseq</a>
     <a href="demo/">Demo</a>
     <a href="blog/">Blog</a>
@@ -201,6 +202,17 @@
         </tbody>
       </table></div>
 
+      <h2 class="cmp-h">Extensions &amp; themes</h2>
+      <p class="cmp-h-lede">Both apps are extensible, but the APIs and trust models are different.</p>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Plugin platform</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Tine 0.6 starts an experimental signed catalogue of bounded WebAssembly guests and inert token themes. It is intentionally not compatible with Logseq's mature <code>@logseq/libs</code> ecosystem; ports use Tine's narrower host-owned API.</td></tr>
+          <tr><td class="feat">Custom CSS and themes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Tine reads graph <code>logseq/custom.css</code>, aliases common <code>--ls-*</code> variables, and also offers inert token-theme packages. Graph CSS remains last in the cascade.</td></tr>
+        </tbody>
+      </table></div>
+
       <h2 class="cmp-h">Where Tine goes further <b class="g g-add">⊕</b></h2>
       <p class="cmp-h-lede">The reason Tine exists is speed — and a few conveniences beyond Logseq.</p>
       <div class="tbl-wrap"><table class="cmp">
@@ -222,12 +234,12 @@
       <ul class="notdoing">
         <li><b>Whiteboards</b> — a whole separate canvas app; not Tine's focus.</li>
         <li><b>Flashcards / spaced repetition</b> — a large subsystem better served by dedicated tools.</li>
-        <li><b>Plugin marketplace / <code>@logseq/libs</code></b> — no plugin runtime; a curated CSS-theming shim is the realistic slice.</li>
+        <li><b>Logseq / Obsidian plugin API compatibility</b> — Tine's <a href="plugins.html">capability-limited WebAssembly platform</a> is deliberately narrower; existing plugins do not run unchanged.</li>
         <li><b>Real-time multi-user collaboration</b> — Tine is local-first over your own file sync (Syncthing/Dropbox/git), not a live shared server.</li>
         <li><b>The database version of Logseq</b> — Tine targets the file/Markdown model on purpose; that's what keeps your notes as plain files you own.</li>
       </ul>
 
-      <p class="asof">As of Tine v0.5.0 · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
+      <p class="asof">As of Tine v0.6.0 · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
     </div>
   </section>
 
@@ -248,6 +260,7 @@
       <a href="https://github.com/martinkoutecky/tine">GitHub</a>
       <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
       <a href="index.html">Home</a>
+      <a href="plugins.html">Plugins</a>
       <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
     </nav>
     <p class="foot-note">

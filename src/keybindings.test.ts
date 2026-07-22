@@ -1,11 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen } from "./ui";
-import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands } from "./keybindings";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, selectBlock } from "./store";
+import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc } from "./store";
+import { endEdit, startEditing } from "./editorController";
+import { pluginManager } from "./plugins/manager";
+import * as router from "./router";
 import type { PaneSnapshot } from "./router";
+import type { GraphMeta } from "./types";
+import { backend } from "./backend";
+import { CLIPBOARD_PAYLOAD_MAX_RAW_BYTES, clearClipboardPayload, peekClipboardPayload } from "./clipboard";
+
+const pluginGraphMeta: GraphMeta = {
+  root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
+  shortcuts: {}, start_of_week: 6, block_hidden_properties: [], default_journal_template: null,
+  favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
+  preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
+  logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+};
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -66,6 +81,14 @@ function installFakeWindow() {
         .filter((l) => l.type === "keydown" && l.capture)
         .forEach((l) => l.listener(event));
     },
+    dispatchAuxClick(button: number) {
+      let prevented = false;
+      const event = { button, preventDefault: () => { prevented = true; } } as unknown as MouseEvent;
+      listeners
+        .filter((l) => l.type === "auxclick" && l.capture)
+        .forEach((l) => l.listener(event as unknown as Event));
+      return { prevented: () => prevented };
+    },
   };
 }
 
@@ -108,12 +131,21 @@ function trackedKeyEvent(init: Partial<KeyboardEvent>) {
       prevented = true;
     },
     stopPropagation: () => {},
+    stopImmediatePropagation: () => {},
     ...init,
   } as unknown as KeyboardEvent;
   return {
     event,
     prevented: () => prevented,
   };
+}
+
+function editableTarget(tagName: string, options: { blockEditor?: boolean; contentEditable?: boolean } = {}) {
+  return {
+    tagName,
+    isContentEditable: options.contentEditable ?? false,
+    classList: { contains: (name: string) => options.blockEditor === true && name === "block-editor" },
+  } as unknown as EventTarget;
 }
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
@@ -127,8 +159,15 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  clearClipboardPayload();
+  endEdit("blur");
+  resetStore();
+  clearTransientLayersForTest();
   setPdfTarget(null);
+  setWorkflow("now");
   setFocusMode(false);
+  setGraphMeta(null);
   exitPaneSelect();
   clearSelection();
   if (switcherOpen()) closeSwitcher();
@@ -137,7 +176,117 @@ afterEach(() => {
   restoreFakeGlobals?.();
 });
 
+describe("mouse side-button navigation (#156)", () => {
+  it("aux button 3 (X1) goes back and button 4 (X2) goes forward, once each", () => {
+    const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
+    const fwd = vi.spyOn(router, "goForward").mockImplementation(() => {});
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    const r3 = fake.dispatchAuxClick(3);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(fwd).not.toHaveBeenCalled();
+    expect(r3.prevented()).toBe(true);
+
+    const r4 = fake.dispatchAuxClick(4);
+    expect(fwd).toHaveBeenCalledTimes(1);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(r4.prevented()).toBe(true);
+
+    // Middle-click (button 1) must NOT navigate — it opens links in a new tab.
+    const r1 = fake.dispatchAuxClick(1);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(fwd).toHaveBeenCalledTimes(1);
+    expect(r1.prevented()).toBe(false);
+
+    dispose();
+  });
+});
+
+describe("plugin command context", () => {
+  it("registers plugin default bindings in the same remappable dispatcher", async () => {
+    setGraphMeta(pluginGraphMeta);
+    setDoc({
+      byId: {
+        block: { id: "block", raw: "Heading me", collapsed: false, parent: null, page: "Page", children: [] },
+      },
+      pages: [{ name: "Page", kind: "page", title: "Page", preBlock: null, roots: ["block"], format: "md", readOnly: false, guide: false }],
+      feed: ["Page"],
+      loaded: true,
+    });
+    startEditing("block", 0);
+    vi.spyOn(pluginManager, "commands").mockReturnValue([{
+      pluginId: "page.tine.heading-level-shortcuts",
+      contribution: { id: "heading-1", title: "Set heading level 1", defaultBinding: "mod+alt+1" },
+    }]);
+    const invoke = vi.spyOn(pluginManager, "invokeCommand").mockResolvedValue(undefined);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    const key = trackedKeyEvent({ key: "1", code: "Digit1", ctrlKey: true, altKey: true });
+    fake.dispatchCaptureKeydown(key.event);
+    await Promise.resolve();
+
+    expect(key.prevented()).toBe(true);
+    expect(invoke).toHaveBeenCalledWith(
+      "page.tine.heading-level-shortcuts", "heading-1", expect.objectContaining({
+        owner: expect.objectContaining({ graphRoot: "/plugin-test" }),
+        block: expect.objectContaining({ id: "block", raw: "Heading me" }),
+      })
+    );
+    dispose();
+  });
+
+  it("carries the edited block through Ctrl-K input focus and palette close", async () => {
+    setGraphMeta(pluginGraphMeta);
+    setDoc({
+      byId: {
+        query: { id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table", collapsed: false, parent: null, page: "Sheet", children: [] },
+      },
+      pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["query"], format: "md", readOnly: false, guide: false }],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    startEditing("query", 0);
+    vi.spyOn(pluginManager, "commands").mockReturnValue([
+      {
+        pluginId: "page.tine.query-filter",
+        contribution: { id: "hide-completed", title: "Query view: hide completed rows", description: "Hide completed rows." },
+      },
+    ]);
+    const invoke = vi.spyOn(pluginManager, "invokeCommand").mockResolvedValue(undefined);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "k", code: "KeyK", ctrlKey: true }).event);
+    const captured = switcherPluginBlock();
+    expect(captured).toMatchObject({
+      owner: { graphRoot: "/plugin-test" },
+      block: { id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table" },
+    });
+
+    endEdit("blur");
+    const command = paletteCommands(captured).find((item) => item.id === "plugin:page.tine.query-filter:hide-completed");
+    closeSwitcher();
+    command?.run();
+    await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith("page.tine.query-filter", "hide-completed", captured);
+    dispose();
+  });
+});
+
 describe("keyboard binding strings", () => {
+  it("binds Insert link to Mod-L by default", () => {
+    const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
+    expect(byId["editor/insert-link"]).toMatchObject({ binding: "mod+l", scope: "editor" });
+  });
+
+  it("binds the show-brackets toggle to the OG two-chord shortcut", () => {
+    const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
+    expect(byId["ui/toggle-brackets"]).toMatchObject({ binding: "mod+c mod+b", scope: "global" });
+  });
+
   it("serializes Shift+/ as shift+? because KeyboardEvent.key is already shifted", () => {
     expect(eventToBindingString(keyEvent({ key: "?", code: "Slash", shiftKey: true }))).toBe("shift+?");
   });
@@ -175,6 +324,70 @@ describe("keyboard binding strings", () => {
   });
 });
 
+describe("editable Tab ownership (GH #157)", () => {
+  it("reserves permitted Tab for outline editors instead of native form controls", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    const input = editableTarget("INPUT");
+    const textarea = editableTarget("TEXTAREA");
+    const contenteditable = editableTarget("DIV", { contentEditable: true });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+
+    const plainInput = trackedKeyEvent({ key: "Tab", code: "Tab", target: input });
+    fake.dispatchCaptureKeydown(plainInput.event);
+    expect(plainInput.prevented()).toBe(false);
+
+    const shiftInput = trackedKeyEvent({ key: "Unidentified", code: "Tab", shiftKey: true, target: input });
+    fake.dispatchCaptureKeydown(shiftInput.event);
+    expect(shiftInput.prevented()).toBe(false);
+
+    const plainTextarea = trackedKeyEvent({ key: "Tab", code: "Tab", target: textarea });
+    fake.dispatchCaptureKeydown(plainTextarea.event);
+    expect(plainTextarea.prevented()).toBe(false);
+
+    const contenteditableTab = trackedKeyEvent({ key: "Tab", code: "Tab", target: contenteditable });
+    fake.dispatchCaptureKeydown(contenteditableTab.event);
+    expect(contenteditableTab.prevented()).toBe(false);
+
+    // Editable targets must still clear global chord state, so typing the first
+    // half of g j in a form cannot trigger navigation after focus leaves it.
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "g", code: "KeyG", target: input }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "j", code: "KeyJ" }).event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+
+    const plainEditor = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor });
+    fake.dispatchCaptureKeydown(plainEditor.event);
+    expect(plainEditor.prevented()).toBe(true);
+
+    const shiftEditor = trackedKeyEvent({ key: "Unidentified", code: "Tab", shiftKey: true, target: editor });
+    fake.dispatchCaptureKeydown(shiftEditor.event);
+    expect(shiftEditor.prevented()).toBe(true);
+
+    expect(isPermittedTabGesture(keyEvent({ key: "Tab", code: "Tab", ctrlKey: true }))).toBe(false);
+    expect(isPermittedTabGesture(keyEvent({ key: "Unidentified", code: "Tab", ctrlKey: true, shiftKey: true }))).toBe(false);
+
+    for (const init of [
+      { altKey: true },
+      { ctrlKey: true },
+      { metaKey: true },
+    ]) {
+      const modified = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor, ...init });
+      fake.dispatchCaptureKeydown(modified.event);
+      expect(modified.prevented()).toBe(false);
+    }
+
+    // WebKitGTK/Wayland can omit metaKey from the Tab event, so exercise the
+    // tracked Super fallback used by the global dispatcher.
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Super", code: "SuperLeft", type: "keydown" }).event);
+    const trackedSuper = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor });
+    fake.dispatchCaptureKeydown(trackedSuper.event);
+    expect(trackedSuper.prevented()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Super", code: "SuperLeft", type: "keyup" }).event);
+    dispose();
+  });
+});
+
 describe("find-in-page routing", () => {
   it("opens notes find on mod+f when no PDF is open", () => {
     const fake = installFakeWindow();
@@ -194,7 +407,11 @@ describe("find-in-page routing", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();
     const e = modFEvent();
-    setPdfTarget({ filename: "paper.pdf", label: "Paper" });
+    setPdfTarget({
+      filename: "paper.pdf",
+      label: "Paper",
+      owner: { graphRoot: "/test/keybindings", generation: 1 },
+    });
 
     fake.dispatchCaptureKeydown(e.event);
 
@@ -202,6 +419,111 @@ describe("find-in-page routing", () => {
     expect(e.prevented()).toBe(false);
     expect(e.stopped()).toBe(false);
 
+    dispose();
+  });
+});
+
+describe("block-selection commands", () => {
+  it("Mod+C preserves public flavors and records the exact full private subtree", () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", path: "pages/tasks.md",
+      blocks: [{
+        id: "parent", raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111", collapsed: true,
+        children: [{ id: "child", raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", collapsed: false, children: [] }],
+      }],
+    });
+    selectBlock("parent");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
+
+    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    expect(write).toHaveBeenCalledWith(
+      "- Parent",
+      "<ul><li>Parent</li></ul>",
+    );
+    expect(peekClipboardPayload()).toMatchObject({
+      op: "copy",
+      graph: "/plugin-test",
+      text: "- Parent",
+      blocks: [{
+        raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
+        sourceFormat: "md",
+        children: [{ raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", sourceFormat: "md" }],
+      }],
+    });
+    dispose();
+  });
+
+  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, path: "pages/tasks.md",
+      blocks: [{ id: "cut-me", raw: "Cut me\nid:: 33333333-3333-3333-3333-333333333333", collapsed: false, children: [] }],
+    });
+    selectBlock("cut-me");
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+
+    const payload = peekClipboardPayload();
+    expect(payload?.op).toBe("cut");
+    expect(payload?.sourcePages).toEqual([expect.objectContaining({
+      name: "Tasks", kind: "page", path: "pages/tasks.md", generation: expect.any(Number),
+    })]);
+    expect(payload?.blocks[0].raw).toContain("id:: 33333333-3333-3333-3333-333333333333");
+    expect(doc.byId["cut-me"]).toBeUndefined();
+    dispose();
+  });
+
+  it("Mod+C keeps the public write but records no payload when the selection exceeds the raw cap", () => {
+    setGraphMeta(pluginGraphMeta);
+    const raw = "x".repeat(CLIPBOARD_PAYLOAD_MAX_RAW_BYTES + 1);
+    loadSingle({
+      name: "Oversize", kind: "page", title: "Oversize", pre_block: null, format: "md",
+      blocks: [{ id: "oversize", raw, collapsed: false, children: [] }],
+    });
+    selectBlock("oversize");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
+
+    expect(peekClipboardPayload()).toBeNull();
+    expect(write).toHaveBeenCalledWith(`- ${raw}`, expect.any(String));
+    dispose();
+  });
+
+  it("routes a remapped cycle-todo command before generic Enter (GH #136)", () => {
+    resetStore();
+    setWorkflow("todo");
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "task-a", raw: "one", collapsed: false, children: [] },
+        { id: "task-b", raw: "TODO two", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("task-a");
+    moveSelection(1, true);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "editor/cycle-todo": "alt+enter" });
+    const pressed = trackedKeyEvent({ key: "Enter", code: "Enter", altKey: true });
+
+    fake.dispatchCaptureKeydown(pressed.event);
+
+    expect(doc.byId["task-a"].raw).toBe("TODO one");
+    expect(doc.byId["task-b"].raw).toBe("DOING two");
+    expect(pressed.prevented()).toBe(true);
     dispose();
   });
 });
@@ -269,12 +591,25 @@ describe("pane-select Esc cascade", () => {
     openSwitcher({ mode: "embryo", paneId: embryo, prefill: "x" });
     const fake = installFakeWindow();
     const dispose = installKeybindings();
+    const unregister = registerTransientLayer({ id: "test-switcher", dismiss: () => {
+      const current = switcherEmbryo(); closeSwitcher(); if (current) closePane(current.paneId); return true;
+    } });
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    unregister();
     dispose();
+  });
+
+  it("declares current-page block search as a remappable Mod-Shift-K command", () => {
+    expect(commandDefaults()).toContainEqual({
+      id: "go/search-current-page",
+      label: "Search blocks in current page",
+      binding: "mod+shift+k",
+      scope: "global",
+    });
   });
 
   it("typing on a selected edge materializes an embryo pane that Escape unsplits", () => {
@@ -288,11 +623,15 @@ describe("pane-select Esc cascade", () => {
 
     expect(switcherOpen()).toBe(true);
     expect(layoutPaneIds()).toHaveLength(2);
+    const unregister = registerTransientLayer({ id: "test-switcher", dismiss: () => {
+      const current = switcherEmbryo(); closeSwitcher(); if (current) closePane(current.paneId); return true;
+    } });
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    unregister();
     dispose();
   });
 
@@ -304,6 +643,58 @@ describe("pane-select Esc cascade", () => {
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(paneSel()).toEqual({ kind: "pane", paneId: "main" });
+    dispose();
+  });
+
+  it("restores block selection and Arrow navigation after activating a pane", () => {
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "first", raw: "First", collapsed: false, children: [] },
+        { id: "second", raw: "Second", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("first");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    expect(hasSelection()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Enter", code: "Enter" }).event);
+
+    expect(hasSelection()).toBe(true);
+    expect(selectedIds()).toEqual(["first"]);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowDown", code: "ArrowDown" }).event);
+    expect(selectedIds()).toEqual(["second"]);
+    dispose();
+  });
+
+  it("restores block selection and Arrow navigation after dismissing pane-select", () => {
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "first", raw: "First", collapsed: false, children: [] },
+        { id: "second", raw: "Second", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("first");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    expect(hasSelection()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+
+    expect(hasSelection()).toBe(true);
+    expect(selectedIds()).toEqual(["first"]);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowDown", code: "ArrowDown" }).event);
+    expect(selectedIds()).toEqual(["second"]);
     dispose();
   });
 

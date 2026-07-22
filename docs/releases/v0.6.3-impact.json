@@ -1,0 +1,173 @@
+{
+ "schemaVersion": 1,
+ "version": "0.6.3",
+ "baseTag": "v0.6.2",
+ "focusedAudit": {
+  "required": false,
+  "reason": "0.6.3 is a patch of search-reliability and interaction bug fixes (GH #205/#206/#209/#210/#212). The changes live in the read/cache/query and render/UI paths (per-page parse-panic isolation in cache build, alias-owner scoping, result-truncation signalling, embed-depth guard, responsive top bar, page-property backlink rendering) and in the page-header save-firewall predicate tolerance; none adds a new graph-write path or platform integration, so no focused change-cluster audit is required."
+ },
+ "items": [
+  {
+   "section": "Fixed",
+   "text": "Ctrl+K search now tells you when more matches exist beyond its bounded result window and prompts you to narrow the query, instead of presenting a truncated list as if it were complete (GH #209).",
+   "userVisible": true,
+   "regressions": [
+    "REG-SEARCH-RESULT-TRUNCATION-001",
+    "UI-SEARCH-RESULT-TRUNCATION-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Page aliases are now scoped to the physical file that declares them, so an exact alias search cannot return a same-named sibling file (GH #209).",
+   "userVisible": true,
+   "regressions": [
+    "REG-SEARCH-ALIAS-OWNER-SCOPE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "One page containing unsupported search-index syntax can no longer make its whole cache worker shard disappear silently; other pages remain searchable and the skipped page is reported as an indexing failure (GH #209).",
+   "userVisible": true,
+   "regressions": [
+    "REG-SEARCH-PAGE-PANIC-ISOLATION-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The mobile/narrow top bar no longer pushes action buttons off-screen: the workspace switcher now lives in the left-sidebar header (with a compact one-tap fallback in the toolbar when the sidebar is closed), and lower-priority toolbar actions collapse into a \"…\" overflow menu when the bar is narrow — driven by the toolbar's real width (zoom/DPI-aware), so narrow desktop windows adapt too (GH #205).",
+   "userVisible": true,
+   "regressions": [
+    "UI-TOPBAR-RESPONSIVE-WORKSPACE-205"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Page-property backlinks (e.g. `tags:: blah`) now render their linkified value in Linked References through the same renderer used in-page, instead of showing raw `key:: value` markdown (GH #212).",
+   "userVisible": true,
+   "regressions": [
+    "UI-REFERENCE-PAGE-PROPERTY-RENDER-212"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Recursive and deeply nested block/page embeds and queries now stop with an \"Embed depth is too deep\" notice (OG's depth-5 guard) instead of expanding forever; a page can no longer embed itself (GH #206).",
+   "userVisible": true,
+   "regressions": [
+    "UI-EMBED-DEPTH-GUARD-206"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Pressing Enter while typing page-header properties no longer shows a validation error or jams later saves for that page; the transient trailing newline remains in the editor while the persisted header stays canonical (GH #210).",
+   "userVisible": true,
+   "regressions": [
+    "REG-PAGE-HEADER-ENTER-SAVE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (behavior fix, existing docs remain accurate); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (no marketing-surface change); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch bug fix (patch release); no user-facing doc/site/blog change (blog editorial sync is a 0.x.0 gate).",
+    "refs": []
+   }
+  }
+ ]
+}

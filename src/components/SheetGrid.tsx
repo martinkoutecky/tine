@@ -1,8 +1,8 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, doc, formatForBlock } from "../store";
+import { blockPageReadOnly, depthOf, doc, formatForBlock } from "../store";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
-import { facetsOf } from "../render/facets";
+import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
 import {
   buildMatrixWindow,
@@ -835,6 +835,10 @@ function SheetBlock(props: {
   const node = () => doc.byId[props.id];
   const fmt = () => formatForBlock(props.id);
   const facets = createMemo(() => (node() ? facetsOf(node().raw, fmt()) : null));
+  const headingLevel = createMemo(() => {
+    const value = facets();
+    return value ? effectiveHeadingLevel(value, depthOf(props.id)) : null;
+  });
   const config = createMemo(() => (facets() ? sheetConfig(facets()!.properties) : null));
   const children = () => node()?.children ?? [];
   const editing = () => {
@@ -870,7 +874,7 @@ function SheetBlock(props: {
           >
             <Show
               when={editing() && props.cell}
-              fallback={<AstBody raw={n().raw} format={fmt()} headingLevel={facets()?.headingLevel ?? null} />}
+              fallback={<AstBody raw={n().raw} format={fmt()} headingLevel={headingLevel()} />}
             >
               {(cell) => (
                 <SheetCellContext.Provider value={cell()}>

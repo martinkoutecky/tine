@@ -1,0 +1,682 @@
+[
+  {
+    "query": "A",
+    "labels": [
+      "Priority A",
+      "WAIT",
+      "LATER",
+      "Table",
+      "Board",
+      "Today",
+      "WAITING",
+      "CANCELED",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Math block",
+      "Calculator",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Page reference",
+      "Upload an asset",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Page properties",
+      "Admonition: note",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Query (visual builder)",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Ad",
+    "labels": [
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Upload an asset",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Board",
+      "CANCELED",
+      "Draw.io diagram",
+      "Template var: today",
+      "Template var: date…",
+      "Query (visual builder)",
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Adm",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Admo",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admon",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admoni",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonit",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admoniti",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonitio",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition:",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: ",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: c",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: ca",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: cau",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: caut",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: cauti",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: cautio",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: caution",
+    "labels": [
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: i",
+    "labels": [
+      "Admonition: important",
+      "Admonition: tip",
+      "Admonition: warning",
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: im",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: imp",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: impo",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: impor",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: import",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: importa",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: importan",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: important",
+    "labels": [
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: n",
+    "labels": [
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: no",
+    "labels": [
+      "Admonition: note"
+    ]
+  },
+  {
+    "query": "Admonition: not",
+    "labels": [
+      "Admonition: note"
+    ]
+  },
+  {
+    "query": "Admonition: note",
+    "labels": [
+      "Admonition: note"
+    ]
+  },
+  {
+    "query": "Admonition: t",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Admonition: ti",
+    "labels": [
+      "Admonition: tip",
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Admonition: tip",
+    "labels": [
+      "Admonition: tip"
+    ]
+  },
+  {
+    "query": "Admonition: w",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: wa",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: war",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: warn",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: warni",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: warnin",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "Admonition: warning",
+    "labels": [
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "B",
+    "labels": [
+      "Priority B",
+      "Table",
+      "Board",
+      "Embed",
+      "Code block",
+      "Math block",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Bo",
+    "labels": [
+      "Board",
+      "Code block",
+      "Math block"
+    ]
+  },
+  {
+    "query": "Boa",
+    "labels": [
+      "Board"
+    ]
+  },
+  {
+    "query": "Boar",
+    "labels": [
+      "Board"
+    ]
+  },
+  {
+    "query": "Board",
+    "labels": [
+      "Board"
+    ]
+  },
+  {
+    "query": "C",
+    "labels": [
+      "Priority C",
+      "CANCELED",
+      "Scheduled",
+      "Code block",
+      "Math block",
+      "Calculator",
+      "Current time",
+      "Page reference",
+      "Voice recording",
+      "Admonition: caution",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Ca",
+    "labels": [
+      "CANCELED",
+      "Calculator",
+      "Admonition: caution",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "CA",
+    "labels": [
+      "CANCELED",
+      "Calculator",
+      "Admonition: caution",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Cal",
+    "labels": [
+      "Calculator",
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "Calc",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calcu",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calcul",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calcula",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calculat",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calculato",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Calculator",
+    "labels": [
+      "Calculator"
+    ]
+  },
+  {
+    "query": "CAN",
+    "labels": [
+      "CANCELED",
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "CANC",
+    "labels": [
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "CANCE",
+    "labels": [
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "CANCEL",
+    "labels": [
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "CANCELE",
+    "labels": [
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "CANCELED",
+    "labels": [
+      "CANCELED"
+    ]
+  },
+  {
+    "query": "Co",
+    "labels": [
+      "Code block",
+      "Voice recording",
+      "Calculator",
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Cod",
+    "labels": [
+      "Code block",
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Code",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code ",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code b",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code bl",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code blo",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code bloc",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Code block",
+    "labels": [
+      "Code block"
+    ]
+  },
+  {
+    "query": "Cu",
+    "labels": [
+      "Current time",
+      "Template var: current page",
+      "Calculator",
+      "Scheduled",
+      "Admonition: caution"
+    ]
+  },
+  {
+    "query": "Cur",
+    "labels": [
+      "Current time",
+      "Template var: current page",
+      "Calculator"
+    ]
+  },
+  {
+    "query": "Curr",
+    "labels": [
+      "Current time",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Curre",
+    "labels": [
+      "Current time",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Curren",
+    "labels": [
+      "Current time",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Current",
+    "labels": [
+      "Current time",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Current ",
+    "labels": [
+      "Current time",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Current t",
+    "labels": [
+      "Current time"
+    ]
+  },
+  {
+    "query": "Current ti",
+    "labels": [
+      "Current time"
+    ]
+  },
+  {
+    "query": "Current tim",
+    "labels": [
+      "Current time"
+    ]
+  },
+  {
+    "query": "Current time",
+    "labels": [
+      "Current time"
+    ]
+  },
+  {
+    "query": "D",
+    "labels": [
+      "TODO",
+      "DONE",
+      "Grid",
+      "DOING",
+      "Board",
+      "Embed",
+      "Today",
+      "Divider",
+      "CANCELED",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Scheduled",
+      "Code block",
+      "Upload an asset",
+      "Voice recording",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Admonition: note",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Query (visual builder)",
+      "Admonition: important",
+      "Template var: yesterday"
+    ]
+  }
+]
+

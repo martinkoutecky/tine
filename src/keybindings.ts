@@ -13,8 +13,6 @@ import {
   openDevtools,
   toggleTheme,
   toggleSidebar,
-  closeSwitcher,
-  closeSettings,
   openSettings,
   toggleHelpPopup,
   toggleRightSidebar,
@@ -24,24 +22,16 @@ import {
   toggleDimInactiveBlocks,
   focusMode,
   exitFocusMode,
-  switcherOpen,
-  switcherEmbryo,
-  settingsOpen,
   carryDays,
-  audioPlayer,
-  contextMenu,
-  datePicker,
-  exportModal,
-  formulaEditor,
-  helpPopupOpen,
-  lightbox,
-  pagePropsPanel,
-  pdfExportPage,
+  showBrackets,
+  changeShowBrackets,
   pushToast,
   openPdfExport,
   pdfTarget,
-  welcomeOpen,
+  dismissMobileDrawer,
 } from "./ui";
+import { restoreDrawerFocus } from "./mobileDrawers";
+import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
@@ -58,6 +48,7 @@ import {
   redo,
   hasSelection,
   moveSelection,
+  cycleSelectionTasks,
   moveSelectionItems,
   indentSelection,
   outdentSelection,
@@ -66,10 +57,16 @@ import {
   clearSelection,
   selectedIds,
   blockIsGridView,
+  doc,
+  pageVisibleOrder,
+  selectBlock,
+  visibleOrder,
+  toggleUndoRedoMode,
+  buildClipboardPayload,
 } from "./store";
-import { startEditing } from "./editorController";
-import { copyOutline } from "./clipboard";
-import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
+import { editingId, startEditing } from "./editorController";
+import { copyBlockOutline } from "./clipboard";
+import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -80,6 +77,7 @@ import {
   layoutPaneIds,
   layoutRoot,
   moveActiveTabToPane,
+  paneRouter,
   splitPane,
   splitPaneAtSeam,
   splitRootAtEdge,
@@ -92,9 +90,32 @@ import {
   paneSel,
   previousPaneSelectionTarget,
   readingOrderPanes,
+  rememberBlockSelectionForPaneReturn,
+  takeBlockSelectionForPaneReturn,
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { pluginManager } from "./plugins/manager";
+import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
+
+function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
+  const owner = capturePluginGraphOwner();
+  if (!owner) return undefined;
+  const id = editingId();
+  const node = id ? doc.byId[id] : undefined;
+  if (!node) return undefined;
+  let depth = 0;
+  let parentId = node.parent;
+  while (parentId && doc.byId[parentId] && depth < 1_000) {
+    depth++;
+    parentId = doc.byId[parentId].parent;
+  }
+  const format = doc.pages.find((page) => page.name === node.page)?.format === "org" ? "org" : "md";
+  if (!isPluginGraphOwnerCurrent(owner)) return undefined;
+  const owned = bindPluginBlockSnapshot({ id: node.id, raw: node.raw, parentId: node.parent, depth, format });
+  if (!owned || owned.owner.graphRoot !== owner.graphRoot || owned.owner.generation !== owner.generation) return undefined;
+  return owned;
+}
 
 interface Chord {
   mod: boolean;
@@ -146,6 +167,19 @@ function enterPaneSelectFromFocus() {
   const ids = layoutPaneIds();
   const focused = focusedPaneId();
   enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
+}
+
+function firstVisibleBlockInFocusedPane(): string | null {
+  const currentRoute = paneRouter(focusedPaneId()).route();
+  return currentRoute.kind === "page"
+    ? pageVisibleOrder(currentRoute.name)[0] ?? null
+    : visibleOrder()[0] ?? null;
+}
+
+function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
+  if (hasSelection()) return;
+  const target = previous && doc.byId[previous] ? previous : firstVisibleBlockInFocusedPane();
+  if (target) selectBlock(target);
 }
 
 // Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8
@@ -204,12 +238,16 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
       return true;
     }
     case "dismiss":
+      const previous = takeBlockSelectionForPaneReturn();
       exitPaneSelect();
+      restoreBlockSelectionAfterPaneReturn(previous);
       return true;
     case "activate":
       if (target.kind === "pane") {
+        const previous = takeBlockSelectionForPaneReturn();
         exitPaneSelect();
         focusPane(target.paneId);
+        restoreBlockSelectionAfterPaneReturn(previous);
       } else {
         materializePaneSelection(null); // Enter on a seam/edge = mirror split
       }
@@ -224,29 +262,13 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
   }
 }
 
-function anyOverlayOpen(): boolean {
-  return !!(
-    switcherOpen() ||
-    settingsOpen() ||
-    datePicker() ||
-    formulaEditor() ||
-    pagePropsPanel() ||
-    exportModal() ||
-    contextMenu() ||
-    helpPopupOpen() ||
-    lightbox() ||
-    audioPlayer() ||
-    pdfExportPage() ||
-    welcomeOpen()
-  );
-}
-
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
-  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -294,6 +316,7 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTabInDirection("up"), global: true },
   { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTabInDirection("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
+  { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
   { id: "ui/open-settings", binding: "t s", label: "Open settings", scope: "global", run: openSettings },
@@ -324,6 +347,17 @@ const COMMANDS: CommandDef[] = [
   { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
+  // Palette-only, matching OG's empty binding and mode report at
+  // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
+  // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
+  // (OG commit 6e7afa8eb).
+  {
+    id: "editor/toggle-undo-redo-mode",
+    binding: "",
+    label: "Toggle undo/redo mode",
+    scope: "global",
+    run: () => pushToast(`Undo/redo mode: ${toggleUndoRedoMode()}`),
+  },
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },
@@ -346,7 +380,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/italics", binding: "mod+i", label: "Italic", scope: "editor" },
   { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
-  { id: "editor/insert-link", binding: "mod+shift+l", label: "Insert link", scope: "editor" },
+  { id: "editor/insert-link", binding: "mod+l", label: "Insert link", scope: "editor" },
   { id: "editor/clear-block", binding: "alt+l", label: "Clear block content", scope: "editor" },
   // Emacs-style cursor/kill motions.
   { id: "editor/kill-line-before", binding: "alt+u", label: "Delete to line start", scope: "editor" },
@@ -379,14 +413,14 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     id: "builtin/editor/enter",
     scope: "editor",
     binding: "enter",
-    label: "New block or continue list",
-    details: "Splits the current block, continues an in-block list, or adds a sibling note under PDF annotations.",
+    label: "New block (or newline in Document mode)",
+    details: "Normally splits the current block, continues an in-block list, or adds a sibling note under PDF annotations. In Document mode it inserts a newline unless the Document-mode Enter setting keeps this structural behavior.",
   },
   {
     id: "builtin/editor/soft-newline",
     scope: "editor",
     binding: "shift+enter",
-    label: "Insert a newline inside the block",
+    label: "Insert a newline inside the block (or new block in Document mode)",
   },
   {
     id: "builtin/editor/escape",
@@ -514,6 +548,21 @@ function shortcutScope(c: CommandDef): ShortcutScope {
   return "global";
 }
 
+function pluginCommandDefs(): CommandDef[] {
+  return pluginManager.commands().map(({ pluginId, contribution }) => ({
+    id: `plugin:${pluginId}:${contribution.id}`,
+    binding: contribution.defaultBinding ?? "",
+    label: `Plugin: ${contribution.title}`,
+    scope: "global",
+    global: true,
+    run: () => {
+      void pluginManager
+        .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
+        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+    },
+  }));
+}
+
 function normKey(k: string): string {
   switch (k) {
     case "arrowup": return "up";
@@ -585,6 +634,19 @@ function eventToChord(e: KeyboardEvent): Chord {
   };
 }
 
+/** WebKitGTK can report Shift+Tab with a non-Tab key, but preserves its code. */
+export function isTabLikeEvent(e: KeyboardEvent, chord = eventToChord(e)): boolean {
+  return e.code === "Tab" || chord.key === "tab";
+}
+
+/** Bare Tab permits Shift but declines every platform modifier.
+ *
+ * Raw Control is deliberate: on macOS eventToChord maps `mod` from Meta, so
+ * Ctrl+Tab must not normalize into a plain editor Tab. */
+export function isPermittedTabGesture(e: KeyboardEvent, chord = eventToChord(e)): boolean {
+  return isTabLikeEvent(e, chord) && !e.ctrlKey && !chord.mod && !chord.alt && !chord.meta;
+}
+
 function chordEq(a: Chord, b: Chord): boolean {
   return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
@@ -625,8 +687,10 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
 /** Runnable global commands for the command palette / Ctrl-K Commands group:
  *  every global command with a run handler, with its effective binding. The
  *  switcher itself is excluded (no point launching the launcher). */
-export function paletteCommands(): { id: string; label: string; binding: string; run: () => void }[] {
-  return COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
+export function paletteCommands(
+  focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
+): { id: string; label: string; binding: string; run: () => void }[] {
+  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
     .map((c) => ({
       id: c.id,
       label: c.label,
@@ -634,6 +698,17 @@ export function paletteCommands(): { id: string; label: string; binding: string;
       run: c.run!,
     }))
     .filter((c) => c.binding !== "false");
+  const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
+    id: `plugin:${pluginId}:${contribution.id}`,
+    label: contribution.title,
+    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
+    run: () => {
+      void pluginManager
+        .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
+        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+    },
+  }));
+  return [...builtIn, ...plugins];
 }
 
 export function runGlobalCommand(id: string): boolean {
@@ -645,7 +720,7 @@ export function runGlobalCommand(id: string): boolean {
 
 /** Merged shortcuts for the Settings reference. */
 export function currentShortcuts(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return COMMANDS.map((c) => ({
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({
     id: c.id,
     label: c.label,
     binding: overridesApplied[c.id] ?? c.binding,
@@ -657,7 +732,7 @@ export function currentShortcuts(): { id: string; label: string; binding: string
  *  remap UI, which computes the effective binding reactively from these plus
  *  config.edn and the user's local overrides. */
 export function commandDefaults(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return COMMANDS.map((c) => ({ id: c.id, label: c.label, binding: c.binding, scope: shortcutScope(c) }));
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: c.label, binding: c.binding, scope: shortcutScope(c) }));
 }
 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns
@@ -682,6 +757,11 @@ function isEditableTarget(t: EventTarget | null): boolean {
   return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
 }
 
+function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
+  const el = t as { tagName?: unknown; classList?: { contains?: (name: string) => boolean } } | null;
+  return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true;
+}
+
 function focusedGridSurface(gridId: string): string | null {
   const paneId = focusedPaneId();
   const expected = paneId === "main" ? "main" : `pane:${paneId}`;
@@ -701,6 +781,10 @@ function focusedGridSurface(gridId: string): string | null {
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "Escape") return clearSelection(), true;
+  // Resolve the configured command before generic Enter handling. This keeps
+  // Ctrl/Cmd+Enter (and user remaps) in block-selection mode instead of opening
+  // the last selected block's editor.
+  if (matchesCommand(e, "editor/cycle-todo")) return cycleSelectionTasks(), true;
   if (matchesCommand(e, "editor/outdent")) return outdentSelection(), true;
   if (matchesCommand(e, "editor/indent")) return indentSelection(), true;
   if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
@@ -717,9 +801,16 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "c") return void copyOutline(selectionMarkdown()), true;
+  if (mod && e.key.toLowerCase() === "c") {
+    const ids = selectedIds();
+    const text = selectionMarkdown();
+    void copyBlockOutline("copy", text, buildClipboardPayload(ids));
+    return true;
+  }
   if (mod && e.key.toLowerCase() === "x") {
-    void copyOutline(selectionMarkdown());
+    const ids = selectedIds();
+    const text = selectionMarkdown();
+    void copyBlockOutline("cut", text, buildClipboardPayload(ids));
     deleteSelection();
     return true;
   }
@@ -744,13 +835,14 @@ export interface Command {
 export function installKeybindings(overrides: Record<string, string> = {}): () => void {
   overridesApplied = overrides;
   bindings = {};
-  for (const c of COMMANDS) {
+  const allCommands = [...COMMANDS, ...pluginCommandDefs()];
+  for (const c of allCommands) {
     const b = overrides[c.id] ?? c.binding;
     if (b !== "false") bindings[c.id] = parseBinding(b);
   }
 
   // Global dispatch list (sequences + global chords).
-  const commands = COMMANDS.filter((c) => c.scope === "global" && c.run)
+  const commands = allCommands.filter((c) => c.scope === "global" && c.run)
     .map((c) => ({ ...c, chords: bindings[c.id] }))
     .filter((c) => c.chords);
 
@@ -763,21 +855,14 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   };
 
   const handler = (e: KeyboardEvent) => {
-    if (suspended) return;
+    // IME composition owns Escape.  It must not fall through to a transient,
+    // shortcut recorder, editor, or pane handler.
+    if (e.isComposing || e.keyCode === 229) return;
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
-
-    // !editing guard: pane-select must NEVER eat keys while a text field has
-    // focus — a stale mode (entered via Esc, then click into a block) would
-    // otherwise swallow every printable/arrow/Enter and break typing.
-    if (paneSel() && !editing && handlePaneSelectKey(e)) {
-      e.preventDefault();
-      resetSeq();
-      return;
-    }
 
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the
@@ -785,20 +870,22 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // deselects (and in focus mode that same Esc exits focus); else exit focus.
     // Net: editing → Esc (to block-select) → Esc (exit focus) = twice, not once.
     if (e.key === "Escape") {
-      if (inPageFindOpen()) {
-        closeInPageFind();
-        e.preventDefault();
-        resetSeq();
-        return;
+      if (dismissTopTransient("escape")) {
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
       }
-      if (switcherOpen() || settingsOpen()) {
-        const embryo = switcherEmbryo();
-        closeSwitcher();
-        if (embryo) closePane(embryo.paneId);
-        closeSettings();
-        e.preventDefault();
-        resetSeq();
-        return;
+      if (dismissMobileDrawer("escape")) {
+        restoreDrawerFocus("escape");
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
+      }
+      // Settings shortcut recording suspends only the ordinary shortcut/editor/
+      // pane ladder. Escape's transient/drawer prefix above remains available,
+      // but an unconsumed Escape must be stopped at capture so it cannot reach a
+      // target-local editor handler.
+      if (suspended) {
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
+      }
+      if (paneSel() && !editing && handlePaneSelectKey(e)) {
+        e.preventDefault(); resetSeq(); return;
       }
       if (editing) return; // defer to the editor's own Esc (capture phase)
       if (cellSel() && handleCellSelectionKey(e)) {
@@ -807,6 +894,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         return;
       }
       if (hasSelection()) {
+        const previous = selectedIds().at(-1) ?? null;
+        if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();
         // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to
         // pane-select — the old "cleared but nothing selected" state between
@@ -823,11 +912,19 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
-      if (anyOverlayOpen()) {
-        resetSeq();
-        return;
-      }
       enterPaneSelectFromFocus();
+      e.preventDefault();
+      resetSeq();
+      return;
+    }
+
+    // Settings shortcut recording still declines non-Escape input so its own
+    // capture listener can record ordinary chords.
+    if (suspended) return;
+
+    // !editing guard: pane-select must NEVER eat ordinary keys while a text
+    // field has focus. Escape itself was handled after transient/drawer.
+    if (paneSel() && !editing && handlePaneSelectKey(e)) {
       e.preventDefault();
       resetSeq();
       return;
@@ -870,9 +967,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
     if (editing && !chord.mod) {
       // Cancel GTK/browser focus traversal on Tab/Shift+Tab in the capture
-      // phase (WebKitGTK grabs it before the textarea can), but still let the
-      // event reach the editor so it can indent/outdent.
-      if (e.code === "Tab" || chord.key === "tab") e.preventDefault();
+      // phase (WebKitGTK grabs it before an outline editor can), but still let
+      // that editor receive its owned gesture. Native form controls retain
+      // their browser focus traversal and blur behavior.
+      if (isOutlineBlockEditorTarget(e.target) && isPermittedTabGesture(e, chord)) e.preventDefault();
       resetSeq();
       return;
     }
@@ -912,17 +1010,71 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (!cellSel()) return;
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
+  type MouseHistoryDirection = "back" | "forward";
+  type MouseHistorySource = "dom" | "native";
+  let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
+  const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
+    const now = performance.now();
+    // A platform that exposes both its native command and DOM auxclick must not
+    // advance twice for one physical release. Repeated events from the same
+    // source remain distinct clicks and are never collapsed.
+    if (lastMouseHistory?.direction === direction && lastMouseHistory.source !== source && now - lastMouseHistory.at < 100) {
+      return;
+    }
+    lastMouseHistory = { direction, source, at: now };
+    if (direction === "back") goBack();
+    else goForward();
+  };
+  // Mouse side buttons: X1 (DOM button 3) navigates back, X2 (button 4) forward,
+  // reusing the same history ops as Alt+Left / Alt+Right (GH #156). `auxclick`
+  // fires once per non-primary button release, so a single listener never
+  // double-navigates; preventDefault suppresses any webview built-in nav.
+  // Middle-click (button 1) is left untouched for new-tab handlers.
+  const mouseNav = (e: MouseEvent) => {
+    if (e.button === 3) {
+      e.preventDefault();
+      navigateMouseHistory("back", "dom");
+    } else if (e.button === 4) {
+      e.preventDefault();
+      navigateMouseHistory("forward", "dom");
+    }
+  };
+
+  let disposed = false;
+  let unlistenNativeMouseHistory = () => {};
+  if ("__TAURI_INTERNALS__" in window) {
+    void Promise.all([import("@tauri-apps/api/event"), import("@tauri-apps/api/window")]).then(
+      async ([{ listen }, { getCurrentWindow }]) => {
+        const target = getCurrentWindow().label;
+        const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
+          "history-navigate",
+          (e) => {
+            if (e.payload?.target !== target) return;
+            if (e.payload.direction === "back" || e.payload.direction === "forward") {
+              navigateMouseHistory(e.payload.direction, "native");
+            }
+          },
+        );
+        if (disposed) unlisten();
+        else unlistenNativeMouseHistory = unlisten;
+      },
+    );
+  }
 
   window.addEventListener("keydown", handler, true);
   window.addEventListener("paste", pasteHandler, true);
   window.addEventListener("keydown", superTracker, true);
   window.addEventListener("keyup", superTracker, true);
   window.addEventListener("blur", clearSuper);
+  window.addEventListener("auxclick", mouseNav, true);
   return () => {
+    disposed = true;
+    unlistenNativeMouseHistory();
     window.removeEventListener("keydown", handler, true);
     window.removeEventListener("paste", pasteHandler, true);
     window.removeEventListener("keydown", superTracker, true);
     window.removeEventListener("keyup", superTracker, true);
     window.removeEventListener("blur", clearSuper);
+    window.removeEventListener("auxclick", mouseNav, true);
   };
 }

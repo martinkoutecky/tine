@@ -1,0 +1,18 @@
+[package]
+name = "tine-plugin-revocation-sentinel"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true

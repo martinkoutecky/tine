@@ -32,6 +32,14 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:property-pages/enabled?` — OG creates a page reference from every
+    /// eligible property key unless this is explicitly false. Absent defaults to
+    /// true (`block.cljs`: `(contains? #{true nil} enabled?)`).
+    pub property_pages_enabled: bool,
+    /// `:property-pages/excludelist #{:a :b}` — property keys that do not create
+    /// property-page references. Values retain OG keyword names here and are
+    /// folded with `property_key_norm` when matched.
+    pub property_pages_excludelist: Vec<String>,
     /// `:default-templates {:journals "Name"}` — template applied to a new,
     /// empty journal page.
     pub default_journal_template: Option<String>,
@@ -62,6 +70,15 @@ pub struct Config {
     /// `:feature/enable-timetracking?` — OG default ON; only explicit false
     /// disables marker-driven CLOCK entries.
     pub enable_timetracking: bool,
+    /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
+    /// brackets around page references.
+    pub show_brackets: bool,
+    /// `:shortcut/doc-mode-enter-for-new-block?` — when document mode is on,
+    /// retain the normal Enter = new block mapping. Absent defaults to false.
+    pub doc_mode_enter_for_new_block: bool,
+    /// `:editor/logical-outdenting?` — leave following siblings under the old
+    /// parent when a block is outdented. Absent defaults to OG's false.
+    pub logical_outdenting: bool,
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
     /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
@@ -116,6 +133,8 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            property_pages_enabled: true,
+            property_pages_excludelist: Vec::new(),
             default_journal_template: None,
             favorites: Vec::new(),
             journal_file_name_format: None,
@@ -124,6 +143,9 @@ impl Default for Config {
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
             enable_timetracking: true,
+            show_brackets: true,
+            doc_mode_enter_for_new_block: false,
+            logical_outdenting: false,
             logbook: LogbookSettings::default(),
             guide_announced: false,
         }
@@ -167,6 +189,8 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        cfg.property_pages_enabled = bool_value(edn, ":property-pages/enabled?").unwrap_or(true);
+        cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
@@ -191,8 +215,11 @@ impl Config {
             _ => FileNameFormat::Legacy,
         };
         cfg.macros = parse_macros(edn);
-        cfg.enable_timetracking =
-            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
+        cfg.doc_mode_enter_for_new_block =
+            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
+        cfg.logical_outdenting = bool_value(edn, ":editor/logical-outdenting?").unwrap_or(false);
         cfg.logbook = LogbookSettings {
             with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
                 .unwrap_or(true),
@@ -207,6 +234,13 @@ impl Config {
         };
         cfg.guide_announced = bool_value(edn, ":tine/guide-announced?").unwrap_or(false);
         cfg
+    }
+
+    pub(crate) fn property_page_key_enabled(&self, key: &str) -> bool {
+        self.property_pages_enabled
+            && !self.property_pages_excludelist.iter().any(|excluded| {
+                crate::doc::property_key_norm(excluded) == crate::doc::property_key_norm(key)
+            })
     }
 }
 
@@ -301,6 +335,69 @@ impl Graph {
     /// but writing the explicit boolean keeps the Settings toggle reversible.
     pub fn set_timetracking_enabled(&self, enabled: bool) -> io::Result<()> {
         let key = ":feature/enable-timetracking?";
+        let val = if enabled { "true" } else { "false" };
+        let path = config_path_for_write(self)?;
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist `:ui/show-brackets?`. OG treats an absent key as ON, but writing
+    /// the explicit boolean keeps the Settings toggle reversible.
+    pub fn set_show_brackets(&self, enabled: bool) -> io::Result<()> {
+        let key = ":ui/show-brackets?";
+        let val = if enabled { "true" } else { "false" };
+        let path = config_path_for_write(self)?;
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist the document-mode escape hatch. OG declares the equivalent key in
+    /// `src/main/frontend/schema/handler/common_config.cljc:41` at `6e7afa8eb`.
+    pub fn set_doc_mode_enter_for_new_block(&self, enabled: bool) -> io::Result<()> {
+        self.set_config_bool(":shortcut/doc-mode-enter-for-new-block?", enabled)
+    }
+
+    /// Persist logical (Roam-like) outdenting. OG declares the equivalent key in
+    /// `src/main/frontend/schema/handler/common_config.cljc:83` at `6e7afa8eb`.
+    pub fn set_logical_outdenting(&self, enabled: bool) -> io::Result<()> {
+        self.set_config_bool(":editor/logical-outdenting?", enabled)
+    }
+
+    /// Write one graph-portable boolean through the existing config.edn atomic
+    /// update path, preserving unrelated keys, comments, and formatting.
+    fn set_config_bool(&self, key: &str, enabled: bool) -> io::Result<()> {
         let val = if enabled { "true" } else { "false" };
         let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
@@ -1040,6 +1137,32 @@ mod tests {
     }
 
     #[test]
+    fn property_pages_default_enabled_and_parse_og_controls() {
+        let defaults = Config::parse("{}");
+        assert!(defaults.property_pages_enabled);
+        assert!(Config::parse("{:property-pages/enabled? nil}").property_pages_enabled);
+        assert!(defaults.property_pages_excludelist.is_empty());
+        assert!(defaults.property_page_key_enabled("url"));
+
+        let configured = Config::parse(
+            "{:property-pages/enabled? true
+              :property-pages/excludelist #{:private_key :duration}}",
+        );
+        assert!(configured.property_pages_enabled);
+        assert_eq!(
+            configured.property_pages_excludelist,
+            vec!["private_key", "duration"]
+        );
+        assert!(!configured.property_page_key_enabled("private-key"));
+        assert!(!configured.property_page_key_enabled("duration"));
+        assert!(configured.property_page_key_enabled("url"));
+
+        let disabled = Config::parse("{:property-pages/enabled? false}");
+        assert!(!disabled.property_pages_enabled);
+        assert!(!disabled.property_page_key_enabled("url"));
+    }
+
+    #[test]
     fn set_timetracking_enabled_round_trips() {
         use crate::model::Graph;
         let dir = std::env::temp_dir().join(format!("tine-cfgttrack-{}", std::process::id()));
@@ -1061,6 +1184,37 @@ mod tests {
         assert!(!Graph::open(&dir).config.enable_timetracking);
         Graph::open(&dir).set_timetracking_enabled(true).unwrap();
         assert!(Graph::open(&dir).config.enable_timetracking);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn show_brackets_defaults_parses_and_round_trips() {
+        use crate::model::Graph;
+
+        assert!(Config::parse("{}").show_brackets);
+        assert!(!Config::parse("{:ui/show-brackets? false}").show_brackets);
+
+        let dir = std::env::temp_dir().join(format!("tine-cfgbrackets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"\n ;; preserve this comment\n :start-of-week 0}\n",
+        )
+        .unwrap();
+
+        Graph::open(&dir).set_show_brackets(false).unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(
+            after.contains(":ui/show-brackets? false"),
+            "not written: {after}"
+        );
+        assert!(after.contains(":start-of-week 0"), "other keys preserved");
+        assert!(
+            after.contains(";; preserve this comment"),
+            "comments preserved"
+        );
+        assert!(!Graph::open(&dir).config.show_brackets);
         let _ = fs::remove_dir_all(&dir);
     }
 

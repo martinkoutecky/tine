@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tine UI regression catalog",
+  "type": "object",
+  "required": ["schemaVersion", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "family", "sources", "platforms", "layer", "status", "coverage"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^UI-[A-Z0-9-]+$" },
+          "title": { "type": "string", "minLength": 5 },
+          "family": { "type": "string", "minLength": 2 },
+          "sources": {
+            "type": "object",
+            "required": ["issues", "commits"],
+            "properties": {
+              "issues": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+              "commits": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" } }
+            },
+            "additionalProperties": false
+          },
+          "platforms": { "type": "array", "minItems": 1, "items": { "enum": ["all", "linux", "windows", "macos", "android"] } },
+          "layer": { "enum": ["unit", "render", "browser", "native"] },
+          "status": { "enum": ["reported", "reproduced", "fixing", "covered", "released", "closed", "exempt"] },
+          "coverage": {
+            "type": "object",
+            "required": ["tests", "failBefore"],
+            "properties": {
+              "tests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "scenario": { "type": ["string", "null"] },
+              "failBefore": { "enum": ["proven", "reconstructed", "inferred", "unavailable"] },
+              "exemption": { "type": "string", "minLength": 10 }
+            },
+            "additionalProperties": false
+          },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -5,31 +5,53 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. **Every field below is optional** — fill in what you
-        can. If the form doesn't fit, [open a blank issue](https://github.com/martinkoutecky/tine/issues/new)
-        instead. The single most useful thing for a startup/crash problem is the
-        debug log (last field).
+        Thanks for reporting. A small reproducible example is the fastest route to
+        a fix and becomes a permanent regression test. Please remove private names,
+        URLs, and note content before attaching a graph. If the form does not fit,
+        [open a blank issue](https://github.com/martinkoutecky/tine/issues/new).
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
       description: What you did and what went wrong.
     validations:
-      required: false
+      required: true
   - type: textarea
     id: expected
     attributes:
       label: What did you expect instead?
       description: If it differs from Logseq, say so — Tine aims to match Logseq by default.
     validations:
-      required: false
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Exact steps to reproduce
+      description: Start from opening Tine and list the shortest sequence that reliably shows the problem.
+      placeholder: |
+        1. Open page …
+        2. Click …
+        3. Press …
+    validations:
+      required: true
+  - type: textarea
+    id: sample-graph
+    attributes:
+      label: Minimal anonymized sample graph
+      description: |
+        Drag a small .zip here containing only the files needed to reproduce the
+        bug. Replace private page names, URLs, and content first. If a graph cannot
+        be shared or the bug happens in every graph, say that explicitly and give
+        the smallest block text that reproduces it.
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
       label: Tine version
       description: From the Releases page / the title bar / `tine --version`.
     validations:
-      required: false
+      required: true
   - type: dropdown
     id: os
     attributes:
@@ -41,7 +63,7 @@ body:
         - Android
         - Other
     validations:
-      required: false
+      required: true
   - type: dropdown
     id: install
     attributes:

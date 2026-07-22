@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-07-17T00:00:00Z",
+  "plugins": [],
+  "revocations": [
+    {
+      "id": "page.tine.e2e.revocation-sentinel",
+      "reason": "Reserved native E2E fixture; never publish this identity.",
+      "revokedAt": "2026-07-17T00:00:00Z",
+      "severity": "critical",
+      "version": "0.0.1"
+    }
+  ],
+  "schemaVersion": 1,
+  "themes": []
+}

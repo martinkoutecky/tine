@@ -85,14 +85,28 @@ describe("parse + serialize round-trip", () => {
     expect(roundtrip("(between 2026-01-01 2026-12-31)")).toBe("(between 2026-01-01 2026-12-31)");
   });
 
+  it("retains OG bare content terms in the visual tree", () => {
+    expect(parseQuery("(and (task DONE) changelog)")).toEqual({
+      kind: "op",
+      op: "and",
+      children: [
+        { kind: "task", markers: ["DONE"] },
+        { kind: "content", text: "changelog" },
+      ],
+    });
+    expect(roundtrip("(and (task DONE) changelog)")).toBe('(and (task DONE) "changelog")');
+  });
+
   it("between field selector and journal predicate round-trip", () => {
     expect(roundtrip("(journal)")).toBe("(journal)");
-    expect(roundtrip("(between journal -30d today)")).toBe("(between journal -30d today)");
+    expect(roundtrip("(between -30d today)")).toBe("(between -30d today)");
+    expect(roundtrip("(between journal -30d today)")).toBe("(between -30d today)");
     expect(roundtrip("(between scheduled -7d +7d)")).toBe("(between scheduled -7d +7d)");
     expect(roundtrip("(between deadline today +14d)")).toBe("(between deadline today +14d)");
+    expect(roundtrip("(between any -7d +7d)")).toBe("(between any -7d +7d)");
     // The motivating query.
     expect(roundtrip("(and (task TODO) (between journal -30d today))")).toBe(
-      "(and (task TODO) (between journal -30d today))"
+      "(and (task TODO) (between -30d today))"
     );
   });
 
@@ -131,6 +145,16 @@ describe("parse + serialize round-trip", () => {
       kind: "op",
       op: "and",
       children: [{ kind: "content", text: "a\\q b" }],
+    });
+  });
+
+  it("round-trips a lossless friendly-search frontend", () => {
+    const dsl = '(search "alpha or \\"beta gamma\\" not draft")';
+    expect(roundtrip(dsl)).toBe(dsl);
+    expect(parseQuery(dsl)).toEqual({
+      kind: "op",
+      op: "and",
+      children: [{ kind: "search", source: 'alpha or "beta gamma" not draft' }],
     });
   });
 
@@ -227,10 +251,10 @@ describe("labels", () => {
     expect(clauseLabel({ kind: "property", key: "type", value: "book" })).toBe("type: book");
     expect(clauseLabel({ kind: "property", key: "public", value: null })).toBe("public: any");
     expect(clauseLabel({ kind: "between", field: "any", start: "-7d", end: "+7d" })).toBe(
-      "between: -7d ~ +7d"
+      "any between: -7d ~ +7d"
     );
     expect(clauseLabel({ kind: "between", field: "journal", start: "-30d", end: "today" })).toBe(
-      "journal between: -30d ~ today"
+      "between: -30d ~ today"
     );
   });
 });
@@ -275,6 +299,13 @@ describe("aggregate + group-by directives", () => {
 describe("clauseToAdvanced", () => {
   const conv = (dsl: string) => clauseToAdvanced(parseQuery(dsl));
 
+  it("refuses to guess an advanced equivalent for friendly search", () => {
+    expect(conv('(search "alpha beta")')).toEqual({
+      ok: false,
+      unsupported: ['friendly search "alpha beta"'],
+    });
+  });
+
   it("converts a task query 1:1 and stays on one line", () => {
     const r = conv("(task TODO DOING)");
     expect(r).toEqual({
@@ -310,7 +341,7 @@ describe("clauseToAdvanced", () => {
   });
 
   it('expands between "any" into the faithful (or …) of the three fields', () => {
-    const r = conv('(between "2026-01-01" "2026-12-31")');
+    const r = conv('(between any "2026-01-01" "2026-12-31")');
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.dsl).toContain('(or (between :journal ?b "2026-01-01" "2026-12-31")');

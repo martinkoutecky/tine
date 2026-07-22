@@ -72,6 +72,7 @@ For Debian/Ubuntu preload Rust stable, Node matching the lockfile, project npm
 dependencies, `tauri-driver`, `libwebkit2gtk-4.1-dev`, `webkit2gtk-driver`,
 `libayatana-appindicator3-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`,
 `libjavascriptcoregtk-4.1-dev`, `xvfb`, `xauth`, `dbus-x11`, `at-spi2-core`,
+`x11-utils`,
 Mesa software-rendering packages, and deterministic fonts. Also install
 `ffmpeg` and ImageMagick for artifacts, plus `xclip`, `xsel` and `wl-clipboard`
 for clipboard coverage. Playwright Chromium/WebKit are complementary browser

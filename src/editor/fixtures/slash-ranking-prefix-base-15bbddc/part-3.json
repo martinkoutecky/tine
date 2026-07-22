@@ -1,0 +1,759 @@
+[
+  {
+    "query": "NOW",
+    "labels": [
+      "NOW",
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "P",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "IN-PROGRESS",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Page reference",
+      "Upload an asset",
+      "Admonition: tip",
+      "Page properties",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Pa",
+    "labels": [
+      "Template: Page Planning",
+      "Page reference",
+      "Page properties",
+      "Template var: current page",
+      "Priority A",
+      "Template: Priority Plan",
+      "Upload an asset",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Pag",
+    "labels": [
+      "Template: Page Planning",
+      "Page reference",
+      "Page properties",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Page",
+    "labels": [
+      "Template: Page Planning",
+      "Page reference",
+      "Page properties",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Page ",
+    "labels": [
+      "Template: Page Planning",
+      "Page reference",
+      "Page properties",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Page p",
+    "labels": [
+      "Template: Page Planning",
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page pr",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page pro",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page prop",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page prope",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page proper",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page propert",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page properti",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page propertie",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page properties",
+    "labels": [
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page r",
+    "labels": [
+      "Page reference",
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page re",
+    "labels": [
+      "Page reference",
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Page ref",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page refe",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page refer",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page refere",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page referen",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page referenc",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Page reference",
+    "labels": [
+      "Page reference"
+    ]
+  },
+  {
+    "query": "Pr",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "IN-PROGRESS",
+      "Template: Priority Plan",
+      "Page properties",
+      "Page reference",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Pri",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan",
+      "Page properties",
+      "Template var: time"
+    ]
+  },
+  {
+    "query": "Prio",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Prior",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priori",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priorit",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priority",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priority ",
+    "labels": [
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priority A",
+    "labels": [
+      "Priority A",
+      "Template: Priority Plan"
+    ]
+  },
+  {
+    "query": "Priority B",
+    "labels": [
+      "Priority B"
+    ]
+  },
+  {
+    "query": "Priority C",
+    "labels": [
+      "Priority C"
+    ]
+  },
+  {
+    "query": "Q",
+    "labels": [
+      "Quote",
+      "Query",
+      "Template: Query Notes",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Qu",
+    "labels": [
+      "Quote",
+      "Query",
+      "Template: Query Notes",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Que",
+    "labels": [
+      "Query",
+      "Template: Query Notes",
+      "Query (visual builder)",
+      "Quote"
+    ]
+  },
+  {
+    "query": "Quer",
+    "labels": [
+      "Query",
+      "Template: Query Notes",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query",
+    "labels": [
+      "Query",
+      "Template: Query Notes",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query ",
+    "labels": [
+      "Template: Query Notes",
+      "Query (visual builder)",
+      "Query"
+    ]
+  },
+  {
+    "query": "Query (",
+    "labels": [
+      "Query (visual builder)",
+      "Query",
+      "Template: Query Notes"
+    ]
+  },
+  {
+    "query": "Query (v",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (vi",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (vis",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visu",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visua",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual ",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual b",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual bu",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual bui",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual buil",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual build",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual builde",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual builder",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Query (visual builder)",
+    "labels": [
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Quo",
+    "labels": [
+      "Quote",
+      "Template: Query Notes"
+    ]
+  },
+  {
+    "query": "Quot",
+    "labels": [
+      "Quote",
+      "Template: Query Notes"
+    ]
+  },
+  {
+    "query": "Quote",
+    "labels": [
+      "Quote",
+      "Template: Query Notes"
+    ]
+  },
+  {
+    "query": "S",
+    "labels": [
+      "Scheduled",
+      "Template: Query Notes",
+      "IN-PROGRESS",
+      "Upload an asset",
+      "Page properties",
+      "Template: Template starter",
+      "Query (visual builder)",
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Sc",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Sch",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Sche",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Sched",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Schedu",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Schedul",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Schedule",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Scheduled",
+    "labels": [
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "T",
+    "labels": [
+      "TODO",
+      "WAIT",
+      "LATER",
+      "Table",
+      "Quote",
+      "Today",
+      "WAITING",
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "Math block",
+      "Calculator",
+      "Current time",
+      "Upload an asset",
+      "Admonition: tip",
+      "Page properties",
+      "Admonition: note",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Ta",
+    "labels": [
+      "Table",
+      "Template: Template starter",
+      "Admonition: important",
+      "Today",
+      "Priority A",
+      "Template: Priority Plan",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Tab",
+    "labels": [
+      "Table"
+    ]
+  },
+  {
+    "query": "Tabl",
+    "labels": [
+      "Table"
+    ]
+  },
+  {
+    "query": "Table",
+    "labels": [
+      "Table"
+    ]
+  },
+  {
+    "query": "Te",
+    "labels": [
+      "LATER",
+      "Quote",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Admonition: note",
+      "Table",
+      "Current time",
+      "Page properties",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Tem",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Temp",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Templ",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Templa",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Templat",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Template",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Query Notes",
+      "Template: Template starter"
+    ]
+  },
+  {
+    "query": "Template ",
+    "labels": [
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template v",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template va",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  }
+]
+

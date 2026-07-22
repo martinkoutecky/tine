@@ -5,19 +5,27 @@ import {
   installPaneRouterRegistry,
   installLastTabCloseHandler,
   installNavigationInterceptor,
+  historyRouteContextAdapter,
   mainPaneRouter,
   tabRoute,
   type AdoptedTab,
   type PaneSnapshot,
   type PaneRouter,
   type Route,
+  type PageTarget,
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
-import { clearSelection, doc, pageByName, registerPaneRouteProvider } from "./store";
+import {
+  clearSelection,
+  doc,
+  pageByName,
+  registerPaneRouteProvider,
+  installHistoryRouteContextAdapter,
+} from "./store";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
-import { nearestPane } from "./paneSelect";
+import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
 
 export type LayoutNode =
   | {
@@ -90,6 +98,14 @@ export function firstPaneId(node: LayoutNode | null): string | null {
 
 export function activePaneRoutes(): Route[] {
   return layoutPaneIds().map((id) => paneRouter(id).route());
+}
+
+export function rewritePageTargetAcrossPanes(from: PageTarget, to: PageTarget) {
+  for (const router of routers.values()) router.rewritePageTarget(from, to);
+}
+
+export function removePageTargetAcrossPanes(target: PageTarget) {
+  for (const router of routers.values()) router.removePageTarget(target);
 }
 
 export function feedPaneId(): string | null {
@@ -166,16 +182,12 @@ export function closeLayoutPane(
   return { node, focusedPaneId: firstPaneId(node) ?? "main", closed: false };
 }
 
-function routeForJournalsDuplicate(source: PaneSnapshot): Route {
-  const active = source.tabs[Math.min(Math.max(0, source.activeIndex | 0), source.tabs.length - 1)];
-  for (let i = active.pos - 1; i >= 0; i--) {
-    const r = active.history[i];
-    if (r?.kind === "page") return r;
-  }
-  for (const r of active.history) {
-    if (r?.kind === "page") return r;
-  }
-  const name = doc.feed[0] ?? journalTitle(new Date());
+function routeForJournalsDuplicate(anchor: string | null): Route {
+  const selectedDay = anchor ? doc.byId[anchor]?.page : undefined;
+  const today = journalTitle(new Date());
+  const name =
+    (selectedDay && doc.feed.includes(selectedDay) ? selectedDay : undefined) ??
+    (doc.feed.includes(today) ? today : doc.feed[0] ?? today);
   return { kind: "page", name, pageKind: pageByName(name)?.kind ?? "journal" };
 }
 
@@ -183,8 +195,9 @@ function splitSnapshotForNewPane(source: PaneRouter): PaneSnapshot {
   const snap = source.duplicateActiveSnapshot();
   const active = snap.tabs[0];
   if (active && tabRoute({ id: "snapshot", history: active.history, pos: active.pos, pinned: active.pinned }).kind === "journals") {
-    active.history = [routeForJournalsDuplicate(snap)];
+    active.history = [routeForJournalsDuplicate(takeBlockSelectionForPaneReturn())];
     active.pos = 0;
+    active.pinned = false;
   }
   return snap;
 }
@@ -209,7 +222,7 @@ export function splitPane(
   const router = paneRouter(newPaneId);
   router.restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(source));
   setLayoutRoot(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
-  if (opts.focusNew !== false) setFocusedPaneId(newPaneId);
+  if (opts.focusNew !== false) focusPane(newPaneId);
   focusedRouter().scheduleSessionSave();
   return newPaneId;
 }
@@ -274,31 +287,38 @@ export function splitRootAtEdge(
     ratio: 0.5,
     children: newFirst ? [newLeaf, oldRoot] : [oldRoot, newLeaf],
   });
-  if (opts.focusNew !== false) setFocusedPaneId(newPaneId);
+  if (opts.focusNew !== false) focusPane(newPaneId);
   focusedRouter().scheduleSessionSave();
   return newPaneId;
 }
 
 export function closePane(paneId = focusedPaneId()): boolean {
   if (layoutPaneIds().length <= 1) return false;
+  const closingFocusedPane = focusedPaneId() === paneId;
   const res = closeLayoutPane(layoutRoot(), paneId);
   if (!res.closed) return false;
   setLayoutRoot(res.node);
   if (paneId !== "main") routers.delete(paneId);
-  setFocusedPaneId(res.focusedPaneId);
+  // Closing a background pane must not manufacture a foreground visit. When
+  // the focused pane closes, however, its sibling becomes the page the user is
+  // actually looking at and must pass through the same activation boundary as
+  // a pointer-driven pane focus change.
+  if (closingFocusedPane) focusPane(res.focusedPaneId);
   focusedRouter().scheduleSessionSave();
   return true;
 }
 
 export function focusPane(paneId: string) {
-  if (layoutPaneIds().includes(paneId)) setFocusedPaneId(paneId);
+  if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
+  setFocusedPaneId(paneId);
+  paneRouter(paneId).activateCurrentRoute();
 }
 
 function finishMovedTab(sourcePaneId: string, targetPaneId: string, moved: { emptied: boolean }) {
-  setFocusedPaneId(targetPaneId);
+  focusPane(targetPaneId);
   if (moved.emptied) {
     closePane(sourcePaneId);
-    if (layoutPaneIds().includes(targetPaneId)) setFocusedPaneId(targetPaneId);
+    if (layoutPaneIds().includes(targetPaneId)) focusPane(targetPaneId);
   } else {
     focusedRouter().scheduleSessionSave();
   }
@@ -317,7 +337,7 @@ export function moveTabToPane(
   if (sourcePaneId === targetPaneId) {
     if (typeof index === "number") source.moveTabToIndex(tabId, index);
     else source.setActiveTab(tabId);
-    setFocusedPaneId(targetPaneId);
+    focusPane(targetPaneId);
     return true;
   }
   const moved = source.extractTabForAdoption(tabId);
@@ -418,7 +438,8 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block);
+    else if (route.kind === "query") router.replaceActiveRoute(route);
+    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block, route.path);
     else if (route.path) router.openFile(route.path, route.name, route.pageKind);
     else router.openPage(route.name, route.pageKind);
   } else {
@@ -455,16 +476,29 @@ export function restorePaneLayout(
   setFocusedPaneId(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
-installPaneRouterRegistry({ focusedRouter, mainRouter });
+installPaneRouterRegistry({
+  focusedRouter,
+  mainRouter,
+  routerForPane: (paneId) => routers.get(paneId),
+  activatePane: (paneId) => {
+    if (!layoutPaneIds().includes(paneId) || !routers.has(paneId)) return false;
+    setFocusedPaneId(paneId);
+    return true;
+  },
+});
+installHistoryRouteContextAdapter(historyRouteContextAdapter);
 installLastTabCloseHandler((paneId) => closePane(paneId));
 installNavigationInterceptor((paneId, r) => {
   if (r.kind !== "journals") return false;
   const existing = feedPaneId();
   if (existing && existing !== paneId) {
-    setFocusedPaneId(existing);
+    focusPane(existing);
     return true;
   }
   return false;
 });
 registerPaneRouteProvider(activePaneRoutes);
-registerPaneFocusSetter(setFocusedPaneId);
+// Pointer/focus-driven pane changes are genuine foreground activations. Raw
+// setFocusedPaneId remains for restore/preload/layout construction, which must
+// not rewrite RECENT merely because a saved session was reconstructed.
+registerPaneFocusSetter(focusPane);

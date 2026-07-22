@@ -7,6 +7,8 @@ import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
 
 export interface InPageFindMatch {
   blockId: string;
+  /** Present for visible non-outline surfaces such as query rows and references. */
+  surfaceId?: string;
   ordinalInBlock: number;
   start: number;
   end: number;
@@ -66,6 +68,7 @@ const state = createRoot(() => {
   const [focusRequest, setFocusRequest] = createSignal(0);
   const [preserveEditorBlur, setPreserveEditorBlur] = createSignal(false);
   const [paneId, setPaneId] = createSignal<string | null>(null);
+  const [surfaceRevision, setSurfaceRevision] = createSignal(0);
   const matches = createMemo(() => currentMatchesFor(query()));
   return {
     open, setOpen,
@@ -74,6 +77,7 @@ const state = createRoot(() => {
     focusRequest, setFocusRequest,
     preserveEditorBlur, setPreserveEditorBlur,
     paneId, setPaneId,
+    surfaceRevision, setSurfaceRevision,
     matches,
   };
 });
@@ -82,6 +86,8 @@ let restoreFocusEl: HTMLElement | null = null;
 let revealToken = 0;
 let highlightToken = 0;
 let overlayRoot: HTMLDivElement | null = null;
+let surfaceObserver: MutationObserver | null = null;
+let surfaceObserverFrame = 0;
 
 export const inPageFindOpen = state.open;
 export const inPageFindQuery = state.query;
@@ -131,7 +137,8 @@ export function collectInPageFindMatches(
 
 function currentMatchesFor(query: string): InPageFindMatch[] {
   const q = query.trim();
-  if (!q || !doc.loaded) return [];
+  if (!q) return [];
+  state.surfaceRevision();
   const out: InPageFindMatch[] = [];
   const walk = (ids: readonly string[], format: Format) => {
     for (const id of ids) {
@@ -145,6 +152,23 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     }
   };
   for (const p of pagesForInPageFind()) walk(p.roots, p.format);
+  const pane = currentFindPaneElement();
+  if (pane) {
+    for (const element of pane.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
+      const surfaceId = element.dataset.inpageFindSurface;
+      if (!surfaceId) continue;
+      const text = searchableTextForRoot(element);
+      findTextOccurrences(text, q).forEach((match, ordinalInBlock) => {
+        out.push({
+          blockId: `surface:${surfaceId}`,
+          surfaceId,
+          ordinalInBlock,
+          start: match.start,
+          end: match.end,
+        });
+      });
+    }
+  }
   return out;
 }
 
@@ -169,6 +193,7 @@ function pagesForInPageFind(): FeedPage[] {
   const router = paneRouter(currentFindPaneId());
   const r = router.route();
   if (r.kind === "journals") return mainPages();
+  if (r.kind === "query") return [];
   const page = pageByName(r.name);
   return page ? [page] : [];
 }
@@ -181,6 +206,7 @@ export function openInPageFind() {
     state.setOpen(true);
     state.setFocusRequest((n) => n + 1);
   });
+  queueMicrotask(observeCurrentFindSurfaces);
   if (state.query().trim()) activateInPageFindIndex(Math.max(0, state.activeIndex()));
 }
 
@@ -194,6 +220,7 @@ export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {
     state.setPaneId(null);
   });
   clearInPageFindHighlights();
+  disconnectFindSurfaceObserver();
   if (!restoreFocus) {
     state.setPreserveEditorBlur(false);
     return;
@@ -259,8 +286,44 @@ function paneSelector(id: string): string {
   return `[data-pane-id="${esc}"]`;
 }
 
+function surfaceSelector(id: string): string {
+  const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
+  return `[data-inpage-find-surface="${esc}"]`;
+}
+
 export function inPageFindBlockElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
   return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
+}
+
+function inPageFindSurfaceElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
+  return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(surfaceSelector(id)) as HTMLElement | null;
+}
+
+function disconnectFindSurfaceObserver() {
+  surfaceObserver?.disconnect();
+  surfaceObserver = null;
+  if (surfaceObserverFrame) cancelAnimationFrame(surfaceObserverFrame);
+  surfaceObserverFrame = 0;
+}
+
+function observeCurrentFindSurfaces() {
+  disconnectFindSurfaceObserver();
+  if (!state.open() || typeof MutationObserver === "undefined") return;
+  const pane = currentFindPaneElement();
+  if (!pane) return;
+  surfaceObserver = new MutationObserver(() => {
+    if (surfaceObserverFrame) return;
+    surfaceObserverFrame = requestAnimationFrame(() => {
+      surfaceObserverFrame = 0;
+      state.setSurfaceRevision((revision) => revision + 1);
+      const matches = inPageFindMatches();
+      if (!matches.length) state.setActiveIndex(-1);
+      else if (state.activeIndex() < 0 || state.activeIndex() >= matches.length) state.setActiveIndex(0);
+      refreshInPageFindHighlights();
+    });
+  });
+  surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true });
+  state.setSurfaceRevision((revision) => revision + 1);
 }
 
 function animationFrame(): Promise<void> {
@@ -271,6 +334,17 @@ function animationFrame(): Promise<void> {
 }
 
 export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boolean> {
+  if (match.surfaceId) {
+    for (let i = 0; i < 20; i++) {
+      await animationFrame();
+      const element = inPageFindSurfaceElement(match.surfaceId);
+      if (element) {
+        element.scrollIntoView({ block: "center", behavior: "smooth" });
+        return true;
+      }
+    }
+    return false;
+  }
   const node = doc.byId[match.blockId];
   if (!node) return false;
   renderedBlocks.add(match.blockId);
@@ -292,9 +366,7 @@ interface TextPart {
   end: number;
 }
 
-function textRanges(root: HTMLElement, query: string): Range[] {
-  const q = query.trim();
-  if (!q) return [];
+function textPartsForRoot(root: HTMLElement): { parts: TextPart[]; text: string } {
   const parts: TextPart[] = [];
   let text = "";
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -302,7 +374,8 @@ function textRanges(root: HTMLElement, query: string): Range[] {
       const value = node.textContent ?? "";
       if (!value) return NodeFilter.FILTER_REJECT;
       const parent = node.parentElement;
-      if (!parent || parent.closest("button,input,textarea,select")) return NodeFilter.FILTER_REJECT;
+      const control = parent?.closest("button,input,textarea,select");
+      if (!parent || (control && control !== root)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -313,6 +386,17 @@ function textRanges(root: HTMLElement, query: string): Range[] {
     text += value;
     node = walker.nextNode() as Text | null;
   }
+  return { parts, text };
+}
+
+function searchableTextForRoot(root: HTMLElement): string {
+  return textPartsForRoot(root).text;
+}
+
+function textRanges(root: HTMLElement, query: string): Range[] {
+  const q = query.trim();
+  if (!q) return [];
+  const { parts, text } = textPartsForRoot(root);
   const pointForStart = (offset: number): [Text, number] | null => {
     for (const p of parts) if (offset >= p.start && offset < p.end) return [p.node, offset - p.start];
     return null;
@@ -412,6 +496,14 @@ function visibleFindBlockElements(): HTMLElement[] {
   });
 }
 
+function visibleFindSurfaceElements(): HTMLElement[] {
+  const pane = currentFindPaneElement();
+  if (!pane) return [];
+  const paneRect = pane.getBoundingClientRect();
+  return Array.from(pane.querySelectorAll<HTMLElement>("[data-inpage-find-surface]"))
+    .filter((element) => isViewportVisible(element, paneRect));
+}
+
 function resetCssHighlights() {
   if (typeof CSS === "undefined") return;
   ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_HIGHLIGHT);
@@ -434,31 +526,46 @@ export function refreshInPageFindHighlights() {
   const activeIdx = state.activeIndex();
   const activeMatch = matches[activeIdx] ?? null;
   const candidates = visibleFindBlockElements();
-  if (activeMatch) {
+  const surfaceCandidates = visibleFindSurfaceElements();
+  if (activeMatch?.surfaceId) {
+    const activeSurface = inPageFindSurfaceElement(activeMatch.surfaceId);
+    if (activeSurface && !surfaceCandidates.includes(activeSurface)) surfaceCandidates.push(activeSurface);
+  } else if (activeMatch) {
     const activeBlock = inPageFindBlockElement(activeMatch.blockId);
     if (activeBlock && !candidates.includes(activeBlock)) candidates.push(activeBlock);
   }
   const candidateIds = new Set(candidates.map(blockIdForElement).filter((id): id is string => !!id));
-  if (!candidateIds.size) {
+  const candidateSurfaceIds = new Set(surfaceCandidates.map((element) => element.dataset.inpageFindSurface).filter((id): id is string => !!id));
+  if (!candidateIds.size && !candidateSurfaceIds.size) {
     resetCssHighlights();
     clearOverlayHighlights();
     return;
   }
   const matchesByBlock = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
+  const matchesBySurface = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i];
+    if (m.surfaceId) {
+      if (!candidateSurfaceIds.has(m.surfaceId)) continue;
+      const bucket = matchesBySurface.get(m.surfaceId);
+      if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
+      else matchesBySurface.set(m.surfaceId, [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
+      continue;
+    }
     if (!candidateIds.has(m.blockId)) continue;
     const bucket = matchesByBlock.get(m.blockId);
     if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
     else matchesByBlock.set(m.blockId, [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
   }
-  void refreshInPageFindHighlightsChunked(token, candidates, matchesByBlock, query, activeIdx);
+  void refreshInPageFindHighlightsChunked(token, candidates, surfaceCandidates, matchesByBlock, matchesBySurface, query, activeIdx);
 }
 
 async function refreshInPageFindHighlightsChunked(
   token: number,
   candidates: HTMLElement[],
+  surfaceCandidates: HTMLElement[],
   matchesByBlock: Map<string, { ordinalInBlock: number; matchIndex: number }[]>,
+  matchesBySurface: Map<string, { ordinalInBlock: number; matchIndex: number }[]>,
   query: string,
   activeIdx: number,
 ) {
@@ -481,6 +588,26 @@ async function refreshInPageFindHighlightsChunked(
       if (m.matchIndex === activeIdx) {
         activeRange = range;
         block.classList.add("inpage-find-active-block");
+      } else {
+        ranges.push(range);
+      }
+    }
+  }
+  for (let i = 0; i < surfaceCandidates.length; i++) {
+    if ((candidates.length + i) > 0 && (candidates.length + i) % HIGHLIGHT_BLOCK_CHUNK_SIZE === 0) await animationFrame();
+    if (token !== highlightToken) return;
+    const surface = surfaceCandidates[i];
+    const surfaceId = surface.dataset.inpageFindSurface;
+    if (!surfaceId) continue;
+    const surfaceMatches = matchesBySurface.get(surfaceId);
+    if (!surfaceMatches?.length) continue;
+    const surfaceRanges = textRanges(surface, query);
+    for (const match of surfaceMatches) {
+      const range = surfaceRanges[match.ordinalInBlock];
+      if (!range) continue;
+      if (match.matchIndex === activeIdx) {
+        activeRange = range;
+        surface.classList.add("inpage-find-active-block");
       } else {
         ranges.push(range);
       }

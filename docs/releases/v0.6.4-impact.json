@@ -1,0 +1,936 @@
+{
+ "schemaVersion": 1,
+ "version": "0.6.4",
+ "baseTag": "v0.6.3",
+ "focusedAudit": {
+  "required": false,
+  "reason": "0.6.4 is a patch release of GitHub/report-driven bug fixes plus OG-parity render, clipboard, export and editor work. It adds no new graph-write path: the only write-path touches are in-place block-property updates (GH #216), a setSchedule rewrite that PRESERVES trailing text, and clipboard block-identity paste, all through the existing audited save path. No subsystem was introduced or rewritten, so no focused change-cluster audit is required."
+ },
+ "items": [
+  {
+   "section": "Added",
+   "text": "**Drag table columns into the order you want** (GH #217): grab a property column's header in a table view and drop it where it belongs. The order is stored with the sheet, so it survives a restart. Computed formula columns stay pinned at the end.",
+   "userVisible": true,
+   "regressions": [
+    "UI-SHEET-TABLE-COLUMN-REORDER-217"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Cut & paste keeps block identity, and copy & paste is block-exact**, like Logseq: cutting blocks (Ctrl/Cmd+X or the context menu) and pasting them back now preserves their `id::`, so `((...))` block references and embeds pointing at them keep working. Pasting your own copied blocks inside Tine is now a true block-level paste — exact text, hidden properties like `collapsed::`, and the full subtree survive — while plain-text pastes into other apps are unchanged. Copy-paste never duplicates block ids, nothing about block identity is written to the OS clipboard, and pasting can never create two blocks with the same id.",
+   "userVisible": true,
+   "regressions": [
+    "UI-CLIPBOARD-BLOCK-IDENTITY-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Full calculator language in ` ```calc ` blocks**, like Logseq: hex/octal/ binary numbers in and out (`:hex`, `:oct`, `:bin`, `:decimal`), scientific and mixed-number literals (`3 1/2`), inverse trig and factorial, output format directives (`:format fix/sci/normal/fractions/improper`), exact decimal arithmetic (`0.1 + 0.2 = 0.3`), and Logseq's error-to-`last` behavior. Tine's `floor`/`ceil`/`round` keep working as an extension.",
+   "userVisible": true,
+   "regressions": [
+    "UI-CALC-OG-LANGUAGE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Org image links render as images**, like Logseq: in Org pages, a page reference pointing at a local image asset (e.g. `[[../assets/pic.png]]`) now shows the image instead of a page link.",
+   "userVisible": true,
+   "regressions": [
+    "UI-RENDER-ORG-MEDIA-PAGEREF-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Direct Hiccup and raw media render**, like Logseq: a Hiccup form typed directly in a block (e.g. `[:span.highlight \"text\"]`) now renders as real (sanitized) HTML instead of literal source, and raw HTML `<audio controls>` / `<video controls>` play natively. Scripts, iframes, event handlers, and autoplay remain stripped; base64 `data:` images keep working, matching Logseq's sanitizer exactly.",
+   "userVisible": true,
+   "regressions": [
+    "UI-RENDER-HICCUP-RAWMEDIA-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Admonition icons and custom-block styling**, like Logseq: NOTE, TIP, IMPORTANT, CAUTION, WARNING, and PINNED admonitions now show a per-type icon, and other `#+BEGIN_X` blocks (like VERSE) keep a wrapper with their name as a CSS class so themes can style them.",
+   "userVisible": true,
+   "regressions": [
+    "UI-RENDER-ADMONITION-STRUCTURE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**Table v2**, like Logseq: a table in a block with `logseq.table.version:: 2` renders Logseq's grid presentation with compact mode and header transforms, and the `logseq.table.*` configuration properties no longer show as visible text.",
+   "userVisible": true,
+   "regressions": [
+    "UI-RENDER-TABLE-V2-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**YouTube timestamps**, like Logseq: `{{youtube-timestamp}}` stamps are now clickable and seek the embedded YouTube video, and a new \"Embed Youtube timestamp\" slash command inserts the current playback time. Works offline too — without a player the stamp stays a plain label.",
+   "userVisible": true,
+   "regressions": [
+    "UI-MEDIA-YT-TIMESTAMP-SEEK-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "**`<` advanced commands**, like Logseq: typing `<` at the start of a line opens the advanced-section menu (Quote, Src, Query, Note, Tip, Warning, Example, Verse, Center, Export variants, Comment…); picking one inserts the paired `#+BEGIN_…/#+END_…` section with the caret ready to type — and on Markdown pages, Src inserts a ``` code fence, exactly as Logseq does.",
+   "userVisible": true,
+   "regressions": [
+    "UI-EDITOR-ADVANCED-COMMANDS-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**On phones, a PDF can always be closed again.** The reader took over the screen with a toolbar that pushed its own Close button off the edge, and the Android back gesture ignored it — leaving no way out. The reader now fills the screen deliberately, Close sits at the front of the toolbar, the secondary tools move into the \"⋯\" menu when space is tight, and both the back gesture and Escape close the reader (any open find bar, settings or outline panel closes first).",
+   "userVisible": true,
+   "regressions": [
+    "UI-PDF-PANE-MOBILE"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Splitting a pane from the journals feed no longer opens a random other day's bullet.** Because a second journals pane isn't allowed, the new pane was filled with the last page you had visited in that tab — reusing its zoom and its pinned state, which is why an unrelated day's bullet could appear zoomed and pinned. It now opens the day page of the bullet you had selected, plainly.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PANE-JOURNALS-SPLIT"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Editors re-measure their height when a pane split changes their width, so a multiline block clicked in a freshly created pane is no longer clipped.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PANE-JOURNALS-SPLIT"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Typing at the end of a block that ends with a `SCHEDULED:`/`DEADLINE:` line no longer breaks the date.** Clicking at the visual end of such a block puts the caret after the planning line, and the text you typed there used to turn the deadline into ordinary text. The date now keeps working as long as the timestamp starts its line — matching Logseq, which accepts the same shape — and your text stays exactly where you typed it; nothing rewrites the block. Re-picking a date from the calendar also keeps that trailing text instead of deleting it.",
+   "userVisible": true,
+   "regressions": [
+    "UI-DEADLINE-TRAILING-TEXT"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A page containing a malformed HTML fragment (for example `- <div </div><`) no longer breaks the parser or disappears from search — it loads and stays searchable (GH #221, via the lsdoc 0.5.4 update).",
+   "userVisible": true,
+   "regressions": [
+    "REG-LSDOC-MALFORMED-HTML-INDEX-221"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The `/Today` command now inserts the date in the journal date format your graph is configured with (`:journal/page-title-format`) instead of always `MMM do, yyyy`, so the link points at the actual journal page (GH #220).",
+   "userVisible": true,
+   "regressions": [
+    "UI-SLASH-TODAY-FORMAT-220"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "PDF annotation files written by Tine now match Logseq's exact field shape (text highlights omit the empty `:image` key; area highlights write Logseq's `\"[:span]\"` text sentinel), so a graph annotated in Tine looks byte-familiar to Logseq and vice versa. Deleting an area highlight now also moves its cropped image to the graph's recoverable trash (Logseq deletes it outright; Tine previously left it orphaned) — only after the annotation save fully commits, and never when another highlight still references the image.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PDF-ANNOTATION-OG-SHAPE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Automatic headings**, like Logseq: a new \"Auto\" option (context menu and `/Heading (Auto)`) sizes the heading by the block's nesting depth and updates live on indent/outdent; explicit H1–H6 still win, and switching between the two cleans up the other representation in both Markdown and Org.",
+   "userVisible": true,
+   "regressions": [
+    "UI-HEADING-AUTO-DEPTH-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Paste parity with Logseq**: Ctrl/Cmd+Shift+V now pastes the literal clipboard text for every payload (not just multiline) — rich HTML and URLs included, with no formatting applied; formatted paste keeps HTML images (`![alt](src)`, org equivalent, unsafe `data:` URLs declined safely); and pasting a bare YouTube/Loom/Vimeo/Bilibili link inserts a playable `{{video}}` embed.",
+   "userVisible": true,
+   "regressions": [
+    "UI-CLIPBOARD-RAW-PASTE-UNIVERSAL-001",
+    "UI-CLIPBOARD-HTML-IMG-VIDEO-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Numbered lists work like Logseq's**: typing `1. ` in an empty block turns it into a numbered-list block; Enter continues the numbering into the new sibling and Enter on an empty item stops the list; Backspace at the start removes just the numbering; and blocks dragged or pasted into a numbered list pick up the numbering automatically (already-numbered blocks keep theirs).",
+   "userVisible": true,
+   "regressions": [
+    "UI-NUMLIST-TYPING-TOGGLE-001",
+    "UI-NUMLIST-CONTINUATION-001",
+    "UI-NUMLIST-DRAG-PASTE-INHERIT-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Document-mode Enter**, like Logseq: with Document mode on, plain Enter now inserts a line break and Shift+Enter creates a new block (the reverse of outline mode), with a config switch (`:shortcut/doc-mode-enter-for-new-block?`) to keep the outline mapping.",
+   "userVisible": true,
+   "regressions": [
+    "UI-DOC-MODE-ENTER-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Logical outdenting**, like Logseq: a new Editor setting; when on, Shift+Tab moves a block out one level and leaves its following siblings where they are (Roam-style) instead of nesting them under it. Both settings live in the graph's `config.edn`, so they travel with the graph.",
+   "userVisible": true,
+   "regressions": [
+    "UI-LOGICAL-OUTDENTING-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Undo/redo modes and context restore**, like Logseq: a new palette command \"Toggle undo/redo mode\" switches between the default Global history and Page-only history (undo/redo affects only the current page's latest change). Undo/redo now also restores where you were — the route/pane, right-sidebar state, and the editing cursor position — instead of just the text.",
+   "userVisible": true,
+   "regressions": [
+    "UI-HISTORY-PAGE-ONLY-MODE-001",
+    "UI-HISTORY-RESTORE-CONTEXT-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Property autocomplete**, like Logseq: typing `::` at the start of a line (or a typed key ending in `::`) opens a picker of the property names already used in your graph; picking one inserts the canonical `key:: ` and immediately offers that property's known values. `::` inside ordinary prose, references, or code fences never triggers it.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PROPERTY-AUTOCOMPLETE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The Copy/export modal gained Logseq's **maximum-depth control** (`Level ≤` all/1..9): descendants deeper than the selected level are omitted from the exported text, in both Rendered and Source modes.",
+   "userVisible": true,
+   "regressions": [
+    "UI-EXPORT-MAX-DEPTH-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**OPML and HTML export**, like Logseq: the Copy/export modal now offers Text/OPML/HTML for a block selection, and the **page menu gained \"Copy / export as…\"** opening the same dialog for the whole page. Each format shows Logseq's option set (cleanup + max depth for OPML/HTML; the full set for Text); OPML/HTML always omit property lines.",
+   "userVisible": true,
+   "regressions": [
+    "UI-EXPORT-FORMATS-OPML-HTML-PAGE-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "**The back and forward buttons now stay on the top bar on phones.** The bar used to move them into the \"…\" menu at the same width as the calendar, journals, theme and right-sidebar buttons; navigation now keeps its place and only collapses on extremely narrow windows (GH #205).",
+   "userVisible": true,
+   "regressions": [
+    "UI-TOPBAR-RESPONSIVE-WORKSPACE-205"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "**Multiline plain-text paste now matches Logseq**: pasted text only becomes multiple blocks when it looks like an outline (`-`/`+`/`*`/`#` lines, org stars) or contains blank-line-separated paragraphs; ordinary prose — addresses, log excerpts, indented text — stays in one block, replacing the selection literally. (Previously every multiline paste was split into blocks.)",
+   "userVisible": true,
+   "regressions": [
+    "UI-CLIPBOARD-PLAINTEXT-POLICY-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "Parser updated to **lsdoc v0.5.4**: correctness, panic, and performance fixes from the GH #209 audit (split-title math chains, latex-env tails, raw-HTML scanning, 32-bit cookie/timestamp bounds, refs-indexing parity).",
+   "userVisible": true,
+   "regressions": [
+    "REG-LSDOC-MALFORMED-HTML-INDEX-221"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Property keys now create backlinks**, like Logseq: a page or block with `author:: something` shows up in the `author` page's Linked References even when the value contains no `[[reference]]`. Built-in/hidden properties and the `:property-pages/excludelist` are exempt, and `:property-pages/enabled? false` turns it off — matching Logseq's rules.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PROPERTY-KEY-BACKLINKS-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Exported HTML sites now run `#+BEGIN_QUERY` blocks** the same way they already run `{{query}}` — showing the authored title and results, restricted to public pages; when matches on non-public pages were filtered out, the query notes how many were omitted instead of silently under-reporting.",
+   "userVisible": true,
+   "regressions": [
+    "UI-BEGIN-QUERY-RENDER-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**Custom macros with rich output now render it**, like Logseq: a `:macros` entry whose body is a Hiccup form (e.g. `[:span {:class \"x\"} \"text\"]`) shows the styled result instead of the literal bracket source — on the page, in linked references, and in reference previews. Output goes through the same HTML sanitizer as pasted raw HTML; Hiccup typed directly in a note (outside a macro) still renders literally.",
+   "userVisible": true,
+   "regressions": [
+    "UI-MACRO-HICCUP-RICH-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**`#+BEGIN_QUERY` advanced query blocks now render** their authored title and a bounded result table — on the page, in Linked References, and in reference previews — instead of showing the raw `#+BEGIN_QUERY … #+END_QUERY` source, like Logseq. The common page-property Datalog form (`[?p :block/properties ?props]` + `[(get ?props :key)]`) is understood; malformed or unsupported queries show a clear \"Unsupported BEGIN_QUERY\" notice rather than a guessed partial result.",
+   "userVisible": true,
+   "regressions": [
+    "UI-BEGIN-QUERY-RENDER-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "**YouTube (and Vimeo) embeds now play** instead of failing with the player's \"error 153\". A `{{youtube …}}`/`{{video …}}` embed — and a pasted raw `<iframe>` pointing at a video host — now sends the app origin as its referrer (`referrerpolicy=\"strict-origin-when-cross-origin\"`) and the standard media `allow` permissions, matching Logseq; YouTube rejects an embed that arrives with no referrer. Raw `<iframe>`s to any other host keep `no-referrer`, so an arbitrary embed still can't see where it was opened from.",
+   "userVisible": true,
+   "regressions": [
+    "UI-YOUTUBE-EMBED-153-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A bare remote media URL now **renders inline**, like Logseq: a plain `https://…/photo.jpg` (or `.png`/`.gif`/`.webp`/…) shows the image, and a bare `.mp4`/`.webm`/`.mp3`/… URL shows a video/audio player, instead of a raw link. Labeled links (`[text](…)`) and non-media links are unchanged.",
+   "userVisible": true,
+   "regressions": [
+    "UI-RAW-REMOTE-MEDIA-URL-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "`[[`, `#`, and `((` autocomplete now match what you type **literally**, like Logseq. Previously the in-progress text was run through the Ctrl+K search query language, so typing a bare `OR`, a leading `-`, a quote, or a `/…/` was read as a boolean/negation/regex operator and made valid pages or blocks silently disappear (the \"works at 1 char, vanishes at 2, returns at 3\" effect). Ctrl+K keeps its full query language (GH #186).",
+   "userVisible": true,
+   "regressions": [
+    "REG-AUTOCOMPLETE-LITERAL-186",
+    "UI-SEARCH-GLOBAL-BLOCK-RANK-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Made equal-ranked page autocomplete results **deterministic**: ties now break on a stable key (file path / canonical name) instead of filesystem/enumeration order, so the same query on the same graph always returns the same set and order (GH #186).",
+   "userVisible": true,
+   "regressions": [
+    "REG-PAGE-TOPK-DETERMINISM-186"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Windows, clicking an external `http(s)`/`mailto` link now opens your default browser/mail client instead of a File Explorer window. The opener no longer hands the URL to `explorer.exe` (which treats it as a shell item); it uses the system URL handler, the same path already used on mobile (GH #215).",
+   "userVisible": true,
+   "regressions": [
+    "UI-OPEN-EXTERNAL-WINDOWS-215"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The top bar no longer collapses its calendar/journals/theme/right-sidebar and history actions into the \"…\" overflow menu while there is plenty of room for them; the collapse threshold now reflects the actual space the buttons need (GH #205 follow-up).",
+   "userVisible": true,
+   "regressions": [
+    "UI-TOPBAR-RESPONSIVE-WORKSPACE-205"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The top bar \"…\" overflow menu now closes when you click anywhere outside it (GH #205 follow-up).",
+   "userVisible": true,
+   "regressions": [
+    "UI-TOPBAR-OVERFLOW-OUTSIDE-DISMISS-205"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Editing a cell in a field table (`/table`) no longer reorders the columns. Updating a block property now keeps the property on its original line instead of moving it to the end, so the edited column stays put and the saved file keeps a stable property order (GH #216).",
+   "userVisible": true,
+   "regressions": [
+    "REG-BLOCK-PROPERTY-UPDATE-ORDER-001"
+   ],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  }
+ ]
+}

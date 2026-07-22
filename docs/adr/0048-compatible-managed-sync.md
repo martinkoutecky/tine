@@ -1,4 +1,4 @@
-# 0042. Managed sync uses operation truth with an optional shared Markdown projection
+# 0048. Managed sync uses operation truth with an optional shared Markdown projection
 
 - **Status:** Accepted
 - **Date:** 2026-07-11

@@ -1,12 +1,13 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias } from "../ui";
-import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
+import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { EmojiText } from "../render/emoji";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -38,15 +39,31 @@ export function openSidebarPageTarget(
   gesture: "normal" | "sidebar" | "new-tab" | "context",
   point: { x: number; y: number } = { x: 0, y: 0 },
   deps: SidebarPageOpenDeps = sidebarPageOpenDeps,
+  onActiveNavigationComplete?: () => void,
 ) {
   const target = sidebarPageTarget(name, kind);
-  if (gesture === "normal") deps.normal(target.name, target.kind);
+  if (gesture === "normal") { deps.normal(target.name, target.kind); onActiveNavigationComplete?.(); }
   else if (gesture === "sidebar") deps.sidebar(target.name, target.kind);
   else if (gesture === "new-tab") deps.newTab(target.name, target.kind);
   else deps.context(point.x, point.y, target.name, target.kind);
 }
 
-export function Sidebar(): JSX.Element {
+export interface GraphNavigationActions {
+  openKnown(path: string, newWindow: boolean): Promise<LoadGraphPathOutcome>;
+  openPicked(): Promise<LoadGraphPathOutcome>;
+  createNew(): Promise<LoadGraphPathOutcome>;
+}
+
+const graphNavigationActions: GraphNavigationActions = {
+  openKnown: openKnownGraph,
+  openPicked: switchGraph,
+  createNew: createNewGraph,
+};
+
+export function Sidebar(props: {
+  onActiveNavigationComplete?: () => void;
+  graphActions?: GraphNavigationActions;
+} = {}): JSX.Element {
   // The whole-graph page list is the shared, graph-epoch-keyed resource (see
   // src/pages.ts) — fetched once per graph generation and shared with the
   // namespace tree/macro/hierarchy, not a sidebar-private fetch. Epoch keying
@@ -76,6 +93,7 @@ export function Sidebar(): JSX.Element {
   };
   const openEntry = (path: string, name: string) => {
     path ? openFile(path, name, "page") : openPage(name, "page");
+    props.onActiveNavigationComplete?.();
   };
   // Shift+click on a sidebar page row opens it in the right sidebar (mirrors the
   // center-pane page-link behavior; GH #63). The onMouseDown guard suppresses the
@@ -92,16 +110,9 @@ export function Sidebar(): JSX.Element {
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
         <div class="app-logo">Tine</div>
-        <GraphSwitcher />
-      </div>
-
-      <div class="nav-search">
-        <input
-          class="search-input"
-          type="text"
-          placeholder="Search"
-          readonly
-          onClick={() => openSwitcher()}
+        <GraphSwitcher
+          onActiveNavigationComplete={props.onActiveNavigationComplete}
+          actions={props.graphActions ?? graphNavigationActions}
         />
       </div>
 
@@ -109,7 +120,7 @@ export function Sidebar(): JSX.Element {
         <div
           class="nav-item"
           classList={{ active: route().kind === "journals" }}
-          onClick={() => openJournals()}
+          onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
@@ -123,66 +134,99 @@ export function Sidebar(): JSX.Element {
 
         <Show when={favorites().length > 0}>
           <div class="nav-section">
-            <div class="nav-section-header">FAVORITES</div>
-            <For each={favorites()}>
-              {(fav) => {
-                const target = () => sidebarPageTarget(fav.name, fav.kind);
-                return (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(target().name) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal")}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openSidebarPageTarget(fav.name, fav.kind, "new-tab");
-                    }
+            <button
+              type="button"
+              class="nav-section-header nav-section-toggle"
+              data-sidebar-section="favorites"
+              aria-expanded={favoritesSectionExpanded()}
+              aria-controls="sidebar-favorites-list"
+              onClick={toggleFavoritesSection}
+            >
+              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>
+              FAVORITES
+              <span class="nav-section-count">{favorites().length}</span>
+            </button>
+            <Show when={favoritesSectionExpanded()}>
+              <div id="sidebar-favorites-list">
+                <For each={favorites()}>
+                  {(fav) => {
+                    const target = () => sidebarPageTarget(fav.name, fav.kind);
+                    return (
+                      <div
+                        class="nav-page"
+                        classList={{ active: isActive(target().name) }}
+                        onMouseDown={shiftGuard}
+                        onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal", { x: 0, y: 0 }, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            openSidebarPageTarget(fav.name, fav.kind, "new-tab");
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
+                        }}
+                      >
+                        {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
+                            crashes painting a raw color-emoji glyph on hardened
+                            libstdc++ (#29); Twemoji <img> never touches the font. */}
+                        <EmojiText text={`⭐ ${fav.name}`} />
+                      </div>
+                    );
                   }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
-                      crashes painting a raw color-emoji glyph on hardened
-                      libstdc++ (#29); Twemoji <img> never touches the font. */}
-                  <EmojiText text={`⭐ ${fav.name}`} />
-                </div>
-                );
-              }}
-            </For>
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
 
         <Show when={recentPages().length > 0}>
           <div class="nav-section">
-            <div class="nav-section-header">RECENT</div>
-            <For each={recentPages()}>
-              {(r) => {
-                const target = () => sidebarPageTarget(r.name, r.kind);
-                return (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(target().name) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal")}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openSidebarPageTarget(r.name, r.kind, "new-tab");
-                    }
+            <button
+              type="button"
+              class="nav-section-header nav-section-toggle"
+              data-sidebar-section="recent"
+              aria-expanded={recentSectionExpanded()}
+              aria-controls="sidebar-recent-list"
+              onClick={toggleRecentSection}
+            >
+              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>
+              RECENT
+              <span class="nav-section-count">{recentPages().length}</span>
+            </button>
+            <Show when={recentSectionExpanded()}>
+              <div id="sidebar-recent-list">
+                <For each={recentPages()}>
+                  {(r) => {
+                    const target = (): PageTarget => ({ name: r.name, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
+                    return (
+                      <div
+                        class="nav-page"
+                        classList={{ active: isActive(target().name, target().path) }}
+                        onMouseDown={shiftGuard}
+                        onClick={(e) => {
+                          if (e.shiftKey) openPageInSidebar(target());
+                          else { openPageTarget(target()); props.onActiveNavigationComplete?.(); }
+                        }}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            openPageTargetInNewTab(target());
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openPageContextMenu(e.clientX, e.clientY, target());
+                        }}
+                      >
+                        <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                      </div>
+                    );
                   }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openSidebarPageTarget(r.name, r.kind, "context", { x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
-                </div>
-                );
-              }}
-            </For>
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
 
@@ -205,7 +249,7 @@ export function Sidebar(): JSX.Element {
                   classList={{ active: isActive(p.name, p.path) }}
                   onMouseDown={shiftGuard}
                   onClick={(e) =>
-                    e.shiftKey ? openPageInSidebar(p.name, "page") : openEntry(p.path, p.name)
+                    e.shiftKey ? openPageInSidebar({ name: p.name, pageKind: "page", path: p.path }) : openEntry(p.path, p.name)
                   }
                   onAuxClick={(e) => {
                     if (e.button === 1) {
@@ -215,7 +259,10 @@ export function Sidebar(): JSX.Element {
                         : openPageInNewTab(p.name, "page");
                     }
                   }}
-                  onContextMenu={(e) => openRowMenu(e, p.name, "page")}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
+                  }}
                 >
                   <EmojiText text={pageListLabel(p, allPages())} />
                 </div>
@@ -238,7 +285,7 @@ export function Sidebar(): JSX.Element {
             NAMESPACES
           </div>
           <Show when={showNs()}>
-            <NamespaceTree onPageContextMenu={openRowMenu} />
+            <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
         </div>
       </div>
@@ -260,8 +307,8 @@ function graphDisplayName(): string {
 }
 
 export interface KnownGraphOpenDeps {
-  switchInPlace(path: string): Promise<unknown>;
-  openNewWindow(path: string): Promise<unknown>;
+  switchInPlace(path: string): Promise<LoadGraphPathOutcome>;
+  openNewWindow(path: string): Promise<LoadGraphPathOutcome>;
 }
 
 export function openKnownGraph(
@@ -269,16 +316,26 @@ export function openKnownGraph(
   newWindow: boolean,
   deps: KnownGraphOpenDeps = {
     switchInPlace: loadGraphPath,
-    openNewWindow: (target) => backend().openGraphWindow(target),
+    openNewWindow: async (target) => {
+      if (!(await authorizeGraphAccess(target))) return { kind: "aborted" };
+      // A graph opened in a peer window is never an in-place navigation even
+      // when the backend had to construct that window, so it must keep the
+      // mobile drawer open.
+      await backend().openGraphWindow(target);
+      return { kind: "focused_existing" };
+    },
   }
-): Promise<unknown> {
+): Promise<LoadGraphPathOutcome> {
   return newWindow ? deps.openNewWindow(path) : deps.switchInPlace(path);
 }
 
 // The current-graph control in the sidebar header. OG puts a graph-name dropdown
 // top-left (database icon → switch/new/all-graphs/re-index). Tine lists its known
 // graphs here alongside open/create actions; Shift-click opens a peer window.
-function GraphSwitcher(): JSX.Element {
+export function GraphSwitcher(props: {
+  onActiveNavigationComplete?: () => void;
+  actions: GraphNavigationActions;
+}): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const [knownGraphs, { refetch }] = createResource(() => backend().listKnownGraphs());
   const close = () => setOpen(false);
@@ -287,14 +344,14 @@ function GraphSwitcher(): JSX.Element {
     if (open()) void refetch();
   });
 
-  // Esc closes the menu (the backdrop handles click-outside).
   createEffect(() => {
     if (!open()) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    const unregister = registerTransientLayer({
+      id: "graph-switch-menu",
+      root: () => document.querySelector(".graph-switch-menu"),
+      dismiss: () => { close(); return true; },
+    });
+    onCleanup(unregister);
   });
 
   return (
@@ -329,11 +386,15 @@ function GraphSwitcher(): JSX.Element {
                 classList={{ active: graph.path === graphMeta()?.root }}
                 title={graph.path}
                 onClick={(event) => {
+                  const newWindow = event.shiftKey;
                   close();
-                  const open = openKnownGraph(graph.path, event.shiftKey);
-                  void open.catch((error) =>
-                    pushToast(`Couldn't open ${graph.name}. (${String(error)})`, "error")
-                  );
+                  void props.actions.openKnown(graph.path, newWindow)
+                    .then((outcome) => {
+                      if (!newWindow && (outcome.kind === "loaded" || outcome.kind === "already_current")) {
+                        props.onActiveNavigationComplete?.();
+                      }
+                    })
+                    .catch((error) => pushToast(`Couldn't open ${graph.name}. (${String(error)})`, "error"));
                 }}
               >
                 <span class="graph-switch-row-name">{graph.name}</span>
@@ -361,7 +422,11 @@ function GraphSwitcher(): JSX.Element {
             class="ctx-item"
             onClick={() => {
               close();
-              void switchGraph();
+              void props.actions.openPicked()
+                .then((outcome) => {
+                  if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
+                })
+                .catch((error) => pushToast(`Couldn't open the selected graph. (${String(error)})`, "error"));
             }}
           >
             Open graph…
@@ -370,7 +435,11 @@ function GraphSwitcher(): JSX.Element {
             class="ctx-item"
             onClick={() => {
               close();
-              void createNewGraph();
+              void props.actions.createNew()
+                .then((outcome) => {
+                  if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
+                })
+                .catch((error) => pushToast(`Couldn't create the graph. (${String(error)})`, "error"));
             }}
           >
             New graph…

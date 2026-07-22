@@ -1,5 +1,47 @@
 // Shared PDF helpers (mirror the Rust asset_key / hls naming and colors).
 
+import type { Highlight, Rect } from "./types";
+
+export interface PdfPageDimensions {
+  w: number;
+  h: number;
+}
+
+function hasSourceSpace(rect: Rect): rect is Rect & { source_width: number; source_height: number } {
+  return Number.isFinite(rect.source_width) && Number.isFinite(rect.source_height) &&
+    rect.source_width! > 0 && rect.source_height! > 0;
+}
+
+/** Convert a persisted rectangle to pdf.js scale-1 page coordinates. Current
+ * Logseq stores coordinates relative to the viewport size at creation time;
+ * older Tine rectangles are already in page coordinates. */
+export function rectInPageSpace(rect: Rect, page: PdfPageDimensions): Rect {
+  if (!hasSourceSpace(rect)) return rect;
+  const x = page.w / rect.source_width;
+  const y = page.h / rect.source_height;
+  return {
+    ...rect,
+    left: rect.left * x,
+    top: rect.top * y,
+    width: rect.width * x,
+    height: rect.height * y,
+  };
+}
+
+/** Attach the coordinate-space dimensions required by Logseq's sidecar shape.
+ * Used before persistence to migrate old Tine rectangles without changing their
+ * visible scale-1 page coordinates. */
+export function rectWithSourceSpace(rect: Rect, page: PdfPageDimensions): Rect {
+  if (hasSourceSpace(rect)) return rect;
+  return { ...rect, source_width: page.w, source_height: page.h };
+}
+
+/** OG stores an area highlight entirely in `bounding`; `rects` is reserved for
+ * the line fragments of a text selection and is empty for a captured region. */
+export function areaHighlightPosition(page: number, bounding: Rect): Highlight["position"] {
+  return { page, bounding, rects: [] };
+}
+
 // MUST stay byte-for-byte in sync with the Rust `asset_key` (crates/tine-core/
 // src/pdf.rs) — the frontend derives the hls__ page name the Notes pane opens,
 // and the backend derives the page it writes; a divergence points them at

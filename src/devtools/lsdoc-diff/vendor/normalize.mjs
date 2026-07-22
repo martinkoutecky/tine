@@ -129,6 +129,13 @@ export function normNode(node) {
       // ["Custom", name, _opts, [children], raw] — callout blocks (#+BEGIN_X);
       // BEGIN_QUOTE is emitted as Quote instead, so this is NOTE/TIP/WARNING/etc.
       return { kind: "custom", name: node[1], children: (node[3] ?? []).map(normNode) };
+    case "Export": {
+      const block = { kind: "export", name: node[1] ?? "", content: node[3] ?? "" };
+      if (node[2] != null) block.options = node[2];
+      return block;
+    }
+    case "CommentBlock":
+      return { kind: "comment_block", content: (node[1] ?? []).join("") };
     case "Property_Drawer":
       return { kind: "properties", props: (node[1] ?? []).map((p) => [p[0], p[1]]) };
     case "Horizontal_Rule":

@@ -1,0 +1,597 @@
+[
+  {
+    "query": "Template var:",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: ",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: c",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: cu",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: cur",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: curr",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: curre",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: curren",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current ",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current p",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current pa",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current pag",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: current page",
+    "labels": [
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: d",
+    "labels": [
+      "Template var: date…",
+      "Template var: today",
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: da",
+    "labels": [
+      "Template var: date…",
+      "Template var: today",
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: dat",
+    "labels": [
+      "Template var: date…"
+    ]
+  },
+  {
+    "query": "Template var: date",
+    "labels": [
+      "Template var: date…"
+    ]
+  },
+  {
+    "query": "Template var: date…",
+    "labels": [
+      "Template var: date…"
+    ]
+  },
+  {
+    "query": "Template var: t",
+    "labels": [
+      "Template var: time",
+      "Template var: today",
+      "Template var: tomorrow",
+      "Template var: date…",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Template var: ti",
+    "labels": [
+      "Template var: time"
+    ]
+  },
+  {
+    "query": "Template var: tim",
+    "labels": [
+      "Template var: time"
+    ]
+  },
+  {
+    "query": "Template var: time",
+    "labels": [
+      "Template var: time"
+    ]
+  },
+  {
+    "query": "Template var: to",
+    "labels": [
+      "Template var: today",
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tod",
+    "labels": [
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Template var: toda",
+    "labels": [
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Template var: today",
+    "labels": [
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Template var: tom",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tomo",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tomor",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tomorr",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tomorro",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: tomorrow",
+    "labels": [
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Template var: y",
+    "labels": [
+      "Template var: yesterday",
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Template var: ye",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yes",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yest",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yeste",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yester",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yesterd",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yesterda",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "Template var: yesterday",
+    "labels": [
+      "Template var: yesterday"
+    ]
+  },
+  {
+    "query": "To",
+    "labels": [
+      "TODO",
+      "Today",
+      "Calculator",
+      "Template var: today",
+      "Template var: tomorrow",
+      "Math block",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "TO",
+    "labels": [
+      "TODO",
+      "Today",
+      "Calculator",
+      "Template var: today",
+      "Template var: tomorrow",
+      "Math block",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Tod",
+    "labels": [
+      "TODO",
+      "Today",
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "TOD",
+    "labels": [
+      "TODO",
+      "Today",
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Toda",
+    "labels": [
+      "Today",
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "Today",
+    "labels": [
+      "Today",
+      "Template var: today"
+    ]
+  },
+  {
+    "query": "TODO",
+    "labels": [
+      "TODO"
+    ]
+  },
+  {
+    "query": "U",
+    "labels": [
+      "Quote",
+      "Query",
+      "Scheduled",
+      "Calculator",
+      "Template: Query Notes",
+      "Current time",
+      "Upload an asset",
+      "Admonition: caution",
+      "Query (visual builder)",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Up",
+    "labels": [
+      "Upload an asset",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Upl",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Uplo",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Uploa",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload ",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload a",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an ",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an a",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an as",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an ass",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an asse",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "Upload an asset",
+    "labels": [
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "V",
+    "labels": [
+      "Divider",
+      "Voice recording",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Query (visual builder)",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Vo",
+    "labels": [
+      "Voice recording",
+      "Template var: today",
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "Voi",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voic",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice ",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice r",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice re",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice rec",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice reco",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice recor",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice record",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice recordi",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice recordin",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "Voice recording",
+    "labels": [
+      "Voice recording"
+    ]
+  },
+  {
+    "query": "W",
+    "labels": [
+      "NOW",
+      "WAIT",
+      "WAITING",
+      "Draw.io diagram",
+      "Admonition: warning",
+      "Template var: tomorrow"
+    ]
+  },
+  {
+    "query": "WA",
+    "labels": [
+      "WAIT",
+      "WAITING",
+      "Admonition: warning",
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "WAI",
+    "labels": [
+      "WAIT",
+      "WAITING",
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "WAIT",
+    "labels": [
+      "WAIT",
+      "WAITING"
+    ]
+  },
+  {
+    "query": "WAITI",
+    "labels": [
+      "WAITING"
+    ]
+  },
+  {
+    "query": "WAITIN",
+    "labels": [
+      "WAITING"
+    ]
+  },
+  {
+    "query": "WAITING",
+    "labels": [
+      "WAITING"
+    ]
+  }
+]
+

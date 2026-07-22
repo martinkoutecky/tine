@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { installMobileExternalLinkHandler } from "./App";
+import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
+import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
+import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
+import { pageInventoryRev } from "./ui";
 
 function addAnchor(href: string): HTMLAnchorElement {
   const a = document.createElement("a");
@@ -19,7 +22,17 @@ function click(el: Element): MouseEvent {
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  resetStore();
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
 });
+
+function page(name: string, kind: "page" | "journal", roots: string[]): FeedPage {
+  return { name, kind, title: name, preBlock: null, roots, format: "md", readOnly: false, guide: false };
+}
+
+function node(id: string, pageName: string): StoreNode {
+  return { id, raw: "loaded elsewhere", collapsed: false, parent: null, page: pageName, children: [] };
+}
 
 describe("mobile external link delegation", () => {
   it("opens external links through the OS browser on Android", async () => {
@@ -70,5 +83,39 @@ describe("mobile external link delegation", () => {
     } finally {
       uninstall();
     }
+  });
+});
+
+describe("journal watcher feed reconciliation", () => {
+  it("restarts a live Journals feed when the changed journal was already loaded in another pane", async () => {
+    const name = "15th July, 2030";
+    restorePaneLayout(
+      { kind: "split", dir: "row", ratio: 0.5, children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pane-2" }] },
+      new Map([
+        ["main", { tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 }],
+        ["pane-2", { tabs: [{ history: [{ kind: "page", name, pageKind: "journal" }], pos: 0, pinned: false }], activeIndex: 0 }],
+      ]),
+      "main"
+    );
+    setDoc({ byId: { loaded: node("loaded", name) }, pages: [page(name, "journal", ["loaded"])], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ name, kind: "journal", title: name, pre_block: null, blocks: [] });
+    const now = new Date();
+    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
+      pages: [], next_before_day: null, done: true,
+      as_of_day: now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate(),
+    });
+
+    await handleGraphChange({ name, kind: "journal", created: false, removed: false });
+    await Promise.resolve();
+    expect(feed).toHaveBeenCalledTimes(1);
+    expect(feed).toHaveBeenCalledWith(3, null);
+  });
+});
+
+describe("watcher page inventory invalidation", () => {
+  it("bumps the rare page-inventory revision for an external create", async () => {
+    const before = pageInventoryRev();
+    await handleGraphChange({ name: "Created Elsewhere", kind: "page", created: true, removed: false });
+    expect(pageInventoryRev()).toBeGreaterThan(before);
   });
 });

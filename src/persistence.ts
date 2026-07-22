@@ -8,9 +8,10 @@
 // page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
 // so the store↔persistence import cycle resolves cleanly.
 
-import { doc, pageByName, pageToDto } from "./store";
+import { doc, pageByName, pageInstanceGeneration, pageToDto } from "./store";
 import { backend } from "./backend";
-import { markConflict, isConflicted, conflicts, bumpDataRev, pushToast } from "./ui";
+import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
+import type { ClipboardSourcePage } from "./clipboard";
 
 // ---------------------------------------------------------------------------
 // Guard state (owned here; mutated only through the accessors below)
@@ -166,9 +167,31 @@ function scheduleDataRev() {
   }, 700);
 }
 
-function enqueueSave(name: string, force = false): Promise<boolean> {
+function cutSourceMatches(expected: ClipboardSourcePage): boolean {
+  const page = pageByName(expected.name);
+  return !!page
+    && page.name === expected.name
+    && page.kind === expected.kind
+    && page.path === expected.path
+    && pageInstanceGeneration(expected.name) === expected.generation;
+}
+
+function cutSourceUsable(expected: ClipboardSourcePage): boolean {
+  return cutSourceMatches(expected)
+    && !deletedPages.has(expected.name)
+    && !isConflicted(expected.name);
+}
+
+function enqueueSave(
+  name: string,
+  force = false,
+  expectedCutSource?: ClipboardSourcePage,
+): Promise<boolean> {
   const prev = saveChain.get(name) ?? Promise.resolve(true);
-  const next = prev.then(() => doSave(name, force), () => doSave(name, force));
+  const next = prev.then(
+    () => doSave(name, force, expectedCutSource),
+    () => doSave(name, force, expectedCutSource),
+  );
   saveChain.set(name, next);
   void next.finally(() => {
     if (saveChain.get(name) === next) saveChain.delete(name);
@@ -180,7 +203,15 @@ function enqueueSave(name: string, force = false): Promise<boolean> {
  *  forced. Sends `baseRev` (the version the editor loaded) so the backend
  *  conflicts against external changes; updates the baseline on success. On a
  *  conflict marks it (no clobber); on a transient error keeps it dirty + toasts. */
-async function doSave(name: string, force: boolean): Promise<boolean> {
+async function doSave(
+  name: string,
+  force: boolean,
+  expectedCutSource?: ClipboardSourcePage,
+): Promise<boolean> {
+  // A cut-retirement save is authority-bound to the exact loaded page instance.
+  // Check when this queued operation actually reaches its snapshot boundary, not
+  // only when the caller enqueues it: another save may have been ahead of it.
+  if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
   if (deletedPages.has(name)) return true; // tombstoned — never recreate a deleted page
   if (!force && !dirty.has(name)) return true; // already saved by a prior link
   if (isConflicted(name) && !force) return false;
@@ -202,8 +233,16 @@ async function doSave(name: string, force: boolean): Promise<boolean> {
   }
   dirty.delete(name);
   try {
-    const rev = await backend().savePage(dto, baseRev.get(name) ?? null, force);
-    if (token === graphToken) baseRev.set(name, rev);
+    const baseline = baseRev.get(name) ?? null;
+    const rev = await backend().savePage(dto, baseline, force);
+    // A reload/rename/delete/rebind while savePage was in flight invalidates the
+    // retirement proof even if those bytes landed. Never let that stale success
+    // authorize identity reuse or update the replacement instance's baseline.
+    if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
+    if (token === graphToken) {
+      baseRev.set(name, rev);
+      if (baseline === null) bumpPageInventoryRev();
+    }
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
     return true;
   } catch (e) {
@@ -241,6 +280,37 @@ export async function flushPage(name: string): Promise<boolean> {
   const ok = await enqueueSave(name);
   if (ok) scheduleDataRev();
   return ok;
+}
+
+/** Retire every page touched by a cut against the exact instances recorded in
+ * the clipboard grant. Preflight the whole set before starting any writes, then
+ * bind the same identity+generation check into each queued save at snapshot and
+ * completion. A clean page still queues a checked no-op so an earlier save is
+ * drained before it counts as retired. */
+export async function flushCutSourcePages(sources: readonly ClipboardSourcePage[]): Promise<boolean> {
+  if (
+    !doc.loaded
+    || sources.length === 0
+    || new Set(sources.map((source) => source.name)).size !== sources.length
+    || !sources.every(cutSourceUsable)
+  ) return false;
+  const results = await Promise.all(
+    sources.map((source) => enqueueSave(source.name, false, source)),
+  );
+  if (results.some(Boolean)) scheduleDataRev();
+  return results.every(Boolean);
+}
+
+/** Final synchronous retirement guard used immediately before identity insert. */
+export function cutSourcePagesRetired(sources: readonly ClipboardSourcePage[]): boolean {
+  return sources.length > 0 && sources.every((source) =>
+    cutSourceMatches(source)
+    && !dirty.has(source.name)
+    && !saveChain.has(source.name)
+    && !deletedPages.has(source.name)
+    && !heldSources.has(source.name)
+    && !isConflicted(source.name)
+  );
 }
 
 /** Persist every dirty page now and wait for them (incl. anything mid-write) —

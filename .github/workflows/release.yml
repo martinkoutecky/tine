@@ -4,7 +4,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
-# build matrix WITHOUT cutting a release.
+# build matrix WITHOUT cutting a release. Both paths fail before packaging unless
+# the exact candidate SHA already has a successful manually dispatched full CI.
 #
 # Publication is atomic at the workflow level: every expensive build writes only
 # an immutable workflow artifact; one assembler creates latest.json; and one
@@ -23,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -36,10 +38,22 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Require exact-SHA full CI evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_EVIDENCE_SHA: ${{ github.sha }}
+          CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
+        run: node scripts/check-ci-evidence.mjs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
       - run: npm ci
       - name: Require updater signing key
         env:
@@ -50,6 +64,8 @@ jobs:
             exit 1
           fi
       - name: Version, Android code, tag, and changelog agree
+        env:
+          REQUIRE_RELEASE_READINESS: "1"
         run: node scripts/check-release-preflight.mjs
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
@@ -60,7 +76,9 @@ jobs:
       - name: lsdoc oracle bytes and cross-platform EOL policy are current
         run: node scripts/check-lsdoc-oracle-sync.mjs
       - name: Release pipeline contract fixtures
-        run: node scripts/test-release-pipeline.mjs
+        run: |
+          node scripts/test-release-pipeline.mjs
+          node scripts/test-env-toolchain-fallback.mjs
 
   # Reuse the actual privileged, network-disabled Flatpak bundle build. It runs
   # in parallel with the platform packages but is a hard publication dependency.
@@ -81,6 +99,7 @@ jobs:
             lane: linux-x64
             args: "--features custom-protocol"
             rust-targets: ""
+            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_amd64.AppImage.zsync"
           # Linux ARM64: built NATIVELY on GitHub's aarch64 runner (free on public
           # repos). No cross-compile — GTK/WebKitGTK are system libs that are
           # painful to cross-compile, so we install the arm64 -dev packages on the
@@ -91,6 +110,7 @@ jobs:
             lane: linux-arm64
             args: "--features custom-protocol"
             rust-targets: ""
+            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_aarch64.AppImage.zsync"
           - platform: macos-latest
             lane: macos-universal
             # one universal binary that runs on both Apple Silicon and Intel
@@ -125,7 +145,8 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev patchelf \
-            build-essential curl wget file libssl-dev libxdo-dev
+            build-essential curl wget file libssl-dev libxdo-dev \
+            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync
 
       - uses: actions/setup-node@v4
         with:
@@ -142,6 +163,18 @@ jobs:
           workspaces: ". -> target"
 
       - run: npm ci
+
+      - name: Install Linux release-suite browser
+        if: matrix.lane == 'linux-x64'
+        run: npx playwright install --with-deps chromium
+
+      - name: Snapshot Linux E2E candidate inputs
+        if: matrix.lane == 'linux-x64'
+        run: node scripts/build-e2e-receipt.mjs before --snapshot target/release/tine.build.before.json
+
+      - name: Snapshot Windows E2E candidate inputs
+        if: matrix.lane == 'windows-x64'
+        run: node scripts/build-e2e-receipt.mjs before --tauri-manifest-normalization --snapshot target/release/tine.exe.build.before.json
 
       - name: Build signed Tauri bundles
         env:
@@ -162,7 +195,63 @@ jobs:
           # re-add the matching env lines:
           #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
+          # linuxdeploy-plugin-appimage passes this to appimagetool, which embeds
+          # the .upd_info section and creates the matching .zsync metadata.
+          # Newer plugin builds read LDAI_UPDATE_INFORMATION and only warn on the
+          # deprecated UPDATE_INFORMATION; set both so any plugin version embeds it.
+          UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
+          LDAI_UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
         run: npm run tauri build -- ${{ matrix.args }}
+
+      - name: Verify Linux AppImage update information
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          case "${{ matrix.lane }}" in
+            linux-x64) arch=amd64 ;;
+            linux-arm64) arch=aarch64 ;;
+            *) echo "::error::unexpected Linux release lane: ${{ matrix.lane }}"; exit 1 ;;
+          esac
+          appimage_dir=./target/release/bundle/appimage
+          appimage="$appimage_dir/Tine_${version}_${arch}.AppImage"
+          zsync_name="Tine_${version}_${arch}.AppImage.zsync"
+          # appimagetool writes the .zsync into the tauri build CWD (src-tauri/),
+          # NOT beside the AppImage in the bundle dir. Check the known candidate
+          # locations, then fall back to a whole-tree search so a future CWD change
+          # cannot silently drop it (that false "missing" was the GH #222 bug).
+          zsync_source=""
+          for cand in \
+            "./src-tauri/$zsync_name" \
+            "$appimage_dir/$zsync_name" \
+            "./$zsync_name"; do
+            if [ -f "$cand" ]; then zsync_source="$cand"; break; fi
+          done
+          if [ -z "$zsync_source" ]; then
+            zsync_source=$(find . -type f -name "$zsync_name" -print -quit 2>/dev/null)
+          fi
+          if [ -z "$zsync_source" ]; then
+            echo "::error::missing AppImage update metadata: $zsync_name"
+            exit 1
+          fi
+          if [ "$zsync_source" != "$appimage_dir/$zsync_name" ]; then
+            mv "$zsync_source" "$appimage_dir/$zsync_name"
+          fi
+          if [ ! -f "$appimage" ] || [ ! -f "$appimage_dir/$zsync_name" ]; then
+            echo "::error::AppImage or update metadata is not staged beside the bundle"
+            exit 1
+          fi
+          if ! readelf --string-dump=.upd_info "$appimage" | grep -Fq 'gh-releases-zsync|'; then
+            echo "::error::AppImage is missing embedded update information"
+            exit 1
+          fi
+
+      - name: Write Linux E2E candidate receipt
+        if: matrix.lane == 'linux-x64'
+        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.build.before.json --app target/release/tine
+
+      - name: Write Windows E2E candidate receipt
+        if: matrix.lane == 'windows-x64'
+        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.exe.build.before.json --app target/release/tine.exe
 
       # Portable Windows build: the compiled Tauri exe is already self-contained
       # (frontend + lsdoc-wasm are embedded; WebView2Loader is statically linked),
@@ -187,6 +276,54 @@ jobs:
           $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
 
+      # The expensive Linux build above is also the exact binary under test and
+      # is a hard publication gate. Windows advisory evidence runs independently
+      # from the staged portable artifact below so it cannot serialize assembly.
+      - name: Install Tauri WebDriver bridge
+        if: matrix.lane == 'linux-x64'
+        run: cargo install tauri-driver --locked
+
+      - name: Gate Linux x64 on the complete real-app regression catalog
+        if: matrix.lane == 'linux-x64'
+        env:
+          E2E_ALLOW_SYNTHETIC_FOCUS: "1"
+          TINE_E2E_MODE: release
+        run: npm run e2e:linux:release
+
+      - name: Gate Linux x64 on the signed plugin catalogue lifecycle
+        if: matrix.lane == 'linux-x64'
+        run: npm run e2e:plugins
+
+      - name: Upload release E2E evidence
+        if: always() && matrix.lane == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-${{ matrix.lane }}
+          path: test-results/e2e
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The staged Windows smoke jobs verify that the downloaded portable exe
+      # embeds this exact production frontend.  Preserve the already-built dist
+      # once instead of rebuilding it independently in every advisory job.
+      - name: Upload exact Windows x64 frontend proof
+        if: matrix.lane == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload exact Windows x64 E2E receipt
+        if: matrix.lane == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-receipt-windows-x64
+          path: target/release/tine.exe.build.json
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Stage immutable release artifact
         run: node scripts/stage-release-lane.mjs "${{ matrix.lane }}" release-candidate "${{ github.sha }}"
 
@@ -198,6 +335,95 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+  # Advisory Windows scenarios consume the already-staged portable x64 binary.
+  # They run on independent hosts and in parallel with candidate assembly, so a
+  # bad runner neither cascades into 0/N evidence nor delays atomic publication.
+  # Job-level continue-on-error keeps the advisory policy while leaving each
+  # scenario's real failure visible instead of turning one 0/N step green.
+  windows-smoke:
+    needs: [preflight, build]
+    # A failure in another build-matrix lane (for example the hard Linux E2E
+    # gate) must not suppress evidence from an already-staged Windows x64 app.
+    # If x64 itself failed, the artifact download below fails visibly instead.
+    if: ${{ always() && needs.preflight.result == 'success' && needs.build.result != 'cancelled' }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          # og-parity-references stays a hard Linux gate; dropped from the advisory
+          # Windows suite only (unclassified WebView2 trailing-space, AGENTS.md §2b
+          # E2E stop-loss). See scripts/run-e2e.mjs windows-smoke suite for rationale.
+          - windows-core
+          - page-properties
+          - page-trailing-block
+          - pdf-logseq
+          - print-security
+          - tab-overflow
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows-x64
+          # Stage OUTSIDE the worktree. The E2E build receipt binds the app to the
+          # clean-checkout build-input digest (git ls-files -co --untracked=all).
+          # A download into the worktree adds untracked, non-ignored files that
+          # poison that digest and make every advisory Windows scenario fail with
+          # "built from different build inputs" — the Linux E2E runs inside the
+          # build job, so it never hit this. `dist/` below is fine: it is gitignored.
+          path: ${{ runner.temp }}/release-windows-x64
+      - name: Download the exact embedded frontend proof
+        uses: actions/download-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
+      - name: Download the exact Windows x64 E2E receipt
+        uses: actions/download-artifact@v4
+        with:
+          name: release-e2e-receipt-windows-x64
+          path: ${{ runner.temp }}/tine-receipt
+      - name: Extract the exact staged portable app
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\release-windows-x64" -Filter '*-portable.zip' | Select-Object -First 1
+          if (-not $zip) { throw "staged Windows portable zip is missing" }
+          Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\tine-portable" -Force
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw "portable Tine executable is missing" }
+          "TINE_APP=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TINE_E2E_BUILD_RECEIPT=$env:RUNNER_TEMP\tine-receipt\tine.exe.build.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install Edge WebDriver matching the hosted browser
+        shell: pwsh
+        run: |
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
+          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
+          $driverDir = "$env:RUNNER_TEMP\edgedriver"
+          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $driverDir -Force
+          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$driverDir\msedgedriver.exe" --version
+      - name: Run advisory Windows x64 real-app scenario
+        env:
+          TINE_E2E_MODE: release
+        run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
+      - name: Upload Windows E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-windows-x64-${{ matrix.scenario }}
+          path: test-results/e2e/windows-smoke
+          if-no-files-found: warn
+          retention-days: 14
 
   # Android builds concurrently and contributes another immutable workflow
   # artifact. Signed Android output is mandatory for every release smoke/tag.
@@ -350,6 +576,22 @@ jobs:
           apk=$(find src-tauri/gen/android -path '*/release/*' -name '*-release.apk' | head -1)
           if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
           cp "$apk" "Tine_${version}_android-arm64.apk"
+
+      # Android API < 30 does not export bionic's renameat2 wrapper. A source
+      # check missed a second call in GH #192, so inspect the final linked .so
+      # that users will actually load and fail the release before publication.
+      - name: Verify Android 9 native-loader compatibility
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          apk="Tine_${version}_android-arm64.apk"
+          unzip -p "$apk" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
+          if readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" \
+            | grep -Eq '[[:space:]]UND[[:space:]].*renameat2(@|$)'; then
+            echo "::error::Android native library imports API-30 renameat2; it will not load on Android 9/API 28."
+            exit 1
+          fi
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" | grep -F 'syscall@' >/dev/null
 
       - name: Stage immutable Android artifact
         if: steps.sign.outputs.enabled == 'true'

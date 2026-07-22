@@ -73,6 +73,40 @@ describe("AstBody (no-IO degrade path)", () => {
     expect(h).toContain("notes after the schedule");
     expect(h).not.toContain("2026-07-13");
   });
+
+  it("renders a line-leading inline-code property lookalike as code", async () => {
+    const h = await htmlOf(() => AstBody({
+      raw: "`tine.view:: grid`",
+      blockId: "inline-code-property-lookalike",
+    }));
+    expect(h).toContain("<code");
+    expect(h).toContain("tine.view:: grid");
+    expect(h).not.toContain("block-props");
+  });
+
+  it("keeps line-leading code visible after body/properties and across a newline", async () => {
+    const afterBody = await htmlOf(() => AstBody({
+      raw: "body\n`tine.view:: grid`",
+      blockId: "inline-code-after-body",
+    }));
+    expect(afterBody).toContain("body");
+    expect(afterBody).toContain("<code");
+    expect(afterBody).toContain("tine.view:: grid");
+
+    const afterProperty = await htmlOf(() => AstBody({
+      raw: "real:: x\n`tine.view:: grid`",
+      blockId: "inline-code-after-property",
+    }));
+    expect(afterProperty).toContain("tine.view:: grid");
+
+    const multiline = await htmlOf(() => AstBody({
+      raw: "`a:: b\ncontinued` tail",
+      blockId: "multiline-inline-code-property-lookalike",
+    }));
+    expect(multiline).toContain("<code");
+    expect(multiline).toContain("a:: b\ncontinued");
+    expect(multiline).toContain("tail");
+  });
 });
 
 describe("estimateBodyReserve (placeholder height proxy)", () => {

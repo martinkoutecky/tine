@@ -20,4 +20,5 @@ icon:: 👋
 	- [[Features/Tips & shortcuts]] — slash commands, the command palette, tabs, the sidebar, focus mode and dimming.
 	- [[Features/Sheets]] — grids, field tables, and task boards over plain bullets.
 	- [[Features/PDF annotation]] — highlight PDFs and turn them into linked notes.
+	- [[Features/Plugins]] — add small capability-limited extensions or token themes without giving code unrestricted access to Tine.
 	- When you're ready, point Tine at your **own** Logseq graph: open Settings (**t s**) and pick a different folder. Your notes stay exactly where they are.

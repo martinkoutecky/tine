@@ -12,6 +12,7 @@ import {
   trimBlockTrailingSpace,
   wrapLink,
   isPasteableUrl,
+  toggleInlineFormat,
 } from "./format";
 
 describe("toggleWrap", () => {
@@ -36,12 +37,62 @@ describe("toggleWrap", () => {
   });
 });
 
+describe("toggleInlineFormat (GH #178)", () => {
+  it.each([
+    ["leading", " selected", 0, 9, " **selected**", 3, 11],
+    ["trailing", "selected ", 0, 9, "**selected** ", 2, 10],
+    ["both", " \tselected \r\n", 0, 13, " \t**selected** \r\n", 4, 12],
+  ] as const)("keeps %s ASCII whitespace outside Markdown delimiters", (_label, text, start, end, expected, nextStart, nextEnd) => {
+    expect(toggleInlineFormat(text, start, end, "md", "bold", "forward")).toEqual({
+      text: expected,
+      start: nextStart,
+      end: nextEnd,
+      direction: "forward",
+    });
+  });
+
+  it("preserves a backward selection while unwrapping a whitespace-surrounded format", () => {
+    expect(toggleInlineFormat(" **selected** ", 0, 14, "md", "bold", "backward")).toEqual({
+      text: " selected ",
+      start: 1,
+      end: 9,
+      direction: "backward",
+    });
+  });
+
+  it("leaves an all-whitespace selection unchanged", () => {
+    expect(toggleInlineFormat("a \t b", 1, 4, "org", "italic")).toEqual({
+      text: "a \t b", start: 1, end: 4,
+    });
+  });
+});
+
 describe("insertLink", () => {
   it("turns a selection into the label, caret in ()", () => {
     expect(insertLink("see docs", 4, 8)).toEqual({ text: "see [docs]()", start: 11, end: 11 });
   });
   it("inserts empty link with caret in [] on no selection", () => {
     expect(insertLink("a b", 2, 2)).toEqual({ text: "a []()b", start: 3, end: 3 });
+  });
+
+  it("uses the page format and parser-recognized selected links rather than a URL regex", () => {
+    const formatAware = insertLink as (text: string, start: number, end: number, format: "md" | "org") => ReturnType<typeof insertLink>;
+    expect(formatAware("Label", 0, 5, "org")).toEqual({ text: "[[][Label]]", start: 2, end: 2 });
+    expect(formatAware("https://example.com", 0, 19, "md")).toEqual({ text: "[](https://example.com)", start: 1, end: 1 });
+    expect(formatAware("[[Page]]", 0, 8, "org")).toEqual({ text: "[[[[Page]]][]]", start: 12, end: 12 });
+  });
+
+  it("preserves surrounding text and recognizes block refs and already formatted links", () => {
+    const formatAware = insertLink as (text: string, start: number, end: number, format: "md" | "org") => ReturnType<typeof insertLink>;
+    expect(formatAware("before Label after", 7, 12, "org")).toEqual({
+      text: "before [[][Label]] after", start: 9, end: 9,
+    });
+    expect(formatAware("((abc-123))", 0, 11, "md")).toEqual({
+      text: "[](((abc-123)))", start: 1, end: 1,
+    });
+    expect(formatAware("[label](https://example.com)", 0, 28, "md")).toEqual({
+      text: "[]([label](https://example.com))", start: 1, end: 1,
+    });
   });
 });
 

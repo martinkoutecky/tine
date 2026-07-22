@@ -1,9 +1,11 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
 import { routeTitle, type PaneRouter, type Route } from "../router";
 import { doc, formatForBlock } from "../store";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";
+import { registerTransientLayer } from "../transientLayers";
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
@@ -12,7 +14,7 @@ const EDGE_ZONE_PX = 24;
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
 // the hidden id::/collapsed:: lines, takes the first non-empty line, and strips
 // the common markdown decorations so the pill reads like the block's text.
-function blockSummary(raw: string, format: PropFormat): string {
+function blockSummary(raw: string, format: PropFormat, truncate = true): string {
   const { visible } = splitProps(raw, isBuiltinHidden, format);
   const line =
     visible
@@ -29,7 +31,7 @@ function blockSummary(raw: string, format: PropFormat): string {
     .replace(/^#{1,6}\s+/, "") // markdown heading
     .replace(/\s+/g, " ")
     .trim();
-  return plain.length > MAX_TITLE ? plain.slice(0, MAX_TITLE - 1).trimEnd() + "…" : plain;
+  return truncate && plain.length > MAX_TITLE ? plain.slice(0, MAX_TITLE - 1).trimEnd() + "…" : plain;
 }
 
 // Tab label: a zoomed-into block shows its (shortened) content; everything else
@@ -40,6 +42,17 @@ function tabTitle(r: Route): string {
     if (n) {
       const s = blockSummary(n.raw, formatForBlock(r.block));
       if (s) return s;
+    }
+  }
+  return routeTitle(r);
+}
+
+function tabFullTitle(r: Route): string {
+  if (r.kind === "page" && r.block) {
+    const n = doc.byId[r.block];
+    if (n) {
+      const summary = blockSummary(n.raw, formatForBlock(r.block), false);
+      if (summary) return summary;
     }
   }
   return routeTitle(r);
@@ -56,6 +69,8 @@ export type TabDropTarget =
 
 const [activeTabDrag, setActiveTabDrag] = createSignal<{ paneId: string; tabId: string } | null>(null);
 const [currentTabDropTarget, setCurrentTabDropTarget] = createSignal<TabDropTarget | null>(null);
+type ActiveStripDragSession = { cancel: () => void };
+let activeStripDragSession: ActiveStripDragSession | null = null;
 
 export const tabDragState = activeTabDrag;
 export const tabDropTarget = currentTabDropTarget;
@@ -215,40 +230,294 @@ function applyTabDrop(sourcePaneId: string, tabId: string, target: TabDropTarget
 // extra vertical space.
 export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneStrip?: boolean; focused?: boolean }): JSX.Element {
   let suppressClick = false;
+  let root: HTMLDivElement | undefined;
+  let strip: HTMLDivElement | undefined;
+  let overviewTrigger: HTMLButtonElement | undefined;
   const router = props.router;
+  const overviewId = `tab-overview-${createUniqueId()}`;
+  const stripDragLayerId = `tab-strip-drag-${createUniqueId()}`;
+  const [overflowing, setOverflowing] = createSignal(false);
+  const [overviewOpen, setOverviewOpen] = createSignal(false);
+  const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
+  const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
+  const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
+  let cancelOverviewReorder: (() => void) | undefined;
+  let cancelStripDrag: (() => void) | undefined;
+  let stripDragTabId: string | null = null;
+
+  onCleanup(() => cancelStripDrag?.());
+  createEffect(() => {
+    const ids = router.tabs().map((tab) => tab.id);
+    if (stripDragTabId && !ids.includes(stripDragTabId)) cancelStripDrag?.();
+  });
+
+  const measureOverflow = () => {
+    if (!strip) return;
+    setOverflowing(strip.scrollWidth > strip.clientWidth + 1);
+  };
+  const revealActive = () => {
+    if (!strip) return;
+    measureOverflow();
+    const active = strip.querySelector<HTMLElement>(`.tab[data-tab-id="${cssEsc(router.activeId())}"]`);
+    if (!active) return;
+    const left = active.offsetLeft;
+    const right = left + active.offsetWidth;
+    if (left < strip.scrollLeft) strip.scrollLeft = left;
+    else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
+  };
+  const dismissOverview = (restoreFocus = true) => {
+    cancelOverviewReorder?.();
+    setOverviewOpen(false);
+    if (restoreFocus) queueMicrotask(() => overviewTrigger?.focus());
+  };
+  const positionOverview = () => {
+    const rect = overviewTrigger?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.min(360, Math.max(240, window.innerWidth - 16));
+    setOverviewPosition({
+      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+      top: rect.bottom + 5,
+      width,
+    });
+  };
+  const focusOverviewRow = (index: number) => {
+    const rows = [...(document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
+    rows[Math.min(Math.max(index, 0), rows.length - 1)]?.focus();
+  };
+  const focusOverviewTab = (tabId: string) => {
+    document.getElementById(overviewId)
+      ?.querySelector<HTMLElement>(`[data-tab-overview-row][data-tab-id="${cssEsc(tabId)}"]`)
+      ?.focus();
+  };
+  const moveOverviewTab = (tabId: string, direction: -1 | 1) => {
+    const tabs = router.tabs();
+    const from = tabs.findIndex((tab) => tab.id === tabId);
+    if (from < 0) return;
+    const target = Math.min(Math.max(0, from + direction), tabs.length - 1);
+    if (target === from) return;
+    // moveTabToIndex takes an insertion boundary in the pre-removal list.
+    router.moveTabToIndex(tabId, direction > 0 ? target + 1 : target);
+    queueMicrotask(() => focusOverviewTab(tabId));
+  };
+  const activateOverviewTab = (id: string) => {
+    router.setActiveTab(id);
+    dismissOverview();
+  };
+  const closeOverviewTab = async (id: string, index: number) => {
+    await router.closeTab(id);
+    queueMicrotask(() => {
+      measureOverflow();
+      if (overviewOpen()) focusOverviewRow(Math.min(index, router.tabs().length - 1));
+    });
+  };
+  const onOverviewKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
+    const rows = [...(document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
+    if (!rows.length) return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-tab-overview-row]");
+    const index = Math.max(0, rows.indexOf(row ?? rows[0]));
+    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      const id = rows[index].dataset.tabId;
+      if (id) moveOverviewTab(id, event.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
+    let next = index;
+    if (event.key === "ArrowDown") next = (index + 1) % rows.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + rows.length) % rows.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = rows.length - 1;
+    else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      rows[index].click();
+      return;
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      const id = rows[index].dataset.tabId;
+      if (id) void closeOverviewTab(id, index);
+      return;
+    } else return;
+    event.preventDefault();
+    focusOverviewRow(next);
+  };
+
+  const beginOverviewDrag = (tabId: string, event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancelOverviewReorder?.();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    let dragging = false;
+    let active = true;
+
+    const cleanup = () => {
+      if (!active) return;
+      active = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (cancelOverviewReorder === cleanup) {
+        cancelOverviewReorder = undefined;
+        setOverviewDragId(null);
+        setOverviewDrop(null);
+      }
+    };
+    const ownsPointer = (pointer: PointerEvent) => pointer.pointerId === pointerId;
+    const onMove = (move: PointerEvent) => {
+      if (!ownsPointer(move)) return;
+      if (!dragging && Math.hypot(move.clientX - startX, move.clientY - startY) < DRAG_THRESHOLD_PX) return;
+      if (!dragging) {
+        dragging = true;
+        setOverviewDragId(tabId);
+      }
+      move.preventDefault();
+      const row = document.elementFromPoint(move.clientX, move.clientY)
+        ?.closest<HTMLElement>("[data-tab-overview-row]");
+      const targetId = row?.dataset.tabId;
+      if (!row || !targetId || targetId === tabId) {
+        setOverviewDrop(null);
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      setOverviewDrop({ tabId: targetId, before: move.clientY < rect.top + rect.height / 2 });
+    };
+    const onCancel = (cancel: PointerEvent) => {
+      if (ownsPointer(cancel)) cleanup();
+    };
+    const onUp = (up: PointerEvent) => {
+      if (!ownsPointer(up)) return;
+      if (!active) return;
+      const drop = overviewDrop();
+      const didDrag = dragging;
+      cleanup();
+      if (didDrag && drop) {
+        const index = router.tabs().findIndex((tab) => tab.id === drop.tabId);
+        if (index >= 0) router.moveTabToIndex(tabId, index + (drop.before ? 0 : 1));
+      }
+      if (didDrag) queueMicrotask(() => focusOverviewTab(tabId));
+    };
+    cancelOverviewReorder = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  };
+
+  createEffect(() => {
+    router.activeId();
+    router.tabs().map((tab) => `${tab.id}:${tab.pos}:${tab.pinned}`).join("|");
+    queueMicrotask(revealActive);
+  });
+  createEffect(() => {
+    if (!overflowing() && overviewOpen()) dismissOverview(false);
+  });
+  createEffect(() => {
+    if (!overviewOpen()) return;
+    const unregister = registerTransientLayer({
+      id: overviewId,
+      root: () => document.getElementById(overviewId),
+      trigger: () => overviewTrigger ?? null,
+      dismiss: () => {
+        // The capture dispatcher owns ordinary Escape.  Let its registry
+        // restoration focus the real trigger after this exact row session has
+        // been retired, rather than competing with a target-local handler.
+        dismissOverview(false);
+        return true;
+      },
+    });
+    queueMicrotask(() => {
+      positionOverview();
+      const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
+      focusOverviewRow(activeIndex);
+    });
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!root?.contains(target) && !document.getElementById(overviewId)?.contains(target)) dismissOverview();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("resize", positionOverview);
+    window.addEventListener("scroll", positionOverview, true);
+    onCleanup(() => {
+      cancelOverviewReorder?.();
+      unregister();
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("resize", positionOverview);
+      window.removeEventListener("scroll", positionOverview, true);
+    });
+  });
+  onMount(() => {
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(revealActive) : null;
+    if (strip) observer?.observe(strip);
+    window.addEventListener("resize", revealActive);
+    queueMicrotask(revealActive);
+    onCleanup(() => {
+      observer?.disconnect();
+      window.removeEventListener("resize", revealActive);
+    });
+  });
 
   function beginDrag(tabId: string, e: PointerEvent) {
     if (e.button !== 0) return;
+    // Interactive children keep their native pointer sequence. Capturing their
+    // pointer on the tab card retargets the later click to the card in WebView2,
+    // so the visible close control only activates the tab instead of closing it.
+    if ((e.target as Element | null)?.closest("[data-tab-drag-exempt]")) return;
     e.preventDefault();
+    activeStripDragSession?.cancel();
+    const card = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    const restoreTarget = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : card;
     const sourcePaneId = router.paneId;
     const startX = e.clientX;
     const startY = e.clientY;
     let dragging = false;
-    let cancelled = false;
+    let finished = false;
+    let unregister = () => {};
+    let session!: ActiveStripDragSession;
 
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("keydown", onKeyDown, true);
-      setActiveTabDrag(null);
-      setCurrentTabDropTarget(null);
-    };
     const markMoved = () => {
       suppressClick = true;
       setTimeout(() => (suppressClick = false), 0);
     };
-    const onCancel = () => {
-      cancelled = true;
-      if (dragging) markMoved();
-      cleanup();
+    const finish = (cancelled: boolean, restoreFocus: boolean) => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onBlur, true);
+      card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
+      try {
+        if (typeof card.hasPointerCapture === "function" &&
+            typeof card.releasePointerCapture === "function" &&
+            card.hasPointerCapture(pointerId)) card.releasePointerCapture(pointerId);
+      } catch {
+        // The platform may already have revoked capture during disposal.
+      }
+      unregister();
+      if (activeStripDragSession === session) activeStripDragSession = null;
+      if (cancelStripDrag === session.cancel) {
+        cancelStripDrag = undefined;
+        stripDragTabId = null;
+      }
+      if (activeTabDrag()?.paneId === sourcePaneId && activeTabDrag()?.tabId === tabId) {
+        setActiveTabDrag(null);
+        setCurrentTabDropTarget(null);
+      }
+      if (cancelled) markMoved();
+      if (restoreFocus && restoreTarget.isConnected && !restoreTarget.inert) {
+        queueMicrotask(() => restoreTarget.isConnected && restoreTarget.focus());
+      }
     };
-    const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      ev.preventDefault();
-      onCancel();
+    session = { cancel: () => finish(true, true) };
+    const ownsPointer = (event: PointerEvent) => event.pointerId === pointerId && activeStripDragSession === session;
+    const onCancel = (event: PointerEvent) => {
+      if (ownsPointer(event)) finish(true, true);
     };
     const onMove = (ev: PointerEvent) => {
+      if (!ownsPointer(ev)) return;
       if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
       if (!dragging) {
         dragging = true;
@@ -258,29 +527,57 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
       setCurrentTabDropTarget(tabDropTargetAt(el, ev.clientX, ev.clientY, sourcePaneId));
     };
-    const onUp = () => {
+    const onUp = (event: PointerEvent) => {
+      if (!ownsPointer(event)) return;
       const target = currentTabDropTarget();
-      const shouldDrop = dragging && !cancelled && !!target;
+      const shouldDrop = dragging && !!target;
       if (dragging) markMoved();
-      cleanup();
+      finish(false, false);
       if (shouldDrop) applyTabDrop(sourcePaneId, tabId, target!);
     };
+    const onBlur = () => finish(true, true);
+    const onLostPointerCapture = (event: PointerEvent) => {
+      if (ownsPointer(event)) finish(true, true);
+    };
+
+    activeStripDragSession = session;
+    cancelStripDrag = session.cancel;
+    stripDragTabId = tabId;
+    unregister = registerTransientLayer({
+      id: stripDragLayerId,
+      root: () => card,
+      trigger: () => restoreTarget,
+      dismiss: () => {
+        if (finished || activeStripDragSession !== session) return false;
+        // Registry focus restoration owns the Escape/Back path.
+        finish(true, false);
+        return true;
+      },
+    });
+    try { card.setPointerCapture?.(pointerId); } catch { /* optional platform support */ }
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", onBlur, true);
+    card.addEventListener("lostpointercapture", onLostPointerCapture, true);
   }
 
   return (
     // The tab strip fills the toolbar's middle, so its empty space is the main
     // window-drag handle (the tabs, being children, still click/drag-to-reorder).
     <div
+      ref={root}
       class="tab-bar"
       classList={{ "pane-tab-bar": !!props.paneStrip, "pane-tab-focused": !!props.focused }}
       data-tauri-drag-region={props.dragRegion === false ? undefined : ""}
       data-tab-strip-pane-id={router.paneId}
     >
+      <div
+        ref={strip}
+        class="tab-strip-scroll"
+        data-tauri-drag-region={props.dragRegion === false ? undefined : ""}
+      >
       <For each={router.tabs()}>
         {(t) => (
           <div
@@ -329,6 +626,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
             <Show when={router.tabs().length > 1}>
               <span
                 class="tab-close"
+                data-tab-drag-exempt
                 onClick={(e) => {
                   e.stopPropagation();
                   router.closeTab(t.id);
@@ -340,6 +638,90 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           </div>
         )}
       </For>
+      </div>
+      <Show when={overflowing()}>
+        <button
+          ref={overviewTrigger}
+          class="tab-overview-trigger"
+          type="button"
+          title="Show all tabs"
+          aria-label="Show all tabs"
+          aria-haspopup="listbox"
+          aria-expanded={overviewOpen()}
+          aria-controls={overviewId}
+          data-tab-overview-trigger
+          onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
+        >⌄</button>
+        <Show when={overviewOpen()}>
+          <Portal>
+          <div
+            id={overviewId}
+            class="tab-overview"
+            role="listbox"
+            aria-label="Open tabs"
+            style={{
+              left: `${overviewPosition().left}px`,
+              top: `${overviewPosition().top}px`,
+              width: `${overviewPosition().width}px`,
+            }}
+            onKeyDown={onOverviewKeyDown}
+          >
+            <For each={router.tabs()}>
+              {(tab, index) => (
+                <div
+                  class="tab-overview-row"
+                  classList={{
+                    active: tab.id === router.activeId(),
+                    "tab-overview-dragging": overviewDragId() === tab.id,
+                    "tab-overview-drop-before": overviewDrop()?.tabId === tab.id && overviewDrop()?.before,
+                    "tab-overview-drop-after": overviewDrop()?.tabId === tab.id && !overviewDrop()?.before,
+                  }}
+                  role="option"
+                  aria-selected={tab.id === router.activeId()}
+                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                  tabIndex={-1}
+                  data-tab-overview-row
+                  data-tab-id={tab.id}
+                  onClick={() => activateOverviewTab(tab.id)}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    void closeOverviewTab(tab.id, index());
+                  }}
+                >
+                  <button
+                    class="tab-overview-drag-handle"
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={`Reorder ${tabFullTitle(router.tabRoute(tab))}`}
+                    title="Drag to reorder; Alt+Up/Down moves the focused tab"
+                    onPointerDown={(event) => beginOverviewDrag(tab.id, event)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                  >⠿</button>
+                  <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
+                  <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
+                  <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>
+                  <Show when={router.tabs().length > 1}>
+                    <button
+                      class="tab-overview-close"
+                      type="button"
+                      aria-label={`Close ${tabFullTitle(router.tabRoute(tab))}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void closeOverviewTab(tab.id, index());
+                      }}
+                    >✕</button>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+          </Portal>
+        </Show>
+      </Show>
     </div>
   );
 }

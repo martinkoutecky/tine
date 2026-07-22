@@ -1,0 +1,826 @@
+[
+  {
+    "query": "De",
+    "labels": [
+      "Deadline",
+      "Code block",
+      "Query (visual builder)",
+      "Divider",
+      "DONE",
+      "Scheduled",
+      "Upload an asset",
+      "Admonition: note",
+      "Template var: date…"
+    ]
+  },
+  {
+    "query": "Dea",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Dead",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Deadl",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Deadli",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Deadlin",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Deadline",
+    "labels": [
+      "Deadline"
+    ]
+  },
+  {
+    "query": "Di",
+    "labels": [
+      "Divider",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Voice recording",
+      "Draw.io diagram",
+      "DOING",
+      "Deadline",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Div",
+    "labels": [
+      "Divider"
+    ]
+  },
+  {
+    "query": "Divi",
+    "labels": [
+      "Divider"
+    ]
+  },
+  {
+    "query": "Divid",
+    "labels": [
+      "Divider"
+    ]
+  },
+  {
+    "query": "Divide",
+    "labels": [
+      "Divider"
+    ]
+  },
+  {
+    "query": "Divider",
+    "labels": [
+      "Divider"
+    ]
+  },
+  {
+    "query": "DO",
+    "labels": [
+      "TODO",
+      "DONE",
+      "DOING",
+      "Code block",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "DOI",
+    "labels": [
+      "DOING",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "DOIN",
+    "labels": [
+      "DOING",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "DOING",
+    "labels": [
+      "DOING",
+      "Admonition: warning"
+    ]
+  },
+  {
+    "query": "DON",
+    "labels": [
+      "DONE",
+      "DOING",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "DONE",
+    "labels": [
+      "DONE",
+      "Admonition: note"
+    ]
+  },
+  {
+    "query": "Dr",
+    "labels": [
+      "Draw.io diagram",
+      "Divider",
+      "Admonition: warning",
+      "Query (visual builder)",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Dra",
+    "labels": [
+      "Draw.io diagram",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Draw",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.i",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io ",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io d",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io di",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io dia",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io diag",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io diagr",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io diagra",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "Draw.io diagram",
+    "labels": [
+      "Draw.io diagram"
+    ]
+  },
+  {
+    "query": "E",
+    "labels": [
+      "DONE",
+      "LATER",
+      "Table",
+      "Quote",
+      "Query",
+      "Embed",
+      "Divider",
+      "CANCELED",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Scheduled",
+      "Code block",
+      "Template: Query Notes",
+      "IN-PROGRESS",
+      "Current time",
+      "Template: Page Planning",
+      "Page reference",
+      "Upload an asset",
+      "Voice recording",
+      "Page properties",
+      "Admonition: note",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Query (visual builder)",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Em",
+    "labels": [
+      "Embed",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Current time"
+    ]
+  },
+  {
+    "query": "Emb",
+    "labels": [
+      "Embed"
+    ]
+  },
+  {
+    "query": "Embe",
+    "labels": [
+      "Embed"
+    ]
+  },
+  {
+    "query": "Embed",
+    "labels": [
+      "Embed"
+    ]
+  },
+  {
+    "query": "G",
+    "labels": [
+      "Grid",
+      "DOING",
+      "WAITING",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "IN-PROGRESS",
+      "Template: Page Planning",
+      "Page reference",
+      "Voice recording",
+      "Draw.io diagram",
+      "Page properties",
+      "Admonition: warning",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Gr",
+    "labels": [
+      "Grid",
+      "IN-PROGRESS",
+      "Draw.io diagram",
+      "Page reference",
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Gri",
+    "labels": [
+      "Grid",
+      "Page properties"
+    ]
+  },
+  {
+    "query": "Grid",
+    "labels": [
+      "Grid"
+    ]
+  },
+  {
+    "query": "H",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Scheduled",
+      "Math block"
+    ]
+  },
+  {
+    "query": "He",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Scheduled"
+    ]
+  },
+  {
+    "query": "Hea",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Head",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Headi",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Headin",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Heading",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Heading ",
+    "labels": [
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "Heading 1",
+    "labels": [
+      "Heading 1"
+    ]
+  },
+  {
+    "query": "Heading 2",
+    "labels": [
+      "Heading 2"
+    ]
+  },
+  {
+    "query": "Heading 3",
+    "labels": [
+      "Heading 3"
+    ]
+  },
+  {
+    "query": "Heading 4",
+    "labels": [
+      "Heading 4"
+    ]
+  },
+  {
+    "query": "I",
+    "labels": [
+      "WAIT",
+      "Grid",
+      "Link",
+      "DOING",
+      "WAITING",
+      "Divider",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Priority A",
+      "Priority B",
+      "Priority C",
+      "IN-PROGRESS",
+      "Current time",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Voice recording",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Page properties",
+      "Admonition: note",
+      "Template var: time",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Query (visual builder)",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "IN",
+    "labels": [
+      "Link",
+      "DOING",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "IN-PROGRESS",
+      "Template: Page Planning",
+      "WAITING",
+      "Voice recording",
+      "Admonition: warning",
+      "Template: Priority Plan",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "IN-",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-P",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PR",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PRO",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PROG",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PROGR",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PROGRE",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PROGRES",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "IN-PROGRESS",
+    "labels": [
+      "IN-PROGRESS"
+    ]
+  },
+  {
+    "query": "Kanban",
+    "labels": [
+      "Board"
+    ]
+  },
+  {
+    "query": "L",
+    "labels": [
+      "Link",
+      "LATER",
+      "Table",
+      "CANCELED",
+      "Deadline",
+      "Scheduled",
+      "Code block",
+      "Math block",
+      "Calculator",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Upload an asset",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Query (visual builder)",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "LA",
+    "labels": [
+      "LATER",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Calculator",
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "LAT",
+    "labels": [
+      "LATER",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Calculator",
+      "Upload an asset"
+    ]
+  },
+  {
+    "query": "LATE",
+    "labels": [
+      "LATER",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "LATER",
+    "labels": [
+      "LATER",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Li",
+    "labels": [
+      "Link",
+      "Deadline",
+      "Template: Page Planning",
+      "Template var: time",
+      "Query (visual builder)"
+    ]
+  },
+  {
+    "query": "Lin",
+    "labels": [
+      "Link",
+      "Deadline",
+      "Template: Page Planning"
+    ]
+  },
+  {
+    "query": "Link",
+    "labels": [
+      "Link"
+    ]
+  },
+  {
+    "query": "M",
+    "labels": [
+      "Embed",
+      "Math block",
+      "Current time",
+      "Draw.io diagram",
+      "Admonition: tip",
+      "Admonition: note",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Ma",
+    "labels": [
+      "Math block",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "Mat",
+    "labels": [
+      "Math block",
+      "Template: Template starter",
+      "Template var: time",
+      "Template var: today",
+      "Template var: date…",
+      "Template var: tomorrow",
+      "Template var: yesterday",
+      "Template var: current page",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  },
+  {
+    "query": "Math",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math ",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math b",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math bl",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math blo",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math bloc",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "Math block",
+    "labels": [
+      "Math block"
+    ]
+  },
+  {
+    "query": "N",
+    "labels": [
+      "NOW",
+      "DONE",
+      "Link",
+      "DOING",
+      "Board",
+      "WAITING",
+      "CANCELED",
+      "Deadline",
+      "Heading 1",
+      "Heading 2",
+      "Heading 3",
+      "Heading 4",
+      "Template: Query Notes",
+      "IN-PROGRESS",
+      "Current time",
+      "Template: Priority Plan",
+      "Template: Page Planning",
+      "Page reference",
+      "Upload an asset",
+      "Voice recording",
+      "Admonition: tip",
+      "Admonition: note",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important",
+      "Template var: current page"
+    ]
+  },
+  {
+    "query": "NO",
+    "labels": [
+      "NOW",
+      "Template: Query Notes",
+      "Admonition: note",
+      "IN-PROGRESS",
+      "Admonition: tip",
+      "Admonition: warning",
+      "Admonition: caution",
+      "Admonition: important"
+    ]
+  }
+]
+

@@ -1,6 +1,7 @@
-import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { toasts, dismissToast, lightbox, setLightbox, pushToast } from "../ui";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
+import { registerTransientLayer } from "../transientLayers";
 
 // Bottom-right transient notifications.
 export function Toasts(): JSX.Element {
@@ -48,19 +49,8 @@ export function Toasts(): JSX.Element {
 // (or use the Copy button) to copy it to the OS clipboard.
 export function Lightbox(): JSX.Element {
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
-  // Esc closes the viewer (the right-click menu first, if it's open). Capture
-  // phase + stopImmediatePropagation so it wins over any block-level Esc handler.
-  onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !lightbox()) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (menu()) setMenu(null);
-      else setLightbox(null);
-    };
-    window.addEventListener("keydown", onKey, true);
-    onCleanup(() => window.removeEventListener("keydown", onKey, true));
-  });
+  // Escape is owned by the application transient registry. Context-menu peeling
+  // remains local to pointer interactions.
   const copy = async () => {
     setMenu(null);
     const src = lightbox();
@@ -72,6 +62,19 @@ export function Lightbox(): JSX.Element {
       pushToast("Couldn't copy the image", "error");
     }
   };
+  createEffect(() => {
+    if (!lightbox()) return;
+    const unregister = registerTransientLayer({
+      id: "image-lightbox",
+      root: () => document.querySelector<HTMLElement>(".lightbox-overlay"),
+      dismiss: () => {
+        if (menu()) { setMenu(null); return true; }
+        setLightbox(null);
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
   return (
     <Show when={lightbox()}>
       <div

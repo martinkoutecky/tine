@@ -18,6 +18,9 @@ import {
   reopenClosedTab,
   activateNextTab,
   activatePrevTab,
+  openQueryInNewTab,
+  updateActiveQuery,
+  replaceActiveRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { setDoc } from "./store";
@@ -39,7 +42,50 @@ beforeEach(() => {
 
 const pinActive = () => togglePin(activeId());
 
+describe("independent empty query workspaces (GH #172)", () => {
+  it("keeps same-timestamp empty query routes identity-distinct through edits, presentation, and tab history", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_725_000_000_000);
+    const first = openQueryInNewTab("", "search", true);
+    const firstTab = activeId();
+    const second = openQueryInNewTab("", "search", true);
+    const secondTab = activeId();
+    expect(first.id).not.toBe(second.id);
+    expect(sameRoute(first, second)).toBe(false);
+
+    setActiveTab(firstTab);
+    updateActiveQuery({ source: "alpha", presentation: "table" });
+    expect(route()).toMatchObject({ id: first.id, source: "alpha", presentation: "table" });
+    expect(activeTab().history).toHaveLength(1);
+    setActiveTab(secondTab);
+    expect(route()).toMatchObject({ id: second.id, source: "", presentation: "search" });
+    expect(activeTab().history).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+});
+
 describe("reuse already-open tabs on user navigation", () => {
+  it("edits a virtual query in one stable history entry and can materialize it in place", () => {
+    openQueryInNewTab("alpha", "search", true);
+    const queryTab = activeTab();
+    const original = route();
+    expect(original).toMatchObject({ kind: "query", source: "alpha", presentation: "search" });
+
+    updateActiveQuery({ source: "alpha -draft" });
+    updateActiveQuery({ presentation: "table" });
+
+    expect(activeTab().history).toHaveLength(1);
+    expect(route()).toMatchObject({
+      kind: "query",
+      id: original.kind === "query" ? original.id : "",
+      source: "alpha -draft",
+      presentation: "table",
+    });
+
+    replaceActiveRoute({ kind: "page", name: "Saved search", pageKind: "page" });
+    expect(activeId()).toBe(queryTab.id);
+    expect(activeTab().history).toEqual([{ kind: "page", name: "Saved search", pageKind: "page" }]);
+  });
+
   it("sticky navigation to a route already open in another pinned tab focuses it without changing the active tab's content", () => {
     pinActive();
     const journalsId = activeId();
@@ -119,6 +165,41 @@ describe("reuse already-open tabs on user navigation", () => {
     expect(activeId()).toBe(sourceId);
     expect(activeId()).not.toBe(existingZoomId);
     expect(route()).toEqual(zoomed);
+  });
+
+  it("stores a fresh block's durable UUID in the persistent zoom route", () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    setDoc({
+      byId: {
+        "bfresh-route": {
+          id: "bfresh-route",
+          raw: "Fresh route target",
+          collapsed: false,
+          parent: null,
+          page: "Target",
+          children: [],
+        },
+      },
+      pages: [{
+        name: "Target", kind: "page", title: "Target", preBlock: null,
+        roots: ["bfresh-route"], format: "md", readOnly: false, guide: false,
+        path: "pages/Target.md",
+      }],
+      feed: ["Target"],
+      loaded: true,
+    });
+
+    focusBlock("bfresh-route");
+
+    expect(route()).toEqual({
+      kind: "page",
+      name: "Target",
+      pageKind: "page",
+      path: "pages/Target.md",
+      block: uuid,
+    });
+    expect((route() as { block?: string }).block).not.toBe("bfresh-route");
   });
 
   it("explicit new-tab navigation still duplicates", () => {
@@ -226,6 +307,29 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     openFile("journals/Friday, 26-06-2026.org", "Friday, 26-06-2026", "journal");
     // The path-pinned route is distinct, so it actually navigates (new history entry).
     expect((route() as { path?: string }).path).toBe("journals/Friday, 26-06-2026.org");
+  });
+
+  it("retains the loaded physical owner while zooming into and back out of a block", () => {
+    const path = "pages/client-b/Twin.md";
+    const id = "11111111-1111-4111-8111-111111111111";
+    setDoc({
+      byId: {
+        [id]: { id, raw: "Client B", collapsed: false, parent: null, page: "Twin", children: [] },
+      },
+      pages: [{
+        name: "Twin", kind: "page", title: "Twin", preBlock: null, roots: [id],
+        format: "md", readOnly: false, guide: false, path,
+      }],
+      feed: ["Twin"],
+      loaded: true,
+    });
+    openFile(path, "Twin", "page");
+
+    focusBlock(id);
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id });
+
+    focusBlock(null);
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });
   });
 });
 

@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import {
   blockPageReadOnly,
   blockProperty,
+  blockWritable,
   doc,
   formatForBlock,
   formatForPage,
@@ -10,6 +11,7 @@ import {
   readPageProperty,
   setBlockProperty,
   setPageProperty,
+  setRaw,
   withUndoUnit,
 } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
@@ -26,6 +28,7 @@ import {
   cellIsInRange,
   cellSel,
   cellSurfaceKey,
+  handleCellSelectionKey,
   aggregateFooterPinned,
   clearSelectedSheetInstance,
   registerSheetViewAdapter,
@@ -49,6 +52,7 @@ import {
   type FieldValue,
 } from "../sheet/fields";
 import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
+import { planSheetFieldRename } from "../sheet/renameField";
 import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import {
   createFormulaFilterMemo,
@@ -69,6 +73,7 @@ import {
   openFormulaEditor,
   openSheetCellContextMenu,
   openSheetContextMenu,
+  pushToast,
   type ContextMenuAction,
 } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
@@ -87,8 +92,10 @@ type SortKey = { kind: "number"; value: number; text: string } | { kind: "text";
 type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
 type FormulaHome = { kind: "block"; id: string } | { kind: "page"; name: string };
 type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
+type FieldHeaderDrop = { field: FieldId; before: boolean };
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
+const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
   "text",
   "number",
@@ -130,9 +137,15 @@ export function SheetTable(props: {
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
   const [addingColumn, setAddingColumn] = createSignal(false);
+  const [renamingField, setRenamingField] = createSignal<{ field: FieldId; value: string } | null>(null);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
+  const [draggingFieldHeader, setDraggingFieldHeader] = createSignal<FieldId | null>(null);
+  const [fieldHeaderDrop, setFieldHeaderDrop] = createSignal<FieldHeaderDrop | null>(null);
+  let sortBeforePotentialHeaderDoubleClick: SortState | undefined;
+  let cancelFieldHeaderDrag: (() => void) | undefined;
+  let suppressFieldHeaderClick = false;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
@@ -458,6 +471,92 @@ export function SheetTable(props: {
     const specs = fields().map((field) => specForField(field)).filter((spec): spec is FieldSpec => !!spec);
     writeSchemaFields(specs);
   };
+  const canDragFieldHeader = (field: FieldId) =>
+    field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
+  const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
+    if (field === dragged) return false;
+    // Formula fields are not serialized in tine.fields. They still make a useful
+    // terminal drop boundary: a property dropped on one is inserted before all
+    // formulas, which are always rendered at the end.
+    if (isFormulaField(field)) return true;
+    return schemaHome() ? schemaFieldSet().has(field) : !!specForField(field);
+  };
+  const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
+    if (!schemaHome()) declareFreshSchema();
+    const next = [...schemaFields()];
+    const from = next.findIndex((spec) => spec.field === field);
+    if (from < 0) return;
+    const [moved] = next.splice(from, 1);
+    const target = next.findIndex((spec) => spec.field === drop.field);
+    // Formula fields do not have schema specs. A drop on one means append to the
+    // property schema, immediately before the pinned formula run.
+    const at = target < 0 ? next.length : target + (drop.before ? 0 : 1);
+    next.splice(at, 0, moved);
+    writeSchemaFields(next);
+  };
+  const beginFieldHeaderDrag = (field: FieldId, event: PointerEvent) => {
+    if (event.button !== 0 || isSheetPointerInteractive(event.target) || !canDragFieldHeader(field)) return;
+    cancelFieldHeaderDrag?.();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragging = false;
+    let active = true;
+
+    const cleanup = () => {
+      if (!active) return;
+      active = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (cancelFieldHeaderDrag === cleanup) cancelFieldHeaderDrag = undefined;
+      setDraggingFieldHeader(null);
+      setFieldHeaderDrop(null);
+    };
+    const ownsPointer = (pointer: PointerEvent) => pointer.pointerId === pointerId;
+    const onMove = (move: PointerEvent) => {
+      if (!ownsPointer(move)) return;
+      if (!dragging && Math.hypot(move.clientX - startX, move.clientY - startY) < FIELD_HEADER_DRAG_THRESHOLD_PX) return;
+      if (!dragging) {
+        dragging = true;
+        setDraggingFieldHeader(field);
+      }
+      move.preventDefault();
+      const header = document.elementFromPoint(move.clientX, move.clientY)
+        ?.closest<HTMLElement>("[data-sheet-field-header]");
+      const target = header?.dataset.sheetField as FieldId | undefined;
+      if (!header || !target || !canDropFieldHeader(target, field)) {
+        setFieldHeaderDrop(null);
+        return;
+      }
+      if (isFormulaField(target)) {
+        setFieldHeaderDrop({ field: target, before: true });
+        return;
+      }
+      const rect = header.getBoundingClientRect();
+      setFieldHeaderDrop({ field: target, before: move.clientX < rect.left + rect.width / 2 });
+    };
+    const onCancel = (cancel: PointerEvent) => {
+      if (ownsPointer(cancel)) cleanup();
+    };
+    const onUp = (up: PointerEvent) => {
+      if (!ownsPointer(up)) return;
+      const drop = fieldHeaderDrop();
+      const didDrag = dragging;
+      cleanup();
+      if (didDrag) {
+        suppressFieldHeaderClick = true;
+        setTimeout(() => (suppressFieldHeaderClick = false), 0);
+      }
+      if (didDrag && drop) reorderFieldHeader(field, drop);
+    };
+
+    cancelFieldHeaderDrag = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  };
+  onCleanup(() => cancelFieldHeaderDrag?.());
   const changeFieldType = (field: FieldId, type: SchemaMenuType) => {
     writeSchemaFields(schemaFields().map((spec) => (spec.field === field ? { ...spec, type } : spec)));
   };
@@ -468,6 +567,64 @@ export function SheetTable(props: {
     // being removed from the schema, until an app restart clears the signal.
     setExtraFields((cur) => cur.filter((f) => f !== field));
   };
+  const renameDisabledReason = (field: FieldId, declared: FieldSpec | null): string | null => {
+    if (props.rowSource !== "children") return "only children-backed tables can rename fields";
+    if (!declared) return "declare this field first";
+    if (!declared.field.startsWith("prop:")) return "built-in fields cannot be renamed";
+    if (schemaHome()?.kind !== "block") return "page-inherited fields cannot be renamed here";
+    if (!schemaWriteAllowed() || !blockWritable(props.ownerId)) return "this table is read-only";
+    return null;
+  };
+  const startFieldRename = (field: FieldId, declared: FieldSpec | null) => {
+    if (renameDisabledReason(field, declared)) return;
+    setRenamingField({ field, value: field.slice("prop:".length) });
+  };
+  const commitFieldRename = (field: FieldId, value: string): boolean => {
+    const owner = doc.byId[props.ownerId];
+    const home = schemaHome();
+    if (!owner || home?.kind !== "block") return false;
+    const rowNodes = owner.children.map((id) => doc.byId[id]).filter((row): row is NonNullable<typeof row> => !!row);
+    if (rowNodes.length !== owner.children.length) {
+      pushToast("Some direct rows are not loaded; no fields were renamed.", "error");
+      return false;
+    }
+    const page = props.schemaPage ? pageByName(props.schemaPage) : undefined;
+    const result = planSheetFieldRename({
+      rowSource: props.rowSource,
+      ownerWritable: blockWritable(props.ownerId),
+      schemaHome: home.kind,
+      owner: {
+        id: props.ownerId,
+        page: owner.page,
+        raw: owner.raw,
+        format: formatForBlock(props.ownerId),
+        recognizedProperties: facetsOf(owner.raw, formatForBlock(props.ownerId)).properties,
+      },
+      rows: rowNodes.map((row) => ({
+        id: row.id,
+        page: row.page,
+        raw: row.raw,
+        format: formatForBlock(row.id),
+        recognizedProperties: facetsOf(row.raw, formatForBlock(row.id)).properties,
+      })),
+      pageProperties: page ? pageProperties(page.preBlock, page.format) : [],
+      recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
+      oldField: field,
+      newName: value,
+    });
+    if (!result.ok) {
+      pushToast(result.error, "error");
+      return false;
+    }
+    const plan = result.plan;
+    withUndoUnit("sheet:rename-field", [plan.page], () => {
+      setRaw(plan.ownerId, plan.ownerRaw, { timetracking: false });
+      for (const row of plan.rows) setRaw(row.id, row.raw, { timetracking: false });
+    });
+    setExtraFields((current) => current.filter((candidate) => candidate !== plan.oldField && candidate !== plan.newField));
+    setRenamingField(null);
+    return true;
+  };
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
     e.stopPropagation();
@@ -475,6 +632,12 @@ export function SheetTable(props: {
       const name = formulaNameFromField(field);
       const home = name ? formulaHomes().get(name) ?? null : null;
       openActionContextMenu(e.clientX, e.clientY, [
+        {
+          label: props.rowSource === "children"
+            ? "Rename field… (formula columns cannot be renamed here)"
+            : "Rename field… (only children-backed tables can rename fields)",
+          disabled: true,
+        },
         {
           label: "Edit formula…",
           disabled: !name || !formulaWriteAllowed(home),
@@ -502,6 +665,12 @@ export function SheetTable(props: {
     const declared = schemaFields().find((spec) => spec.field === field) ?? null;
     const disabled = !schemaWriteAllowed();
     const actions: ContextMenuAction[] = [];
+    const renameReason = renameDisabledReason(field, declared);
+    actions.push({
+      label: renameReason ? `Rename field… (${renameReason})` : "Rename field…",
+      disabled: !!renameReason,
+      run: () => startFieldRename(field, declared),
+    });
     if (!schemaHome()) {
       if (field.startsWith("prop:")) actions.push({ label: "Declare field (text)", disabled, run: declareFreshSchema });
     } else if (!declared) {
@@ -706,14 +875,66 @@ export function SheetTable(props: {
               classList={{
                 "sheet-col-formula": isFormulaField(field),
                 "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) && !isFormulaField(field),
+                "sheet-header-draggable": canDragFieldHeader(field),
+                "sheet-header-dragging": draggingFieldHeader() === field,
+                "sheet-header-drop-before": fieldHeaderDrop()?.field === field && fieldHeaderDrop()?.before,
+                "sheet-header-drop-after": fieldHeaderDrop()?.field === field && !fieldHeaderDrop()?.before,
               }}
-              onClick={() => sortHeader(i() + 1)}
+              data-sheet-field-header
+              data-sheet-field={field}
+              onPointerDown={(e) => beginFieldHeaderDrag(field, e)}
+              onClick={(e) => {
+                if (suppressFieldHeaderClick) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
+                if ((e.target as HTMLElement).closest("input")) return;
+                if (e.detail > 1) return;
+                sortBeforePotentialHeaderDoubleClick = sort();
+                sortHeader(i() + 1);
+              }}
+              onDblClick={(e) => {
+                const declared = schemaFields().find((spec) => spec.field === field) ?? null;
+                if (renameDisabledReason(field, declared)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (sortBeforePotentialHeaderDoubleClick !== undefined) {
+                  setSort(sortBeforePotentialHeaderDoubleClick);
+                  sortBeforePotentialHeaderDoubleClick = undefined;
+                }
+                startFieldRename(field, declared);
+              }}
               onContextMenu={(e) => openFieldHeaderMenu(e, field)}
             >
-              <Show when={isFormulaField(field)}>
-                <span class="sheet-formula-marker">ƒ</span>
+              <Show
+                when={renamingField()?.field === field}
+                fallback={
+                  <>
+                    <Show when={isFormulaField(field)}>
+                      <span class="sheet-formula-marker">ƒ</span>
+                    </Show>
+                    {fieldLabel(field)}{sortArrow(i() + 1)}
+                  </>
+                }
+              >
+                <input
+                  class="sheet-prop-input sheet-header-rename-input"
+                  autofocus
+                  value={renamingField()?.value ?? ""}
+                  aria-label={`Rename ${fieldLabel(field)} field`}
+                  onClick={(e) => e.stopPropagation()}
+                  onInput={(e) => setRenamingField({ field, value: e.currentTarget.value })}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") commitFieldRename(field, e.currentTarget.value);
+                    else if (e.key === "Escape") setRenamingField(null);
+                  }}
+                  onBlur={(e) => {
+                    if (renamingField()?.field === field) commitFieldRename(field, e.currentTarget.value);
+                  }}
+                />
               </Show>
-              {fieldLabel(field)}{sortArrow(i() + 1)}
             </div>
           )}
         </For>
@@ -1271,6 +1492,18 @@ function FieldCell(props: {
           class="sheet-prop-input"
           classList={{ "sheet-input-invalid": inputInvalid() }}
           autofocus
+          ref={(el) => {
+            // Dynamically inserted autofocus inputs are not focused reliably by
+            // WebKit. Without an explicit handoff, type-to-overtype displays
+            // its first character but the next Tab is handled from selection
+            // mode and discards that draft (GH #176).
+            queueMicrotask(() => {
+              if (!el.isConnected) return;
+              el.focus();
+              const end = el.value.length;
+              el.setSelectionRange(end, end);
+            });
+          }}
           value={props.initial}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
@@ -1282,7 +1515,15 @@ function FieldCell(props: {
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === "Enter") commit(e.currentTarget.value);
-            else if (e.key === "Escape") {
+            else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "Tab" || e.code === "Tab")) {
+              // A native input's Tab never reaches the global sheet-selection
+              // handler. Commit first, then advance through the same stable
+              // row/column path used by selected cells. Otherwise blur saves
+              // this draft but leaves selection behind, so the next typed
+              // value overtypes this same cell (GH #176).
+              if (commit(e.currentTarget.value)) handleCellSelectionKey(e);
+              e.preventDefault();
+            } else if (e.key === "Escape") {
               setInputInvalid(false);
               props.closePropInput();
             }

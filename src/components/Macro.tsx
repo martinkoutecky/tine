@@ -1,11 +1,13 @@
-import { For, Show, Switch, Match, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { openPage, openPageInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta } from "../ui";
-import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
+import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta, pageIdentityKey } from "../ui";
+import { blockProperty, doc, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
+import { SearchResultRow } from "./SearchResultRow";
 import {
   advancedToClause,
   clearSimpleForm,
@@ -25,11 +27,16 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
+import { savedDslToFriendlySearch } from "../editor/searchQuery";
+import type { QueryExecution, QueryHit } from "../types";
+import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
+import { blockDtoExternalId } from "../blockIdentity";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
-type QueryView = "list" | "table" | "board";
-const QUERY_VIEWS: QueryView[] = ["list", "table", "board"];
+type QueryView = "search" | "list" | "table" | "board";
+const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
+  search: "Search",
   list: "List",
   table: "Table",
   board: "Board",
@@ -61,6 +68,7 @@ function saveCollapsed(key: string, v: boolean) {
 interface Row {
   page: string;
   kind: PageKind;
+  path?: string;
   text: string;
   props: Record<string, string>;
 }
@@ -94,18 +102,30 @@ export function QueryMacro(props: {
   body: string;
   blockId?: string;
   title?: string;
+  /** Read-only query surfaces can supply page context without a blockId, which
+   * would incorrectly enable editing controls. */
+  currentPage?: string;
+  /** BEGIN_QUERY must never execute a partially understood query or expose its
+   * authored payload in an error. The ordinary {{query}} path keeps its existing
+   * partial-query diagnostics unless these read-only options are requested. */
+  strictAdvanced?: boolean;
+  unsupportedLabel?: string;
   // When set, render nothing at all if the query has no results (used for the
   // app-inserted journal agenda, which should disappear once vacated — unlike a
   // user-authored {{query}} block, which keeps showing "No results" so it stays
   // editable).
   hideWhenEmpty?: boolean;
 }): JSX.Element {
+  const linkDepth = useContext(LinkDepthContext);
+  if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
+
   const arg = () => props.body.replace(/^query\s*/i, "").trim();
   // Split a trailing front-matter options map ({:title … :collapsed? … :table-view? …})
   // off the query form, so builder/engine see only the form and the options drive
   // display defaults.
   const parsed = createMemo(() => splitQuery(arg()));
   const form = () => parsed().form;
+  const friendlySearch = createMemo(() => savedDslToFriendlySearch(form()));
   const sheet = createMemo(() => {
     if (!props.blockId || !doc.byId[props.blockId]) return null;
     return sheetConfig(facetsOf(doc.byId[props.blockId].raw, formatForBlock(props.blockId)).properties);
@@ -113,7 +133,7 @@ export function QueryMacro(props: {
   const currentView = (): QueryView => {
     if (!props.blockId) return "list";
     const view = blockProperty(props.blockId, "tine.view");
-    return view === "table" || view === "board" ? view : "list";
+    return view === "search" || view === "table" || view === "board" ? view : "list";
   };
   const sheetFace = () => currentView() === "table" || currentView() === "board";
   const legacyTable = () => currentView() === "list" && parsed().tableView === true;
@@ -217,10 +237,11 @@ export function QueryMacro(props: {
       </button>
     </span>
   );
-  const currentPage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const currentPage = () => props.currentPage ?? (props.blockId ? doc.byId[props.blockId]?.page : undefined);
   const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
     null
   );
+  const [searchExecution, setSearchExecution] = createSignal<QueryExecution | null>(null);
   const collapseKey = () => JSON.stringify([
     graphMeta()?.root ?? "",
     props.blockId ?? currentPage() ?? "global",
@@ -243,6 +264,32 @@ export function QueryMacro(props: {
     () => `${graphEpoch()}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`,
     async (requestKey) => {
       const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
+      const searchSource = friendlySearch();
+      if (searchSource !== null) {
+        setAdvInfo(null);
+        const execution = await sharedQueryResult(
+          scope,
+          `friendly-search\0${requestKey}`,
+          () => backend().runGraphSearch(
+            searchSource,
+            500,
+            5_000,
+            `inline-query:${props.blockId ?? currentPage() ?? "global"}`,
+            false
+          ),
+        );
+        setSearchExecution(execution);
+        const grouped = new Map<string, RefGroup>();
+        for (const hit of execution.hits) {
+          if (hit.entity !== "block") continue;
+          const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
+          const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, path: hit.path, blocks: [] };
+          group.blocks.push(hit.block);
+          grouped.set(key, group);
+        }
+        return [...grouped.values()];
+      }
+      setSearchExecution(null);
       // Advanced (datalog) queries take a separate path that maps the supported
       // clause subset onto the engine and reports what ran vs was ignored.
       if (isAdvanced()) {
@@ -259,12 +306,49 @@ export function QueryMacro(props: {
       return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
     }
   );
-  const total = () => groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;
+  const groupsError = () => {
+    const error = groups.error;
+    if (!error) return null;
+    const message = error instanceof Error ? error.message : String(error);
+    const oversized = message.startsWith("result-too-large:");
+    return {
+      lead: oversized ? "Query result is too large to display safely:" : "Query couldn't be loaded:",
+      message: message.replace(/^result-too-large:\s*/, ""),
+    };
+  };
+  // Presentation never changes membership. Canonical `(search "…")` queries
+  // already carry page/block hits and match evidence from QueryPlan. Ordinary
+  // DSL queries return RefGroups, so adapt those same blocks into evidence-free
+  // search rows instead of making the Search presentation appear empty.
+  const searchPresentationHits = createMemo<QueryHit[]>(() => {
+    if (friendlySearch() !== null) return searchExecution()?.hits ?? [];
+    return (groups() ?? []).flatMap((group) => group.blocks.map((block) => ({
+      entity: "block" as const,
+      page: group.page,
+      kind: group.kind,
+      block,
+      display_text: visibleBody(block.raw).join(" "),
+      evidence: [],
+    })));
+  });
+  const total = () => currentView() === "search"
+    ? searchPresentationHits().length
+    : groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;
   // A `(sort-by …)` query is sorted GLOBALLY by the engine and returned as one
   // block per group in that order — so the list view must render flat (a single
   // ordered sequence with a per-row page breadcrumb), not grouped by page, or the
   // global order would be lost to page headers.
   const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
+  const queryGroupKey = (group: RefGroup, flat: boolean) =>
+    flat
+      ? `${group.kind}\0${group.page}\0${group.path ?? ""}\0${group.blocks.map((block) => block.id).join("\0")}`
+      : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
+  const groupedQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, false), group] as const))
+  );
+  const flatQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, true), group] as const))
+  );
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
 
@@ -275,7 +359,7 @@ export function QueryMacro(props: {
         // the row's text is the visible body. No re-derivation here.
         const props: Record<string, string> = {};
         for (const [k, val] of b.properties ?? []) props[k] = val;
-        return { page: g.page, kind: g.kind, text: visibleBody(b.raw).join(" "), props };
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props };
       })
     )
   );
@@ -353,15 +437,23 @@ export function QueryMacro(props: {
   // Hide the whole block when asked and there's nothing to show (advanced
   // queries still render their "unsupported" notice).
   const hidden = () => props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0;
+  const unsupportedAdvanced = () => isAdvanced() && advInfo() && (
+    !advInfo()!.supported || (props.strictAdvanced === true && advInfo()!.ignored.length > 0)
+  );
 
   return (
     <Show when={!hidden()}>
       <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
         <Switch>
-          <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
-            <div class="query-unsupported">
+          <Match when={unsupportedAdvanced()}>
+            <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
               <Show when={props.blockId}>{simpleBackButton()}</Show>
-              Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code>
+              <Show
+                when={props.unsupportedLabel}
+                fallback={<>Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code></>}
+              >
+                {(label) => <>{label()}: query contains unsupported clauses.</>}
+              </Show>
             </div>
           </Match>
           <Match when={true}>
@@ -460,11 +552,69 @@ export function QueryMacro(props: {
             <Show when={props.blockId && !isAdvanced()}>
               <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
             </Show>
+            <Show when={groupsError()}>
+              {(message) => (
+                <div class="query-unsupported" role="alert">
+                  {message().lead} {message().message}
+                </div>
+              )}
+            </Show>
             <Show when={!collapsed()}>
               <Show
                 when={sheetFace()}
                 fallback={
                   <>
+                    <Show when={currentView() === "search"}>
+                      <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
+                        <Show
+                          when={searchPresentationHits().length > 0}
+                          fallback={<div class="query-empty">No results</div>}
+                        >
+                          <For each={searchPresentationHits()}>
+                            {(hit) => (
+                              <Show
+                                when={hit.entity === "block" ? hit : null}
+                                fallback={hit.entity === "page" ? (
+                                  <button
+                                    type="button"
+                                    class="query-search-page"
+                                    onClick={() => openPageTarget({
+                                      name: hit.page.name,
+                                      pageKind: hit.page.kind,
+                                      ...(hit.page.path ? { path: hit.page.path } : {}),
+                                    })}
+                                  >
+                                    <span class="switcher-kind">{hit.page.kind}</span>
+                                    <span>{hit.display_text}</span>
+                                  </button>
+                                ) : null}
+                              >
+                                {(blockHit) => (
+                                  <button
+                                    type="button"
+                                    class="query-search-hit switcher-row block-result"
+                                    onClick={() => openPageAtBlock({
+                                      name: blockHit().page,
+                                      pageKind: blockHit().kind,
+                                      block: blockDtoExternalId(blockHit().block),
+                                      ...(blockHit().path ? { path: blockHit().path } : {}),
+                                    })}
+                                  >
+                                    <SearchResultRow
+                                      page={blockHit().page}
+                                      breadcrumb={blockHit().block.breadcrumb ?? []}
+                                      text={blockHit().display_text}
+                                      spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
+                                    />
+                                  </button>
+                                )}
+                              </Show>
+                            )}
+                          </For>
+                        </Show>
+                      </div>
+                    </Show>
+                    <Show when={currentView() !== "search"}>
                     {/* Summary panel (1a): count/sum/avg overall, or a per-group breakdown.
                         Rendered above the full result list, which stays grouped by page. */}
                     <Show when={summarySingle()}>
@@ -515,16 +665,16 @@ export function QueryMacro(props: {
                           <Show
                             when={globalSort()}
                             fallback={
-                              <For each={groups() ?? []}>
-                                {(g) => <QueryGroup page={g.page} group={() => g} />}
+                              <For each={[...groupedQueryByKey().keys()]}>
+                                {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
                               </For>
                             }
                           >
                             {/* Sorted: flat global order (each group holds one block). Iterate the
                                 groups DIRECTLY and pass the group object — re-`find()`ing the group
                                 by page/id for every row was O(groups²) on broad queries (audit #3). */}
-                            <For each={groups() ?? []}>
-                              {(g) => <QueryGroup page={g.page} group={() => g} flat />}
+                            <For each={[...flatQueryByKey().keys()]}>
+                              {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
                             </For>
                           </Show>
                         }
@@ -550,20 +700,22 @@ export function QueryMacro(props: {
                                     class="qt-page"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      if (e.shiftKey) openPageInSidebar(r.page, r.kind);
-                                      else openPage(r.page, r.kind);
+                                      const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
+                                      if (e.shiftKey) openPageInSidebar(target);
+                                      else openPageTarget(target);
                                     }}
                                     onAuxClick={(e) => {
                                       if (e.button === 1) {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        openPageInNewTab(r.page, r.kind);
+                                        openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                                       }
                                     }}
                                     onContextMenu={(e) => {
+                                      if (!shouldOpenTextContextMenu(e.target)) return;
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
+                                      openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                                     }}
                                   >
                                     {r.page}
@@ -575,6 +727,7 @@ export function QueryMacro(props: {
                           </tbody>
                         </table>
                       </Show>
+                    </Show>
                     </Show>
                   </>
                 }
@@ -610,8 +763,10 @@ export function QueryMacro(props: {
 // Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
 // re-query that returns the same membership reuses the existing rows — it never
 // re-mounts a block you're editing in a result and yanks the caret out.
-function QueryGroup(props: { page: string; group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
+function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
   const kind = (): PageKind => props.group()?.kind ?? "page";
+  const page = () => props.group()?.page ?? "";
+  const target = () => ({ name: page(), pageKind: kind(), ...(props.group()?.path ? { path: props.group()!.path } : {}) });
   return (
     <Show when={props.group()}>
       {(g) => (
@@ -620,29 +775,108 @@ function QueryGroup(props: { page: string; group: () => RefGroup | undefined; fl
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
-              if (e.shiftKey) openPageInSidebar(props.page, kind());
-              else openPage(props.page, kind());
+              if (e.shiftKey) openPageInSidebar(target());
+              else openPageTarget(target());
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                openPageInNewTab(props.page, kind());
+                openPageTargetInNewTab(target());
               }
             }}
             onContextMenu={(e) => {
+              if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, props.page, kind());
+              openPageContextMenu(e.clientX, e.clientY, target());
             }}
           >
-            {props.page}
+            {page()}
           </div>
-          <LiveRefGroup page={props.page} kind={kind()} blocks={g().blocks} />
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb />
         </div>
       )}
     </Show>
   );
+}
+
+interface YoutubePlayer {
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
+  getCurrentTime(): number;
+  destroy?(): void;
+}
+
+interface YoutubeApi {
+  Player: new (iframeId: string, options: { events?: { onReady?: () => void } }) => YoutubePlayer;
+}
+
+type YoutubeWindow = Window & {
+  YT?: YoutubeApi;
+  onYouTubeIframeAPIReady?: () => void;
+};
+
+const youtubePlayers = new Map<string, YoutubePlayer>();
+let youtubeApiLoading: Promise<YoutubeApi | null> | null = null;
+const YOUTUBE_API_SCRIPT_ID = "tine-youtube-iframe-api";
+
+// The API is intentionally fetched only from a mounted YouTube embed. OG does
+// the same mount-time load/register sequence (og-1.0.0 6e7afa8eb,
+// extensions/video/youtube.cljs:20-27, :45-53).
+function loadYoutubeApi(): Promise<YoutubeApi | null> {
+  if (typeof window === "undefined" || typeof document === "undefined") return Promise.resolve(null);
+  const ytWindow = window as YoutubeWindow;
+  if (ytWindow.YT?.Player) return Promise.resolve(ytWindow.YT);
+  if (youtubeApiLoading) return youtubeApiLoading;
+
+  youtubeApiLoading = new Promise((resolve) => {
+    let settled = false;
+    const settle = (api: YoutubeApi | undefined) => {
+      if (settled) return;
+      settled = true;
+      resolve(api?.Player ? api : null);
+    };
+    const priorReady = ytWindow.onYouTubeIframeAPIReady;
+    ytWindow.onYouTubeIframeAPIReady = () => {
+      try {
+        priorReady?.();
+      } finally {
+        settle(ytWindow.YT);
+      }
+    };
+    let script = document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
+    if (!script) {
+      script = document.createElement("script");
+      script.id = YOUTUBE_API_SCRIPT_ID;
+      script.async = true;
+      script.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(script);
+    }
+    script.addEventListener("error", () => settle(undefined), { once: true });
+  });
+  return youtubeApiLoading;
+}
+
+// OG's get-player selects the last YouTube iframe whose DOM position precedes
+// the target (compareDocumentPosition(..., target) has FOLLOWING set), then
+// looks up that iframe's registered handle (og-1.0.0 6e7afa8eb,
+// extensions/video/youtube.cljs:85-101).
+export function youtubePlayerForTarget(target: Node): YoutubePlayer | undefined {
+  if (typeof document === "undefined" || typeof Node === "undefined") return undefined;
+  const iframe = Array.from(document.getElementsByTagName("iframe"))
+    .filter((node) => node.src.includes("youtube.com"))
+    .filter((node) => (node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+    .at(-1);
+  return iframe ? youtubePlayers.get(iframe.id) : undefined;
+}
+
+// The OG generator floors getCurrentTime before it formats the macro; with no
+// registered/ready player it produces NOTHING — the command is a no-op, no
+// macro is inserted (og-1.0.0 6e7afa8eb, extensions/video/youtube.cljs:113-122).
+export function youtubeTimestampMacroFor(target: Node): string | null {
+  const seconds = youtubePlayerForTarget(target)?.getCurrentTime();
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
+  return `{{youtube-timestamp ${Math.max(0, Math.floor(seconds))}}}`;
 }
 
 // A {{video}} / {{youtube}} / {{vimeo}} / {{bilibili}} macro: embeds YouTube,
@@ -651,6 +885,7 @@ function QueryGroup(props: { page: string; group: () => RefGroup | undefined; fl
 // OG; the generic `{{video URL}}` sniffs the provider from the URL. Falls back to a
 // link. (`youtube-timestamp` is a SEPARATE macro — handled before this one.)
 export function VideoMacro(props: { body: string }): JSX.Element {
+  const iframeId = `youtube-player-${createUniqueId()}`;
   const parsed = () => {
     const m = /^(\w+)\s*([\s\S]*)$/.exec(props.body.trim());
     const name = (m?.[1] ?? "video").toLowerCase();
@@ -660,9 +895,12 @@ export function VideoMacro(props: { body: string }): JSX.Element {
   const url = () => parsed().arg;
   const embed = () => {
     const { name, arg } = parsed();
+    // `?enablejsapi=1` matches OG (youtube.cljs:58) and, together with the
+    // referrerpolicy below, is what makes the embed play under WebKitGTK — a bare
+    // src with no referrer is rejected by YouTube's player as error 153.
     const yt = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
-    if (yt) return `https://www.youtube.com/embed/${yt[1]}`;
-    if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}`;
+    if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
+    if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
     const vimeo = /vimeo\.com\/(\d+)/.exec(arg);
     if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
     if (name === "vimeo" && /^\d+$/.test(arg)) return `https://player.vimeo.com/video/${arg}`;
@@ -671,6 +909,48 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     if (bvid) return `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1`;
     return null;
   };
+  // OG parity (og-1.0.0 6e7afa8eb): the embed iframe's `allow`/`referrerpolicy`.
+  // YouTube (youtube.cljs:54-70) sends a `strict-origin-when-cross-origin`
+  // referrer so the app origin reaches YouTube — without a referrer the player
+  // fails with error 153. Vimeo (block.cljs:1290-1305) gets the same `allow` list
+  // minus picture-in-picture/web-share and NO referrerpolicy; bilibili sets
+  // neither (the `.embed-iframe` class already removes the border).
+  const embedAttrs = (): Record<string, string> => {
+    const src = embed() ?? "";
+    if (/(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(src))
+      return {
+        allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+        referrerpolicy: "strict-origin-when-cross-origin",
+      };
+    if (src.includes("player.vimeo.com"))
+      return { allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope" };
+    return {};
+  };
+  const isYoutubeEmbed = () => /(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(embed() ?? "");
+  let player: YoutubePlayer | undefined;
+  onMount(() => {
+    if (!isYoutubeEmbed()) return;
+    let mounted = true;
+    void loadYoutubeApi().then((api) => {
+      if (!mounted || !api) return;
+      try {
+        const registered = new api.Player(iframeId, { events: { onReady: () => undefined } });
+        if (!mounted) {
+          registered.destroy?.();
+          return;
+        }
+        player = registered;
+        youtubePlayers.set(iframeId, registered);
+      } catch {
+        // Offline, blocked, or malformed API responses leave the timestamp label usable.
+      }
+    });
+    onCleanup(() => {
+      mounted = false;
+      if (youtubePlayers.get(iframeId) === player) youtubePlayers.delete(iframeId);
+      player?.destroy?.();
+    });
+  });
   return (
     <Show
       when={embed()}
@@ -684,7 +964,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       }
     >
       <div class="embed-iframe-wrap">
-        <iframe class="embed-iframe" src={embed()!} allowfullscreen title="video" />
+        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
       </div>
     </Show>
   );
@@ -701,10 +981,7 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   );
 }
 
-// `{{youtube-timestamp <seconds>}}` — OG makes this seek a sibling on-page YouTube
-// player via the IFrame Player API. Tine embeds YouTube as a bare <iframe> with no
-// player handle, so there's nothing to drive; we degrade to a styled, formatted
-// timestamp label (m:ss / h:mm:ss). Flagged as a known parity gap.
+// `{{youtube-timestamp <seconds>}}` seeks the OG-selected on-page YouTube player.
 export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   const secs = () => {
     const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
@@ -720,9 +997,20 @@ export function YoutubeTimestamp(props: { body: string }): JSX.Element {
     return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
   };
   return (
-    <span class="youtube-ts" title="YouTube-player seeking isn't supported yet (the embed is a bare iframe)">
+    <a
+      class="youtube-ts"
+      title="Seek the preceding YouTube video"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // OG timestamp click stops the event and calls seekTo(seconds, true)
+        // on get-player's result (og-1.0.0 6e7afa8eb,
+        // extensions/video/youtube.cljs:103-111).
+        youtubePlayerForTarget(event.currentTarget)?.seekTo(secs(), true);
+      }}
+    >
       ⏱ {label()}
-    </span>
+    </a>
   );
 }
 
@@ -764,11 +1052,23 @@ export function ZoteroMacro(props: { body: string }): JSX.Element {
 }
 
 // A {{embed ((uuid))}} or {{embed [[Page]]}} block.
-export function EmbedMacro(props: { body: string }): JSX.Element {
+export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Element {
+  const linkDepth = useContext(LinkDepthContext);
+  if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
+
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
+  const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
+  const selfPageEmbed = () => {
+    const sourcePage = props.blockId ? doc.byId[props.blockId]?.page : undefined;
+    const targetPage = pageTarget();
+    return !!sourcePage
+      && pageByName(sourcePage)?.kind === "page"
+      && !!targetPage
+      && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
+  };
 
   const [data] = createResource(
-    () => `${target()} ${graphEpoch()}`,
+    () => selfPageEmbed() ? null : `${target()} ${graphEpoch()} ${dataRev()}`,
     async () => {
     const t = target();
     const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);
@@ -790,8 +1090,10 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
 
   return (
     <div class="embed-block">
-      <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-        <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} />
+      <Show when={!selfPageEmbed()}>
+        <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
+          <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} surface="embed" />
+        </Show>
       </Show>
     </div>
   );

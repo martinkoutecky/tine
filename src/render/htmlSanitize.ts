@@ -20,20 +20,44 @@ import DOMPurify from "dompurify";
 // `javascript:` etc.).
 
 /** Tags that survive sanitization — inline text formatting plus a small set of
- *  containers, `<a>`, and `<img>`. Deliberately excludes `<iframe>`, `<script>`,
- *  forms, and anything executable. (The app renders a sandboxed-https `<iframe>`
- *  via a SEPARATE path in `renderRawHtml`, layered above this allowlist.) */
+ *  containers, links, images, and native playback elements. OG 6e7afa8eb sends
+ *  raw HTML through DOMPurify (src/main/frontend/security.cljs:5-11; raw block
+ *  insertion at src/main/frontend/components/block.cljs:3258-3261), whose HTML
+ *  profile preserves native media. `audio`/`video` provide playback and `source` provides codec
+ *  alternatives without admitting an executable or embedded browsing context.
+ *  Deliberately excludes `<iframe>`, `<script>`, `<object>`, `<embed>`, forms,
+ *  and anything executable. (The app renders a sandboxed-https `<iframe>` via a
+ *  SEPARATE path in `renderRawHtml`, layered above this allowlist.) */
 export const RAW_HTML_TAGS = [
   "b", "strong", "i", "em", "u", "ins", "del", "s", "strike", "sub", "sup",
   "mark", "kbd", "abbr", "small", "code", "cite", "q", "span", "br",
   "p", "div", "blockquote", "details", "summary", "a", "img",
+  "audio", "video", "source",
 ];
 
 /** Attributes that survive, across all allowed tags. Note the absence of
- *  `style` (positioning/tracking) and any `on*` handler. */
+ *  `style` (positioning/tracking), `autoplay`, and any `on*` handler.
+ *  `controls` exposes user-driven playback; `loop`/`muted` retain playback
+ *  state without starting it; `preload` is the browser's media fetch hint;
+ *  `poster` is the video placeholder; `type` lets `<source>` advertise its
+ *  codec. `width`/`height` were already admitted for images and also bound the
+ *  video box. URL-bearing `src`/`poster` receive the scheme guard below. */
 export const RAW_HTML_ATTRS = [
   "class", "title", "href", "src", "alt", "width", "height", "open",
+  "controls", "loop", "muted", "preload", "poster", "type",
 ];
+
+/** Defense-in-depth on top of DOMPurify: reject `javascript:` in `src`/`poster`
+ *  even under control-character-obfuscated spellings. `data:` is deliberately
+ *  NOT denied here — DOMPurify (= OG's sanitizer, security.cljs:5-11) allows
+ *  `data:` URIs on media tags (DATA_URI_TAGS: img/audio/video/source), and
+ *  base64-embedded images in raw HTML are a real user payload; scripts do not
+ *  execute in an image/media src context. */
+function hasDeniedResourceScheme(value: string): boolean {
+  const compact = value.replace(/[\u0000-\u0020]/g, "");
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1]?.toLowerCase();
+  return scheme === "javascript";
+}
 
 // --- Local-file `<img>` support (opt-in; see localFileSettings + ADR 0019) ---
 // The sanitizer strips a `file:`/absolute-path `src`, so a raw-HTML `<img>` pointing
@@ -82,9 +106,22 @@ export function rawHtmlLocalImages(text: string): (string | null)[] {
  *  (tags, attributes, `javascript:`/`data:text` URIs) is stripped; the text
  *  content of stripped elements is preserved where DOMPurify preserves it. */
 export function sanitizeRawHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
+  const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: RAW_HTML_TAGS,
     ALLOWED_ATTR: RAW_HTML_ATTRS,
     ALLOW_DATA_ATTR: false,
   });
+
+  // Work on DOMPurify's already-safe output so entity/whitespace-obfuscated
+  // schemes are compared as the browser will interpret them, without installing
+  // a process-global DOMPurify hook shared with the editor's paste sanitizer.
+  const template = document.createElement("template");
+  template.innerHTML = clean;
+  for (const element of template.content.querySelectorAll<HTMLElement>("[src], [poster]")) {
+    for (const attr of ["src", "poster"] as const) {
+      const value = element.getAttribute(attr);
+      if (value !== null && hasDeniedResourceScheme(value)) element.removeAttribute(attr);
+    }
+  }
+  return template.innerHTML;
 }

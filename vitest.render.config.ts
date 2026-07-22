@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
+import { fileURLToPath } from "node:url";
 
 // Separate config for the AST renderer tests: these import the .tsx render
 // components and mount them into a jsdom DOM (client mode), so they need the
@@ -11,12 +12,23 @@ export default defineConfig({
   define: {
     __BUILD_TIME__: JSON.stringify("1970-01-01T00:00:00.000Z"),
     __GIT_COMMIT__: JSON.stringify(""),
+    __TINE_COMMUNITY_REGISTRY__: JSON.stringify(true),
   },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.tsx"],
+    setupFiles: ["./src/testSetup.render.ts"],
+    server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {
     conditions: ["browser"],
+    alias: [
+      { find: /^solid-js$/, replacement: fileURLToPath(new URL("./node_modules/solid-js/dist/dev.js", import.meta.url)) },
+      { find: /^solid-js\/store$/, replacement: fileURLToPath(new URL("./node_modules/solid-js/store/dist/dev.js", import.meta.url)) },
+      { find: /^solid-js\/web$/, replacement: fileURLToPath(new URL("./node_modules/solid-js/web/dist/dev.js", import.meta.url)) },
+    ],
+  },
+  ssr: {
+    resolve: { conditions: ["browser"], externalConditions: ["browser"] },
   },
 });

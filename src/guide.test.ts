@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { maybeShowGuideAnnouncement } from "./guide";
-import { dismissToast, graphMeta, setGraphMeta, setToasts, toasts } from "./ui";
+import { copyGuideIntoGraph, maybeShowGuideAnnouncement } from "./guide";
+import { dismissToast, graphMeta, pageInventoryRev, setGraphMeta, setToasts, toasts } from "./ui";
 
 async function seedMeta(root: string) {
   const meta = await backend().loadGraph("");
@@ -41,5 +41,31 @@ describe("guide announcement", () => {
 
     expect(setFlag).toHaveBeenCalledWith(true);
     expect(graphMeta()?.guide_announced).toBe(true);
+  });
+});
+
+describe("guide copy inventory", () => {
+  it("refreshes canonical page inventory when the backend creates guide pages", async () => {
+    const copy = vi.spyOn(backend(), "copyGuideIntoGraph").mockResolvedValue({
+      name: "tine-guide/Tine Guide",
+      created: true,
+      created_pages: ["tine-guide/Tine Guide"],
+    });
+    const before = pageInventoryRev();
+    await copyGuideIntoGraph("Tine-guide/Tine Guide");
+    expect(copy).toHaveBeenCalledWith("Tine Guide");
+    expect(pageInventoryRev()).toBeGreaterThan(before);
+  });
+
+  it("does not refresh page inventory for an assets-only Guide repair", async () => {
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockResolvedValue({
+      name: "tine-guide/Tine Guide",
+      created: true,
+      created_pages: [],
+      copied_assets: ["assets/guide-image.png"],
+    });
+    const before = pageInventoryRev();
+    await copyGuideIntoGraph("Tine-guide/Tine Guide");
+    expect(pageInventoryRev()).toBe(before);
   });
 });

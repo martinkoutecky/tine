@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { parseSearchQuery, matcherMatches, simpleTerm, matchHighlight } from "./searchQuery";
+import { SEARCH_SYNTAX, canonicalFold, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
-  matcherMatches(parseSearchQuery(q), text.toLowerCase(), text);
+  matcherMatches(parseSearchQuery(q), canonicalFold(text), text);
 
 describe("searchQuery parser (#44)", () => {
+  it("executes every example displayed by Ctrl K syntax help", () => {
+    for (const rule of SEARCH_SYNTAX) {
+      expect(hit(rule.example, rule.match), rule.example).toBe(true);
+      expect(hit(rule.example, rule.miss), rule.example).toBe(false);
+    }
+  });
   it("single bare term is simple", () => {
     expect(simpleTerm(parseSearchQuery("hello"))).toBe("hello");
     expect(hit("hello", "well HELLO there")).toBe(true);
@@ -66,5 +72,46 @@ describe("searchQuery parser (#44)", () => {
     expect(matchHighlight(parseSearchQuery("/b.z/"), "foo bar baz")).toEqual({ start: 8, len: 3 });
     // negated terms are never highlighted
     expect(matchHighlight(parseSearchQuery("foo -bar"), "foo bar")).toEqual({ start: 0, len: 3 });
+  });
+
+  it("mock presentation evidence includes every positive term and repeated regex hit", () => {
+    expect(matchHighlights(parseSearchQuery("alpha beta -draft"), "beta alpha alpha")).toEqual([
+      { start: 0, end: 4 },
+      { start: 5, end: 10 },
+      { start: 11, end: 16 },
+    ]);
+    expect(matchHighlights(parseSearchQuery("/a./"), "ab ac")).toEqual([
+      { start: 0, end: 2 },
+      { start: 3, end: 5 },
+    ]);
+  });
+
+  it("matches canonical Unicode forms and maps highlights to original UTF-16 spans", () => {
+    expect(hit("Café", "Cafe\u0301")).toBe(true);
+    expect(hit("Cafe\u0301", "Café")).toBe(true);
+    expect(hit("가", "\u1100\u1161")).toBe(true);
+    expect(hit("i\u0307", "İ")).toBe(true);
+    expect(hit("cafe", "café")).toBe(false);
+    expect(hit("/Café/", "Cafe\u0301")).toBe(false);
+    expect(matchHighlight(parseSearchQuery("Résumé"), "\u{1F9E0} Re\u0301sume\u0301"))
+      .toEqual({ start: 3, len: 8 });
+    expect(matchHighlights(parseSearchQuery("è\u0315"), "e\u0315\u0300"))
+      .toEqual([{ start: 0, end: 3 }]);
+    expect(matchHighlights(parseSearchQuery("i\u0307"), "İ"))
+      .toEqual([{ start: 0, end: 1 }]);
+  });
+
+  it("compiles friendly search to ordinary query DSL and preserves saved source losslessly", () => {
+    expect(friendlySearchToDsl('foo -draft OR "exact phrase"')).toEqual({
+      dsl: '(or (and "foo" (not "draft")) "exact phrase")',
+      error: null,
+    });
+    expect(friendlySearchToDsl("/[A-Z]{3}/")).toEqual({
+      dsl: '(content-regex "[A-Z]{3}")',
+      error: null,
+    });
+    expect(friendlySearchToSavedDsl('foo "bar"')).toBe('(search "foo \\"bar\\"")');
+    expect(savedDslToFriendlySearch('(search "foo \\"bar\\"")')).toBe('foo "bar"');
+    expect(savedDslToFriendlySearch('(and "foo" "bar")')).toBeNull();
   });
 });

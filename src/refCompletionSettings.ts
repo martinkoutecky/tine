@@ -1,7 +1,7 @@
 // Device-local editor preference: after accepting a page/block-reference completion,
 // insert a space after the closing `]]`/`))` so typing continues cleanly. Persisted
-// in tine-settings.json via the app_bool backend (WebKitGTK localStorage is NOT
-// persisted across launches). Read once at startup by initRefCompletionSettings().
+// in tine-settings.json via the app_bool backend so independent WebViews consume the
+// same value. Read once at startup by initRefCompletionSettings().
 //
 // DIFFERS from Logseq by default: OG (and file-based Logseq) leave the caret right
 // after the closing brackets with no space (verified in og handler/page.cljs →

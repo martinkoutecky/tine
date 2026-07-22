@@ -1,15 +1,16 @@
-// Port of graph-check.mjs's `selfTest` (lines 1200-1235) — the correctness
-// contract for the anonymizer + chunker. If these pass, the in-app scrub behaves
-// exactly like Martin's verified CLI tool.
+// Correctness + privacy contract for the in-app anonymizer and chunker. The app
+// intentionally fails closed where the developer CLI's reversible fallback
+// would expose graph content.
 import { describe, expect, it } from "vitest";
 import {
   anonymizeTier1,
-  anonymizeTier2,
   anonymizeAndVerify,
+  divergenceSignature,
   anonymizeSourceRel,
   protectedSpans,
 } from "./anonymize";
 import { chunkRanges, toBytes } from "./minimize";
+import { isMldocBacktickStateArtifact } from "./oracle-artifacts";
 import { projectionKey } from "./projection";
 
 const enc = new TextEncoder();
@@ -27,10 +28,6 @@ describe("anonymize tiers", () => {
     expect(byteLen(chars[5])).toBe(4); // 😀 → 4-byte placeholder
   });
 
-  it("tier 2 Caesar-shifts letters and digits", () => {
-    expect(anonymizeTier2("Azaz09")).toBe("Baba10");
-  });
-
   it("keeps URL schemes parseable while scrubbing the host, path, query, and fragment", () => {
     const original = "See https://private.example/Client/Plan?q=Secret#Board";
     const scrubbed = anonymizeTier1(original, protectedSpans(original));
@@ -42,22 +39,34 @@ describe("anonymize tiers", () => {
     expect(scrubbed).toMatch(/https:\/\/a+\.a+\/A[a]+\/A[a]+\?a=A[a]+#A[a]+/);
   });
 
-  it("does not retain numeric URL identifiers in the structure-preserving tier", () => {
+  it("does not retain numeric URL identifiers", () => {
     const original = "https://123.example/account/456";
-    const scrubbed = anonymizeTier2(original, protectedSpans(original));
-    expect(scrubbed).toBe("https://234.fybnqmf/bddpvou/567");
+    const scrubbed = anonymizeTier1(original, protectedSpans(original));
+    expect(scrubbed).toBe("https://999.aaaaaaa/aaaaaaa/999");
     expect(scrubbed).not.toContain("123");
     expect(scrubbed).not.toContain("456");
   });
 
   it("keeps percent escapes syntactically valid without retaining encoded bytes", () => {
     const original = "https://example.test/private%20name%2Fsecret";
-    const scrubbed = anonymizeTier2(original, protectedSpans(original));
+    const scrubbed = anonymizeTier1(original, protectedSpans(original));
     expect(scrubbed).toContain("https://");
     expect(scrubbed).toContain("%41");
     expect(scrubbed).not.toContain("%20");
     expect(scrubbed).not.toContain("%2F");
     expect([...scrubbed.matchAll(/%([^\s]{2})/g)].every((m) => /^[0-9A-F]{2}$/.test(m[1]))).toBe(true);
+  });
+
+  it("never preserves non-ASCII prose or private custom Org identifiers", () => {
+    const original = "#+BEGIN_CLIENT_ACME\n秘密 Проект\n#+PRIVATE_CLIENT: Acme42\n#+END_CLIENT_ACME";
+    const scrubbed = anonymizeTier1(original, protectedSpans(original));
+    expect(scrubbed).not.toContain("CLIENT");
+    expect(scrubbed).not.toContain("ACME");
+    expect(scrubbed).not.toContain("PRIVATE");
+    expect(scrubbed).not.toContain("秘密");
+    expect(scrubbed).not.toContain("Проект");
+    expect(scrubbed).toContain("#+BEGIN_");
+    expect(scrubbed).toContain("#+END_");
   });
 
   it("replaces source page names with neutral stable labels", () => {
@@ -66,24 +75,77 @@ describe("anonymize tiers", () => {
   });
 });
 
-describe("anonymizeAndVerify tier escalation", () => {
-  // Verifier that only accepts tier-2 output of "Ab1" (= "Bc2"), forcing the
-  // fallback past tier 1 (= "Aa9").
+describe("anonymizeAndVerify privacy-safe tier escalation", () => {
   const verify = (accept: (c: string) => boolean) => async (candidate: string) => ({
     ok: true,
     diverges: accept(candidate),
   });
 
-  it("selects tier 2 when tier 1 no longer reproduces", async () => {
-    const r = await anonymizeAndVerify("Ab1", verify((c) => c === "Bc2"));
+  it("uses only a fixed grammar-token fallback when full collapse loses the mismatch", async () => {
+    const r = await anonymizeAndVerify("TODO Secret", verify((c) => c === "TODO Aaaaaa"));
     expect(r.ok).toBe(true);
-    expect(r.tier).toBe("tier 2");
-    expect(r.input).toBe("Bc2");
+    expect(r.tier).toBe("tier 1 + protected keywords");
+    expect(r.input).toBe("TODO Aaaaaa");
   });
 
-  it("fails when no tier reproduces the divergence", async () => {
-    const r = await anonymizeAndVerify("Ab1", verify(() => false));
+  it("fails closed when only the old reversible Caesar candidate would reproduce", async () => {
+    const r = await anonymizeAndVerify("Client秘密42", verify((candidate) => candidate === "Dmjfou秘密53"));
     expect(r.ok).toBe(false);
+  });
+
+  it("keeps trying when a scrubbed candidate reproduces only a rejected oracle artifact", async () => {
+    const refs = { page: [] as string[], block: [] as string[] };
+    const artifact = {
+      lsdoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "ä " }, { k: "code", text: "`aaaa" }] }], refs },
+      mldoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "ä `" }, { k: "code", text: "aaaa" }] }], refs },
+    };
+    const actionable = {
+      lsdoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "lsdoc" }] }], refs },
+      mldoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "mldoc" }] }], refs },
+    };
+    const r = await anonymizeAndVerify(
+      "TODO Secret",
+      async (candidate) => {
+        const pair = candidate === "AAAA Aaaaaa" ? artifact : actionable;
+        return { ok: true, diverges: true, lsdocProjection: pair.lsdoc, mldocProjection: pair.mldoc };
+      },
+      (parsed) => !isMldocBacktickStateArtifact(parsed.lsdocProjection!, parsed.mldocProjection!),
+      { ok: true, diverges: true, lsdocProjection: actionable.lsdoc, mldocProjection: actionable.mldoc },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.tier).toBe("tier 1 + protected keywords");
+    expect(r.input).toBe("TODO Aaaaaa");
+  });
+
+  it("rejects a scrub that changes which structural parser delta survived", async () => {
+    const sameLeft = { blocks: [{ kind: "paragraph", text: "private" }], refs: { page: [], block: [] } };
+    const sameRight = { blocks: [{ kind: "heading", text: "other" }], refs: { page: [], block: [] } };
+    const differentLeft = { blocks: [{ kind: "paragraph" }], refs: { page: ["x"], block: [] } };
+    const differentRight = { blocks: [{ kind: "paragraph" }], refs: { page: [], block: [] } };
+    const r = await anonymizeAndVerify(
+      "TODO Secret",
+      async (candidate) => {
+        const pair = candidate === "AAAA Aaaaaa"
+          ? { left: differentLeft, right: differentRight }
+          : { left: sameLeft, right: sameRight };
+        return { ok: true, diverges: true, lsdocProjection: pair.left, mldocProjection: pair.right };
+      },
+      () => true,
+      { ok: true, diverges: true, lsdocProjection: sameLeft, mldocProjection: sameRight },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.tier).toBe("tier 1 + protected keywords");
+  });
+
+  it("treats scrubbed scalar payloads as the same divergence identity", () => {
+    const a1 = { blocks: [{ kind: "plain", text: "secret" }], refs: { page: [], block: [] } };
+    const b1 = { blocks: [{ kind: "code", text: "private" }], refs: { page: [], block: [] } };
+    const a2 = { blocks: [{ kind: "plain", text: "aaaaaa" }], refs: { page: [], block: [] } };
+    const b2 = { blocks: [{ kind: "code", text: "bbbbbbb" }], refs: { page: [], block: [] } };
+    expect(divergenceSignature(a1, b1)).toBe(divergenceSignature(a2, b2));
+
+    const structurallyDifferent = { blocks: [{ kind: "heading", text: "bbbbbbb" }], refs: { page: [], block: [] } };
+    expect(divergenceSignature(a2, structurallyDifferent)).not.toBe(divergenceSignature(a1, b1));
   });
 
   it("can retain a URL-sensitive divergence without retaining the private URL", async () => {

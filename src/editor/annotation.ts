@@ -38,11 +38,13 @@ export function annotationInfoForBlock(block: Pick<BlockDto, "raw" | "properties
   return { color, hlPage };
 }
 
-/** Resolve a page pre-block's `file-path::` value to the asset basename. The
- * value extends to end-of-line so OG graphs whose PDF filenames contain spaces
- * remain usable. */
+/** Resolve a page pre-block's PDF path to the asset basename. Logseq writes
+ * `file-path::` in Markdown and `#+FILE-PATH:` in Org; both values extend to
+ * end-of-line so filenames containing spaces remain usable. */
 export function pdfFileFromPreBlock(preBlock: string | null | undefined): string | null {
-  const path = /^\s*file-path::\s*(.*?)\s*$/m.exec(preBlock ?? "")?.[1];
+  const source = preBlock ?? "";
+  const path = /^\s*file-path::\s*(.*?)\s*$/mi.exec(source)?.[1]
+    ?? /^\s*#\+file-path:\s*(.*?)\s*$/mi.exec(source)?.[1];
   if (!path) return null;
   return path.split(/[\\/]/).pop() || null;
 }

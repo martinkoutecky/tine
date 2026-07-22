@@ -21,12 +21,26 @@ function leadingWs(line: string): number {
   return i;
 }
 
-function bullet(line: string): { col: number; content: string } | null {
+function bullet(line: string): { col: number; contentStart: number; content: string } | null {
   const col = leadingWs(line);
   const rest = line.slice(col);
-  if (rest === "-") return { col, content: "" };
-  if (rest.startsWith("- ")) return { col, content: rest.slice(2) };
+  const marker = /^(?:[-+*]|\d+[.)])(?:\s+|$)/.exec(rest);
+  if (marker) return { col, contentStart: col + marker[0].length, content: rest.slice(marker[0].length) };
   return null;
+}
+
+function tableDelimiter(line: string): boolean {
+  const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+  return cells.length >= 2 && cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell));
+}
+
+function tableRow(line: string): boolean {
+  return line.includes("|") && line.trim().length > 1;
+}
+
+function fenceMarker(line: string): string | null {
+  const match = /^\s*(`{3,}|~{3,})/.exec(line);
+  return match?.[1] ?? null;
 }
 
 function stripWs(line: string, n: number): string {
@@ -56,12 +70,52 @@ export function parseOutline(text: string): OutlineNode[] {
     else roots.push(node);
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    const fence = fenceMarker(line);
+    if (fence) {
+      const indent = leadingWs(line);
+      const fenced = [line.trim()];
+      let next = lineIndex + 1;
+      const close = new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`);
+      while (next < lines.length) {
+        fenced.push(stripWs(lines[next], indent));
+        if (close.test(lines[next])) {
+          next += 1;
+          break;
+        }
+        next += 1;
+      }
+      const node: OutlineNode = { raw: fenced.join("\n"), children: [] };
+      place(indent, node);
+      stack.push({ col: indent, contentStart: indent, kind: "block", node });
+      lineIndex = next - 1;
+      sawBlank = false;
+      continue;
+    }
+    // A GFM table is one Markdown content unit. Keeping its contiguous rows in a
+    // single block prevents the generic line parser from turning every row into
+    // unrelated sibling blocks (GH #58).
+    if (tableRow(line) && lineIndex + 1 < lines.length && tableDelimiter(lines[lineIndex + 1])) {
+      const indent = leadingWs(line);
+      const table = [line.trim()];
+      let next = lineIndex + 1;
+      while (next < lines.length && tableRow(lines[next])) {
+        table.push(lines[next].trim());
+        next += 1;
+      }
+      const node: OutlineNode = { raw: table.join("\n"), children: [] };
+      place(indent, node);
+      stack.push({ col: indent, contentStart: indent, kind: "block", node });
+      lineIndex = next - 1;
+      sawBlank = false;
+      continue;
+    }
     const b = bullet(line);
     if (b) {
       const node: OutlineNode = { raw: b.content, children: [] };
       place(b.col, node);
-      stack.push({ col: b.col, contentStart: b.col + 2, kind: "bullet", node });
+      stack.push({ col: b.col, contentStart: b.contentStart, kind: "bullet", node });
       sawBlank = false;
       continue;
     }

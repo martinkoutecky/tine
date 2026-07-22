@@ -11,6 +11,7 @@ import {
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { EmojiText } from "../render/emoji";
 import { openGuide } from "../guide";
+import { registerTransientLayer } from "../transientLayers";
 import "../styles/help.css";
 
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -66,19 +67,15 @@ export function HelpPopup(): JSX.Element {
       const target = e.target as Node | null;
       if (root && target && !root.contains(target)) closeHelpPopup();
     };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      closeHelpPopup();
-    };
-
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKeyDown, true);
     onCleanup(() => {
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKeyDown, true);
     });
+  });
+  createEffect(() => {
+    if (!helpPopupOpen()) return;
+    const unregister = registerTransientLayer({ id: "help", root: () => root ?? null, dismiss: () => { closeHelpPopup(); return true; } });
+    onCleanup(unregister);
   });
 
   const run = (item: HelpItem) => {

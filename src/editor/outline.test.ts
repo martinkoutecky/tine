@@ -38,6 +38,25 @@ describe("parseOutline", () => {
     ]);
   });
 
+  it("recognizes common unordered and ordered Markdown list markers", () => {
+    const text = "+ plus\n  * star child\n1. first\n2) second";
+    expect(parseOutline(text)).toEqual([
+      { raw: "plus", children: [{ raw: "star child", children: [] }] },
+      { raw: "first", children: [] },
+      { raw: "second", children: [] },
+    ]);
+  });
+
+  it("keeps a contiguous GFM table as one block", () => {
+    const table = "| Name | Value |\n| --- | ---: |\n| Alpha | 1 |\n| Beta | 2 |";
+    expect(parseOutline(table)).toEqual([{ raw: table, children: [] }]);
+  });
+
+  it("keeps a fenced code block as one block", () => {
+    const code = "```ts\nconst x = 1;\n```";
+    expect(parseOutline(code)).toEqual([{ raw: code, children: [] }]);
+  });
+
   it("keeps a bullet's indented continuation lines in the same block", () => {
     const text = "- first line\n  second line\n- next";
     expect(parseOutline(text)).toEqual([

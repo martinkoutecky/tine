@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { exportModal, closeExportModal, pushToast, typographyMode, graphMeta } from "../ui";
 import { exportNodesFor, formatForPage } from "../store";
 import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
 import { expandTemplate } from "../render/inline";
 import { visibleBody } from "../render/block";
@@ -14,11 +15,16 @@ import {
   type ExportNode,
   type ExportOptions,
   type IndentStyle,
+  type MaxDepth,
 } from "../editor/exportText";
+import { exportOpml } from "../editor/exportOpml";
+import { exportHtml } from "../editor/exportHtml";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
-import type { BlockDto, PageDto, RefGroup } from "../types";
+import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 const STORE_KEY = "tine.exportOptions";
+type ExportFormat = "text" | "opml" | "html";
 
 // Persist the last-used options so the modal opens the way you left it (the
 // indent style especially — most people pick one and keep it).
@@ -44,23 +50,34 @@ const CONTENT_STYLES: { value: ExportContent; label: string; hint: string }[] = 
   { value: "source", label: "Source", hint: "the raw Markdown/Org text" },
 ];
 
+const FORMAT_STYLES: { value: ExportFormat; label: string }[] = [
+  { value: "text", label: "Text" },
+  { value: "opml", label: "OPML" },
+  { value: "html", label: "HTML" },
+];
+
 const INDENT_STYLES: { value: IndentStyle; label: string; hint: string }[] = [
   { value: "dashes", label: "Dashes", hint: "Logseq outline (- bullets)" },
   { value: "spaces", label: "Spaces", hint: "indent, no bullets" },
   { value: "no-indent", label: "No indent", hint: "flat, no bullets" },
 ];
 
+const MAX_DEPTHS: MaxDepth[] = ["all", 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
 // `sourceOnly` toggles are moot in rendered mode (the markers are already gone).
-const TOGGLES: { key: keyof ExportOptions; label: string; sourceOnly?: boolean; renderedOnly?: boolean }[] = [
+type ExportToggle = { key: keyof ExportOptions; label: string; sourceOnly?: boolean; renderedOnly?: boolean };
+const COMMON_TOGGLES: ExportToggle[] = [
   { key: "stripLinks", label: "[[links]] → text" },
   { key: "removeEmphasis", label: "Remove emphasis", sourceOnly: true },
   { key: "removeTags", label: "Remove #tags" },
+];
+const TEXT_TOGGLES: ExportToggle[] = [
   { key: "removeProperties", label: "Remove properties" },
   { key: "newlineAfterBlock", label: "Newline after block" },
   { key: "resolveRefsFully", label: "Resolve refs fully", renderedOnly: true },
 ];
 
-const QUERY_EXPORT_BLOCK_LIMIT = 50;
+const EMBED_EXPORT_NODE_LIMIT = 2_000;
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 
 const BUILT_IN_MACRO_NAMES = new Set([
@@ -137,28 +154,24 @@ function refGroupToExportNodes(group: RefGroup): ExportNode[] {
   return blockDtosToExportNodes(group.blocks, formatForPage(group.page));
 }
 
-function queryGroupsToExportNodes(groups: RefGroup[]): { nodes: ExportNode[]; shown: number; total: number } {
-  let shown = 0;
-  let total = 0;
-  const nodes: ExportNode[] = [];
-  for (const g of groups) {
-    const kept: BlockDto[] = [];
-    for (const block of g.blocks) {
-      total++;
-      if (shown < QUERY_EXPORT_BLOCK_LIMIT) {
-        kept.push(block);
-        shown++;
-      }
-    }
-    if (kept.length) {
-      nodes.push({
-        raw: g.page,
-        format: "md",
-        children: blockDtosToExportNodes(kept, formatForPage(g.page)),
-      });
-    }
+type PageReadCache = Map<string, Promise<PageDto | null>>;
+
+function cachedPage(cache: PageReadCache, page: string, kind: "page" | "journal"): Promise<PageDto | null> {
+  const key = `${kind}\0${page}`;
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = backend().getPage(page, kind);
+    cache.set(key, pending);
   }
-  return { nodes, shown, total };
+  return pending;
+}
+
+export function queryGroupsToExportNodes(result: QueryExportResult): ExportNode[] {
+  return result.groups.map((group) => ({
+    raw: group.page,
+    format: "md",
+    children: blockDtosToExportNodes(group.blocks, formatForPage(group.page)),
+  }));
 }
 
 function literalBuiltInMacroText(name: string, args: string[]): string | null {
@@ -242,7 +255,11 @@ function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets): void {
   }
 }
 
-async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<string, WarmedMacro>): Promise<void> {
+async function warmMacro(
+  macro: { name: string; args: string[] },
+  warmed: Map<string, WarmedMacro>,
+  pages: PageReadCache,
+): Promise<void> {
   const key = macroKey(macro.name, macro.args);
   const name = macro.name.toLowerCase();
   const arg = macroArg(macro.args);
@@ -250,31 +267,22 @@ async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<st
     if (name === "embed") {
       const uuid = blockRefTarget(arg);
       if (uuid) {
-        const group = await resolveBlockBatched(uuid);
-        if (group) warmed.set(key, { kind: "nodes", nodes: refGroupToExportNodes(group) });
+        const preview = await backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT);
+        if (preview) warmed.set(key, {
+          kind: "nodes",
+          nodes: refGroupToExportNodes(preview.group),
+          truncation: preview.truncated > 0
+            ? `[embed truncated: ${preview.truncated} descendant blocks omitted]`
+            : undefined,
+        });
         return;
       }
       const page = pageRefTarget(arg);
       if (page) {
-        const dto = await backend().getPage(page, "page");
+        const dto = await cachedPage(pages, page, "page");
         if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
         return;
       }
-    }
-    if (name === "query") {
-      const { form } = splitTrailingMap(arg);
-      const groups = ADVANCED_RE.test(form) ? (await backend().runAdvancedQuery(form)).groups : await backend().runQuery(form);
-      const result = queryGroupsToExportNodes(groups);
-      warmed.set(key, {
-        kind: "nodes",
-        nodes: result.nodes,
-        emptyText: "No results",
-        truncation:
-          result.total > result.shown
-            ? `[query truncated: showing first ${result.shown} of ${result.total} results]`
-            : undefined,
-      });
-      return;
     }
     const text = literalBuiltInMacroText(name, macro.args);
     if (text != null) warmed.set(key, { kind: "text", text });
@@ -283,16 +291,74 @@ async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<st
   }
 }
 
-async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
-  const targets: WarmTargets = { refs: new Set(), macros: new Map() };
-  collectNodeTargets(nodes, targets);
-  await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
-  await Promise.all([...targets.macros.values()].map((macro) => warmMacro(macro, warmed)));
+async function warmQueryMacros(
+  macros: { name: string; args: string[] }[],
+  warmed: Map<string, WarmedMacro>,
+): Promise<void> {
+  if (!macros.length) return;
+  const specs: QueryExportSpec[] = macros.map((macro) => {
+    const { form } = splitTrailingMap(macroArg(macro.args));
+    return {
+      key: macroKey(macro.name, macro.args),
+      query: form,
+      advanced: ADVANCED_RE.test(form),
+    };
+  });
+  try {
+    const batch = await backend().exportQuerySubtrees(specs);
+    const byKey = new Map(batch.results.map((result) => [result.key, result]));
+    for (const spec of specs) {
+      const result = byKey.get(spec.key);
+      if (!result) {
+        warmed.set(spec.key, {
+          kind: "nodes",
+          nodes: [],
+          emptyText: "Query expansion omitted",
+          truncation: `[query truncated: shared export budget supports the first ${batch.results.length} query macros; ${batch.omitted_queries} omitted]`,
+        });
+        continue;
+      }
+      warmed.set(spec.key, {
+        kind: "nodes",
+        nodes: queryGroupsToExportNodes(result),
+        emptyText: "No results",
+        truncation:
+          result.total > result.shown || result.omitted_nodes > 0
+            ? `[query truncated: showing first ${result.shown} of ${result.total} results${
+              result.omitted_nodes > 0 ? `; ${result.omitted_nodes} descendant blocks omitted` : ""
+            }]`
+            : undefined,
+      });
+    }
+  } catch {
+    // Leave the literal macro visible when native resolution rejects the bounded
+    // request; never fall back to whole-page hydration in the WebView.
+  }
 }
 
-// "Copy / Export" modal — live-preview text export of a block subtree or a
-// multi-block selection, with indent-style + remove options (mirrors OG Logseq's
-// export dialog). Read-only preview; Copy writes to the clipboard.
+export async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
+  const targets: WarmTargets = { refs: new Set(), macros: new Map() };
+  const pages: PageReadCache = new Map();
+  collectNodeTargets(nodes, targets);
+  await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
+  const macros = [...targets.macros.values()];
+  await warmQueryMacros(
+    macros.filter((macro) => macro.name.toLowerCase() === "query"),
+    warmed,
+  );
+  // Page embeds are intentionally whole-page exports, but run them after the
+  // globally bounded query batch so their PageDto cache cannot overlap query
+  // source-page hydration (which no longer uses getPage at all).
+  await Promise.all(
+    macros
+      .filter((macro) => macro.name.toLowerCase() !== "query")
+      .map((macro) => warmMacro(macro, warmed, pages)),
+  );
+}
+
+// "Copy / Export" modal — live-preview Text/OPML/HTML export of a block forest,
+// with per-format controls mirroring OG Logseq's dialog. Read-only preview;
+// Copy writes the currently selected serializer payload to the clipboard.
 export function ExportModal(): JSX.Element {
   return (
     <Show when={exportModal()}>
@@ -302,7 +368,13 @@ export function ExportModal(): JSX.Element {
 }
 
 function Modal(props: { ids: string[] }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "copy-export", root: () => root ?? null, dismiss: () => { closeExportModal(); return true; } });
+    onCleanup(unregister);
+  });
   const [opts, setOpts] = createSignal<ExportOptions>(loadOptions());
+  const [format, setFormat] = createSignal<ExportFormat>("text");
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
   const warmedMacros = new Map<string, WarmedMacro>();
@@ -333,8 +405,10 @@ function Modal(props: { ids: string[] }): JSX.Element {
     }
     return resolveExportMacro(name, args);
   };
-  const text = createMemo(() => {
+  const payload = createMemo(() => {
     warmRev();
+    if (format() === "opml") return exportOpml(nodes, opts());
+    if (format() === "html") return exportHtml(nodes, opts());
     return exportOutline(nodes, {
       ...opts(),
       typographicGlyphs: typographyMode() === "render",
@@ -344,8 +418,8 @@ function Modal(props: { ids: string[] }): JSX.Element {
   });
 
   const copy = () => {
-    if (opts().content === "rendered" && warming()) return;
-    void backend().writeText(text());
+    if (format() === "text" && opts().content === "rendered" && warming()) return;
+    void writeClipboardText(payload());
     pushToast("Copied to clipboard", "success");
     closeExportModal();
   };
@@ -364,10 +438,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
     });
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeExportModal();
-      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         copy();
       }
@@ -376,57 +447,95 @@ function Modal(props: { ids: string[] }): JSX.Element {
     onCleanup(() => window.removeEventListener("keydown", onKey, true));
   });
 
-  const toggleDisabled = (t: (typeof TOGGLES)[number]) =>
-    (t.sourceOnly && opts().content === "rendered") || (t.renderedOnly && opts().content !== "rendered");
-  const toggleTitle = (t: (typeof TOGGLES)[number]) => {
-    if (t.sourceOnly && opts().content === "rendered") return "Rendered text has no markup markers";
-    if (t.renderedOnly && opts().content !== "rendered") return "Only applies to rendered text";
+  const visibleToggles = () => format() === "text" ? [...COMMON_TOGGLES, ...TEXT_TOGGLES] : COMMON_TOGGLES;
+  const toggleDisabled = (t: ExportToggle) =>
+    format() === "text"
+      && ((t.sourceOnly && opts().content === "rendered") || (t.renderedOnly && opts().content !== "rendered"));
+  const toggleTitle = (t: ExportToggle) => {
+    if (format() === "text" && t.sourceOnly && opts().content === "rendered") return "Rendered text has no markup markers";
+    if (format() === "text" && t.renderedOnly && opts().content !== "rendered") return "Only applies to rendered text";
     return undefined;
   };
 
   const blockCount = props.ids.length;
   return (
     <div class="modal-overlay" onClick={closeExportModal}>
-      <div class="export-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="export-modal" onClick={(e) => e.stopPropagation()}>
         <div class="export-head">
           Copy / export <span class="export-count">{blockCount} block{blockCount === 1 ? "" : "s"}</span>
         </div>
 
-        <textarea class="export-preview" readonly spellcheck={false} value={text()} />
+        <textarea class="export-preview" readonly spellcheck={false} value={payload()} />
 
         <div class="export-opts">
+          {/* OG 1.0.0 exposes Text/OPML/HTML together at
+              src/main/frontend/components/export.cljs:148-162. */}
           <div class="export-opt-row export-indent">
-            <span class="export-opt-label">Content</span>
-            <For each={CONTENT_STYLES}>
+            <span class="export-opt-label">Format</span>
+            <For each={FORMAT_STYLES}>
               {(s) => (
                 <button
                   class="export-indent-btn"
-                  classList={{ active: opts().content === s.value }}
-                  title={s.hint}
-                  onClick={() => update({ content: s.value })}
+                  classList={{ active: format() === s.value }}
+                  onClick={() => setFormat(s.value)}
                 >
                   {s.label}
                 </button>
               )}
             </For>
           </div>
-          <div class="export-opt-row export-indent">
-            <span class="export-opt-label">Indent</span>
-            <For each={INDENT_STYLES}>
-              {(s) => (
-                <button
-                  class="export-indent-btn"
-                  classList={{ active: opts().indent === s.value }}
-                  title={s.hint}
-                  onClick={() => update({ indent: s.value })}
-                >
-                  {s.label}
-                </button>
-              )}
-            </For>
-          </div>
+          <Show when={format() === "text"}>
+            {/* OG keeps content indentation, property, and newline controls
+                Text-only (components/export.cljs:190-206,240-260). */}
+            <div class="export-opt-row export-indent">
+              <span class="export-opt-label">Content</span>
+              <For each={CONTENT_STYLES}>
+                {(s) => (
+                  <button
+                    class="export-indent-btn"
+                    classList={{ active: opts().content === s.value }}
+                    title={s.hint}
+                    onClick={() => update({ content: s.value })}
+                  >
+                    {s.label}
+                  </button>
+                )}
+              </For>
+            </div>
+            <div class="export-opt-row export-indent">
+              <span class="export-opt-label">Indent</span>
+              <For each={INDENT_STYLES}>
+                {(s) => (
+                  <button
+                    class="export-indent-btn"
+                    classList={{ active: opts().indent === s.value }}
+                    title={s.hint}
+                    onClick={() => update({ indent: s.value })}
+                  >
+                    {s.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+          <label class="export-opt-row export-indent">
+            <span class="export-opt-label">Level ≤</span>
+            <select
+              value={opts().maxDepth}
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                update({ maxDepth: value === "all" ? "all" : Number(value) });
+              }}
+            >
+              <For each={MAX_DEPTHS}>
+                {(depth) => <option value={depth}>{depth}</option>}
+              </For>
+            </select>
+          </label>
           <div class="export-opt-row export-toggles">
-            <For each={TOGGLES}>
+            {/* Cleanup + depth are shared by Text/OPML/HTML in OG
+                (components/export.cljs:207-238,262-275). */}
+            <For each={visibleToggles()}>
               {(t) => (
                 <label
                   class="export-toggle"
@@ -448,8 +557,12 @@ function Modal(props: { ids: string[] }): JSX.Element {
 
         <div class="export-foot">
           <button class="export-btn-secondary" onClick={closeExportModal}>Close</button>
-          <button class="export-btn-primary" disabled={opts().content === "rendered" && warming()} onClick={copy}>
-            {opts().content === "rendered" && warming() ? "Resolving..." : "Copy"}
+          <button
+            class="export-btn-primary"
+            disabled={format() === "text" && opts().content === "rendered" && warming()}
+            onClick={copy}
+          >
+            {format() === "text" && opts().content === "rendered" && warming() ? "Resolving..." : "Copy"}
           </button>
         </div>
       </div>

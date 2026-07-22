@@ -118,4 +118,35 @@ describe("in-page find DOM scoping", () => {
       host.remove();
     }
   });
+
+  it("keeps the caret collapsed while typing and selects all only on an explicit refocus (GH #224)", async () => {
+    vi.useFakeTimers();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <InPageFind />, host);
+    try {
+      openInPageFind();
+      await Promise.resolve();
+      const input = host.querySelector(".inpage-find-input") as HTMLInputElement;
+      expect(input).toBeTruthy();
+
+      input.value = "a";
+      input.setSelectionRange(1, 1);
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(110);
+      await Promise.resolve();
+
+      expect(input.value).toBe("a");
+      expect([input.selectionStart, input.selectionEnd]).toEqual([1, 1]);
+
+      // Repeating Ctrl+F is a distinct semantic request: focus the existing
+      // query and select it so the user can replace it in one keystroke.
+      openInPageFind();
+      await Promise.resolve();
+      expect([input.selectionStart, input.selectionEnd]).toEqual([0, 1]);
+    } finally {
+      dispose();
+      host.remove();
+    }
+  });
 });

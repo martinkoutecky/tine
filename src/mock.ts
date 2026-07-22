@@ -2,11 +2,26 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GuideCopyResult, GuidePage, Highlight, ManagedSyncStatus, PageDto, PageEntry, RefGroup } from "./types";
+import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, ManagedSyncStatus, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
+import { fuzzyScore } from "./editor/autocomplete";
+import { canonicalFold, matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { parseJournalWith } from "./journal";
+
+/** Mock feed membership must use a Logseq journal-title parser, never the
+ * host's permissive/non-portable Date string parser. Keep the same explicit
+ * patterns the fixture can emit so pagination remains deterministic in every
+ * browser/runtime. */
+function mockJournalDayKey(name: string): number | null {
+  for (const format of ["MMM do, yyyy", "EEEE, dd-MM-yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "yyyy_MM_dd"]) {
+    const parsed = parseJournalWith(name, format);
+    if (parsed) return parsed.y * 10_000 + parsed.m * 100 + parsed.d;
+  }
+  return null;
+}
 
 function pageRefs(raw: string): string[] {
   const out: string[] = [];
@@ -64,8 +79,44 @@ function propertyLines(raw: string): [string, string][] {
   return out;
 }
 
+function mockReferencedPageNames(pages: PageDto[]): string[] {
+  const seen = new Map<string, string>();
+  const add = (name: string) => {
+    const trimmed = name.trim();
+    if (trimmed) seen.set(trimmed.toLowerCase(), seen.get(trimmed.toLowerCase()) ?? trimmed);
+  };
+  const addPropertyRefs = (raw: string | null) => {
+    if (!raw) return;
+    for (const [key, value] of propertyLines(raw)) {
+      if (!/^(tags|alias|aliases)$/i.test(key)) continue;
+      const quoted = value.trim();
+      if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
+      for (const valuePart of value.split(/[,，]/)) {
+        const bare = valuePart.trim().replace(/^#/, "");
+        const name = bare.startsWith("[[") && bare.endsWith("]]")
+          ? bare.slice(2, -2).trim()
+          : bare;
+        add(name);
+      }
+    }
+  };
+  const visit = (blocks: BlockDto[]) => blocks.forEach((block) => {
+    pageRefs(block.raw).forEach(add);
+    addPropertyRefs(block.raw);
+    visit(block.children);
+  });
+  for (const page of pages) {
+    addPropertyRefs(page.pre_block);
+    visit(page.blocks);
+  }
+  return [...seen.values()];
+}
+
 let _id = 0;
 const nid = () => `mock-${_id++}`;
+const mockPlugins: InstalledPluginRecord[] = [];
+const mockPluginEntries = new Map<string, Uint8Array>();
+let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
 
 function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
@@ -377,10 +428,47 @@ function bigPageBlocks(n: number): BlockDto[] {
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
 }
+if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
+  NAMED.push(
+    {
+      name: "Preamble regression",
+      kind: "page",
+      title: "Preamble regression",
+      pre_block: "Intro before the first outline marker",
+      blocks: [b("First marked block")],
+    },
+    {
+      name: "First-block properties regression",
+      kind: "page",
+      title: "First-block properties regression",
+      pre_block: null,
+      blocks: [b("alias:: fbpr\ntags:: testing, properties"), b("Visible body")],
+    },
+    {
+      name: "Block embed source regression",
+      kind: "page",
+      title: "Block embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Embedded root\nid:: ui-block-embed-root", [
+          b("Embedded child", [b("Embedded grandchild")]),
+        ]),
+      ],
+    },
+    {
+      name: "Block embed regression",
+      kind: "page",
+      title: "Block embed regression",
+      pre_block: null,
+      blocks: [b("{{embed ((ui-block-embed-root))}}")],
+    },
+  );
+}
 
-const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
+const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+let mockWorkspaces: string | null = null;
 let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
@@ -594,6 +682,9 @@ export function mockBackend(): Backend {
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
         enable_timetracking: true,
+        show_brackets: true,
+        doc_mode_enter_for_new_block: false,
+        logical_outdenting: false,
         logbook_with_second_support: true,
         logbook_enabled_in_timestamped_blocks: true,
         logbook_enabled_in_all_blocks: false,
@@ -609,6 +700,10 @@ export function mockBackend(): Backend {
     async listKnownGraphs() {
       return [{ path: "/mock/graph", name: "graph" }];
     },
+    async inspectGraphAccess(path: string) {
+      return { graph_root: path || "/mock/graph", external_assets_path: null, approved: true };
+    },
+    async approveExternalAssets() {},
     async openGraphWindow() {
       return { kind: "focused_existing" as const, window_label: "main" };
     },
@@ -618,10 +713,89 @@ export function mockBackend(): Backend {
     async captureTarget() {
       return "main";
     },
+    async bindCaptureGraph() {},
     async forgetKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
+      const requested = new URLSearchParams(globalThis.location?.search ?? "").get("platform");
+      if (requested === "android" || requested === "ios") return requested;
       return "desktop";
     },
+    async listInstalledPlugins() {
+      return mockPlugins.map((plugin) => ({ ...plugin }));
+    },
+    async installPlugin(manifestJson: string, wasm: Uint8Array) {
+      const manifest = JSON.parse(manifestJson) as { id: string; version: string };
+      const key = `${manifest.id}@${manifest.version}`;
+      mockPluginEntries.set(key, wasm.slice());
+      const record: InstalledPluginRecord = {
+        id: manifest.id,
+        version: manifest.version,
+        manifest_json: manifestJson,
+        sha256: "mock",
+        selected: false,
+        enabled: false,
+      };
+      mockPlugins.push(record);
+      return { ...record };
+    },
+    async uninstallPlugin(id: string, version: string) {
+      const index = mockPlugins.findIndex((record) => {
+        const manifest = JSON.parse(record.manifest_json) as { id: string; version: string };
+        return manifest.id === id && manifest.version === version;
+      });
+      if (index === -1) throw new Error("plugin version is not installed");
+      mockPlugins.splice(index, 1);
+      mockPluginEntries.delete(`${id}@${version}`);
+      if (!mockPlugins.some((record) => (JSON.parse(record.manifest_json) as { id: string }).id === id)) {
+        delete mockAppStrings[`plugin-settings:${id}`];
+      }
+    },
+    async readPluginEntry(id: string, version: string) {
+      const entry = mockPluginEntries.get(`${id}@${version}`);
+      if (!entry) throw new Error("plugin version is not installed");
+      return entry.slice();
+    },
+    async setPluginEnabled(id: string, version: string, enabled: boolean) {
+      for (const record of mockPlugins) {
+        const manifest = JSON.parse(record.manifest_json) as { id: string; version: string };
+        if (manifest.id === id) {
+          record.selected = manifest.version === version;
+          record.enabled = record.selected && enabled;
+        }
+      }
+    },
+    async verifyPluginRegistry() {
+      // Browser mock has no embedded native key. Registry tests mock this boundary.
+    },
+    async loadPluginRegistryCache() {
+      if (mockPluginRegistryCache) {
+        return { kind: "envelope" as const, envelope: { ...mockPluginRegistryCache } };
+      }
+      const hasIndex = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-index");
+      const hasSignature = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-signature");
+      if (!hasIndex && !hasSignature) return { kind: "absent" as const };
+      if (!hasIndex || !hasSignature || !mockAppStrings["plugin-registry-index"] || !mockAppStrings["plugin-registry-signature"]?.trim()) {
+        return { kind: "unsafe" as const, reason: "legacy registry cache is torn" };
+      }
+      return {
+        kind: "legacy" as const,
+        indexJson: mockAppStrings["plugin-registry-index"],
+        signature: mockAppStrings["plugin-registry-signature"],
+      };
+    },
+    async storePluginRegistryCache(indexJson, signature, expectedLegacy) {
+      if (expectedLegacy && (
+        mockPluginRegistryCache !== null
+        || mockAppStrings["plugin-registry-index"] !== expectedLegacy.indexJson
+        || mockAppStrings["plugin-registry-signature"] !== expectedLegacy.signature
+      )) {
+        throw new Error("legacy registry cache changed during migration");
+      }
+      mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
+      delete mockAppStrings["plugin-registry-index"];
+      delete mockAppStrings["plugin-registry-signature"];
+    },
+    async setSystemBarAppearance(): Promise<void> {},
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.
     },
@@ -634,11 +808,30 @@ export function mockBackend(): Backend {
     async defaultGraphParent(): Promise<string> {
       return "/mock";
     },
+    async referencedPageNames(): Promise<string[]> {
+      return mockReferencedPageNames(all);
+    },
     async listPages(): Promise<PageEntry[]> {
       return all.map(mockPageEntry);
     },
-    async journalsDesc(limit: number, offset: number): Promise<PageDto[]> {
-      return PAGES.slice(offset, offset + limit);
+    async journalFeedPage(limit: number, beforeDay: number | null) {
+      const now = new Date();
+      const as_of_day = now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+      const candidates = PAGES
+        .filter((p) => p.kind === "journal")
+        .map((page) => ({ page, day: mockJournalDayKey(page.name) }))
+        .filter((row): row is { page: PageDto; day: number } =>
+          row.day !== null && row.day <= as_of_day && (beforeDay === null || row.day < beforeDay)
+        )
+        .sort((a, b) => b.day - a.day);
+      const rows = candidates.slice(0, limit);
+      const done = rows.length === candidates.length;
+      return {
+        pages: rows.map(({ page }) => page),
+        next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
+        done,
+        as_of_day,
+      };
     },
     async journalContentDays(): Promise<number[]> {
       return [];
@@ -721,6 +914,36 @@ export function mockBackend(): Backend {
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
+    },
+    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
+      const excluded = name.trim().toLowerCase();
+      const wanted = new Map(targets.map((item) => [
+        `${item.kind}\0${item.page.toLowerCase()}\0${item.block_id}`,
+        item,
+      ]));
+      const entries: BacklinkFilterContext["entries"] = [];
+      const visit = (page: PageDto, block: BlockDto): void => {
+        const key = `${page.kind}\0${page.name.toLowerCase()}\0${block.id}`;
+        const target = wanted.get(key);
+        if (target) {
+          const text: string[] = [];
+          const facets = new Map<string, string>();
+          const subtree = (node: BlockDto) => {
+            text.push(node.raw);
+            for (const ref of pageRefs(node.raw)) {
+              const normalized = ref.trim().toLowerCase();
+              if (normalized && normalized !== excluded && !facets.has(normalized)) facets.set(normalized, ref);
+            }
+            if (node.marker) facets.set(node.marker.toLowerCase(), node.marker);
+            node.children.forEach(subtree);
+          };
+          subtree(block);
+          entries.push({ ...target, text: text.join("\n"), facets: [...facets.values()] });
+        }
+        block.children.forEach((child) => visit(page, child));
+      };
+      for (const page of all) page.blocks.forEach((block) => visit(page, block));
+      return { entries, truncated: entries.length < wanted.size };
     },
     async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
@@ -808,6 +1031,75 @@ export function mockBackend(): Backend {
       }
       return [];
     },
+    async exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch> {
+      let remainingRoots = 50;
+      let remainingNodes = 2_000;
+      let remainingBytes = 8 * 1024 * 1024;
+      const estimate = (block: BlockDto) => block.id.length + block.raw.length + 128;
+      const countTree = (root: BlockDto) => {
+        let count = 0;
+        const stack = [root];
+        while (stack.length) {
+          const block = stack.pop()!;
+          count++;
+          for (const child of block.children) stack.push(child);
+        }
+        return count;
+      };
+      const copyTree = (block: BlockDto): BlockDto | null => {
+        const bytes = estimate(block);
+        if (remainingNodes === 0 || bytes > remainingBytes) return null;
+        remainingNodes--;
+        remainingBytes -= bytes;
+        const children: BlockDto[] = [];
+        for (const child of block.children) {
+          const copied = copyTree(child);
+          if (!copied) break;
+          children.push(copied);
+        }
+        return { ...block, children };
+      };
+      const findBlock = (page: PageDto, id: string): BlockDto | null => {
+        const stack = [...page.blocks];
+        while (stack.length) {
+          const block = stack.pop()!;
+          if (block.id === id) return block;
+          for (const child of block.children) stack.push(child);
+        }
+        return null;
+      };
+      const results = [];
+      for (const spec of specs.slice(0, 64)) {
+        const groups = spec.advanced
+          ? (await this.runAdvancedQuery(spec.query)).groups
+          : await this.runQuery(spec.query);
+        const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
+        const hydrated: RefGroup[] = [];
+        let shown = 0;
+        let omittedNodes = 0;
+        for (const group of groups) {
+          const page = find(group.page);
+          if (!page) continue;
+          const blocks: BlockDto[] = [];
+          for (const shallow of group.blocks) {
+            if (remainingRoots === 0) break;
+            remainingRoots--;
+            const source = findBlock(page, shallow.id) ?? shallow;
+            const before = remainingNodes;
+            const copied = copyTree(source);
+            omittedNodes += Math.max(0, countTree(source) - (before - remainingNodes));
+            if (copied) {
+              blocks.push(copied);
+              shown++;
+            }
+          }
+          if (blocks.length) hydrated.push({ page: group.page, kind: group.kind, blocks });
+          if (remainingRoots === 0) break;
+        }
+        results.push({ key: spec.key, groups: hydrated, shown, total, omitted_nodes: omittedNodes });
+      }
+      return { results, omitted_queries: Math.max(0, specs.length - 64) };
+    },
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
@@ -829,6 +1121,15 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async setTimetrackingEnabled(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setShowBrackets(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setDocModeEnterForNewBlock(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setLogicalOutdenting(): Promise<void> {
       // no-op in the browser mock
     },
     async setPreferredFormat(): Promise<void> {
@@ -869,15 +1170,99 @@ export function mockBackend(): Backend {
       return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
     },
     async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => b.raw.toLowerCase().includes(q));
+      const groups = collect((b) => canonicalFold(b.raw).includes(q));
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
       }
       return groups.filter((g) => g.blocks.length > 0);
+    },
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope): Promise<QueryExecution> {
+      // Browser-preview approximation only (ADR 0016). Production matching,
+      // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
+      const matcher = parseSearchQuery(source);
+      if (matcher.kind === "invalid") {
+        return {
+          hits: [],
+          diagnostics: [{ code: "invalid_regex", message: matcher.error }],
+          explanation: { branches: [] },
+          cancelled: false,
+        };
+      }
+      const bare = simpleTerm(matcher);
+      const pageMatches = scope ? [] : all
+        .map((page) => ({ page, score: bare ? fuzzyScore(bare, canonicalFold(page.name)) : 0 }))
+        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, canonicalFold(page.name), page.name))
+        .sort((a, b) => b.score - a.score);
+      const pages = pageMatches
+        .slice(0, pageLimit)
+        .map(({ page, score }) => ({
+          entity: "page" as const,
+          page: mockPageEntry(page),
+          display_text: page.name,
+          evidence: [{
+            clause_id: 1,
+            field: "page_name" as const,
+            mode: bare ? "fuzzy" as const : matcher.kind === "regex" ? "regex" as const : "contains" as const,
+            spans: matchHighlights(matcher, page.name),
+            score,
+          }],
+          score,
+          match_class: bare
+            ? canonicalFold(page.name) === bare ? "exact" as const
+              : canonicalFold(page.name).startsWith(bare) ? "prefix" as const
+              : canonicalFold(page.name).includes(bare) ? "substring" as const
+              : "fuzzy" as const
+            : undefined,
+        }));
+      const inScope = (group: RefGroup) => {
+        if (!scope) return true;
+        const page = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
+        if (!page) return false;
+        return scope.path
+          ? mockPagePath(page) === scope.path
+          : page.kind === scope.pageKind && canonicalFold(page.name) === canonicalFold(scope.name);
+      };
+      const blockMatches = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
+        .filter(inScope)
+        .flatMap((group) => group.blocks.map((block) => ({ group, block })));
+      const blocks = blockMatches
+        .slice(0, Math.max(0, blockLimit))
+        .map(({ group, block }) => {
+          const owner = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
+          return {
+            entity: "block" as const,
+            page: group.page,
+            kind: group.kind,
+            path: owner ? mockPagePath(owner) : "",
+            block,
+            display_text: block.raw,
+            evidence: [{
+              clause_id: 1,
+              field: "visible_content" as const,
+              mode: matcher.kind === "regex" ? "regex" as const : "contains" as const,
+              spans: matchHighlights(matcher, block.raw),
+            }],
+          };
+        });
+      return {
+        hits: [...pages, ...blocks],
+        diagnostics: [],
+        has_more: {
+          pages: pageLimit > 0 && pageMatches.length > pageLimit,
+          blocks: blockLimit > 0 && blockMatches.length > blockLimit,
+        },
+        explanation: {
+          branches: explain ? [
+            { description: bare ? `Page names fuzzily match “${source}”` : `Page names match “${source}”`, children: [] },
+            { description: `Block content matches “${source}”`, children: [] },
+          ] : [],
+        },
+        cancelled: false,
+      };
     },
     async listTemplates() {
       return [
@@ -894,27 +1279,67 @@ export function mockBackend(): Backend {
       ];
     },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       return all
-        .filter((p) => p.name.toLowerCase().includes(q))
+        .filter((p) => canonicalFold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
+    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+      return this.quickSwitch(query, limit);
+    },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
       for (const p of all) {
-        let found: BlockDto | null = null;
-        const walk = (bs: BlockDto[]) =>
-          bs.forEach((b) => {
-            if (!found && b.raw.includes(`id:: ${uuid}`)) found = b;
-            walk(b.children);
-          });
-        walk(p.blocks);
-        if (found) return { page: p.name, kind: p.kind, blocks: [found] };
+        const found = find(p.blocks);
+        if (found) return { page: p.name, kind: p.kind, blocks: [{ ...found, children: [] }] };
       }
       return null;
     },
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
       return Promise.all(uuids.map((u) => this.resolveBlock(u)));
+    },
+    async previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null> {
+      let group: RefGroup | null = null;
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.id === uuid || block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
+      for (const page of all) {
+        const found = find(page.blocks);
+        if (found) {
+          group = { page: page.name, kind: page.kind, blocks: [found] };
+          break;
+        }
+      }
+      if (!group) return null;
+      let emitted = 0;
+      let truncated = 0;
+      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
+      const copy = (blocks: BlockDto[]): BlockDto[] => {
+        const out: BlockDto[] = [];
+        for (const block of blocks) {
+          if (emitted >= Math.max(1, maxNodes)) {
+            truncated += count([block]);
+            continue;
+          }
+          emitted++;
+          out.push({ ...block, children: copy(block.children) });
+        }
+        return out;
+      };
+      return { group: { ...group, blocks: copy(group.blocks) }, truncated };
     },
     async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
       void maxBytes;
@@ -946,6 +1371,9 @@ export function mockBackend(): Backend {
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
     },
+    async importNativeCapture(path: string, name: string): Promise<string> {
+      return name || path.split("/").pop() || path;
+    },
     async clipboardFiles() {
       return { files: [], skipped: 0, truncated: false };
     },
@@ -954,6 +1382,9 @@ export function mockBackend(): Backend {
     },
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock
+    },
+    async openPageFile(): Promise<void> {
+      // no OS file manager in the browser mock
     },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock
@@ -1151,6 +1582,23 @@ export function mockBackend(): Backend {
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
+    async loadWorkspaces(): Promise<string> {
+      if (!mockWorkspaces) {
+        const blob = mockSession ? JSON.parse(mockSession) : {
+          tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
+          activeIndex: 0,
+        };
+        mockWorkspaces = JSON.stringify({
+          version: 1,
+          activeId: "default",
+          workspaces: [{ id: "default", name: "", blob }],
+        });
+      }
+      return mockWorkspaces;
+    },
+    async saveWorkspaces(data: string): Promise<void> {
+      mockWorkspaces = data;
+    },
     async takeIdentifierMigrationNotice(): Promise<boolean> {
       return false;
     },
@@ -1193,8 +1641,21 @@ export function mockBackend(): Backend {
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
+    async openPdf(pdf: string, label: string): Promise<PdfState> {
+      const current = mockHighlights[pdf] ?? { label, highlights: [] };
+      mockHighlights[pdf] = current;
+      return {
+        highlights: current.highlights,
+        page: current.page ?? null,
+        scale: current.scale ?? null,
+      };
+    },
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
-      mockHighlights[pdf] = { label, highlights };
+      mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights };
+    },
+    async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
+      const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };
+      mockHighlights[pdf] = { ...current, page, scale };
     },
     async savePdfAreaImage(
       pdf: string,

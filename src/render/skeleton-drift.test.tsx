@@ -35,6 +35,7 @@ const REMOVE_SELECTORS = [
   ".media-open-external",
   ".media-audio-widen",
   ".block-ref-preview",
+  ".admonition-icon", // per-type admonition icon (AD1) — frontend ornament; static render keeps text title
 ];
 // Frontend-only state-modifier classes (resolve-state / lazy-render markers).
 const DROP_CLASSES = new Set(["ast-deferred", "ast-fallback", "block-ref-missing"]);

@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "version": "0.6.5",
+  "baseTag": "v0.6.4",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.6.5 is a patch release of issue-driven correctness, responsiveness, packaging, and compatibility fixes. It introduces no new subsystem or graph-write path, so no focused change-cluster audit is required."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "**AppImage builds now carry update information** (GH #222), so `appimageupdatetool` (and AppImageUpdate) can update Tine in place. Each release also publishes the matching `.zsync` file. Delta updates work from one release that has this metadata to the next, so the first usable update is the one after this release.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": { "status": "not-applicable", "reason": "The changelog explains the new packaging capability; the Guide's application-use documentation remains current.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "This patch changes AppImage packaging rather than the website or product positioning.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release packaging improvement; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Large graphs no longer do reference and rename work on the UI thread** (GH #233, #235, #236). Page-title blur now commits the same conflict-safe rename as Enter, repeated commits are suppressed, and reference lookups use a reconstructible in-memory candidate index with exact verification and a safe full-scan fallback. Linked References use Logseq-compatible disclosure defaults; Unlinked References precompute in the background while remaining collapsed.",
+      "userVisible": true,
+      "regressions": ["UI-PAGE-RENAME-ASYNC-LARGE-GRAPH-233", "UI-LINKED-REFERENCES-ASYNC-DEFAULTS-235", "UI-UNLINKED-REFERENCES-ASYNC-DEFAULTS-236"],
+      "docs": { "status": "not-applicable", "reason": "The fixes restore documented page rename and reference behavior without changing the user-facing workflow.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "Correctness and responsiveness fixes do not change website claims or navigation.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release bug fixes; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Opening Backups no longer hashes every saved snapshot** (GH #234). The list reads cheap manifest metadata in a blocking worker, while restoring still verifies the selected snapshot before changing graph files. The panel now exposes loading and retryable error states.",
+      "userVisible": true,
+      "regressions": ["UI-BACKUP-LIST-RESPONSIVE-234"],
+      "docs": { "status": "not-applicable", "reason": "The existing Backups workflow remains unchanged; this fixes its responsiveness and preserves restore verification.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The fix does not change website content or product positioning.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release bug fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**File-backed block rows now keep stable runtime identity** (GH #232) across cold loads, cache rebuilds, references, merges, and publish snapshots without adding synthetic `id::` properties.",
+      "userVisible": true,
+      "regressions": ["UI-FILE-BLOCK-RUNTIME-IDENTITY-232"],
+      "docs": { "status": "not-applicable", "reason": "This restores internal identity consistency without changing any documented user workflow.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The internal correctness fix does not affect the website.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release correctness fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**IME composition now commits finalized block text once** (GH #237), avoiding intermediate graph writes and duplicate trailing-input commits.",
+      "userVisible": true,
+      "regressions": ["UI-IME-COMPOSITION-237"],
+      "docs": { "status": "not-applicable", "reason": "The normal editing contract is unchanged; composition now follows it correctly.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The editing fix does not change website content.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release editing fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Template date expressions now understand natural language** (GH #226), so `<% next monday %>`, `in 5 days`, and similar English expressions expand to journal links using the graph's configured journal-title format. Unknown placeholders remain intact.",
+      "userVisible": true,
+      "regressions": ["UI-TEMPLATE-NATURAL-LANGUAGE-DATE-226"],
+      "docs": { "status": "not-applicable", "reason": "This parity fix extends accepted template expressions; the existing template documentation remains accurate.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The template parity fix does not require a website change.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release parity fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Reference-only page names now contribute namespace descendants** (GH #229), so the namespace sidebar, `{{namespace}}`, and a page's Hierarchy section show linked child paths even when no child file exists. All Pages remains file-only.",
+      "userVisible": true,
+      "regressions": ["UI-NAMESPACE-REFERENCE-ONLY-DESCENDANTS-229"],
+      "docs": { "status": "not-applicable", "reason": "This restores namespace semantics without changing the documented namespace workflow.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The namespace correctness fix does not require a website change.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release correctness fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android 9 can load Tine's native library** (GH #192). The earlier fix covered the backup path but missed a second `renameat2` call in the trash path, so v0.6.4 could still fail before launch. Both paths now use the API-compatible syscall entry point, and release CI checks the final APK for this class of loader regression.",
+      "userVisible": true,
+      "regressions": ["REG-ANDROID-RENAMEAT2-DLOPEN-001"],
+      "docs": { "status": "not-applicable", "reason": "This restores supported Android startup behavior; installation documentation remains current.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The compatibility fix does not change website content.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release platform fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl+F no longer reselects the query after every typed character** (GH #224). The field still selects its contents when Ctrl+F is invoked again, but ordinary debounced search updates leave the caret and selection alone.",
+      "userVisible": true,
+      "regressions": ["UI-INPAGE-FIND-SELECTION-224"],
+      "docs": { "status": "not-applicable", "reason": "This restores the expected in-page find interaction without changing its documented workflow.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The interaction fix does not require a website change.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release interaction fix; no editorial post is required.", "refs": [] }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Task slash commands replace the block's task marker** (GH #225), rather than appending literal text such as `DONE` after an existing `TODO`. The shared marker operation preserves priority and block properties.",
+      "userVisible": true,
+      "regressions": ["UI-TASK-SLASH-SET-MARKER-225"],
+      "docs": { "status": "not-applicable", "reason": "This restores the expected slash-command behavior; task documentation remains current.", "refs": [] },
+      "website": { "status": "not-applicable", "reason": "The task-command fix does not require a website change.", "refs": [] },
+      "blog": { "status": "not-applicable", "reason": "Patch-release task fix; no editorial post is required.", "refs": [] }
+    }
+  ]
+}

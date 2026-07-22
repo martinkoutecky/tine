@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
 import {
@@ -26,11 +27,17 @@ const journalsSnapshot = (): PaneSnapshot => ({
   activeIndex: 0,
 });
 
+const querySnapshot = (): PaneSnapshot => ({
+  tabs: [{ history: [{ kind: "query", id: "query-find", sourceKind: "search", source: "needle", presentation: "search" }], pos: 0, pinned: false }],
+  activeIndex: 0,
+});
+
 afterEach(() => {
   clearInPageFindRenderedTextCacheForTests();
   resetRenderedBlockTextCallCountForTests();
   resetStore();
   resetPaneLayoutToSingle(journalsSnapshot());
+  document.body.innerHTML = "";
 });
 
 describe("in-page find model", () => {
@@ -153,5 +160,41 @@ describe("in-page find model", () => {
     focusPane("pane-2");
 
     expect(scopedInPageFindMatchesForQuery("needle").map((m) => m.blockId)).toEqual(["pane-block"]);
+  });
+
+  it("searches visible rows in a persistent query workspace", () => {
+    resetPaneLayoutToSingle(querySnapshot());
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <button data-inpage-find-surface="query:page:Alpha">Page Alpha needle</button>
+        <button data-inpage-find-surface="query:block:block-1">Research block needle</button>
+      </main>`;
+
+    expect(scopedInPageFindMatchesForQuery("needle").map((match) => match.surfaceId)).toEqual([
+      "query:page:Alpha",
+      "query:block:block-1",
+    ]);
+  });
+
+  it("adds visible reference rows to the page model without losing body matches", () => {
+    setDoc({
+      loaded: true,
+      feed: ["Target"],
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: ["body"], format: "md", readOnly: false, guide: false }],
+      byId: { body: { id: "body", raw: "needle in body", collapsed: false, parent: null, page: "Target", children: [] } },
+    });
+    resetPaneLayoutToSingle(pageSnapshot("Target"));
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <div data-inpage-find-surface="linked:Source">linked reference needle</div>
+        <div data-inpage-find-surface="unlinked:Other">unlinked reference needle</div>
+      </main>`;
+
+    const matches = scopedInPageFindMatchesForQuery("needle");
+    expect(matches.map((match) => match.blockId)).toContain("body");
+    expect(matches.map((match) => match.surfaceId).filter(Boolean)).toEqual([
+      "linked:Source",
+      "unlinked:Other",
+    ]);
   });
 });

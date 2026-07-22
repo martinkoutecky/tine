@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { FormulaEditor } from "./FormulaEditor";
@@ -6,6 +6,13 @@ import { initParser } from "../render/parse";
 import { blockProperty, doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { closeFormulaEditor, openFormulaEditor } from "../ui";
 import { decodeFormulaExpr, encodeFormulaExpr } from "../sheet/formula";
+import {
+  clearTransientLayersForTest,
+  dismissTopTransient,
+  registerTransientLayer,
+  topTransientLayer,
+  type TransientDismissReason,
+} from "../transientLayers";
 
 beforeAll(async () => {
   await initParser();
@@ -15,6 +22,7 @@ afterEach(() => {
   closeFormulaEditor();
   resetStore();
   document.body.innerHTML = "";
+  clearTransientLayersForTest();
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -73,6 +81,31 @@ function rawToggle(root: ParentNode): HTMLButtonElement {
   const button = root.querySelector(".formula-editor-raw-toggle") as HTMLButtonElement | null;
   if (!button) throw new Error("missing raw toggle");
   return button;
+}
+
+function valueFaces(root: ParentNode): HTMLButtonElement[] {
+  return [...root.querySelectorAll<HTMLButtonElement>(".formula-builder-value-face")];
+}
+
+function pickerFor(face: HTMLButtonElement): HTMLDivElement | null {
+  return face.closest(".formula-builder-value-wrap")?.querySelector<HTMLDivElement>(".formula-builder-picker") ?? null;
+}
+
+function openValueEditor(expr = '"todo"') {
+  loadEditorDoc();
+  const mounted = mount(() => <FormulaEditor />);
+  openFormulaEditor({
+    mode: "edit",
+    ownerId: "table",
+    x: 10,
+    y: 10,
+    name: "label",
+    expr,
+    formulas: [],
+    fields: ["status", "points"],
+    home: { kind: "block", id: "table" },
+  });
+  return mounted;
 }
 
 describe("FormulaEditor", () => {
@@ -310,5 +343,130 @@ describe("FormulaEditor", () => {
     textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("points > 2");
     dispose();
+  });
+
+  for (const reason of ["escape", "back"] satisfies TransientDismissReason[]) {
+    it(`closes a value picker before the formula editor on registry ${reason}`, async () => {
+      const lower = vi.fn(() => true);
+      const unregisterLower = registerTransientLayer({ id: `formula-picker-${reason}-lower`, dismiss: lower });
+      const { root, dispose } = openValueEditor();
+      const face = valueFaces(root)[0];
+      face.click();
+      expect(pickerFor(face)).not.toBeNull();
+
+      expect(dismissTopTransient(reason)).toBe(true);
+      await Promise.resolve();
+      expect(pickerFor(face)).toBeNull();
+      expect(root.querySelector(".formula-editor")).not.toBeNull();
+      expect(lower).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(face);
+
+      expect(dismissTopTransient(reason)).toBe(true);
+      await Promise.resolve();
+      expect(root.querySelector(".formula-editor")).toBeNull();
+      expect(lower).not.toHaveBeenCalled();
+
+      expect(dismissTopTransient(reason)).toBe(true);
+      expect(lower).toHaveBeenCalledOnce();
+      unregisterLower();
+      dispose();
+    });
+  }
+
+  it("keeps multiple value pickers instance-safe and reactivates an older visible peer", async () => {
+    const { root, dispose } = openValueEditor("points > 2");
+    const [left, right] = valueFaces(root);
+    left.click();
+    const leftId = topTransientLayer()?.id;
+    right.click();
+    const rightId = topTransientLayer()?.id;
+
+    expect(leftId).toMatch(/^formula-picker-/);
+    expect(rightId).toMatch(/^formula-picker-/);
+    expect(rightId).not.toBe(leftId);
+    expect(pickerFor(left)).not.toBeNull();
+    expect(pickerFor(right)).not.toBeNull();
+
+    pickerFor(left)?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(topTransientLayer()?.id).toBe(leftId);
+    expect(dismissTopTransient("escape")).toBe(true);
+    await Promise.resolve();
+    expect(pickerFor(left)).toBeNull();
+    expect(pickerFor(right)).not.toBeNull();
+
+    expect(dismissTopTransient("back")).toBe(true);
+    await Promise.resolve();
+    expect(pickerFor(right)).toBeNull();
+    expect(root.querySelector(".formula-editor")).not.toBeNull();
+    dispose();
+  });
+
+  it("dismisses raw and transform drafts without mutating the expression", async () => {
+    const { root, dispose } = openValueEditor();
+    let face = valueFaces(root)[0];
+    face.click();
+    const raw = pickerFor(face)?.querySelector<HTMLInputElement>(".formula-builder-raw-input");
+    if (!raw) throw new Error("missing raw expression input");
+    raw.focus();
+    raw.value = "status";
+    input(raw);
+
+    expect(dismissTopTransient("escape")).toBe(true);
+    await Promise.resolve();
+    expect(pickerFor(face)).toBeNull();
+    expect(face.textContent?.trim()).toBe('"todo"');
+
+    face.click();
+    const replace = [...(pickerFor(face)?.querySelectorAll<HTMLButtonElement>(".formula-builder-transform") ?? [])]
+      .find((button) => button.textContent?.trim() === "replace text");
+    if (!replace) throw new Error("missing replace transform");
+    replace.click();
+    const transformInput = pickerFor(face)?.querySelector<HTMLInputElement>(".formula-builder-transform-args .qb-input");
+    if (!transformInput) throw new Error("missing transform input");
+    transformInput.focus();
+    transformInput.value = "draft needle";
+    input(transformInput);
+
+    expect(dismissTopTransient("back")).toBe(true);
+    await Promise.resolve();
+    face = valueFaces(root)[0];
+    expect(pickerFor(face)).toBeNull();
+    expect(face.textContent?.trim()).toBe('"todo"');
+    rawToggle(root).click();
+    expect((root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement).value).toBe('"todo"');
+    dispose();
+  });
+
+  it("unregisters a picker after explicit commit and after component disposal", () => {
+    const lower = vi.fn(() => true);
+    const unregisterLower = registerTransientLayer({ id: "formula-picker-cleanup-lower", dismiss: lower });
+    const { root, dispose } = openValueEditor();
+    const face = valueFaces(root)[0];
+    face.click();
+    const status = [...(pickerFor(face)?.querySelectorAll<HTMLButtonElement>(".formula-builder-pick-field") ?? [])]
+      .find((button) => button.textContent?.trim() === "status");
+    if (!status) throw new Error("missing status field");
+    status.click();
+    expect(pickerFor(valueFaces(root)[0])).toBeNull();
+    expect(dismissTopTransient("escape")).toBe(true);
+    expect(root.querySelector(".formula-editor")).toBeNull();
+    expect(lower).not.toHaveBeenCalled();
+
+    openFormulaEditor({
+      mode: "edit",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      name: "label",
+      expr: '"todo"',
+      formulas: [],
+      fields: ["status"],
+      home: { kind: "block", id: "table" },
+    });
+    valueFaces(root)[0].click();
+    dispose();
+    expect(dismissTopTransient("back")).toBe(true);
+    expect(lower).toHaveBeenCalledOnce();
+    unregisterLower();
   });
 });

@@ -3,16 +3,20 @@
 
 import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText, renderInlines, renderRawHtml, MathView, CopyButton } from "./inline";
+import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
+import { EmojiText } from "./emoji";
 import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
+import { hiccupToHtml } from "./hiccup";
 import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
-import { isRenderHiddenProp, isPropertyLine } from "./block";
+import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
+import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, stripPlanningLines } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
+import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -79,6 +83,33 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
 
 const CALLOUT_TYPES = ["note", "tip", "important", "caution", "warning", "pinned"];
 
+// OG 6e7afa8eb ui/admonition maps these six types to svg/note, svg/tip,
+// svg/important, svg/caution, svg/warning, and svg/pinned respectively
+// (og/src/main/frontend/ui.cljs:825-840); block dispatches the same types at
+// og/src/main/frontend/components/block.cljs:3286-3302. Use Tine's existing
+// Twemoji image renderer while preserving that one-distinct-icon-per-type contract.
+const ADMONITION_ICONS: Record<string, string> = {
+  note: "📝",
+  tip: "💡",
+  important: "❗",
+  caution: "⚠️",
+  warning: "🚨",
+  pinned: "📌",
+};
+
+function AdmonitionIcon(props: { type: string }): JSX.Element {
+  return (
+    <span
+      class={`admonition-icon admonition-icon-${props.type}`}
+      role="img"
+      aria-label={`${props.type} icon`}
+      title={`${props.type[0].toUpperCase()}${props.type.slice(1)}`}
+    >
+      <EmojiText text={ADMONITION_ICONS[props.type]} />
+    </span>
+  );
+}
+
 function isInlineFlow(b: AstBlock): boolean {
   return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
 }
@@ -99,7 +130,14 @@ function isEmptyInlineFlow(b: AstBlock): boolean {
 /** Render a Tine block's parsed content (`Block[]`). Consecutive inline-flow
  *  blocks (header + continuation paragraphs) are `<br>`-joined to match the old
  *  line-stacked look; block-level constructs render standalone. */
-export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?: number | null): JSX.Element {
+export function renderBlocks(
+  blocks: AstBlock[],
+  blockId?: string,
+  headingLevel?: number | null,
+  macroExpansion = false,
+  format: Format = "md",
+  tableOptions?: TableV2Options,
+): JSX.Element {
   const content = (
     <For each={blocks}>
       {(b, i) => (
@@ -111,8 +149,8 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?
               first inline-flow node), NOT to continuation constructs in the same block
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
-          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId)}>
-            <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId)}</span>
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId, macroExpansion, format, tableOptions)}>
+            <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId, macroExpansion, format, tableOptions)}</span>
           </Show>
         </>
       )}
@@ -126,11 +164,11 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?
   );
 }
 
-function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
+function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   switch (b.kind) {
     case "paragraph":
     case "bullet":
-      return renderInlines(b.inline, blockId);
+      return renderInlines(b.inline, blockId, true, macroExpansion, format);
     case "heading": {
       // A heading on a CONTINUATION line of a multiline block (i.e. not blocks[0],
       // which renderBlocks styles from the facet cache) must still render at its
@@ -138,8 +176,8 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
       // Clamp to h1..h6; an out-of-range/absent size renders as plain inline text.
       const sz = b.size;
       return sz != null && sz >= 1 && sz <= 6
-        ? <span class={`heading-text h${sz}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderInlines(b.inline, blockId)}</span>
-        : renderInlines(b.inline, blockId);
+        ? <span class={`heading-text h${sz}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderInlines(b.inline, blockId, true, macroExpansion, format)}</span>
+        : renderInlines(b.inline, blockId, true, macroExpansion, format);
     }
     case "src":
       return b.lang === "calc"
@@ -148,15 +186,15 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "example":
       return <CodeBlock code={b.code} lang="" spanAttrs={coarseSpanAttrs(b.span)} />;
     case "quote":
-      return renderQuote(b, blockId);
+      return renderQuote(b, blockId, macroExpansion, format, tableOptions);
     case "custom":
-      return renderCustom(b, blockId);
+      return renderCustom(b, blockId, macroExpansion, format, tableOptions);
     case "list":
-      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} />;
+      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
     case "table":
-      return renderTable(b, blockId);
+      return renderTable(b, blockId, macroExpansion, format, tableOptions);
     case "properties":
-      return renderProps(b, blockId);
+      return renderProps(b, blockId, macroExpansion, format);
     case "hr":
       return <hr class="md-hr" {...(coarseSpanAttrs(b.span) ?? {})} />;
     case "displayed_math":
@@ -168,7 +206,7 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "footnote_def":
       return (
         <div class="footnote-def" {...(coarseSpanAttrs(b.span) ?? {})}>
-          <sup class="footnote-ref">{b.name}</sup> {renderInlines(b.inline, blockId)}
+          <sup class="footnote-ref">{b.name}</sup> {renderInlines(b.inline, blockId, true, macroExpansion, format)}
         </div>
       );
     case "drawer":
@@ -176,8 +214,13 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "comment":
       return null; // org drawers / `#+KEY:` keywords / `# comment` — not rendered
     case "hiccup":
-      // Clojure-hiccup `[:tag …]` — render the raw bracket text literally (OG turns
-      // it into HTML; a hiccup→HTML transform is a possible later upgrade). Edge case.
+      // OG 6e7afa8eb inserts direct block Hiccup only after safe-read,
+      // serialization, and sanitization
+      // (src/main/frontend/components/block.cljs:1554-1562 and
+      // src/main/frontend/components/block.cljs:3266-3271). Tine's bounded
+      // transcriber is the safe-read equivalent.
+      const html = hiccupToHtml(b.v);
+      if (html !== null) return renderSanitizedHtml(html, coarseSpanAttrs(b.span));
       return <span class="ast-hiccup" {...(coarseSpanAttrs(b.span) ?? {})}>{b.v}</span>;
   }
 }
@@ -185,7 +228,7 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
 // A `> [!NOTE]` callout (GitHub-flavoured) arrives as a `quote` whose first
 // paragraph's leading plain text is `[!TYPE] …` — re-detect it. (Org `#+BEGIN_NOTE`
 // is a `custom` block, handled in renderCustom.) Otherwise render a blockquote.
-function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string): JSX.Element {
+function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   const first = b.children[0];
   if (first && first.kind === "paragraph") {
     const lead = first.inline[0];
@@ -211,35 +254,51 @@ function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string):
             <div class="callout-title">
               <Show when={!titleEmpty} fallback={type.toUpperCase()}>
                 {titleText}
-                {renderInlines(titleMarkup, blockId)}
+                {renderInlines(titleMarkup, blockId, true, macroExpansion, format)}
               </Show>
             </div>
-            <div class="callout-body">{renderBlocks(bodyChildren, blockId)}</div>
+            <div class="callout-body">{renderBlocks(bodyChildren, blockId, undefined, macroExpansion, format, tableOptions)}</div>
           </div>
         );
       }
     }
   }
-  return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId)}</blockquote>;
+  return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
 }
 
-function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string): JSX.Element {
+function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   const type = b.name.toLowerCase();
   if (CALLOUT_TYPES.includes(type)) {
     return (
       <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
-        <div class="callout-title">{type.toUpperCase()}</div>
+        <div class="callout-title"><AdmonitionIcon type={type} />{type.toUpperCase()}</div>
         <Show when={b.children.length > 0}>
-          <div class="callout-body">{renderBlocks(b.children, blockId)}</div>
+          <div class="callout-body">{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</div>
         </Show>
       </div>
     );
   }
-  if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId)}</blockquote>;
-  return <>{renderBlocks(b.children, blockId)}</>;
+  if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
+  // OG 6e7afa8eb preserves non-special Custom blocks in a div whose class is
+  // the custom name (og/src/main/frontend/components/block.cljs:3309-3313).
+  return <div class={type} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</div>;
 }
 
-function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string): JSX.Element {
+function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
+  // OG dispatches table v2 only when the resolved component version is 2
+  // (`og/src/main/frontend/components/block.cljs:3075-3079`). The
+  // block-property resolver is built from the same parsed body that supplies
+  // this table.
+  if (tableOptions?.version === 2) {
+    return (
+      <TableV2
+        table={b}
+        options={tableOptions}
+        spanAttrs={coarseSpanAttrs(b.span)}
+        renderCell={(cell) => renderInlines(cell, blockId, true, macroExpansion, format)}
+      />
+    );
+  }
   const al = (i: number) => {
     const align = b.aligns[i] ?? null;
     return align ? { "text-align": align } : undefined;
@@ -252,7 +311,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
         <Show when={b.header}>
           <thead>
             <tr>
-              <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId)}</th>}</For>
+              <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</th>}</For>
             </tr>
           </thead>
         </Show>
@@ -260,7 +319,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
           <For each={b.rows}>
             {(row) => (
               <tr>
-                <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId)}</td>}</For>
+                <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId, true, macroExpansion, format)}</td>}</For>
               </tr>
             )}
           </For>
@@ -270,17 +329,17 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
   );
 }
 
-function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: string): JSX.Element {
+function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
   const visible = b.props.filter(([k]) => !isRenderHiddenProp(k, graphMeta()?.block_hidden_properties ?? []));
-  const fmt = formatForBlock(blockId); // parse org property values as org
+  const fmt = formatForBlock(blockId) ?? format; // parse org property values as org
   return (
     <Show when={visible.length > 0}>
       <span class="block-properties">
         <For each={visible}>
           {([k, v]) => (
             <span class="block-property">
-              <span class="block-property-key">{k}</span>{" "}
-              <span class="block-property-val"><InlineText text={v} format={fmt} /></span>
+              <span class="block-property-key">{propertyKeyNorm(k)}</span>{" "}
+              <span class="block-property-val"><InlineText text={v} format={fmt} macroExpansion={macroExpansion} /></span>
             </span>
           )}
         </For>
@@ -309,7 +368,7 @@ function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
 // An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
 // depth-first list of checkbox items, shared across nested AstLists so each
 // checkbox knows its global index.
-function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs }): JSX.Element {
+function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -337,11 +396,11 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
             {/* Markdown definition-list term (`term\n: def`): the item's label,
                 rendered inline before its definition body (lsdoc render contract). */}
             <Show when={item.name && item.name.length > 0}>
-              <span class="md-list-term">{renderInlines(item.name!, props.blockId)}</span>{" "}
+              <span class="md-list-term">{renderInlines(item.name!, props.blockId, true, props.macroExpansion ?? false, props.format)}</span>{" "}
             </Show>
-            {renderBlocks(item.content, props.blockId)}
+            {renderBlocks(item.content, props.blockId, undefined, props.macroExpansion ?? false, props.format, props.tableOptions)}
             <Show when={item.items.length > 0}>
-              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} />
+              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
             </Show>
           </li>
         )}
@@ -357,8 +416,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
  *  renders markerless automatically. A planning `Timestamp` only ever appears on a
  *  standalone planning line (lsdoc never makes one mid-text), so dropping any block
  *  that contains one drops exactly the badge lines. */
-function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
-  const parsed = parseBody(raw, isOrg ? "org" : "md");
+function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   if (isQuarantined(parsed)) return parsed;
   // Drop `properties` (chips in chrome), then remove only the parser-confirmed
   // whole-line planning timestamp from its inline flow. A trailing body line can
@@ -366,6 +424,19 @@ function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
   return stripPlanningLines(parsed, raw).filter(
     (b) => b.kind !== "properties" && !isEmptyInlineFlow(b)
   );
+}
+
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false): JSX.Element {
+  // One parse supplies both the visible body and its property-dependent table
+  // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
+  const parsed = parseBody(raw, format);
+  const properties: [string, string][] = [];
+  for (const b of parsed) if (b.kind === "properties") properties.push(...b.props);
+  const blocks = bodyBlocks(parsed, raw);
+  const beginQuery = inspectBeginQuery(raw, format, blocks);
+  return beginQuery
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? doc.byId[blockId]?.page : undefined} />
+    : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties));
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -377,7 +448,7 @@ function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
  *  The parser is initialized once before first paint (main.tsx / capture.tsx). The
  *  `<Show>` fallback renders the raw text literally and only triggers if the wasm
  *  parser failed to load (degraded mode), so content is never silently blank. */
-export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null }): JSX.Element {
+export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean }): JSX.Element {
   // Deferred (off-screen) placeholder text: raw minus property lines (cheap, no
   // parse) — a good height proxy, replaced by the real render once near.
   const placeholder = createMemo(() => props.raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n"));
@@ -412,7 +483,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback">{placeholder()}</span>}>
-        {renderBlocks(bodyBlocks(props.raw, props.format === "org"), props.blockId, props.headingLevel)}
+        {renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}
       </Show>
     </Show>
   );

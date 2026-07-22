@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "baseRevision": "15bbddc0c5596c3fa72e84c4f3ad90c722db81a0",
+    "generator": "git show base:src/editor/autocomplete.ts plus its base template registry"
+  },
+  "dynamicTemplates": [
+    "Priority Plan",
+    "Page Planning",
+    "Query Notes",
+    "Template starter"
+  ],
+  "parts": 4
+}
+
