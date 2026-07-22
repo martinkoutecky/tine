@@ -18,6 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Reference-only page names now contribute namespace descendants** (GH #229),
+  so the namespace sidebar, `{{namespace}}`, and a page's Hierarchy section show
+  linked child paths even when no child file exists. All Pages remains file-only.
 - **Android 9 can load Tine's native library** (GH #192). The earlier fix
   covered the backup path but missed a second `renameat2` call in the trash
   path, so v0.6.4 could still fail before launch. Both paths now use the

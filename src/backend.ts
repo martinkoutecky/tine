@@ -205,6 +205,8 @@ export interface Backend {
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
   createGraph(dir: string): Promise<string>;
+  /** Page names that exist only through references in the warmed graph cache. */
+  referencedPageNames(): Promise<string[]>;
   listPages(): Promise<PageEntry[]>;
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
@@ -635,6 +637,9 @@ class TauriBackend implements Backend {
   }
   createGraph(dir: string) {
     return this.call<string>("create_graph", { dir });
+  }
+  referencedPageNames() {
+    return this.call<string[]>("referenced_page_names");
   }
   listPages() {
     return this.call<PageEntry[]>("list_pages");

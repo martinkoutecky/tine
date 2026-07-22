@@ -124,7 +124,7 @@ export function NamespaceTree(props: {
   onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
   onActiveNavigationComplete?: () => void;
 } = {}): JSX.Element {
-  // Pure CPU derivation off the shared, epoch-keyed page list (src/pages.ts) —
+  // Pure CPU derivation off the shared page-name inventory (src/pages.ts) —
   // no longer its own whole-graph listPages() fetch.
   const tree = createMemo(() => buildNamespaceTree(allPageNames()));
   return (
@@ -171,8 +171,8 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
 /** `{{namespace X}}` — the full nested descendant tree of namespace `X`, each
  *  page showing its `icon::` (like OG's namespace macro). */
 export function NamespaceMacro(props: { root: string }): JSX.Element {
-  // The descendant tree is a pure CPU derivation off the shared, epoch-keyed page
-  // list (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
+  // The descendant tree is a pure CPU derivation off the shared page-name
+  // inventory (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
   // resulting `fulls` set (so it refetches when the page set changes, not per nav).
   const treeData = createMemo(() => {
     const prefix = `${props.root}/`.toLowerCase();
@@ -259,7 +259,7 @@ export function namespaceHierarchyRows(allNames: string[], name: string): string
 export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   // Was a createResource keyed on the page NAME → it re-pulled the WHOLE page list
   // over IPC on every navigation (this renders below every non-journal page). Now a
-  // pure CPU scan over the shared, epoch-keyed page list (src/pages.ts): recomputes
+  // pure CPU scan over the shared page-name inventory (src/pages.ts): recomputes
   // on nav, but with zero IPC and no whole-graph deserialize per nav.
   const rows = createMemo(() => namespaceHierarchyRows(allPageNames(), props.name));
   return (

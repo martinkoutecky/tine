@@ -232,6 +232,11 @@ pub(crate) fn list_pages(state: GraphContext<'_>) -> Result<Vec<PageEntry>, Stri
     with_graph(&state, |g| Ok(g.list_pages()))
 }
 
+#[tauri::command]
+pub(crate) fn referenced_page_names(state: GraphContext<'_>) -> Result<Vec<String>, String> {
+    with_graph(&state, |g| Ok(g.referenced_page_names()))
+}
+
 #[derive(Serialize)]
 pub(crate) struct JournalFeedPage {
     pages: Vec<PageDto>,

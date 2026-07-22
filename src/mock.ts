@@ -79,6 +79,39 @@ function propertyLines(raw: string): [string, string][] {
   return out;
 }
 
+function mockReferencedPageNames(pages: PageDto[]): string[] {
+  const seen = new Map<string, string>();
+  const add = (name: string) => {
+    const trimmed = name.trim();
+    if (trimmed) seen.set(trimmed.toLowerCase(), seen.get(trimmed.toLowerCase()) ?? trimmed);
+  };
+  const addPropertyRefs = (raw: string | null) => {
+    if (!raw) return;
+    for (const [key, value] of propertyLines(raw)) {
+      if (!/^(tags|alias|aliases)$/i.test(key)) continue;
+      const quoted = value.trim();
+      if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
+      for (const valuePart of value.split(/[,，]/)) {
+        const bare = valuePart.trim().replace(/^#/, "");
+        const name = bare.startsWith("[[") && bare.endsWith("]]")
+          ? bare.slice(2, -2).trim()
+          : bare;
+        add(name);
+      }
+    }
+  };
+  const visit = (blocks: BlockDto[]) => blocks.forEach((block) => {
+    pageRefs(block.raw).forEach(add);
+    addPropertyRefs(block.raw);
+    visit(block.children);
+  });
+  for (const page of pages) {
+    addPropertyRefs(page.pre_block);
+    visit(page.blocks);
+  }
+  return [...seen.values()];
+}
+
 let _id = 0;
 const nid = () => `mock-${_id++}`;
 const mockPlugins: InstalledPluginRecord[] = [];
@@ -773,6 +806,9 @@ export function mockBackend(): Backend {
     },
     async defaultGraphParent(): Promise<string> {
       return "/mock";
+    },
+    async referencedPageNames(): Promise<string[]> {
+      return mockReferencedPageNames(all);
     },
     async listPages(): Promise<PageEntry[]> {
       return all.map(mockPageEntry);
