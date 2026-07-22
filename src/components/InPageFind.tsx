@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import {
   closeInPageFind,
   inPageFindActiveIndex,
@@ -59,15 +59,14 @@ export function InPageFind(): JSX.Element {
     onCleanup(unregister);
   });
 
-  createEffect(() => {
-    inPageFindFocusRequest();
+  createEffect(on(inPageFindFocusRequest, () => {
     if (!inPageFindOpen()) return;
     setDraftQuery(inPageFindQuery());
     queueMicrotask(() => {
       inputEl?.focus();
       inputEl?.select();
     });
-  });
+  }));
 
   createEffect(() => {
     if (inPageFindOpen()) return;

@@ -577,6 +577,22 @@ jobs:
           if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
           cp "$apk" "Tine_${version}_android-arm64.apk"
 
+      # Android API < 30 does not export bionic's renameat2 wrapper. A source
+      # check missed a second call in GH #192, so inspect the final linked .so
+      # that users will actually load and fail the release before publication.
+      - name: Verify Android 9 native-loader compatibility
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          apk="Tine_${version}_android-arm64.apk"
+          unzip -p "$apk" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
+          if readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" \
+            | grep -Eq '[[:space:]]UND[[:space:]].*renameat2(@|$)'; then
+            echo "::error::Android native library imports API-30 renameat2; it will not load on Android 9/API 28."
+            exit 1
+          fi
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" | grep -F 'syscall@' >/dev/null
+
       - name: Stage immutable Android artifact
         if: steps.sign.outputs.enabled == 'true'
         run: node scripts/stage-release-lane.mjs android release-candidate "${{ github.sha }}"

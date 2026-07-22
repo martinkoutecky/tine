@@ -124,7 +124,7 @@ async function inlineQueryViewButton(browser, label) {
   throw new Error(`missing inline-query ${label} view button`);
 }
 
-async function assertInPageFind(browser, query, activeSelector) {
+async function assertInPageFind(browser, query, activeSelector, slowTyping = false) {
   // WebKitWebDriver itself reserves native Ctrl+F on some builds; dispatch the
   // identical cancelable DOM chord so this still exercises Tine's real global
   // keybinding and find UI without handing the session to the driver's browser UI.
@@ -133,7 +133,22 @@ async function assertInPageFind(browser, query, activeSelector) {
   })));
   const input = await browser.$(".inpage-find-input");
   await input.waitForExist({ timeout: 5_000 });
-  await input.setValue(query);
+  if (slowTyping) {
+    for (const [index, char] of [...query].entries()) {
+      await input.addValue(char);
+      // Cross the query debounce after every character. GH #224 reselected the
+      // committed prefix here, so the next character replaced it even though a
+      // fast atomic WebDriver setValue looked healthy.
+      await browser.pause(150);
+      const expected = [...query].slice(0, index + 1).join("");
+      const actual = await input.getValue();
+      if (actual !== expected) {
+        throw new Error(`in-page find replaced a typed prefix: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+      }
+    }
+  } else {
+    await input.setValue(query);
+  }
   try {
     await browser.waitUntil(async () => {
       const count = (await browser.$(".inpage-find-count").getText()).trim();
@@ -196,7 +211,7 @@ await withApp(0, async (browser) => {
   await browser.waitUntil(async () => (await browser.$(".reference-blocks").getText()).includes("Open"), {
     timeout: 10_000, timeoutMsg: "linked-reference content did not finish rendering",
   });
-  await assertInPageFind(browser, "Open", ".reference-blocks.inpage-find-active-block");
+  await assertInPageFind(browser, "Open", ".reference-blocks.inpage-find-active-block", true);
   await browser.$(".unlinked-references .references-header").click();
   const unlinkedBlocks = await browser.$(".unlinked-references .reference-blocks");
   await unlinkedBlocks.waitForExist({ timeout: 10_000 });

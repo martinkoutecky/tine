@@ -718,11 +718,15 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "src-tauri/src/backup.rs"
+          "src-tauri/src/backup.rs",
+          "crates/tine-core/src/model.rs",
+          ".github/workflows/release.yml",
+          "scripts/test-release-pipeline.mjs"
         ],
         "scenario": "android.renameat2-syscall-no-api-gated-symbol",
-        "failBefore": "source-proven"
-      }
+        "failBefore": "artifact-proven"
+      },
+      "notes": "Reopened 2026-07-22 after the reporter reproduced the same loader crash on v0.6.2. Direct inspection of the published v0.6.4 arm64 APK proved libtine_lib.so still imported undefined renameat2: the first fix covered backup.rs but missed the Android-built model.rs trash path. The second call now uses the syscall entry point, and an actual packaged debug APK (SHA-256 d2c8280524ca9adaf450d62f44efb735ada1d381eff55625e5c47cf137e2561f) imports syscall but not renameat2. The release workflow now enforces the same symbol-table gate on the canonical APK. Android 9 device confirmation remains desirable but is no longer the only protection against recurrence."
     },
     {
       "id": "REG-REF-ALIAS-COMPONENT-001",

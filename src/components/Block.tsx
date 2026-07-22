@@ -138,6 +138,7 @@ import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 
 import { taskCheckboxState } from "../markers";
@@ -934,6 +935,7 @@ interface AcItem {
   insert?: string;
   caret?: number;
   action?: import("../editor/autocomplete").CommandAction;
+  taskMarker?: string;
   plugin?: { pluginId: string; contributionId: string; insertText?: string };
   templateNodes?: import("../types").BlockDto[];
   /** A `((block reference))` candidate: insert `((uuid))` and persist id::. */
@@ -1304,7 +1306,7 @@ export function Editor(props: { id: string }): JSX.Element {
         if (c.action === "drawio" && isMobilePlatform) return;
         const s = q ? commandScore(q, c) : 1;
         if (s > 0)
-          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: q ? c.matchTieOrder : c.bareOrder });
+          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
       });
       pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
         const s = q ? fuzzyScore(q, contribution.title) : 1;
@@ -1974,6 +1976,24 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     switch (item.action) {
+      case "task-marker": {
+        if (!item.taskMarker) return;
+        // OG clears the slash query, sets/replaces the leading task marker, and
+        // then moves to the end. Treat this as one semantic edit: literal
+        // insertion leaves the old marker intact when invoked mid-block (GH
+        // #225) and also bypasses the shared marker grammar.
+        const removed = applyCompletion(ref.value, t.start, t.end, "");
+        const next = setMarker(removed.raw, item.taskMarker);
+        commit(next);
+        closeAc();
+        queueMicrotask(() => {
+          ref.value = next;
+          ref.setSelectionRange(next.length, next.length);
+          ref.focus();
+          autosize();
+        });
+        return;
+      }
       case "heading-auto":
       case "heading-1":
       case "heading-2":

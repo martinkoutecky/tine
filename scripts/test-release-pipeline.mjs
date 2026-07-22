@@ -86,6 +86,11 @@ assert.match(
   /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
   "release workflow verify step must search src-tauri/ for the .zsync (appimagetool writes it into the build CWD) and fail closed when update information is absent"
 );
+assert.match(
+  releaseWorkflow,
+  /name: Verify Android 9 native-loader compatibility[\s\S]*?unzip -p "\$apk" lib\/arm64-v8a\/libtine_lib\.so[\s\S]*?readelf --dyn-syms --wide[\s\S]*?renameat2/,
+  "Android release packaging must inspect the final APK native library and reject the API-30 renameat2 wrapper"
+);
 
 // Architecture guard: the expensive Linux release build must test that exact
 // binary before it can be staged for the atomic assembler/publisher. Windows

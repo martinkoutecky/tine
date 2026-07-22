@@ -357,6 +357,7 @@ export function orderAcItems<T>(
 /** Action commands need runtime behaviour (date stamps, file picker) rather
  *  than a fixed insertion; the editor resolves these when chosen. */
 export type CommandAction =
+  | "task-marker"
   | "scheduled"
   | "deadline"
   | "upload-asset"
@@ -390,6 +391,8 @@ export interface Command {
   caret?: number;
   /** A runtime action resolved by the editor instead of a literal insert. */
   action?: CommandAction;
+  /** Marker payload for the semantic task-marker action. */
+  taskMarker?: string;
   /** Optional short match alias scored in ADDITION to the label, so a one-letter
    *  query surfaces this command first (mirrors OG, whose priority commands are
    *  literally named "A"/"B"/"C" — a full-length exact match that outranks longer
@@ -406,15 +409,15 @@ export interface Command {
 type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder">;
 
 const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
-  { label: "TODO", insert: "TODO " },
-  { label: "DOING", insert: "DOING " },
-  { label: "LATER", insert: "LATER " },
-  { label: "NOW", insert: "NOW " },
-  { label: "DONE", insert: "DONE " },
-  { label: "WAITING", insert: "WAITING " },
-  { label: "WAIT", insert: "WAIT " },
-  { label: "IN-PROGRESS", insert: "IN-PROGRESS " },
-  { label: "CANCELED", insert: "CANCELED " },
+  { label: "TODO", action: "task-marker", taskMarker: "TODO" },
+  { label: "DOING", action: "task-marker", taskMarker: "DOING" },
+  { label: "LATER", action: "task-marker", taskMarker: "LATER" },
+  { label: "NOW", action: "task-marker", taskMarker: "NOW" },
+  { label: "DONE", action: "task-marker", taskMarker: "DONE" },
+  { label: "WAITING", action: "task-marker", taskMarker: "WAITING" },
+  { label: "WAIT", action: "task-marker", taskMarker: "WAIT" },
+  { label: "IN-PROGRESS", action: "task-marker", taskMarker: "IN-PROGRESS" },
+  { label: "CANCELED", action: "task-marker", taskMarker: "CANCELED" },
   { label: "Priority A", action: "priority-a", key: "A" },
   { label: "Priority B", action: "priority-b", key: "B" },
   { label: "Priority C", action: "priority-c", key: "C" },

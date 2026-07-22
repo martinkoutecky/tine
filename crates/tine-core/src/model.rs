@@ -6680,18 +6680,20 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
         use std::os::unix::ffi::OsStrExt;
         let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
         let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
-        // Atomic move + create-if-absent. Whichever inode currently owns `src`
-        // at the syscall boundary is moved intact; an external replacement can
-        // therefore never be unlinked behind our back.
+        // Atomic move + create-if-absent. Call the syscall directly: Android's
+        // bionic `renameat2` wrapper is only exported from API 30, whereas
+        // `syscall` is available from API 1. A wrapper reference here survived
+        // the first GH #192 fix in backup.rs and still prevented the complete
+        // native library from loading on Android 9. Whichever inode currently
+        // owns `src` at the syscall boundary is moved intact, so the safety and
+        // errno contracts remain unchanged.
         let result = unsafe {
-            libc::renameat2(
+            libc::syscall(
+                libc::SYS_renameat2,
                 libc::AT_FDCWD,
                 src.as_ptr(),
                 libc::AT_FDCWD,
                 dest.as_ptr(),
-                // Android declares renameat2's flags as c_uint while its
-                // RENAME_NOREPLACE constant is c_int. Linux happens to expose
-                // matching types; normalize explicitly for both targets.
                 libc::RENAME_NOREPLACE as libc::c_uint,
             )
         };
