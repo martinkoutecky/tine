@@ -58,6 +58,8 @@ async function loadHarness(
     ]),
   };
   const setAliasMap = vi.fn();
+  const applyTemplateVars = vi.fn((raw: string, _currentPage?: string) => raw);
+  const prepareTemplateVars = vi.fn(async () => {});
   const drainPdfWork = vi.fn(async () => {
     events.push("drain-pdf");
     return true;
@@ -112,7 +114,7 @@ async function loadHarness(
     journalTitle: () => "Jul 10th, 2026",
     setJournalTitleFormat: vi.fn(),
   }));
-  vi.doMock("./editor/templateVars", () => ({ applyTemplateVars: (raw: string) => raw }));
+  vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => warm) }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
@@ -124,6 +126,7 @@ async function loadHarness(
   return {
     loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
+    applyTemplateVars, prepareTemplateVars,
   };
 }
 
@@ -221,6 +224,22 @@ describe("default journal template graph bind", () => {
       "save-template",
       "bump-epoch",
     ]);
+  });
+
+  it("routes default-journal template blocks through the shared variable expander", async () => {
+    const { loadGraphPath, api, applyTemplateVars, prepareTemplateVars } = await loadHarness(null);
+
+    await loadGraphPath(META.root);
+
+    expect(prepareTemplateVars).toHaveBeenCalledOnce();
+    expect(applyTemplateVars).toHaveBeenCalledWith("Template body", "Jul 10th, 2026");
+    expect(api.savePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ raw: "Template body" })],
+      }),
+      null,
+      false
+    );
   });
 
   it("uses an empty journal's revision as the conflict baseline", async () => {

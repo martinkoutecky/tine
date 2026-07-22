@@ -6,6 +6,24 @@
 import { journalTitle } from "../journal";
 import { resolveDateToken } from "./dateExpr";
 
+type NaturalDateParser = (text: string, reference?: Date) => Date | null;
+let parseEnglishDate: NaturalDateParser | null = null;
+let parserLoad: Promise<void> | null = null;
+
+/** Prepare OG's natural-language date parser before expanding a template.
+ * Chrono is deliberately a lazy chunk: ordinary app startup never needs its
+ * ~98 kB emitted parser chunk. Both production template insertion paths await this
+ * once before calling the otherwise synchronous recursive expander. */
+export function prepareTemplateVars(): Promise<void> {
+  if (parseEnglishDate) return Promise.resolve();
+  if (!parserLoad) {
+    parserLoad = import("chrono-node/dist/locales/en").then((chrono) => {
+      parseEnglishDate = chrono.parseDate;
+    });
+  }
+  return parserLoad;
+}
+
 /** The variables we advertise — as `/Template var: …` slash commands and in the
  *  "Make a template" hint. `<% date: <token> %>` (a date token like `today`,
  *  `+3d`, `2026-07-01`) is offered separately since it takes an argument. */
@@ -41,13 +59,16 @@ export function applyTemplateVars(raw: string, currentPage?: string): string {
       return `[[${journalTitle(d)}]]`;
     }
     // <% date: <token> %> — resolve via the same date-token parser the query
-    // builder uses (today / ±Nd / yyyy-MM-dd / journal title). Full natural
-    // language ("next monday") is not supported yet; unresolved → left verbatim.
+    // builder uses (today / ±Nd / yyyy-MM-dd / journal title).
     const dm = /^date:\s*(.+)$/i.exec(kw);
     if (dm) {
       const resolved = resolveDateToken(dm[1].trim());
       return resolved ? `[[${journalTitle(resolved)}]]` : whole;
     }
-    return whole;
+    // Match Logseq's final parser path for any remaining expression. The Date
+    // reference preserves Chrono's local-clock semantics; its result is then
+    // formatted through the graph-configured journal title as usual.
+    const resolved = kw && parseEnglishDate ? parseEnglishDate(kw, d) : null;
+    return resolved ? `[[${journalTitle(resolved)}]]` : whole;
   });
 }

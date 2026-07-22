@@ -142,7 +142,7 @@ import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 
 import { taskCheckboxState } from "../markers";
-import { applyTemplateVars } from "../editor/templateVars";
+import { applyTemplateVars, prepareTemplateVars } from "../editor/templateVars";
 import {
   caretAtFirstRow,
   caretAtLastRow,
@@ -1016,6 +1016,7 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
   try {
     templateCache = await backend().listTemplates();
     templateCacheRev = rev;
+    if (templateCache.length) await prepareTemplateVars();
   } catch {
     templateCache = [];
   }

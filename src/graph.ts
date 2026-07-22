@@ -8,7 +8,7 @@ import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
 import { journalTitle, setJournalTitleFormat } from "./journal";
-import { applyTemplateVars } from "./editor/templateVars";
+import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
@@ -294,6 +294,7 @@ async function ensureJournalTemplate(): Promise<void> {
     if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return; // already has content
     const tmpl = (await backend().listTemplates()).find((t) => t.name === tname);
     if (!tmpl) return;
+    await prepareTemplateVars();
     const resolve = (b: BlockDto): BlockDto => ({
       id: "",
       raw: applyTemplateVars(b.raw, title),

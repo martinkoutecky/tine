@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Template date expressions now understand natural language** (GH #226), so
+  `<% next monday %>`, `in 5 days`, and similar English expressions expand to
+  journal links using the graph's configured journal-title format. Unknown
+  placeholders remain intact.
 - **Reference-only page names now contribute namespace descendants** (GH #229),
   so the namespace sidebar, `{{namespace}}`, and a page's Hierarchy section show
   linked child paths even when no child file exists. All Pages remains file-only.
