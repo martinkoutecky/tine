@@ -13,6 +13,7 @@ import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking"
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { persistBlockRefTarget } from "../store";
 import type { QueryPageScope } from "../types";
+import { blockDtoExternalId } from "../blockIdentity";
 
 // One selectable result row.
 type Item =
@@ -205,7 +206,7 @@ export function QuickSwitcher(): JSX.Element {
           page: hit.page,
           pageKind: hit.kind,
           path: hit.path || undefined,
-          blockId: hit.block.id,
+          blockId: blockDtoExternalId(hit.block),
           text: hit.display_text,
           crumb: hit.block.breadcrumb ?? [],
           spans: hit.evidence.flatMap((evidence) => evidence.spans),

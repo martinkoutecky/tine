@@ -135,8 +135,8 @@ await withApp(0, async (browser) => {
   await openPagesInSidebar(browser);
   await browser.saveScreenshot(`${ARTIFACT}/expanded-items.png`);
   const pageA = await itemSelector("Page A");
-  const parentBlock = `${pageA} [data-block-id="sidebar-fold-parent-159"]`;
-  const childBlock = `${pageA} [data-block-id="sidebar-fold-child-159"]`;
+  const parentBlock = `${pageA} [data-block-ref="sidebar-fold-parent-159"]`;
+  const childBlock = `${pageA} [data-block-ref="sidebar-fold-child-159"]`;
   const parentToggle = `${parentBlock} > .block-main .collapse-toggle.has-children`;
   await browser.$(parentToggle).waitForExist({ timeout: 10_000 });
   await browser.$(parentToggle).click();

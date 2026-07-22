@@ -297,7 +297,7 @@ await withApp(0, true, async (browser) => {
   // gesture, then verify overlay geometry and inert focus containment.
   await shiftClick(browser, await browser.$("h1.page-title"));
   await waitDrawer(browser, "right");
-  await browser.$(`[data-sidebar-surface] [data-block-id='${EDIT_ID}']`).waitForExist({ timeout: 10_000 });
+  await browser.$(`[data-sidebar-surface] [data-block-ref='${EDIT_ID}']`).waitForExist({ timeout: 10_000 });
   const right = await snapshot(browser);
   assert(Math.abs(right.main.x - closed.main.x) <= 1 && Math.abs(right.main.width - closed.main.width) <= 1,
     "right drawer squeezed or shifted the main workspace", { closed: closed.main, open: right.main });
@@ -366,9 +366,9 @@ await withApp(0, true, async (browser) => {
   // whole drawer, commits, and never enters block/pane selection.
   await clickToolbar(browser, "Toggle right sidebar");
   await waitDrawer(browser, "right");
-  const contentSelector = `.right-sidebar [data-block-id='${EDIT_ID}'] .block-content`;
+  const contentSelector = `.right-sidebar [data-block-ref='${EDIT_ID}'] .block-content`;
   await browser.$(contentSelector).click();
-  const editor = await browser.$(`.right-sidebar [data-block-id='${EDIT_ID}'] textarea.block-editor`);
+  const editor = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5_000 });
   await editor.setValue("Native plain [[Comp");
   await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 10_000 });
@@ -406,7 +406,7 @@ await withApp(0, true, async (browser) => {
 
   await clickToolbar(browser, "Toggle right sidebar");
   await waitDrawer(browser, "right");
-  const reopenedText = await browser.$(`.right-sidebar [data-block-id='${EDIT_ID}'] .block-content`).getText();
+  const reopenedText = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] .block-content`).getText();
   assert(reopenedText.includes("Native saved") && reopenedText.includes("中文"), "saved edit did not survive drawer reopen", reopenedText);
 
   // Real shortcuts must preserve one-panel/one-scrim exclusivity in both
@@ -458,7 +458,7 @@ await withApp(1, true, async (browser) => {
   await navigate(browser, "Drawer target");
   await clickToolbar(browser, "Toggle right sidebar");
   await waitDrawer(browser, "right");
-  const item = await browser.$(`.right-sidebar [data-block-id='${EDIT_ID}'] .block-content`);
+  const item = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] .block-content`);
   await item.waitForExist({ timeout: 10_000 });
   const text = await item.getText();
   assert(text.includes("Native saved") && text.includes("中文"), "disk edit/right-sidebar item did not survive native restart", text);

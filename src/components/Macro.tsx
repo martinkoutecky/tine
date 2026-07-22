@@ -30,6 +30,7 @@ import { sharedQueryResult } from "../queryResultCache";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
 import type { QueryExecution, QueryHit } from "../types";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
+import { blockDtoExternalId } from "../blockIdentity";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 type QueryView = "search" | "list" | "table" | "board";
@@ -595,7 +596,7 @@ export function QueryMacro(props: {
                                     onClick={() => openPageAtBlock({
                                       name: blockHit().page,
                                       pageKind: blockHit().kind,
-                                      block: blockHit().block.id,
+                                      block: blockDtoExternalId(blockHit().block),
                                       ...(blockHit().path ? { path: blockHit().path } : {}),
                                     })}
                                   >

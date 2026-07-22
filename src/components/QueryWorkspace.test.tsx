@@ -202,6 +202,7 @@ function executionFixture(explained: boolean): QueryExecution {
           collapsed: false,
           children: [],
           breadcrumb: ["Parent"],
+          properties: [["ID", "authored-block-1"]],
         },
         display_text: "An alpha result",
         evidence: [{
@@ -374,7 +375,7 @@ describe("QueryWorkspace", () => {
     });
     resultRows[1].click();
     expect(router.openPageAtBlock).toHaveBeenCalledWith({
-      name: "Research", pageKind: "page", path: "pages/client-b/Research.md", block: "block-1",
+      name: "Research", pageKind: "page", path: "pages/client-b/Research.md", block: "authored-block-1",
     });
 
     for (const [label, selector] of [

@@ -70,7 +70,7 @@ const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NAT
 await sleep(2500);
 
 let browser;
-const rootSelector = (id) => `.block-embed-host .embed-block [data-block-id="${id}"]`;
+const rootSelector = (id) => `.block-embed-host .embed-block [data-block-ref="${id}"]`;
 
 async function openTestPage() {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
@@ -132,10 +132,11 @@ async function exerciseEnter(id, inserted, file) {
       editor: active instanceof HTMLTextAreaElement && active.classList.contains("block-editor"),
       inEmbed: Boolean(active?.closest?.(".embed-block")),
       id: row?.getAttribute("data-block-id") ?? null,
+      ref: row?.getAttribute("data-block-ref") ?? null,
       sourceId,
     };
   }, id);
-  if (!focus.editor || !focus.inEmbed || !focus.id || focus.id === id) {
+  if (!focus.editor || !focus.inEmbed || !focus.id || focus.ref === id) {
     throw new Error(`Enter left the visible embed: ${JSON.stringify(focus)}`);
   }
   await browser.keys([inserted]);
@@ -153,6 +154,7 @@ async function activeEditor() {
       editor: active instanceof HTMLTextAreaElement && active.classList.contains("block-editor"),
       inEmbed: Boolean(active?.closest?.(".embed-block")),
       id: row?.getAttribute("data-block-id") ?? null,
+      ref: row?.getAttribute("data-block-ref") ?? null,
       value: active instanceof HTMLTextAreaElement ? active.value : null,
     };
   });
@@ -161,7 +163,7 @@ async function activeEditor() {
 async function waitForEmbedEditor(id, value) {
   await browser.waitUntil(async () => {
     const state = await activeEditor();
-    return state.editor && state.inEmbed && state.id === id && (value === undefined || state.value === value);
+    return state.editor && state.inEmbed && state.ref === id && (value === undefined || state.value === value);
   }, {
     timeout: 5000,
     timeoutMsg: `embed editor ${id} did not retain focus: ${JSON.stringify(await activeEditor())}`,

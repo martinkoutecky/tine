@@ -205,7 +205,8 @@ describe("QuickSwitcher search syntax help", () => {
   });
 
   it("opens an unloaded selected block in the sidebar and starts durable target persistence", async () => {
-    const blockId = "7eab7af1-1b53-4baa-9082-c1d63540e123";
+    const runtimeId = "runtime-unloaded-block";
+    const authoredId = "7eab7af1-1b53-4baa-9082-c1d63540e123";
     const canonicalPath = "pages/unloaded.md";
     const exactPath = "pages/duplicates/unloaded.md";
     const canonical: PageDto = {
@@ -216,7 +217,13 @@ describe("QuickSwitcher search syntax help", () => {
     const exact: PageDto = {
       name: "Unloaded", kind: "page", title: "Unloaded", pre_block: null,
       path: exactPath, rev: "exact-rev",
-      blocks: [{ id: blockId, raw: "needle block", collapsed: false, children: [] }],
+      blocks: [{
+        id: runtimeId,
+        raw: `needle block\nid:: ${authoredId}`,
+        collapsed: false,
+        children: [],
+        properties: [["ID", authoredId]],
+      }],
     };
     const disk = new Map<string, string>([
       [canonicalPath, JSON.stringify(canonical)],
@@ -240,7 +247,14 @@ describe("QuickSwitcher search syntax help", () => {
         page: "Unloaded",
         kind: "page",
         path: exactPath,
-        block: { id: blockId, raw: "needle block", collapsed: false, children: [], breadcrumb: [] },
+        block: {
+          id: runtimeId,
+          raw: `needle block\nid:: ${authoredId}`,
+          collapsed: false,
+          children: [],
+          breadcrumb: [],
+          properties: [["ID", authoredId]],
+        },
         display_text: "needle block",
         evidence: [{ clause_id: 1, field: "visible_content", mode: "contains", spans: [{ start: 0, end: 6 }] }],
         match_class: "body_evidence",
@@ -262,15 +276,16 @@ describe("QuickSwitcher search syntax help", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
 
     expect(rightSidebar()).toEqual([{
-      kind: "block", uuid: blockId, page: "Unloaded", pageKind: "page",
+      kind: "block", uuid: authoredId, page: "Unloaded", pageKind: "page",
       path: exactPath,
     }]);
-    await vi.waitFor(() => expect(savePage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith(exactPath));
     expect(getPageByPath).toHaveBeenCalledWith(exactPath);
     expect(getPage).not.toHaveBeenCalled();
     const savedExact = JSON.parse(disk.get(exactPath)!) as PageDto;
     expect(savedExact.path).toBe(exactPath);
-    expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${blockId}`);
+    expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${authoredId}`);
+    expect(savePage).not.toHaveBeenCalled();
     expect(disk.get(canonicalPath)).toBe(canonicalBytes);
     expect(canonical.blocks[0].raw).toBe("canonical sibling bytes");
     dispose();
@@ -293,7 +308,14 @@ describe("QuickSwitcher search syntax help", () => {
           page: "Twin",
           kind: "page",
           path,
-          block: { id: "exact-block", raw: "owned needle", collapsed: false, children: [], breadcrumb: [] },
+          block: {
+            id: "exact-runtime-block",
+            raw: "owned needle\nid:: exact-authored-block",
+            collapsed: false,
+            children: [],
+            breadcrumb: [],
+            properties: [["id", "exact-authored-block"]],
+          },
           display_text: "owned needle",
           evidence: [{ clause_id: 2, field: "visible_content", mode: "contains", spans: [{ start: 6, end: 12 }] }],
           match_class: "body_evidence",
@@ -323,7 +345,9 @@ describe("QuickSwitcher search syntax help", () => {
 
       first.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
       first.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-      expect(route()).toMatchObject({ kind: "page", name: "Twin", pageKind: "page", path });
+      expect(route()).toMatchObject({
+        kind: "page", name: "Twin", pageKind: "page", block: "exact-authored-block", path,
+      });
 
       const alternate = await openResults();
       alternate.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
@@ -333,13 +357,13 @@ describe("QuickSwitcher search syntax help", () => {
       const targetPane = layoutPaneIds().find((id) => id !== "main");
       expect(targetPane).toBeDefined();
       expect(paneRouter(targetPane!).route()).toMatchObject({
-        kind: "page", name: "Twin", pageKind: "page", path,
+        kind: "page", name: "Twin", pageKind: "page", block: "exact-authored-block", path,
       });
 
       const background = await openResults();
       background.blockRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 1 }));
       expect(tabs().map(tabRoute)).toContainEqual({
-        kind: "page", name: "Twin", pageKind: "page", block: "exact-block", path,
+        kind: "page", name: "Twin", pageKind: "page", block: "exact-authored-block", path,
       });
     } finally {
       dispose();

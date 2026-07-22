@@ -137,6 +137,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
                     evidence={g.evidence ?? []}
                     page={g.page}
                     kind={g.kind}
+                    path={g.path}
                   />
                 </div>
               </Show>

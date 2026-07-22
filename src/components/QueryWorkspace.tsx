@@ -32,6 +32,7 @@ import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../ui";
+import { blockDtoExternalId } from "../blockIdentity";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -663,7 +664,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       props.router.openPageAtBlock({
         name: hit.page,
         pageKind: hit.kind,
-        block: hit.block.id,
+        block: blockDtoExternalId(hit.block),
         ...(hit.path ? { path: hit.path } : {}),
       });
     }

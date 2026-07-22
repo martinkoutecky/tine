@@ -1,8 +1,9 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openPageAtBlock } from "../router";
-import { doc, formatForPage } from "../store";
+import { doc, formatForPage, resolveBlockRef } from "../store";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
+import { blockDtoExternalId } from "../blockIdentity";
 import { EmojiText } from "../render/emoji";
 import { buildSearchExcerpt } from "./SearchResultRow";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
@@ -12,14 +13,16 @@ function focusMainOccurrence(
   kind: PageKind,
   blockId: string,
   offset: number,
+  path?: string,
 ) {
-  openPageAtBlock(page, kind, blockId);
+  openPageAtBlock(page, kind, blockId, path);
   let attempts = 0;
   const focus = () => {
-    if (doc.byId[blockId]) {
-      const block = doc.byId[blockId];
+    const runtimeId = resolveBlockRef({ uuid: blockId, page, pageKind: kind, ...(path ? { path } : {}) });
+    if (runtimeId && doc.byId[runtimeId]) {
+      const block = doc.byId[runtimeId];
       startEditing(
-        blockId,
+        runtimeId,
         rawOffsetToVisibleOffset(block.raw, offset, isBuiltinHidden, formatForPage(page)),
         null,
         "main",
@@ -71,6 +74,7 @@ export function ReferenceExcerptBlocks(props: {
   evidence: ReferenceBlockEvidence[];
   page: string;
   kind: PageKind;
+  path?: string;
 }): JSX.Element {
   const evidenceById = createMemo(() => new Map(props.evidence.map((item) => [item.block_id, item])));
   const [full, setFull] = createSignal<Record<string, boolean>>({});
@@ -105,7 +109,13 @@ export function ReferenceExcerptBlocks(props: {
                   {(item) => (
                     <OccurrenceControls
                       evidence={item()}
-                      onOccurrence={(offset) => focusMainOccurrence(props.page, props.kind, block.id, offset)}
+                      onOccurrence={(offset) => focusMainOccurrence(
+                        props.page,
+                        props.kind,
+                        blockDtoExternalId(block),
+                        offset,
+                        props.path,
+                      )}
                     />
                   )}
                 </Show>

@@ -75,6 +75,7 @@ import {
   setHeading,
   collapsibleDescendantIds,
   setCollapsedDescendants,
+  blockExternalId,
   type OutlineScope,
 } from "../store";
 import {
@@ -399,7 +400,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // Block-level "linked references" panel toggled by the reference-count badge.
   const [showRefs, setShowRefs] = createSignal(false);
   createEffect(() => {
-    if (blockReferencesRequest()?.id === props.id) setShowRefs(true);
+    const requested = blockReferencesRequest()?.id;
+    if (requested === props.id || requested === blockExternalId(props.id)) setShowRefs(true);
   });
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
   // not its children); null for a normal bullet.
@@ -427,6 +429,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         "plugin-thread-lines-standard": pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
       }}
       data-block-id={props.id}
+      data-block-ref={blockExternalId(props.id) ?? props.id}
     >
       <div
         class="block-main"
