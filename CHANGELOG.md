@@ -16,6 +16,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   one release that has this metadata to the next, so the first usable update
   is the one after this release.
 
+### Fixed
+
+- **Android 9 can load Tine's native library** (GH #192). The earlier fix
+  covered the backup path but missed a second `renameat2` call in the trash
+  path, so v0.6.4 could still fail before launch. Both paths now use the
+  API-compatible syscall entry point, and release CI checks the final APK for
+  this class of loader regression.
+- **Ctrl+F no longer reselects the query after every typed character**
+  (GH #224). The field still selects its contents when Ctrl+F is invoked again,
+  but ordinary debounced search updates leave the caret and selection alone.
+- **Task slash commands replace the block's task marker** (GH #225), rather
+  than appending literal text such as `DONE` after an existing `TODO`. The
+  shared marker operation preserves priority and block properties.
+
 ## [0.6.4] - 2026-07-21
 
 ### Added
