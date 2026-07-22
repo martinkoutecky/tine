@@ -1,0 +1,3 @@
+Improves responsiveness and correctness on large graphs: page renames, Linked References, and Unlinked References now avoid blocking the UI, and Backups no longer hashes every snapshot while listing them.
+
+Also fixes stable block identity, IME text commits, natural-language template dates, reference-only namespaces, Ctrl+F selection, task slash commands, and Android 9 startup. AppImages now include update metadata.

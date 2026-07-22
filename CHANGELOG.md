@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-07-22
+
 ### Added
 
 - **AppImage builds now carry update information** (GH #222), so
