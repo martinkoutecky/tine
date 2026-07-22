@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
-  it("shows eager loading and defaults a threshold-sized result to an unmounted body", async () => {
+  it("stays unmounted while loading and defaults a threshold-sized result to an unmounted body", async () => {
     let resolve!: (groups: RefGroup[]) => void;
     vi.spyOn(backend(), "getBacklinks").mockImplementation(
       () => new Promise<RefGroup[]>((done) => { resolve = done; })
@@ -45,7 +45,7 @@ describe("Linked References filters", () => {
     const dispose = render(() => <LinkedReferences name="Target" />, root);
 
     await tick();
-    expect(root.querySelector(".linked-references")?.textContent).toContain("Loading");
+    expect(root.querySelector(".linked-references")).toBeNull();
 
     resolve([{
       page: "Source",

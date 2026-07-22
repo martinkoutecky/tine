@@ -293,7 +293,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         </div>
       }
     >
-    <Show when={groups.loading || (groups() && mergedGroups().length > 0)}>
+    <Show when={groups() && mergedGroups().length > 0}>
       <div class="linked-references">
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <span class="ref-collapse" classList={{ collapsed: collapsed() }}>
@@ -302,7 +302,6 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
             </svg>
           </span>
           Linked References <span class="references-count">{count()}</span>
-          <Show when={groups.loading}><span class="references-loading"> Loading…</span></Show>
           <button
             type="button"
             class="reference-filter-toggle"
