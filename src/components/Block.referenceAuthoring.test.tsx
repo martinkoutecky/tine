@@ -118,6 +118,38 @@ describe("reference authoring", () => {
     }
   });
 
+  it.each([
+    ["authored id", [["id", "11111111-1111-4111-8111-111111111111"]], "11111111-1111-4111-8111-111111111111"],
+    ["id-less fallback", undefined, "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add"],
+  ] as const)("inserts the %s for an accepted block-reference suggestion", async (_case, properties, expectedId) => {
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source",
+      kind: "page",
+      blocks: [{
+        id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add",
+        raw: "test",
+        collapsed: false,
+        children: [],
+        ...(properties ? { properties } : {}),
+      }],
+      evidence: [],
+    }]);
+    loadSingle(page("((test"));
+    startEditing("reference-authoring", 6);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((test", 6);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(doc.byId["reference-authoring"].raw).toBe(`((${expectedId}))`));
+    } finally {
+      dispose();
+    }
+  });
+
   it("does not let an older same-location page lookup overwrite newer results", async () => {
     const pending: { query: string; resolve: (pages: PageEntry[]) => void }[] = [];
     vi.spyOn(backend(), "quickSwitch").mockImplementation((query) =>

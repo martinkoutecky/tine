@@ -176,6 +176,7 @@ import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockBackgroundColor } from "../blockColors";
+import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 
@@ -941,8 +942,8 @@ interface AcItem {
   taskMarker?: string;
   plugin?: { pluginId: string; contributionId: string; insertText?: string };
   templateNodes?: import("../types").BlockDto[];
-  /** A `((block reference))` candidate: insert `((uuid))` and persist id::. */
-  blockRef?: { uuid: string; page: string; kind: import("../types").PageKind };
+  /** A `((block reference))` candidate. `uuid` finds the target; `externalId` is persisted. */
+  blockRef?: { uuid: string; externalId: string; page: string; kind: import("../types").PageKind };
   /** Canonical property-name candidate, or a newly folded typed key. */
   propertyName?: string;
   /** Existing or newly typed value for the active canonical property. */
@@ -1344,7 +1345,7 @@ export function Editor(props: { id: string }): JSX.Element {
     if (t.kind === "block") {
       // `((` → full-text search for a block to reference, grouped by page. An
       // empty query (bare `((`) returns nothing — the popup stays hidden until
-      // the user types. Selecting inserts `((uuid))` (see selectAc).
+      // the user types. Selecting inserts the target's durable external ID (see selectAc).
       const groups = await backend().search(t.query, 20, "block-picker");
       const cur = ac();
       if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
@@ -1354,7 +1355,7 @@ export function Editor(props: { id: string }): JSX.Element {
           items.push({
             label: blockFirstLine(b.raw) || g.page,
             sub: g.page,
-            blockRef: { uuid: b.id, page: g.page, kind: g.kind },
+            blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
           });
         }
       }
@@ -1869,10 +1870,10 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (item.blockRef) {
-      // Insert `((uuid))` now (resolves in-session via the in-memory uuid), then
-      // durably stamp the target's id:: in the background so it survives restart.
-      const { uuid, page, kind } = item.blockRef;
-      replaceTrigger(`((${uuid}))`);
+      // Insert the target's authored ID (or its runtime fallback), while using the
+      // runtime ID to find an id-less target that still needs an `id::` stamped.
+      const { uuid, externalId, page, kind } = item.blockRef;
+      replaceTrigger(`((${externalId}))`);
       void persistBlockRefTarget(uuid, page, kind);
       return;
     }
