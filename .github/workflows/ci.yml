@@ -151,6 +151,9 @@ jobs:
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
 
+      - name: Graph-ownership plugin fixture is reproducible and routes runtime IDs
+        run: npm run plugin:graph-ownership-fixture:check
+
       - name: Launch plugins build and conform
         run: ./scripts/build-community-plugins.sh
 

@@ -40,6 +40,8 @@
     "bench": "node scripts/bench.mjs",
     "bench:startup": "xvfb-run -a node scripts/bench-startup.mjs",
     "plugin:check": "node scripts/tine-plugin.mjs check",
+    "plugin:graph-ownership-fixture:build": "node scripts/build-plugin-graph-ownership-fixture.mjs",
+    "plugin:graph-ownership-fixture:check": "node scripts/test-plugin-graph-ownership-fixture.mjs",
     "plugin:revocation-fixture:build": "node scripts/build-plugin-revocation-fixture.mjs",
     "plugin:revocation-fixture:check": "node scripts/check-plugin-revocation-fixtures.mjs",
     "plugin:revocation-fixture:repro": "node scripts/test-plugin-revocation-reproducibility.mjs",
