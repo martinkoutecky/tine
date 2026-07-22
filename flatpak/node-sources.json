@@ -1413,6 +1413,13 @@
     },
     {
         "type": "file",
+        "url": "https://registry.npmjs.org/chrono-node/-/chrono-node-2.2.4.tgz",
+        "sha512": "e7c1111c67d6b56cc1c5c905f59c85bb026372b78b0ebec2efd9471329d2a99ec9f32d497cc6bca24d53bc209ffd33999a418c13565268411bd03aaa59a3451e",
+        "dest-filename": "111c67d6b56cc1c5c905f59c85bb026372b78b0ebec2efd9471329d2a99ec9f32d497cc6bca24d53bc209ffd33999a418c13565268411bd03aaa59a3451e",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/e7/c1"
+    },
+    {
+        "type": "file",
         "url": "https://registry.npmjs.org/cliui/-/cliui-8.0.1.tgz",
         "sha512": "05278d9f2bacef90b8fff350f6042dd7f72c4d7ca8ffc49bf9a7cb024cc0a6d16e32ca1df4716890636e759a62fe8415ef786754afac47ee4f55131df83afb61",
         "dest-filename": "8d9f2bacef90b8fff350f6042dd7f72c4d7ca8ffc49bf9a7cb024cc0a6d16e32ca1df4716890636e759a62fe8415ef786754afac47ee4f55131df83afb61",
@@ -1543,6 +1550,13 @@
         "sha512": "db75c770217e7281987af8ab65c793543ecd7493aa567fb8f481f2c60b339be2488872e80764e498fb6c6243564f5a6f4521a4737e4be8d1ecd321e43764ae98",
         "dest-filename": "c770217e7281987af8ab65c793543ecd7493aa567fb8f481f2c60b339be2488872e80764e498fb6c6243564f5a6f4521a4737e4be8d1ecd321e43764ae98",
         "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/db/75"
+    },
+    {
+        "type": "file",
+        "url": "https://registry.npmjs.org/dayjs/-/dayjs-1.11.21.tgz",
+        "sha512": "f7c213f8739a8408ac89bcffca329bcee381c1872327b0422cfcc04721e2c84066473e1f6ad17e28f26ccc41d7b06623506db7e1a1ff70e8d6d70c136ca51994",
+        "dest-filename": "13f8739a8408ac89bcffca329bcee381c1872327b0422cfcc04721e2c84066473e1f6ad17e28f26ccc41d7b06623506db7e1a1ff70e8d6d70c136ca51994",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/f7/c2"
     },
     {
         "type": "file",
@@ -4764,6 +4778,12 @@
     },
     {
         "type": "inline",
+        "contents": "94a4865193bfdec4e4f0c29fca3bb79653343262\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/dayjs/-/dayjs-1.11.21.tgz\", \"integrity\": \"sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA==\", \"time\": 0, \"size\": 147879, \"metadata\": {\"url\": \"https://registry.npmjs.org/dayjs/-/dayjs-1.11.21.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "d2cb7b11a536e30d88852b860539061a061b6ed8d38a9e5f4770a4f52eaa",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/fa/f8"
+    },
+    {
+        "type": "inline",
         "contents": "94b8d6a4c5f1545ef6e579d9f7fde82cc95af232\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz\", \"integrity\": \"sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==\", \"time\": 0, \"size\": 3756, \"metadata\": {\"url\": \"https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "f7afbc9eb60823c417e5dd1dd2f56b61e1b85cdd840120ff5644e6b03358",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/23/76"
@@ -5865,6 +5885,12 @@
         "contents": "f36b1016dd5b1627491067bd6601697ce1a9a873\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.25.12.tgz\", \"integrity\": \"sha512-rMmLrur64A7+DKlnSuwqUdRKyd3UE7oPJZmnljqEptesKM8wx9J8gx5u0+9Pq0fQQW8vqeKebwNXdfOyP+8Bsg==\", \"time\": 0, \"size\": 4079682, \"metadata\": {\"url\": \"https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.25.12.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "419bef7fef31eafed33a2d9dbcde5e2220a980fb9265696660e9ef1a5997",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/53/1b"
+    },
+    {
+        "type": "inline",
+        "contents": "f3c3c6534cb843e4471b985e0da72a046cc012a6\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/chrono-node/-/chrono-node-2.2.4.tgz\", \"integrity\": \"sha512-58ERHGfWtWzBxckF9ZyFuwJjcreLDr7C79lHEynSqZ7J8y1JfMa8ok1TvCCf/TOZmkGME1ZSaEEb0DqqWaNFHg==\", \"time\": 0, \"size\": 108328, \"metadata\": {\"url\": \"https://registry.npmjs.org/chrono-node/-/chrono-node-2.2.4.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "681e352f50557cbee63e4e486540d220e1d107b989891589b26ad19a6bd6",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/bc/55"
     },
     {
         "type": "inline",
