@@ -83,8 +83,8 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /name: Verify Linux AppImage update information[\s\S]*?find \. -maxdepth 1 -type f -name "\$zsync_name"[\s\S]*?find "\$appimage_dir" -maxdepth 1 -type f -name "\$zsync_name"[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
-  "release workflow does not fail closed when AppImage update information is absent"
+  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
+  "release workflow verify step must search src-tauri/ for the .zsync (appimagetool writes it into the build CWD) and fail closed when update information is absent"
 );
 
 // Architecture guard: the expensive Linux release build must test that exact

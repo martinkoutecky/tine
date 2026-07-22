@@ -197,7 +197,10 @@ jobs:
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
           # linuxdeploy-plugin-appimage passes this to appimagetool, which embeds
           # the .upd_info section and creates the matching .zsync metadata.
+          # Newer plugin builds read LDAI_UPDATE_INFORMATION and only warn on the
+          # deprecated UPDATE_INFORMATION; set both so any plugin version embeds it.
           UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
+          LDAI_UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
         run: npm run tauri build -- ${{ matrix.args }}
 
       - name: Verify Linux AppImage update information
@@ -212,9 +215,19 @@ jobs:
           appimage_dir=./target/release/bundle/appimage
           appimage="$appimage_dir/Tine_${version}_${arch}.AppImage"
           zsync_name="Tine_${version}_${arch}.AppImage.zsync"
-          zsync_source=$(find . -maxdepth 1 -type f -name "$zsync_name" -print -quit)
+          # appimagetool writes the .zsync into the tauri build CWD (src-tauri/),
+          # NOT beside the AppImage in the bundle dir. Check the known candidate
+          # locations, then fall back to a whole-tree search so a future CWD change
+          # cannot silently drop it (that false "missing" was the GH #222 bug).
+          zsync_source=""
+          for cand in \
+            "./src-tauri/$zsync_name" \
+            "$appimage_dir/$zsync_name" \
+            "./$zsync_name"; do
+            if [ -f "$cand" ]; then zsync_source="$cand"; break; fi
+          done
           if [ -z "$zsync_source" ]; then
-            zsync_source=$(find "$appimage_dir" -maxdepth 1 -type f -name "$zsync_name" -print -quit)
+            zsync_source=$(find . -type f -name "$zsync_name" -print -quit 2>/dev/null)
           fi
           if [ -z "$zsync_source" ]; then
             echo "::error::missing AppImage update metadata: $zsync_name"

@@ -6,7 +6,7 @@ outliner that reads and writes a real Logseq Markdown (and now Org) graph.
 The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 [Semantic Versioning](https://semver.org/).
 
-## [0.6.4] - 2026-07-21
+## [Unreleased]
 
 ### Added
 
@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   release also publishes the matching `.zsync` file. Delta updates work from
   one release that has this metadata to the next, so the first usable update
   is the one after this release.
+
+## [0.6.4] - 2026-07-21
+
+### Added
+
 - **Drag table columns into the order you want** (GH #217): grab a property
   column's header in a table view and drop it where it belongs. The order is
   stored with the sheet, so it survives a restart. Computed formula columns
@@ -2451,7 +2456,7 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.6.4...HEAD
 [0.6.0]: https://github.com/martinkoutecky/tine/compare/v0.5.10...v0.6.0
 [0.5.10]: https://github.com/martinkoutecky/tine/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/martinkoutecky/tine/compare/v0.5.8...v0.5.9
