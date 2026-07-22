@@ -18,6 +18,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **IME composition now commits finalized block text once** (GH #237), avoiding
+  intermediate graph writes and duplicate trailing-input commits.
 - **Template date expressions now understand natural language** (GH #226), so
   `<% next monday %>`, `in 5 days`, and similar English expressions expand to
   journal links using the graph's configured journal-title format. Unknown

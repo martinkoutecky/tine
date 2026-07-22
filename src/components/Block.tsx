@@ -2316,7 +2316,27 @@ export function Editor(props: { id: string }): JSX.Element {
     ref.setSelectionRange(paired.caret, paired.caret);
     return true;
   };
+  // IMEs replace the textarea's transient composition range many times before
+  // committing. Keep that range DOM-local: every setRaw() also dirties the page
+  // and starts its save/reparse work. The finalized value has one canonical
+  // commit at compositionend instead.
+  let compositionActive = false;
+  let compositionEndValue: string | null = null;
+  const onCompositionStart = () => {
+    compositionActive = true;
+    compositionEndValue = null;
+    clearTimeout(acTimer);
+  };
   const onInput = (e: InputEvent) => {
+    if (compositionActive || e.isComposing) return;
+    // Chromium-family engines can emit one ordinary input after compositionend.
+    // Its DOM value has already committed above; suppress only that duplicate,
+    // never a subsequent real edit with different text.
+    if (compositionEndValue === ref.value) {
+      compositionEndValue = null;
+      return;
+    }
+    compositionEndValue = null;
     // Editor keystroke post-processing on a single inserted char (not paste/IME/
     // delete). All branches edit ref.value BEFORE commit so the store sees it.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
@@ -2368,7 +2388,9 @@ export function Editor(props: { id: string }): JSX.Element {
     refreshAutocompleteAfterInput();
   };
   const onCompositionEnd = () => {
-    if (!applyFullWidthRefReplace()) return;
+    compositionActive = false;
+    applyFullWidthRefReplace();
+    compositionEndValue = ref.value;
     commit(ref.value);
     autosize();
     refreshAutocompleteAfterInput();
@@ -3321,6 +3343,7 @@ export function Editor(props: { id: string }): JSX.Element {
         value={isCalc() ? (calcLive() ?? "") : editorValue()}
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}
+        onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {
