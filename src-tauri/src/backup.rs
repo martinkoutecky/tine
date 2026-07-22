@@ -64,6 +64,7 @@ pub(crate) fn backup_graph_now(
 /// Returns (files copied, complete) — `complete` is false if ANY graph
 /// text/config/asset-sidecar copy failed, so the caller (restore) can refuse to
 /// proceed without a full rollback snapshot.
+#[derive(Clone)]
 struct BackupSource {
     journals: PathBuf,
     pages: PathBuf,
@@ -90,6 +91,11 @@ impl BackupSource {
 
 const SNAPSHOT_SCHEMA: u32 = 2;
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
+
+#[cfg(test)]
+std::thread_local! {
+    static PAYLOAD_HASH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct SnapshotFile {
@@ -150,6 +156,8 @@ fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
 }
 
 fn hash_snapshot_file(path: &std::path::Path) -> std::io::Result<String> {
+    #[cfg(test)]
+    PAYLOAD_HASH_READS.with(|reads| reads.set(reads.get() + 1));
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
@@ -383,20 +391,35 @@ pub(crate) fn set_backup_keep(
 
 /// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).
 fn backup_base(app: &tauri::AppHandle, graph: &Graph) -> Option<PathBuf> {
-    let root = graph.root.clone();
+    backup_base_for_root(app, &graph.root)
+}
+
+fn backup_base_for_root(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
     let data_dir = app.path().app_data_dir().ok()?;
-    Some(data_dir.join("backups").join(root_backup_id(&root)))
+    Some(data_dir.join("backups").join(root_backup_id(root)))
 }
 
 #[tauri::command]
-pub(crate) fn list_backups(
+pub(crate) async fn list_backups(
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<Vec<BackupInfo>, String> {
-    let slot = slot_for_context(&state)?;
-    let Some(base) = backup_base(&app, &slot.graph) else {
-        return Ok(Vec::new());
-    };
+    let root = slot_for_context(&state)?.graph.root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(base) = backup_base_for_root(&app, &root) else {
+            return Vec::new();
+        };
+        list_backups_from_base(&base, &root)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec<BackupInfo> {
+    let current_root = std::fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .display()
+        .to_string();
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&base) {
         for e in rd.flatten() {
@@ -407,11 +430,7 @@ pub(crate) fn list_backups(
             let Some(manifest) = read_manifest(&p) else {
                 continue;
             };
-            let current_root = std::fs::canonicalize(&slot.graph.root)
-                .unwrap_or_else(|_| slot.graph.root.clone())
-                .display()
-                .to_string();
-            if manifest.root != current_root || !verify_snapshot(&p, &manifest) {
+            if manifest.root != current_root {
                 continue;
             }
             let stamp = match p.file_name().and_then(|s| s.to_str()) {
@@ -423,7 +442,7 @@ pub(crate) fn list_backups(
         }
     }
     out.sort_by(|a, b| b.stamp.cmp(&a.stamp)); // newest first
-    Ok(out)
+    out
 }
 
 fn count_md_recursive(dir: &std::path::Path) -> usize {
@@ -474,7 +493,7 @@ fn count_asset_sidecars_recursive(dir: &std::path::Path) -> usize {
 /// *current* state first (so a mistaken restore is itself reversible).
 /// Destructive — the frontend confirms.
 #[tauri::command]
-pub(crate) fn restore_backup(
+pub(crate) async fn restore_backup(
     stamp: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
@@ -487,25 +506,35 @@ pub(crate) fn restore_backup(
     {
         return Err("invalid backup id".into());
     }
-    let slot = slot_for_context(&state)?;
-    let (journals, pages, assets, cfg_dest, source) = {
-        let g = &slot.graph;
-        (
-            g.journals_path(),
-            g.pages_path(),
-            g.assets_path(),
-            g.root.join("logseq").join("config.edn"),
-            BackupSource::from_graph(g),
-        )
-    };
-    let base = backup_base(&app, &slot.graph).ok_or("no app-data dir")?;
+    let source = BackupSource::from_graph(&slot_for_context(&state)?.graph);
+    let restore_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
+        restore_from_backup_source(&stamp, &base, source, |source| {
+            do_backup_source(&restore_app, source.clone(), "pre-restore")
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    crate::state::refresh_graph(&state)
+}
+
+fn restore_from_backup_source(
+    stamp: &str,
+    base: &std::path::Path,
+    source: BackupSource,
+    snapshot_current: impl FnOnce(&BackupSource) -> (usize, bool),
+) -> Result<(), String> {
+    let journals = source.journals.clone();
+    let pages = source.pages.clone();
+    let assets = source.assets.clone();
+    let cfg_dest = source.cfg.clone();
     let src = base.join(&stamp);
     if !src.is_dir() {
         return Err("backup not found".into());
     }
     let manifest = read_manifest(&src).ok_or("backup is incomplete or unverified")?;
-    let current_root =
-        std::fs::canonicalize(&slot.graph.root).unwrap_or_else(|_| slot.graph.root.clone());
+    let current_root = std::fs::canonicalize(&source.root).unwrap_or_else(|_| source.root.clone());
     if manifest.root != current_root.display().to_string() {
         return Err("backup belongs to a different graph".into());
     }
@@ -566,7 +595,7 @@ pub(crate) fn restore_backup(
     // name so it can't collide with (or be pruned by) the launch snapshot the
     // post-restore reload will take. Abort if the snapshot fails while the live
     // graph has content — never run a destructive restore without a way back.
-    let (snapshot_n, complete) = do_backup_source(&app, source, "pre-restore");
+    let (snapshot_n, complete) = snapshot_current(&source);
     let live_n = count_md_recursive(&journals)
         + count_md_recursive(&pages)
         + count_asset_sidecars_recursive(&assets);
@@ -625,7 +654,6 @@ pub(crate) fn restore_backup(
         atomic_copy_new_into_live(&graph_recovery, &src_cfg, &cfg_dest)
             .map_err(|e| format!("restore config failed: {e}"))?;
     }
-    crate::state::refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1645,6 +1673,97 @@ mod tests {
         )
         .unwrap();
         assert!(read_manifest(&root).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manifest_listing_never_hashes_snapshot_payloads() {
+        let root = scratch("manifest-only-listing");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        let snapshot = base.join("2026-07-22_12-00-00");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
+        std::fs::write(snapshot.join("pages/note.md"), b"tampered payload").unwrap();
+        write_manifest(
+            &snapshot,
+            &SnapshotManifest {
+                schema: SNAPSHOT_SCHEMA,
+                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
+                journals_dir: "journals".into(),
+                pages_dir: "pages".into(),
+                files: vec![SnapshotFile {
+                    path: "pages/note.md".into(),
+                    sha256: "manifest metadata only".into(),
+                }],
+                complete: true,
+            },
+        )
+        .unwrap();
+
+        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
+        let listed = list_backups_from_base(&base, &graph);
+
+        assert_eq!(
+            PAYLOAD_HASH_READS.with(|reads| reads.get()),
+            0,
+            "listing must not read or hash snapshot payloads"
+        );
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].files, 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restore_verifies_a_selected_snapshot_before_mutating_the_graph() {
+        let root = scratch("restore-verification-before-mutation");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        let stamp = "2026-07-22_12-00-00";
+        let snapshot = base.join(stamp);
+        let live_page = graph.join("pages/note.md");
+        std::fs::create_dir_all(live_page.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
+        std::fs::write(&live_page, b"live graph data").unwrap();
+        std::fs::write(snapshot.join("pages/note.md"), b"tampered payload").unwrap();
+        write_manifest(
+            &snapshot,
+            &SnapshotManifest {
+                schema: SNAPSHOT_SCHEMA,
+                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
+                journals_dir: "journals".into(),
+                pages_dir: "pages".into(),
+                files: vec![SnapshotFile {
+                    path: "pages/note.md".into(),
+                    sha256: "does not match the payload".into(),
+                }],
+                complete: true,
+            },
+        )
+        .unwrap();
+        let source = BackupSource {
+            journals: graph.join("journals"),
+            pages: graph.join("pages"),
+            assets: graph.join("assets"),
+            cfg: graph.join("logseq/config.edn"),
+            root: graph.clone(),
+            journals_dir: "journals".into(),
+            pages_dir: "pages".into(),
+        };
+
+        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
+        let result = restore_from_backup_source(stamp, &base, source, |_| {
+            std::fs::write(&live_page, b"mutated graph data").unwrap();
+            (1, true)
+        });
+
+        assert_eq!(
+            PAYLOAD_HASH_READS.with(|reads| reads.get()),
+            1,
+            "restoring must verify the selected snapshot payload"
+        );
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&live_page).unwrap(), b"live graph data");
         let _ = std::fs::remove_dir_all(root);
     }
 
