@@ -89,21 +89,23 @@ try {
   // Invoke Tine's real block menu command. The target begins without id::, so
   // the command must synchronously choose the durable UUID used everywhere else.
   const sourceMenuOpened = await browser.execute(() => {
-    const blocks = [...document.querySelectorAll(".page-blocks > .ls-block")];
-    const row = blocks.at(-1)?.querySelector(".block-main");
-    if (!(row instanceof HTMLElement)) return false;
-    const rect = row.getBoundingClientRect();
-    row.dispatchEvent(new MouseEvent("contextmenu", {
+    const freshBlock = [...document.querySelectorAll(".page-blocks > .ls-block")]
+      .find((block) => block.querySelector(".block-content-wrapper")?.textContent?.trim() === "Fresh source target");
+    const surface = freshBlock?.querySelector(":scope > .block-main > .block-content-wrapper");
+    if (!(surface instanceof HTMLElement)) return false;
+    const rect = surface.getBoundingClientRect();
+    const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
       clientX: rect.left + Math.max(2, Math.min(20, rect.width / 2)),
       clientY: rect.top + Math.max(2, Math.min(12, rect.height / 2)),
       view: window,
-    }));
-    return true;
+    });
+    return !surface.dispatchEvent(event) && event.defaultPrevented;
   });
-  if (!sourceMenuOpened) throw new Error("fresh source block was unavailable for Copy block ref");
-  const copyRef = await browser.$("button=Copy block ref");
+  if (!sourceMenuOpened) throw new Error("fresh source block did not open Tine's context menu");
+  await browser.$(".ctx-menu").waitForExist({ timeout: 5000 });
+  const copyRef = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-menu ')]//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-item ') and normalize-space(.) = 'Copy block ref']");
   await copyRef.waitForExist({ timeout: 5000 });
   await copyRef.click();
   await browser.waitUntil(() => /(?:^|\n)\s*id::\s*[0-9a-f-]{36}(?:\s|$)/i.test(
