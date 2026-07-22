@@ -760,7 +760,7 @@ function Rendered(props: {
   const body = (
     <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} />}>
       <AnnotationBody
-        highlightId={props.id}
+        highlightId={blockExternalId(props.id) ?? props.id}
         color={annotation()!.color}
         hlPage={annotation()!.hlPage}
         line={annotationLine()}

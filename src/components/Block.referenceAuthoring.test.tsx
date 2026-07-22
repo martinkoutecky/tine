@@ -49,6 +49,36 @@ function accept(textarea: HTMLTextAreaElement, key: "Enter" | "Tab" = "Enter") {
 }
 
 describe("reference authoring", () => {
+  it("renders PDF annotation navigation with the authored highlight id", () => {
+    const authoredId = "7b6704f8-a337-4336-a711-2ba6bc14fbf2";
+    loadSingle({
+      name: "hls__paper",
+      kind: "page",
+      title: "hls__paper",
+      pre_block: "file-path:: ../assets/paper.pdf",
+      blocks: [{
+        id: "runtime-annotation-id",
+        raw: `Highlighted text\nid:: ${authoredId}\nls-type:: annotation\nhl-page:: 2\nhl-color:: yellow`,
+        collapsed: false,
+        children: [],
+        properties: [
+          ["id", authoredId],
+          ["ls-type", "annotation"],
+          ["hl-page", "2"],
+          ["hl-color", "yellow"],
+        ],
+      }],
+    });
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("hls__paper")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      expect(root.querySelector(".hl-prefix")?.getAttribute("data-highlight-id")).toBe(authoredId);
+    } finally {
+      dispose();
+    }
+  });
+
   it("makes Page reference the active bare slash command and chains into a blank page lifecycle", async () => {
     loadSingle(page("/"));
     startEditing("reference-authoring", 1);
