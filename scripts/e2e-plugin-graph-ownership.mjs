@@ -70,12 +70,12 @@ try {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
   });
-  await browser.$('[data-block-id="shared-id"] .block-content').waitForExist({ timeout: 20_000 });
-  await browser.$('[data-block-id="shared-id"] .block-content').click();
-  await browser.$('[data-block-id="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
+  await browser.$('[data-block-ref="shared-id"] .block-content').waitForExist({ timeout: 20_000 });
+  await browser.$('[data-block-ref="shared-id"] .block-content').click();
+  await browser.$('[data-block-ref="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
 
   const raced = await browser.execute(async (graphB) => {
-    const editor = document.querySelector('[data-block-id="shared-id"] textarea.block-editor');
+    const editor = document.querySelector('[data-block-ref="shared-id"] textarea.block-editor');
     if (!(editor instanceof HTMLTextAreaElement)) return "missing-editor";
     editor.dispatchEvent(new KeyboardEvent("keydown", {
       key: "g", code: "KeyG", ctrlKey: true, altKey: true, bubbles: true, cancelable: true,
@@ -96,13 +96,13 @@ try {
   await sleep(600);
   if (fs.readFileSync(journalPath(A), "utf8") !== sourceBytes) throw new Error("stale response changed graph A after transition began");
   if (fs.readFileSync(journalPath(B), "utf8") !== sourceBytes) throw new Error("stale graph-A response changed equal graph-B bytes");
-  const staleUi = await browser.$('[data-block-id="shared-id"] .block-content').getText();
+  const staleUi = await browser.$('[data-block-ref="shared-id"] .block-content').getText();
   if (!staleUi.includes("same raw")) throw new Error(`graph B routed state changed: ${staleUi}`);
 
-  await browser.$('[data-block-id="shared-id"] .block-content').click();
-  await browser.$('[data-block-id="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
+  await browser.$('[data-block-ref="shared-id"] .block-content').click();
+  await browser.$('[data-block-ref="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
   await browser.execute(() => {
-    document.querySelector('[data-block-id="shared-id"] textarea.block-editor')?.dispatchEvent(new KeyboardEvent("keydown", {
+    document.querySelector('[data-block-ref="shared-id"] textarea.block-editor')?.dispatchEvent(new KeyboardEvent("keydown", {
       key: "g", code: "KeyG", ctrlKey: true, altKey: true, bubbles: true, cancelable: true,
     }));
   });

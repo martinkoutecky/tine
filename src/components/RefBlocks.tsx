@@ -11,6 +11,7 @@ import { formatForPage } from "../store";
 import { openBlockInSidebar } from "../ui";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
+import { blockDtoExternalId } from "../blockIdentity";
 
 // `page`/`pageKind` (where these blocks live) are threaded through so a
 // shift-click can open the block live in the sidebar.
@@ -62,7 +63,12 @@ function RefBlock(props: {
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
   return (
-    <div class="ls-block ref-block" data-block-id={props.block.id} classList={{ "page-property-reference": !!props.block.page_property }}>
+    <div
+      class="ls-block ref-block"
+      data-block-id={props.block.id}
+      data-block-ref={blockDtoExternalId(props.block)}
+      classList={{ "page-property-reference": !!props.block.page_property }}
+    >
       <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
         <div class="block-controls">
           <span
@@ -72,7 +78,7 @@ function RefBlock(props: {
               if (!props.block.page_property && e.shiftKey) {
                 e.stopPropagation();
                 openBlockInSidebar({
-                  uuid: props.block.id,
+                  uuid: blockDtoExternalId(props.block),
                   page: props.page ?? "",
                   pageKind: props.pageKind ?? "page",
                 });

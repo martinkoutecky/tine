@@ -71,16 +71,17 @@ const editorState = (browser) => browser.execute(() => {
         start: active.selectionStart,
         end: active.selectionEnd,
         blockId: active.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null,
+        blockRef: active.closest("[data-block-ref]")?.getAttribute("data-block-ref") ?? null,
       }
-    : { value: null, start: null, end: null, blockId: null };
+    : { value: null, start: null, end: null, blockId: null, blockRef: null };
 });
 const focusBlockEditor = async (browser, id) => {
-  const content = await browser.$(`[data-block-id="${id}"] .block-content`);
+  const content = await browser.$(`[data-block-ref="${id}"] .block-content`);
   await content.waitForExist({ timeout: 5000 });
   await content.click();
-  const editor = await browser.$(`[data-block-id="${id}"] textarea.block-editor`);
+  const editor = await browser.$(`[data-block-ref="${id}"] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5000 });
-  await browser.waitUntil(async () => (await editorState(browser)).blockId === id, {
+  await browser.waitUntil(async () => (await editorState(browser)).blockRef === id, {
     timeout: 5000,
     timeoutMsg: `clicking block ${id} did not focus its editor`,
   });
@@ -297,9 +298,9 @@ try {
   }
   await ensureParityPage(browser);
 
-  const content = await browser.$(`[data-block-id="${EDITOR}"] .block-content`);
+  const content = await browser.$(`[data-block-ref="${EDITOR}"] .block-content`);
   await content.click();
-  const editor = await browser.$(`[data-block-id="${EDITOR}"] textarea.block-editor`);
+  const editor = await browser.$(`[data-block-ref="${EDITOR}"] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "((test");
 
@@ -348,7 +349,7 @@ try {
     timeout: 10_000,
     timeoutMsg: "accepted block reference did not persist exactly in the editor block",
   });
-  const rendered = await browser.$(`[data-block-id="${EDITOR}"] .block-ref`);
+  const rendered = await browser.$(`[data-block-ref="${EDITOR}"] .block-ref`);
   await rendered.waitForExist({ timeout: 5000 });
   receipt.observations.renderedText = (await rendered.getText()).trim();
   receipt.observations.persisted = fs.readFileSync(TEST_PAGE, "utf8");
@@ -358,9 +359,9 @@ try {
   }
   // GH #155: bare slash must select Page reference, chain into the active but
   // row-free blank page lifecycle, then use ordinary adaptive page completion.
-  const slashContent = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .block-content`);
+  const slashContent = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await slashContent.click();
-  const slashEditor = await browser.$(`[data-block-id="${SLASH_EDITOR}"] textarea.block-editor`);
+  const slashEditor = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
   await slashEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "/");
   await waitForActiveAutocomplete(browser, "Page reference", "bare slash did not activate Page reference");
@@ -458,9 +459,9 @@ try {
 
   // The literal Linux Mod-L chord reaches the editor dispatcher, wraps selected
   // text and leaves the collapsed caret in the Markdown URL field.
-  const linkContent = await browser.$(`[data-block-id="${LINK_EDITOR}"] .block-content`);
+  const linkContent = await browser.$(`[data-block-ref="${LINK_EDITOR}"] .block-content`);
   await linkContent.click();
-  const linkEditor = await browser.$(`[data-block-id="${LINK_EDITOR}"] textarea.block-editor`);
+  const linkEditor = await browser.$(`[data-block-ref="${LINK_EDITOR}"] textarea.block-editor`);
   await linkEditor.waitForExist({ timeout: 5000 });
   await browser.execute(() => {
     window.__ogParityModL = [];
@@ -583,9 +584,9 @@ try {
     capabilities: tauriCapabilities(APP, "typed-restart", process.platform, webviewTarget.debuggerAddress),
   });
   await ensureParityPage(browser);
-  const restartedSlashContent = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .block-content`);
+  const restartedSlashContent = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await restartedSlashContent.click();
-  const restartedSlashEditor = await browser.$(`[data-block-id="${SLASH_EDITOR}"] textarea.block-editor`);
+  const restartedSlashEditor = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
   await restartedSlashEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "[[FEx");
   await waitForActiveAutocomplete(browser, 'Create "FEx"', "typed policy did not survive a same-XDG restart");
@@ -615,9 +616,9 @@ try {
   const paneIds = await browser.execute(() => [...document.querySelectorAll("[data-pane-id]")].map((pane) => pane.getAttribute("data-pane-id")));
   const splitPane = paneIds.find((id) => id && id !== "main");
   if (!splitPane) throw new Error(`could not identify duplicate split pane: ${JSON.stringify(paneIds)}`);
-  const splitContent = await browser.$(`[data-pane-id="${splitPane}"] [data-block-id="${SLASH_EDITOR}"] .block-content`);
+  const splitContent = await browser.$(`[data-pane-id="${splitPane}"] [data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await splitContent.click();
-  const splitEditor = await browser.$(`[data-pane-id="${splitPane}"] [data-block-id="${SLASH_EDITOR}"] textarea.block-editor`);
+  const splitEditor = await browser.$(`[data-pane-id="${splitPane}"] [data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
   await splitEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "[[Fzy");
   await waitForActiveAutocomplete(browser, "Fuzzy Existing", "split editor did not consume main-WebView existing-first policy");
@@ -653,7 +654,7 @@ try {
     capabilities: tauriCapabilities(APP, "committed-reload", process.platform, webviewTarget.debuggerAddress),
   });
   await ensureParityPage(browser);
-  const reloadedRef = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .page-ref`);
+  const reloadedRef = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] .page-ref`);
   await reloadedRef.waitForExist({ timeout: 10_000 });
   receipt.observations.reload = {
     rendered: (await reloadedRef.getText()).trim(),

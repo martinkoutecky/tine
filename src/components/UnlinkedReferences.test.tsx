@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import type { RefGroup } from "../types";
+import { resetStore, setDoc } from "../store";
+import { editingId, endEdit } from "../editorController";
+import { route } from "../router";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -9,9 +12,75 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  endEdit("blur");
+  resetStore();
 });
 
 describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
+  it("routes authored DTO identities and focuses their loaded runtime owner", async () => {
+    const runtimeId = "runtime-unlinked";
+    const authoredId = "authored-unlinked";
+    const path = "pages/Source.md";
+    setDoc({
+      byId: {
+        [runtimeId]: {
+          id: runtimeId,
+          raw: `Target mention\nid:: ${authoredId}`,
+          collapsed: false,
+          parent: null,
+          page: "Source",
+          children: [],
+        },
+      },
+      pages: [{
+        name: "Source",
+        kind: "page",
+        title: "Source",
+        preBlock: null,
+        roots: [runtimeId],
+        path,
+        format: "md",
+        readOnly: false,
+        guide: false,
+      }],
+      feed: ["Source"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{
+      page: "Source",
+      kind: "page",
+      path,
+      blocks: [{
+        id: runtimeId,
+        raw: `Target mention\nid:: ${authoredId}`,
+        collapsed: false,
+        children: [],
+        properties: [["Id", authoredId]],
+      }],
+      evidence: [{
+        block_id: runtimeId,
+        occurrences: [
+          { matched_name: "Target", canonical: "Target", kind: "plain", span: { start: 0, end: 6 }, rule: "plain" },
+          { matched_name: "Target", canonical: "Target", kind: "plain", span: { start: 0, end: 6 }, rule: "plain" },
+        ],
+      }],
+    }]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <UnlinkedReferences name="Target" />, root);
+
+    try {
+      root.querySelector<HTMLElement>(".references-header")!.click();
+      await tick();
+      await tick();
+      root.querySelector<HTMLButtonElement>(".reference-occurrence-jump")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: "Source", pageKind: "page", path });
+      await vi.waitFor(() => expect(editingId()).toBe(runtimeId));
+    } finally {
+      dispose();
+    }
+  });
+
   it("computes eagerly while collapsed and mounts results only after expansion (GH #236)", async () => {
     let resolve!: (groups: RefGroup[]) => void;
     const request = vi.spyOn(backend(), "getUnlinkedRefs").mockImplementation(
