@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **AppImage builds now carry update information** (GH #222), so
+  `appimageupdatetool` (and AppImageUpdate) can update Tine in place. Each
+  release also publishes the matching `.zsync` file. Delta updates work from
+  one release that has this metadata to the next, so the first usable update
+  is the one after this release.
 - **Drag table columns into the order you want** (GH #217): grab a property
   column's header in a table view and drop it where it belongs. The order is
   stored with the sheet, so it survives a restart. Computed formula columns

@@ -4,9 +4,30 @@
  "baseTag": "v0.6.3",
  "focusedAudit": {
   "required": false,
-  "reason": "0.6.4 is a patch release of GitHub/report-driven bug fixes plus OG-parity render, clipboard, export and editor work. It adds no new graph-write path: the only write-path touches are in-place block-property updates (GH #216), a setSchedule rewrite that PRESERVES trailing text, and clipboard block-identity paste, all through the existing audited save path. No subsystem was introduced or rewritten, so no focused change-cluster audit is required."
+  "reason": "0.6.4 is a patch release of GitHub/report-driven bug fixes plus OG-parity render, clipboard, export and editor work carried on the same batch branch. It adds no new graph-write path: the only write-path touches are in-place block-property updates (GH #216), a setSchedule rewrite that now PRESERVES trailing text instead of dropping it, and clipboard block-identity paste, all of which route through the existing audited save path. The AppImage change (GH #222) is release packaging only. No subsystem was introduced or rewritten, so no focused change-cluster audit is required."
  },
  "items": [
+  {
+   "section": "Added",
+   "text": "**AppImage builds now carry update information** (GH #222), so `appimageupdatetool` (and AppImageUpdate) can update Tine in place. Each release also publishes the matching `.zsync` file. Delta updates work from one release that has this metadata to the next, so the first usable update is the one after this release.",
+   "userVisible": true,
+   "regressions": [],
+   "docs": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): Release-pipeline change only; covered by scripts/test-release-pipeline.mjs (asset inventory + workflow wiring), not by a user-behavior catalog row. behavior/parity change documented by its changelog entry and regression coverage. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no marketing-surface change. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "Patch release (0.6.4): no editorial post required. Existing Guide/README/site copy stays accurate; the blog editorial sync is a 0.x.0 gate.",
+    "refs": []
+   }
+  },
   {
    "section": "Added",
    "text": "**Drag table columns into the order you want** (GH #217): grab a property column's header in a table view and drop it where it belongs. The order is stored with the sheet, so it survives a restart. Computed formula columns stay pinned at the end.",

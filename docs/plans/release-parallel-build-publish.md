@@ -3,7 +3,7 @@
 **Status:** implemented on `master` in `dd6e0e0` (2026-07-11). Manual release
 run [29165451611](https://github.com/martinkoutecky/tine/actions/runs/29165451611)
 proved all five desktop builds + Android overlap, the real Flatpak build passes,
-and candidate assembly produces exactly 21 assets / 12 updater entries without
+and candidate assembly produces the layout's exact 23-asset inventory / 12 updater entries without
 touching GitHub Releases. The first real tagged publisher run is intentionally
 the next explicitly authorized release; no dummy public version was cut.
 
@@ -61,7 +61,7 @@ The v0.5.6 hardening remains mandatory, together with the exact-SHA CI gate:
 4. Both Flatpak offline dependency manifests are current, and the real Flatpak
    bundle build succeeds.
 5. Tagged releases require a signed Android APK; missing secrets are fatal.
-6. The final release contains exactly the expected 21 assets.
+6. The final release contains exactly the layout's expected asset inventory.
 7. `latest.json` contains exactly the expected 12 signed Linux/Windows updater
    platform entries.
 8. Any failure leaves no public partial release.
@@ -143,9 +143,9 @@ An `assemble` job downloads all build artifacts and:
 1. verifies every fragment has the requested version and exact tag commit;
 2. rejects duplicate filenames/platform keys;
 3. verifies recorded SHA-256 values and signatures;
-4. verifies the exact 20 platform assets (everything except `latest.json`);
+4. verifies every platform asset in the layout (everything except `latest.json`);
 5. creates `latest.json` once from the shared contract and fragments;
-6. runs the same 21-asset/12-platform verifier used after upload.
+6. runs the same exact-inventory/12-platform verifier used after upload.
 
 For `workflow_dispatch`, stop here and upload a `release-candidate` workflow
 artifact. This exercises the complete build and assembly path without creating
@@ -159,7 +159,7 @@ On a version tag only, the publisher:
 2. creates a draft if none exists;
 3. reuses it only if it is still a draft for the same commit;
 4. removes/replaces stale draft assets from an earlier failed attempt;
-5. uploads the 20 platform assets sequentially;
+5. uploads every platform asset in the layout sequentially;
 6. uploads the fully assembled `latest.json` last;
 7. re-downloads the draft assets and updater manifest and runs
    `check-release-assets.mjs` against the remote state;
@@ -179,7 +179,7 @@ the tag so two publishers cannot run for the same version.
    this phase.
 3. Run the manual workflow on an exact release-shaped commit. Require all five
    desktop jobs to overlap in time, Android + Flatpak green, and the assembled
-   candidate to pass the 21-asset/12-platform contract.
+   candidate to pass the exact-inventory/12-platform contract.
 4. Switch tagged publication to the single publisher. Preserve the serialized
    workflow revision as the documented rollback commit; do not cut a dummy public
    version just to test publishing.
@@ -198,7 +198,7 @@ the tag so two publishers cannot run for the same version.
 - Forced loss of any required artifact/signature/platform fails before publish.
 - A failed publisher rerun is safe and idempotent.
 - The real offline Flatpak job and signed Android job are hard dependencies.
-- Remote verification reports exactly 21 assets and 12 updater entries.
+- Remote verification reports the layout's exact inventory and 12 updater entries.
 - The public release is created only after all expensive builds have completed;
   the post-build publication phase is short and sequential.
 
