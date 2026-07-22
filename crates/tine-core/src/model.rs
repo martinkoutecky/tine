@@ -16,6 +16,7 @@ use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -581,7 +582,12 @@ impl ReferenceTokenSignature {
     }
 
     fn insert_text(&mut self, text: &str) {
-        let bytes = text.as_bytes();
+        // Exact plain-reference matching compares Unicode-lowercased, NFC text.
+        // Fold the source the same way before extracting ASCII tokens so a
+        // character such as the Kelvin sign (`K`) cannot match page `K` exactly
+        // while being absent from this no-false-negative prefilter.
+        let folded: String = text.to_lowercase().nfc().collect();
+        let bytes = folded.as_bytes();
         let mut start = None;
         for (index, byte) in bytes.iter().copied().enumerate() {
             if byte.is_ascii_alphanumeric() {
@@ -2772,19 +2778,41 @@ impl Graph {
         let generation = self
             .cache_gen
             .load(std::sync::atomic::Ordering::Acquire);
-        let guard = self.reference_candidate_index.read().unwrap();
-        let index = guard.as_ref()?;
-        if !index.complete
-            || index.generation != generation
-            || index.pages.len() != entries.len()
-            || entries.iter().any(|entry| !index.pages.contains_key(&entry.path))
-        {
+        let paths = {
+            let guard = self.reference_candidate_index.read().unwrap();
+            let index = guard.as_ref()?;
+            if !index.complete
+                || index.generation != generation
+                || index.pages.len() != entries.len()
+                || entries.iter().any(|entry| !index.pages.contains_key(&entry.path))
+            {
+                return None;
+            }
+            let mut paths = std::collections::BTreeSet::new();
+            for name in names_norm {
+                if let Some(postings) = index.explicit.get(name) {
+                    paths.extend(postings.iter().cloned());
+                }
+            }
+            paths
+        };
+
+        // Generation/path coherence proves only that the index matches the
+        // cached snapshot. Before using it to skip physical files, also prove
+        // every listed file still has the bytes that snapshot was parsed from.
+        // This catches external edits that landed before watcher reconciliation;
+        // failures or mismatches retain the existing full-scan transaction.
+        // Clone the reconstructible revisions so disk I/O does not hold a graph
+        // lock. No document is reparsed on this validation path.
+        let disk_revs = self.disk_revs.read().unwrap().clone();
+        if disk_revs.len() != entries.len() {
             return None;
         }
-        let mut paths = std::collections::BTreeSet::new();
-        for name in names_norm {
-            if let Some(postings) = index.explicit.get(name) {
-                paths.extend(postings.iter().cloned());
+        for entry in entries {
+            let expected = disk_revs.get(&entry.path)?;
+            let current = fs::read_to_string(&entry.path).ok()?;
+            if content_rev(&current) != *expected {
+                return None;
             }
         }
         (self
@@ -8107,6 +8135,26 @@ mod tests {
     }
 
     #[test]
+    fn plain_reference_signature_folds_unicode_before_ascii_tokenizing() {
+        let dir = scratch("reference-candidate-unicode-fold");
+        fs::write(dir.join("pages/K.md"), "- target body\n").unwrap();
+        fs::write(dir.join("pages/Source.md"), "- plain K mention\n").unwrap();
+        fs::write(dir.join("pages/Irrelevant.md"), "- unrelated\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let names = vec![crate::refs::page_key("K")];
+        let candidates = g.reference_candidate_pages(&names, ReferenceKind::Plain);
+        assert!(candidates.indexed);
+        assert!(candidate_paths(&candidates).contains(&"pages/Source.md".to_string()));
+        assert!(candidates.pages.len() < candidates.full_page_count);
+        assert_reference_candidates_equal_full_scan(&g, "K", &names, ReferenceKind::Plain);
+        assert_indexed_reference_results_equal_full_scan(&g, "K");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     #[ignore = "10k synthetic performance receipt"]
     fn reference_candidate_index_10k_receipt() {
         let dir = scratch("reference-candidate-10k");
@@ -8989,6 +9037,36 @@ mod tests {
         let other = fs::read_to_string(dir.join("pages").join("Other.md")).unwrap();
         assert!(other.contains("[[Beta]]"), "ref rewritten to [[Beta]]");
         assert!(!other.contains("[[Alpha]]"), "no stale [[Alpha]] left");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_falls_back_when_a_non_candidate_changed_on_disk() {
+        let dir = scratch("rename-stale-non-candidate");
+        fs::write(dir.join("pages/Old.md"), "- old body\n").unwrap();
+        let referrer = dir.join("pages/Referrer.md");
+        fs::write(&referrer, "- unrelated\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let entries = g.list_pages();
+        let names = vec![crate::refs::page_key("Old")];
+        let initial_candidates = g
+            .reference_candidate_paths_for_entries(&names, &entries)
+            .expect("warm coherent index should narrow");
+        assert!(!initial_candidates.contains(&referrer));
+
+        fs::write(&referrer, "- newly landed [[Old]] reference\n").unwrap();
+        assert!(
+            g.reference_candidate_paths_for_entries(&names, &entries)
+                .is_none(),
+            "disk-ahead-of-cache content must force the full rename scan"
+        );
+
+        g.rename_page("Old", "New").unwrap();
+        let rewritten = fs::read_to_string(&referrer).unwrap();
+        assert!(rewritten.contains("[[New]]"));
+        assert!(!rewritten.contains("[[Old]]"));
         let _ = fs::remove_dir_all(&dir);
     }
 
