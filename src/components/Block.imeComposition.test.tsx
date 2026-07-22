@@ -18,8 +18,8 @@ vi.mock("../store", async (importOriginal) => {
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
-import type { BlockDto, PageDto } from "../types";
+import { doc, isDirty, loadSingle, pageByName, resetStore } from "../store";
+import type { BlockDto, PageDto, PageEntry } from "../types";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());
@@ -43,25 +43,25 @@ function page(raw: string): PageDto {
   return { name: "IME composition", kind: "page", title: "IME composition", pre_block: null, blocks: [block] };
 }
 
-function composingInput(textarea: HTMLTextAreaElement, value: string) {
+function composingInput(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
   textarea.value = value;
-  textarea.setSelectionRange(value.length, value.length);
+  textarea.setSelectionRange(caret, caret);
   const event = new InputEvent("input", {
     bubbles: true,
     inputType: "insertCompositionText",
-    data: value.at(-1) ?? null,
+    data: value[caret - 1] ?? null,
   });
   Object.defineProperty(event, "isComposing", { value: true });
   textarea.dispatchEvent(event);
 }
 
-function input(textarea: HTMLTextAreaElement, value: string) {
+function input(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
   textarea.value = value;
-  textarea.setSelectionRange(value.length, value.length);
+  textarea.setSelectionRange(caret, caret);
   textarea.dispatchEvent(new InputEvent("input", {
     bubbles: true,
     inputType: "insertText",
-    data: value.at(-1) ?? null,
+    data: value[caret - 1] ?? null,
   }));
 }
 
@@ -71,6 +71,24 @@ function compositionStart(textarea: HTMLTextAreaElement) {
 
 function compositionEnd(textarea: HTMLTextAreaElement) {
   textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+}
+
+function pageEntry(name: string): PageEntry {
+  return { name, kind: "page", date_key: null, path: `pages/${name}.md` };
+}
+
+function composingEnter(textarea: HTMLTextAreaElement) {
+  const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  Object.defineProperty(event, "isComposing", { value: true });
+  textarea.dispatchEvent(event);
+  return event;
+}
+
+function legacyImeEnter(textarea: HTMLTextAreaElement) {
+  const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  Object.defineProperty(event, "keyCode", { value: 229 });
+  textarea.dispatchEvent(event);
+  return event;
 }
 
 describe("IME composition", () => {
@@ -147,6 +165,87 @@ describe("IME composition", () => {
       expect(textarea.selectionStart).toBe(2);
       expect(doc.byId["ime-composition"].raw).toBe("[[]]");
       expect(setRawSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a composing Enter out of autocomplete and structural handling until composition end", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([pageEntry("Parity Target")]);
+    loadSingle(page("[[P]]"));
+    startEditing("ime-composition", 3);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("IME composition")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      input(textarea, "[[P]]", 3);
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.resolve();
+      expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
+      setRawSpy.mockClear();
+      expect(isDirty("IME composition")).toBe(false);
+
+      compositionStart(textarea);
+      composingInput(textarea, "[[Pa]]", 4);
+      const event = composingEnter(textarea);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(textarea.value).toBe("[[Pa]]");
+      expect(doc.byId["ime-composition"].raw).toBe("[[P]]");
+      expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
+      expect(setRawSpy).not.toHaveBeenCalled();
+      expect(isDirty("IME composition")).toBe(false);
+      expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
+
+      compositionEnd(textarea);
+
+      expect(doc.byId["ime-composition"].raw).toBe("[[Pa]]");
+      expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
+      expect(setRawSpy).toHaveBeenCalledTimes(1);
+      expect(isDirty("IME composition")).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("uses legacy keyCode 229 to preserve the IME transaction when compositionstart is absent", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([pageEntry("Parity Target")]);
+    loadSingle(page("[[P]]"));
+    startEditing("ime-composition", 3);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("IME composition")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      input(textarea, "[[P]]", 3);
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.resolve();
+      expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
+      setRawSpy.mockClear();
+      expect(isDirty("IME composition")).toBe(false);
+
+      composingInput(textarea, "[[Pa]]", 4);
+      const event = legacyImeEnter(textarea);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(textarea.value).toBe("[[Pa]]");
+      expect(doc.byId["ime-composition"].raw).toBe("[[P]]");
+      expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
+      expect(setRawSpy).not.toHaveBeenCalled();
+      expect(isDirty("IME composition")).toBe(false);
+      expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target");
+
+      compositionEnd(textarea);
+
+      expect(doc.byId["ime-composition"].raw).toBe("[[Pa]]");
+      expect(pageByName("IME composition")?.roots).toEqual(["ime-composition"]);
+      expect(setRawSpy).toHaveBeenCalledTimes(1);
+      expect(isDirty("IME composition")).toBe(true);
     } finally {
       dispose();
     }

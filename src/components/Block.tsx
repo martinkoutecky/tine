@@ -2734,14 +2734,12 @@ export function Editor(props: { id: string }): JSX.Element {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    // IME owns its key events until compositionend commits the finalized value.
+    if (compositionActive || e.isComposing || e.keyCode === 229) return;
+
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const raw = ref.value;
-
-    // IME owns Escape.  The global capture handler already declines it, and the
-    // textarea must not then close completion or leave editing on the target
-    // phase (notably Android/WebKit's legacy keyCode 229 path).
-    if (e.key === "Escape" && (e.isComposing || e.keyCode === 229)) return;
 
     // Ctrl/Cmd+Shift+V is Logseq's universal raw-paste gesture.
     // ClipboardEvent does not expose modifier keys, so remember the preceding
