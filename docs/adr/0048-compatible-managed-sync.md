@@ -1,6 +1,6 @@
 # 0048. Managed sync uses operation truth with an optional shared Markdown projection
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0049](0049-oplog-first-sparse-storage.md)
 - **Date:** 2026-07-11
 
 ## Context
