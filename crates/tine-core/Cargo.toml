@@ -22,7 +22,8 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+cap-fs-ext = "=4.0.2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
