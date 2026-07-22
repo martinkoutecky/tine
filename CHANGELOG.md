@@ -18,6 +18,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Large graphs no longer do reference and rename work on the UI thread**
+  (GH #233, #235, #236). Page-title blur now commits the same conflict-safe
+  rename as Enter, repeated commits are suppressed, and reference lookups use a
+  reconstructible in-memory candidate index with exact verification and a safe
+  full-scan fallback. Linked References use Logseq-compatible disclosure
+  defaults; Unlinked References precompute in the background while remaining
+  collapsed.
+- **Opening Backups no longer hashes every saved snapshot** (GH #234). The list
+  reads cheap manifest metadata in a blocking worker, while restoring still
+  verifies the selected snapshot before changing graph files. The panel now
+  exposes loading and retryable error states.
 - **File-backed block rows now keep stable runtime identity** (GH #232) across cold loads, cache rebuilds, references, merges, and publish snapshots without adding synthetic `id::` properties.
 - **IME composition now commits finalized block text once** (GH #237), avoiding
   intermediate graph writes and duplicate trailing-input commits.
