@@ -66,6 +66,27 @@ try {
   assert.notEqual(unstable.status, 0);
   assert.match(`${unstable.stdout}\n${unstable.stderr}`, /immutable\/scrollBig: .*round spread exceeds/);
 
+  // A fast outlier must not block a clearly favorable candidate. Full spread
+  // is still reported, and the candidate's slowest round must remain inside
+  // both regression budgets.
+  const favorableVariableCandidate = measurement(
+    "candidate",
+    [90, 92, 91],
+    [80, 95, 80],
+  );
+  const favorableVariable = check(favorableVariableCandidate, stableImmutable, stablePrevious);
+  assert.equal(favorableVariable.status, 0, favorableVariable.stderr || favorableVariable.stdout);
+  assert.match(
+    `${favorableVariable.stdout}\n${favorableVariable.stderr}`,
+    /warning: candidate\/scrollBig: .*candidate median beats both anchors/,
+  );
+
+  // A favorable median cannot conceal an unsafe slow tail.
+  const unsafeTailCandidate = measurement("candidate", [90, 92, 91], [50, 50, 200]);
+  const unsafeTail = check(unsafeTailCandidate, stableImmutable, stablePrevious);
+  assert.notEqual(unsafeTail.status, 0);
+  assert.match(`${unsafeTail.stdout}\n${unsafeTail.stderr}`, /candidate\/scrollBig: .*round spread exceeds/);
+
   const regressedCandidate = measurement("candidate", [140, 141, 139], [140, 141, 139]);
   const regressed = check(regressedCandidate, stableImmutable, stablePrevious);
   assert.notEqual(regressed.status, 0);

@@ -42,6 +42,30 @@ if (calibrations.some((n) => !Number.isFinite(n) || n <= 0)) {
 
 console.log("metric      candidate  immutable  delta/limit     previous  delta/limit");
 for (const [name, budget] of Object.entries(policy.metrics)) {
+  const value = candidate.metrics?.[name]?.rawMedianOfRoundMins;
+  const old = immutable.metrics?.[name]?.rawMedianOfRoundMins;
+  const prev = previous.metrics?.[name]?.rawMedianOfRoundMins;
+  if (![value, old, prev].every((n) => Number.isFinite(n) && n > 0)) {
+    failures.push(`${name}: missing or invalid median-of-round-mins measurement`);
+    continue;
+  }
+  const vsOld = ((value / old) - 1) * 100;
+  const vsPrev = ((value / prev) - 1) * 100;
+  const candidateRoundMins = candidate.metrics?.[name]?.roundMins;
+  const candidateSlowest = Array.isArray(candidateRoundMins) && candidateRoundMins.length > 0
+    ? Math.max(...candidateRoundMins)
+    : Number.NaN;
+  const slowestVsOld = ((candidateSlowest / old) - 1) * 100;
+  const slowestVsPrev = ((candidateSlowest / prev) - 1) * 100;
+  // Full max/min spread is still useful diagnostic evidence, but it is
+  // symmetric: one unusually fast round can exceed the threshold even when
+  // every regression comparison is safe. Tolerate high spread only when the
+  // candidate median beats both anchors and even its slowest round remains
+  // inside both performance budgets. Slow or ambiguous variance still fails.
+  const favorableSafeEnvelope = vsOld <= 0 && vsPrev <= 0
+    && Number.isFinite(candidateSlowest)
+    && slowestVsOld <= budget.maxVsImmutablePct
+    && slowestVsPrev <= budget.maxVsPreviousPct;
   for (const [label, measurement] of Object.entries(measurements)) {
     const metric = measurement.metrics?.[name];
     const spread = metric?.roundSpreadPct;
@@ -52,21 +76,17 @@ for (const [name, budget] of Object.entries(policy.metrics)) {
         `${label}/${name} round spread: ${spread.toFixed(1)}% (limit ${budget.maxRoundSpreadPct}%)`,
       );
       if (spread > budget.maxRoundSpreadPct) {
-        failures.push(
-          `${label}/${name}: ${spread.toFixed(1)}% round spread exceeds ${budget.maxRoundSpreadPct}% reliability limit; investigate runner/metric variance`,
-        );
+        const message = `${label}/${name}: ${spread.toFixed(1)}% round spread exceeds ${budget.maxRoundSpreadPct}% reliability limit`;
+        if (favorableSafeEnvelope) {
+          console.warn(
+            `warning: ${message}, but candidate median beats both anchors and its slowest round remains within both budgets`,
+          );
+        } else {
+          failures.push(`${message}; investigate runner/metric variance`);
+        }
       }
     }
   }
-  const value = candidate.metrics?.[name]?.rawMedianOfRoundMins;
-  const old = immutable.metrics?.[name]?.rawMedianOfRoundMins;
-  const prev = previous.metrics?.[name]?.rawMedianOfRoundMins;
-  if (![value, old, prev].every((n) => Number.isFinite(n) && n > 0)) {
-    failures.push(`${name}: missing or invalid median-of-round-mins measurement`);
-    continue;
-  }
-  const vsOld = ((value / old) - 1) * 100;
-  const vsPrev = ((value / prev) - 1) * 100;
   console.log(
     `${name.padEnd(11)} ${value.toFixed(1).padStart(9)}  ${old.toFixed(1).padStart(9)}  ` +
     `${`${vsOld.toFixed(1)}%/${budget.maxVsImmutablePct}%`.padStart(11)}  ${prev.toFixed(1).padStart(9)}  ` +
