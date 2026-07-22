@@ -553,21 +553,24 @@ pub(crate) fn copy_guide_into_graph(
 }
 
 #[tauri::command]
-pub(crate) fn get_backlinks(
+pub(crate) async fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| {
-        bounded_groups_or_error(g.backlinks_bounded(
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || {
+        bounded_groups_or_error(graph.backlinks_bounded(
             &name,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
         ))
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn get_backlink_filter_context(
+pub(crate) async fn get_backlink_filter_context(
     name: String,
     targets: Vec<BacklinkFilterTarget>,
     state: GraphContext<'_>,
@@ -578,25 +581,31 @@ pub(crate) fn get_backlink_filter_context(
             targets.len()
         ));
     }
-    with_graph(&state, |graph| {
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || {
         Ok(tine_core::query::backlink_filter_context(
-            graph, &name, &targets,
+            &graph, &name, &targets,
         ))
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn get_unlinked_refs(
+pub(crate) async fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| {
-        bounded_groups_or_error(g.unlinked_refs_bounded(
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || {
+        bounded_groups_or_error(graph.unlinked_refs_bounded(
             &name,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
         ))
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// `block uuid → # of referrers` over the whole graph (drives the per-block
@@ -642,16 +651,40 @@ pub(crate) fn delete_page(
 }
 
 #[tauri::command]
-pub(crate) fn rename_page(
+pub(crate) async fn rename_page(
     old: String,
     new: String,
     expected_path: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.rename_page_expected(&old, &new, expected_path.as_deref())
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || {
+        graph
+            .rename_page_expected(&old, &new, expected_path.as_deref())
             .map_err(|e| e.to_string())
     })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod graph_wide_command_boundary_tests {
+    #[test]
+    fn expensive_reference_and_rename_commands_cross_the_blocking_pool() {
+        let source = include_str!("commands.rs");
+        for name in ["get_backlinks", "get_unlinked_refs", "rename_page"] {
+            let signature = format!("pub(crate) async fn {name}(");
+            let start = source.find(&signature).expect("command stays async");
+            let tail = &source[start..];
+            let end = tail
+                .find("\n#[tauri::command]")
+                .unwrap_or(tail.len());
+            assert!(
+                tail[..end].contains("tauri::async_runtime::spawn_blocking"),
+                "{name} must not run graph-wide work on the command/UI thread"
+            );
+        }
+    }
 }
 
 #[tauri::command]

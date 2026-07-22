@@ -44,9 +44,8 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const [groups] = createResource(
-    () => (open() ? props.name : null),
+    () => props.name,
     async (n) => {
-      if (!n) return [];
       setLoadError(null);
       try {
         return await backend().getUnlinkedRefs(n);
@@ -87,9 +86,10 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
     <div class="unlinked-references">
       <div class="references-header clickable" onClick={() => setOpen(!open())}>
         {open() ? "▾" : "▸"} Unlinked References
-        <Show when={open() && groups()}>
+        <Show when={groups()}>
           <span class="references-count">{count()}</span>
         </Show>
+        <Show when={groups.loading}><span class="references-loading"> Loading…</span></Show>
       </div>
       <Show when={open()}>
         <Show when={loadError()}>

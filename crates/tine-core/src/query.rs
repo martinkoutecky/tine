@@ -561,6 +561,9 @@ pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, St
 pub(crate) type RealPageNames = std::collections::HashMap<String, (std::path::PathBuf, String)>;
 
 pub(crate) fn real_page_names(graph: &Graph) -> RealPageNames {
+    if let Some(indexed) = graph.reference_real_page_names() {
+        return indexed;
+    }
     graph.with_pages(|pages| {
         let mut real = RealPageNames::new();
         for (entry, _) in pages {
@@ -696,6 +699,49 @@ fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
     Some(block)
 }
 
+/// Parser-owned explicit page-reference targets contributed by one physical
+/// cached page. This is the projection used by the reconstructible candidate
+/// index; query-time occurrence verification still uses the full evidence
+/// engine below and remains authoritative.
+pub(crate) fn document_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+) -> Vec<String> {
+    fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
+        for block in blocks {
+            names.extend(
+                block
+                    .projection()
+                    .reference_source
+                    .explicit
+                    .iter()
+                    .map(|reference| refs::page_key(&reference.name)),
+            );
+            collect(&block.children, names);
+        }
+    }
+
+    let mut names = Vec::new();
+    if let Some(block) = doc
+        .pre_block
+        .as_deref()
+        .and_then(|pre| page_property_block(entry, pre))
+    {
+        names.extend(
+            block
+                .projection()
+                .reference_source
+                .explicit
+                .iter()
+                .map(|reference| refs::page_key(&reference.name)),
+        );
+    }
+    collect(&doc.roots, &mut names);
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 fn block_reference_evidence(
     block: &DocBlock,
     canonical: &str,
@@ -764,7 +810,9 @@ fn collect_reference_occurrences_bounded(
 ) -> BoundedGroups {
     let exclude = refs::page_key(self_page);
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
-    let groups = graph.with_pages(|pages| {
+    let candidate_pages = graph.reference_candidate_pages(names_norm, kind);
+    let groups = {
+        let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
         let mut by_name = std::collections::HashMap::<String, usize>::new();
         let mut sources = pages.iter().collect::<Vec<_>>();
@@ -869,7 +917,7 @@ fn collect_reference_occurrences_bounded(
                 .then_with(|| a.1.page.cmp(&b.1.page))
         });
         groups.into_iter().map(|(_, group)| group).collect()
-    });
+    };
     BoundedGroups {
         groups,
         total: budget.total,
