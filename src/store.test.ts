@@ -68,6 +68,9 @@ import {
   setPageProperty,
   beginPageHeaderEdit,
   finishPageHeaderEdit,
+  ensureBlockId,
+  persistentBlockRef,
+  resolveBlockRef,
 } from "./store";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
@@ -853,8 +856,8 @@ describe("undo history is graph-local", () => {
 });
 
 describe("cross-page duplicate id::", () => {
-  const page = (name: string, blocks: BlockDto[]): PageDto => ({
-    name, kind: "page", title: name, pre_block: null, blocks,
+  const page = (name: string, blocks: BlockDto[], path?: string): PageDto => ({
+    name, kind: "page", title: name, pre_block: null, blocks, path,
   });
 
   it("re-keys a duplicate id:: on a second page so the two blocks stay distinct", () => {
@@ -875,6 +878,37 @@ describe("cross-page duplicate id::", () => {
     expect(doc.byId[aRoot].raw).toContain("alpha");
     expect(doc.byId[aRoot].page).toBe("A");
     expect(doc.byId[bRoot].page).toBe("B");
+  });
+
+  it("resolves a durable UUID only within its declared page, kind, and path", () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    ensurePageLoaded(page("A", [{ id: uuid, raw: `alpha\nid:: ${uuid}`, collapsed: false, children: [] }]));
+    ensurePageLoaded(page(
+      "B",
+      [{ id: uuid, raw: `beta\nid:: ${uuid}`, collapsed: false, children: [] }],
+      "pages/client-b/B.md",
+    ));
+    const bRoot = pageByName("B")!.roots[0];
+    expect(bRoot).not.toBe(uuid);
+
+    expect(resolveBlockRef({
+      uuid,
+      page: "B",
+      pageKind: "page",
+      path: "pages/client-b/B.md",
+    })).toBe(bRoot);
+    expect(resolveBlockRef({
+      uuid,
+      page: "B",
+      pageKind: "journal",
+      path: "pages/client-b/B.md",
+    })).toBeNull();
+    expect(resolveBlockRef({
+      uuid,
+      page: "B",
+      pageKind: "page",
+      path: "pages/client-a/B.md",
+    })).toBeNull();
   });
 });
 
@@ -1561,6 +1595,45 @@ describe("save engine (persistence)", () => {
     markDirty("Test");
     await flushPage("Test");
     expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+  });
+
+  it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    load([blk("Fresh target")]);
+    const storeKey = doc.pages[0].roots[0];
+
+    const ref = persistentBlockRef(storeKey);
+
+    expect(ref).toMatchObject({ uuid, page: "Test", pageKind: "page" });
+    expect(ref.uuid).not.toBe(storeKey);
+    expect(doc.byId[storeKey].raw).toBe(`Fresh target\nid:: ${uuid}`);
+    expect(await ensureBlockId(storeKey)).toBe(uuid);
+    expect(doc.byId[storeKey].raw.match(/(?:^|\n)id::/g)).toHaveLength(1);
+  });
+
+  it("derives a fresh Org journal's persistent identity from its format-aware drawer", async () => {
+    const uuid = "87654321-4321-4321-8321-cba987654321";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    const target = blk("Fresh journal target\nSCHEDULED: <2026-07-22 Wed>");
+    loadSingle({
+      name: "2026-07-22",
+      kind: "journal",
+      title: "Wednesday, 22 July 2026",
+      pre_block: null,
+      format: "org",
+      blocks: [target],
+    });
+
+    const ref = persistentBlockRef(target.id);
+
+    expect(ref).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
+    expect(ref.uuid).not.toBe(target.id);
+    expect(doc.byId[target.id].raw).toBe(
+      `Fresh journal target\nSCHEDULED: <2026-07-22 Wed>\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
+    );
+    expect(await ensureBlockId(target.id)).toBe(uuid);
+    expect(doc.byId[target.id].raw.match(/(?:^|\n):id:/gi)).toHaveLength(1);
   });
 
   it("refreshes page inventory only when a save creates a new file", async () => {

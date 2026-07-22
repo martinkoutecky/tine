@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage } from "../store";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -374,12 +374,12 @@ export function PageView(): JSX.Element {
   const zoomValid = () => {
     const r = currentRoute();
     if (r.kind !== "page" || !r.block) return null;
-    const block = doc.byId[r.block];
-    const owner = block ? pageByName(block.page) : undefined;
-    const target = pageTargetFromRoute(r);
-    return block && owner && target && pageTargetMatchesLoaded(target, owner)
-      ? r.block
-      : null;
+    return resolveBlockRef({
+      uuid: r.block,
+      page: r.name,
+      pageKind: r.pageKind,
+      ...(r.path ? { path: r.path } : {}),
+    });
   };
   const contentReady = () => {
     const r = loadedRoute();

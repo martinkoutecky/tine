@@ -2541,6 +2541,54 @@ export function existingBlockId(raw: string, format: Format): string | null {
   return m ? m[1] : null;
 }
 
+/** The identity other blocks and persisted UI state must use for a loaded node.
+ * A freshly-created node keeps its transient `b…` store key for the whole live
+ * session even after Copy block ref writes a UUID property into `raw`; external
+ * references must follow that property while render/edit paths keep the key. */
+export function blockExternalId(id: string): string | null {
+  const node = doc.byId[id];
+  if (!node) return null;
+  return existingBlockId(node.raw, formatForBlock(id)) ?? node.id;
+}
+
+export interface LoadedBlockRef {
+  uuid: string;
+  page: string;
+  pageKind: PageKind;
+  path?: string;
+}
+
+/** Resolve a durable external UUID back to the current live store key. The page
+ * descriptor is part of the identity: even a direct `byId[uuid]` hit is rejected
+ * when it belongs to another page kind or physical path. */
+export function resolveBlockRef(ref: LoadedBlockRef): string | null {
+  const owner = pageByName(ref.page);
+  if (
+    !owner
+    || owner.kind !== ref.pageKind
+    || (ref.path !== undefined && owner.path !== ref.path)
+  ) return null;
+
+  const matches = (id: string): boolean => {
+    const node = doc.byId[id];
+    return !!node && node.page === ref.page && blockExternalId(id) === ref.uuid;
+  };
+  if (matches(ref.uuid)) return ref.uuid;
+
+  const stack = [...owner.roots];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = doc.byId[id];
+    if (!node || node.page !== ref.page) continue;
+    if (matches(id)) return id;
+    stack.push(...node.children);
+  }
+  return null;
+}
+
 /** `raw` with a durable `id` property added in the page's on-disk format.
  *  Markdown appends an `id:: <uuid>` trailer. ORG inserts/extends a
  *  `:PROPERTIES:`/`:id:`/`:END:` drawer at OG's canonical position — right after
@@ -2642,14 +2690,13 @@ export async function ensureBlockId(id: string): Promise<string | null> {
   return ok ? uuid : null;
 }
 
-/** A live reference to a loaded block — its stable uuid + the page it lives on
- *  (so a satellite surface can load that page and render the same editable
- *  node). The uuid IS the store key, so no snapshot is needed. */
-export function blockRef(id: string): { uuid: string; page: string; pageKind: PageKind; path?: string } {
+/** A live reference to a loaded block: its durable external UUID plus its exact
+ * owner. The UUID can differ from the live store key until the page is reloaded. */
+export function blockRef(id: string): LoadedBlockRef {
   const n = doc.byId[id];
   const owner = pageByName(n.page);
   return {
-    uuid: n.id,
+    uuid: blockExternalId(id) ?? n.id,
     page: n.page,
     pageKind: owner?.kind ?? "page",
     ...(owner?.path ? { path: owner.path } : {}),
@@ -2658,22 +2705,22 @@ export function blockRef(id: string): { uuid: string; page: string; pageKind: Pa
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Persist a block's `id::` equal to its current uuid, so its in-memory key and
- *  on-disk identity match — making a reference to it survive an app restart.
- *  No-op if it already has an id::. Only writes when the uuid is a real UUID
- *  (always true for blocks loaded from the graph); a freshly-created,
- *  not-yet-reloaded block is skipped rather than writing a non-UUID id::. */
-export function ensureStableBlockId(id: string): void {
+/** Ensure a block has a durable external UUID synchronously, while deliberately
+ * leaving its live store key unchanged. Existing ids win; otherwise a fresh
+ * transient key receives a UUID in the page's Markdown/Org property syntax. */
+export function ensureStableBlockId(id: string): string | null {
   const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return;
+  if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
-  if (existingBlockId(node.raw, fmt)) return;
-  if (!UUID_RE.test(id)) return;
-  setDoc("byId", id, "raw", rawWithBlockId(node.raw, id, fmt));
+  const existing = existingBlockId(node.raw, fmt);
+  if (existing) return existing;
+  const uuid = UUID_RE.test(id) ? id : crypto.randomUUID();
+  setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
   markDirty(node.page);
   // Persist now, not on the 400ms debounce: the user may quit right after
   // parking the block, and a pending timer is lost when the webview closes.
   void flushPage(node.page);
+  return uuid;
 }
 
 /** Like `blockRef`, but first persists the block's `id::` so the reference
@@ -2681,7 +2728,7 @@ export function ensureStableBlockId(id: string): void {
  *  a new tab, and zoom all stamp `id::` so the spot survives a relaunch (Martin's
  *  call — he wants these to persist; the `id::` is harmless in the file and is
  *  stripped from clipboard copies anyway, see `blockSubtreeMarkdown`). */
-export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind; path?: string } {
+export function persistentBlockRef(id: string): LoadedBlockRef {
   ensureStableBlockId(id);
   return blockRef(id);
 }
@@ -2698,10 +2745,8 @@ export async function persistBlockRefTarget(
   kind: PageKind,
   path?: string,
 ): Promise<void> {
-  const loadedOwner = pageByName(page);
-  const exactOwnerLoaded = !!loadedOwner && (!path || loadedOwner.path === path);
-  const loadedNode = doc.byId[uuid];
-  if (!loadedNode || !exactOwnerLoaded || loadedNode.page !== page) {
+  const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
+  if (!resolveBlockRef(ref)) {
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
@@ -2710,9 +2755,8 @@ export async function persistBlockRefTarget(
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
-  const owner = pageByName(page);
-  const node = doc.byId[uuid];
-  if (node?.page === page && owner && (!path || owner.path === path)) ensureStableBlockId(uuid);
+  const id = resolveBlockRef(ref);
+  if (id) ensureStableBlockId(id);
 }
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.

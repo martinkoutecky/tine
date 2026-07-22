@@ -13,6 +13,7 @@ import {
 import {
   doc,
   persistentBlockRef,
+  resolveBlockRef,
   extendFeedForScroll,
   type HistoryRouteContext,
 } from "./store";
@@ -601,16 +602,26 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const target: BlockTarget = typeof targetOrName === "string"
       ? { name: targetOrName, pageKind: pageKind!, block: blockId!, ...(path ? { path } : {}) }
       : targetOrName;
+    const liveId = () => resolveBlockRef({
+      uuid: target.block,
+      page: target.name,
+      pageKind: target.pageKind,
+      ...(target.path ? { path: target.path } : {}),
+    });
     // Pre-latch the target so its body renders eagerly (not as a deferred raw-text
     // placeholder) - a heavy target (table/image) then lands at its true height
     // instead of growing after the scroll. See AstBody / docs/adr (P1 lazy body).
-    renderedBlocks.add(target.block);
+    renderedBlocks.add(liveId() ?? target.block);
     openPageTarget(target);
     // Let the page render, then scroll + briefly highlight the target block.
     let tries = 0;
     const tick = () => {
       if (typeof document === "undefined") return;
-      const el = document.querySelector(`.ls-block[data-block-id="${target.block}"]`);
+      const id = liveId();
+      if (id) renderedBlocks.add(id);
+      const el = id
+        ? document.querySelector(`.ls-block[data-block-id="${id}"]`)
+        : null;
       if (el) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         el.classList.add("block-flash");

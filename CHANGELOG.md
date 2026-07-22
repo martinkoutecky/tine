@@ -643,6 +643,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   page links, block references, reference panels, namespaces, embeds, and query
   results; the bullet remains the explicit mobile block-action target.
   (GH #162)
+- **Fresh block references use their durable identity immediately.** Copy block
+  ref now gives a new target one UUID shared by counts, referrer panels, routes,
+  and the sidebar before reload, with Markdown and Org persistence. (GH #154)
 - **Inline block-reference text follows every landed source transaction.** Loaded
   targets update immediately through their reactive editor node; visible UUIDs
   whose source was never loaded are batch-refreshed after external edits and

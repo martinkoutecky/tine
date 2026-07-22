@@ -3,9 +3,9 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, persistentBlockRef, resetStore } from "../store";
 import type { PageDto } from "../types";
-import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
+import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";
 
 const page: PageDto = {
@@ -54,6 +54,71 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
+  it("stores a fresh block's durable UUID instead of its transient sidebar key", () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-sidebar");
+    loadSingle({
+      ...page,
+      blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
+    });
+
+    openBlockInSidebar(persistentBlockRef("bfresh-sidebar"));
+
+    expect(rightSidebar()[0]).toMatchObject({
+      kind: "block",
+      uuid,
+      page: page.name,
+      pageKind: "page",
+    });
+    expect((rightSidebar()[0] as { uuid?: string }).uuid).not.toBe("bfresh-sidebar");
+  });
+
+  it("resolves a durable Org sidebar UUID to its transient live store node", async () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    const transient = "bfresh-org-sidebar";
+    const orgPage: PageDto = {
+      name: "2026-07-22",
+      kind: "journal",
+      title: "Wednesday, 22 July 2026",
+      pre_block: null,
+      format: "org",
+      path: "journals/2026_07_22.org",
+      blocks: [{
+        id: transient,
+        raw: `Fresh Org target\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
+        collapsed: false,
+        children: [],
+      }],
+    };
+    loadSingle(orgPage);
+    applySidebarSession({
+      right: true,
+      items: [{
+        kind: "block",
+        uuid,
+        page: orgPage.name,
+        pageKind: "journal",
+        path: orgPage.path,
+      }],
+    });
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+
+    try {
+      await vi.waitFor(() => {
+        expect(root.querySelector(`[data-block-id="${transient}"]`)).not.toBeNull();
+        expect(root.textContent).toContain("Fresh Org target");
+      });
+    } finally {
+      dispose();
+    }
+  });
+
   it("replaces a same-name loaded page with the sidebar item's exact physical owner", async () => {
     loadSingle({ ...page, path: "pages/Sidebar test.md" });
     applySidebarSession({

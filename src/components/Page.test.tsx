@@ -446,6 +446,45 @@ describe("tag-page table", () => {
 });
 
 describe("zoomed block view", () => {
+  it("resolves a durable zoom route to the current transient live node", async () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    const transient = "bfresh-zoom";
+    const raw = `Fresh zoom target\nid:: ${uuid}`;
+    const dto = {
+      name: "Fresh zoom",
+      kind: "page" as const,
+      title: "Fresh zoom",
+      pre_block: null,
+      path: "pages/Fresh zoom.md",
+      blocks: [{ id: uuid, raw, collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [transient]: node(transient, raw, dto.name) },
+      pages: [{ ...page(dto.name, "page", [transient]), path: dto.path }],
+      feed: [dto.name],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    mainPaneRouter.replaceActiveRoute({
+      kind: "page",
+      name: dto.name,
+      pageKind: dto.kind,
+      path: dto.path,
+      block: uuid,
+    });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".zoomed-page")).not.toBeNull();
+      expect(root.querySelector(`[data-block-id="${transient}"]`)).not.toBeNull();
+      expect(root.textContent).toContain("Fresh zoom target");
+    } finally {
+      dispose();
+    }
+  });
+
   it("reveals a collapsed root's children without changing its stored collapse state", async () => {
     const parent = "11111111-1111-4111-8111-111111111111";
     const child = "22222222-2222-4222-8222-222222222222";

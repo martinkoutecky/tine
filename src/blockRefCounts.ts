@@ -2,6 +2,7 @@ import { createResource, createRoot } from "solid-js";
 import { backend } from "./backend";
 import { dataRev, graphEpoch } from "./ui";
 import { waitForWarmCache } from "./warmCache";
+import { blockExternalId } from "./store";
 
 // One graph-wide `block uuid → referrer count` map, fetched once per graph and
 // after each landed save, and shared by every block's count badge (Block.tsx). Reading
@@ -23,5 +24,6 @@ const countsMap = createRoot(() => {
 /** Number of blocks that reference block `id` in the current graph (0 if none /
  *  not yet loaded). Reactive: re-runs when the map (re)loads. */
 export function blockRefCount(id: string): number {
-  return countsMap()?.[id] ?? 0;
+  const externalId = blockExternalId(id) ?? id;
+  return countsMap()?.[externalId] ?? 0;
 }

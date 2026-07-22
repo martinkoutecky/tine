@@ -22,7 +22,7 @@ import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell"
 import { openPageTarget, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName } from "../store";
+import { doc, ensurePageLoaded, pageByName, resolveBlockRef } from "../store";
 import { visibleBody } from "../render/block";
 import { Block, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -313,16 +313,11 @@ function BlockItem(props: {
     () => props.item.path,
     () => !props.collapsed,
   );
-  // Resolve by store key first; fall back to finding the loaded node whose
-  // persisted id:: matches (the in-memory key can differ from the id:: it was
-  // parked under). Returns the live store node so edits stay propagated.
+  // Resolve the durable sidebar identity back to the current live store node so
+  // edits stay propagated even while its store key is still transient.
   const node = () => {
-    const owner = pageByName(props.item.page);
-    if (props.item.path && owner?.path !== props.item.path) return undefined;
-    const direct = doc.byId[props.item.uuid];
-    if (direct) return direct;
-    const re = new RegExp(`(?:^|\\n)id:: *${props.item.uuid}(?:\\s|$)`);
-    return Object.values(doc.byId).find((n) => n.page === props.item.page && re.test(n.raw));
+    const id = resolveBlockRef(props.item);
+    return id ? doc.byId[id] : undefined;
   };
   const pageLoaded = () => {
     const loaded = pageByName(props.item.page);

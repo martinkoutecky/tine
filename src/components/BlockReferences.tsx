@@ -5,6 +5,7 @@ import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { blockExternalId } from "../store";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -13,8 +14,8 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 // the block-ref panel). Refetches when the graph generation changes.
 export function BlockReferences(props: { id: string }): JSX.Element {
   const [groups] = createResource(
-    () => `${props.id} ${graphEpoch()} ${dataRev()}`,
-    () => backend().getBlockReferrers(props.id)
+    () => ({ id: blockExternalId(props.id) ?? props.id, epoch: graphEpoch(), revision: dataRev() }),
+    ({ id }) => backend().getBlockReferrers(id)
   );
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
 

@@ -14,9 +14,9 @@
       "stability": "stable"
     },
     "scripts/e2e-block-ref-count.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Copied block references refresh visible reference counts and text after saved source changes.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.", "blocking": true }],
       "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
-      "nonRequirements": ["Exact badge typography or animation."],
+      "nonRequirements": ["Exact badge typography, panel layout, animation, or generated UUID value."],
       "stability": "stable"
     },
     "scripts/e2e-blockselect.mjs": {

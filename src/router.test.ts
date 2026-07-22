@@ -167,6 +167,41 @@ describe("reuse already-open tabs on user navigation", () => {
     expect(route()).toEqual(zoomed);
   });
 
+  it("stores a fresh block's durable UUID in the persistent zoom route", () => {
+    const uuid = "12345678-1234-4234-8234-123456789abc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    setDoc({
+      byId: {
+        "bfresh-route": {
+          id: "bfresh-route",
+          raw: "Fresh route target",
+          collapsed: false,
+          parent: null,
+          page: "Target",
+          children: [],
+        },
+      },
+      pages: [{
+        name: "Target", kind: "page", title: "Target", preBlock: null,
+        roots: ["bfresh-route"], format: "md", readOnly: false, guide: false,
+        path: "pages/Target.md",
+      }],
+      feed: ["Target"],
+      loaded: true,
+    });
+
+    focusBlock("bfresh-route");
+
+    expect(route()).toEqual({
+      kind: "page",
+      name: "Target",
+      pageKind: "page",
+      path: "pages/Target.md",
+      block: uuid,
+    });
+    expect((route() as { block?: string }).block).not.toBe("bfresh-route");
+  });
+
   it("explicit new-tab navigation still duplicates", () => {
     const target = { kind: "page" as const, name: "Target", pageKind: "page" as const };
     openInNewTab(target, true);
