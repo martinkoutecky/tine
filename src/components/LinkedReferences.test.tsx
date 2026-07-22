@@ -35,6 +35,33 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it("shows eager loading and defaults a threshold-sized result to an unmounted body", async () => {
+    let resolve!: (groups: RefGroup[]) => void;
+    vi.spyOn(backend(), "getBacklinks").mockImplementation(
+      () => new Promise<RefGroup[]>((done) => { resolve = done; })
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+
+    await tick();
+    expect(root.querySelector(".linked-references")?.textContent).toContain("Loading");
+
+    resolve([{
+      page: "Source",
+      kind: "page",
+      blocks: Array.from({ length: 100 }, (_, index) => block(`b${index}`, `[[Target]] ${index}`)),
+    }]);
+    await tick();
+    await tick();
+    expect(root.querySelector(".references-count")?.textContent).toBe("100");
+    expect(root.querySelector(".test-ref-group")).toBeNull();
+
+    root.querySelector<HTMLElement>(".references-header")!.click();
+    expect(root.querySelector(".test-ref-group")).not.toBeNull();
+    dispose();
+  });
+
   it("renders a bounded bridge error instead of an empty panel", async () => {
     vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: 20001 matches"));
     const root = document.createElement("div");

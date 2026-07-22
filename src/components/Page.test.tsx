@@ -706,6 +706,66 @@ describe("trailing page block target", () => {
 });
 
 describe("page actions entry point", () => {
+  it("commits title rename once from blur or Enter and lets Escape cancel (GH #233)", async () => {
+    const dto: PageDto = {
+      name: "Rename me",
+      kind: "page",
+      title: "Rename me",
+      pre_block: null,
+      path: "pages/Rename me.md",
+      blocks: [{ id: "rename-root", raw: "Body", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "rename-root": node("rename-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["rename-root"]), path: dto.path }],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue();
+    mainPaneRouter.openFile(dto.path!, dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    const begin = async (next: string) => {
+      await tick();
+      await tick();
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true })
+      );
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      input.value = next;
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      return input;
+    };
+
+    try {
+      const blurred = await begin("Blurred name");
+      blurred.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
+      await flushMicrotasks();
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", dto.path);
+
+      rename.mockClear();
+      const entered = await begin("Entered name");
+      entered.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      entered.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
+      await flushMicrotasks();
+      expect(rename).toHaveBeenCalledTimes(1);
+
+      rename.mockClear();
+      const escaped = await begin("Cancelled name");
+      escaped.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      escaped.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
+      await flushMicrotasks();
+      expect(rename).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps a path-bearing title owner through sidebar, new-tab, and menu gestures", async () => {
     const path = "pages/client-b/Twin.md";
     const dto: PageDto = {

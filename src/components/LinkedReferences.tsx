@@ -100,6 +100,8 @@ function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
 // filterable by co-referenced page (click a chip: include → exclude → off),
 // mirroring OG's reference filter.
+const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
+
 export function LinkedReferences(props: { name: string }): JSX.Element {
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [groups] = createResource(
@@ -115,7 +117,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     }
   );
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
-  const [collapsed, setCollapsed] = createSignal(false);
+  const [collapsedOverride, setCollapsedOverride] = createSignal<boolean | null>(null);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const [filterOpen, setFilterOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
@@ -129,6 +131,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   // Reload the saved filter when the page changes.
   createEffect(() => {
     props.name;
+    setCollapsedOverride(null);
     setFilters(loadFilters(props.name));
     setFilterOpen(false);
     setSearchDraft("");
@@ -250,6 +253,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
+  const collapsed = () => collapsedOverride() ?? totalCount() >= OG_REFERENCE_COLLAPSE_THRESHOLD;
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;
@@ -289,15 +293,16 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         </div>
       }
     >
-    <Show when={groups() && mergedGroups().length > 0}>
+    <Show when={groups.loading || (groups() && mergedGroups().length > 0)}>
       <div class="linked-references">
-        <div class="references-header" onClick={() => setCollapsed(!collapsed())}>
+        <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <span class="ref-collapse" classList={{ collapsed: collapsed() }}>
             <svg viewBox="0 0 24 24" class="triangle">
               <path d="M8 5l8 7-8 7z" />
             </svg>
           </span>
           Linked References <span class="references-count">{count()}</span>
+          <Show when={groups.loading}><span class="references-loading"> Loading…</span></Show>
           <button
             type="button"
             class="reference-filter-toggle"

@@ -526,6 +526,9 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  let renameInFlight = false;
+  let renameSubmitted = false;
+  let renameCancelled = false;
   let pageActionsTrigger: HTMLButtonElement | undefined;
   const pageTarget = () => pageTargetFromFeedPage(props.page);
   const pageActionsOpen = () => {
@@ -588,15 +591,21 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     }
   });
   const startRename = () => {
+    if (renameInFlight) return;
     if (props.page.guide || props.page.readOnly) return;
     if (props.page.kind !== "page") return; // journals are named by their date
+    renameSubmitted = false;
+    renameCancelled = false;
     setNewName(props.page.name);
     setRenaming(true);
   };
   const commitRename = async () => {
+    if (renameSubmitted || renameCancelled || renameInFlight) return;
     const next = newName().trim();
+    renameSubmitted = true;
     setRenaming(false);
     if (!next || next === props.page.name) return;
+    renameInFlight = true;
     try {
       // Flush ALL unsaved edits before the file is moved on disk — the rename
       // transaction reads every referencing page from disk to rewrite its
@@ -615,6 +624,8 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);
+    } finally {
+      renameInFlight = false;
     }
   };
 
@@ -634,9 +645,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               onInput={(e) => setNewName(e.currentTarget.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void commitRename();
-                else if (e.key === "Escape") setRenaming(false);
+                else if (e.key === "Escape") {
+                  renameCancelled = true;
+                  setRenaming(false);
+                }
               }}
-              onBlur={() => setRenaming(false)}
+              onBlur={() => void commitRename()}
             />
           }
         >

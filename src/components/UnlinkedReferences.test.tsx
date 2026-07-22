@@ -12,6 +12,34 @@ afterEach(() => {
 });
 
 describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
+  it("computes eagerly while collapsed and mounts results only after expansion (GH #236)", async () => {
+    let resolve!: (groups: RefGroup[]) => void;
+    const request = vi.spyOn(backend(), "getUnlinkedRefs").mockImplementation(
+      () => new Promise<RefGroup[]>((done) => { resolve = done; })
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <UnlinkedReferences name="Target" />, root);
+
+    await tick();
+    expect(request).toHaveBeenCalledOnce();
+    expect(root.querySelector(".unlinked-references")?.textContent).toContain("Loading");
+
+    resolve([{
+      page: "Source",
+      kind: "page",
+      blocks: [{ id: "plain", raw: "Target", collapsed: false, children: [] }],
+    }]);
+    await tick();
+    await tick();
+    expect(root.querySelector(".references-count")?.textContent).toBe("1");
+    expect(root.querySelector(".reference-excerpt-row")).toBeNull();
+
+    root.querySelector<HTMLElement>(".references-header")!.click();
+    expect(root.querySelector(".reference-excerpt-row")).not.toBeNull();
+    dispose();
+  });
+
   it("shows bounded highlighted evidence and unmounts collapsed page groups", async () => {
     const text = `${"before ".repeat(50)}Target${" after".repeat(50)}`;
     const start = text.indexOf("Target");
