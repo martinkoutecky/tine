@@ -11,6 +11,7 @@ pub mod html_sanitize;
 pub mod logbook;
 pub mod model;
 pub mod onboarding;
+pub mod oplog;
 pub mod org;
 pub mod pdf;
 pub mod publish;
