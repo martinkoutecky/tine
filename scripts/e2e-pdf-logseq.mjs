@@ -990,14 +990,14 @@ async function proveNativeUploadsThemesAndHighlights() {
     if (!fs.existsSync(ORG_SIDECAR) || !fs.existsSync(ORG_HLS_PAGE)) return false;
     const written = fs.readFileSync(ORG_SIDECAR, "utf8");
     textHighlightId = ednIds(written).find((id) => !beforeTextIds.includes(id));
-    return !!textHighlightId && written.includes(`:content {:text "${HIGHLIGHT_TEXT}" :image nil}`)
+    return !!textHighlightId && written.includes(`:content {:text "${HIGHLIGHT_TEXT}"}`)
       && written.includes(':properties {:color "purple"}')
       && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${textHighlightId}`);
   }, { timeout: 15_000, timeoutMsg: "native purple text selection did not persist a matching sidecar and hls annotation" });
   const textSidecar = fs.readFileSync(ORG_SIDECAR, "utf8");
   const textHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
   const textEntry = ednHighlightEntry(textSidecar, textHighlightId, "purple");
-  if (!textEntry.includes(`:content {:text "${HIGHLIGHT_TEXT}" :image nil}`)
+  if (!textEntry.includes(`:content {:text "${HIGHLIGHT_TEXT}"}`)
     || !textHls.includes(`* ${HIGHLIGHT_TEXT}`)
     || !textHls.includes(":hl-page: 1")
     || !textHls.includes(":hl-color: purple")
