@@ -28,8 +28,8 @@ pub use batch::{
     OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use hot_engine::{
-    AcceptedBatch, AuthorBatch, BatchDisposition, BlockLocation, EngineError,
-    EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
+    AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, BatchDisposition, BlockLocation,
+    EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
     ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats, MaterializedBlock,
     MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine, StageOutcome,
     WorkspaceStatus,
@@ -60,6 +60,6 @@ pub use simulator::{
 pub use sqlite::{
     AcceptedBatchEvent, ApplyDisposition, ForensicEvidence, OpenProjection, ProjectionClaim,
     ProjectionError, ProjectionRecovery, RebuildSource, SqliteFrontier, TailOverlay,
-    TailOverlayError, TailOverlayStatus, SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION,
-    TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
+    TailOverlayError, TailOverlayStatus, TailReservation, SQLITE_APPLICATION_ID,
+    SQLITE_SCHEMA_VERSION, TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
 };

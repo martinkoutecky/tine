@@ -2571,7 +2571,7 @@ fn rename_noreplace(_dir: &Dir, _from: &str, _to: &str) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
     // cap-std may retain an O_PATH directory capability, which is suitable for
     // openat but cannot itself be fsynced. Open the capability's `.` as a real
     // directory descriptor and propagate the result of syncing that handle.
@@ -2593,12 +2593,12 @@ fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
 }
 
 #[cfg(windows)]
-fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
     PublicationDirSync::open(dir)?.sync()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn sync_dir_required(_dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(_dir: &Dir) -> Result<(), StoreError> {
     Err(std::io::Error::new(
         ErrorKind::Unsupported,
         "directory durability is unsupported on this target",
