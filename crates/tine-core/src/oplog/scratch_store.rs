@@ -25,7 +25,7 @@ const MARKER_FILE: &str = "marker";
 const LEASE_FILE: &str = "lease";
 const PAGES_FILE: &str = "pages.index";
 const BLOBS_FILE: &str = "blobs.data";
-const SCRATCH_SCHEMA_VERSION: u32 = 4;
+const SCRATCH_SCHEMA_VERSION: u32 = 5;
 const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
 const SCRATCH_LSM_LEVELS: usize = 32;
 const CURRENT_FILTER_WORDS: usize = 16_384;
@@ -155,8 +155,8 @@ pub(crate) enum ScratchPageKind {
     LoroHistory = 12,
     DocumentExternalCurrent = 13,
     DocumentExternalExact = 14,
-    AcceptedEvidence = 15,
-    AcceptedFrontier = 16,
+    AcceptedFrontier = 15,
+    AcceptedSequence = 16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -261,8 +261,8 @@ pub(crate) struct ScratchRoots {
     pub conflict_root: ScratchLsmRoot,
     pub external_document_current_root: ScratchLsmRoot,
     pub external_document_state_root: ScratchLsmRoot,
-    pub accepted_evidence_root: ScratchLsmRoot,
     pub accepted_frontier_root: ScratchLsmRoot,
+    pub accepted_sequence_root: ScratchLsmRoot,
 }
 
 /// One reconstructible, authenticated run-local scratch namespace.

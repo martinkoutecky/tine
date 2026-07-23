@@ -28,11 +28,11 @@ pub use batch::{
     OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use hot_engine::{
-    AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, BatchDisposition, BlockLocation,
-    EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
-    ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats, MaterializedBlock,
-    MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine, StageOutcome,
-    WorkspaceStatus,
+    AcceptedBatch, AcceptedBatchEvidence, AcceptedFrontierRoot, AuthorBatch, BatchDisposition,
+    BlockLocation, EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle,
+    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats,
+    MaterializedBlock, MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine,
+    StageOutcome, WorkspaceStatus,
 };
 pub use identity::{
     BatchId, BlockId, CrdtPeerId, DeviceId, DocumentId, ImportId, LogseqUuid, PageId, SessionId,
@@ -59,7 +59,7 @@ pub use simulator::{
 };
 pub use sqlite::{
     AcceptedBatchEvent, ApplyDisposition, ForensicEvidence, OpenProjection, ProjectionClaim,
-    ProjectionError, ProjectionRecovery, RebuildSource, SqliteFrontier, TailOverlay,
-    TailOverlayError, TailOverlayStatus, TailReservation, SQLITE_APPLICATION_ID,
-    SQLITE_SCHEMA_VERSION, TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
+    ProjectionError, ProjectionRecovery, RebuildInstrumentation, RebuildSource, SqliteFrontier,
+    TailOverlay, TailOverlayError, TailOverlayStatus, TailReservation, WorkspaceRuntimeLeaseRoot,
+    SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION, TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
 };

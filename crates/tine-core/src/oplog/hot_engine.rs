@@ -35,9 +35,10 @@ const MAX_TRANSACTION_OPERATIONS: usize = 100_000;
 const MAX_DOCUMENT_ENTRIES: usize = 1_000_000;
 const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
 const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 5;
-const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 3;
+const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 4;
 const BLOCK_CLAIM_RECORD_SCHEMA_VERSION: u32 = 2;
-const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 2;
+const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 1;
 const MAX_EPHEMERAL_BLOCK_CLAIMS: usize = 4_096;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -428,11 +429,55 @@ pub struct AcceptedBatchEvidence {
     schema_version: u32,
     batch_id: BatchId,
     manifest_fingerprint: ContentDigest,
+    event_binding_digest: ContentDigest,
     acceptance_sequence: u64,
-    post_frontier: FrontierV2,
+    prior_frontier_root: AcceptedFrontierRoot,
+    post_frontier_root: AcceptedFrontierRoot,
+    affected_documents: Vec<DocumentDependencies>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptedFrontierRoot {
+    schema_version: u32,
+    acceptance_sequence: u64,
+    document_count: u64,
+    state_digest: ContentDigest,
+    scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
 }
 
 impl AcceptedBatchEvidence {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        batch_id: BatchId,
+        manifest_fingerprint: ContentDigest,
+        event_binding_digest: ContentDigest,
+        prior_frontier_root: AcceptedFrontierRoot,
+        affected_documents: Vec<DocumentDependencies>,
+        document_count: u64,
+    ) -> Self {
+        let acceptance_sequence = prior_frontier_root.acceptance_sequence.saturating_add(1);
+        let post_frontier_root = next_accepted_frontier_root(
+            &prior_frontier_root,
+            event_binding_digest,
+            acceptance_sequence,
+            document_count,
+            &affected_documents,
+            None,
+        )
+        .expect("canonical test accepted-frontier transition");
+        Self {
+            schema_version: ACCEPTED_EVIDENCE_SCHEMA_VERSION,
+            batch_id,
+            manifest_fingerprint,
+            event_binding_digest,
+            acceptance_sequence,
+            prior_frontier_root,
+            post_frontier_root,
+            affected_documents,
+        }
+    }
+
     pub const fn batch_id(&self) -> BatchId {
         self.batch_id
     }
@@ -441,12 +486,83 @@ impl AcceptedBatchEvidence {
         self.manifest_fingerprint
     }
 
+    pub const fn event_binding_digest(&self) -> ContentDigest {
+        self.event_binding_digest
+    }
+
+    pub(crate) fn binding_digest_for(
+        batch_id: BatchId,
+        manifest_fingerprint: ContentDigest,
+        semantic_effect_digest: SemanticEffectDigest,
+        dependency_frontier: &FrontierV2,
+        causal_dependency_heads: &[BatchId],
+    ) -> Result<ContentDigest, EngineError> {
+        let bytes = postcard::to_allocvec(&(
+            b"tine/oplog/accepted-event-binding/v1".as_slice(),
+            batch_id,
+            manifest_fingerprint,
+            semantic_effect_digest,
+            dependency_frontier,
+            causal_dependency_heads,
+        ))
+        .map_err(|error| EngineError::Archive(error.to_string()))?;
+        Ok(ContentDigest::of(&bytes))
+    }
+
     pub const fn acceptance_sequence(&self) -> u64 {
         self.acceptance_sequence
     }
 
-    pub fn post_frontier(&self) -> &FrontierV2 {
-        &self.post_frontier
+    pub const fn prior_frontier_root(&self) -> &AcceptedFrontierRoot {
+        &self.prior_frontier_root
+    }
+
+    pub const fn post_frontier_root(&self) -> &AcceptedFrontierRoot {
+        &self.post_frontier_root
+    }
+
+    pub fn affected_documents(&self) -> &[DocumentDependencies] {
+        &self.affected_documents
+    }
+}
+
+impl AcceptedFrontierRoot {
+    pub fn empty() -> Self {
+        empty_accepted_frontier_root()
+    }
+
+    pub const fn acceptance_sequence(&self) -> u64 {
+        self.acceptance_sequence
+    }
+
+    pub const fn document_count(&self) -> u64 {
+        self.document_count
+    }
+
+    pub const fn state_digest(&self) -> ContentDigest {
+        self.state_digest
+    }
+
+    pub(crate) const fn has_persistent_point_index(&self) -> bool {
+        self.scratch_root.is_some()
+    }
+
+    pub(crate) fn validates_transition(
+        &self,
+        event_binding_digest: ContentDigest,
+        acceptance_sequence: u64,
+        document_count: u64,
+        affected_documents: &[DocumentDependencies],
+        post: &Self,
+    ) -> Result<bool, EngineError> {
+        Ok(next_accepted_frontier_root(
+            self,
+            event_binding_digest,
+            acceptance_sequence,
+            document_count,
+            affected_documents,
+            post.scratch_root.clone(),
+        )? == *post)
     }
 }
 
@@ -622,7 +738,10 @@ impl StageOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum ArchiveStatus {
     Staged,
-    Accepted { no_op: bool },
+    Accepted {
+        no_op: bool,
+        evidence: AcceptedBatchEvidence,
+    },
     Quarantined,
     Rejected(EngineError),
 }
@@ -637,9 +756,12 @@ struct ColdHistoryRecord {
     status: ArchiveStatus,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum BatchApplication {
-    Accepted { no_op: bool },
+    Accepted {
+        no_op: bool,
+        evidence: AcceptedBatchEvidence,
+    },
     Quarantined,
 }
 
@@ -782,7 +904,8 @@ pub struct ShardedHotEngine {
         RefCell<BTreeSet<(DocumentId, BatchId, ContentDigest, ContentDigest)>>,
     history_work: Cell<HistoryWorkStats>,
     accepted_frontier: BTreeMap<DocumentId, DocumentDependencies>,
-    accepted_evidence: BTreeMap<BatchId, AcceptedBatchEvidence>,
+    accepted_frontier_root: AcceptedFrontierRoot,
+    accepted_sequence: BTreeMap<u64, BatchId>,
     next_acceptance_sequence: u64,
     #[cfg(test)]
     validation_phase_nanos: [u128; 10],
@@ -842,7 +965,8 @@ impl ShardedHotEngine {
             external_anchor_point_cache: RefCell::new(BTreeSet::new()),
             history_work: Cell::new(HistoryWorkStats::default()),
             accepted_frontier: BTreeMap::new(),
-            accepted_evidence: BTreeMap::new(),
+            accepted_frontier_root: empty_accepted_frontier_root(),
+            accepted_sequence: BTreeMap::new(),
             next_acceptance_sequence: 0,
             #[cfg(test)]
             validation_phase_nanos: [0; 10],
@@ -992,6 +1116,76 @@ impl ShardedHotEngine {
             .map_err(EngineError::from)
     }
 
+    pub fn accepted_frontier_root(&self) -> Result<AcceptedFrontierRoot, EngineError> {
+        self.ensure_not_blocked()?;
+        validate_accepted_frontier_root(&self.accepted_frontier_root)?;
+        Ok(self.accepted_frontier_root.clone())
+    }
+
+    pub fn accepted_batch_count(&self) -> Result<u64, EngineError> {
+        self.ensure_not_blocked()?;
+        Ok(self.next_acceptance_sequence)
+    }
+
+    pub fn accepted_batch_id_at(&self, sequence: u64) -> Result<Option<BatchId>, EngineError> {
+        self.ensure_not_blocked()?;
+        if sequence == 0 || sequence > self.next_acceptance_sequence {
+            return Ok(None);
+        }
+        if let Some(store) = &self.scratch {
+            let bytes = store
+                .lookup(
+                    &self.scratch_roots.accepted_sequence_root,
+                    super::scratch_store::ScratchPageKind::AcceptedSequence,
+                    &sequence.to_be_bytes(),
+                )
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .ok_or_else(|| {
+                    EngineError::Archive(format!(
+                        "accepted sequence {sequence} has no authenticated batch"
+                    ))
+                })?;
+            let uuid = Uuid::from_slice(&bytes).map_err(|error| {
+                EngineError::Archive(format!(
+                    "accepted sequence {sequence} has invalid batch bytes: {error}"
+                ))
+            })?;
+            return Ok(Some(BatchId::from_uuid(uuid)));
+        }
+        Ok(self.accepted_sequence.get(&sequence).copied())
+    }
+
+    pub fn accepted_frontier_document(
+        &self,
+        root: &AcceptedFrontierRoot,
+        document_id: DocumentId,
+    ) -> Result<Option<DocumentDependencies>, EngineError> {
+        validate_accepted_frontier_root(root)?;
+        let Some(scratch_root) = &root.scratch_root else {
+            if root == &self.accepted_frontier_root {
+                return Ok(self.accepted_frontier.get(&document_id).cloned());
+            }
+            return Err(EngineError::Archive(
+                "historical frontier point queries require store-backed accepted history".into(),
+            ));
+        };
+        let store = self.scratch.as_ref().ok_or_else(|| {
+            EngineError::Archive(
+                "store-backed accepted frontier root has no authenticated scratch store".into(),
+            )
+        })?;
+        let bytes = store
+            .lookup(
+                scratch_root,
+                super::scratch_store::ScratchPageKind::AcceptedFrontier,
+                document_id.as_uuid().as_bytes(),
+            )
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        bytes
+            .map(|bytes| decode_accepted_document(document_id, &bytes))
+            .transpose()
+    }
+
     /// Point lookup of immutable evidence bound when this batch became
     /// accepted. Store-backed engines authenticate the record from scratch
     /// state and cross-check its manifest fingerprint against batch history.
@@ -1000,35 +1194,9 @@ impl ShardedHotEngine {
         batch_id: BatchId,
     ) -> Result<AcceptedBatchEvidence, EngineError> {
         self.begin_point_operation();
-        if !matches!(
-            self.archive_status(batch_id)?,
-            Some(ArchiveStatus::Accepted { .. })
-        ) {
-            return Err(EngineError::MissingDependency(batch_id));
-        }
-        let evidence = if let Some(store) = &self.scratch {
-            let bytes = store
-                .lookup(
-                    &self.scratch_roots.accepted_evidence_root,
-                    super::scratch_store::ScratchPageKind::AcceptedEvidence,
-                    batch_id.as_uuid().as_bytes(),
-                )
-                .map_err(|error| EngineError::Archive(error.to_string()))?
-                .ok_or_else(|| {
-                    EngineError::Archive(format!(
-                        "accepted batch {batch_id} has no frontier evidence"
-                    ))
-                })?;
-            decode_accepted_evidence(batch_id, &bytes)?
-        } else {
-            self.accepted_evidence
-                .get(&batch_id)
-                .cloned()
-                .ok_or_else(|| {
-                    EngineError::Archive(format!(
-                        "accepted batch {batch_id} has no frontier evidence"
-                    ))
-                })?
+        let evidence = match self.archive_status(batch_id)? {
+            Some(ArchiveStatus::Accepted { evidence, .. }) => evidence,
+            _ => return Err(EngineError::MissingDependency(batch_id)),
         };
         let expected_fingerprint = if let Some(store) = &self.scratch {
             super::dependency_queue::lookup(store, &self.scratch_roots, batch_id)
@@ -1048,6 +1216,7 @@ impl ShardedHotEngine {
                 "accepted batch {batch_id} frontier evidence fingerprint mismatch"
             )));
         }
+        validate_accepted_evidence(&evidence)?;
         Ok(evidence)
     }
 
@@ -1087,7 +1256,26 @@ impl ShardedHotEngine {
             changed_documents.insert(*document_id, dependencies);
         }
         let mut roots = candidate_roots.clone();
-        let (post_documents, post_frontier) = if let Some(store) = &self.scratch {
+        let acceptance_sequence = self
+            .next_acceptance_sequence
+            .checked_add(1)
+            .ok_or_else(|| EngineError::Archive("acceptance sequence overflowed".into()))?;
+        let prior_frontier_root = self.accepted_frontier_root.clone();
+        let new_document_count = changed_documents.keys().try_fold(
+            prior_frontier_root.document_count,
+            |count, document_id| -> Result<u64, EngineError> {
+                Ok(
+                    if self.accepted_document_dependencies(*document_id)?.is_some() {
+                        count
+                    } else {
+                        count.checked_add(1).ok_or_else(|| {
+                            EngineError::Archive("accepted document count overflowed".into())
+                        })?
+                    },
+                )
+            },
+        )?;
+        let (post_documents, scratch_root) = if let Some(store) = &self.scratch {
             let records = changed_documents
                 .iter()
                 .map(|(document_id, dependencies)| {
@@ -1104,41 +1292,53 @@ impl ShardedHotEngine {
                     &records,
                 )
                 .map_err(|error| EngineError::Archive(error.to_string()))?;
-            (
-                None,
-                materialize_accepted_frontier(store, &roots.accepted_frontier_root)?,
-            )
+            (None, Some(roots.accepted_frontier_root.clone()))
         } else {
             let mut post_documents = self.accepted_frontier.clone();
-            post_documents.extend(changed_documents);
-            let post_frontier = FrontierV2::new(post_documents.values().cloned().collect())?;
-            (Some(post_documents), post_frontier)
+            post_documents.extend(changed_documents.clone());
+            (Some(post_documents), None)
         };
-        let acceptance_sequence = self
-            .next_acceptance_sequence
-            .checked_add(1)
-            .ok_or_else(|| EngineError::Archive("acceptance sequence overflowed".into()))?;
         let manifest_fingerprint = self
             .archive_fingerprints
             .get(&batch_id)
             .copied()
             .ok_or(EngineError::MissingDependency(batch_id))?;
+        let manifest = self.archive[&batch_id].manifest();
+        let event_binding_digest = AcceptedBatchEvidence::binding_digest_for(
+            batch_id,
+            manifest_fingerprint,
+            manifest.semantic_effect_digest(),
+            manifest.dependency_frontier(),
+            manifest.causal_dependency_heads(),
+        )?;
+        let affected_documents = changed_documents.into_values().collect::<Vec<_>>();
+        let post_frontier_root = next_accepted_frontier_root(
+            &prior_frontier_root,
+            event_binding_digest,
+            acceptance_sequence,
+            new_document_count,
+            &affected_documents,
+            scratch_root,
+        )?;
         let evidence = AcceptedBatchEvidence {
             schema_version: ACCEPTED_EVIDENCE_SCHEMA_VERSION,
             batch_id,
             manifest_fingerprint,
+            event_binding_digest,
             acceptance_sequence,
-            post_frontier,
+            prior_frontier_root,
+            post_frontier_root,
+            affected_documents,
         };
         if let Some(store) = &self.scratch {
             let records = BTreeMap::from([(
-                batch_id.as_uuid().as_bytes().to_vec(),
-                Some(encode_accepted_evidence(&evidence)?),
+                acceptance_sequence.to_be_bytes().to_vec(),
+                Some(batch_id.as_uuid().as_bytes().to_vec()),
             )]);
-            roots.accepted_evidence_root = store
+            roots.accepted_sequence_root = store
                 .insert_many(
-                    &roots.accepted_evidence_root,
-                    super::scratch_store::ScratchPageKind::AcceptedEvidence,
+                    &roots.accepted_sequence_root,
+                    super::scratch_store::ScratchPageKind::AcceptedSequence,
                     &records,
                 )
                 .map_err(|error| EngineError::Archive(error.to_string()))?;
@@ -1153,14 +1353,16 @@ impl ShardedHotEngine {
         roots: ScratchRoots,
     ) {
         self.next_acceptance_sequence = evidence.acceptance_sequence;
+        self.accepted_frontier_root = evidence.post_frontier_root.clone();
         if self.scratch.is_some() {
             debug_assert!(post_documents.is_none());
             debug_assert!(self.accepted_frontier.is_empty());
-            debug_assert!(self.accepted_evidence.is_empty());
+            debug_assert!(self.accepted_sequence.is_empty());
             self.scratch_roots = roots;
         } else {
             self.accepted_frontier = post_documents.expect("inline accepted frontier");
-            self.accepted_evidence.insert(evidence.batch_id, evidence);
+            self.accepted_sequence
+                .insert(evidence.acceptance_sequence, evidence.batch_id);
         }
     }
 
@@ -1259,7 +1461,7 @@ impl ShardedHotEngine {
                         missing_objects: 0,
                         missing_dependencies: self.missing_dependencies(batch_id)?,
                     },
-                    ArchiveStatus::Accepted { no_op } => BatchDisposition::Accepted { no_op },
+                    ArchiveStatus::Accepted { no_op, .. } => BatchDisposition::Accepted { no_op },
                     ArchiveStatus::Quarantined => BatchDisposition::Quarantined,
                     ArchiveStatus::Rejected(error) => BatchDisposition::Rejected { error },
                 };
@@ -1454,7 +1656,7 @@ impl ShardedHotEngine {
             let disposition = match self.statuses.get(&batch_id).cloned() {
                 Some(ArchiveStatus::Rejected(error)) => BatchDisposition::Rejected { error },
                 Some(ArchiveStatus::Staged) => self.incomplete_staged_disposition(batch_id),
-                Some(ArchiveStatus::Accepted { no_op }) => {
+                Some(ArchiveStatus::Accepted { no_op, .. }) => {
                     BatchDisposition::DuplicateAccepted { no_op }
                 }
                 Some(ArchiveStatus::Quarantined) => BatchDisposition::Quarantined,
@@ -1486,7 +1688,7 @@ impl ShardedHotEngine {
         }
         let disposition = match self.archive_status(batch_id) {
             Err(error) => BatchDisposition::Rejected { error },
-            Ok(Some(ArchiveStatus::Accepted { no_op })) => BatchDisposition::Accepted { no_op },
+            Ok(Some(ArchiveStatus::Accepted { no_op, .. })) => BatchDisposition::Accepted { no_op },
             Ok(Some(ArchiveStatus::Quarantined)) => BatchDisposition::Quarantined,
             Ok(Some(ArchiveStatus::Rejected(error))) => BatchDisposition::Rejected { error },
             Ok(Some(ArchiveStatus::Staged)) => self.incomplete_staged_disposition(batch_id),
@@ -1648,9 +1850,9 @@ impl ShardedHotEngine {
                                 allow_publication,
                                 Some(causal_roots),
                             ) {
-                                Ok(BatchApplication::Accepted { no_op }) => {
+                                Ok(BatchApplication::Accepted { no_op, evidence }) => {
                                     accepted.push(AcceptedBatch { batch_id, no_op });
-                                    ArchiveStatus::Accepted { no_op }
+                                    ArchiveStatus::Accepted { no_op, evidence }
                                 }
                                 Ok(BatchApplication::Quarantined) => ArchiveStatus::Quarantined,
                                 Err(error) => ArchiveStatus::Rejected(error),
@@ -1691,7 +1893,7 @@ impl ShardedHotEngine {
             );
         }
         let disposition = match self.archive_status(offered_batch_id) {
-            Ok(Some(ArchiveStatus::Accepted { no_op })) => BatchDisposition::Accepted { no_op },
+            Ok(Some(ArchiveStatus::Accepted { no_op, .. })) => BatchDisposition::Accepted { no_op },
             Ok(Some(ArchiveStatus::Quarantined)) => BatchDisposition::Quarantined,
             Ok(Some(ArchiveStatus::Rejected(error))) => BatchDisposition::Rejected { error },
             Ok(Some(ArchiveStatus::Staged)) => self.incomplete_staged_disposition(offered_batch_id),
@@ -2172,8 +2374,11 @@ impl ShardedHotEngine {
                     }
                 }
                 match self.validate_and_apply(batch_id, true, None) {
-                    Ok(BatchApplication::Accepted { no_op }) => {
-                        self.set_final_status(batch_id, ArchiveStatus::Accepted { no_op });
+                    Ok(BatchApplication::Accepted { no_op, evidence }) => {
+                        self.set_final_status(
+                            batch_id,
+                            ArchiveStatus::Accepted { no_op, evidence },
+                        );
                         accepted.push(AcceptedBatch { batch_id, no_op });
                     }
                     Ok(BatchApplication::Quarantined) => {
@@ -3218,6 +3423,7 @@ impl ShardedHotEngine {
             self.block_claim_root = identity.block_claim_root;
             self.fatal_handle = identity.fatal_handle;
         }
+        let status_evidence = accepted_evidence.clone();
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
         let bulk_hot_documents = self.scratch.as_ref().and_then(|_| {
             let non_catalog = replacements
@@ -3287,6 +3493,7 @@ impl ShardedHotEngine {
         }
         Ok(BatchApplication::Accepted {
             no_op: declared_effect.is_empty(),
+            evidence: status_evidence,
         })
     }
 
@@ -3406,6 +3613,7 @@ impl ShardedHotEngine {
             self.block_claim_root = identity.block_claim_root;
             self.fatal_handle = identity.fatal_handle;
         }
+        let status_evidence = accepted_evidence.clone();
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
 
         let mut work = self.history_work.get();
@@ -3454,6 +3662,7 @@ impl ShardedHotEngine {
         }
         Ok(Some(BatchApplication::Accepted {
             no_op: declared_effect.is_empty(),
+            evidence: status_evidence,
         }))
     }
 
@@ -4995,34 +5204,115 @@ fn decode_archive_status(bytes: &[u8]) -> Result<ArchiveStatus, EngineError> {
     Ok(status)
 }
 
-fn encode_accepted_evidence(evidence: &AcceptedBatchEvidence) -> Result<Vec<u8>, EngineError> {
-    postcard::to_allocvec(evidence).map_err(|error| EngineError::Archive(error.to_string()))
+fn empty_accepted_frontier_root() -> AcceptedFrontierRoot {
+    AcceptedFrontierRoot {
+        schema_version: ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION,
+        acceptance_sequence: 0,
+        document_count: 0,
+        state_digest: ContentDigest::of(b"tine/oplog/accepted-frontier/v1/empty"),
+        scratch_root: None,
+    }
 }
 
-fn decode_accepted_evidence(
-    expected_batch_id: BatchId,
-    bytes: &[u8],
-) -> Result<AcceptedBatchEvidence, EngineError> {
-    let evidence: AcceptedBatchEvidence =
-        postcard::from_bytes(bytes).map_err(|error| EngineError::Archive(error.to_string()))?;
+fn next_accepted_frontier_root(
+    prior: &AcceptedFrontierRoot,
+    event_binding_digest: ContentDigest,
+    acceptance_sequence: u64,
+    document_count: u64,
+    affected_documents: &[DocumentDependencies],
+    scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
+) -> Result<AcceptedFrontierRoot, EngineError> {
+    validate_accepted_frontier_root(prior)?;
+    if acceptance_sequence != prior.acceptance_sequence.saturating_add(1) {
+        return Err(EngineError::Archive(
+            "accepted frontier sequence is not contiguous".into(),
+        ));
+    }
+    let mut bytes = b"tine/oplog/accepted-frontier/v1\0".to_vec();
+    bytes.extend_from_slice(prior.state_digest.as_bytes());
+    bytes.extend_from_slice(event_binding_digest.as_bytes());
+    bytes.extend_from_slice(&acceptance_sequence.to_be_bytes());
+    bytes.extend_from_slice(&document_count.to_be_bytes());
+    bytes.extend_from_slice(&(affected_documents.len() as u64).to_be_bytes());
+    for document in affected_documents {
+        let encoded = encode_accepted_document(document)?;
+        bytes.extend_from_slice(&(encoded.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(&encoded);
+    }
+    Ok(AcceptedFrontierRoot {
+        schema_version: ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION,
+        acceptance_sequence,
+        document_count,
+        state_digest: ContentDigest::of(&bytes),
+        scratch_root,
+    })
+}
+
+fn validate_accepted_frontier_root(root: &AcceptedFrontierRoot) -> Result<(), EngineError> {
+    if root.schema_version != ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION {
+        return Err(EngineError::Archive(format!(
+            "unknown accepted-frontier root schema {}",
+            root.schema_version
+        )));
+    }
+    if root.acceptance_sequence == 0 {
+        if root.document_count != 0
+            || root.state_digest != empty_accepted_frontier_root().state_digest
+            || root.scratch_root.is_some()
+        {
+            return Err(EngineError::Archive(
+                "malformed empty accepted-frontier root".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_accepted_evidence(evidence: &AcceptedBatchEvidence) -> Result<(), EngineError> {
     if evidence.schema_version != ACCEPTED_EVIDENCE_SCHEMA_VERSION {
         return Err(EngineError::Archive(format!(
             "unknown accepted-evidence schema {}",
             evidence.schema_version
         )));
     }
-    if evidence.batch_id != expected_batch_id {
+    validate_accepted_frontier_root(&evidence.prior_frontier_root)?;
+    validate_accepted_frontier_root(&evidence.post_frontier_root)?;
+    if evidence.acceptance_sequence != evidence.post_frontier_root.acceptance_sequence
+        || evidence.acceptance_sequence
+            != evidence
+                .prior_frontier_root
+                .acceptance_sequence
+                .saturating_add(1)
+    {
         return Err(EngineError::Archive(format!(
-            "accepted-evidence identity mismatch: expected {expected_batch_id}, found {}",
+            "accepted batch {} has a non-contiguous frontier transition",
             evidence.batch_id
         )));
     }
-    if encode_accepted_evidence(&evidence)? != bytes {
+    if evidence
+        .affected_documents
+        .windows(2)
+        .any(|pair| pair[0].document_id() >= pair[1].document_id())
+    {
         return Err(EngineError::Archive(
-            "accepted-evidence bytes are not canonical".into(),
+            "accepted frontier affected documents are not canonical".into(),
         ));
     }
-    Ok(evidence)
+    let expected = next_accepted_frontier_root(
+        &evidence.prior_frontier_root,
+        evidence.event_binding_digest,
+        evidence.acceptance_sequence,
+        evidence.post_frontier_root.document_count,
+        &evidence.affected_documents,
+        evidence.post_frontier_root.scratch_root.clone(),
+    )?;
+    if expected != evidence.post_frontier_root {
+        return Err(EngineError::Archive(format!(
+            "accepted batch {} frontier root digest mismatch",
+            evidence.batch_id
+        )));
+    }
+    Ok(())
 }
 
 fn encode_accepted_document(dependencies: &DocumentDependencies) -> Result<Vec<u8>, EngineError> {
@@ -5209,7 +5499,7 @@ fn status_history_from_records(records: Vec<ColdHistoryRecord>) -> StatusHistory
     for record in records {
         history.offered_batches.push(record.batch_id);
         match record.status {
-            ArchiveStatus::Accepted { no_op } => {
+            ArchiveStatus::Accepted { no_op, .. } => {
                 history.accepted_batches.push(AcceptedBatch {
                     batch_id: record.batch_id,
                     no_op,
@@ -5232,10 +5522,10 @@ fn status_history_from_records(records: Vec<ColdHistoryRecord>) -> StatusHistory
 
 fn disposition_from_final_status(status: ArchiveStatus, duplicate: bool) -> BatchDisposition {
     match status {
-        ArchiveStatus::Accepted { no_op } if duplicate => {
+        ArchiveStatus::Accepted { no_op, .. } if duplicate => {
             BatchDisposition::DuplicateAccepted { no_op }
         }
-        ArchiveStatus::Accepted { no_op } => BatchDisposition::Accepted { no_op },
+        ArchiveStatus::Accepted { no_op, .. } => BatchDisposition::Accepted { no_op },
         ArchiveStatus::Quarantined => BatchDisposition::Quarantined,
         ArchiveStatus::Rejected(error) => BatchDisposition::Rejected { error },
         ArchiveStatus::Staged => unreachable!("cold engine history never stores staged status"),
@@ -9526,8 +9816,8 @@ mod validation_tests {
             "store-backed accepted frontier leaked into graph-wide heap state"
         );
         assert!(
-            engine.accepted_evidence.is_empty(),
-            "store-backed accepted evidence leaked into graph-wide heap state"
+            engine.accepted_sequence.is_empty(),
+            "store-backed accepted sequence index leaked into graph-wide heap state"
         );
         assert_eq!(engine.exact_frontier().unwrap().documents().len(), 2);
         assert!(

@@ -10,7 +10,7 @@
 //! macOS, Windows, and Android. The small lock file remains as diagnostic
 //! metadata, but never decides ownership by its contents.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Seek, SeekFrom, Write};
@@ -24,19 +24,19 @@ use rusqlite::{
 use uuid::Uuid;
 
 use super::{
-    BatchDisposition, BatchId, BatchInspection, ContentDigest, FrontierV2, LineageDigest,
-    ObjectKind, ObjectStore, SemanticEffect, SemanticEffectDigest, ShardedHotEngine,
-    ValidatedBatch, WorkspaceId, WorkspaceStatus, MANAGED_ENTITY_SET_VERSION,
-    MANIFEST_ENCODING_VERSION, OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION,
-    OPLOG_PROTOCOL_VERSION,
+    AcceptedFrontierRoot, BatchId, BatchInspection, ContentDigest, DocumentDependencies,
+    DocumentId, FrontierV2, LineageDigest, ObjectKind, ObjectStore, SemanticEffect,
+    SemanticEffectDigest, ShardedHotEngine, ValidatedBatch, WorkspaceId, WorkspaceStatus,
+    MANAGED_ENTITY_SET_VERSION, MANIFEST_ENCODING_VERSION, OBJECT_ENVELOPE_SCHEMA_VERSION,
+    OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 2;
+pub const SQLITE_SCHEMA_VERSION: u32 = 3;
 pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
-const EXPECTED_TABLES: [&str; 3] = ["applied_batches", "frontier", "meta"];
+const EXPECTED_TABLES: [&str; 4] = ["applied_batches", "frontier", "frontier_documents", "meta"];
 const EXPECTED_INDEXES: [&str; 2] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
@@ -53,9 +53,14 @@ const META_DDL: &str = "CREATE TABLE meta (
 ) STRICT";
 const FRONTIER_DDL: &str = "CREATE TABLE frontier (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    exact_frontier BLOB NOT NULL,
-    frontier_digest BLOB NOT NULL CHECK (length(frontier_digest) = 32),
+    frontier_root BLOB NOT NULL,
+    frontier_root_digest BLOB NOT NULL CHECK (length(frontier_root_digest) = 32),
     applied_batch_count INTEGER NOT NULL CHECK (applied_batch_count >= 0)
+) STRICT";
+const FRONTIER_DOCUMENTS_DDL: &str = "CREATE TABLE frontier_documents (
+    document_id BLOB PRIMARY KEY CHECK (length(document_id) = 16),
+    dependencies BLOB NOT NULL,
+    dependencies_digest BLOB NOT NULL CHECK (length(dependencies_digest) = 32)
 ) STRICT";
 const APPLIED_BATCHES_DDL: &str = "CREATE TABLE applied_batches (
     sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
@@ -66,8 +71,15 @@ const APPLIED_BATCHES_DDL: &str = "CREATE TABLE applied_batches (
     dependency_frontier BLOB NOT NULL,
     dependency_frontier_digest BLOB NOT NULL
         CHECK (length(dependency_frontier_digest) = 32),
-    exact_frontier BLOB NOT NULL,
-    exact_frontier_digest BLOB NOT NULL CHECK (length(exact_frontier_digest) = 32),
+    prior_frontier_root BLOB NOT NULL,
+    prior_frontier_root_digest BLOB NOT NULL
+        CHECK (length(prior_frontier_root_digest) = 32),
+    post_frontier_root BLOB NOT NULL,
+    post_frontier_root_digest BLOB NOT NULL
+        CHECK (length(post_frontier_root_digest) = 32),
+    affected_documents BLOB NOT NULL,
+    affected_documents_digest BLOB NOT NULL
+        CHECK (length(affected_documents_digest) = 32),
     causal_dependency_heads BLOB NOT NULL,
     acceptance_sequence INTEGER NOT NULL CHECK (acceptance_sequence > 0),
     retained_bytes INTEGER NOT NULL CHECK (retained_bytes >= 0)
@@ -88,11 +100,12 @@ const META_COLUMNS: [&str; 8] = [
 ];
 const FRONTIER_COLUMNS: [&str; 4] = [
     "singleton",
-    "exact_frontier",
-    "frontier_digest",
+    "frontier_root",
+    "frontier_root_digest",
     "applied_batch_count",
 ];
-const APPLIED_BATCH_COLUMNS: [&str; 12] = [
+const FRONTIER_DOCUMENT_COLUMNS: [&str; 3] = ["document_id", "dependencies", "dependencies_digest"];
+const APPLIED_BATCH_COLUMNS: [&str; 16] = [
     "sequence",
     "batch_id",
     "manifest_digest",
@@ -100,8 +113,12 @@ const APPLIED_BATCH_COLUMNS: [&str; 12] = [
     "semantic_effect_digest",
     "dependency_frontier",
     "dependency_frontier_digest",
-    "exact_frontier",
-    "exact_frontier_digest",
+    "prior_frontier_root",
+    "prior_frontier_root_digest",
+    "post_frontier_root",
+    "post_frontier_root_digest",
+    "affected_documents",
+    "affected_documents_digest",
     "causal_dependency_heads",
     "acceptance_sequence",
     "retained_bytes",
@@ -148,10 +165,13 @@ pub struct AcceptedBatchEvent {
     lineage_digest: LineageDigest,
     batch_id: BatchId,
     manifest_digest: ContentDigest,
+    event_binding_digest: ContentDigest,
     semantic_effect: Vec<u8>,
     semantic_effect_digest: SemanticEffectDigest,
     dependency_frontier: FrontierV2,
-    exact_frontier: FrontierV2,
+    prior_frontier_root: AcceptedFrontierRoot,
+    post_frontier_root: AcceptedFrontierRoot,
+    affected_documents: Vec<DocumentDependencies>,
     acceptance_sequence: u64,
     causal_dependency_heads: Vec<BatchId>,
     retained_bytes: usize,
@@ -204,17 +224,28 @@ impl AcceptedBatchEvent {
                 found: manifest_digest,
             });
         }
-        Self::from_validated(
-            &validated,
-            evidence.post_frontier().clone(),
-            evidence.acceptance_sequence(),
-        )
+        if evidence.post_frontier_root().has_persistent_point_index() {
+            for document in evidence.affected_documents() {
+                let authenticated = engine
+                    .accepted_frontier_document(
+                        evidence.post_frontier_root(),
+                        document.document_id(),
+                    )
+                    .map_err(|error| ProjectionError::InvalidAcceptedEvent(error.to_string()))?;
+                if authenticated.as_ref() != Some(document) {
+                    return Err(ProjectionError::InvalidAcceptedEvent(format!(
+                        "accepted batch {batch_id} affected document {} is not bound to its frontier root",
+                        document.document_id()
+                    )));
+                }
+            }
+        }
+        Self::from_validated(&validated, &evidence)
     }
 
     fn from_validated(
         batch: &ValidatedBatch,
-        exact_frontier: FrontierV2,
-        acceptance_sequence: u64,
+        evidence: &super::AcceptedBatchEvidence,
     ) -> Result<Self, ProjectionError> {
         let manifest = batch.manifest();
         let manifest_bytes = manifest.encode().map_err(|error| {
@@ -259,6 +290,20 @@ impl AcceptedBatchEvent {
                 manifest.batch_id()
             )));
         }
+        let event_binding_digest = super::AcceptedBatchEvidence::binding_digest_for(
+            manifest.batch_id(),
+            ContentDigest::of(&manifest_bytes),
+            semantic_effect_digest,
+            manifest.dependency_frontier(),
+            manifest.causal_dependency_heads(),
+        )
+        .map_err(|error| ProjectionError::InvalidAcceptedEvent(error.to_string()))?;
+        if event_binding_digest != evidence.event_binding_digest() {
+            return Err(ProjectionError::InvalidAcceptedEvent(format!(
+                "accepted batch {} event binding differs from its frontier evidence",
+                manifest.batch_id()
+            )));
+        }
         let retained_bytes = batch.objects().iter().try_fold(
             manifest_bytes.len(),
             |total, object| -> Result<usize, ProjectionError> {
@@ -275,17 +320,39 @@ impl AcceptedBatchEvent {
                 })
             },
         )?;
-        canonical_frontier_bytes(&exact_frontier)?;
+        let updated_documents = batch
+            .objects()
+            .iter()
+            .filter(|object| object.kind() == ObjectKind::CrdtUpdate)
+            .map(|object| object.document_id())
+            .collect::<BTreeSet<_>>();
+        let evidenced_documents = evidence
+            .affected_documents()
+            .iter()
+            .map(DocumentDependencies::document_id)
+            .collect::<BTreeSet<_>>();
+        if updated_documents != evidenced_documents {
+            return Err(ProjectionError::InvalidAcceptedEvent(format!(
+                "accepted batch {} affected-document evidence differs from its CRDT updates",
+                manifest.batch_id()
+            )));
+        }
+        canonical_frontier_root_bytes(evidence.prior_frontier_root())?;
+        canonical_frontier_root_bytes(evidence.post_frontier_root())?;
+        canonical_affected_documents_bytes(evidence.affected_documents())?;
         Ok(Self {
             workspace_id: manifest.workspace_id(),
             lineage_digest: manifest.lineage_digest(),
             batch_id: manifest.batch_id(),
             manifest_digest: ContentDigest::of(&manifest_bytes),
+            event_binding_digest,
             semantic_effect,
             semantic_effect_digest,
             dependency_frontier: manifest.dependency_frontier().clone(),
-            exact_frontier,
-            acceptance_sequence,
+            prior_frontier_root: evidence.prior_frontier_root().clone(),
+            post_frontier_root: evidence.post_frontier_root().clone(),
+            affected_documents: evidence.affected_documents().to_vec(),
+            acceptance_sequence: evidence.acceptance_sequence(),
             causal_dependency_heads: manifest.causal_dependency_heads().to_vec(),
             retained_bytes,
         })
@@ -311,8 +378,22 @@ impl AcceptedBatchEvent {
         &self.dependency_frontier
     }
 
-    pub fn exact_frontier(&self) -> &FrontierV2 {
-        &self.exact_frontier
+    pub const fn prior_frontier_root(&self) -> &AcceptedFrontierRoot {
+        &self.prior_frontier_root
+    }
+
+    pub const fn post_frontier_root(&self) -> &AcceptedFrontierRoot {
+        &self.post_frontier_root
+    }
+
+    pub fn affected_documents(&self) -> &[DocumentDependencies] {
+        &self.affected_documents
+    }
+
+    #[cfg(test)]
+    fn exact_frontier(&self) -> FrontierV2 {
+        FrontierV2::new(self.affected_documents.clone())
+            .expect("test event affected documents are canonical")
     }
 
     pub const fn acceptance_sequence(&self) -> u64 {
@@ -328,10 +409,32 @@ impl AcceptedBatchEvent {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceRuntimeLeaseRoot {
+    path: PathBuf,
+    workspace_id: WorkspaceId,
+}
+
+impl WorkspaceRuntimeLeaseRoot {
+    pub fn open(path: &Path, workspace_id: WorkspaceId) -> Result<Self, ProjectionError> {
+        let path = prepare_runtime_lease_root(path, workspace_id)?;
+        Ok(Self { path, workspace_id })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+}
+
 pub struct RebuildSource<'a> {
     engine: &'a ShardedHotEngine,
     store: &'a ObjectStore,
-    exact_frontier: FrontierV2,
+    exact_frontier_root: AcceptedFrontierRoot,
+    accepted_batch_count: u64,
 }
 
 impl<'a> RebuildSource<'a> {
@@ -339,14 +442,41 @@ impl<'a> RebuildSource<'a> {
         engine: &'a ShardedHotEngine,
         store: &'a ObjectStore,
     ) -> Result<Self, ProjectionError> {
-        let exact_frontier = engine
-            .exact_frontier()
+        let exact_frontier_root = engine
+            .accepted_frontier_root()
+            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
+        let accepted_batch_count = engine
+            .accepted_batch_count()
             .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
         Ok(Self {
             engine,
             store,
-            exact_frontier,
+            exact_frontier_root,
+            accepted_batch_count,
         })
+    }
+
+    fn accepted_event_at(
+        &self,
+        acceptance_sequence: u64,
+    ) -> Result<AcceptedBatchEvent, ProjectionError> {
+        let batch_id = self
+            .engine
+            .accepted_batch_id_at(acceptance_sequence)
+            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?
+            .ok_or_else(|| {
+                ProjectionError::Rebuild(format!(
+                    "accepted history is missing sequence {acceptance_sequence}"
+                ))
+            })?;
+        let event = AcceptedBatchEvent::from_accepted(self.engine, self.store, batch_id)?;
+        if event.acceptance_sequence != acceptance_sequence {
+            return Err(ProjectionError::Rebuild(format!(
+                "accepted batch {batch_id} is indexed at sequence {acceptance_sequence} but carries {}",
+                event.acceptance_sequence
+            )));
+        }
+        Ok(event)
     }
 }
 
@@ -372,6 +502,16 @@ pub enum ProjectionRecovery {
 pub struct OpenProjection {
     pub database: SqliteFrontier,
     pub recovery: ProjectionRecovery,
+    pub rebuild: RebuildInstrumentation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RebuildInstrumentation {
+    pub accepted_events_validated: usize,
+    pub accepted_events_applied: usize,
+    pub max_live_events: usize,
+    pub max_live_evidence_records: usize,
+    pub ancestry_full_scans: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -436,22 +576,45 @@ pub struct TailReservation {
     retained_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TailDescriptor {
+    batch_id: BatchId,
+    manifest_digest: ContentDigest,
+    retained_bytes: usize,
+}
+
 #[derive(Default)]
 pub struct TailOverlay {
-    queue: VecDeque<AcceptedBatchEvent>,
+    hot_descriptors: BTreeMap<u64, TailDescriptor>,
     retained_bytes: usize,
+    authoritative_through: u64,
+    applied_through: u64,
+    descriptor_overflow: bool,
     reservations: BTreeMap<u64, usize>,
     reserved_bytes: usize,
     next_reservation_id: u64,
 }
 
 impl TailOverlay {
+    #[cfg(test)]
+    fn hot_descriptor_count(&self) -> usize {
+        self.hot_descriptors.len()
+    }
+
     pub fn status(&self) -> TailOverlayStatus {
+        let authoritative_pending = self
+            .authoritative_through
+            .saturating_sub(self.applied_through);
         TailOverlayStatus {
-            unapplied_batches: self.queue.len(),
-            retained_bytes: self.retained_bytes,
-            backpressured: self.queue.len().saturating_add(self.reservations.len())
-                >= TAIL_MAX_BATCHES
+            unapplied_batches: usize::try_from(authoritative_pending)
+                .unwrap_or(usize::MAX)
+                .saturating_add(self.reservations.len()),
+            retained_bytes: self.retained_bytes.saturating_add(self.reserved_bytes),
+            backpressured: self.descriptor_overflow
+                || usize::try_from(authoritative_pending)
+                    .unwrap_or(usize::MAX)
+                    .saturating_add(self.reservations.len())
+                    >= TAIL_MAX_BATCHES
                 || self.retained_bytes.saturating_add(self.reserved_bytes) >= TAIL_MAX_BYTES,
         }
     }
@@ -466,8 +629,10 @@ impl TailOverlay {
         retained_bytes: usize,
     ) -> Result<TailReservation, TailOverlayError> {
         let next_batches = self
-            .queue
-            .len()
+            .authoritative_through
+            .saturating_sub(self.applied_through)
+            .try_into()
+            .unwrap_or(usize::MAX)
             .saturating_add(self.reservations.len())
             .saturating_add(1);
         let next_bytes = self
@@ -518,6 +683,7 @@ impl TailOverlay {
     pub fn enqueue_reserved(
         &mut self,
         reservation: TailReservation,
+        database: &mut SqliteFrontier,
         event: AcceptedBatchEvent,
     ) -> Result<bool, TailOverlayError> {
         let Some(retained_bytes) = self.reservations.remove(&reservation.id) else {
@@ -525,45 +691,81 @@ impl TailOverlay {
         };
         debug_assert_eq!(retained_bytes, reservation.retained_bytes);
         self.reserved_bytes = self.reserved_bytes.saturating_sub(retained_bytes);
-        self.enqueue_authoritative(event)
+        self.observe_authoritative(database, &event)
     }
 
-    /// Queue an already-authoritative local or provider event. Crossing a cap
-    /// latches visible backpressure but never discards immutable accepted work.
-    pub fn try_enqueue(&mut self, event: AcceptedBatchEvent) -> Result<bool, TailOverlayError> {
-        self.enqueue_authoritative(event)
-    }
-
-    fn enqueue_authoritative(
+    /// Observe an already-authoritative local or provider event. The durable
+    /// accepted-history sequence remains the backlog; RAM retains only bounded
+    /// descriptors and can therefore discard stale duplicates immediately.
+    pub fn try_enqueue(
         &mut self,
-        event: AcceptedBatchEvent,
+        database: &mut SqliteFrontier,
+        event: &AcceptedBatchEvent,
     ) -> Result<bool, TailOverlayError> {
-        if let Some(existing) = self
-            .queue
-            .iter()
-            .find(|existing| existing.batch_id == event.batch_id)
-        {
-            return if existing == &event {
+        self.observe_authoritative(database, event)
+    }
+
+    fn observe_authoritative(
+        &mut self,
+        database: &mut SqliteFrontier,
+        event: &AcceptedBatchEvent,
+    ) -> Result<bool, TailOverlayError> {
+        let applied = u64::try_from(database.applied_batch_count()?)
+            .map_err(|_| ProjectionError::Corrupt("applied count exceeds u64".into()))?;
+        self.applied_through = self.applied_through.max(applied);
+        if event.acceptance_sequence <= applied {
+            return match database.apply_accepted(event)? {
+                ApplyDisposition::Duplicate => Ok(false),
+                ApplyDisposition::Applied => Err(ProjectionError::Corrupt(
+                    "stale provider event unexpectedly advanced SQLite".into(),
+                )
+                .into()),
+            };
+        }
+        let descriptor = TailDescriptor {
+            batch_id: event.batch_id,
+            manifest_digest: event.manifest_digest,
+            retained_bytes: event.retained_bytes,
+        };
+        if let Some(existing) = self.hot_descriptors.get(&event.acceptance_sequence) {
+            return if existing == &descriptor {
                 Ok(false)
             } else {
                 Err(TailOverlayError::BatchCollision(event.batch_id))
             };
         }
-        self.retained_bytes = self.retained_bytes.saturating_add(event.retained_bytes);
-        self.queue.push_back(event);
+        self.authoritative_through = self.authoritative_through.max(event.acceptance_sequence);
+        if self.hot_descriptors.len() < TAIL_MAX_BATCHES
+            && self
+                .retained_bytes
+                .checked_add(event.retained_bytes)
+                .is_some_and(|bytes| bytes <= TAIL_MAX_BYTES)
+        {
+            self.retained_bytes = self.retained_bytes.saturating_add(event.retained_bytes);
+            self.hot_descriptors
+                .insert(event.acceptance_sequence, descriptor);
+        } else {
+            self.descriptor_overflow = true;
+            self.retained_bytes = self
+                .retained_bytes
+                .saturating_add(event.retained_bytes)
+                .min(TAIL_MAX_BYTES.saturating_add(1));
+        }
         Ok(true)
     }
 
-    /// Apply any dependency-ready events, scanning the bounded tail so provider
-    /// reordering does not turn FIFO order into a false dependency failure.
+    /// Drain by authoritative acceptance sequence. Provider arrival order is
+    /// only a hint; every missing next event is rediscovered from durable
+    /// accepted history and validated exactly once before application.
     pub fn drain_ready(
         &mut self,
         database: &mut SqliteFrontier,
+        source: &RebuildSource<'_>,
         max_batches: usize,
     ) -> Result<usize, TailOverlayError> {
         let mut applied = 0;
+        self.authoritative_through = self.authoritative_through.max(source.accepted_batch_count);
         while applied < max_batches {
-            let mut ready = None;
             let expected_sequence =
                 database
                     .applied_batch_count()?
@@ -573,40 +775,37 @@ impl TailOverlay {
                             "applied batch sequence overflowed".into(),
                         ))
                     })? as u64;
-            for (index, event) in self.queue.iter().enumerate() {
-                if event.acceptance_sequence != expected_sequence {
-                    continue;
-                }
-                let mut dependencies_applied = true;
-                for dependency in &event.causal_dependency_heads {
-                    if !database.contains_batch(*dependency)? {
-                        dependencies_applied = false;
-                        break;
-                    }
-                }
-                if dependencies_applied {
-                    ready = Some(index);
-                    break;
-                }
-            }
-            let Some(index) = ready else {
+            if expected_sequence > source.accepted_batch_count {
                 break;
-            };
-            let event = self
-                .queue
-                .remove(index)
-                .expect("selected overlay event exists");
-            let retained_bytes = event.retained_bytes;
-            match database.apply_accepted(&event) {
-                Ok(_) => {
-                    self.retained_bytes = self.retained_bytes.saturating_sub(retained_bytes);
-                    applied += 1;
-                }
-                Err(error) => {
-                    self.queue.insert(index, event);
-                    return Err(error.into());
+            }
+            let event = source.accepted_event_at(expected_sequence)?;
+            if let Some(descriptor) = self.hot_descriptors.get(&expected_sequence) {
+                if descriptor.batch_id != event.batch_id
+                    || descriptor.manifest_digest != event.manifest_digest
+                {
+                    return Err(TailOverlayError::BatchCollision(event.batch_id));
                 }
             }
+            let retained_bytes = event.retained_bytes;
+            database.apply_accepted(&event)?;
+            if let Some(descriptor) = self.hot_descriptors.remove(&expected_sequence) {
+                self.retained_bytes = self
+                    .retained_bytes
+                    .saturating_sub(descriptor.retained_bytes);
+            } else if self.descriptor_overflow {
+                self.retained_bytes = self.retained_bytes.saturating_sub(retained_bytes);
+            }
+            self.applied_through = expected_sequence;
+            applied += 1;
+        }
+        if self.applied_through >= self.authoritative_through {
+            self.descriptor_overflow = false;
+            self.retained_bytes = self
+                .hot_descriptors
+                .values()
+                .fold(0_usize, |total, descriptor| {
+                    total.saturating_add(descriptor.retained_bytes)
+                });
         }
         Ok(applied)
     }
@@ -640,18 +839,24 @@ enum ApplyFault {
 impl SqliteFrontier {
     pub fn open_or_rebuild(
         path: &Path,
+        runtime_lease_root: &WorkspaceRuntimeLeaseRoot,
         claim: ProjectionClaim,
         source: RebuildSource<'_>,
     ) -> Result<OpenProjection, ProjectionError> {
         validate_source(claim, &source)?;
         let path = prepare_database_path(path)?;
-        let lease = ProcessLease::acquire(&path, claim.workspace_id)?;
-        let expected = collect_rebuild_events(claim, &source)?;
+        if runtime_lease_root.workspace_id != claim.workspace_id {
+            return Err(ProjectionError::WorkspaceMismatch {
+                expected: claim.workspace_id,
+                found: runtime_lease_root.workspace_id,
+            });
+        }
+        let lease = ProcessLease::acquire(runtime_lease_root, &path, claim.workspace_id)?;
         let mut pending_forensics = resume_pending_forensics(&path)?;
         let existed = projection_files_exist(&path);
 
         if existed {
-            match validate_existing(&path, claim, &expected, &source.exact_frontier) {
+            match validate_existing(&path, claim, &source) {
                 Ok(()) => {
                     if !pending_forensics.directories.is_empty() {
                         mark_rebuild_complete(&pending_forensics)?;
@@ -667,8 +872,10 @@ impl SqliteFrontier {
                                 reason: "recovered a committed rebuild after process termination"
                                     .into(),
                                 evidence: pending_forensics.evidence,
-                                applied_batches: expected.len(),
+                                applied_batches: usize::try_from(source.accepted_batch_count)
+                                    .unwrap_or(usize::MAX),
                             },
+                            rebuild: RebuildInstrumentation::default(),
                         });
                     }
                     let connection = open_writable(&path)?;
@@ -680,28 +887,29 @@ impl SqliteFrontier {
                             _lease: lease,
                         },
                         recovery: ProjectionRecovery::OpenedExisting,
+                        rebuild: RebuildInstrumentation::default(),
                     });
                 }
                 Err(reason) => {
                     pending_forensics.extend(preserve_forensics(&path)?);
                     maybe_abort_forensic_test("before-rebuild", 0);
-                    let mut database = Self::create_new(&path, claim, lease)?;
-                    database.rebuild_events(&expected, &source.exact_frontier)?;
+                    let (database, rebuild) =
+                        Self::build_candidate_and_publish(&path, claim, lease, &source)?;
                     mark_rebuild_complete(&pending_forensics)?;
                     return Ok(OpenProjection {
                         database,
                         recovery: ProjectionRecovery::RebuiltPreservingEvidence {
                             reason,
                             evidence: pending_forensics.evidence,
-                            applied_batches: expected.len(),
+                            applied_batches: rebuild.accepted_events_applied,
                         },
+                        rebuild,
                     });
                 }
             }
         }
 
-        let mut database = Self::create_new(&path, claim, lease)?;
-        database.rebuild_events(&expected, &source.exact_frontier)?;
+        let (database, rebuild) = Self::build_candidate_and_publish(&path, claim, lease, &source)?;
         if !pending_forensics.directories.is_empty() {
             mark_rebuild_complete(&pending_forensics)?;
             return Ok(OpenProjection {
@@ -709,16 +917,72 @@ impl SqliteFrontier {
                 recovery: ProjectionRecovery::RebuiltPreservingEvidence {
                     reason: "resumed interrupted forensic preservation and rebuild".into(),
                     evidence: pending_forensics.evidence,
-                    applied_batches: expected.len(),
+                    applied_batches: rebuild.accepted_events_applied,
                 },
+                rebuild,
             });
         }
         Ok(OpenProjection {
             database,
             recovery: ProjectionRecovery::RebuiltMissing {
-                applied_batches: expected.len(),
+                applied_batches: rebuild.accepted_events_applied,
             },
+            rebuild,
         })
+    }
+
+    fn build_candidate_and_publish(
+        path: &Path,
+        claim: ProjectionClaim,
+        lease: ProcessLease,
+        source: &RebuildSource<'_>,
+    ) -> Result<(Self, RebuildInstrumentation), ProjectionError> {
+        let candidate_path = candidate_database_path(path)?;
+        remove_projection_files(&candidate_path)?;
+        let mut candidate = Self::create_new(&candidate_path, claim, lease)?;
+        let rebuild = match candidate.rebuild_stream(source) {
+            Ok(rebuild) => rebuild,
+            Err(error) => {
+                drop(candidate);
+                remove_projection_files(&candidate_path)?;
+                return Err(error);
+            }
+        };
+        candidate
+            .connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;")?;
+        let Self {
+            path: _,
+            claim,
+            connection,
+            _lease: lease,
+        } = candidate;
+        connection
+            .close()
+            .map_err(|(_, error)| ProjectionError::Sqlite(error.to_string()))?;
+        if sidecar_path(&candidate_path, "-wal").exists()
+            || sidecar_path(&candidate_path, "-shm").exists()
+        {
+            remove_projection_files(&candidate_path)?;
+            return Err(ProjectionError::Corrupt(
+                "checkpointed SQLite candidate retained sidecars".into(),
+            ));
+        }
+        fs::rename(&candidate_path, path)?;
+        sync_directory(
+            path.parent()
+                .ok_or_else(|| ProjectionError::UnsafePath("database has no parent".into()))?,
+        )?;
+        let connection = open_writable(path)?;
+        Ok((
+            Self {
+                path: path.to_path_buf(),
+                claim,
+                connection,
+                _lease: lease,
+            },
+            rebuild,
+        ))
     }
 
     fn create_new(
@@ -744,17 +1008,28 @@ impl SqliteFrontier {
         self.claim
     }
 
+    pub fn frontier_root(&self) -> Result<AcceptedFrontierRoot, ProjectionError> {
+        read_frontier_root(&self.connection)
+    }
+
+    /// Explicit whole-frontier materialization for diagnostics and recovery.
+    /// Normal apply, startup, and point authorization use `frontier_root` and
+    /// `contains_frontier` instead.
     pub fn frontier(&self) -> Result<FrontierV2, ProjectionError> {
-        read_frontier(&self.connection)
+        read_frontier_documents(&self.connection)
     }
 
     pub fn contains_frontier(&self, required: &FrontierV2) -> Result<bool, ProjectionError> {
         canonical_frontier_bytes(required)?;
-        Ok(frontier_contains(
-            &self.frontier()?,
-            required,
-            &load_ancestry(&self.connection)?,
-        ))
+        for needed in required.documents() {
+            let Some(have) = load_frontier_document(&self.connection, needed.document_id())? else {
+                return Ok(false);
+            };
+            if !document_frontier_contains(&self.connection, &have, needed)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn applied_batch_count(&self) -> Result<usize, ProjectionError> {
@@ -782,7 +1057,7 @@ impl SqliteFrontier {
         &mut self,
         event: &AcceptedBatchEvent,
     ) -> Result<ApplyDisposition, ProjectionError> {
-        self.apply_internal(event, ApplyFault::None, None)
+        self.apply_internal(event, ApplyFault::None)
     }
 
     pub fn semantic_projection_digest(&self) -> Result<ContentDigest, ProjectionError> {
@@ -800,45 +1075,57 @@ impl SqliteFrontier {
                 bytes.extend_from_slice(&value);
             }
         }
-        let frontier = canonical_frontier_bytes(&self.frontier()?)?;
-        bytes.extend_from_slice(&(frontier.len() as u64).to_be_bytes());
-        bytes.extend_from_slice(&frontier);
+        let root = canonical_frontier_root_bytes(&read_frontier_root(&self.connection)?)?;
+        bytes.extend_from_slice(&(root.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(&root);
         Ok(ContentDigest::of(&bytes))
     }
 
-    fn rebuild_events(
+    fn rebuild_stream(
         &mut self,
-        events: &[AcceptedBatchEvent],
-        exact_frontier: &FrontierV2,
-    ) -> Result<(), ProjectionError> {
-        let ordered = topological_events(events)?;
-        let ancestry = event_ancestry(events);
-        for (index, event) in ordered.into_iter().enumerate() {
-            self.apply_internal(event, ApplyFault::None, Some(&ancestry))?;
-            maybe_abort_rebuild_test(index.saturating_add(1));
+        source: &RebuildSource<'_>,
+    ) -> Result<RebuildInstrumentation, ProjectionError> {
+        let mut instrumentation = RebuildInstrumentation::default();
+        for sequence in 1..=source.accepted_batch_count {
+            let event = source.accepted_event_at(sequence)?;
+            instrumentation.accepted_events_validated += 1;
+            instrumentation.max_live_events = instrumentation.max_live_events.max(1);
+            instrumentation.max_live_evidence_records =
+                instrumentation.max_live_evidence_records.max(1);
+            self.apply_internal(&event, ApplyFault::None)?;
+            instrumentation.accepted_events_applied += 1;
+            maybe_abort_rebuild_test(instrumentation.accepted_events_applied);
         }
-        if self.frontier()? != *exact_frontier {
+        if read_frontier_root(&self.connection)? != source.exact_frontier_root {
             return Err(ProjectionError::Rebuild(
-                "rebuild did not reach the engine's exact frontier".into(),
+                "rebuild did not reach the engine's authenticated frontier root".into(),
             ));
         }
-        Ok(())
+        if u64::try_from(self.applied_batch_count()?)
+            .map_err(|_| ProjectionError::Corrupt("applied count exceeds u64".into()))?
+            != source.accepted_batch_count
+        {
+            return Err(ProjectionError::Rebuild(
+                "rebuild did not reach the engine's accepted event count".into(),
+            ));
+        }
+        Ok(instrumentation)
     }
 
     fn apply_internal(
         &mut self,
         event: &AcceptedBatchEvent,
         fault: ApplyFault,
-        external_ancestry: Option<&BTreeMap<BatchId, Vec<BatchId>>>,
     ) -> Result<ApplyDisposition, ProjectionError> {
         #[cfg(not(test))]
         let _ = fault;
         self.validate_event_claim(event)?;
         if let Some(existing) = load_batch(&self.connection, event.batch_id)? {
             if existing.matches(event)? {
-                let current = self.frontier()?;
-                let ancestry = load_ancestry(&self.connection)?;
-                if frontier_contains(&current, &event.exact_frontier, &ancestry) {
+                let current = read_frontier_root(&self.connection)?;
+                if current.acceptance_sequence() >= event.acceptance_sequence
+                    && current.state_digest() != event.prior_frontier_root.state_digest()
+                {
                     return Ok(ApplyDisposition::Duplicate);
                 }
                 return Err(ProjectionError::FrontierRegression);
@@ -846,15 +1133,6 @@ impl SqliteFrontier {
             return Err(ProjectionError::BatchCollision(event.batch_id));
         }
 
-        let mut ancestry = load_ancestry(&self.connection)?;
-        if let Some(external) = external_ancestry {
-            for (batch_id, dependencies) in external {
-                ancestry
-                    .entry(*batch_id)
-                    .or_insert_with(|| dependencies.clone());
-            }
-        }
-        ancestry.insert(event.batch_id, event.causal_dependency_heads.clone());
         for dependency in &event.causal_dependency_heads {
             if !self.contains_batch(*dependency)? {
                 return Err(ProjectionError::MissingDependency(*dependency));
@@ -872,21 +1150,58 @@ impl SqliteFrontier {
                 found: event.acceptance_sequence,
             });
         }
-        let applied_batches: BTreeSet<_> = load_ancestry(&self.connection)?.into_keys().collect();
-        for implied in frontier_batch_closure(&event.exact_frontier, &ancestry)? {
-            if implied != event.batch_id && !applied_batches.contains(&implied) {
-                return Err(ProjectionError::FrontierUnappliedBatch(implied));
+        let current_root = read_frontier_root(&self.connection)?;
+        if current_root != event.prior_frontier_root
+            || event.post_frontier_root.acceptance_sequence() != event.acceptance_sequence
+        {
+            return Err(ProjectionError::FrontierRegression);
+        }
+        let binding = super::AcceptedBatchEvidence::binding_digest_for(
+            event.batch_id,
+            event.manifest_digest,
+            event.semantic_effect_digest,
+            &event.dependency_frontier,
+            &event.causal_dependency_heads,
+        )
+        .map_err(|error| ProjectionError::InvalidAcceptedEvent(error.to_string()))?;
+        if binding != event.event_binding_digest
+            || !current_root
+                .validates_transition(
+                    binding,
+                    event.acceptance_sequence,
+                    event.post_frontier_root.document_count(),
+                    &event.affected_documents,
+                    &event.post_frontier_root,
+                )
+                .map_err(|error| ProjectionError::InvalidAcceptedEvent(error.to_string()))?
+        {
+            return Err(ProjectionError::InvalidAcceptedEvent(
+                "accepted event is not bound to its authenticated frontier transition".into(),
+            ));
+        }
+        let mut new_documents = 0_u64;
+        for document in &event.affected_documents {
+            if load_frontier_document(&self.connection, document.document_id())?.is_none() {
+                new_documents = new_documents.saturating_add(1);
+            }
+            if !document.direct_dependency_heads().contains(&event.batch_id) {
+                return Err(ProjectionError::InvalidAcceptedEvent(format!(
+                    "affected document {} does not name accepted batch {} as a direct head",
+                    document.document_id(),
+                    event.batch_id
+                )));
             }
         }
-        let current = self.frontier()?;
-        if !frontier_contains(&event.exact_frontier, &current, &ancestry)
-            || !frontier_contains(&event.exact_frontier, &event.dependency_frontier, &ancestry)
+        if event.post_frontier_root.document_count()
+            != current_root.document_count().saturating_add(new_documents)
         {
             return Err(ProjectionError::FrontierRegression);
         }
 
         let dependency_frontier = canonical_frontier_bytes(&event.dependency_frontier)?;
-        let exact_frontier = canonical_frontier_bytes(&event.exact_frontier)?;
+        let prior_frontier_root = canonical_frontier_root_bytes(&event.prior_frontier_root)?;
+        let post_frontier_root = canonical_frontier_root_bytes(&event.post_frontier_root)?;
+        let affected_documents = canonical_affected_documents_bytes(&event.affected_documents)?;
         let causal_dependencies = encode_batch_ids(&event.causal_dependency_heads)?;
         let retained_bytes = i64::try_from(event.retained_bytes).map_err(|_| {
             ProjectionError::InvalidAcceptedEvent("retained-byte count exceeds SQLite".into())
@@ -899,7 +1214,9 @@ impl SqliteFrontier {
             sequence,
             event,
             &dependency_frontier,
-            &exact_frontier,
+            &prior_frontier_root,
+            &post_frontier_root,
+            &affected_documents,
             &causal_dependencies,
             retained_bytes,
         )?;
@@ -911,15 +1228,18 @@ impl SqliteFrontier {
         if matches!(fault, ApplyFault::AbortAfterInsert) {
             std::process::abort();
         }
+        for document in &event.affected_documents {
+            upsert_frontier_document(&transaction, document)?;
+        }
         transaction.execute(
             "UPDATE frontier
-             SET exact_frontier = ?1,
-                 frontier_digest = ?2,
+             SET frontier_root = ?1,
+                 frontier_root_digest = ?2,
                  applied_batch_count = ?3
              WHERE singleton = 1",
             params![
-                exact_frontier,
-                ContentDigest::of(&exact_frontier).as_bytes().as_slice(),
+                post_frontier_root,
+                ContentDigest::of(&post_frontier_root).as_bytes().as_slice(),
                 i64::try_from(sequence).map_err(|_| {
                     ProjectionError::Corrupt("applied batch sequence exceeds SQLite".into())
                 })?
@@ -955,7 +1275,9 @@ fn insert_event(
     sequence: usize,
     event: &AcceptedBatchEvent,
     dependency_frontier: &[u8],
-    exact_frontier: &[u8],
+    prior_frontier_root: &[u8],
+    post_frontier_root: &[u8],
+    affected_documents: &[u8],
     causal_dependencies: &[u8],
     retained_bytes: i64,
 ) -> Result<(), ProjectionError> {
@@ -963,10 +1285,15 @@ fn insert_event(
         "INSERT INTO applied_batches (
              sequence, batch_id, manifest_digest, semantic_effect,
              semantic_effect_digest, dependency_frontier,
-             dependency_frontier_digest, exact_frontier,
-             exact_frontier_digest, causal_dependency_heads,
+             dependency_frontier_digest, prior_frontier_root,
+             prior_frontier_root_digest, post_frontier_root,
+             post_frontier_root_digest, affected_documents,
+             affected_documents_digest, causal_dependency_heads,
              acceptance_sequence, retained_bytes
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         ) VALUES (
+             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+             ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+         )",
         params![
             i64::try_from(sequence)
                 .map_err(|_| ProjectionError::Corrupt("batch sequence exceeds SQLite".into()))?,
@@ -976,8 +1303,12 @@ fn insert_event(
             event.semantic_effect_digest.as_bytes().as_slice(),
             dependency_frontier,
             ContentDigest::of(dependency_frontier).as_bytes().as_slice(),
-            exact_frontier,
-            ContentDigest::of(exact_frontier).as_bytes().as_slice(),
+            prior_frontier_root,
+            ContentDigest::of(prior_frontier_root).as_bytes().as_slice(),
+            post_frontier_root,
+            ContentDigest::of(post_frontier_root).as_bytes().as_slice(),
+            affected_documents,
+            ContentDigest::of(affected_documents).as_bytes().as_slice(),
             causal_dependencies,
             i64::try_from(event.acceptance_sequence).map_err(|_| {
                 ProjectionError::InvalidAcceptedEvent("acceptance sequence exceeds SQLite".into())
@@ -1018,144 +1349,19 @@ fn validate_source(
             "blocked hot engine cannot authorize a SQLite rebuild".into(),
         ));
     }
-    canonical_frontier_bytes(&source.exact_frontier)?;
-    Ok(())
-}
-
-fn collect_rebuild_events(
-    claim: ProjectionClaim,
-    source: &RebuildSource<'_>,
-) -> Result<Vec<AcceptedBatchEvent>, ProjectionError> {
-    let accepted = source
-        .engine
-        .status()
-        .accepted_batch_ids()
-        .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
-    let accepted_set: BTreeSet<_> = accepted.iter().copied().collect();
-    let mut accepted_by_sequence = BTreeMap::new();
-    for batch_id in &accepted {
-        let evidence = source
-            .engine
-            .accepted_batch_evidence(*batch_id)
-            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
-        let validated = match source.store.inspect_batch(*batch_id)? {
-            BatchInspection::Ready(validated) => validated,
-            BatchInspection::Absent => {
-                return Err(ProjectionError::Rebuild(format!(
-                    "accepted batch {batch_id} is absent from the object store"
-                )));
-            }
-            BatchInspection::Staged { .. } => {
-                return Err(ProjectionError::Rebuild(format!(
-                    "accepted batch {batch_id} is partial in the object store"
-                )));
-            }
-        };
-        if validated.manifest().lineage_digest() != claim.lineage_digest {
-            return Err(ProjectionError::LineageMismatch {
-                expected: claim.lineage_digest,
-                found: validated.manifest().lineage_digest(),
-            });
-        }
-        let manifest_digest =
-            ContentDigest::of(&validated.manifest().encode().map_err(|error| {
-                ProjectionError::Rebuild(format!(
-                    "cannot encode accepted manifest {batch_id}: {error}"
-                ))
-            })?);
-        if manifest_digest != evidence.manifest_fingerprint() {
-            return Err(ProjectionError::ManifestMismatch {
-                batch_id: *batch_id,
-                expected: evidence.manifest_fingerprint(),
-                found: manifest_digest,
-            });
-        }
-        for dependency in validated.manifest().causal_dependency_heads() {
-            if !accepted_set.contains(dependency) {
-                return Err(ProjectionError::Rebuild(format!(
-                    "accepted batch {batch_id} depends on non-accepted batch {dependency}"
-                )));
-            }
-        }
-        if accepted_by_sequence
-            .insert(
-                evidence.acceptance_sequence(),
-                (*batch_id, validated, evidence),
-            )
-            .is_some()
-        {
-            return Err(ProjectionError::Rebuild(
-                "accepted history has duplicate acceptance sequences".into(),
-            ));
-        }
-    }
-
-    let mut replay = ShardedHotEngine::new(
-        claim.workspace_id,
-        claim.lineage_digest,
-        source.engine.catalog_document_id(),
-    );
-    let mut events = Vec::with_capacity(accepted_by_sequence.len());
-    let mut applied = BTreeSet::new();
-    for (index, (acceptance_sequence, (batch_id, validated, evidence))) in
-        accepted_by_sequence.iter().enumerate()
-    {
-        let expected_sequence = (index as u64).saturating_add(1);
-        if *acceptance_sequence != expected_sequence {
-            return Err(ProjectionError::Rebuild(format!(
-                "accepted history sequence {acceptance_sequence} is not contiguous at {expected_sequence}"
-            )));
-        }
-        if let Some(dependency) = validated
-            .manifest()
-            .causal_dependency_heads()
-            .iter()
-            .find(|dependency| !applied.contains(*dependency))
-        {
-            return Err(ProjectionError::Rebuild(format!(
-                "accepted batch {batch_id} precedes dependency {dependency}"
-            )));
-        }
-        let outcome = replay
-            .stage_from_store(source.store, *batch_id)
-            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
-        if !matches!(
-            outcome.disposition(),
-            BatchDisposition::Accepted { .. } | BatchDisposition::DuplicateAccepted { .. }
-        ) {
-            return Err(ProjectionError::Rebuild(format!(
-                "deterministic replay did not accept batch {batch_id}: {:?}",
-                outcome.disposition()
-            )));
-        }
-        let event = AcceptedBatchEvent::from_accepted(&replay, source.store, *batch_id)?;
-        if event.exact_frontier != *evidence.post_frontier()
-            || event.acceptance_sequence != *acceptance_sequence
-        {
-            return Err(ProjectionError::Rebuild(format!(
-                "accepted batch {batch_id} historical frontier evidence differs from deterministic replay"
-            )));
-        }
-        events.push(event);
-        applied.insert(*batch_id);
-    }
-    if replay
-        .exact_frontier()
-        .map_err(|error| ProjectionError::Rebuild(error.to_string()))?
-        != source.exact_frontier
-    {
+    canonical_frontier_root_bytes(&source.exact_frontier_root)?;
+    if source.exact_frontier_root.acceptance_sequence() != source.accepted_batch_count {
         return Err(ProjectionError::Rebuild(
-            "deterministic replay frontier differs from accepted engine".into(),
+            "accepted count differs from authenticated frontier version".into(),
         ));
     }
-    Ok(events)
+    Ok(())
 }
 
 fn validate_existing(
     path: &Path,
     claim: ProjectionClaim,
-    expected: &[AcceptedBatchEvent],
-    exact_frontier: &FrontierV2,
+    source: &RebuildSource<'_>,
 ) -> Result<(), String> {
     validate_sidecar_shape(path).map_err(|error| error.to_string())?;
     let connection = Connection::open_with_flags(
@@ -1165,78 +1371,9 @@ fn validate_existing(
     .map_err(|error| format!("cannot open SQLite projection read-only: {error}"))?;
     validate_integrity(&connection).map_err(|error| error.to_string())?;
     validate_schema_and_claim(&connection, claim).map_err(|error| error.to_string())?;
-    let found_frontier = read_frontier(&connection).map_err(|error| error.to_string())?;
-    if found_frontier != *exact_frontier {
+    let found_frontier = read_frontier_root(&connection).map_err(|error| error.to_string())?;
+    if found_frontier != source.exact_frontier_root {
         return Err("SQLite frontier is stale".into());
-    }
-    let stored = load_all_batches(&connection).map_err(|error| error.to_string())?;
-    if stored.len() != expected.len() {
-        return Err(format!(
-            "SQLite accepted batch count {} differs from engine count {}",
-            stored.len(),
-            expected.len()
-        ));
-    }
-    let ancestry = load_ancestry(&connection).map_err(|error| error.to_string())?;
-    let mut prior = FrontierV2::default();
-    let mut applied = BTreeSet::new();
-    for (index, record) in stored.iter().enumerate() {
-        if record.sequence != (index + 1) as i64 {
-            return Err("SQLite applied batch sequence is not contiguous".into());
-        }
-        if record.acceptance_sequence != (index + 1) as i64 {
-            return Err("SQLite acceptance sequence is not contiguous".into());
-        }
-        let expected = &expected[index];
-        if record.batch_id != expected.batch_id {
-            return Err(format!(
-                "SQLite batch {} is out of accepted-history order",
-                record.batch_id,
-            ));
-        }
-        if !record
-            .matches(expected)
-            .map_err(|error| error.to_string())?
-        {
-            return Err(format!(
-                "SQLite batch {} differs from immutable oplog evidence",
-                record.batch_id
-            ));
-        }
-        let frontier_after =
-            decode_frontier(&record.exact_frontier).map_err(|error| error.to_string())?;
-        if record.exact_frontier_digest
-            != ContentDigest::of(&record.exact_frontier)
-                .as_bytes()
-                .as_slice()
-        {
-            return Err(format!(
-                "SQLite batch {} exact frontier digest is corrupt",
-                record.batch_id
-            ));
-        }
-        if !frontier_contains(&frontier_after, &prior, &ancestry)
-            || !frontier_contains(&frontier_after, &expected.dependency_frontier, &ancestry)
-            || !frontier_contains(exact_frontier, &frontier_after, &ancestry)
-        {
-            return Err(format!(
-                "SQLite batch {} carries a regressing or impossible frontier",
-                record.batch_id
-            ));
-        }
-        applied.insert(record.batch_id);
-        let implied = frontier_batch_closure(&frontier_after, &ancestry)
-            .map_err(|error| error.to_string())?;
-        if let Some(batch_id) = implied.iter().find(|batch_id| !applied.contains(batch_id)) {
-            return Err(format!(
-                "SQLite batch {} frontier implies unapplied batch {batch_id}",
-                record.batch_id
-            ));
-        }
-        prior = frontier_after;
-    }
-    if prior != *exact_frontier {
-        return Err("SQLite final row does not carry the exact stored frontier".into());
     }
     let count: i64 = connection
         .query_row(
@@ -1245,8 +1382,43 @@ fn validate_existing(
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
-    if count != stored.len() as i64 {
+    let expected_count = i64::try_from(source.accepted_batch_count)
+        .map_err(|_| "accepted batch count exceeds SQLite".to_string())?;
+    if count != expected_count {
         return Err("SQLite frontier batch count is stale".into());
+    }
+    let row_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM applied_batches", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    if row_count != expected_count {
+        return Err("SQLite accepted batch rows are incomplete".into());
+    }
+    let (validated_root, validated_count) =
+        validate_stored_history(&connection).map_err(|error| error.to_string())?;
+    if validated_count != source.accepted_batch_count || validated_root != found_frontier {
+        return Err("SQLite accepted history authentication chain is stale".into());
+    }
+    let document_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM frontier_documents", [], |row| {
+            row.get(0)
+        })
+        .map_err(|error| error.to_string())?;
+    if u64::try_from(document_count).ok() != Some(found_frontier.document_count()) {
+        return Err("SQLite frontier document count is stale".into());
+    }
+    if expected_count > 0 {
+        let final_record = load_batch_at_sequence(&connection, expected_count)
+            .map_err(|error| error.to_string())?;
+        let final_record =
+            final_record.ok_or_else(|| "SQLite final accepted row is missing".to_string())?;
+        let final_root = decode_frontier_root(&final_record.post_frontier_root)
+            .map_err(|error| error.to_string())?;
+        if final_record.sequence != expected_count
+            || final_record.acceptance_sequence != expected_count
+            || final_root != found_frontier
+        {
+            return Err("SQLite final accepted row is not bound to the frontier root".into());
+        }
     }
     Ok(())
 }
@@ -1324,6 +1496,7 @@ fn initialize_schema(
          PRAGMA user_version = {SQLITE_SCHEMA_VERSION};
          {META_DDL};
          {FRONTIER_DDL};
+         {FRONTIER_DOCUMENTS_DDL};
          {APPLIED_BATCHES_DDL};
          {BATCH_ID_INDEX_DDL};
          {ACCEPTANCE_SEQUENCE_INDEX_DDL};"
@@ -1344,10 +1517,10 @@ fn initialize_schema(
             i64::from(claim.managed_entity_set_version),
         ],
     )?;
-    let frontier = canonical_frontier_bytes(&FrontierV2::default())?;
+    let frontier = canonical_frontier_root_bytes(&AcceptedFrontierRoot::empty())?;
     connection.execute(
         "INSERT INTO frontier (
-             singleton, exact_frontier, frontier_digest, applied_batch_count
+             singleton, frontier_root, frontier_root_digest, applied_batch_count
          ) VALUES (1, ?1, ?2, 0)",
         params![
             &frontier,
@@ -1444,9 +1617,16 @@ fn validate_schema_and_claim(
     }
     validate_table_columns(connection, "meta", &META_COLUMNS)?;
     validate_table_columns(connection, "frontier", &FRONTIER_COLUMNS)?;
+    validate_table_columns(connection, "frontier_documents", &FRONTIER_DOCUMENT_COLUMNS)?;
     validate_table_columns(connection, "applied_batches", &APPLIED_BATCH_COLUMNS)?;
     validate_schema_sql(connection, "table", "meta", META_DDL)?;
     validate_schema_sql(connection, "table", "frontier", FRONTIER_DDL)?;
+    validate_schema_sql(
+        connection,
+        "table",
+        "frontier_documents",
+        FRONTIER_DOCUMENTS_DDL,
+    )?;
     validate_schema_sql(connection, "table", "applied_batches", APPLIED_BATCHES_DDL)?;
     validate_schema_sql(
         connection,
@@ -1609,8 +1789,12 @@ struct StoredBatch {
     semantic_effect_digest: Vec<u8>,
     dependency_frontier: Vec<u8>,
     dependency_frontier_digest: Vec<u8>,
-    exact_frontier: Vec<u8>,
-    exact_frontier_digest: Vec<u8>,
+    prior_frontier_root: Vec<u8>,
+    prior_frontier_root_digest: Vec<u8>,
+    post_frontier_root: Vec<u8>,
+    post_frontier_root_digest: Vec<u8>,
+    affected_documents: Vec<u8>,
+    affected_documents_digest: Vec<u8>,
     causal_dependency_heads: Vec<u8>,
     acceptance_sequence: i64,
     retained_bytes: i64,
@@ -1619,9 +1803,19 @@ struct StoredBatch {
 impl StoredBatch {
     fn matches(&self, event: &AcceptedBatchEvent) -> Result<bool, ProjectionError> {
         Ok(self.matches_static(event)?
-            && decode_frontier(&self.exact_frontier)? == event.exact_frontier
-            && self.exact_frontier_digest
-                == ContentDigest::of(&self.exact_frontier)
+            && decode_frontier_root(&self.prior_frontier_root)? == event.prior_frontier_root
+            && self.prior_frontier_root_digest
+                == ContentDigest::of(&self.prior_frontier_root)
+                    .as_bytes()
+                    .as_slice()
+            && decode_frontier_root(&self.post_frontier_root)? == event.post_frontier_root
+            && self.post_frontier_root_digest
+                == ContentDigest::of(&self.post_frontier_root)
+                    .as_bytes()
+                    .as_slice()
+            && decode_affected_documents(&self.affected_documents)? == event.affected_documents
+            && self.affected_documents_digest
+                == ContentDigest::of(&self.affected_documents)
                     .as_bytes()
                     .as_slice()
             && self.retained_bytes == event.retained_bytes as i64)
@@ -1640,22 +1834,146 @@ impl StoredBatch {
                 "stored semantic effect is not canonical".into(),
             ));
         }
-        Ok(
-            self.manifest_digest == event.manifest_digest.as_bytes().as_slice()
-                && self.semantic_effect == event.semantic_effect
-                && self.semantic_effect_digest
-                    == event.semantic_effect_digest.as_bytes().as_slice()
-                && dependency_frontier == event.dependency_frontier
-                && self.dependency_frontier_digest
-                    == ContentDigest::of(&self.dependency_frontier)
-                        .as_bytes()
-                        .as_slice()
-                && decode_batch_ids(&self.causal_dependency_heads)?
-                    == event.causal_dependency_heads
-                && self.acceptance_sequence == event.acceptance_sequence as i64
-                && self.retained_bytes == event.retained_bytes as i64,
-        )
+        Ok(self.batch_id == event.batch_id
+            && self.manifest_digest == event.manifest_digest.as_bytes().as_slice()
+            && self.semantic_effect == event.semantic_effect
+            && self.semantic_effect_digest == event.semantic_effect_digest.as_bytes().as_slice()
+            && dependency_frontier == event.dependency_frontier
+            && self.dependency_frontier_digest
+                == ContentDigest::of(&self.dependency_frontier)
+                    .as_bytes()
+                    .as_slice()
+            && decode_batch_ids(&self.causal_dependency_heads)? == event.causal_dependency_heads
+            && self.acceptance_sequence == event.acceptance_sequence as i64
+            && self.retained_bytes == event.retained_bytes as i64)
     }
+
+    fn validate_canonical_transition(
+        &self,
+        prior: &AcceptedFrontierRoot,
+    ) -> Result<AcceptedFrontierRoot, ProjectionError> {
+        if self.sequence <= 0
+            || self.acceptance_sequence != self.sequence
+            || self.retained_bytes < 0
+        {
+            return Err(ProjectionError::Corrupt(
+                "stored accepted sequence or retained-byte count is invalid".into(),
+            ));
+        }
+        let manifest_digest = decode_content_digest(&self.manifest_digest)?;
+        let semantic_effect_digest = decode_semantic_effect_digest(&self.semantic_effect_digest)?;
+        if SemanticEffectDigest::of(&self.semantic_effect) != semantic_effect_digest {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} semantic-effect digest mismatch",
+                self.batch_id
+            )));
+        }
+        let semantic = SemanticEffect::decode(&self.semantic_effect)
+            .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
+        if semantic
+            .encode()
+            .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
+            != self.semantic_effect
+        {
+            return Err(ProjectionError::Corrupt(
+                "stored semantic effect is not canonical".into(),
+            ));
+        }
+        if self.dependency_frontier_digest
+            != ContentDigest::of(&self.dependency_frontier)
+                .as_bytes()
+                .as_slice()
+        {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} dependency-frontier digest mismatch",
+                self.batch_id
+            )));
+        }
+        let dependency_frontier = decode_frontier(&self.dependency_frontier)?;
+        let causal_dependency_heads = decode_batch_ids(&self.causal_dependency_heads)?;
+        if self.prior_frontier_root_digest
+            != ContentDigest::of(&self.prior_frontier_root)
+                .as_bytes()
+                .as_slice()
+            || self.post_frontier_root_digest
+                != ContentDigest::of(&self.post_frontier_root)
+                    .as_bytes()
+                    .as_slice()
+            || self.affected_documents_digest
+                != ContentDigest::of(&self.affected_documents)
+                    .as_bytes()
+                    .as_slice()
+        {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} frontier evidence digest mismatch",
+                self.batch_id
+            )));
+        }
+        let stored_prior = decode_frontier_root(&self.prior_frontier_root)?;
+        let post = decode_frontier_root(&self.post_frontier_root)?;
+        let affected_documents = decode_affected_documents(&self.affected_documents)?;
+        if stored_prior != *prior {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} does not continue the accepted frontier root",
+                self.batch_id
+            )));
+        }
+        let binding = super::AcceptedBatchEvidence::binding_digest_for(
+            self.batch_id,
+            manifest_digest,
+            semantic_effect_digest,
+            &dependency_frontier,
+            &causal_dependency_heads,
+        )
+        .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
+        if !prior
+            .validates_transition(
+                binding,
+                self.acceptance_sequence as u64,
+                post.document_count(),
+                &affected_documents,
+                &post,
+            )
+            .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
+        {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} frontier transition is not authenticated",
+                self.batch_id
+            )));
+        }
+        Ok(post)
+    }
+}
+
+fn validate_stored_history(
+    connection: &Connection,
+) -> Result<(AcceptedFrontierRoot, u64), ProjectionError> {
+    let mut statement = connection.prepare(
+        "SELECT sequence, batch_id, manifest_digest, semantic_effect,
+                semantic_effect_digest, dependency_frontier,
+                dependency_frontier_digest, prior_frontier_root,
+                prior_frontier_root_digest, post_frontier_root,
+                post_frontier_root_digest, affected_documents,
+                affected_documents_digest, causal_dependency_heads,
+                acceptance_sequence, retained_bytes
+         FROM applied_batches ORDER BY sequence",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut prior = AcceptedFrontierRoot::empty();
+    let mut count = 0_u64;
+    while let Some(row) = rows.next()? {
+        let record = stored_batch_from_row(row)?;
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| ProjectionError::Corrupt("stored history count overflowed".into()))?;
+        if record.sequence != count as i64 {
+            return Err(ProjectionError::Corrupt(
+                "stored accepted history sequence is not contiguous".into(),
+            ));
+        }
+        prior = record.validate_canonical_transition(&prior)?;
+    }
+    Ok((prior, count))
 }
 
 fn load_batch(
@@ -1666,8 +1984,10 @@ fn load_batch(
         .query_row(
             "SELECT sequence, batch_id, manifest_digest, semantic_effect,
                     semantic_effect_digest, dependency_frontier,
-                    dependency_frontier_digest, exact_frontier,
-                    exact_frontier_digest, causal_dependency_heads,
+                    dependency_frontier_digest, prior_frontier_root,
+                    prior_frontier_root_digest, post_frontier_root,
+                    post_frontier_root_digest, affected_documents,
+                    affected_documents_digest, causal_dependency_heads,
                     acceptance_sequence, retained_bytes
              FROM applied_batches WHERE batch_id = ?1",
             [uuid_blob(&batch_id.as_uuid())],
@@ -1677,20 +1997,25 @@ fn load_batch(
         .map_err(ProjectionError::from)
 }
 
-fn load_all_batches(connection: &Connection) -> Result<Vec<StoredBatch>, ProjectionError> {
-    let mut statement = connection.prepare(
-        "SELECT sequence, batch_id, manifest_digest, semantic_effect,
+fn load_batch_at_sequence(
+    connection: &Connection,
+    sequence: i64,
+) -> Result<Option<StoredBatch>, ProjectionError> {
+    connection
+        .query_row(
+            "SELECT sequence, batch_id, manifest_digest, semantic_effect,
                 semantic_effect_digest, dependency_frontier,
-                dependency_frontier_digest, exact_frontier,
-                exact_frontier_digest, causal_dependency_heads,
+                dependency_frontier_digest, prior_frontier_root,
+                prior_frontier_root_digest, post_frontier_root,
+                post_frontier_root_digest, affected_documents,
+                affected_documents_digest, causal_dependency_heads,
                 acceptance_sequence, retained_bytes
-         FROM applied_batches ORDER BY sequence",
-    )?;
-    let batches = statement
-        .query_map([], stored_batch_from_row)?
-        .collect::<Result<_, _>>()
-        .map_err(ProjectionError::from)?;
-    Ok(batches)
+         FROM applied_batches WHERE sequence = ?1",
+            [sequence],
+            stored_batch_from_row,
+        )
+        .optional()
+        .map_err(ProjectionError::from)
 }
 
 fn stored_batch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredBatch> {
@@ -1704,26 +2029,30 @@ fn stored_batch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredBatc
         semantic_effect_digest: row.get(4)?,
         dependency_frontier: row.get(5)?,
         dependency_frontier_digest: row.get(6)?,
-        exact_frontier: row.get(7)?,
-        exact_frontier_digest: row.get(8)?,
-        causal_dependency_heads: row.get(9)?,
-        acceptance_sequence: row.get(10)?,
-        retained_bytes: row.get(11)?,
+        prior_frontier_root: row.get(7)?,
+        prior_frontier_root_digest: row.get(8)?,
+        post_frontier_root: row.get(9)?,
+        post_frontier_root_digest: row.get(10)?,
+        affected_documents: row.get(11)?,
+        affected_documents_digest: row.get(12)?,
+        causal_dependency_heads: row.get(13)?,
+        acceptance_sequence: row.get(14)?,
+        retained_bytes: row.get(15)?,
     })
 }
 
-fn read_frontier(connection: &Connection) -> Result<FrontierV2, ProjectionError> {
+fn read_frontier_root(connection: &Connection) -> Result<AcceptedFrontierRoot, ProjectionError> {
     let (bytes, digest): (Vec<u8>, Vec<u8>) = connection.query_row(
-        "SELECT exact_frontier, frontier_digest FROM frontier WHERE singleton = 1",
+        "SELECT frontier_root, frontier_root_digest FROM frontier WHERE singleton = 1",
         [],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     if digest != ContentDigest::of(&bytes).as_bytes().as_slice() {
         return Err(ProjectionError::Corrupt(
-            "frontier digest does not match frontier bytes".into(),
+            "frontier-root digest does not match frontier-root bytes".into(),
         ));
     }
-    decode_frontier(&bytes)
+    decode_frontier_root(&bytes)
 }
 
 fn canonical_frontier_bytes(frontier: &FrontierV2) -> Result<Vec<u8>, ProjectionError> {
@@ -1750,156 +2079,199 @@ fn decode_frontier(bytes: &[u8]) -> Result<FrontierV2, ProjectionError> {
     Ok(frontier)
 }
 
-fn frontier_contains(
-    have: &FrontierV2,
-    required: &FrontierV2,
-    ancestry: &BTreeMap<BatchId, Vec<BatchId>>,
-) -> bool {
-    for needed_document in required.documents() {
-        let Some(have_document) = have
-            .documents()
-            .iter()
-            .find(|document| document.document_id() == needed_document.document_id())
-        else {
-            return false;
-        };
-        for needed_counter in needed_document.peer_counters() {
-            let Some(have_counter) = have_document
-                .peer_counters()
-                .iter()
-                .find(|counter| counter.peer_id() == needed_counter.peer_id())
-            else {
-                return false;
-            };
-            if have_counter.max_counter() < needed_counter.max_counter() {
-                return false;
-            }
-        }
-        for needed_head in needed_document.direct_dependency_heads() {
-            if !have_document
-                .direct_dependency_heads()
-                .iter()
-                .any(|have_head| {
-                    have_head == needed_head
-                        || batch_descends_from(*have_head, *needed_head, ancestry)
-                })
-            {
-                return false;
-            }
-        }
+fn canonical_frontier_root_bytes(root: &AcceptedFrontierRoot) -> Result<Vec<u8>, ProjectionError> {
+    let bytes = postcard::to_allocvec(root)
+        .map_err(|error| ProjectionError::InvalidFrontier(error.to_string()))?;
+    if decode_frontier_root(&bytes)? != *root {
+        return Err(ProjectionError::InvalidFrontier(
+            "frontier root did not survive canonical round trip".into(),
+        ));
     }
-    true
+    Ok(bytes)
 }
 
-fn frontier_batch_closure(
-    frontier: &FrontierV2,
-    ancestry: &BTreeMap<BatchId, Vec<BatchId>>,
-) -> Result<BTreeSet<BatchId>, ProjectionError> {
-    let mut pending = frontier
-        .documents()
+fn decode_frontier_root(bytes: &[u8]) -> Result<AcceptedFrontierRoot, ProjectionError> {
+    let root: AcceptedFrontierRoot = postcard::from_bytes(bytes)
+        .map_err(|error| ProjectionError::Corrupt(format!("invalid frontier root: {error}")))?;
+    let canonical = postcard::to_allocvec(&root)
+        .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
+    if canonical != bytes {
+        return Err(ProjectionError::Corrupt(
+            "stored frontier root is not canonical".into(),
+        ));
+    }
+    if root.acceptance_sequence() == 0 && root != AcceptedFrontierRoot::empty() {
+        return Err(ProjectionError::Corrupt(
+            "stored empty frontier root is malformed".into(),
+        ));
+    }
+    Ok(root)
+}
+
+fn canonical_affected_documents_bytes(
+    documents: &[DocumentDependencies],
+) -> Result<Vec<u8>, ProjectionError> {
+    let canonical = FrontierV2::new(documents.to_vec())
+        .map_err(|error| ProjectionError::InvalidFrontier(error.to_string()))?;
+    if canonical.documents() != documents {
+        return Err(ProjectionError::InvalidFrontier(
+            "affected documents are not canonically ordered".into(),
+        ));
+    }
+    postcard::to_allocvec(&documents)
+        .map_err(|error| ProjectionError::InvalidFrontier(error.to_string()))
+}
+
+fn decode_affected_documents(bytes: &[u8]) -> Result<Vec<DocumentDependencies>, ProjectionError> {
+    let documents: Vec<DocumentDependencies> = postcard::from_bytes(bytes).map_err(|error| {
+        ProjectionError::Corrupt(format!("invalid affected documents: {error}"))
+    })?;
+    let canonical = canonical_affected_documents_bytes(&documents)
+        .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
+    if canonical != bytes {
+        return Err(ProjectionError::Corrupt(
+            "stored affected documents are not canonical".into(),
+        ));
+    }
+    Ok(documents)
+}
+
+fn encode_frontier_document(document: &DocumentDependencies) -> Result<Vec<u8>, ProjectionError> {
+    canonical_affected_documents_bytes(std::slice::from_ref(document))
+}
+
+fn decode_frontier_document(
+    expected_document_id: DocumentId,
+    bytes: &[u8],
+) -> Result<DocumentDependencies, ProjectionError> {
+    let mut documents = decode_affected_documents(bytes)?;
+    if documents.len() != 1 || documents[0].document_id() != expected_document_id {
+        return Err(ProjectionError::Corrupt(
+            "frontier document row has mismatched identity".into(),
+        ));
+    }
+    Ok(documents.remove(0))
+}
+
+fn upsert_frontier_document(
+    transaction: &Transaction<'_>,
+    document: &DocumentDependencies,
+) -> Result<(), ProjectionError> {
+    let bytes = encode_frontier_document(document)?;
+    transaction.execute(
+        "INSERT INTO frontier_documents (
+             document_id, dependencies, dependencies_digest
+         ) VALUES (?1, ?2, ?3)
+         ON CONFLICT(document_id) DO UPDATE SET
+             dependencies = excluded.dependencies,
+             dependencies_digest = excluded.dependencies_digest",
+        params![
+            uuid_blob(&document.document_id().as_uuid()),
+            &bytes,
+            ContentDigest::of(&bytes).as_bytes().as_slice(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn load_frontier_document(
+    connection: &Connection,
+    document_id: DocumentId,
+) -> Result<Option<DocumentDependencies>, ProjectionError> {
+    let found: Option<(Vec<u8>, Vec<u8>)> = connection
+        .query_row(
+            "SELECT dependencies, dependencies_digest
+             FROM frontier_documents WHERE document_id = ?1",
+            [uuid_blob(&document_id.as_uuid())],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((bytes, digest)) = found else {
+        return Ok(None);
+    };
+    if digest != ContentDigest::of(&bytes).as_bytes().as_slice() {
+        return Err(ProjectionError::Corrupt(format!(
+            "frontier document {document_id} digest mismatch"
+        )));
+    }
+    Ok(Some(decode_frontier_document(document_id, &bytes)?))
+}
+
+fn read_frontier_documents(connection: &Connection) -> Result<FrontierV2, ProjectionError> {
+    let mut statement = connection.prepare(
+        "SELECT document_id, dependencies, dependencies_digest
+         FROM frontier_documents ORDER BY document_id",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut documents = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id_bytes: Vec<u8> = row.get(0)?;
+        let document_id = decode_document_id(&id_bytes)?;
+        let bytes: Vec<u8> = row.get(1)?;
+        let digest: Vec<u8> = row.get(2)?;
+        if digest != ContentDigest::of(&bytes).as_bytes().as_slice() {
+            return Err(ProjectionError::Corrupt(format!(
+                "frontier document {document_id} digest mismatch"
+            )));
+        }
+        documents.push(decode_frontier_document(document_id, &bytes)?);
+    }
+    FrontierV2::new(documents).map_err(|error| ProjectionError::Corrupt(error.to_string()))
+}
+
+fn document_frontier_contains(
+    connection: &Connection,
+    have: &DocumentDependencies,
+    required: &DocumentDependencies,
+) -> Result<bool, ProjectionError> {
+    if have.document_id() != required.document_id() {
+        return Ok(false);
+    }
+    let have_counters = have
+        .peer_counters()
         .iter()
-        .flat_map(|document| document.direct_dependency_heads().iter().copied())
-        .collect::<Vec<_>>();
-    let mut closure = BTreeSet::new();
-    while let Some(batch_id) = pending.pop() {
-        if !closure.insert(batch_id) {
-            continue;
-        }
-        let dependencies = ancestry.get(&batch_id).ok_or_else(|| {
-            ProjectionError::InvalidFrontier(format!(
-                "frontier head or ancestor {batch_id} has no applied-batch ancestry"
-            ))
-        })?;
-        pending.extend(dependencies.iter().copied());
+        .map(|counter| (counter.peer_id(), counter.max_counter()))
+        .collect::<BTreeMap<_, _>>();
+    if required.peer_counters().iter().any(|counter| {
+        have_counters.get(&counter.peer_id()).copied().unwrap_or(0) < counter.max_counter()
+    }) {
+        return Ok(false);
     }
-    Ok(closure)
+    for required_head in required.direct_dependency_heads() {
+        let mut contained = false;
+        for have_head in have.direct_dependency_heads() {
+            if batch_descends_from_database(connection, *have_head, *required_head)? {
+                contained = true;
+                break;
+            }
+        }
+        if !contained {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
-fn batch_descends_from(
+fn batch_descends_from_database(
+    connection: &Connection,
     descendant: BatchId,
     ancestor: BatchId,
-    ancestry: &BTreeMap<BatchId, Vec<BatchId>>,
-) -> bool {
+) -> Result<bool, ProjectionError> {
     let mut pending = vec![descendant];
     let mut visited = BTreeSet::new();
     while let Some(batch_id) = pending.pop() {
+        if batch_id == ancestor {
+            return Ok(true);
+        }
         if !visited.insert(batch_id) {
             continue;
         }
-        let Some(dependencies) = ancestry.get(&batch_id) else {
-            continue;
+        let Some(record) = load_batch(connection, batch_id)? else {
+            return Ok(false);
         };
-        if dependencies.contains(&ancestor) {
-            return true;
-        }
-        pending.extend(dependencies.iter().copied());
+        pending.extend(decode_batch_ids(&record.causal_dependency_heads)?);
     }
-    false
-}
-
-fn load_ancestry(
-    connection: &Connection,
-) -> Result<BTreeMap<BatchId, Vec<BatchId>>, ProjectionError> {
-    let mut statement = connection.prepare(
-        "SELECT batch_id, causal_dependency_heads FROM applied_batches ORDER BY batch_id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let batch_id: Vec<u8> = row.get(0)?;
-        let dependencies: Vec<u8> = row.get(1)?;
-        Ok((batch_id, dependencies))
-    })?;
-    let mut ancestry = BTreeMap::new();
-    for row in rows {
-        let (batch_id, dependencies) = row?;
-        ancestry.insert(
-            decode_batch_id(&batch_id)?,
-            decode_batch_ids(&dependencies)?,
-        );
-    }
-    Ok(ancestry)
-}
-
-fn event_ancestry(events: &[AcceptedBatchEvent]) -> BTreeMap<BatchId, Vec<BatchId>> {
-    events
-        .iter()
-        .map(|event| (event.batch_id, event.causal_dependency_heads.clone()))
-        .collect()
-}
-
-fn topological_events(
-    events: &[AcceptedBatchEvent],
-) -> Result<Vec<&AcceptedBatchEvent>, ProjectionError> {
-    let by_sequence: BTreeMap<_, _> = events
-        .iter()
-        .map(|event| (event.acceptance_sequence, event))
-        .collect();
-    if by_sequence.len() != events.len() {
-        return Err(ProjectionError::Rebuild(
-            "duplicate acceptance sequences in rebuild input".into(),
-        ));
-    }
-    let mut done = BTreeSet::new();
-    let mut ordered = Vec::with_capacity(events.len());
-    for (index, (sequence, event)) in by_sequence.iter().enumerate() {
-        let expected = (index as u64).saturating_add(1);
-        if *sequence != expected {
-            return Err(ProjectionError::Rebuild(
-                "accepted history sequence is not contiguous".into(),
-            ));
-        }
-        if event
-            .causal_dependency_heads
-            .iter()
-            .any(|dependency| !done.contains(dependency))
-        {
-            return Err(ProjectionError::Rebuild(
-                "accepted batch dependency graph is out of acceptance order".into(),
-            ));
-        }
-        done.insert(event.batch_id);
-        ordered.push(*event);
-    }
-    Ok(ordered)
+    Ok(false)
 }
 
 fn encode_batch_ids(batch_ids: &[BatchId]) -> Result<Vec<u8>, ProjectionError> {
@@ -1954,6 +2326,87 @@ fn prepare_database_path(path: &Path) -> Result<PathBuf, ProjectionError> {
         }
     }
     Ok(canonical_path)
+}
+
+fn prepare_runtime_lease_root(
+    path: &Path,
+    workspace_id: WorkspaceId,
+) -> Result<PathBuf, ProjectionError> {
+    fs::create_dir_all(path)?;
+    let canonical = fs::canonicalize(path)?;
+    let metadata = fs::symlink_metadata(&canonical)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ProjectionError::UnsafePath(
+            "runtime lease root is not a real directory".into(),
+        ));
+    }
+    let binding = canonical.join("workspace-id");
+    let expected = format!("{}\n", workspace_id);
+    match fs::symlink_metadata(&binding) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(ProjectionError::UnsafePath(
+                    "runtime lease workspace binding is not a regular file".into(),
+                ));
+            }
+            let found = fs::read_to_string(&binding)?;
+            if found != expected {
+                return Err(ProjectionError::WorkspaceMismatch {
+                    expected: workspace_id,
+                    found: found
+                        .trim()
+                        .parse::<Uuid>()
+                        .map(WorkspaceId::from_uuid)
+                        .map_err(|_| {
+                            ProjectionError::Corrupt(
+                                "runtime lease workspace binding is malformed".into(),
+                            )
+                        })?,
+                });
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&binding)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    return prepare_runtime_lease_root(&canonical, workspace_id)
+                }
+                Err(error) => return Err(error.into()),
+            };
+            file.write_all(expected.as_bytes())?;
+            file.sync_all()?;
+            sync_directory(&canonical)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(canonical)
+}
+
+fn candidate_database_path(path: &Path) -> Result<PathBuf, ProjectionError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| ProjectionError::UnsafePath("database path has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| ProjectionError::UnsafePath("database file name is not UTF-8".into()))?;
+    Ok(parent.join(format!(".{name}.candidate-{}.sqlite", Uuid::new_v4())))
+}
+
+fn remove_projection_files(path: &Path) -> Result<(), ProjectionError> {
+    for suffix in FORENSIC_SUFFIXES {
+        let candidate = sidecar_path(path, suffix);
+        match fs::remove_file(candidate) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn projection_files_exist(path: &Path) -> bool {
@@ -2161,17 +2614,18 @@ struct ProcessLease {
 }
 
 impl ProcessLease {
-    fn acquire(path: &Path, workspace_id: WorkspaceId) -> Result<Self, ProjectionError> {
-        let workspace_lease_path = path.with_file_name(format!(
-            ".tine-sqlite-{}.applier.lock",
-            workspace_id.as_uuid()
-        ));
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| ProjectionError::UnsafePath("database file name is not UTF-8".into()))?;
-        let database_lease_path =
-            path.with_file_name(format!(".{file_name}.database-applier.lock"));
+    fn acquire(
+        runtime_root: &WorkspaceRuntimeLeaseRoot,
+        database_path: &Path,
+        workspace_id: WorkspaceId,
+    ) -> Result<Self, ProjectionError> {
+        if runtime_root.workspace_id != workspace_id {
+            return Err(ProjectionError::WorkspaceMismatch {
+                expected: workspace_id,
+                found: runtime_root.workspace_id,
+            });
+        }
+        let workspace_lease_path = runtime_root.path.join("sqlite-applier.lock");
         let mut workspace_file = lock_lease_file(&workspace_lease_path)?;
         workspace_file.set_len(0)?;
         workspace_file.seek(SeekFrom::Start(0))?;
@@ -2183,6 +2637,12 @@ impl ProcessLease {
             std::env::consts::OS
         )?;
         workspace_file.sync_all()?;
+        let file_name = database_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| ProjectionError::UnsafePath("database file name is not UTF-8".into()))?;
+        let database_lease_path =
+            database_path.with_file_name(format!(".{file_name}.database-applier.lock"));
         let database_file = lock_lease_file(&database_lease_path)?;
         Ok(Self {
             files: vec![workspace_file, database_file],
@@ -2235,8 +2695,22 @@ fn decode_workspace_id(bytes: &[u8]) -> Result<WorkspaceId, ProjectionError> {
     Ok(WorkspaceId::from_uuid(decode_uuid(bytes)?))
 }
 
-fn decode_batch_id(bytes: &[u8]) -> Result<BatchId, ProjectionError> {
-    Ok(BatchId::from_uuid(decode_uuid(bytes)?))
+fn decode_document_id(bytes: &[u8]) -> Result<DocumentId, ProjectionError> {
+    Ok(DocumentId::from_uuid(decode_uuid(bytes)?))
+}
+
+fn decode_content_digest(bytes: &[u8]) -> Result<ContentDigest, ProjectionError> {
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| ProjectionError::Corrupt("content digest has invalid length".into()))?;
+    Ok(ContentDigest::from_bytes(bytes))
+}
+
+fn decode_semantic_effect_digest(bytes: &[u8]) -> Result<SemanticEffectDigest, ProjectionError> {
+    let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+        ProjectionError::Corrupt("semantic-effect digest has invalid length".into())
+    })?;
+    Ok(SemanticEffectDigest::from_bytes(bytes))
 }
 
 fn decode_batch_id_sql(bytes: &[u8]) -> rusqlite::Result<BatchId> {
@@ -2392,13 +2866,12 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use rusqlite::params;
-
     use super::*;
     use crate::oplog::{
-        AuthorBatch, BatchCausalDot, BlockId, BlockLocation, CausalPeerId, CrdtPeerCounter,
-        CrdtPeerId, DeviceId, DocumentDependencies, DocumentId, ManagedPath, OperationBatch,
-        OperationObject, OperationTransaction, PageId, PreparedBatch, SemanticOperation, SessionId,
+        AuthorBatch, BatchCausalDot, BatchDisposition, BlockId, BlockLocation, CausalPeerId,
+        CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId, ManagedPath,
+        OperationBatch, OperationObject, OperationTransaction, PageId, PreparedBatch,
+        SemanticOperation, SessionId,
     };
 
     struct TestDir(PathBuf);
@@ -2420,6 +2893,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn open_test_projection(
+        path: &Path,
+        claim: ProjectionClaim,
+        source: RebuildSource<'_>,
+    ) -> Result<OpenProjection, ProjectionError> {
+        let parent = path.parent().expect("test database parent");
+        let runtime = WorkspaceRuntimeLeaseRoot::open(
+            &parent.join(format!(".runtime-{}", claim.workspace_id())),
+            claim.workspace_id(),
+        )?;
+        SqliteFrontier::open_or_rebuild(path, &runtime, claim, source)
     }
 
     #[derive(Clone, Copy)]
@@ -2506,6 +2992,21 @@ mod tests {
         ));
     }
 
+    fn publish_and_stage_archive(
+        engine: &mut ShardedHotEngine,
+        store: &ObjectStore,
+        prepared: &PreparedBatch,
+    ) {
+        store.publish_prepared(prepared).unwrap();
+        let outcome = engine
+            .stage_archive_batch(prepared.manifest().batch_id())
+            .unwrap();
+        assert!(matches!(
+            outcome.disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+    }
+
     fn wait_for_file(path: &Path) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !path.exists() {
@@ -2563,7 +3064,7 @@ mod tests {
         let path = dir.path().join("frontier.sqlite");
         let empty_engine = ids.engine();
         drop(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&empty_engine, &store).unwrap(),
@@ -2586,7 +3087,7 @@ mod tests {
     fn open_empty(dir: &TestDir, ids: TestIds) -> (SqliteFrontier, ShardedHotEngine, ObjectStore) {
         let engine = ids.engine();
         let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
-        let opened = SqliteFrontier::open_or_rebuild(
+        let opened = open_test_projection(
             &dir.path().join("frontier.sqlite"),
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -2659,17 +3160,52 @@ mod tests {
         let root_id = batch(100);
         let child_id = batch(101);
         let root = fake_validated(store, ids, root_id, Vec::new(), FrontierV2::default());
-        let root_frontier = frontier(ids.document, 1, vec![root_id]);
-        let child = fake_validated(store, ids, child_id, vec![root_id], root_frontier.clone());
-        (
-            AcceptedBatchEvent::from_validated(&root, root_frontier, 1).unwrap(),
-            AcceptedBatchEvent::from_validated(
-                &child,
-                frontier(ids.document, 2, vec![child_id]),
-                2,
-            )
-            .unwrap(),
+        let root_document = frontier(ids.document, 1, vec![root_id]).documents()[0].clone();
+        let root_fingerprint = ContentDigest::of(&root.manifest().encode().unwrap());
+        let root_binding = super::super::AcceptedBatchEvidence::binding_digest_for(
+            root_id,
+            root_fingerprint,
+            root.manifest().semantic_effect_digest(),
+            root.manifest().dependency_frontier(),
+            root.manifest().causal_dependency_heads(),
         )
+        .unwrap();
+        let root_evidence = super::super::AcceptedBatchEvidence::for_test(
+            root_id,
+            root_fingerprint,
+            root_binding,
+            AcceptedFrontierRoot::empty(),
+            vec![root_document],
+            1,
+        );
+        let root_event = AcceptedBatchEvent::from_validated(&root, &root_evidence).unwrap();
+        let child = fake_validated(
+            store,
+            ids,
+            child_id,
+            vec![root_id],
+            frontier(ids.document, 1, vec![root_id]),
+        );
+        let child_document = frontier(ids.document, 2, vec![child_id]).documents()[0].clone();
+        let child_fingerprint = ContentDigest::of(&child.manifest().encode().unwrap());
+        let child_binding = super::super::AcceptedBatchEvidence::binding_digest_for(
+            child_id,
+            child_fingerprint,
+            child.manifest().semantic_effect_digest(),
+            child.manifest().dependency_frontier(),
+            child.manifest().causal_dependency_heads(),
+        )
+        .unwrap();
+        let child_evidence = super::super::AcceptedBatchEvidence::for_test(
+            child_id,
+            child_fingerprint,
+            child_binding,
+            root_event.post_frontier_root.clone(),
+            vec![child_document],
+            1,
+        );
+        let child_event = AcceptedBatchEvent::from_validated(&child, &child_evidence).unwrap();
+        (root_event, child_event)
     }
 
     #[test]
@@ -2687,7 +3223,7 @@ mod tests {
         let ready = root.join("helper-ready");
         if mode == "lease" {
             let engine = ids.engine();
-            let _opened = SqliteFrontier::open_or_rebuild(
+            let _opened = open_test_projection(
                 &root.join("lease-a.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -2697,6 +3233,20 @@ mod tests {
             loop {
                 thread::park_timeout(Duration::from_secs(60));
             }
+        }
+
+        if mode == "canonical-lease-contender" {
+            let runtime =
+                WorkspaceRuntimeLeaseRoot::open(&root.join("runtime"), ids.workspace).unwrap();
+            let engine = ids.engine();
+            let result = SqliteFrontier::open_or_rebuild(
+                &root.join("db-b/frontier.sqlite"),
+                &runtime,
+                ids.claim(),
+                RebuildSource::new(&engine, &store).unwrap(),
+            );
+            assert!(matches!(result, Err(ProjectionError::LeaseContended(_))));
+            return;
         }
 
         if mode == "recover" {
@@ -2711,7 +3261,7 @@ mod tests {
                 ));
             }
             fs::write(&ready, b"ready").unwrap();
-            let _ = SqliteFrontier::open_or_rebuild(
+            let _ = open_test_projection(
                 &root.join("frontier.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&accepted_engine, &store).unwrap(),
@@ -2730,7 +3280,7 @@ mod tests {
             BatchDisposition::Accepted { .. }
         ));
         let empty_engine = ids.engine();
-        let mut database = SqliteFrontier::open_or_rebuild(
+        let mut database = open_test_projection(
             &root.join("frontier.sqlite"),
             ids.claim(),
             RebuildSource::new(&empty_engine, &store).unwrap(),
@@ -2746,10 +3296,10 @@ mod tests {
         match mode.as_str() {
             "apply-before" => std::process::abort(),
             "apply-during" => {
-                let _ = database.apply_internal(&event, ApplyFault::AbortAfterInsert, None);
+                let _ = database.apply_internal(&event, ApplyFault::AbortAfterInsert);
             }
             "apply-after" => {
-                let _ = database.apply_internal(&event, ApplyFault::AbortAfterCommit, None);
+                let _ = database.apply_internal(&event, ApplyFault::AbortAfterCommit);
             }
             other => panic!("unknown SQLite subprocess helper mode {other}"),
         }
@@ -2778,14 +3328,14 @@ mod tests {
 
         let (root, _) = root_and_child_events(&store, ids);
         assert_eq!(
-            database.apply_internal(&root, ApplyFault::ReturnAfterInsert, None),
+            database.apply_internal(&root, ApplyFault::ReturnAfterInsert),
             Err(ProjectionError::InjectedFailure)
         );
         assert_eq!(database.applied_batch_count().unwrap(), 0);
         assert_eq!(database.frontier().unwrap(), FrontierV2::default());
         let database_path = database.path().to_path_buf();
         drop(database);
-        let reopened = SqliteFrontier::open_or_rebuild(
+        let reopened = open_test_projection(
             &database_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -2798,7 +3348,7 @@ mod tests {
             ApplyDisposition::Applied
         );
         assert_eq!(database.applied_batch_count().unwrap(), 1);
-        assert_eq!(database.frontier().unwrap(), *root.exact_frontier());
+        assert_eq!(database.frontier().unwrap(), root.exact_frontier());
     }
 
     #[test]
@@ -2860,7 +3410,7 @@ mod tests {
                 _ => unreachable!(),
             }
             drop(connection);
-            let rebuilt = SqliteFrontier::open_or_rebuild(
+            let rebuilt = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -2879,30 +3429,32 @@ mod tests {
     }
 
     #[test]
-    fn exact_frontier_containment_is_monotonic_and_ancestry_aware() {
+    fn exact_frontier_point_queries_are_monotonic_and_ancestry_aware() {
         let ids = TestIds::new(2_000);
-        let root = batch(200);
-        let child = batch(201);
-        let required = frontier(ids.document, 1, vec![root]);
-        let have = frontier(ids.document, 2, vec![child]);
-        let ancestry = BTreeMap::from([(child, vec![root]), (root, Vec::new())]);
-        assert!(frontier_contains(&have, &required, &ancestry));
-        assert!(!frontier_contains(&required, &have, &ancestry));
+        let dir = TestDir::new("frontier-point-containment");
+        let (mut database, _engine, store) = open_empty(&dir, ids);
+        let (root, child) = root_and_child_events(&store, ids);
+        let required = root.exact_frontier();
+        assert!(!database.contains_frontier(&required).unwrap());
+        database.apply_accepted(&root).unwrap();
+        assert!(database.contains_frontier(&required).unwrap());
+        database.apply_accepted(&child).unwrap();
+        assert!(database.contains_frontier(&required).unwrap());
 
         let unrelated = frontier(ids.document, 2, vec![batch(202)]);
-        assert!(!frontier_contains(&unrelated, &required, &ancestry));
+        assert!(!database.contains_frontier(&unrelated).unwrap());
         let missing_peer = FrontierV2::new(vec![DocumentDependencies::new(
             ids.document,
-            Vec::new(),
-            vec![child],
+            vec![CrdtPeerCounter::new(CrdtPeerId::from_u64(999), 1)],
+            vec![child.batch_id()],
         )
         .unwrap()])
         .unwrap();
-        assert!(!frontier_contains(&missing_peer, &required, &ancestry));
+        assert!(!database.contains_frontier(&missing_peer).unwrap());
     }
 
     #[test]
-    fn accepted_events_keep_historical_frontiers_and_structural_applied_closure() {
+    fn accepted_events_keep_compact_historical_roots_and_structural_applied_closure() {
         let ids = TestIds::new(2_100);
         let dir = TestDir::new("historical-frontier");
         let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
@@ -2940,7 +3492,7 @@ mod tests {
         assert_ne!(late_root.exact_frontier(), child_event.exact_frontier());
 
         let empty = ids.engine();
-        let mut database = SqliteFrontier::open_or_rebuild(
+        let mut database = open_test_projection(
             &dir.path().join("live.sqlite"),
             ids.claim(),
             RebuildSource::new(&empty, &store).unwrap(),
@@ -2954,7 +3506,7 @@ mod tests {
         assert!(!database
             .contains_batch(child.manifest().batch_id())
             .unwrap());
-        assert_eq!(database.frontier().unwrap(), *late_root.exact_frontier());
+        assert_eq!(database.frontier().unwrap(), late_root.exact_frontier());
         assert_eq!(
             database.apply_accepted(&late_root).unwrap(),
             ApplyDisposition::Duplicate
@@ -2966,7 +3518,7 @@ mod tests {
         drop(database);
 
         let rebuild_path = dir.path().join("rebuild.sqlite");
-        let rebuilt = SqliteFrontier::open_or_rebuild(
+        let rebuilt = open_test_projection(
             &rebuild_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -2975,22 +3527,253 @@ mod tests {
         assert_eq!(rebuilt.database.applied_batch_count().unwrap(), 2);
         drop(rebuilt);
         let connection = Connection::open(&rebuild_path).unwrap();
-        let row_frontiers: Vec<Vec<u8>> = connection
-            .prepare("SELECT exact_frontier FROM applied_batches ORDER BY sequence")
+        let row_frontiers: Vec<(Vec<u8>, Vec<u8>)> = connection
+            .prepare(
+                "SELECT post_frontier_root, affected_documents
+                 FROM applied_batches ORDER BY sequence",
+            )
             .unwrap()
-            .query_map([], |row| row.get(0))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(row_frontiers.len(), 2);
-        assert_ne!(row_frontiers[0], row_frontiers[1]);
+        assert_ne!(row_frontiers[0].0, row_frontiers[1].0);
         assert_eq!(
-            decode_frontier(&row_frontiers[0]).unwrap(),
-            *late_root.exact_frontier()
+            decode_frontier_root(&row_frontiers[0].0).unwrap(),
+            late_root.post_frontier_root
         );
         assert_eq!(
-            decode_frontier(&row_frontiers[1]).unwrap(),
-            *child_event.exact_frontier()
+            decode_frontier_root(&row_frontiers[1].0).unwrap(),
+            child_event.post_frontier_root
+        );
+        assert_eq!(
+            decode_affected_documents(&row_frontiers[0].1).unwrap(),
+            late_root.affected_documents
+        );
+        assert_eq!(
+            decode_affected_documents(&row_frontiers[1].1).unwrap(),
+            child_event.affected_documents
+        );
+    }
+
+    #[test]
+    fn store_backed_one_document_acceptance_keeps_compact_authenticated_evidence() {
+        const PAGE_COUNT: usize = 128;
+        let ids = TestIds::new(2_300);
+        let dir = TestDir::new("compact-frontier-evidence");
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let mut operations = Vec::with_capacity(PAGE_COUNT * 2);
+        let mut target = None;
+        let mut untouched_document = None;
+        for index in 0..PAGE_COUNT as u128 {
+            let page_id = PageId::from_uuid(uuid(20_000 + index * 3));
+            let document_id = DocumentId::from_uuid(uuid(20_001 + index * 3));
+            let block_id = BlockId::from_uuid(uuid(20_002 + index * 3));
+            operations.push(SemanticOperation::CreatePage {
+                page_id,
+                home_document_id: document_id,
+                path: ManagedPath::parse(&format!("pages/wide-{index}.md")).unwrap(),
+            });
+            operations.push(SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id,
+                    home_document_id: document_id,
+                },
+                page_id,
+                parent: None,
+                order: "a".into(),
+                content: format!("wide {index}"),
+            });
+            if index == 0 {
+                target = Some((block_id, document_id));
+            } else if index == 1 {
+                untouched_document = Some(document_id);
+            }
+        }
+        let wide = engine
+            .prepare_transaction(
+                author(2_301),
+                &OperationTransaction::new(operations).unwrap(),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &wide);
+        let wide_evidence = engine
+            .accepted_batch_evidence(wide.manifest().batch_id())
+            .unwrap();
+        assert_eq!(
+            engine.exact_frontier().unwrap().documents().len(),
+            PAGE_COUNT + 1
+        );
+        let (block_id, document_id) = target.unwrap();
+        let edit = engine
+            .prepare_transaction(
+                author(2_302),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id,
+                        home_document_id: document_id,
+                    },
+                    content: "bounded edit".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &edit);
+        let evidence = engine
+            .accepted_batch_evidence(edit.manifest().batch_id())
+            .unwrap();
+        assert!(evidence.post_frontier_root().has_persistent_point_index());
+        assert_eq!(evidence.affected_documents().len(), 1);
+        let evidence_bytes = postcard::to_allocvec(&evidence).unwrap();
+        assert!(
+            evidence_bytes.len() < 32 * 1024,
+            "one-document evidence retained {} bytes for {PAGE_COUNT} pages",
+            evidence_bytes.len()
+        );
+        let event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, edit.manifest().batch_id()).unwrap();
+        assert_eq!(event.affected_documents().len(), 1);
+        assert!(
+            canonical_frontier_root_bytes(event.post_frontier_root())
+                .unwrap()
+                .len()
+                < 16 * 1024
+        );
+        let untouched_document = untouched_document.unwrap();
+        assert_eq!(
+            engine
+                .accepted_frontier_document(wide_evidence.post_frontier_root(), untouched_document,)
+                .unwrap(),
+            engine
+                .accepted_frontier_document(evidence.post_frontier_root(), untouched_document)
+                .unwrap()
+        );
+        assert_ne!(
+            engine
+                .accepted_frontier_document(wide_evidence.post_frontier_root(), document_id,)
+                .unwrap(),
+            engine
+                .accepted_frontier_document(evidence.post_frontier_root(), document_id)
+                .unwrap()
+        );
+    }
+
+    fn measured_streaming_rebuild(
+        batch_count: usize,
+        seed: u128,
+    ) -> (RebuildInstrumentation, Duration, Duration) {
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new(&format!("streaming-rebuild-{batch_count}"));
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let root = engine
+            .prepare_transaction(
+                author(seed + 1),
+                &root_transaction(ids, "pages/linear.md", "0"),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &root);
+        for index in 1..batch_count {
+            let edit = engine
+                .prepare_transaction(
+                    author(seed + 1 + index as u128),
+                    &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                        block: BlockLocation {
+                            block_id: ids.block,
+                            home_document_id: ids.document,
+                        },
+                        content: index.to_string(),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            publish_and_stage_archive(&mut engine, &store, &edit);
+        }
+        let started = Instant::now();
+        let path = dir.path().join("frontier.sqlite");
+        let opened = open_test_projection(
+            &path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        let rebuild_elapsed = started.elapsed();
+        assert_eq!(opened.database.applied_batch_count().unwrap(), batch_count);
+        let rebuild = opened.rebuild;
+        drop(opened);
+        let started = Instant::now();
+        let reopened = open_test_projection(
+            &path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        let startup_elapsed = started.elapsed();
+        assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
+        (rebuild, rebuild_elapsed, startup_elapsed)
+    }
+
+    #[test]
+    fn rebuild_streams_linearly_with_one_live_event_and_evidence_record() {
+        let (small, small_elapsed, small_startup) = measured_streaming_rebuild(24, 2_500);
+        let (large, large_elapsed, large_startup) = measured_streaming_rebuild(48, 2_700);
+        assert_eq!(small.accepted_events_validated, 24);
+        assert_eq!(small.accepted_events_applied, 24);
+        assert_eq!(large.accepted_events_validated, 48);
+        assert_eq!(large.accepted_events_applied, 48);
+        assert_eq!(small.max_live_events, 1);
+        assert_eq!(large.max_live_events, 1);
+        assert_eq!(small.max_live_evidence_records, 1);
+        assert_eq!(large.max_live_evidence_records, 1);
+        assert_eq!(small.ancestry_full_scans, 0);
+        assert_eq!(large.ancestry_full_scans, 0);
+        assert!(small_startup < Duration::from_secs(2));
+        assert!(large_startup < Duration::from_secs(2));
+        eprintln!(
+            "sqlite_streaming_rebuild batches=24 rebuild_ms={} startup_ms={} validated={} max_live_events={} max_live_evidence={}; batches=48 rebuild_ms={} startup_ms={} validated={} max_live_events={} max_live_evidence={}",
+            small_elapsed.as_millis(),
+            small_startup.as_millis(),
+            small.accepted_events_validated,
+            small.max_live_events,
+            small.max_live_evidence_records,
+            large_elapsed.as_millis(),
+            large_startup.as_millis(),
+            large.accepted_events_validated,
+            large.max_live_events,
+            large.max_live_evidence_records,
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit authenticated SQLite cold-rebuild performance gate"]
+    fn sqlite_streaming_rebuild_cold_gate() {
+        let (work, rebuild_elapsed, startup_elapsed) = measured_streaming_rebuild(1_000, 2_900);
+        assert_eq!(work.accepted_events_validated, 1_000);
+        assert_eq!(work.accepted_events_applied, 1_000);
+        assert_eq!(work.max_live_events, 1);
+        assert_eq!(work.max_live_evidence_records, 1);
+        assert_eq!(work.ancestry_full_scans, 0);
+        assert!(
+            rebuild_elapsed <= Duration::from_secs(45),
+            "authenticated SQLite rebuild took {rebuild_elapsed:?}"
+        );
+        assert!(
+            startup_elapsed <= Duration::from_secs(2),
+            "normal SQLite startup took {startup_elapsed:?}"
+        );
+        eprintln!(
+            "sqlite_streaming_rebuild_gate batches=1000 rebuild_ms={} startup_ms={} validated={} max_live_events={} max_live_evidence={}",
+            rebuild_elapsed.as_millis(),
+            startup_elapsed.as_millis(),
+            work.accepted_events_validated,
+            work.max_live_events,
+            work.max_live_evidence_records,
         );
     }
 
@@ -3104,7 +3887,7 @@ mod tests {
             Err(ProjectionError::ManifestMismatch { .. })
         ));
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &dir.path().join("evil-rebuild.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&receiver, &evil_store).unwrap(),
@@ -3123,8 +3906,8 @@ mod tests {
             database.apply_accepted(&root).unwrap(),
             ApplyDisposition::Applied
         );
-        assert!(database.contains_frontier(root.exact_frontier()).unwrap());
-        assert!(!database.contains_frontier(child.exact_frontier()).unwrap());
+        assert!(database.contains_frontier(&root.exact_frontier()).unwrap());
+        assert!(!database.contains_frontier(&child.exact_frontier()).unwrap());
         assert_eq!(
             database.apply_accepted(&root).unwrap(),
             ApplyDisposition::Duplicate
@@ -3142,17 +3925,34 @@ mod tests {
             database.apply_accepted(&child).unwrap(),
             ApplyDisposition::Applied
         );
-        assert!(database.contains_frontier(root.exact_frontier()).unwrap());
-        assert!(database.contains_frontier(child.exact_frontier()).unwrap());
+        assert!(database.contains_frontier(&root.exact_frontier()).unwrap());
+        assert!(database.contains_frontier(&child.exact_frontier()).unwrap());
         let sibling = fake_validated(
             &store,
             ids,
             batch(102),
             vec![root.batch_id()],
-            root.exact_frontier().clone(),
+            root.exact_frontier(),
         );
-        let regressing =
-            AcceptedBatchEvent::from_validated(&sibling, root.exact_frontier().clone(), 3).unwrap();
+        let sibling_document = frontier(ids.document, 3, vec![batch(102)]).documents()[0].clone();
+        let sibling_evidence = super::super::AcceptedBatchEvidence::for_test(
+            batch(102),
+            ContentDigest::of(&sibling.manifest().encode().unwrap()),
+            super::super::AcceptedBatchEvidence::binding_digest_for(
+                batch(102),
+                ContentDigest::of(&sibling.manifest().encode().unwrap()),
+                sibling.manifest().semantic_effect_digest(),
+                sibling.manifest().dependency_frontier(),
+                sibling.manifest().causal_dependency_heads(),
+            )
+            .unwrap(),
+            child.post_frontier_root.clone(),
+            vec![sibling_document],
+            1,
+        );
+        let mut regressing =
+            AcceptedBatchEvent::from_validated(&sibling, &sibling_evidence).unwrap();
+        regressing.prior_frontier_root = root.post_frontier_root.clone();
         assert_eq!(
             database.apply_accepted(&regressing),
             Err(ProjectionError::FrontierRegression)
@@ -3163,51 +3963,114 @@ mod tests {
     fn overlay_reorders_dependencies_and_enforces_both_limits() {
         let ids = TestIds::new(4_000);
         let dir = TestDir::new("overlay");
-        let (mut database, _engine, store) = open_empty(&dir, ids);
-        let (root, child) = root_and_child_events(&store, ids);
+        let (mut database, _empty, store) = open_empty(&dir, ids);
+        let mut engine = ids.engine();
+        let root_prepared = engine
+            .prepare_transaction(
+                author(4_010),
+                &root_transaction(ids, "pages/overlay.md", "root"),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &root_prepared);
+        let root =
+            AcceptedBatchEvent::from_accepted(&engine, &store, root_prepared.manifest().batch_id())
+                .unwrap();
+        let child_prepared = engine
+            .prepare_transaction(
+                author(4_011),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: ids.block,
+                        home_document_id: ids.document,
+                    },
+                    content: "child".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &child_prepared);
+        let child = AcceptedBatchEvent::from_accepted(
+            &engine,
+            &store,
+            child_prepared.manifest().batch_id(),
+        )
+        .unwrap();
+        let source = RebuildSource::new(&engine, &store).unwrap();
         let mut overlay = TailOverlay::default();
-        assert!(overlay.try_enqueue(child.clone()).unwrap());
-        assert!(overlay.try_enqueue(root.clone()).unwrap());
-        assert_eq!(overlay.drain_ready(&mut database, usize::MAX).unwrap(), 2);
-        assert_eq!(database.frontier().unwrap(), *child.exact_frontier());
+        assert!(overlay.try_enqueue(&mut database, &child).unwrap());
+        assert!(overlay.try_enqueue(&mut database, &root).unwrap());
+        assert_eq!(
+            overlay
+                .drain_ready(&mut database, &source, usize::MAX)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            database.frontier().unwrap(),
+            engine.exact_frontier().unwrap()
+        );
+        assert_eq!(overlay.status().unapplied_batches, 0);
+        assert!(!overlay.try_enqueue(&mut database, &root).unwrap());
         assert_eq!(overlay.status().unapplied_batches, 0);
 
         let mut count_limited = TailOverlay::default();
-        let mut tiny = root.clone();
-        tiny.retained_bytes = 1;
-        for value in 0..TAIL_MAX_BATCHES {
-            tiny.batch_id = batch(50_000 + value as u128);
-            let reservation = count_limited.reserve_mutation(1).unwrap();
-            assert!(count_limited
-                .enqueue_reserved(reservation, tiny.clone())
-                .unwrap());
+        let mut reservations = Vec::with_capacity(TAIL_MAX_BATCHES);
+        for _ in 0..TAIL_MAX_BATCHES {
+            reservations.push(count_limited.reserve_mutation(1).unwrap());
         }
         assert!(count_limited.status().backpressured);
-        tiny.batch_id = batch(70_000);
         assert!(matches!(
-            count_limited.reserve_mutation(tiny.retained_bytes),
+            count_limited.reserve_mutation(1),
             Err(TailOverlayError::Backpressure(TailOverlayStatus {
                 backpressured: true,
                 ..
             }))
         ));
+        for reservation in reservations {
+            count_limited.cancel_reservation(reservation).unwrap();
+        }
 
         let mut byte_limited = TailOverlay::default();
-        let mut full = root;
-        full.retained_bytes = TAIL_MAX_BYTES;
         let reservation = byte_limited.reserve_mutation(TAIL_MAX_BYTES).unwrap();
-        assert!(byte_limited
-            .enqueue_reserved(reservation, full.clone())
-            .unwrap());
         assert!(byte_limited.status().backpressured);
-        full.batch_id = batch(70_001);
         assert!(matches!(
-            byte_limited.reserve_mutation(full.retained_bytes),
+            byte_limited.reserve_mutation(1),
             Err(TailOverlayError::Backpressure(TailOverlayStatus {
                 backpressured: true,
                 ..
             }))
         ));
+        byte_limited.cancel_reservation(reservation).unwrap();
+    }
+
+    #[test]
+    fn provider_tail_over_cap_retains_only_bounded_hot_descriptors() {
+        let ids = TestIds::new(4_050);
+        let dir = TestDir::new("provider-tail-cap");
+        let (mut database, _engine, store) = open_empty(&dir, ids);
+        let (root, _) = root_and_child_events(&store, ids);
+        let mut overlay = TailOverlay::default();
+        let tail = TAIL_MAX_BATCHES + 257;
+        for index in (0..tail).rev() {
+            let mut event = root.clone();
+            event.batch_id = batch(80_000 + index as u128);
+            event.manifest_digest = ContentDigest::of(&index.to_be_bytes());
+            event.acceptance_sequence = index as u64 + 1;
+            event.retained_bytes = 1;
+            assert!(overlay.try_enqueue(&mut database, &event).unwrap());
+        }
+        assert_eq!(overlay.status().unapplied_batches, tail);
+        assert!(overlay.status().backpressured);
+        assert_eq!(overlay.hot_descriptor_count(), TAIL_MAX_BATCHES);
+        assert!(overlay.hot_descriptor_count() <= TAIL_MAX_BATCHES);
+
+        let mut duplicate = root;
+        duplicate.batch_id = batch(80_000 + (tail - 1) as u128);
+        duplicate.manifest_digest = ContentDigest::of(&(tail - 1).to_be_bytes());
+        duplicate.acceptance_sequence = tail as u64;
+        duplicate.retained_bytes = 1;
+        assert!(!overlay.try_enqueue(&mut database, &duplicate).unwrap());
+        assert_eq!(overlay.hot_descriptor_count(), TAIL_MAX_BATCHES);
     }
 
     #[test]
@@ -3252,20 +4115,21 @@ mod tests {
             AcceptedBatchEvent::from_accepted(&engine, &store, prepared.manifest().batch_id())
                 .unwrap();
         assert!(event.retained_bytes() > TAIL_MAX_BYTES);
-        assert!(overlay.try_enqueue(event.clone()).unwrap());
-        assert_eq!(overlay.status().unapplied_batches, 1);
-        assert!(overlay.status().backpressured);
-        assert!(overlay.status().retained_bytes > TAIL_MAX_BYTES);
-
         let empty = ids.engine();
-        let mut database = SqliteFrontier::open_or_rebuild(
+        let mut database = open_test_projection(
             &dir.path().join("frontier.sqlite"),
             ids.claim(),
             RebuildSource::new(&empty, &store).unwrap(),
         )
         .unwrap()
         .database;
-        assert_eq!(overlay.drain_ready(&mut database, 1).unwrap(), 1);
+        assert!(overlay.try_enqueue(&mut database, &event).unwrap());
+        assert_eq!(overlay.status().unapplied_batches, 1);
+        assert!(overlay.status().backpressured);
+        assert!(overlay.status().retained_bytes > TAIL_MAX_BYTES);
+
+        let source = RebuildSource::new(&engine, &store).unwrap();
+        assert_eq!(overlay.drain_ready(&mut database, &source, 1).unwrap(), 1);
         assert_eq!(overlay.status().unapplied_batches, 0);
         assert!(database.contains_batch(event.batch_id()).unwrap());
     }
@@ -3302,14 +4166,14 @@ mod tests {
         let engine = ids.engine();
         let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
         let database_path = dir.path().join("frontier.sqlite");
-        let first = SqliteFrontier::open_or_rebuild(
+        let first = open_test_projection(
             &database_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
         )
         .unwrap();
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &database_path,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -3317,7 +4181,7 @@ mod tests {
             Err(ProjectionError::LeaseContended(_))
         ));
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &dir.path().join("alternate.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -3326,7 +4190,7 @@ mod tests {
         ));
         fs::create_dir(dir.path().join("alias")).unwrap();
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &dir.path().join("alias").join("..").join("aliased.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -3338,7 +4202,7 @@ mod tests {
         let foreign_store =
             ObjectStore::open(&dir.path().join("foreign-objects"), foreign_ids.workspace).unwrap();
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &database_path,
                 foreign_ids.claim(),
                 RebuildSource::new(&foreign_engine, &foreign_store).unwrap(),
@@ -3346,7 +4210,7 @@ mod tests {
             Err(ProjectionError::LeaseContended(_))
         ));
         drop(first);
-        let recovered = SqliteFrontier::open_or_rebuild(
+        let recovered = open_test_projection(
             &database_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -3365,7 +4229,7 @@ mod tests {
         wait_for_file(&dir.path().join("helper-ready"));
         let engine = ids.engine();
         assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
+            open_test_projection(
                 &dir.path().join("lease-b.sqlite"),
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -3374,8 +4238,58 @@ mod tests {
         ));
         child.kill().unwrap();
         assert!(!child.wait().unwrap().success());
-        let recovered = SqliteFrontier::open_or_rebuild(
+        let recovered = open_test_projection(
             &dir.path().join("lease-b.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            recovered.recovery,
+            ProjectionRecovery::RebuiltMissing { applied_batches: 0 }
+        ));
+    }
+
+    #[test]
+    fn canonical_runtime_lease_contends_across_database_parents_and_subprocess() {
+        let seed = 7_400;
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new("canonical-runtime-lease");
+        fs::create_dir_all(dir.path().join("db-a")).unwrap();
+        fs::create_dir_all(dir.path().join("db-b")).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let engine = ids.engine();
+        let runtime =
+            WorkspaceRuntimeLeaseRoot::open(&dir.path().join("runtime"), ids.workspace).unwrap();
+        let first = SqliteFrontier::open_or_rebuild(
+            &dir.path().join("db-a/frontier.sqlite"),
+            &runtime,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            SqliteFrontier::open_or_rebuild(
+                &dir.path().join("db-b/frontier.sqlite"),
+                &runtime,
+                ids.claim(),
+                RebuildSource::new(&engine, &store).unwrap(),
+            ),
+            Err(ProjectionError::LeaseContended(_))
+        ));
+        let mut child = spawn_test_helper("canonical-lease-contender", dir.path(), seed, &[]);
+        assert!(child.wait().unwrap().success());
+
+        let foreign = TestIds::new(seed + 100);
+        assert!(matches!(
+            WorkspaceRuntimeLeaseRoot::open(&dir.path().join("runtime"), foreign.workspace),
+            Err(ProjectionError::WorkspaceMismatch { .. })
+        ));
+
+        drop(first);
+        let recovered = SqliteFrontier::open_or_rebuild(
+            &dir.path().join("db-b/frontier.sqlite"),
+            &runtime,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
         )
@@ -3449,11 +4363,11 @@ mod tests {
             .unwrap();
         let exact_frontier = probe.manifest().dependency_frontier().clone();
         assert_eq!(engine.exact_frontier().unwrap(), exact_frontier);
-        assert_eq!(accepted_event.exact_frontier(), &exact_frontier);
+        assert_eq!(accepted_event.exact_frontier(), exact_frontier);
         let expected_snapshot = engine.canonical_snapshot().unwrap();
         let database_path = dir.path().join("frontier.sqlite");
 
-        let first = SqliteFrontier::open_or_rebuild(
+        let first = open_test_projection(
             &database_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -3464,7 +4378,7 @@ mod tests {
         drop(first);
         remove_projection_files(&database_path);
 
-        let rebuilt = SqliteFrontier::open_or_rebuild(
+        let rebuilt = open_test_projection(
             &database_path,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -3504,7 +4418,7 @@ mod tests {
             let path = database.path().to_path_buf();
             drop(database);
             fs::write(&path, bytes).unwrap();
-            let rebuilt = SqliteFrontier::open_or_rebuild(
+            let rebuilt = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -3538,7 +4452,7 @@ mod tests {
             if mode == "apply-after" {
                 assert!(fs::metadata(sidecar_path(&path, "-wal")).unwrap().len() >= 32);
             }
-            let reopened = SqliteFrontier::open_or_rebuild(
+            let reopened = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&accepted_engine, &store).unwrap(),
@@ -3595,7 +4509,7 @@ mod tests {
                 file.write_all(&[0_u8; 8]).unwrap();
                 file.sync_all().unwrap();
             }
-            let reopened = SqliteFrontier::open_or_rebuild(
+            let reopened = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&accepted_engine, &store).unwrap(),
@@ -3627,7 +4541,7 @@ mod tests {
             );
             wait_for_file(&dir.path().join("helper-ready"));
             assert!(!child.wait().unwrap().success());
-            let reopened = SqliteFrontier::open_or_rebuild(
+            let reopened = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&accepted_engine, &store).unwrap(),
@@ -3668,7 +4582,7 @@ mod tests {
         );
         wait_for_file(&dir.path().join("helper-ready"));
         assert!(!helper.wait().unwrap().success());
-        let reopened = SqliteFrontier::open_or_rebuild(
+        let reopened = open_test_projection(
             &path,
             ids.claim(),
             RebuildSource::new(&accepted_engine, &store).unwrap(),
@@ -3706,20 +4620,17 @@ mod tests {
                     )
                     .unwrap();
             } else {
-                let stale =
-                    canonical_frontier_bytes(&frontier(ids.document, 1, vec![batch(10_200)]))
-                        .unwrap();
                 connection
                     .execute(
                         "UPDATE frontier
-                         SET exact_frontier = ?1, frontier_digest = ?2
+                         SET frontier_root_digest = zeroblob(32)
                          WHERE singleton = 1",
-                        params![&stale, ContentDigest::of(&stale).as_bytes().as_slice()],
+                        [],
                     )
                     .unwrap();
             }
             drop(connection);
-            let rebuilt = SqliteFrontier::open_or_rebuild(
+            let rebuilt = open_test_projection(
                 &path,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
