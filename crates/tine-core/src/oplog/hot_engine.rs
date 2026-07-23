@@ -943,6 +943,64 @@ impl ShardedHotEngine {
         }
     }
 
+    /// Derive the complete exact frontier of the currently accepted visible
+    /// state. This is intentionally a recovery/materialization operation, not
+    /// an edit-path primitive: store-backed engines may authenticate one
+    /// current record per document from scratch storage.
+    pub fn exact_frontier(&self) -> Result<FrontierV2, EngineError> {
+        self.begin_point_operation();
+        self.ensure_not_blocked()?;
+        let mut document_ids = BTreeSet::new();
+        for batch_id in self.status().accepted_batch_ids()? {
+            let manifest = self.load_observed_manifest(batch_id)?;
+            document_ids.extend(
+                manifest
+                    .required_objects()
+                    .iter()
+                    .filter(|descriptor| descriptor.kind() == ObjectKind::CrdtUpdate)
+                    .map(|descriptor| descriptor.document_id()),
+            );
+        }
+
+        let mut documents = Vec::with_capacity(document_ids.len());
+        for document_id in document_ids {
+            let (peer_counters, direct_heads) = if let Some(store) = &self.scratch {
+                let Some((record, _, work)) = super::document_state::load_external_current(
+                    store,
+                    &self.scratch_roots,
+                    super::document_state::DocumentLane::Visible,
+                    document_id,
+                )
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                else {
+                    return Err(EngineError::FrontierVectorMismatch(document_id));
+                };
+                self.record_document_state_work(work);
+                self.validate_external_record_anchor(document_id, &record)?;
+                (
+                    record.peer_counters().to_vec(),
+                    record.exact_direct_heads().to_vec(),
+                )
+            } else {
+                let document = self.clone_validation_document(document_id, 1)?;
+                (
+                    canonical_peer_counters(&document.oplog_vv())?,
+                    self.document_dependency_heads(document_id, false)?
+                        .into_iter()
+                        .collect(),
+                )
+            };
+            if !peer_counters.is_empty() || !direct_heads.is_empty() {
+                documents.push(DocumentDependencies::new(
+                    document_id,
+                    peer_counters,
+                    direct_heads,
+                )?);
+            }
+        }
+        FrontierV2::new(documents).map_err(EngineError::from)
+    }
+
     /// Legacy no-store evidence snapshot. Store-backed engines retain only an
     /// authenticated handle and must be inspected through bounded pages.
     pub fn fatal_evidence(&self) -> Option<&ImmutableHomeEvidence> {

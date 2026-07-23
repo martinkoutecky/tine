@@ -21,6 +21,8 @@ loro = { path = "../../vendor/loro-1.13.6", version = "=1.13.6" }
 libc = "0.2"
 cap-std = "4.0.2"
 same-file = "1.0.6"
+fs2 = "0.4.3"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 

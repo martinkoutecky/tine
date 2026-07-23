@@ -19,6 +19,7 @@ pub mod receipt;
 pub(crate) mod scratch_store;
 pub mod semantic;
 pub mod simulator;
+pub mod sqlite;
 
 pub use batch::{
     BatchCausalDot, BatchError, CausalPeerId, ContentDigest, LineageDigest, ObjectDescriptor,
@@ -55,4 +56,10 @@ pub use simulator::{
     DeterministicSimulator, FailureCapsule, FailureIdentity, MinimizedScenario, Scenario,
     ScenarioAction, ScenarioDevice, ScenarioError, SimulatorDeviceState,
     FAILURE_CAPSULE_SCHEMA_VERSION, SCENARIO_SCHEMA_VERSION,
+};
+pub use sqlite::{
+    AcceptedBatchEvent, ApplyDisposition, ForensicEvidence, OpenProjection, ProjectionClaim,
+    ProjectionError, ProjectionRecovery, RebuildSource, SqliteFrontier, TailOverlay,
+    TailOverlayError, TailOverlayStatus, SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION,
+    TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
 };
