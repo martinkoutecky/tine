@@ -2703,8 +2703,6 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "1.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "221b567f34e3a7b38d05345b17797a7ca252d28e1fae479b4bb55c1a19616ddc"
 dependencies = [
  "enum-as-inner 0.6.1",
  "generic-btree",
@@ -2749,8 +2747,6 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "1.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb15cd83866965b50b4893246699312624808a1f2e2d205432237287d947b822"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -2785,6 +2781,7 @@ dependencies = [
  "serde",
  "serde_columnar",
  "serde_json",
+ "sha2",
  "smallvec",
  "thiserror 1.0.69",
  "thread_local",
@@ -5475,6 +5472,7 @@ dependencies = [
 name = "tine-core"
 version = "0.6.5"
 dependencies = [
+ "ahash",
  "ammonia",
  "cap-fs-ext",
  "cap-std",
@@ -5482,6 +5480,7 @@ dependencies = [
  "libc",
  "loro",
  "lsdoc",
+ "postcard",
  "pretty_assertions",
  "regex",
  "same-file",
@@ -5489,6 +5488,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "slotmap",
+ "smallvec",
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",

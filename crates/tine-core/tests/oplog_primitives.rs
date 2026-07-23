@@ -126,6 +126,13 @@ fn ordinary_application_ids_are_minted_as_uuid_v4() {
 fn decode_rejects_truncation_corruption_and_unknown_versions() {
     let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
     let encoded = intent.encode().unwrap();
+    let current: Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(current["receipt_schema_version"], json!(2));
+    assert_eq!(current["projection_schema_version"], json!(1));
+    assert_eq!(current["projection_policy_version"], json!(1));
+    assert_eq!(current["managed_entity_set_version"], json!(1));
+    assert!(current["frontier"][0]["direct_dependency_heads"].is_array());
+    assert!(current["frontier"][0]["causal_state_digest"].is_string());
     assert!(ProjectionIntent::decode(&encoded[..encoded.len() - 3]).is_err());
 
     let mut corrupt: Value = serde_json::from_slice(&encoded).unwrap();
@@ -255,7 +262,7 @@ fn decode_rejects_noncanonical_dependencies_and_annotations() {
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&unsorted_documents).unwrap()).is_err());
 
     let mut unsorted_batches: Value = serde_json::from_slice(&encoded).unwrap();
-    unsorted_batches["frontier"][0]["batch_closure"]
+    unsorted_batches["frontier"][0]["direct_dependency_heads"]
         .as_array_mut()
         .unwrap()
         .reverse();
@@ -288,8 +295,8 @@ fn decode_rejects_duplicate_document_and_batch_dependencies() {
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&duplicate_document).unwrap()).is_err());
 
     let mut duplicate_batch: Value = serde_json::from_slice(&encoded).unwrap();
-    duplicate_batch["frontier"][0]["batch_closure"][1] =
-        duplicate_batch["frontier"][0]["batch_closure"][0].clone();
+    duplicate_batch["frontier"][0]["direct_dependency_heads"][1] =
+        duplicate_batch["frontier"][0]["direct_dependency_heads"][0].clone();
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&duplicate_batch).unwrap()).is_err());
 
     assert!(matches!(
@@ -322,7 +329,7 @@ fn frontier_construction_is_canonical_and_true_empty_baseline_is_valid() {
     )
     .unwrap();
     assert_eq!(first.peer_counters(), &[peer(2, 8), peer(9, 4)]);
-    assert_eq!(first.batch_closure(), &[batch(3), batch(7)]);
+    assert_eq!(first.direct_dependency_heads(), &[batch(3), batch(7)]);
 
     let equivalent = DocumentDependencies::new(
         document(1),
@@ -332,8 +339,8 @@ fn frontier_construction_is_canonical_and_true_empty_baseline_is_valid() {
     .unwrap();
     assert_eq!(first, equivalent);
     assert_eq!(
-        first.batch_closure_digest(),
-        equivalent.batch_closure_digest()
+        first.causal_state_digest(),
+        equivalent.causal_state_digest()
     );
 
     assert!(FrontierV2::default().documents().is_empty());
@@ -348,18 +355,18 @@ fn frontier_construction_is_canonical_and_true_empty_baseline_is_valid() {
 }
 
 #[test]
-fn frontier_decode_recomputes_closure_digest_and_rejects_malformed_entries() {
+fn frontier_decode_recomputes_causal_digest_and_rejects_malformed_entries() {
     let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
         .encode()
         .unwrap();
 
     let mut mismatch: Value = serde_json::from_slice(&encoded).unwrap();
-    mismatch["frontier"][0]["batch_closure_digest"] =
+    mismatch["frontier"][0]["causal_state_digest"] =
         json!("0000000000000000000000000000000000000000000000000000000000000000");
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&mismatch).unwrap()).is_err());
 
     let mut malformed_digest: Value = serde_json::from_slice(&encoded).unwrap();
-    malformed_digest["frontier"][0]["batch_closure_digest"] = json!("ABCDEF");
+    malformed_digest["frontier"][0]["causal_state_digest"] = json!("ABCDEF");
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&malformed_digest).unwrap()).is_err());
 
     let mut missing_counters: Value = serde_json::from_slice(&encoded).unwrap();
@@ -580,7 +587,7 @@ fn completion_id_is_stable_across_equivalent_encodings() {
 }
 
 #[test]
-fn completion_id_binds_peer_counters_and_full_batch_closure() {
+fn completion_id_binds_peer_counters_and_direct_dependency_heads() {
     let make_intent = |peer_id, max_counter, dependencies| {
         intent_with_frontier(
             ProjectionPolicy::SparseLogseqIds,
@@ -597,15 +604,15 @@ fn completion_id_binds_peer_counters_and_full_batch_closure() {
     let baseline = make_intent(2, 7, vec![batch(1), batch(2)]);
     let changed_peer = make_intent(3, 7, vec![batch(1), batch(2)]);
     let changed_counter = make_intent(2, 8, vec![batch(1), batch(2)]);
-    let changed_closure = make_intent(2, 7, vec![batch(1), batch(2), batch(3)]);
+    let changed_heads = make_intent(2, 7, vec![batch(1), batch(2), batch(3)]);
 
     assert_ne!(baseline.id().unwrap(), changed_peer.id().unwrap());
     assert_ne!(baseline.id().unwrap(), changed_counter.id().unwrap());
-    assert_ne!(baseline.id().unwrap(), changed_closure.id().unwrap());
+    assert_ne!(baseline.id().unwrap(), changed_heads.id().unwrap());
 
     let encoded: Value = serde_json::from_slice(&baseline.encode().unwrap()).unwrap();
     assert_eq!(encoded["projection_schema_version"], json!(1));
-    assert!(encoded["frontier"][0]["batch_closure_digest"].is_string());
+    assert!(encoded["frontier"][0]["causal_state_digest"].is_string());
 }
 
 #[test]

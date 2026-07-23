@@ -98,15 +98,34 @@ The logical causal frontier is `FrontierV2`: a canonical list sorted by
 `DocumentId`. Empty document entries are omitted, and a globally empty frontier is
 valid only for a true empty baseline. Every non-empty entry contains both (a) that
 document's CRDT version vector as canonical sorted unique `(CrdtPeerId, max_counter)`
-entries and (b) the full sorted unique transitive causal `BatchId` closure needed by
-that document, plus the canonical digest of that exact closure. Decoding/validation
-recomputes the digest from the canonical closure and rejects a mismatch. The list
-enables exact reconstruction and the digest binds it; neither substitutes for the
-other. `CrdtPeerId` is an opaque engine-neutral interchange identity, populated from
-the current Loro peer identity without making Loro's type part of this API.
-Application IDs remain separate from CRDT peer/operation IDs. This
-per-document frontier is the accepted logical format choice; its concrete persistent
-byte encoding remains versioned and gated on implementation receipts.
+entries and (b) only the sorted unique exact direct `BatchId` heads relevant to that
+document. A relevant head is an immutable batch that carries an update for the
+document and has no relevant descendant in the declared atomic-batch DAG, including
+when the descendant path crosses batches that update other documents. An unrelated
+maximal batch, a redundant ancestor, and an omitted relevant head are all rejected.
+The document causal digest binds the document ID, counters, and exact direct heads.
+Cold validation uses authenticated exact document-state and causal-clock point
+indexes. It does not walk immutable manifest ancestry; direct heads are still not
+permission to omit or approximate the exact frontier.
+
+The earlier full-transitive-closure representation made each sequential page edit
+carry and validate all prior batch IDs, so manifest size and hot preparation work
+were O(page history). The correction10 same-page probe also exposed accumulated
+Loro-history snapshot export: its early/late clone-operation maxima grew from
+`[4, 68]` to `[2, 834]` despite a constant-size edit. Compact exact heads plus
+reusable current-state author buffers and semantic snapshots remove those two
+history-proportional paths; componentwise early/late cost assertions now gate the
+construction. `CrdtPeerId` remains an opaque engine-neutral interchange identity,
+populated from the current Loro peer identity without making Loro's type part of
+this API. Application IDs remain separate from CRDT peer/operation IDs.
+
+This is an incompatible disconnected candidate-format correction:
+`manifest_encoding_version` and `operation_schema_version` advance to 3 and
+`receipt_schema_version` remains 2. The internal CRDT update payload advances to
+version 5, compact batch status to version 3, and block-claim records to version 2.
+The causal, document-state, and scratch-page formats begin at their explicitly
+versioned experimental schemas. None of these bytes are activated for graph startup,
+v1 reinterpretation, or production writes.
 
 Each semantic `OperationBatch` has exactly one manifest. The manifest contains all
 compatibility versions, workspace and lineage/genesis hash, batch/author/device/
@@ -135,6 +154,31 @@ versioned canonical affected-entity delta, and compares its digest with the
 manifest. Unavailable dependency state remains staged; a mismatch is rejected before
 hot state, SQLite, or projection visibility. Full-page snapshots are only
 bootstrap/import/recovery payloads, not ordinary edits or merge primitives.
+
+Store-backed hot engines create exactly one `engine-scratch-v2/run-<UUID>`
+capability containing a canonical workspace/run marker, an advisory lease, one page
+file, and one blob file. Cleanup enumerates exact canonical run names, refuses
+symlinks, reparse points, special files, malformed markers, and unknown entries,
+skips live leases, and unlinks stale files only relative to that capability. Scratch
+never performs a durability sync and has no capability that reaches authoritative
+objects, manifests, or lineage bytes.
+
+Authenticated point pages hold compact batch status, reverse dependency waits, a
+deterministic disk heap of ready batch IDs, exact causal-dot/vector-clock records,
+current and exact document checkpoints, block claims, and canonical conflict
+evidence. Ready payload bytes are reloaded from their immutable locator only while
+one batch is processed. Visible and terminal document handles share the catalog plus
+64 non-catalog cache bound. Fatal hot state is a fixed root/count/digest handle;
+complete conflict evidence is explicitly streamed from canonical pages. The
+immutable home shard remains the sole owner authority.
+
+Document checkpoints are editable Loro shallow snapshots split into fixed-size
+content-addressed chunks, so state roots structurally share unchanged bytes and no
+normal path calls `all_updates()`. Exact frontier validation loads the checkpoint
+bound to the declared document causal digest; ordinary authorship and
+materialization load the current checkpoint and revalidate its one latest immutable
+manifest/object anchor. Missing, truncated, tampered, misbound, or noncanonical
+scratch data fails closed without live ancestry reconstruction.
 
 ### Projection, external import, and handoff
 
@@ -216,6 +260,15 @@ move, and affected-only rename remain synthetic Loro-update lower bounds.
 `LocalActive` stays disabled until P2.2 and the other implementation receipts pass;
 acceptance of this ADR is not production activation.
 
+P1A.2 separately proves authenticated offline replay of 25 batches containing
+1,000,000 blocks and 10,000 page operations. The measured optimized runs took
+37.860 and 39.833 seconds and peaked at about 224 MiB, so the regression ceiling is
+45 seconds and 1 GiB. This rare full-recovery gate replaces the earlier provisional
+15-second estimate; it does not relax the 2-second normal-startup gate. A subsequent
+100-block page materialization took 39.180 ms and exactly one manifest plus one
+object read. The complete receipt and distinction between recovery, SQLite rebuild,
+and normal startup are recorded in `docs/BENCH.md`.
+
 ## Consequences
 
 - The recovery/fallback materializer scales with open content and referenced home
@@ -236,3 +289,7 @@ acceptance of this ADR is not production activation.
   persistent-byte rollout, and `LocalActive` activation remain gated by semantic
   convergence, real replay, SQLite startup/rebuild, and retained-tail/backpressure
   receipts.
+- The disconnected P1A.2 engine can reconstruct old causal state and identity
+  evidence from immutable batches without retaining transitive frontier closures or
+  one hot claim entry per block. This does not make its run-local authenticated
+  indexes a second owner authority or a production startup database.

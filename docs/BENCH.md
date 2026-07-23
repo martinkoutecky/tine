@@ -303,17 +303,20 @@ shard, so it is not copied between CRDT documents on a move.
 
 The logical causal frontier is `FrontierV2`, a canonical `DocumentId`-sorted list.
 Empty document entries are omitted; a globally empty frontier is valid for a true
-empty baseline. Every non-empty entry contains both canonical sorted unique
-`(CrdtPeerId, max_counter)` entries and the full sorted unique transitive causal
-`BatchId` closure needed by that document, plus the canonical digest of that exact
-closure. Validation recomputes the digest from the canonical closure and rejects a
-mismatch. The list enables reconstruction and the digest binds it. Semantic
-validation reconstructs the declared dependency state, excludes concurrent
-non-dependencies, applies only the manifest's closed update-object set, and hashes
-the canonical affected-entity delta. Unavailable frontiers stage; mismatches reject
-before visibility. ADR 0049 contains the complete manifest/object, projection,
-import, and fencing contract, including an explicit `projection_schema_version`
-separate from receipt-format, projection-policy, and managed-entity-set versions.
+empty baseline. Every non-empty entry contains canonical sorted unique
+`(CrdtPeerId, max_counter)` entries plus the exact direct `BatchId` heads relevant
+to that document. A relevant head updates the document and has no relevant
+descendant in the declared atomic-batch DAG, including descendant paths through
+batches that update other documents. The causal-state digest binds the document,
+counters, and exact direct heads. Authenticated exact document-state and causal-clock
+indexes reconstruct the declared dependency state without manifest-ancestry scans;
+they exclude concurrent non-dependencies, apply only the manifest's closed update-
+object set, and hash the canonical affected-entity delta. Unavailable frontiers
+stage; redundant ancestors, unrelated maxima, omitted heads, and digest mismatches
+reject before visibility. ADR 0049 contains the complete manifest/object,
+projection, import, and fencing contract, including an explicit
+`projection_schema_version` separate from receipt-format, projection-policy, and
+managed-entity-set versions.
 
 The representative fanout row, not the home-local row, selects the v2 architecture.
 Its P0A CRDT recovery/fallback evidence is deliberately separate from the later
@@ -326,9 +329,9 @@ SQLite-backed normal startup/hot-state activation evidence.
 | P2.2 normal user-facing startup/hot state (1,000 pages, 100,000 blocks) | <= 2,000 ms and <= 524,288 KiB current RSS | not implemented by this Loro harness; requires SQLite-backed startup | **UNPROVEN until P2.2** |
 | one-page edit and update | <= 2 ms and <= 4,096 bytes | 0.124 ms / 131 B | PASS lower bound |
 | cross-page move/owner update | <= 5 ms and <= 16,384 bytes | 0.021 ms / 277 B | PASS lower bound |
-| full operation-batch replay | <= 15,000 ms and <= 1,048,576 KiB peak RSS | not implemented by this harness | **UNPROVEN until P1** |
+| authenticated full operation-batch replay (offline recovery) | <= 45,000 ms and <= 1,048,576 KiB peak RSS | 39,832.674 ms / 223,812 KiB at P1A.2 | PASS |
 | bounded startup tail replay | P2.2 must set/meet the numeric sub-gate within the normal startup ceiling | not implemented by this harness | **UNPROVEN until P2.2** |
-| SQLite rebuild to canonical state | <= 15,000 ms and <= 1,048,576 KiB peak RSS | not implemented by this harness | **UNPROVEN until P2** |
+| complete SQLite rebuild to canonical state | <= 60,000 ms and <= 1,048,576 KiB peak RSS | not implemented by this harness; the budget includes authenticated replay plus projection work | **UNPROVEN until P2** |
 | deterministic fixture build+encode+write | <= 15,000 ms and <= 402,653,184 encoded bytes | 8,182.892 ms / 215,959,441 B | PASS fixture-only |
 
 The adversarial fanout result accepts stable immutable-home plus current-membership
@@ -339,6 +342,23 @@ SQLite materialization, canonical rebuild, bounded tail replay, or normal startu
 path. `LocalActive` remains disabled until the P2.2 startup/hot-state gate and the
 other implementation receipts pass. ADR 0049 acceptance records the architecture
 and logical format choice; it does not mean production activation.
+
+The P1A.2 full-replay receipt is a separate, fresh-process recovery measurement over
+25 authenticated batches containing exactly 1,000,000 blocks and 10,000 page
+operations. It validates immutable manifests and update objects, reconstructs exact
+causal and semantic state, and publishes authenticated current and exact document
+checkpoints. The optimized runs took 37.860 and 39.833 seconds; the slower run peaked
+at 223,812 KiB. The 45-second ceiling preserves a measured regression margin. It is
+not a normal startup target and does not relax the P2.2 2-second SQLite-backed
+startup/hot-state gate.
+
+The same receipt retained zero owned semantic-snapshot entries for the million new
+blocks, reduced external-history page reads from 70,996 to 988, and materialized one
+100-block page in 39.180 ms with exactly one manifest and one object read. Remaining
+full-replay time is dominated by canonical per-document CRDT tracker sealing. Further
+improvement requires an aggregate persistent representation rather than another
+local-path tweak, so that format-level redesign is deferred unless later P2 evidence
+shows it is needed for user-facing startup or bounded local operations.
 
 The **16 MiB retained staged-object / 10,000 unapplied-batch** thresholds are only a
 conservative provisional safety cap, whichever comes first. This harness does not

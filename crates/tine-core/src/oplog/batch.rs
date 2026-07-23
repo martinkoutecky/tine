@@ -10,9 +10,9 @@ use super::{
 };
 
 pub const OPLOG_PROTOCOL_VERSION: u32 = 2;
-pub const OPERATION_SCHEMA_VERSION: u32 = 1;
+pub const OPERATION_SCHEMA_VERSION: u32 = 3;
 pub const OBJECT_ENVELOPE_SCHEMA_VERSION: u32 = 1;
-pub const MANIFEST_ENCODING_VERSION: u32 = 1;
+pub const MANIFEST_ENCODING_VERSION: u32 = 3;
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -98,6 +98,44 @@ pub enum ObjectKind {
     AnnotatedBaseBlob,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CausalPeerId(DeviceId);
+
+impl CausalPeerId {
+    pub const fn from_device_id(device_id: DeviceId) -> Self {
+        Self(device_id)
+    }
+
+    pub const fn as_device_id(self) -> DeviceId {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatchCausalDot {
+    peer_id: CausalPeerId,
+    counter: u64,
+}
+
+impl BatchCausalDot {
+    pub fn new(peer_id: CausalPeerId, counter: u64) -> Result<Self, BatchError> {
+        if counter == 0 {
+            return Err(BatchError::InvalidCausalDot);
+        }
+        Ok(Self { peer_id, counter })
+    }
+
+    pub const fn peer_id(self) -> CausalPeerId {
+        self.peer_id
+    }
+
+    pub const fn counter(self) -> u64 {
+        self.counter
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ObjectDescriptor {
     document_id: DocumentId,
@@ -178,6 +216,8 @@ pub struct OperationBatch {
     batch_id: BatchId,
     author_device_id: DeviceId,
     author_session_id: SessionId,
+    causal_dot: BatchCausalDot,
+    causal_dependency_heads: Vec<BatchId>,
     dependency_frontier: FrontierV2,
     semantic_effect_digest: SemanticEffectDigest,
     required_objects: Vec<ObjectDescriptor>,
@@ -196,6 +236,8 @@ struct OperationBatchWire {
     batch_id: BatchId,
     author_device_id: DeviceId,
     author_session_id: SessionId,
+    causal_dot: BatchCausalDot,
+    causal_dependency_heads: Vec<BatchId>,
     dependency_frontier: FrontierV2,
     semantic_effect_digest: SemanticEffectDigest,
     required_objects: Vec<ObjectDescriptor>,
@@ -203,17 +245,21 @@ struct OperationBatchWire {
 
 impl OperationBatch {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_causality(
         workspace_id: WorkspaceId,
         lineage_digest: LineageDigest,
         batch_id: BatchId,
         author_device_id: DeviceId,
         author_session_id: SessionId,
+        causal_dot: BatchCausalDot,
+        mut causal_dependency_heads: Vec<BatchId>,
         dependency_frontier: FrontierV2,
         semantic_effect_digest: SemanticEffectDigest,
         mut required_objects: Vec<ObjectDescriptor>,
     ) -> Result<Self, BatchError> {
         required_objects.sort_unstable();
+        causal_dependency_heads.sort_unstable();
+        causal_dependency_heads.dedup();
         let batch = Self {
             manifest_encoding_version: MANIFEST_ENCODING_VERSION,
             protocol_version: OPLOG_PROTOCOL_VERSION,
@@ -225,6 +271,8 @@ impl OperationBatch {
             batch_id,
             author_device_id,
             author_session_id,
+            causal_dot,
+            causal_dependency_heads,
             dependency_frontier,
             semantic_effect_digest,
             required_objects,
@@ -279,6 +327,14 @@ impl OperationBatch {
         self.author_session_id
     }
 
+    pub const fn causal_dot(&self) -> BatchCausalDot {
+        self.causal_dot
+    }
+
+    pub fn causal_dependency_heads(&self) -> &[BatchId] {
+        &self.causal_dependency_heads
+    }
+
     pub fn dependency_frontier(&self) -> &FrontierV2 {
         &self.dependency_frontier
     }
@@ -303,6 +359,8 @@ impl OperationBatch {
             batch_id: wire.batch_id,
             author_device_id: wire.author_device_id,
             author_session_id: wire.author_session_id,
+            causal_dot: wire.causal_dot,
+            causal_dependency_heads: wire.causal_dependency_heads,
             dependency_frontier: wire.dependency_frontier,
             semantic_effect_digest: wire.semantic_effect_digest,
             required_objects: wire.required_objects,
@@ -344,6 +402,22 @@ impl OperationBatch {
                     found,
                 });
             }
+        }
+
+        if self.causal_dot.counter == 0 {
+            return Err(BatchError::InvalidCausalDot);
+        }
+        if !is_strictly_sorted(&self.causal_dependency_heads)
+            && !self.causal_dependency_heads.is_empty()
+        {
+            return Err(BatchError::NonCanonicalCausalDependencies);
+        }
+        if self
+            .causal_dependency_heads
+            .binary_search(&self.batch_id)
+            .is_ok()
+        {
+            return Err(BatchError::CausalSelfDependency(self.batch_id));
         }
 
         if !is_strictly_sorted(&self.required_objects) {
@@ -562,7 +636,7 @@ impl OperationObject {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A complete generic batch closure. This validates object identity, type,
+/// A complete generic batch object set. This validates object identity, type,
 /// cardinality, descriptor equality, and the declared semantic-effect digest.
 /// P1A.2 must validate the semantic effect against dependency-frontier state;
 /// P1B.1 must prove which projection intents require which annotated base
@@ -625,6 +699,13 @@ impl PreparedBatch {
         })
     }
 
+    pub(crate) fn from_store_validated(
+        manifest: OperationBatch,
+        objects: Vec<OperationObject>,
+    ) -> Self {
+        Self { manifest, objects }
+    }
+
     pub fn manifest(&self) -> &OperationBatch {
         &self.manifest
     }
@@ -664,6 +745,9 @@ pub enum BatchError {
         found: u32,
     },
     UnsupportedEncryption,
+    InvalidCausalDot,
+    NonCanonicalCausalDependencies,
+    CausalSelfDependency(BatchId),
     NonCanonicalManifest,
     NonCanonicalDescriptors,
     NonCanonicalObjectHeader,
@@ -714,6 +798,13 @@ impl fmt::Display for BatchError {
                 write!(f, "unknown {field} {found}; expected {expected}")
             }
             Self::UnsupportedEncryption => f.write_str("only unencrypted objects are supported"),
+            Self::InvalidCausalDot => f.write_str("batch causal counter must be nonzero"),
+            Self::NonCanonicalCausalDependencies => {
+                f.write_str("causal dependency heads are not canonically sorted")
+            }
+            Self::CausalSelfDependency(batch_id) => {
+                write!(f, "batch {batch_id} causally depends on itself")
+            }
             Self::NonCanonicalManifest => f.write_str("manifest bytes are not canonical"),
             Self::NonCanonicalDescriptors => {
                 f.write_str("object descriptors are not canonically sorted")

@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tine_core::oplog::{
-    BatchError, BatchId, BatchInspection, ContentDigest, CrdtPeerCounter, CrdtPeerId, DeviceId,
-    DocumentDependencies, DocumentId, FrontierV2, LineageDigest, ObjectDescriptor, ObjectKind,
-    ObjectStore, OperationBatch, OperationObject, PreparedBatch, SemanticEffectDigest, SessionId,
-    StoreError, WorkspaceId, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
+    BatchCausalDot, BatchError, BatchId, BatchInspection, CausalPeerId, ContentDigest,
+    CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId, FrontierV2,
+    LineageDigest, ObjectDescriptor, ObjectKind, ObjectStore, OperationBatch, OperationObject,
+    PreparedBatch, SemanticEffectDigest, SessionId, StoreError, WorkspaceId, MAX_MANIFEST_BYTES,
+    MAX_OBJECT_BYTES,
 };
 use uuid::Uuid;
 
@@ -56,6 +57,36 @@ fn object(
     OperationObject::new(workspace_id, document_id, kind, payload.to_vec()).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
+fn test_manifest(
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    batch_id: BatchId,
+    author_device_id: DeviceId,
+    author_session_id: SessionId,
+    dependency_frontier: FrontierV2,
+    semantic_effect_digest: SemanticEffectDigest,
+    required_objects: Vec<ObjectDescriptor>,
+) -> Result<OperationBatch, BatchError> {
+    let causal_dependency_heads = dependency_frontier
+        .documents()
+        .iter()
+        .flat_map(|dependencies| dependencies.direct_dependency_heads().iter().copied())
+        .collect();
+    OperationBatch::new_with_causality(
+        workspace_id,
+        lineage_digest,
+        batch_id,
+        author_device_id,
+        author_session_id,
+        BatchCausalDot::new(CausalPeerId::from_device_id(author_device_id), 1).unwrap(),
+        causal_dependency_heads,
+        dependency_frontier,
+        semantic_effect_digest,
+        required_objects,
+    )
+}
+
 fn manifest(
     workspace_id: WorkspaceId,
     batch_id: BatchId,
@@ -68,11 +99,11 @@ fn manifest(
             CrdtPeerCounter::new(CrdtPeerId::from_u64(8), 12),
             CrdtPeerCounter::new(CrdtPeerId::from_u64(2), 9),
         ],
-        vec![batch(3), batch(2)],
+        vec![batch(300), batch(200)],
     )
     .unwrap()])
     .unwrap();
-    OperationBatch::new(
+    test_manifest(
         workspace_id,
         LineageDigest::of(b"immutable-lineage"),
         batch_id,
@@ -180,12 +211,7 @@ fn canonical_roundtrip_and_deterministic_bytes() {
         assert!(!operation_object.payload().is_empty());
     }
 
-    let ordered = prepared
-        .manifest()
-        .required_objects()
-        .iter()
-        .cloned()
-        .collect();
+    let ordered = prepared.manifest().required_objects().to_vec();
     let equivalent = manifest(
         workspace_id,
         batch(40),
@@ -231,7 +257,7 @@ fn manifest_constructor_canonicalizes_and_rejects_generic_invariant_violations()
         .windows(2)
         .all(|pair| pair[0] < pair[1]));
 
-    let duplicate = OperationBatch::new(
+    let duplicate = test_manifest(
         workspace_id,
         LineageDigest::of(b"lineage"),
         batch(2),
@@ -244,7 +270,7 @@ fn manifest_constructor_canonicalizes_and_rejects_generic_invariant_violations()
     .unwrap_err();
     assert!(matches!(duplicate, BatchError::DuplicateDescriptor(_)));
 
-    let duplicate_update = OperationBatch::new(
+    let duplicate_update = test_manifest(
         workspace_id,
         LineageDigest::of(b"lineage"),
         batch(3),
@@ -264,7 +290,7 @@ fn manifest_constructor_canonicalizes_and_rejects_generic_invariant_violations()
         BatchError::DuplicateCrdtDocument(_)
     ));
 
-    let no_semantic = OperationBatch::new(
+    let no_semantic = test_manifest(
         workspace_id,
         LineageDigest::of(b"lineage"),
         batch(4),
@@ -283,7 +309,7 @@ fn manifest_constructor_canonicalizes_and_rejects_generic_invariant_violations()
         ObjectKind::SemanticEffect,
         b"other semantic",
     );
-    let two_semantics = OperationBatch::new(
+    let two_semantics = test_manifest(
         workspace_id,
         LineageDigest::of(b"lineage"),
         batch(5),
@@ -448,7 +474,7 @@ fn duplicate_delivery_is_idempotent_and_batch_collision_is_fatal() {
         BatchInspection::Ready(_)
     ));
 
-    let foreign_lineage = OperationBatch::new(
+    let foreign_lineage = test_manifest(
         workspace_id,
         LineageDigest::of(b"independent lineage"),
         batch(5),
@@ -572,6 +598,12 @@ fn object_decode_and_store_reject_corruption_workspace_and_descriptor_mismatch()
 fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     let prepared = sample(workspace(1), batch(6), b"semantic");
     let encoded = prepared.manifest().encode().unwrap();
+    let current: Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(current["manifest_encoding_version"], json!(3));
+    assert_eq!(current["protocol_version"], json!(2));
+    assert_eq!(current["operation_schema_version"], json!(3));
+    assert_eq!(current["object_envelope_schema_version"], json!(1));
+    assert_eq!(current["managed_entity_set_version"], json!(1));
 
     for field in [
         "manifest_encoding_version",
@@ -800,14 +832,14 @@ fn reopen_validates_bounded_canonical_namespace_content() {
 }
 
 #[test]
-fn direct_mixed_lineage_blocks_ready_inspection() {
+fn direct_mixed_lineage_is_inert_on_point_lookup_and_blocks_target_or_reopen() {
     let dir = TestDir::new("direct-mixed-lineage");
     let workspace_id = workspace(1);
     let prepared = sample(workspace_id, batch(93), b"semantic");
     let store = open_store(&dir, workspace_id);
     store.publish_prepared(&prepared).unwrap();
 
-    let foreign = OperationBatch::new(
+    let foreign = test_manifest(
         workspace_id,
         LineageDigest::of(b"provider-delivered-foreign-lineage"),
         batch(94),
@@ -828,6 +860,15 @@ fn direct_mixed_lineage_blocks_ready_inspection() {
 
     assert!(matches!(
         store.inspect_batch(prepared.manifest().batch_id()),
+        Ok(BatchInspection::Ready(_))
+    ));
+    assert!(matches!(
+        store.inspect_batch(foreign.batch_id()),
+        Err(StoreError::LineageMismatch { .. })
+    ));
+    drop(store);
+    assert!(matches!(
+        ObjectStore::open(&dir.path().join("candidate-v2-store"), workspace_id),
         Err(StoreError::LineageMismatch { .. })
     ));
 }
@@ -902,7 +943,7 @@ fn concurrent_first_lineages_can_never_be_exposed_together() {
     let workspace_id = workspace(1);
     let first = sample(workspace_id, batch(96), b"first lineage semantic");
     let second_base = sample(workspace_id, batch(97), b"second lineage semantic");
-    let second_manifest = OperationBatch::new(
+    let second_manifest = test_manifest(
         workspace_id,
         LineageDigest::of(b"second concurrent lineage"),
         second_base.manifest().batch_id(),
@@ -942,29 +983,19 @@ fn concurrent_first_lineages_can_never_be_exposed_together() {
         .map(|handle| handle.join().unwrap())
         .collect();
 
-    match results.iter().filter(|result| result.is_ok()).count() {
-        2 => {
-            assert!(matches!(
-                store.inspect_batch(first.manifest().batch_id()),
-                Err(StoreError::LineageMismatch { .. })
-            ));
-            assert!(matches!(
-                store.inspect_batch(second.manifest().batch_id()),
-                Err(StoreError::LineageMismatch { .. })
-            ));
-        }
-        1 => {
-            let winner = if results[0].is_ok() { &first } else { &second };
-            assert!(matches!(
-                store.inspect_batch(winner.manifest().batch_id()).unwrap(),
-                BatchInspection::Ready(_)
-            ));
-            assert!(results
-                .iter()
-                .any(|result| matches!(result, Err(StoreError::LineageMismatch { .. }))));
-        }
-        count => panic!("expected one or two first-lineage publications, found {count}"),
-    }
+    assert_eq!(
+        results.iter().filter(|result| result.is_ok()).count(),
+        1,
+        "the immutable lineage claim must admit exactly one first publisher"
+    );
+    let winner = if results[0].is_ok() { &first } else { &second };
+    assert!(matches!(
+        store.inspect_batch(winner.manifest().batch_id()).unwrap(),
+        BatchInspection::Ready(_)
+    ));
+    assert!(results
+        .iter()
+        .any(|result| matches!(result, Err(StoreError::LineageMismatch { .. }))));
 }
 
 #[cfg(unix)]
