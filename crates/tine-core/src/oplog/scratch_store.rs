@@ -18,16 +18,21 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ContentDigest, WorkspaceId};
+use super::{BatchId, ContentDigest, WorkspaceId};
 
 pub(crate) const SCRATCH_DIR: &str = "engine-scratch-v2";
 const MARKER_FILE: &str = "marker";
 const LEASE_FILE: &str = "lease";
 const PAGES_FILE: &str = "pages.index";
 const BLOBS_FILE: &str = "blobs.data";
-const SCRATCH_SCHEMA_VERSION: u32 = 5;
+const SCRATCH_SCHEMA_VERSION: u32 = 6;
 const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
 const SCRATCH_LSM_LEVELS: usize = 32;
+const ACCEPTED_SEQUENCE_SCHEMA_VERSION: u32 = 1;
+const ACCEPTED_SEQUENCE_LEAF_CAPACITY: usize = 1;
+const ACCEPTED_SEQUENCE_NODE_FANOUT: usize = 32;
+const AUTHENTICATED_MAP_SCHEMA_VERSION: u32 = 1;
+const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
 const CURRENT_FILTER_WORDS: usize = 16_384;
 const MAX_MARKER_BYTES: u64 = 4 * 1024;
 const MAX_PAGE_BYTES: usize = 256 * 1024 * 1024;
@@ -39,6 +44,7 @@ pub(crate) struct ScratchStats {
     pub page_writes: usize,
     pub page_bytes_read: usize,
     pub page_bytes_written: usize,
+    pub max_page_bytes_read: usize,
     pub blob_reads: usize,
     pub blob_writes: usize,
     pub blob_bytes_read: usize,
@@ -56,6 +62,7 @@ struct ScratchCounters {
     page_writes: AtomicUsize,
     page_bytes_read: AtomicUsize,
     page_bytes_written: AtomicUsize,
+    max_page_bytes_read: AtomicUsize,
     blob_reads: AtomicUsize,
     blob_writes: AtomicUsize,
     blob_bytes_read: AtomicUsize,
@@ -116,6 +123,7 @@ impl ScratchCounters {
             page_writes: self.page_writes.load(Ordering::Relaxed),
             page_bytes_read: self.page_bytes_read.load(Ordering::Relaxed),
             page_bytes_written: self.page_bytes_written.load(Ordering::Relaxed),
+            max_page_bytes_read: self.max_page_bytes_read.load(Ordering::Relaxed),
             blob_reads: self.blob_reads.load(Ordering::Relaxed),
             blob_writes: self.blob_writes.load(Ordering::Relaxed),
             blob_bytes_read: self.blob_bytes_read.load(Ordering::Relaxed),
@@ -156,7 +164,9 @@ pub(crate) enum ScratchPageKind {
     DocumentExternalCurrent = 13,
     DocumentExternalExact = 14,
     AcceptedFrontier = 15,
-    AcceptedSequence = 16,
+    AcceptedSequenceLeaf = 16,
+    AcceptedSequenceNode = 17,
+    AcceptedDocumentMap = 18,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -235,6 +245,105 @@ pub(crate) struct ScratchLsmRoot {
     levels: Vec<Option<ScratchSegmentRef>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScratchAcceptedSequenceRoot {
+    schema_version: u32,
+    len: u64,
+    height: u8,
+    root: Option<ScratchPageRef>,
+}
+
+impl Default for ScratchAcceptedSequenceRoot {
+    fn default() -> Self {
+        Self {
+            schema_version: ACCEPTED_SEQUENCE_SCHEMA_VERSION,
+            len: 0,
+            height: 0,
+            root: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptedSequenceLeaf {
+    schema_version: u32,
+    first_sequence: u64,
+    entries: Vec<AcceptedSequenceEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AcceptedSequenceEntry {
+    pub batch_id: BatchId,
+    pub evidence: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptedSequenceNode {
+    schema_version: u32,
+    height: u8,
+    first_leaf: u64,
+    children: Vec<ScratchPageRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScratchAuthenticatedMapRoot {
+    schema_version: u32,
+    count: u64,
+    root_key: Option<[u8; 16]>,
+    root_digest: ContentDigest,
+    root: Option<ScratchPageRef>,
+}
+
+impl Default for ScratchAuthenticatedMapRoot {
+    fn default() -> Self {
+        Self {
+            schema_version: AUTHENTICATED_MAP_SCHEMA_VERSION,
+            count: 0,
+            root_key: None,
+            root_digest: authenticated_map_empty_digest(),
+            root: None,
+        }
+    }
+}
+
+impl ScratchAuthenticatedMapRoot {
+    pub(crate) const fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub(crate) const fn root_key(&self) -> Option<[u8; 16]> {
+        self.root_key
+    }
+
+    pub(crate) const fn root_digest(&self) -> ContentDigest {
+        self.root_digest
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedMapChild {
+    key: [u8; 16],
+    digest: ContentDigest,
+    page_ref: ScratchPageRef,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedMapNode {
+    schema_version: u32,
+    key: [u8; 16],
+    priority: ContentDigest,
+    value_digest: ContentDigest,
+    left: Option<AuthenticatedMapChild>,
+    right: Option<AuthenticatedMapChild>,
+}
+
 impl Default for ScratchLsmRoot {
     fn default() -> Self {
         Self {
@@ -262,7 +371,8 @@ pub(crate) struct ScratchRoots {
     pub external_document_current_root: ScratchLsmRoot,
     pub external_document_state_root: ScratchLsmRoot,
     pub accepted_frontier_root: ScratchLsmRoot,
-    pub accepted_sequence_root: ScratchLsmRoot,
+    pub accepted_sequence_root: ScratchAcceptedSequenceRoot,
+    pub accepted_document_map_root: ScratchAuthenticatedMapRoot,
 }
 
 /// One reconstructible, authenticated run-local scratch namespace.
@@ -498,6 +608,256 @@ impl ScratchStore {
         Ok(None)
     }
 
+    pub(crate) fn append_accepted_sequence(
+        &self,
+        root: &ScratchAcceptedSequenceRoot,
+        sequence: u64,
+        batch_id: BatchId,
+        evidence: Vec<u8>,
+    ) -> Result<ScratchAcceptedSequenceRoot, ScratchError> {
+        validate_accepted_sequence_root(root)?;
+        if sequence == 0 || sequence != root.len.saturating_add(1) {
+            return Err(ScratchError::MalformedPage);
+        }
+        let leaf_index = (sequence - 1) / ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64;
+        let (page_ref, height) = match &root.root {
+            None => (
+                self.write_accepted_sequence_leaf(
+                    sequence,
+                    vec![AcceptedSequenceEntry { batch_id, evidence }],
+                )?,
+                0,
+            ),
+            Some(current)
+                if leaf_index
+                    < accepted_sequence_leaf_capacity(root.height)
+                        .ok_or(ScratchError::IndexCapacity)? =>
+            {
+                (
+                    self.append_accepted_sequence_at(
+                        current,
+                        root.height,
+                        0,
+                        leaf_index,
+                        sequence,
+                        batch_id,
+                        evidence,
+                    )?,
+                    root.height,
+                )
+            }
+            Some(current) => {
+                let height = root
+                    .height
+                    .checked_add(1)
+                    .ok_or(ScratchError::IndexCapacity)?;
+                let new_child = self.build_accepted_sequence_path(
+                    root.height,
+                    leaf_index,
+                    sequence,
+                    batch_id,
+                    evidence,
+                )?;
+                let node = AcceptedSequenceNode {
+                    schema_version: ACCEPTED_SEQUENCE_SCHEMA_VERSION,
+                    height,
+                    first_leaf: 0,
+                    children: vec![current.clone(), new_child],
+                };
+                (self.write_accepted_sequence_node(&node)?, height)
+            }
+        };
+        let next = ScratchAcceptedSequenceRoot {
+            schema_version: ACCEPTED_SEQUENCE_SCHEMA_VERSION,
+            len: sequence,
+            height,
+            root: Some(page_ref),
+        };
+        validate_accepted_sequence_root(&next)?;
+        Ok(next)
+    }
+
+    pub(crate) fn lookup_accepted_sequence(
+        &self,
+        root: &ScratchAcceptedSequenceRoot,
+        sequence: u64,
+    ) -> Result<Option<AcceptedSequenceEntry>, ScratchError> {
+        validate_accepted_sequence_root(root)?;
+        self.counters.point_reads.fetch_add(1, Ordering::Relaxed);
+        if sequence == 0 || sequence > root.len {
+            return Ok(None);
+        }
+        let leaf_index = (sequence - 1) / ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64;
+        let mut page_ref = root.root.clone().ok_or(ScratchError::MalformedPage)?;
+        let mut height = root.height;
+        let mut first_leaf = 0_u64;
+        while height > 0 {
+            let node = self.read_accepted_sequence_node(&page_ref, height, first_leaf)?;
+            let child_capacity =
+                accepted_sequence_leaf_capacity(height - 1).ok_or(ScratchError::IndexCapacity)?;
+            let slot = usize::try_from((leaf_index - first_leaf) / child_capacity)
+                .map_err(|_| ScratchError::MalformedPage)?;
+            page_ref = node
+                .children
+                .get(slot)
+                .cloned()
+                .ok_or(ScratchError::MalformedPage)?;
+            first_leaf = first_leaf
+                .checked_add(
+                    u64::try_from(slot)
+                        .map_err(|_| ScratchError::MalformedPage)?
+                        .saturating_mul(child_capacity),
+                )
+                .ok_or(ScratchError::MalformedPage)?;
+            height -= 1;
+        }
+        let leaf = self.read_accepted_sequence_leaf(&page_ref, first_leaf)?;
+        let offset = usize::try_from((sequence - 1) % ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+            .map_err(|_| ScratchError::MalformedPage)?;
+        leaf.entries
+            .get(offset)
+            .cloned()
+            .ok_or(ScratchError::MalformedPage)
+            .map(Some)
+    }
+
+    pub(crate) fn accepted_sequence_cursor<'a>(
+        &'a self,
+        root: &'a ScratchAcceptedSequenceRoot,
+    ) -> Result<ScratchAcceptedSequenceCursor<'a>, ScratchError> {
+        validate_accepted_sequence_root(root)?;
+        Ok(ScratchAcceptedSequenceCursor {
+            store: self,
+            root,
+            stack: Vec::new(),
+            leaf: None,
+            next_sequence: 1,
+            initialized: false,
+            page_reads: 0,
+            page_bytes_read: 0,
+            max_page_bytes_read: 0,
+        })
+    }
+
+    pub(crate) fn authenticated_map_upsert(
+        &self,
+        root: &ScratchAuthenticatedMapRoot,
+        key: [u8; 16],
+        value_digest: ContentDigest,
+    ) -> Result<ScratchAuthenticatedMapRoot, ScratchError> {
+        validate_authenticated_map_root(root)?;
+        let (child, inserted) = self.authenticated_map_upsert_child(
+            root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+                key: root.root_key.expect("validated nonempty root key"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key,
+            value_digest,
+            0,
+        )?;
+        let count = if inserted {
+            root.count
+                .checked_add(1)
+                .ok_or(ScratchError::IndexCapacity)?
+        } else {
+            root.count
+        };
+        let next = ScratchAuthenticatedMapRoot {
+            schema_version: AUTHENTICATED_MAP_SCHEMA_VERSION,
+            count,
+            root_key: Some(child.key),
+            root_digest: child.digest,
+            root: Some(child.page_ref),
+        };
+        validate_authenticated_map_root(&next)?;
+        Ok(next)
+    }
+
+    fn authenticated_map_upsert_child(
+        &self,
+        current: Option<AuthenticatedMapChild>,
+        key: [u8; 16],
+        value_digest: ContentDigest,
+        depth: usize,
+    ) -> Result<(AuthenticatedMapChild, bool), ScratchError> {
+        if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            let node = AuthenticatedMapNode {
+                schema_version: AUTHENTICATED_MAP_SCHEMA_VERSION,
+                key,
+                priority: authenticated_map_priority(key),
+                value_digest,
+                left: None,
+                right: None,
+            };
+            return Ok((self.write_authenticated_map_node(&node)?, true));
+        };
+        let mut node = self.read_authenticated_map_node(&current)?;
+        let inserted;
+        match key.cmp(&node.key) {
+            std::cmp::Ordering::Equal => {
+                node.value_digest = value_digest;
+                inserted = false;
+            }
+            std::cmp::Ordering::Less => {
+                let (left, was_inserted) = self.authenticated_map_upsert_child(
+                    node.left.take(),
+                    key,
+                    value_digest,
+                    depth + 1,
+                )?;
+                node.left = Some(left);
+                inserted = was_inserted;
+                if node.left.as_ref().is_some_and(|left| {
+                    authenticated_map_priority_order(left.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_map_right(node)?, inserted));
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, was_inserted) = self.authenticated_map_upsert_child(
+                    node.right.take(),
+                    key,
+                    value_digest,
+                    depth + 1,
+                )?;
+                node.right = Some(right);
+                inserted = was_inserted;
+                if node.right.as_ref().is_some_and(|right| {
+                    authenticated_map_priority_order(right.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_map_left(node)?, inserted));
+                }
+            }
+        }
+        Ok((self.write_authenticated_map_node(&node)?, inserted))
+    }
+
+    fn rotate_authenticated_map_right(
+        &self,
+        mut node: AuthenticatedMapNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let left = node.left.take().ok_or(ScratchError::MalformedPage)?;
+        let mut left_node = self.read_authenticated_map_node(&left)?;
+        node.left = left_node.right.take();
+        left_node.right = Some(self.write_authenticated_map_node(&node)?);
+        self.write_authenticated_map_node(&left_node)
+    }
+
+    fn rotate_authenticated_map_left(
+        &self,
+        mut node: AuthenticatedMapNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let right = node.right.take().ok_or(ScratchError::MalformedPage)?;
+        let mut right_node = self.read_authenticated_map_node(&right)?;
+        node.right = right_node.left.take();
+        right_node.left = Some(self.write_authenticated_map_node(&node)?);
+        self.write_authenticated_map_node(&right_node)
+    }
+
     pub(crate) fn scan_prefix(
         &self,
         root: &ScratchLsmRoot,
@@ -650,6 +1010,9 @@ impl ScratchStore {
         self.counters
             .page_bytes_read
             .fetch_add(bytes.len(), Ordering::Relaxed);
+        self.counters
+            .max_page_bytes_read
+            .fetch_max(bytes.len(), Ordering::Relaxed);
         decode_canonical(&envelope.payload)
     }
 
@@ -675,6 +1038,248 @@ impl ScratchStore {
             return Err(ScratchError::PageBindingMismatch);
         }
         Ok(segment)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_accepted_sequence_at(
+        &self,
+        page_ref: &ScratchPageRef,
+        height: u8,
+        first_leaf: u64,
+        leaf_index: u64,
+        sequence: u64,
+        batch_id: BatchId,
+        evidence: Vec<u8>,
+    ) -> Result<ScratchPageRef, ScratchError> {
+        if height == 0 {
+            let mut leaf = self.read_accepted_sequence_leaf(page_ref, first_leaf)?;
+            if leaf.entries.len() >= ACCEPTED_SEQUENCE_LEAF_CAPACITY
+                || sequence
+                    != leaf
+                        .first_sequence
+                        .saturating_add(leaf.entries.len() as u64)
+            {
+                return Err(ScratchError::MalformedPage);
+            }
+            leaf.entries
+                .push(AcceptedSequenceEntry { batch_id, evidence });
+            return self.write_accepted_sequence_leaf(leaf.first_sequence, leaf.entries);
+        }
+        let mut node = self.read_accepted_sequence_node(page_ref, height, first_leaf)?;
+        let child_capacity =
+            accepted_sequence_leaf_capacity(height - 1).ok_or(ScratchError::IndexCapacity)?;
+        let slot = usize::try_from((leaf_index - first_leaf) / child_capacity)
+            .map_err(|_| ScratchError::MalformedPage)?;
+        if slot >= ACCEPTED_SEQUENCE_NODE_FANOUT || slot > node.children.len() {
+            return Err(ScratchError::MalformedPage);
+        }
+        let child_first = first_leaf
+            .checked_add(
+                u64::try_from(slot)
+                    .map_err(|_| ScratchError::MalformedPage)?
+                    .saturating_mul(child_capacity),
+            )
+            .ok_or(ScratchError::MalformedPage)?;
+        let child = if slot == node.children.len() {
+            self.build_accepted_sequence_path(
+                height - 1,
+                child_first,
+                sequence,
+                batch_id,
+                evidence,
+            )?
+        } else {
+            self.append_accepted_sequence_at(
+                &node.children[slot],
+                height - 1,
+                child_first,
+                leaf_index,
+                sequence,
+                batch_id,
+                evidence,
+            )?
+        };
+        if slot == node.children.len() {
+            node.children.push(child);
+        } else {
+            node.children[slot] = child;
+        }
+        self.write_accepted_sequence_node(&node)
+    }
+
+    fn build_accepted_sequence_path(
+        &self,
+        height: u8,
+        first_leaf: u64,
+        sequence: u64,
+        batch_id: BatchId,
+        evidence: Vec<u8>,
+    ) -> Result<ScratchPageRef, ScratchError> {
+        if height == 0 {
+            return self.write_accepted_sequence_leaf(
+                sequence,
+                vec![AcceptedSequenceEntry { batch_id, evidence }],
+            );
+        }
+        let child = self.build_accepted_sequence_path(
+            height - 1,
+            first_leaf,
+            sequence,
+            batch_id,
+            evidence,
+        )?;
+        self.write_accepted_sequence_node(&AcceptedSequenceNode {
+            schema_version: ACCEPTED_SEQUENCE_SCHEMA_VERSION,
+            height,
+            first_leaf,
+            children: vec![child],
+        })
+    }
+
+    fn write_accepted_sequence_leaf(
+        &self,
+        first_sequence: u64,
+        entries: Vec<AcceptedSequenceEntry>,
+    ) -> Result<ScratchPageRef, ScratchError> {
+        let leaf = AcceptedSequenceLeaf {
+            schema_version: ACCEPTED_SEQUENCE_SCHEMA_VERSION,
+            first_sequence,
+            entries,
+        };
+        validate_accepted_sequence_leaf(&leaf)?;
+        let last_sequence = first_sequence
+            .checked_add(leaf.entries.len() as u64 - 1)
+            .ok_or(ScratchError::MalformedPage)?;
+        self.append_page(
+            ScratchPageKind::AcceptedSequenceLeaf,
+            first_sequence.to_be_bytes().to_vec(),
+            last_sequence.to_be_bytes().to_vec(),
+            &leaf,
+        )
+    }
+
+    fn read_accepted_sequence_leaf(
+        &self,
+        page_ref: &ScratchPageRef,
+        first_leaf: u64,
+    ) -> Result<AcceptedSequenceLeaf, ScratchError> {
+        let leaf: AcceptedSequenceLeaf =
+            self.read_page(page_ref, ScratchPageKind::AcceptedSequenceLeaf)?;
+        validate_accepted_sequence_leaf(&leaf)?;
+        let expected_first = first_leaf
+            .checked_mul(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(ScratchError::MalformedPage)?;
+        let last = leaf
+            .first_sequence
+            .checked_add(leaf.entries.len() as u64 - 1)
+            .ok_or(ScratchError::MalformedPage)?;
+        if leaf.first_sequence != expected_first
+            || page_ref.key_min != leaf.first_sequence.to_be_bytes()
+            || page_ref.key_max != last.to_be_bytes()
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(leaf)
+    }
+
+    fn write_accepted_sequence_node(
+        &self,
+        node: &AcceptedSequenceNode,
+    ) -> Result<ScratchPageRef, ScratchError> {
+        validate_accepted_sequence_node(node)?;
+        let first_sequence = node
+            .first_leaf
+            .checked_mul(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(ScratchError::MalformedPage)?;
+        let last_sequence = node
+            .children
+            .last()
+            .and_then(|child| <[u8; 8]>::try_from(child.key_max.as_slice()).ok())
+            .map(u64::from_be_bytes)
+            .ok_or(ScratchError::MalformedPage)?;
+        self.append_page(
+            ScratchPageKind::AcceptedSequenceNode,
+            first_sequence.to_be_bytes().to_vec(),
+            last_sequence.to_be_bytes().to_vec(),
+            node,
+        )
+    }
+
+    fn read_accepted_sequence_node(
+        &self,
+        page_ref: &ScratchPageRef,
+        height: u8,
+        first_leaf: u64,
+    ) -> Result<AcceptedSequenceNode, ScratchError> {
+        let node: AcceptedSequenceNode =
+            self.read_page(page_ref, ScratchPageKind::AcceptedSequenceNode)?;
+        validate_accepted_sequence_node(&node)?;
+        let first_sequence = first_leaf
+            .checked_mul(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(ScratchError::MalformedPage)?;
+        if node.height != height
+            || node.first_leaf != first_leaf
+            || page_ref.key_min != first_sequence.to_be_bytes()
+            || page_ref.key_max
+                != node
+                    .children
+                    .last()
+                    .ok_or(ScratchError::MalformedPage)?
+                    .key_max
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(node)
+    }
+
+    fn write_authenticated_map_node(
+        &self,
+        node: &AuthenticatedMapNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        validate_authenticated_map_node(node)?;
+        let digest = authenticated_map_node_digest(
+            node.key,
+            node.value_digest,
+            node.left.as_ref().map(|child| (child.key, child.digest)),
+            node.right.as_ref().map(|child| (child.key, child.digest)),
+        );
+        let key = node.key.to_vec();
+        let page_ref =
+            self.append_page(ScratchPageKind::AcceptedDocumentMap, key.clone(), key, node)?;
+        Ok(AuthenticatedMapChild {
+            key: node.key,
+            digest,
+            page_ref,
+        })
+    }
+
+    fn read_authenticated_map_node(
+        &self,
+        child: &AuthenticatedMapChild,
+    ) -> Result<AuthenticatedMapNode, ScratchError> {
+        let node: AuthenticatedMapNode =
+            self.read_page(&child.page_ref, ScratchPageKind::AcceptedDocumentMap)?;
+        validate_authenticated_map_node(&node)?;
+        if node.key != child.key
+            || child.page_ref.key_min != child.key
+            || child.page_ref.key_max != child.key
+            || authenticated_map_node_digest(
+                node.key,
+                node.value_digest,
+                node.left
+                    .as_ref()
+                    .map(|candidate| (candidate.key, candidate.digest)),
+                node.right
+                    .as_ref()
+                    .map(|candidate| (candidate.key, candidate.digest)),
+            ) != child.digest
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(node)
     }
 
     fn reclaim_stale_runs(&self) -> Result<(), ScratchError> {
@@ -729,6 +1334,291 @@ impl Drop for ScratchStore {
     fn drop(&mut self) {
         self.cleanup_own_run();
     }
+}
+
+struct AcceptedSequenceCursorFrame {
+    node: AcceptedSequenceNode,
+    next_child: usize,
+}
+
+pub(crate) struct ScratchAcceptedSequenceCursor<'a> {
+    store: &'a ScratchStore,
+    root: &'a ScratchAcceptedSequenceRoot,
+    stack: Vec<AcceptedSequenceCursorFrame>,
+    leaf: Option<(AcceptedSequenceLeaf, usize)>,
+    next_sequence: u64,
+    initialized: bool,
+    page_reads: usize,
+    page_bytes_read: usize,
+    max_page_bytes_read: usize,
+}
+
+impl ScratchAcceptedSequenceCursor<'_> {
+    pub(crate) const fn page_stats(&self) -> (usize, usize, usize) {
+        (
+            self.page_reads,
+            self.page_bytes_read,
+            self.max_page_bytes_read,
+        )
+    }
+
+    pub(crate) fn next_batch(
+        &mut self,
+    ) -> Result<Option<(u64, AcceptedSequenceEntry)>, ScratchError> {
+        if self.next_sequence > self.root.len {
+            return Ok(None);
+        }
+        if !self.initialized {
+            self.initialized = true;
+            let root = self.root.root.clone().ok_or(ScratchError::MalformedPage)?;
+            self.descend_left(root, self.root.height, 0)?;
+        }
+        loop {
+            if let Some((leaf, index)) = &mut self.leaf {
+                if let Some(entry) = leaf.entries.get(*index).cloned() {
+                    let sequence = self.next_sequence;
+                    if sequence
+                        != leaf
+                            .first_sequence
+                            .checked_add(*index as u64)
+                            .ok_or(ScratchError::MalformedPage)?
+                    {
+                        return Err(ScratchError::MalformedPage);
+                    }
+                    *index += 1;
+                    self.next_sequence += 1;
+                    return Ok(Some((sequence, entry)));
+                }
+                self.leaf = None;
+            }
+            let mut next = None;
+            while let Some(frame) = self.stack.last_mut() {
+                if frame.next_child < frame.node.children.len() {
+                    let slot = frame.next_child;
+                    frame.next_child += 1;
+                    let child_capacity = accepted_sequence_leaf_capacity(frame.node.height - 1)
+                        .ok_or(ScratchError::IndexCapacity)?;
+                    let first_leaf = frame
+                        .node
+                        .first_leaf
+                        .checked_add(
+                            u64::try_from(slot)
+                                .map_err(|_| ScratchError::MalformedPage)?
+                                .saturating_mul(child_capacity),
+                        )
+                        .ok_or(ScratchError::MalformedPage)?;
+                    next = Some((
+                        frame.node.children[slot].clone(),
+                        frame.node.height - 1,
+                        first_leaf,
+                    ));
+                    break;
+                }
+                self.stack.pop();
+            }
+            let Some((page_ref, height, first_leaf)) = next else {
+                return Err(ScratchError::MalformedPage);
+            };
+            self.descend_left(page_ref, height, first_leaf)?;
+        }
+    }
+
+    fn descend_left(
+        &mut self,
+        mut page_ref: ScratchPageRef,
+        mut height: u8,
+        mut first_leaf: u64,
+    ) -> Result<(), ScratchError> {
+        while height > 0 {
+            self.record_page_read(&page_ref);
+            let node = self
+                .store
+                .read_accepted_sequence_node(&page_ref, height, first_leaf)?;
+            let child = node
+                .children
+                .first()
+                .cloned()
+                .ok_or(ScratchError::MalformedPage)?;
+            self.stack.push(AcceptedSequenceCursorFrame {
+                node,
+                next_child: 1,
+            });
+            page_ref = child;
+            height -= 1;
+            first_leaf = self
+                .stack
+                .last()
+                .expect("pushed accepted sequence frame")
+                .node
+                .first_leaf;
+        }
+        self.leaf = Some((
+            {
+                self.record_page_read(&page_ref);
+                self.store
+                    .read_accepted_sequence_leaf(&page_ref, first_leaf)?
+            },
+            0,
+        ));
+        Ok(())
+    }
+
+    fn record_page_read(&mut self, page_ref: &ScratchPageRef) {
+        let length = page_ref.encoded_len as usize;
+        self.page_reads = self.page_reads.saturating_add(1);
+        self.page_bytes_read = self.page_bytes_read.saturating_add(length);
+        self.max_page_bytes_read = self.max_page_bytes_read.max(length);
+    }
+}
+
+pub(crate) fn authenticated_map_empty_digest() -> ContentDigest {
+    ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty")
+}
+
+pub(crate) fn authenticated_map_priority(key: [u8; 16]) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-map/v1/priority\0".to_vec();
+    bytes.extend_from_slice(&key);
+    ContentDigest::of(&bytes)
+}
+
+pub(crate) fn authenticated_map_node_digest(
+    key: [u8; 16],
+    value_digest: ContentDigest,
+    left: Option<([u8; 16], ContentDigest)>,
+    right: Option<([u8; 16], ContentDigest)>,
+) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-map/v1/node\0".to_vec();
+    bytes.extend_from_slice(&key);
+    bytes.extend_from_slice(value_digest.as_bytes());
+    for child in [left, right] {
+        match child {
+            Some((child_key, digest)) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&child_key);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+    }
+    ContentDigest::of(&bytes)
+}
+
+pub(crate) fn authenticated_map_priority_order(
+    left: [u8; 16],
+    right: [u8; 16],
+) -> std::cmp::Ordering {
+    authenticated_map_priority(left)
+        .as_bytes()
+        .cmp(authenticated_map_priority(right).as_bytes())
+        .then_with(|| left.cmp(&right))
+}
+
+fn accepted_sequence_leaf_capacity(height: u8) -> Option<u64> {
+    let mut capacity = 1_u64;
+    for _ in 0..height {
+        capacity = capacity.checked_mul(ACCEPTED_SEQUENCE_NODE_FANOUT as u64)?;
+    }
+    Some(capacity)
+}
+
+fn validate_accepted_sequence_root(root: &ScratchAcceptedSequenceRoot) -> Result<(), ScratchError> {
+    if root.schema_version != ACCEPTED_SEQUENCE_SCHEMA_VERSION
+        || (root.len == 0) != root.root.is_none()
+        || (root.len == 0 && root.height != 0)
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    if root.len > 0 {
+        let leaf_count = root
+            .len
+            .saturating_add(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64 - 1)
+            / ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64;
+        let capacity =
+            accepted_sequence_leaf_capacity(root.height).ok_or(ScratchError::IndexCapacity)?;
+        if leaf_count == 0
+            || leaf_count > capacity
+            || (root.height > 0
+                && leaf_count
+                    <= accepted_sequence_leaf_capacity(root.height - 1)
+                        .ok_or(ScratchError::IndexCapacity)?)
+        {
+            return Err(ScratchError::MalformedPage);
+        }
+    }
+    Ok(())
+}
+
+fn validate_accepted_sequence_leaf(leaf: &AcceptedSequenceLeaf) -> Result<(), ScratchError> {
+    if leaf.schema_version != ACCEPTED_SEQUENCE_SCHEMA_VERSION
+        || leaf.first_sequence == 0
+        || leaf.entries.is_empty()
+        || leaf.entries.len() > ACCEPTED_SEQUENCE_LEAF_CAPACITY
+        || leaf.entries.iter().any(|entry| entry.evidence.is_empty())
+        || !(leaf.first_sequence - 1).is_multiple_of(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_accepted_sequence_node(node: &AcceptedSequenceNode) -> Result<(), ScratchError> {
+    if node.schema_version != ACCEPTED_SEQUENCE_SCHEMA_VERSION
+        || node.height == 0
+        || node.children.is_empty()
+        || node.children.len() > ACCEPTED_SEQUENCE_NODE_FANOUT
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    let child_capacity =
+        accepted_sequence_leaf_capacity(node.height - 1).ok_or(ScratchError::IndexCapacity)?;
+    for (index, child) in node.children.iter().enumerate() {
+        let child_first_leaf = node
+            .first_leaf
+            .checked_add(
+                u64::try_from(index)
+                    .map_err(|_| ScratchError::MalformedPage)?
+                    .saturating_mul(child_capacity),
+            )
+            .ok_or(ScratchError::MalformedPage)?;
+        let expected_first = child_first_leaf
+            .checked_mul(ACCEPTED_SEQUENCE_LEAF_CAPACITY as u64)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(ScratchError::MalformedPage)?;
+        if child.key_min != expected_first.to_be_bytes()
+            || child.key_max.len() != std::mem::size_of::<u64>()
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+    }
+    Ok(())
+}
+
+fn validate_authenticated_map_root(root: &ScratchAuthenticatedMapRoot) -> Result<(), ScratchError> {
+    if root.schema_version != AUTHENTICATED_MAP_SCHEMA_VERSION
+        || (root.count == 0)
+            != (root.root.is_none()
+                && root.root_key.is_none()
+                && root.root_digest == authenticated_map_empty_digest())
+        || (root.count > 0 && (root.root.is_none() || root.root_key.is_none()))
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_authenticated_map_node(node: &AuthenticatedMapNode) -> Result<(), ScratchError> {
+    if node.schema_version != AUTHENTICATED_MAP_SCHEMA_VERSION
+        || node.priority != authenticated_map_priority(node.key)
+        || node.left.as_ref().is_some_and(|left| {
+            left.key >= node.key || !authenticated_map_priority_order(node.key, left.key).is_lt()
+        })
+        || node.right.as_ref().is_some_and(|right| {
+            right.key <= node.key || !authenticated_map_priority_order(node.key, right.key).is_lt()
+        })
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
 }
 
 fn validate_root(root: &ScratchLsmRoot) -> Result<(), ScratchError> {

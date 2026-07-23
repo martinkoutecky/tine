@@ -35,10 +35,10 @@ const MAX_TRANSACTION_OPERATIONS: usize = 100_000;
 const MAX_DOCUMENT_ENTRIES: usize = 1_000_000;
 const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
 const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 5;
-const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 4;
+const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 5;
 const BLOCK_CLAIM_RECORD_SCHEMA_VERSION: u32 = 2;
-const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 2;
-const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 1;
+const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 3;
+const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 2;
 const MAX_EPHEMERAL_BLOCK_CLAIMS: usize = 4_096;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -442,6 +442,9 @@ pub struct AcceptedFrontierRoot {
     schema_version: u32,
     acceptance_sequence: u64,
     document_count: u64,
+    retained_bytes_total: u64,
+    document_map_root_key: Option<[u8; 16]>,
+    document_map_root_digest: ContentDigest,
     state_digest: ContentDigest,
     scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
 }
@@ -454,15 +457,22 @@ impl AcceptedBatchEvidence {
         event_binding_digest: ContentDigest,
         prior_frontier_root: AcceptedFrontierRoot,
         affected_documents: Vec<DocumentDependencies>,
-        document_count: u64,
+        all_documents: Vec<DocumentDependencies>,
+        retained_bytes: u64,
     ) -> Self {
         let acceptance_sequence = prior_frontier_root.acceptance_sequence.saturating_add(1);
+        let (document_map_root_key, document_map_root_digest) =
+            authenticated_document_map_root(&all_documents)
+                .expect("canonical test authenticated document map");
         let post_frontier_root = next_accepted_frontier_root(
             &prior_frontier_root,
             event_binding_digest,
             acceptance_sequence,
-            document_count,
+            all_documents.len() as u64,
+            retained_bytes,
             &affected_documents,
+            document_map_root_key,
+            document_map_root_digest,
             None,
         )
         .expect("canonical test accepted-frontier transition");
@@ -524,6 +534,10 @@ impl AcceptedBatchEvidence {
     pub fn affected_documents(&self) -> &[DocumentDependencies] {
         &self.affected_documents
     }
+
+    pub(crate) fn validate(&self) -> Result<(), EngineError> {
+        validate_accepted_evidence(self)
+    }
 }
 
 impl AcceptedFrontierRoot {
@@ -539,6 +553,18 @@ impl AcceptedFrontierRoot {
         self.document_count
     }
 
+    pub const fn retained_bytes_total(&self) -> u64 {
+        self.retained_bytes_total
+    }
+
+    pub const fn document_map_root_key(&self) -> Option<[u8; 16]> {
+        self.document_map_root_key
+    }
+
+    pub const fn document_map_root_digest(&self) -> ContentDigest {
+        self.document_map_root_digest
+    }
+
     pub const fn state_digest(&self) -> ContentDigest {
         self.state_digest
     }
@@ -552,6 +578,7 @@ impl AcceptedFrontierRoot {
         event_binding_digest: ContentDigest,
         acceptance_sequence: u64,
         document_count: u64,
+        retained_bytes: u64,
         affected_documents: &[DocumentDependencies],
         post: &Self,
     ) -> Result<bool, EngineError> {
@@ -560,7 +587,10 @@ impl AcceptedFrontierRoot {
             event_binding_digest,
             acceptance_sequence,
             document_count,
+            retained_bytes,
             affected_documents,
+            post.document_map_root_key,
+            post.document_map_root_digest,
             post.scratch_root.clone(),
         )? == *post)
     }
@@ -842,6 +872,9 @@ pub struct EngineInstrumentation {
     pub external_history_page_reads: usize,
     pub external_history_blob_reads: usize,
     pub ancestry_traversals: usize,
+    pub scratch_page_reads: usize,
+    pub scratch_page_bytes_read: usize,
+    pub scratch_max_page_bytes_read: usize,
     pub scratch_syncs: usize,
     pub stale_scratch_runs_reclaimed: usize,
     pub live_scratch_runs_skipped: usize,
@@ -855,6 +888,45 @@ pub struct EngineInstrumentation {
     pub block_claim_encode_nanos: usize,
     pub block_claim_insert_nanos: usize,
     pub store: super::ObjectStoreStats,
+}
+
+pub(crate) enum AcceptedBatchCursor<'a> {
+    Scratch(super::scratch_store::ScratchAcceptedSequenceCursor<'a>),
+    Inline(std::collections::btree_map::Iter<'a, u64, BatchId>),
+}
+
+impl AcceptedBatchCursor<'_> {
+    pub(crate) fn next_batch(
+        &mut self,
+    ) -> Result<Option<(u64, BatchId, Option<AcceptedBatchEvidence>)>, EngineError> {
+        match self {
+            Self::Scratch(cursor) => cursor
+                .next_batch()
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .map(|(sequence, entry)| {
+                    let evidence = decode_accepted_evidence(&entry.evidence)?;
+                    if evidence.batch_id != entry.batch_id
+                        || evidence.acceptance_sequence != sequence
+                    {
+                        return Err(EngineError::Archive(
+                            "accepted sequence entry is misbound".into(),
+                        ));
+                    }
+                    Ok((sequence, entry.batch_id, Some(evidence)))
+                })
+                .transpose(),
+            Self::Inline(iter) => Ok(iter
+                .next()
+                .map(|(sequence, batch_id)| (*sequence, *batch_id, None))),
+        }
+    }
+
+    pub(crate) fn page_stats(&self) -> (usize, usize, usize) {
+        match self {
+            Self::Scratch(cursor) => cursor.page_stats(),
+            Self::Inline(_) => (0, 0, 0),
+        }
+    }
 }
 
 /// Experimental, disconnected v2 hot state. The immutable archive is retained
@@ -1037,6 +1109,9 @@ impl ShardedHotEngine {
             external_history_page_reads: work.external_history_page_reads,
             external_history_blob_reads: work.external_history_blob_reads,
             ancestry_traversals: work.ancestry_traversals,
+            scratch_page_reads: scratch.page_reads,
+            scratch_page_bytes_read: scratch.page_bytes_read,
+            scratch_max_page_bytes_read: scratch.max_page_bytes_read,
             scratch_syncs: scratch.scratch_syncs,
             stale_scratch_runs_reclaimed: scratch.stale_runs_reclaimed,
             live_scratch_runs_skipped: scratch.live_runs_skipped,
@@ -1128,31 +1203,53 @@ impl ShardedHotEngine {
     }
 
     pub fn accepted_batch_id_at(&self, sequence: u64) -> Result<Option<BatchId>, EngineError> {
+        Ok(self
+            .accepted_batch_entry_at(sequence)?
+            .map(|(batch_id, _)| batch_id))
+    }
+
+    pub(crate) fn accepted_batch_entry_at(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<(BatchId, Option<AcceptedBatchEvidence>)>, EngineError> {
         self.ensure_not_blocked()?;
         if sequence == 0 || sequence > self.next_acceptance_sequence {
             return Ok(None);
         }
         if let Some(store) = &self.scratch {
-            let bytes = store
-                .lookup(
-                    &self.scratch_roots.accepted_sequence_root,
-                    super::scratch_store::ScratchPageKind::AcceptedSequence,
-                    &sequence.to_be_bytes(),
-                )
+            return store
+                .lookup_accepted_sequence(&self.scratch_roots.accepted_sequence_root, sequence)
                 .map_err(|error| EngineError::Archive(error.to_string()))?
-                .ok_or_else(|| {
-                    EngineError::Archive(format!(
-                        "accepted sequence {sequence} has no authenticated batch"
-                    ))
-                })?;
-            let uuid = Uuid::from_slice(&bytes).map_err(|error| {
-                EngineError::Archive(format!(
-                    "accepted sequence {sequence} has invalid batch bytes: {error}"
-                ))
-            })?;
-            return Ok(Some(BatchId::from_uuid(uuid)));
+                .map(|entry| {
+                    let evidence = decode_accepted_evidence(&entry.evidence)?;
+                    if evidence.batch_id != entry.batch_id
+                        || evidence.acceptance_sequence != sequence
+                    {
+                        return Err(EngineError::Archive(
+                            "accepted sequence point entry is misbound".into(),
+                        ));
+                    }
+                    Ok((entry.batch_id, Some(evidence)))
+                })
+                .transpose();
         }
-        Ok(self.accepted_sequence.get(&sequence).copied())
+        Ok(self
+            .accepted_sequence
+            .get(&sequence)
+            .copied()
+            .map(|batch_id| (batch_id, None)))
+    }
+
+    pub(crate) fn accepted_batch_cursor(&self) -> Result<AcceptedBatchCursor<'_>, EngineError> {
+        self.ensure_not_blocked()?;
+        if let Some(store) = &self.scratch {
+            return Ok(AcceptedBatchCursor::Scratch(
+                store
+                    .accepted_sequence_cursor(&self.scratch_roots.accepted_sequence_root)
+                    .map_err(|error| EngineError::Archive(error.to_string()))?,
+            ));
+        }
+        Ok(AcceptedBatchCursor::Inline(self.accepted_sequence.iter()))
     }
 
     pub fn accepted_frontier_document(
@@ -1275,29 +1372,52 @@ impl ShardedHotEngine {
                 )
             },
         )?;
-        let (post_documents, scratch_root) = if let Some(store) = &self.scratch {
-            let records = changed_documents
-                .iter()
-                .map(|(document_id, dependencies)| {
-                    Ok((
-                        document_id.as_uuid().as_bytes().to_vec(),
-                        Some(encode_accepted_document(dependencies)?),
-                    ))
-                })
-                .collect::<Result<BTreeMap<_, _>, EngineError>>()?;
-            roots.accepted_frontier_root = store
-                .insert_many(
-                    &roots.accepted_frontier_root,
-                    super::scratch_store::ScratchPageKind::AcceptedFrontier,
-                    &records,
+        let (post_documents, scratch_root, document_map_root_key, document_map_root_digest) =
+            if let Some(store) = &self.scratch {
+                let records = changed_documents
+                    .iter()
+                    .map(|(document_id, dependencies)| {
+                        Ok((
+                            document_id.as_uuid().as_bytes().to_vec(),
+                            Some(encode_accepted_document(dependencies)?),
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, EngineError>>()?;
+                roots.accepted_frontier_root = store
+                    .insert_many(
+                        &roots.accepted_frontier_root,
+                        super::scratch_store::ScratchPageKind::AcceptedFrontier,
+                        &records,
+                    )
+                    .map_err(|error| EngineError::Archive(error.to_string()))?;
+                for (document_id, dependencies) in &changed_documents {
+                    let value_digest = ContentDigest::of(&encode_accepted_document(dependencies)?);
+                    roots.accepted_document_map_root = store
+                        .authenticated_map_upsert(
+                            &roots.accepted_document_map_root,
+                            document_id.as_uuid().into_bytes(),
+                            value_digest,
+                        )
+                        .map_err(|error| EngineError::Archive(error.to_string()))?;
+                }
+                if roots.accepted_document_map_root.count() != new_document_count {
+                    return Err(EngineError::Archive(
+                        "authenticated document map count differs from accepted frontier".into(),
+                    ));
+                }
+                (
+                    None,
+                    Some(roots.accepted_frontier_root.clone()),
+                    roots.accepted_document_map_root.root_key(),
+                    roots.accepted_document_map_root.root_digest(),
                 )
-                .map_err(|error| EngineError::Archive(error.to_string()))?;
-            (None, Some(roots.accepted_frontier_root.clone()))
-        } else {
-            let mut post_documents = self.accepted_frontier.clone();
-            post_documents.extend(changed_documents.clone());
-            (Some(post_documents), None)
-        };
+            } else {
+                let mut post_documents = self.accepted_frontier.clone();
+                post_documents.extend(changed_documents.clone());
+                let all_documents = post_documents.values().cloned().collect::<Vec<_>>();
+                let (root_key, root_digest) = authenticated_document_map_root(&all_documents)?;
+                (Some(post_documents), None, root_key, root_digest)
+            };
         let manifest_fingerprint = self
             .archive_fingerprints
             .get(&batch_id)
@@ -1312,12 +1432,16 @@ impl ShardedHotEngine {
             manifest.causal_dependency_heads(),
         )?;
         let affected_documents = changed_documents.into_values().collect::<Vec<_>>();
+        let retained_bytes = accepted_batch_retained_bytes(&self.archive[&batch_id])?;
         let post_frontier_root = next_accepted_frontier_root(
             &prior_frontier_root,
             event_binding_digest,
             acceptance_sequence,
             new_document_count,
+            retained_bytes,
             &affected_documents,
+            document_map_root_key,
+            document_map_root_digest,
             scratch_root,
         )?;
         let evidence = AcceptedBatchEvidence {
@@ -1331,15 +1455,13 @@ impl ShardedHotEngine {
             affected_documents,
         };
         if let Some(store) = &self.scratch {
-            let records = BTreeMap::from([(
-                acceptance_sequence.to_be_bytes().to_vec(),
-                Some(batch_id.as_uuid().as_bytes().to_vec()),
-            )]);
             roots.accepted_sequence_root = store
-                .insert_many(
+                .append_accepted_sequence(
                     &roots.accepted_sequence_root,
-                    super::scratch_store::ScratchPageKind::AcceptedSequence,
-                    &records,
+                    acceptance_sequence,
+                    batch_id,
+                    postcard::to_allocvec(&evidence)
+                        .map_err(|error| EngineError::Archive(error.to_string()))?,
                 )
                 .map_err(|error| EngineError::Archive(error.to_string()))?;
         }
@@ -5204,22 +5326,43 @@ fn decode_archive_status(bytes: &[u8]) -> Result<ArchiveStatus, EngineError> {
     Ok(status)
 }
 
+fn decode_accepted_evidence(bytes: &[u8]) -> Result<AcceptedBatchEvidence, EngineError> {
+    let evidence: AcceptedBatchEvidence =
+        postcard::from_bytes(bytes).map_err(|error| EngineError::Archive(error.to_string()))?;
+    if postcard::to_allocvec(&evidence).map_err(|error| EngineError::Archive(error.to_string()))?
+        != bytes
+    {
+        return Err(EngineError::Archive(
+            "non-canonical accepted sequence evidence".into(),
+        ));
+    }
+    validate_accepted_evidence(&evidence)?;
+    Ok(evidence)
+}
+
 fn empty_accepted_frontier_root() -> AcceptedFrontierRoot {
     AcceptedFrontierRoot {
         schema_version: ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION,
         acceptance_sequence: 0,
         document_count: 0,
-        state_digest: ContentDigest::of(b"tine/oplog/accepted-frontier/v1/empty"),
+        retained_bytes_total: 0,
+        document_map_root_key: None,
+        document_map_root_digest: super::scratch_store::authenticated_map_empty_digest(),
+        state_digest: ContentDigest::of(b"tine/oplog/accepted-frontier/v2/empty"),
         scratch_root: None,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn next_accepted_frontier_root(
     prior: &AcceptedFrontierRoot,
     event_binding_digest: ContentDigest,
     acceptance_sequence: u64,
     document_count: u64,
+    retained_bytes: u64,
     affected_documents: &[DocumentDependencies],
+    document_map_root_key: Option<[u8; 16]>,
+    document_map_root_digest: ContentDigest,
     scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
 ) -> Result<AcceptedFrontierRoot, EngineError> {
     validate_accepted_frontier_root(prior)?;
@@ -5228,11 +5371,24 @@ fn next_accepted_frontier_root(
             "accepted frontier sequence is not contiguous".into(),
         ));
     }
-    let mut bytes = b"tine/oplog/accepted-frontier/v1\0".to_vec();
+    let mut bytes = b"tine/oplog/accepted-frontier/v2\0".to_vec();
     bytes.extend_from_slice(prior.state_digest.as_bytes());
     bytes.extend_from_slice(event_binding_digest.as_bytes());
     bytes.extend_from_slice(&acceptance_sequence.to_be_bytes());
     bytes.extend_from_slice(&document_count.to_be_bytes());
+    let retained_bytes_total = prior
+        .retained_bytes_total
+        .checked_add(retained_bytes)
+        .ok_or_else(|| EngineError::Archive("accepted retained-byte total overflowed".into()))?;
+    bytes.extend_from_slice(&retained_bytes_total.to_be_bytes());
+    match document_map_root_key {
+        Some(key) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&key);
+        }
+        None => bytes.push(0),
+    }
+    bytes.extend_from_slice(document_map_root_digest.as_bytes());
     bytes.extend_from_slice(&(affected_documents.len() as u64).to_be_bytes());
     for document in affected_documents {
         let encoded = encode_accepted_document(document)?;
@@ -5243,6 +5399,9 @@ fn next_accepted_frontier_root(
         schema_version: ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION,
         acceptance_sequence,
         document_count,
+        retained_bytes_total,
+        document_map_root_key,
+        document_map_root_digest,
         state_digest: ContentDigest::of(&bytes),
         scratch_root,
     })
@@ -5257,6 +5416,10 @@ fn validate_accepted_frontier_root(root: &AcceptedFrontierRoot) -> Result<(), En
     }
     if root.acceptance_sequence == 0 {
         if root.document_count != 0
+            || root.retained_bytes_total != 0
+            || root.document_map_root_key.is_some()
+            || root.document_map_root_digest
+                != super::scratch_store::authenticated_map_empty_digest()
             || root.state_digest != empty_accepted_frontier_root().state_digest
             || root.scratch_root.is_some()
         {
@@ -5264,8 +5427,85 @@ fn validate_accepted_frontier_root(root: &AcceptedFrontierRoot) -> Result<(), En
                 "malformed empty accepted-frontier root".into(),
             ));
         }
+    } else if (root.document_count == 0
+        && (root.document_map_root_key.is_some()
+            || root.document_map_root_digest
+                != super::scratch_store::authenticated_map_empty_digest()))
+        || (root.document_count > 0
+            && (root.document_map_root_key.is_none()
+                || root.document_map_root_digest
+                    == super::scratch_store::authenticated_map_empty_digest()))
+    {
+        return Err(EngineError::Archive(
+            "malformed nonempty accepted-frontier document map".into(),
+        ));
     }
     Ok(())
+}
+
+fn accepted_batch_retained_bytes(batch: &ValidatedBatch) -> Result<u64, EngineError> {
+    let manifest_bytes = batch
+        .manifest()
+        .encode()
+        .map_err(|error| EngineError::Archive(error.to_string()))?;
+    batch
+        .objects()
+        .iter()
+        .try_fold(manifest_bytes.len() as u64, |total, object| {
+            let encoded = object
+                .encode()
+                .map_err(|error| EngineError::Archive(error.to_string()))?;
+            total
+                .checked_add(encoded.len() as u64)
+                .ok_or_else(|| EngineError::Archive("accepted retained bytes overflowed".into()))
+        })
+}
+
+fn authenticated_document_map_root(
+    documents: &[DocumentDependencies],
+) -> Result<(Option<[u8; 16]>, ContentDigest), EngineError> {
+    let canonical = FrontierV2::new(documents.to_vec())?;
+    if canonical.documents() != documents {
+        return Err(EngineError::Archive(
+            "authenticated document map is not canonically ordered".into(),
+        ));
+    }
+    let entries = documents
+        .iter()
+        .map(|document| {
+            Ok((
+                document.document_id().as_uuid().into_bytes(),
+                ContentDigest::of(&encode_accepted_document(document)?),
+            ))
+        })
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    Ok(authenticated_document_map_subtree(&entries))
+}
+
+fn authenticated_document_map_subtree(
+    entries: &[([u8; 16], ContentDigest)],
+) -> (Option<[u8; 16]>, ContentDigest) {
+    let Some((root_index, (key, value_digest))) =
+        entries
+            .iter()
+            .enumerate()
+            .min_by(|(_, (left, _)), (_, (right, _))| {
+                super::scratch_store::authenticated_map_priority_order(*left, *right)
+            })
+    else {
+        return (None, super::scratch_store::authenticated_map_empty_digest());
+    };
+    let left = authenticated_document_map_subtree(&entries[..root_index]);
+    let right = authenticated_document_map_subtree(&entries[root_index + 1..]);
+    (
+        Some(*key),
+        super::scratch_store::authenticated_map_node_digest(
+            *key,
+            *value_digest,
+            left.0.map(|child_key| (child_key, left.1)),
+            right.0.map(|child_key| (child_key, right.1)),
+        ),
+    )
 }
 
 fn validate_accepted_evidence(evidence: &AcceptedBatchEvidence) -> Result<(), EngineError> {
@@ -5303,7 +5543,14 @@ fn validate_accepted_evidence(evidence: &AcceptedBatchEvidence) -> Result<(), En
         evidence.event_binding_digest,
         evidence.acceptance_sequence,
         evidence.post_frontier_root.document_count,
+        evidence
+            .post_frontier_root
+            .retained_bytes_total
+            .checked_sub(evidence.prior_frontier_root.retained_bytes_total)
+            .ok_or_else(|| EngineError::Archive("accepted retained bytes regressed".into()))?,
         &evidence.affected_documents,
+        evidence.post_frontier_root.document_map_root_key,
+        evidence.post_frontier_root.document_map_root_digest,
         evidence.post_frontier_root.scratch_root.clone(),
     )?;
     if expected != evidence.post_frontier_root {
