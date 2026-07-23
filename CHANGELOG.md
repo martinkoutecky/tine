@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **The disconnected experimental v2 oplog engine now uses one leased,
+  authenticated run-local scratch store.** Exact causal clocks, compact
+  store-backed batch status/waits, shallow document checkpoints with
+  content-addressed chunks, and paged conflict evidence replace archive-history
+  scans and unbounded hot maps. Scratch performs no durability sync and cannot
+  delete or rewrite authoritative archive bytes. This engine remains disconnected
+  from graph startup, migration, and user-visible writes.
+
 ### Added
 
 - **Experimental managed sync can make an existing Syncthing/Dropbox graph

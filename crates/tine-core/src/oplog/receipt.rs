@@ -9,7 +9,7 @@ use super::identity::{parse_digest, write_hex};
 use super::{BatchId, BlockId, CrdtPeerId, DocumentId, ImportId, LogseqUuid, PageId, WorkspaceId};
 
 /// Candidate receipt schema. These bytes are explicitly not a stable wire format.
-pub const RECEIPT_SCHEMA_VERSION: u32 = 1;
+pub const RECEIPT_SCHEMA_VERSION: u32 = 2;
 pub const PROJECTION_SCHEMA_VERSION: u32 = 1;
 pub const PROJECTION_POLICY_VERSION: u32 = 1;
 pub const MANAGED_ENTITY_SET_VERSION: u32 = 1;
@@ -36,7 +36,7 @@ pub enum ReceiptError {
     DuplicateDependency(BatchId),
     NonCanonicalPeerCounters,
     NonCanonicalDependencies,
-    BatchClosureDigestMismatch(DocumentId),
+    CausalStateDigestMismatch(DocumentId),
     NonCanonicalAnnotations,
     NonCanonicalInventory,
     NonCanonicalCompletionIds,
@@ -96,8 +96,11 @@ impl fmt::Display for ReceiptError {
             Self::NonCanonicalDependencies => {
                 f.write_str("document dependencies are not canonically sorted")
             }
-            Self::BatchClosureDigestMismatch(id) => {
-                write!(f, "batch closure digest does not match document {id}")
+            Self::CausalStateDigestMismatch(id) => {
+                write!(
+                    f,
+                    "compact causal-state digest does not match document {id}"
+                )
             }
             Self::NonCanonicalAnnotations => {
                 f.write_str("identity annotations are not canonically sorted")
@@ -466,17 +469,27 @@ impl CrdtPeerCounter {
     }
 }
 
-/// Canonical digest of exactly one document frontier's transitive BatchId closure.
+/// Canonical digest of one document's exact CRDT counters and direct batch heads.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct BatchClosureDigest([u8; 32]);
+pub struct DocumentCausalDigest([u8; 32]);
 
-impl BatchClosureDigest {
-    fn of(dependencies: &[BatchId]) -> Self {
+impl DocumentCausalDigest {
+    fn of(
+        document_id: DocumentId,
+        peer_counters: &[CrdtPeerCounter],
+        direct_dependency_heads: &[BatchId],
+    ) -> Self {
         let mut hasher = Sha256::new();
-        hasher.update(b"tine/frontier-v2/batch-closure/v1\0");
-        hasher.update((dependencies.len() as u64).to_be_bytes());
-        for dependency in dependencies {
-            hasher.update(dependency.as_uuid().as_bytes());
+        hasher.update(b"tine/frontier-v2/document-causal-state/v1\0");
+        hasher.update(document_id.as_uuid().as_bytes());
+        hasher.update((peer_counters.len() as u64).to_be_bytes());
+        for counter in peer_counters {
+            hasher.update(counter.peer_id().as_u64().to_be_bytes());
+            hasher.update(counter.max_counter().to_be_bytes());
+        }
+        hasher.update((direct_dependency_heads.len() as u64).to_be_bytes());
+        for head in direct_dependency_heads {
+            hasher.update(head.as_uuid().as_bytes());
         }
         Self(hasher.finalize().into())
     }
@@ -486,19 +499,19 @@ impl BatchClosureDigest {
     }
 }
 
-impl fmt::Debug for BatchClosureDigest {
+impl fmt::Debug for DocumentCausalDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BatchClosureDigest({self})")
+        write!(f, "DocumentCausalDigest({self})")
     }
 }
 
-impl fmt::Display for BatchClosureDigest {
+impl fmt::Display for DocumentCausalDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_hex(&self.0, f)
     }
 }
 
-impl Serialize for BatchClosureDigest {
+impl Serialize for DocumentCausalDigest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -507,7 +520,7 @@ impl Serialize for BatchClosureDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for BatchClosureDigest {
+impl<'de> Deserialize<'de> for DocumentCausalDigest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -524,8 +537,8 @@ impl<'de> Deserialize<'de> for BatchClosureDigest {
 pub struct DocumentDependencies {
     document_id: DocumentId,
     peer_counters: Vec<CrdtPeerCounter>,
-    batch_closure: Vec<BatchId>,
-    batch_closure_digest: BatchClosureDigest,
+    direct_dependency_heads: Vec<BatchId>,
+    causal_state_digest: DocumentCausalDigest,
 }
 
 #[derive(Deserialize)]
@@ -533,26 +546,27 @@ pub struct DocumentDependencies {
 struct DocumentDependenciesWire {
     document_id: DocumentId,
     peer_counters: Vec<CrdtPeerCounter>,
-    batch_closure: Vec<BatchId>,
-    batch_closure_digest: BatchClosureDigest,
+    direct_dependency_heads: Vec<BatchId>,
+    causal_state_digest: DocumentCausalDigest,
 }
 
 impl DocumentDependencies {
-    /// Builds a canonical document entry from the caller's complete transitive
-    /// BatchId closure. This primitive can canonicalize and bind the supplied
-    /// closure, but discovering that closure belongs to the causal engine.
+    /// Builds a canonical compact document frontier. Heads are only the
+    /// maximal/direct batches whose complete atomic ancestry is accepted.
     pub fn new(
         document_id: DocumentId,
         mut peer_counters: Vec<CrdtPeerCounter>,
-        mut batch_closure: Vec<BatchId>,
+        mut direct_dependency_heads: Vec<BatchId>,
     ) -> Result<Self, ReceiptError> {
         peer_counters.sort_unstable_by_key(|counter| counter.peer_id);
-        batch_closure.sort_unstable();
+        direct_dependency_heads.sort_unstable();
+        let causal_state_digest =
+            DocumentCausalDigest::of(document_id, &peer_counters, &direct_dependency_heads);
         let document = Self {
             document_id,
             peer_counters,
-            batch_closure_digest: BatchClosureDigest::of(&batch_closure),
-            batch_closure,
+            direct_dependency_heads,
+            causal_state_digest,
         };
         document.validate_canonical()?;
         Ok(document)
@@ -562,20 +576,20 @@ impl DocumentDependencies {
         self.document_id
     }
 
-    pub fn batch_closure(&self) -> &[BatchId] {
-        &self.batch_closure
+    pub fn direct_dependency_heads(&self) -> &[BatchId] {
+        &self.direct_dependency_heads
     }
 
     pub fn peer_counters(&self) -> &[CrdtPeerCounter] {
         &self.peer_counters
     }
 
-    pub const fn batch_closure_digest(&self) -> BatchClosureDigest {
-        self.batch_closure_digest
+    pub const fn causal_state_digest(&self) -> DocumentCausalDigest {
+        self.causal_state_digest
     }
 
     fn validate_canonical(&self) -> Result<(), ReceiptError> {
-        if self.peer_counters.is_empty() && self.batch_closure.is_empty() {
+        if self.peer_counters.is_empty() && self.direct_dependency_heads.is_empty() {
             return Err(ReceiptError::EmptyDocumentFrontier(self.document_id));
         }
         if !is_strictly_sorted_by_key(&self.peer_counters, |counter| counter.peer_id) {
@@ -588,14 +602,20 @@ impl DocumentDependencies {
             }
             return Err(ReceiptError::NonCanonicalPeerCounters);
         }
-        if !is_strictly_sorted(&self.batch_closure) {
-            if let Some(duplicate) = adjacent_duplicate(&self.batch_closure) {
+        if !is_strictly_sorted(&self.direct_dependency_heads) {
+            if let Some(duplicate) = adjacent_duplicate(&self.direct_dependency_heads) {
                 return Err(ReceiptError::DuplicateDependency(*duplicate));
             }
             return Err(ReceiptError::NonCanonicalDependencies);
         }
-        if self.batch_closure_digest != BatchClosureDigest::of(&self.batch_closure) {
-            return Err(ReceiptError::BatchClosureDigestMismatch(self.document_id));
+        if self.causal_state_digest
+            != DocumentCausalDigest::of(
+                self.document_id,
+                &self.peer_counters,
+                &self.direct_dependency_heads,
+            )
+        {
+            return Err(ReceiptError::CausalStateDigestMismatch(self.document_id));
         }
         Ok(())
     }
@@ -610,8 +630,8 @@ impl<'de> Deserialize<'de> for DocumentDependencies {
         let document = Self {
             document_id: wire.document_id,
             peer_counters: wire.peer_counters,
-            batch_closure: wire.batch_closure,
-            batch_closure_digest: wire.batch_closure_digest,
+            direct_dependency_heads: wire.direct_dependency_heads,
+            causal_state_digest: wire.causal_state_digest,
         };
         document
             .validate_canonical()
@@ -620,9 +640,9 @@ impl<'de> Deserialize<'de> for DocumentDependencies {
     }
 }
 
-/// ADR 0049's sharding-neutral frontier: canonical `DocumentId` entries,
-/// each containing canonical CRDT peer counters and the complete transitive
-/// causal `BatchId` closure needed to materialize that document.
+/// ADR 0049's compact sharding-neutral frontier: canonical `DocumentId`
+/// entries with exact CRDT counters and maximal/direct atomic batch heads.
+/// Cold validation reconstructs ancestry from immutable manifests.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct FrontierV2(Vec<DocumentDependencies>);
@@ -812,11 +832,11 @@ impl ProjectionIntent {
                 hasher.update(counter.peer_id().as_u64().to_be_bytes());
                 hasher.update(counter.max_counter().to_be_bytes());
             }
-            hasher.update((document.batch_closure().len() as u64).to_be_bytes());
-            for dependency in document.batch_closure() {
+            hasher.update((document.direct_dependency_heads().len() as u64).to_be_bytes());
+            for dependency in document.direct_dependency_heads() {
                 hasher.update(dependency.as_uuid().as_bytes());
             }
-            hasher.update(document.batch_closure_digest().as_bytes());
+            hasher.update(document.causal_state_digest().as_bytes());
         }
 
         match &self.precondition {

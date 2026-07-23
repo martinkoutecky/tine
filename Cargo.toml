@@ -3,7 +3,11 @@ members = ["crates/tine-core", "plugin-sdk/rust", "src-tauri"]
 # lsdoc-wasm is built ONLY by `npm run build:wasm` (wasm-pack, wasm32 target) to
 # regenerate the vendored frontend parser. Excluded so normal `cargo build`/`cargo
 # test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
-exclude = ["crates/lsdoc-wasm"]
+exclude = [
+    "crates/lsdoc-wasm",
+    "vendor/loro-1.13.6",
+    "vendor/loro-internal-1.13.6",
+]
 resolver = "2"
 
 [workspace.package]
