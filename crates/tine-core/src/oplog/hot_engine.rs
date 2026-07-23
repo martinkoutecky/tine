@@ -37,8 +37,8 @@ const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
 const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 5;
 const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 5;
 const BLOCK_CLAIM_RECORD_SCHEMA_VERSION: u32 = 2;
-const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 3;
-const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 2;
+const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 4;
+const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 3;
 const MAX_EPHEMERAL_BLOCK_CLAIMS: usize = 4_096;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -445,12 +445,17 @@ pub struct AcceptedFrontierRoot {
     retained_bytes_total: u64,
     document_map_root_key: Option<[u8; 16]>,
     document_map_root_digest: ContentDigest,
+    // Commits every accepted BatchId to its immutable manifest/event binding,
+    // causal dot, and authenticated sparse-clock root.
+    batch_map_root_key: Option<[u8; 16]>,
+    batch_map_root_digest: ContentDigest,
     state_digest: ContentDigest,
     scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
 }
 
 impl AcceptedBatchEvidence {
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn for_test(
         batch_id: BatchId,
         manifest_fingerprint: ContentDigest,
@@ -458,12 +463,16 @@ impl AcceptedBatchEvidence {
         prior_frontier_root: AcceptedFrontierRoot,
         affected_documents: Vec<DocumentDependencies>,
         all_documents: Vec<DocumentDependencies>,
+        accepted_batch_entries: Vec<(BatchId, ContentDigest)>,
         retained_bytes: u64,
     ) -> Self {
         let acceptance_sequence = prior_frontier_root.acceptance_sequence.saturating_add(1);
         let (document_map_root_key, document_map_root_digest) =
             authenticated_document_map_root(&all_documents)
                 .expect("canonical test authenticated document map");
+        let (batch_map_root_key, batch_map_root_digest) =
+            authenticated_map_root(&accepted_batch_entries)
+                .expect("canonical test authenticated batch map");
         let post_frontier_root = next_accepted_frontier_root(
             &prior_frontier_root,
             event_binding_digest,
@@ -473,6 +482,8 @@ impl AcceptedBatchEvidence {
             &affected_documents,
             document_map_root_key,
             document_map_root_digest,
+            batch_map_root_key,
+            batch_map_root_digest,
             None,
         )
         .expect("canonical test accepted-frontier transition");
@@ -565,6 +576,14 @@ impl AcceptedFrontierRoot {
         self.document_map_root_digest
     }
 
+    pub const fn batch_map_root_key(&self) -> Option<[u8; 16]> {
+        self.batch_map_root_key
+    }
+
+    pub const fn batch_map_root_digest(&self) -> ContentDigest {
+        self.batch_map_root_digest
+    }
+
     pub const fn state_digest(&self) -> ContentDigest {
         self.state_digest
     }
@@ -591,6 +610,8 @@ impl AcceptedFrontierRoot {
             affected_documents,
             post.document_map_root_key,
             post.document_map_root_digest,
+            post.batch_map_root_key,
+            post.batch_map_root_digest,
             post.scratch_root.clone(),
         )? == *post)
     }
@@ -976,6 +997,8 @@ pub struct ShardedHotEngine {
         RefCell<BTreeSet<(DocumentId, BatchId, ContentDigest, ContentDigest)>>,
     history_work: Cell<HistoryWorkStats>,
     accepted_frontier: BTreeMap<DocumentId, DocumentDependencies>,
+    ephemeral_causal_clocks: BTreeMap<BatchId, Vec<(CausalPeerId, u64)>>,
+    ephemeral_accepted_batch_entries: BTreeMap<BatchId, ContentDigest>,
     accepted_frontier_root: AcceptedFrontierRoot,
     accepted_sequence: BTreeMap<u64, BatchId>,
     next_acceptance_sequence: u64,
@@ -1037,6 +1060,8 @@ impl ShardedHotEngine {
             external_anchor_point_cache: RefCell::new(BTreeSet::new()),
             history_work: Cell::new(HistoryWorkStats::default()),
             accepted_frontier: BTreeMap::new(),
+            ephemeral_causal_clocks: BTreeMap::new(),
+            ephemeral_accepted_batch_entries: BTreeMap::new(),
             accepted_frontier_root: empty_accepted_frontier_root(),
             accepted_sequence: BTreeMap::new(),
             next_acceptance_sequence: 0,
@@ -1431,6 +1456,50 @@ impl ShardedHotEngine {
             manifest.dependency_frontier(),
             manifest.causal_dependency_heads(),
         )?;
+        let causal_clock = if let Some(store) = &self.scratch {
+            super::causal_index::batch_record(store, &roots, batch_id)
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .ok_or_else(|| {
+                    EngineError::Archive(format!(
+                        "accepted batch {batch_id} has no authenticated causal record"
+                    ))
+                })?
+                .clock()
+                .to_vec()
+        } else {
+            self.derive_ephemeral_causal_clock(manifest)?
+        };
+        let (clock_root_key, clock_root_digest) = authenticated_causal_clock_root(&causal_clock)?;
+        let causal_record_digest = accepted_causal_record_digest(
+            batch_id,
+            manifest_fingerprint,
+            event_binding_digest,
+            manifest.causal_dot(),
+            clock_root_key,
+            clock_root_digest,
+        );
+        let (batch_map_root_key, batch_map_root_digest) = if let Some(store) = &self.scratch {
+            roots.accepted_batch_map_root = store
+                .accepted_batch_map_upsert(
+                    &roots.accepted_batch_map_root,
+                    batch_id.as_uuid().into_bytes(),
+                    causal_record_digest,
+                )
+                .map_err(|error| EngineError::Archive(error.to_string()))?;
+            if roots.accepted_batch_map_root.count() != acceptance_sequence {
+                return Err(EngineError::Archive(
+                    "authenticated batch map count differs from accepted sequence".into(),
+                ));
+            }
+            (
+                roots.accepted_batch_map_root.root_key(),
+                roots.accepted_batch_map_root.root_digest(),
+            )
+        } else {
+            let mut entries = self.ephemeral_accepted_batch_entries.clone();
+            entries.insert(batch_id, causal_record_digest);
+            authenticated_map_root(&entries.into_iter().collect::<Vec<_>>())?
+        };
         let affected_documents = changed_documents.into_values().collect::<Vec<_>>();
         let retained_bytes = accepted_batch_retained_bytes(&self.archive[&batch_id])?;
         let post_frontier_root = next_accepted_frontier_root(
@@ -1442,6 +1511,8 @@ impl ShardedHotEngine {
             &affected_documents,
             document_map_root_key,
             document_map_root_digest,
+            batch_map_root_key,
+            batch_map_root_digest,
             scratch_root,
         )?;
         let evidence = AcceptedBatchEvidence {
@@ -1482,10 +1553,63 @@ impl ShardedHotEngine {
             debug_assert!(self.accepted_sequence.is_empty());
             self.scratch_roots = roots;
         } else {
+            let manifest = self.archive[&evidence.batch_id].manifest();
+            let clock = self
+                .derive_ephemeral_causal_clock(manifest)
+                .expect("accepted inline causal clock was validated");
+            let (clock_root_key, clock_root_digest) =
+                authenticated_causal_clock_root(&clock).expect("canonical accepted causal clock");
+            let record_digest = accepted_causal_record_digest(
+                evidence.batch_id,
+                evidence.manifest_fingerprint,
+                evidence.event_binding_digest,
+                manifest.causal_dot(),
+                clock_root_key,
+                clock_root_digest,
+            );
+            self.ephemeral_causal_clocks
+                .insert(evidence.batch_id, clock);
+            self.ephemeral_accepted_batch_entries
+                .insert(evidence.batch_id, record_digest);
             self.accepted_frontier = post_documents.expect("inline accepted frontier");
             self.accepted_sequence
                 .insert(evidence.acceptance_sequence, evidence.batch_id);
         }
+    }
+
+    fn derive_ephemeral_causal_clock(
+        &self,
+        manifest: &OperationBatch,
+    ) -> Result<Vec<(CausalPeerId, u64)>, EngineError> {
+        let mut clock = BTreeMap::<CausalPeerId, u64>::new();
+        for parent in manifest.causal_dependency_heads() {
+            let parent_clock = self
+                .ephemeral_causal_clocks
+                .get(parent)
+                .ok_or(EngineError::MissingDependency(*parent))?;
+            for (peer, counter) in parent_clock {
+                clock
+                    .entry(*peer)
+                    .and_modify(|current| *current = (*current).max(*counter))
+                    .or_insert(*counter);
+            }
+        }
+        let dot = manifest.causal_dot();
+        let expected = clock
+            .get(&dot.peer_id())
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| EngineError::Archive("causal counter overflowed".into()))?;
+        if dot.counter() != expected {
+            return Err(EngineError::InvalidCrdt(format!(
+                "causal dot {:?}:{} is not gap-free; expected {expected}",
+                dot.peer_id(),
+                dot.counter()
+            )));
+        }
+        clock.insert(dot.peer_id(), dot.counter());
+        Ok(clock.into_iter().collect())
     }
 
     fn accepted_document_dependencies(
@@ -5348,7 +5472,9 @@ fn empty_accepted_frontier_root() -> AcceptedFrontierRoot {
         retained_bytes_total: 0,
         document_map_root_key: None,
         document_map_root_digest: super::scratch_store::authenticated_map_empty_digest(),
-        state_digest: ContentDigest::of(b"tine/oplog/accepted-frontier/v2/empty"),
+        batch_map_root_key: None,
+        batch_map_root_digest: super::scratch_store::authenticated_map_empty_digest(),
+        state_digest: ContentDigest::of(b"tine/oplog/accepted-frontier/v3/empty"),
         scratch_root: None,
     }
 }
@@ -5363,6 +5489,8 @@ fn next_accepted_frontier_root(
     affected_documents: &[DocumentDependencies],
     document_map_root_key: Option<[u8; 16]>,
     document_map_root_digest: ContentDigest,
+    batch_map_root_key: Option<[u8; 16]>,
+    batch_map_root_digest: ContentDigest,
     scratch_root: Option<super::scratch_store::ScratchLsmRoot>,
 ) -> Result<AcceptedFrontierRoot, EngineError> {
     validate_accepted_frontier_root(prior)?;
@@ -5371,7 +5499,7 @@ fn next_accepted_frontier_root(
             "accepted frontier sequence is not contiguous".into(),
         ));
     }
-    let mut bytes = b"tine/oplog/accepted-frontier/v2\0".to_vec();
+    let mut bytes = b"tine/oplog/accepted-frontier/v3\0".to_vec();
     bytes.extend_from_slice(prior.state_digest.as_bytes());
     bytes.extend_from_slice(event_binding_digest.as_bytes());
     bytes.extend_from_slice(&acceptance_sequence.to_be_bytes());
@@ -5389,6 +5517,14 @@ fn next_accepted_frontier_root(
         None => bytes.push(0),
     }
     bytes.extend_from_slice(document_map_root_digest.as_bytes());
+    match batch_map_root_key {
+        Some(key) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&key);
+        }
+        None => bytes.push(0),
+    }
+    bytes.extend_from_slice(batch_map_root_digest.as_bytes());
     bytes.extend_from_slice(&(affected_documents.len() as u64).to_be_bytes());
     for document in affected_documents {
         let encoded = encode_accepted_document(document)?;
@@ -5402,6 +5538,8 @@ fn next_accepted_frontier_root(
         retained_bytes_total,
         document_map_root_key,
         document_map_root_digest,
+        batch_map_root_key,
+        batch_map_root_digest,
         state_digest: ContentDigest::of(&bytes),
         scratch_root,
     })
@@ -5420,6 +5558,8 @@ fn validate_accepted_frontier_root(root: &AcceptedFrontierRoot) -> Result<(), En
             || root.document_map_root_key.is_some()
             || root.document_map_root_digest
                 != super::scratch_store::authenticated_map_empty_digest()
+            || root.batch_map_root_key.is_some()
+            || root.batch_map_root_digest != super::scratch_store::authenticated_map_empty_digest()
             || root.state_digest != empty_accepted_frontier_root().state_digest
             || root.scratch_root.is_some()
         {
@@ -5427,10 +5567,12 @@ fn validate_accepted_frontier_root(root: &AcceptedFrontierRoot) -> Result<(), En
                 "malformed empty accepted-frontier root".into(),
             ));
         }
-    } else if (root.document_count == 0
-        && (root.document_map_root_key.is_some()
-            || root.document_map_root_digest
-                != super::scratch_store::authenticated_map_empty_digest()))
+    } else if root.batch_map_root_key.is_none()
+        || root.batch_map_root_digest == super::scratch_store::authenticated_map_empty_digest()
+        || (root.document_count == 0
+            && (root.document_map_root_key.is_some()
+                || root.document_map_root_digest
+                    != super::scratch_store::authenticated_map_empty_digest()))
         || (root.document_count > 0
             && (root.document_map_root_key.is_none()
                 || root.document_map_root_digest
@@ -5479,10 +5621,82 @@ fn authenticated_document_map_root(
             ))
         })
         .collect::<Result<Vec<_>, EngineError>>()?;
-    Ok(authenticated_document_map_subtree(&entries))
+    Ok(authenticated_map_subtree(&entries))
 }
 
-fn authenticated_document_map_subtree(
+fn authenticated_map_root(
+    entries: &[(BatchId, ContentDigest)],
+) -> Result<(Option<[u8; 16]>, ContentDigest), EngineError> {
+    if entries.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        return Err(EngineError::Archive(
+            "authenticated batch map is not canonically ordered".into(),
+        ));
+    }
+    Ok(authenticated_map_subtree(
+        &entries
+            .iter()
+            .map(|(batch_id, digest)| (batch_id.as_uuid().into_bytes(), *digest))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub(crate) fn causal_clock_counter_digest(peer: CausalPeerId, counter: u64) -> ContentDigest {
+    let mut bytes = b"tine/oplog/causal-clock-entry/v1\0".to_vec();
+    bytes.extend_from_slice(peer.as_device_id().as_uuid().as_bytes());
+    bytes.extend_from_slice(&counter.to_be_bytes());
+    ContentDigest::of(&bytes)
+}
+
+pub(crate) fn authenticated_causal_clock_root(
+    clock: &[(CausalPeerId, u64)],
+) -> Result<(Option<[u8; 16]>, ContentDigest), EngineError> {
+    if clock.is_empty()
+        || clock.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+        || clock.iter().any(|(_, counter)| *counter == 0)
+    {
+        return Err(EngineError::Archive(
+            "authenticated causal clock is not canonical".into(),
+        ));
+    }
+    let entries = clock
+        .iter()
+        .map(|(peer, counter)| {
+            (
+                peer.as_device_id().as_uuid().into_bytes(),
+                causal_clock_counter_digest(*peer, *counter),
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(authenticated_map_subtree(&entries))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn accepted_causal_record_digest(
+    batch_id: BatchId,
+    manifest_fingerprint: ContentDigest,
+    event_binding_digest: ContentDigest,
+    dot: BatchCausalDot,
+    clock_root_key: Option<[u8; 16]>,
+    clock_root_digest: ContentDigest,
+) -> ContentDigest {
+    let mut bytes = b"tine/oplog/accepted-causal-record/v1\0".to_vec();
+    bytes.extend_from_slice(batch_id.as_uuid().as_bytes());
+    bytes.extend_from_slice(manifest_fingerprint.as_bytes());
+    bytes.extend_from_slice(event_binding_digest.as_bytes());
+    bytes.extend_from_slice(dot.peer_id().as_device_id().as_uuid().as_bytes());
+    bytes.extend_from_slice(&dot.counter().to_be_bytes());
+    match clock_root_key {
+        Some(key) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&key);
+        }
+        None => bytes.push(0),
+    }
+    bytes.extend_from_slice(clock_root_digest.as_bytes());
+    ContentDigest::of(&bytes)
+}
+
+fn authenticated_map_subtree(
     entries: &[([u8; 16], ContentDigest)],
 ) -> (Option<[u8; 16]>, ContentDigest) {
     let Some((root_index, (key, value_digest))) =
@@ -5495,8 +5709,8 @@ fn authenticated_document_map_subtree(
     else {
         return (None, super::scratch_store::authenticated_map_empty_digest());
     };
-    let left = authenticated_document_map_subtree(&entries[..root_index]);
-    let right = authenticated_document_map_subtree(&entries[root_index + 1..]);
+    let left = authenticated_map_subtree(&entries[..root_index]);
+    let right = authenticated_map_subtree(&entries[root_index + 1..]);
     (
         Some(*key),
         super::scratch_store::authenticated_map_node_digest(
@@ -5551,6 +5765,8 @@ fn validate_accepted_evidence(evidence: &AcceptedBatchEvidence) -> Result<(), En
         &evidence.affected_documents,
         evidence.post_frontier_root.document_map_root_key,
         evidence.post_frontier_root.document_map_root_digest,
+        evidence.post_frontier_root.batch_map_root_key,
+        evidence.post_frontier_root.batch_map_root_digest,
         evidence.post_frontier_root.scratch_root.clone(),
     )?;
     if expected != evidence.post_frontier_root {

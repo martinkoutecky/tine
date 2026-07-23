@@ -25,7 +25,7 @@ const MARKER_FILE: &str = "marker";
 const LEASE_FILE: &str = "lease";
 const PAGES_FILE: &str = "pages.index";
 const BLOBS_FILE: &str = "blobs.data";
-const SCRATCH_SCHEMA_VERSION: u32 = 6;
+const SCRATCH_SCHEMA_VERSION: u32 = 7;
 const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
 const SCRATCH_LSM_LEVELS: usize = 32;
 const ACCEPTED_SEQUENCE_SCHEMA_VERSION: u32 = 1;
@@ -167,6 +167,7 @@ pub(crate) enum ScratchPageKind {
     AcceptedSequenceLeaf = 16,
     AcceptedSequenceNode = 17,
     AcceptedDocumentMap = 18,
+    AcceptedBatchMap = 19,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -373,6 +374,7 @@ pub(crate) struct ScratchRoots {
     pub accepted_frontier_root: ScratchLsmRoot,
     pub accepted_sequence_root: ScratchAcceptedSequenceRoot,
     pub accepted_document_map_root: ScratchAuthenticatedMapRoot,
+    pub accepted_batch_map_root: ScratchAuthenticatedMapRoot,
 }
 
 /// One reconstructible, authenticated run-local scratch namespace.
@@ -745,8 +747,38 @@ impl ScratchStore {
         key: [u8; 16],
         value_digest: ContentDigest,
     ) -> Result<ScratchAuthenticatedMapRoot, ScratchError> {
+        self.authenticated_map_upsert_for_kind(
+            ScratchPageKind::AcceptedDocumentMap,
+            root,
+            key,
+            value_digest,
+        )
+    }
+
+    pub(crate) fn accepted_batch_map_upsert(
+        &self,
+        root: &ScratchAuthenticatedMapRoot,
+        key: [u8; 16],
+        value_digest: ContentDigest,
+    ) -> Result<ScratchAuthenticatedMapRoot, ScratchError> {
+        self.authenticated_map_upsert_for_kind(
+            ScratchPageKind::AcceptedBatchMap,
+            root,
+            key,
+            value_digest,
+        )
+    }
+
+    fn authenticated_map_upsert_for_kind(
+        &self,
+        kind: ScratchPageKind,
+        root: &ScratchAuthenticatedMapRoot,
+        key: [u8; 16],
+        value_digest: ContentDigest,
+    ) -> Result<ScratchAuthenticatedMapRoot, ScratchError> {
         validate_authenticated_map_root(root)?;
         let (child, inserted) = self.authenticated_map_upsert_child(
+            kind,
             root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
                 key: root.root_key.expect("validated nonempty root key"),
                 digest: root.root_digest,
@@ -776,6 +808,7 @@ impl ScratchStore {
 
     fn authenticated_map_upsert_child(
         &self,
+        kind: ScratchPageKind,
         current: Option<AuthenticatedMapChild>,
         key: [u8; 16],
         value_digest: ContentDigest,
@@ -793,9 +826,9 @@ impl ScratchStore {
                 left: None,
                 right: None,
             };
-            return Ok((self.write_authenticated_map_node(&node)?, true));
+            return Ok((self.write_authenticated_map_node(kind, &node)?, true));
         };
-        let mut node = self.read_authenticated_map_node(&current)?;
+        let mut node = self.read_authenticated_map_node(kind, &current)?;
         let inserted;
         match key.cmp(&node.key) {
             std::cmp::Ordering::Equal => {
@@ -804,6 +837,7 @@ impl ScratchStore {
             }
             std::cmp::Ordering::Less => {
                 let (left, was_inserted) = self.authenticated_map_upsert_child(
+                    kind,
                     node.left.take(),
                     key,
                     value_digest,
@@ -814,11 +848,12 @@ impl ScratchStore {
                 if node.left.as_ref().is_some_and(|left| {
                     authenticated_map_priority_order(left.key, node.key).is_lt()
                 }) {
-                    return Ok((self.rotate_authenticated_map_right(node)?, inserted));
+                    return Ok((self.rotate_authenticated_map_right(kind, node)?, inserted));
                 }
             }
             std::cmp::Ordering::Greater => {
                 let (right, was_inserted) = self.authenticated_map_upsert_child(
+                    kind,
                     node.right.take(),
                     key,
                     value_digest,
@@ -829,33 +864,35 @@ impl ScratchStore {
                 if node.right.as_ref().is_some_and(|right| {
                     authenticated_map_priority_order(right.key, node.key).is_lt()
                 }) {
-                    return Ok((self.rotate_authenticated_map_left(node)?, inserted));
+                    return Ok((self.rotate_authenticated_map_left(kind, node)?, inserted));
                 }
             }
         }
-        Ok((self.write_authenticated_map_node(&node)?, inserted))
+        Ok((self.write_authenticated_map_node(kind, &node)?, inserted))
     }
 
     fn rotate_authenticated_map_right(
         &self,
+        kind: ScratchPageKind,
         mut node: AuthenticatedMapNode,
     ) -> Result<AuthenticatedMapChild, ScratchError> {
         let left = node.left.take().ok_or(ScratchError::MalformedPage)?;
-        let mut left_node = self.read_authenticated_map_node(&left)?;
+        let mut left_node = self.read_authenticated_map_node(kind, &left)?;
         node.left = left_node.right.take();
-        left_node.right = Some(self.write_authenticated_map_node(&node)?);
-        self.write_authenticated_map_node(&left_node)
+        left_node.right = Some(self.write_authenticated_map_node(kind, &node)?);
+        self.write_authenticated_map_node(kind, &left_node)
     }
 
     fn rotate_authenticated_map_left(
         &self,
+        kind: ScratchPageKind,
         mut node: AuthenticatedMapNode,
     ) -> Result<AuthenticatedMapChild, ScratchError> {
         let right = node.right.take().ok_or(ScratchError::MalformedPage)?;
-        let mut right_node = self.read_authenticated_map_node(&right)?;
+        let mut right_node = self.read_authenticated_map_node(kind, &right)?;
         node.right = right_node.left.take();
-        right_node.left = Some(self.write_authenticated_map_node(&node)?);
-        self.write_authenticated_map_node(&right_node)
+        right_node.left = Some(self.write_authenticated_map_node(kind, &node)?);
+        self.write_authenticated_map_node(kind, &right_node)
     }
 
     pub(crate) fn scan_prefix(
@@ -1237,6 +1274,7 @@ impl ScratchStore {
 
     fn write_authenticated_map_node(
         &self,
+        kind: ScratchPageKind,
         node: &AuthenticatedMapNode,
     ) -> Result<AuthenticatedMapChild, ScratchError> {
         validate_authenticated_map_node(node)?;
@@ -1247,8 +1285,7 @@ impl ScratchStore {
             node.right.as_ref().map(|child| (child.key, child.digest)),
         );
         let key = node.key.to_vec();
-        let page_ref =
-            self.append_page(ScratchPageKind::AcceptedDocumentMap, key.clone(), key, node)?;
+        let page_ref = self.append_page(kind, key.clone(), key, node)?;
         Ok(AuthenticatedMapChild {
             key: node.key,
             digest,
@@ -1258,10 +1295,10 @@ impl ScratchStore {
 
     fn read_authenticated_map_node(
         &self,
+        kind: ScratchPageKind,
         child: &AuthenticatedMapChild,
     ) -> Result<AuthenticatedMapNode, ScratchError> {
-        let node: AuthenticatedMapNode =
-            self.read_page(&child.page_ref, ScratchPageKind::AcceptedDocumentMap)?;
+        let node: AuthenticatedMapNode = self.read_page(&child.page_ref, kind)?;
         validate_authenticated_map_node(&node)?;
         if node.key != child.key
             || child.page_ref.key_min != child.key

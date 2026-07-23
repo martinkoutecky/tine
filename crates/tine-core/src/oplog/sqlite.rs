@@ -2,8 +2,14 @@
 //!
 //! This module deliberately accepts only already-accepted operation events. It
 //! has no mutation-authoring API and is never part of keystroke durability.
-//! Callers place the database and its workspace lease in device-local app data;
-//! neither path is derived from, or requires access to, the shared graph.
+//! Callers place the disposable database in device-local app data. The
+//! workspace lease always lives under Tine's internally derived,
+//! platform-canonical local runtime root; neither path requires access to the
+//! shared graph.
+//! Accepted ancestry is a two-level authenticated index: the durable accepted
+//! frontier commits `BatchId -> (manifest, binding, dot, clock root)` records,
+//! and each clock root addresses a persistent peer-counter treap. Updates copy
+//! only changed search paths; unchanged clock subtrees are shared by digest.
 //!
 //! The lease uses the platform's advisory file-lock primitive through `fs2`.
 //! Dropping the applier or terminating its process releases the lock on Linux,
@@ -14,6 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -34,11 +42,18 @@ use super::{
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 4;
+pub const SQLITE_SCHEMA_VERSION: u32 = 5;
 pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
-const EXPECTED_TABLES: [&str; 4] = ["applied_batches", "frontier", "frontier_documents", "meta"];
+const EXPECTED_TABLES: [&str; 6] = [
+    "accepted_batch_nodes",
+    "applied_batches",
+    "causal_clock_nodes",
+    "frontier",
+    "frontier_documents",
+    "meta",
+];
 const EXPECTED_INDEXES: [&str; 2] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
@@ -73,6 +88,33 @@ const FRONTIER_DOCUMENTS_DDL: &str = "CREATE TABLE frontier_documents (
     CHECK ((right_document_id IS NULL AND right_digest IS NULL)
         OR (length(right_document_id) = 16 AND length(right_digest) = 32))
 ) STRICT";
+const CAUSAL_CLOCK_NODES_DDL: &str = "CREATE TABLE causal_clock_nodes (
+    node_digest BLOB PRIMARY KEY CHECK (length(node_digest) = 32),
+    peer_id BLOB NOT NULL CHECK (length(peer_id) = 16),
+    counter INTEGER NOT NULL CHECK (counter > 0),
+    value_digest BLOB NOT NULL CHECK (length(value_digest) = 32),
+    left_peer_id BLOB,
+    left_digest BLOB,
+    right_peer_id BLOB,
+    right_digest BLOB,
+    CHECK ((left_peer_id IS NULL AND left_digest IS NULL)
+        OR (length(left_peer_id) = 16 AND length(left_digest) = 32)),
+    CHECK ((right_peer_id IS NULL AND right_digest IS NULL)
+        OR (length(right_peer_id) = 16 AND length(right_digest) = 32))
+) STRICT";
+const ACCEPTED_BATCH_NODES_DDL: &str = "CREATE TABLE accepted_batch_nodes (
+    node_digest BLOB PRIMARY KEY CHECK (length(node_digest) = 32),
+    batch_id BLOB NOT NULL CHECK (length(batch_id) = 16),
+    value_digest BLOB NOT NULL CHECK (length(value_digest) = 32),
+    left_batch_id BLOB,
+    left_digest BLOB,
+    right_batch_id BLOB,
+    right_digest BLOB,
+    CHECK ((left_batch_id IS NULL AND left_digest IS NULL)
+        OR (length(left_batch_id) = 16 AND length(left_digest) = 32)),
+    CHECK ((right_batch_id IS NULL AND right_digest IS NULL)
+        OR (length(right_batch_id) = 16 AND length(right_digest) = 32))
+) STRICT";
 const APPLIED_BATCHES_DDL: &str = "CREATE TABLE applied_batches (
     sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
     batch_id BLOB NOT NULL CHECK (length(batch_id) = 16),
@@ -94,8 +136,8 @@ const APPLIED_BATCHES_DDL: &str = "CREATE TABLE applied_batches (
     causal_dependency_heads BLOB NOT NULL,
     causal_peer_id BLOB NOT NULL CHECK (length(causal_peer_id) = 16),
     causal_counter INTEGER NOT NULL CHECK (causal_counter > 0),
-    causal_clock BLOB NOT NULL,
-    causal_clock_digest BLOB NOT NULL CHECK (length(causal_clock_digest) = 32),
+    causal_clock_root_key BLOB NOT NULL CHECK (length(causal_clock_root_key) = 16),
+    causal_clock_root_digest BLOB NOT NULL CHECK (length(causal_clock_root_digest) = 32),
     acceptance_sequence INTEGER NOT NULL CHECK (acceptance_sequence > 0),
     retained_bytes INTEGER NOT NULL CHECK (retained_bytes >= 0)
 ) STRICT";
@@ -129,6 +171,25 @@ const FRONTIER_DOCUMENT_COLUMNS: [&str; 8] = [
     "right_digest",
     "node_digest",
 ];
+const CAUSAL_CLOCK_NODE_COLUMNS: [&str; 8] = [
+    "node_digest",
+    "peer_id",
+    "counter",
+    "value_digest",
+    "left_peer_id",
+    "left_digest",
+    "right_peer_id",
+    "right_digest",
+];
+const ACCEPTED_BATCH_NODE_COLUMNS: [&str; 7] = [
+    "node_digest",
+    "batch_id",
+    "value_digest",
+    "left_batch_id",
+    "left_digest",
+    "right_batch_id",
+    "right_digest",
+];
 const APPLIED_BATCH_COLUMNS: [&str; 20] = [
     "sequence",
     "batch_id",
@@ -146,15 +207,14 @@ const APPLIED_BATCH_COLUMNS: [&str; 20] = [
     "causal_dependency_heads",
     "causal_peer_id",
     "causal_counter",
-    "causal_clock",
-    "causal_clock_digest",
+    "causal_clock_root_key",
+    "causal_clock_root_digest",
     "acceptance_sequence",
     "retained_bytes",
 ];
 const FORENSIC_SUFFIXES: [&str; 4] = ["", "-wal", "-shm", "-auth"];
 const FORENSIC_NAMES: [&str; 4] = ["database", "wal", "shm", "auth"];
 const PROJECTION_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
-const CAUSAL_CLOCK_SCHEMA_VERSION: u32 = 1;
 const PROJECTION_FINGERPRINT_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_PROJECTION_CHECKPOINT_BYTES: u64 = 64 * 1024;
 
@@ -506,7 +566,19 @@ pub struct ApplicationRuntimeRoot {
 }
 
 impl ApplicationRuntimeRoot {
-    pub fn open(path: &Path) -> Result<Self, ProjectionError> {
+    /// Open Tine's one platform-canonical process-lease namespace.
+    ///
+    /// Production callers cannot select this path. All databases for one
+    /// workspace therefore contend on the same OS-visible lease, even when
+    /// callers place their disposable SQLite files in different directories.
+    pub fn open() -> Result<Self, ProjectionError> {
+        let path = platform_application_runtime_root()?;
+        let path = prepare_application_runtime_root(&path)?;
+        Ok(Self { path })
+    }
+
+    #[cfg(test)]
+    fn open_for_test(path: &Path) -> Result<Self, ProjectionError> {
         let path = prepare_application_runtime_root(path)?;
         Ok(Self { path })
     }
@@ -514,6 +586,20 @@ impl ApplicationRuntimeRoot {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn platform_application_runtime_root() -> Result<PathBuf, ProjectionError> {
+    let base = dirs::data_local_dir().ok_or_else(|| {
+        ProjectionError::UnsafePath(
+            "platform did not provide a canonical per-user local-data directory".into(),
+        )
+    })?;
+    let application_id = if cfg!(target_os = "android") {
+        "page.tine.app"
+    } else {
+        "page.tine.Tine"
+    };
+    Ok(base.join(application_id).join("runtime"))
 }
 
 pub struct RebuildSource<'a> {
@@ -649,13 +735,6 @@ struct ProjectionCheckpoint {
 struct ProjectionCheckpointEnvelope {
     checkpoint: ProjectionCheckpoint,
     digest: ContentDigest,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StoredCausalClock {
-    schema_version: u32,
-    entries: Vec<(CausalPeerId, u64)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1321,16 +1400,9 @@ impl SqliteFrontier {
     }
 
     pub fn contains_batch(&self, batch_id: BatchId) -> Result<bool, ProjectionError> {
-        let found = self
-            .connection
-            .query_row(
-                "SELECT 1 FROM applied_batches WHERE batch_id = ?1",
-                [uuid_blob(&batch_id.as_uuid())],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        Ok(found)
+        let root = read_frontier_root(&self.connection)?;
+        authenticated_batch_record(&self.connection, &root, batch_id, &mut 0)
+            .map(|record| record.is_some())
     }
 
     pub fn apply_accepted(
@@ -1403,11 +1475,25 @@ impl SqliteFrontier {
         #[cfg(not(test))]
         let _ = fault;
         self.validate_event_claim(event)?;
+        let current_root = read_frontier_root(&self.connection)?;
         if let Some(existing) = load_batch(&self.connection, event.batch_id)? {
+            let mut rows_read = 0;
+            if authenticated_batch_record(
+                &self.connection,
+                &current_root,
+                event.batch_id,
+                &mut rows_read,
+            )?
+            .is_none()
+            {
+                return Err(ProjectionError::Corrupt(format!(
+                    "stored batch {} is absent from the authenticated accepted map",
+                    event.batch_id
+                )));
+            }
             if existing.matches(event)? {
-                let current = read_frontier_root(&self.connection)?;
-                if current.acceptance_sequence() >= event.acceptance_sequence
-                    && current.state_digest() != event.prior_frontier_root.state_digest()
+                if current_root.acceptance_sequence() >= event.acceptance_sequence
+                    && current_root.state_digest() != event.prior_frontier_root.state_digest()
                 {
                     return Ok(ApplyDisposition::Duplicate);
                 }
@@ -1416,9 +1502,16 @@ impl SqliteFrontier {
             return Err(ProjectionError::BatchCollision(event.batch_id));
         }
 
-        let current_root = read_frontier_root(&self.connection)?;
         for dependency in &event.causal_dependency_heads {
-            if !self.contains_batch(*dependency)? {
+            let mut rows_read = 0;
+            if authenticated_batch_record(
+                &self.connection,
+                &current_root,
+                *dependency,
+                &mut rows_read,
+            )?
+            .is_none()
+            {
                 return Err(ProjectionError::MissingDependency(*dependency));
             }
         }
@@ -1484,13 +1577,36 @@ impl SqliteFrontier {
         let post_frontier_root = canonical_frontier_root_bytes(&event.post_frontier_root)?;
         let affected_documents = canonical_affected_documents_bytes(&event.affected_documents)?;
         let causal_dependencies = encode_batch_ids(&event.causal_dependency_heads)?;
-        let causal_clock = encode_causal_clock(&derive_causal_clock(&self.connection, event)?)?;
         let retained_bytes = i64::try_from(event.retained_bytes).map_err(|_| {
             ProjectionError::InvalidAcceptedEvent("retained-byte count exceeds SQLite".into())
         })?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let causal_clock_root = derive_causal_clock_root(&transaction, &current_root, event)?;
+        let causal_record_digest = super::hot_engine::accepted_causal_record_digest(
+            event.batch_id,
+            event.manifest_digest,
+            event.event_binding_digest,
+            event.causal_dot,
+            Some(causal_clock_root.key),
+            causal_clock_root.digest,
+        );
+        let prior_batch_map_root = current_root.batch_map_root_key().map(|key| MapLink {
+            key,
+            digest: current_root.batch_map_root_digest(),
+        });
+        let post_batch_map_root = upsert_accepted_batch_map(
+            &transaction,
+            prior_batch_map_root,
+            event.batch_id,
+            causal_record_digest,
+        )?;
+        if event.post_frontier_root.batch_map_root_key() != Some(post_batch_map_root.key)
+            || event.post_frontier_root.batch_map_root_digest() != post_batch_map_root.digest
+        {
+            return Err(ProjectionError::FrontierRegression);
+        }
         insert_event(
             &transaction,
             usize::try_from(expected_acceptance_sequence)
@@ -1501,7 +1617,7 @@ impl SqliteFrontier {
             &post_frontier_root,
             &affected_documents,
             &causal_dependencies,
-            &causal_clock,
+            &causal_clock_root,
             retained_bytes,
         )?;
         #[cfg(test)]
@@ -1592,7 +1708,7 @@ fn insert_event(
     post_frontier_root: &[u8],
     affected_documents: &[u8],
     causal_dependencies: &[u8],
-    causal_clock: &[u8],
+    causal_clock_root: &MapLink,
     retained_bytes: i64,
 ) -> Result<(), ProjectionError> {
     transaction.execute(
@@ -1603,7 +1719,8 @@ fn insert_event(
              prior_frontier_root_digest, post_frontier_root,
              post_frontier_root_digest, affected_documents,
              affected_documents_digest, causal_dependency_heads,
-             causal_peer_id, causal_counter, causal_clock, causal_clock_digest,
+             causal_peer_id, causal_counter, causal_clock_root_key,
+             causal_clock_root_digest,
              acceptance_sequence, retained_bytes
          ) VALUES (
              ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
@@ -1630,8 +1747,8 @@ fn insert_event(
             i64::try_from(event.causal_dot.counter()).map_err(|_| {
                 ProjectionError::InvalidAcceptedEvent("causal counter exceeds SQLite".into())
             })?,
-            causal_clock,
-            ContentDigest::of(causal_clock).as_bytes().as_slice(),
+            causal_clock_root.key.as_slice(),
+            causal_clock_root.digest.as_bytes().as_slice(),
             i64::try_from(event.acceptance_sequence).map_err(|_| {
                 ProjectionError::InvalidAcceptedEvent("acceptance sequence exceeds SQLite".into())
             })?,
@@ -1963,6 +2080,8 @@ fn initialize_schema(
          {META_DDL};
          {FRONTIER_DDL};
          {FRONTIER_DOCUMENTS_DDL};
+         {CAUSAL_CLOCK_NODES_DDL};
+         {ACCEPTED_BATCH_NODES_DDL};
          {APPLIED_BATCHES_DDL};
          {BATCH_ID_INDEX_DDL};
          {ACCEPTANCE_SEQUENCE_INDEX_DDL};"
@@ -2084,6 +2203,12 @@ fn validate_schema_and_claim(
     validate_table_columns(connection, "meta", &META_COLUMNS)?;
     validate_table_columns(connection, "frontier", &FRONTIER_COLUMNS)?;
     validate_table_columns(connection, "frontier_documents", &FRONTIER_DOCUMENT_COLUMNS)?;
+    validate_table_columns(connection, "causal_clock_nodes", &CAUSAL_CLOCK_NODE_COLUMNS)?;
+    validate_table_columns(
+        connection,
+        "accepted_batch_nodes",
+        &ACCEPTED_BATCH_NODE_COLUMNS,
+    )?;
     validate_table_columns(connection, "applied_batches", &APPLIED_BATCH_COLUMNS)?;
     validate_schema_sql(connection, "table", "meta", META_DDL)?;
     validate_schema_sql(connection, "table", "frontier", FRONTIER_DDL)?;
@@ -2092,6 +2217,18 @@ fn validate_schema_and_claim(
         "table",
         "frontier_documents",
         FRONTIER_DOCUMENTS_DDL,
+    )?;
+    validate_schema_sql(
+        connection,
+        "table",
+        "causal_clock_nodes",
+        CAUSAL_CLOCK_NODES_DDL,
+    )?;
+    validate_schema_sql(
+        connection,
+        "table",
+        "accepted_batch_nodes",
+        ACCEPTED_BATCH_NODES_DDL,
     )?;
     validate_schema_sql(connection, "table", "applied_batches", APPLIED_BATCHES_DDL)?;
     validate_schema_sql(
@@ -2264,8 +2401,8 @@ struct StoredBatch {
     causal_dependency_heads: Vec<u8>,
     causal_peer_id: Vec<u8>,
     causal_counter: i64,
-    causal_clock: Vec<u8>,
-    causal_clock_digest: Vec<u8>,
+    causal_clock_root_key: Vec<u8>,
+    causal_clock_root_digest: Vec<u8>,
     acceptance_sequence: i64,
     retained_bytes: i64,
 }
@@ -2293,10 +2430,6 @@ impl StoredBatch {
 
     fn matches_static(&self, event: &AcceptedBatchEvent) -> Result<bool, ProjectionError> {
         let dependency_frontier = decode_frontier(&self.dependency_frontier)?;
-        let causal_clock = decode_causal_clock(&self.causal_clock)?;
-        let causal_dot_index = causal_clock
-            .binary_search_by_key(&event.causal_dot.peer_id(), |(peer, _)| *peer)
-            .ok();
         let semantic = SemanticEffect::decode(&self.semantic_effect)
             .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
         if semantic
@@ -2319,10 +2452,8 @@ impl StoredBatch {
                     .as_slice()
             && decode_batch_ids(&self.causal_dependency_heads)? == event.causal_dependency_heads
             && self.causal_dot()? == event.causal_dot
-            && self.causal_clock_digest
-                == ContentDigest::of(&self.causal_clock).as_bytes().as_slice()
-            && causal_dot_index
-                .is_some_and(|index| causal_clock[index].1 == event.causal_dot.counter())
+            && self.causal_clock_root_key.len() == 16
+            && self.causal_clock_root_digest.len() == 32
             && self.acceptance_sequence == event.acceptance_sequence as i64
             && self.retained_bytes == event.retained_bytes as i64)
     }
@@ -2371,14 +2502,7 @@ impl StoredBatch {
         }
         let dependency_frontier = decode_frontier(&self.dependency_frontier)?;
         let causal_dependency_heads = decode_batch_ids(&self.causal_dependency_heads)?;
-        let causal_clock = decode_causal_clock(&self.causal_clock)?;
-        let causal_dot = self.causal_dot()?;
-        if self.causal_clock_digest != ContentDigest::of(&self.causal_clock).as_bytes().as_slice()
-            || causal_clock
-                .binary_search_by_key(&causal_dot.peer_id(), |(peer, _)| *peer)
-                .ok()
-                .is_none_or(|index| causal_clock[index].1 != causal_dot.counter())
-        {
+        if self.causal_clock_root_key.len() != 16 || self.causal_clock_root_digest.len() != 32 {
             return Err(ProjectionError::Corrupt(format!(
                 "stored batch {} causal clock is invalid",
                 self.batch_id
@@ -2459,7 +2583,8 @@ fn validate_stored_history(
                 prior_frontier_root_digest, post_frontier_root,
                 post_frontier_root_digest, affected_documents,
                 affected_documents_digest, causal_dependency_heads,
-                causal_peer_id, causal_counter, causal_clock, causal_clock_digest,
+                causal_peer_id, causal_counter, causal_clock_root_key,
+                causal_clock_root_digest,
                 acceptance_sequence, retained_bytes
          FROM applied_batches ORDER BY sequence",
     )?;
@@ -2476,7 +2601,16 @@ fn validate_stored_history(
                 "stored accepted history sequence is not contiguous".into(),
             ));
         }
-        prior = record.validate_canonical_transition(&prior)?;
+        let post = record.validate_canonical_transition(&prior)?;
+        let mut rows_read = 0;
+        if authenticated_batch_record(connection, &post, record.batch_id, &mut rows_read)?.is_none()
+        {
+            return Err(ProjectionError::Corrupt(format!(
+                "stored batch {} is absent from its authenticated accepted map",
+                record.batch_id
+            )));
+        }
+        prior = post;
     }
     Ok((prior, count))
 }
@@ -2493,7 +2627,8 @@ fn load_batch(
                     prior_frontier_root_digest, post_frontier_root,
                     post_frontier_root_digest, affected_documents,
                     affected_documents_digest, causal_dependency_heads,
-                    causal_peer_id, causal_counter, causal_clock, causal_clock_digest,
+                    causal_peer_id, causal_counter, causal_clock_root_key,
+                    causal_clock_root_digest,
                     acceptance_sequence, retained_bytes
              FROM applied_batches WHERE batch_id = ?1",
             [uuid_blob(&batch_id.as_uuid())],
@@ -2515,7 +2650,8 @@ fn load_batch_at_sequence(
                 prior_frontier_root_digest, post_frontier_root,
                 post_frontier_root_digest, affected_documents,
                 affected_documents_digest, causal_dependency_heads,
-                causal_peer_id, causal_counter, causal_clock, causal_clock_digest,
+                causal_peer_id, causal_counter, causal_clock_root_key,
+                causal_clock_root_digest,
                 acceptance_sequence, retained_bytes
          FROM applied_batches WHERE sequence = ?1",
             [sequence],
@@ -2545,8 +2681,8 @@ fn stored_batch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredBatc
         causal_dependency_heads: row.get(13)?,
         causal_peer_id: row.get(14)?,
         causal_counter: row.get(15)?,
-        causal_clock: row.get(16)?,
-        causal_clock_digest: row.get(17)?,
+        causal_clock_root_key: row.get(16)?,
+        causal_clock_root_digest: row.get(17)?,
         acceptance_sequence: row.get(18)?,
         retained_bytes: row.get(19)?,
     })
@@ -3109,44 +3245,57 @@ fn batch_descends_from_database_measured(
     descendant: BatchId,
     ancestor: BatchId,
 ) -> Result<(bool, usize), ProjectionError> {
-    let Some(descendant_record) = load_batch(connection, descendant)? else {
-        return Ok((false, 1));
-    };
-    let Some(ancestor_record) = load_batch(connection, ancestor)? else {
-        return Ok((false, 2));
+    let root = read_frontier_root(connection)?;
+    let mut rows_read = 0;
+    let descendant_record =
+        authenticated_batch_record(connection, &root, descendant, &mut rows_read)?.ok_or_else(
+            || {
+                ProjectionError::Corrupt(format!(
+                    "descendant batch {descendant} is absent from the authenticated accepted map"
+                ))
+            },
+        )?;
+    let Some(ancestor_record) =
+        authenticated_batch_record(connection, &root, ancestor, &mut rows_read)?
+    else {
+        return Ok((false, rows_read));
     };
     let ancestor_dot = ancestor_record.causal_dot()?;
-    let clock = decode_causal_clock(&descendant_record.causal_clock)?;
+    let root = descendant_record.clock_root()?;
+    let counter = causal_clock_lookup(
+        connection,
+        Some(root),
+        ancestor_dot.peer_id(),
+        &mut rows_read,
+    )?;
     Ok((
-        clock
-            .binary_search_by_key(&ancestor_dot.peer_id(), |(peer, _)| *peer)
-            .ok()
-            .is_some_and(|index| clock[index].1 >= ancestor_dot.counter()),
-        2,
+        counter.is_some_and(|counter| counter >= ancestor_dot.counter()),
+        rows_read,
     ))
 }
 
-fn derive_causal_clock(
-    connection: &Connection,
+fn derive_causal_clock_root(
+    transaction: &Transaction<'_>,
+    accepted_root: &AcceptedFrontierRoot,
     event: &AcceptedBatchEvent,
-) -> Result<Vec<(CausalPeerId, u64)>, ProjectionError> {
-    let mut clock = BTreeMap::<CausalPeerId, u64>::new();
+) -> Result<MapLink, ProjectionError> {
+    let mut root = None;
+    let mut rows_read = 0;
     for parent in &event.causal_dependency_heads {
         let record =
-            load_batch(connection, *parent)?.ok_or(ProjectionError::MissingDependency(*parent))?;
-        for (peer, counter) in decode_causal_clock(&record.causal_clock)? {
-            clock
-                .entry(peer)
-                .and_modify(|current| *current = (*current).max(counter))
-                .or_insert(counter);
-        }
+            authenticated_batch_record(transaction, accepted_root, *parent, &mut rows_read)?
+                .ok_or(ProjectionError::MissingDependency(*parent))?;
+        root = merge_causal_clock_roots(transaction, root, Some(record.clock_root()?))?;
     }
-    let expected = clock
-        .get(&event.causal_dot.peer_id())
-        .copied()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| ProjectionError::Corrupt("causal counter overflowed".into()))?;
+    let expected = causal_clock_lookup(
+        transaction,
+        root.clone(),
+        event.causal_dot.peer_id(),
+        &mut rows_read,
+    )?
+    .unwrap_or(0)
+    .checked_add(1)
+    .ok_or_else(|| ProjectionError::Corrupt("causal counter overflowed".into()))?;
     if event.causal_dot.counter() != expected {
         return Err(ProjectionError::InvalidAcceptedEvent(format!(
             "accepted batch {} causal counter {} does not follow {}",
@@ -3155,39 +3304,596 @@ fn derive_causal_clock(
             expected.saturating_sub(1)
         )));
     }
-    clock.insert(event.causal_dot.peer_id(), event.causal_dot.counter());
-    Ok(clock.into_iter().collect())
+    upsert_causal_clock(
+        transaction,
+        root,
+        event.causal_dot.peer_id(),
+        event.causal_dot.counter(),
+    )
 }
 
-fn encode_causal_clock(clock: &[(CausalPeerId, u64)]) -> Result<Vec<u8>, ProjectionError> {
-    if clock.is_empty()
-        || clock.windows(2).any(|pair| pair[0].0 >= pair[1].0)
-        || clock.iter().any(|(_, counter)| *counter == 0)
-    {
-        return Err(ProjectionError::InvalidAcceptedEvent(
-            "causal clock is not canonical".into(),
-        ));
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MapLink {
+    key: [u8; 16],
+    digest: ContentDigest,
+}
+
+#[derive(Clone, Debug)]
+struct ClockNode {
+    peer: CausalPeerId,
+    counter: u64,
+    left: Option<MapLink>,
+    right: Option<MapLink>,
+}
+
+#[derive(Clone, Debug)]
+struct BatchMapNode {
+    batch_id: BatchId,
+    value_digest: ContentDigest,
+    left: Option<MapLink>,
+    right: Option<MapLink>,
+}
+
+impl StoredBatch {
+    fn clock_root(&self) -> Result<MapLink, ProjectionError> {
+        Ok(MapLink {
+            key: self
+                .causal_clock_root_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| ProjectionError::Corrupt("causal clock root key is invalid".into()))?,
+            digest: decode_content_digest(&self.causal_clock_root_digest)?,
+        })
     }
-    postcard::to_allocvec(&StoredCausalClock {
-        schema_version: CAUSAL_CLOCK_SCHEMA_VERSION,
-        entries: clock.to_vec(),
-    })
-    .map_err(|error| ProjectionError::InvalidAcceptedEvent(error.to_string()))
+
+    fn causal_record_digest(&self) -> Result<ContentDigest, ProjectionError> {
+        let manifest_digest = decode_content_digest(&self.manifest_digest)?;
+        let semantic_effect_digest = decode_semantic_effect_digest(&self.semantic_effect_digest)?;
+        let dependency_frontier = decode_frontier(&self.dependency_frontier)?;
+        let causal_dependency_heads = decode_batch_ids(&self.causal_dependency_heads)?;
+        let binding = super::AcceptedBatchEvidence::binding_digest_for(
+            self.batch_id,
+            manifest_digest,
+            semantic_effect_digest,
+            &dependency_frontier,
+            &causal_dependency_heads,
+        )
+        .map_err(|error| ProjectionError::Corrupt(error.to_string()))?;
+        let clock_root = self.clock_root()?;
+        Ok(super::hot_engine::accepted_causal_record_digest(
+            self.batch_id,
+            manifest_digest,
+            binding,
+            self.causal_dot()?,
+            Some(clock_root.key),
+            clock_root.digest,
+        ))
+    }
 }
 
-fn decode_causal_clock(bytes: &[u8]) -> Result<Vec<(CausalPeerId, u64)>, ProjectionError> {
-    let stored: StoredCausalClock = postcard::from_bytes(bytes)
-        .map_err(|error| ProjectionError::Corrupt(format!("invalid causal clock: {error}")))?;
-    if stored.schema_version != CAUSAL_CLOCK_SCHEMA_VERSION
-        || encode_causal_clock(&stored.entries)
-            .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
-            != bytes
+fn authenticated_batch_record(
+    connection: &Connection,
+    root: &AcceptedFrontierRoot,
+    batch_id: BatchId,
+    rows_read: &mut usize,
+) -> Result<Option<StoredBatch>, ProjectionError> {
+    let Some(root_key) = root.batch_map_root_key() else {
+        if root.acceptance_sequence() == 0 {
+            return Ok(None);
+        }
+        return Err(ProjectionError::Corrupt(
+            "nonempty frontier has no authenticated batch-map root".into(),
+        ));
+    };
+    let mut current = Some(MapLink {
+        key: root_key,
+        digest: root.batch_map_root_digest(),
+    });
+    let mut value_digest = None;
+    while let Some(link) = current {
+        let node = load_batch_map_node(connection, &link)?;
+        *rows_read = rows_read.saturating_add(1);
+        match batch_id.cmp(&node.batch_id) {
+            std::cmp::Ordering::Equal => {
+                value_digest = Some(node.value_digest);
+                break;
+            }
+            std::cmp::Ordering::Less => current = node.left,
+            std::cmp::Ordering::Greater => current = node.right,
+        }
+    }
+    let Some(value_digest) = value_digest else {
+        return Ok(None);
+    };
+    let record = load_batch(connection, batch_id)?.ok_or_else(|| {
+        ProjectionError::Corrupt(format!(
+            "authenticated accepted batch {batch_id} is missing its exact record"
+        ))
+    })?;
+    *rows_read = rows_read.saturating_add(1);
+    if record.causal_record_digest()? != value_digest {
+        return Err(ProjectionError::Corrupt(format!(
+            "accepted batch {batch_id} differs from its authenticated causal record"
+        )));
+    }
+    let dot = record.causal_dot()?;
+    let counter = causal_clock_lookup(
+        connection,
+        Some(record.clock_root()?),
+        dot.peer_id(),
+        rows_read,
+    )?;
+    if counter != Some(dot.counter()) {
+        return Err(ProjectionError::Corrupt(format!(
+            "accepted batch {batch_id} causal dot is absent from its authenticated clock"
+        )));
+    }
+    Ok(Some(record))
+}
+
+fn causal_clock_lookup(
+    connection: &Connection,
+    mut current: Option<MapLink>,
+    peer: CausalPeerId,
+    rows_read: &mut usize,
+) -> Result<Option<u64>, ProjectionError> {
+    while let Some(link) = current {
+        let node = load_clock_node(connection, &link)?;
+        *rows_read = rows_read.saturating_add(1);
+        match peer.cmp(&node.peer) {
+            std::cmp::Ordering::Equal => return Ok(Some(node.counter)),
+            std::cmp::Ordering::Less => current = node.left,
+            std::cmp::Ordering::Greater => current = node.right,
+        }
+    }
+    Ok(None)
+}
+
+fn load_clock_node(
+    connection: &Connection,
+    expected: &MapLink,
+) -> Result<ClockNode, ProjectionError> {
+    let stored = connection
+        .query_row(
+            "SELECT peer_id, counter, value_digest, left_peer_id, left_digest,
+                    right_peer_id, right_digest
+             FROM causal_clock_nodes WHERE node_digest = ?1",
+            [expected.digest.as_bytes().as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Option<Vec<u8>>>(3)?,
+                    row.get::<_, Option<Vec<u8>>>(4)?,
+                    row.get::<_, Option<Vec<u8>>>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            ProjectionError::Corrupt(format!(
+                "authenticated causal clock node {} is missing",
+                expected.digest
+            ))
+        })?;
+    let peer = decode_causal_peer(&stored.0)?;
+    let counter = u64::try_from(stored.1)
+        .map_err(|_| ProjectionError::Corrupt("causal clock counter is invalid".into()))?;
+    let value_digest = decode_content_digest(&stored.2)?;
+    let left = decode_map_link(stored.3, stored.4)?;
+    let right = decode_map_link(stored.5, stored.6)?;
+    let node = ClockNode {
+        peer,
+        counter,
+        left,
+        right,
+    };
+    validate_clock_node(expected, value_digest, &node)?;
+    Ok(node)
+}
+
+fn validate_clock_node(
+    expected: &MapLink,
+    value_digest: ContentDigest,
+    node: &ClockNode,
+) -> Result<(), ProjectionError> {
+    let key = causal_peer_key(node.peer);
+    if expected.key != key
+        || node.counter == 0
+        || value_digest != super::hot_engine::causal_clock_counter_digest(node.peer, node.counter)
+        || !valid_map_children(key, node.left.as_ref(), node.right.as_ref())
+        || super::scratch_store::authenticated_map_node_digest(
+            key,
+            value_digest,
+            node.left.as_ref().map(|child| (child.key, child.digest)),
+            node.right.as_ref().map(|child| (child.key, child.digest)),
+        ) != expected.digest
     {
         return Err(ProjectionError::Corrupt(
-            "stored causal clock is not canonical".into(),
+            "authenticated causal clock node is misbound".into(),
         ));
     }
-    Ok(stored.entries)
+    Ok(())
+}
+
+fn load_batch_map_node(
+    connection: &Connection,
+    expected: &MapLink,
+) -> Result<BatchMapNode, ProjectionError> {
+    let stored = connection
+        .query_row(
+            "SELECT batch_id, value_digest, left_batch_id, left_digest,
+                    right_batch_id, right_digest
+             FROM accepted_batch_nodes WHERE node_digest = ?1",
+            [expected.digest.as_bytes().as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                    row.get::<_, Option<Vec<u8>>>(3)?,
+                    row.get::<_, Option<Vec<u8>>>(4)?,
+                    row.get::<_, Option<Vec<u8>>>(5)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            ProjectionError::Corrupt(format!(
+                "authenticated accepted-batch node {} is missing",
+                expected.digest
+            ))
+        })?;
+    let node = BatchMapNode {
+        batch_id: BatchId::from_uuid(decode_uuid(&stored.0)?),
+        value_digest: decode_content_digest(&stored.1)?,
+        left: decode_map_link(stored.2, stored.3)?,
+        right: decode_map_link(stored.4, stored.5)?,
+    };
+    let key = node.batch_id.as_uuid().into_bytes();
+    if expected.key != key
+        || !valid_map_children(key, node.left.as_ref(), node.right.as_ref())
+        || super::scratch_store::authenticated_map_node_digest(
+            key,
+            node.value_digest,
+            node.left.as_ref().map(|child| (child.key, child.digest)),
+            node.right.as_ref().map(|child| (child.key, child.digest)),
+        ) != expected.digest
+    {
+        return Err(ProjectionError::Corrupt(
+            "authenticated accepted-batch node is misbound".into(),
+        ));
+    }
+    Ok(node)
+}
+
+fn valid_map_children(key: [u8; 16], left: Option<&MapLink>, right: Option<&MapLink>) -> bool {
+    left.is_none_or(|child| {
+        child.key < key
+            && super::scratch_store::authenticated_map_priority_order(key, child.key).is_lt()
+    }) && right.is_none_or(|child| {
+        child.key > key
+            && super::scratch_store::authenticated_map_priority_order(key, child.key).is_lt()
+    })
+}
+
+fn decode_map_link(
+    key: Option<Vec<u8>>,
+    digest: Option<Vec<u8>>,
+) -> Result<Option<MapLink>, ProjectionError> {
+    match (key, digest) {
+        (None, None) => Ok(None),
+        (Some(key), Some(digest)) => Ok(Some(MapLink {
+            key: key
+                .as_slice()
+                .try_into()
+                .map_err(|_| ProjectionError::Corrupt("authenticated map key is invalid".into()))?,
+            digest: decode_content_digest(&digest)?,
+        })),
+        _ => Err(ProjectionError::Corrupt(
+            "authenticated map child is incomplete".into(),
+        )),
+    }
+}
+
+fn causal_peer_key(peer: CausalPeerId) -> [u8; 16] {
+    peer.as_device_id().as_uuid().into_bytes()
+}
+
+fn decode_causal_peer(bytes: &[u8]) -> Result<CausalPeerId, ProjectionError> {
+    Ok(CausalPeerId::from_device_id(super::DeviceId::from_uuid(
+        decode_uuid(bytes)?,
+    )))
+}
+
+fn merge_causal_clock_roots(
+    connection: &Connection,
+    left: Option<MapLink>,
+    right: Option<MapLink>,
+) -> Result<Option<MapLink>, ProjectionError> {
+    match (&left, &right) {
+        (_, None) => return Ok(left),
+        (None, Some(_)) => return Ok(right),
+        (Some(left), Some(right)) if left == right => return Ok(Some(left.clone())),
+        _ => {}
+    }
+    let mut entries = Vec::new();
+    collect_causal_clock_entries(connection, right, &mut entries)?;
+    let mut merged = left;
+    for (peer, counter) in entries {
+        let current = causal_clock_lookup(connection, merged.clone(), peer, &mut 0)?;
+        if current.is_none_or(|current| current < counter) {
+            merged = Some(upsert_causal_clock(connection, merged, peer, counter)?);
+        }
+    }
+    Ok(merged)
+}
+
+fn collect_causal_clock_entries(
+    connection: &Connection,
+    root: Option<MapLink>,
+    entries: &mut Vec<(CausalPeerId, u64)>,
+) -> Result<(), ProjectionError> {
+    let Some(root) = root else {
+        return Ok(());
+    };
+    let node = load_clock_node(connection, &root)?;
+    collect_causal_clock_entries(connection, node.left.clone(), entries)?;
+    entries.push((node.peer, node.counter));
+    collect_causal_clock_entries(connection, node.right, entries)
+}
+
+fn upsert_causal_clock(
+    connection: &Connection,
+    root: Option<MapLink>,
+    peer: CausalPeerId,
+    counter: u64,
+) -> Result<MapLink, ProjectionError> {
+    let Some(root) = root else {
+        return write_clock_node(
+            connection,
+            &ClockNode {
+                peer,
+                counter,
+                left: None,
+                right: None,
+            },
+        );
+    };
+    let mut node = load_clock_node(connection, &root)?;
+    match peer.cmp(&node.peer) {
+        std::cmp::Ordering::Equal => {
+            node.counter = node.counter.max(counter);
+            write_clock_node(connection, &node)
+        }
+        std::cmp::Ordering::Less => {
+            node.left = Some(upsert_causal_clock(
+                connection,
+                node.left.take(),
+                peer,
+                counter,
+            )?);
+            if node.left.as_ref().is_some_and(|left| {
+                super::scratch_store::authenticated_map_priority_order(
+                    left.key,
+                    causal_peer_key(node.peer),
+                )
+                .is_lt()
+            }) {
+                rotate_clock_right(connection, node)
+            } else {
+                write_clock_node(connection, &node)
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            node.right = Some(upsert_causal_clock(
+                connection,
+                node.right.take(),
+                peer,
+                counter,
+            )?);
+            if node.right.as_ref().is_some_and(|right| {
+                super::scratch_store::authenticated_map_priority_order(
+                    right.key,
+                    causal_peer_key(node.peer),
+                )
+                .is_lt()
+            }) {
+                rotate_clock_left(connection, node)
+            } else {
+                write_clock_node(connection, &node)
+            }
+        }
+    }
+}
+
+fn rotate_clock_right(
+    connection: &Connection,
+    mut node: ClockNode,
+) -> Result<MapLink, ProjectionError> {
+    let left_link = node.left.take().ok_or_else(|| {
+        ProjectionError::Corrupt("causal clock rotation has no left child".into())
+    })?;
+    let mut left = load_clock_node(connection, &left_link)?;
+    node.left = left.right.take();
+    left.right = Some(write_clock_node(connection, &node)?);
+    write_clock_node(connection, &left)
+}
+
+fn rotate_clock_left(
+    connection: &Connection,
+    mut node: ClockNode,
+) -> Result<MapLink, ProjectionError> {
+    let right_link = node.right.take().ok_or_else(|| {
+        ProjectionError::Corrupt("causal clock rotation has no right child".into())
+    })?;
+    let mut right = load_clock_node(connection, &right_link)?;
+    node.right = right.left.take();
+    right.left = Some(write_clock_node(connection, &node)?);
+    write_clock_node(connection, &right)
+}
+
+fn write_clock_node(connection: &Connection, node: &ClockNode) -> Result<MapLink, ProjectionError> {
+    let key = causal_peer_key(node.peer);
+    let value_digest = super::hot_engine::causal_clock_counter_digest(node.peer, node.counter);
+    let digest = super::scratch_store::authenticated_map_node_digest(
+        key,
+        value_digest,
+        node.left.as_ref().map(|child| (child.key, child.digest)),
+        node.right.as_ref().map(|child| (child.key, child.digest)),
+    );
+    let link = MapLink { key, digest };
+    validate_clock_node(&link, value_digest, node)?;
+    connection.execute(
+        "INSERT OR IGNORE INTO causal_clock_nodes (
+             node_digest, peer_id, counter, value_digest, left_peer_id, left_digest,
+             right_peer_id, right_digest
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            digest.as_bytes().as_slice(),
+            key.as_slice(),
+            i64::try_from(node.counter)
+                .map_err(|_| ProjectionError::Corrupt("causal counter exceeds SQLite".into()))?,
+            value_digest.as_bytes().as_slice(),
+            node.left.as_ref().map(|child| child.key.as_slice()),
+            node.left
+                .as_ref()
+                .map(|child| child.digest.as_bytes().as_slice()),
+            node.right.as_ref().map(|child| child.key.as_slice()),
+            node.right
+                .as_ref()
+                .map(|child| child.digest.as_bytes().as_slice()),
+        ],
+    )?;
+    let _ = load_clock_node(connection, &link)?;
+    Ok(link)
+}
+
+fn upsert_accepted_batch_map(
+    connection: &Connection,
+    root: Option<MapLink>,
+    batch_id: BatchId,
+    value_digest: ContentDigest,
+) -> Result<MapLink, ProjectionError> {
+    let Some(root) = root else {
+        return write_batch_map_node(
+            connection,
+            &BatchMapNode {
+                batch_id,
+                value_digest,
+                left: None,
+                right: None,
+            },
+        );
+    };
+    let mut node = load_batch_map_node(connection, &root)?;
+    match batch_id.cmp(&node.batch_id) {
+        std::cmp::Ordering::Equal => {
+            node.value_digest = value_digest;
+            write_batch_map_node(connection, &node)
+        }
+        std::cmp::Ordering::Less => {
+            node.left = Some(upsert_accepted_batch_map(
+                connection,
+                node.left.take(),
+                batch_id,
+                value_digest,
+            )?);
+            if node.left.as_ref().is_some_and(|left| {
+                super::scratch_store::authenticated_map_priority_order(
+                    left.key,
+                    node.batch_id.as_uuid().into_bytes(),
+                )
+                .is_lt()
+            }) {
+                rotate_batch_map_right(connection, node)
+            } else {
+                write_batch_map_node(connection, &node)
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            node.right = Some(upsert_accepted_batch_map(
+                connection,
+                node.right.take(),
+                batch_id,
+                value_digest,
+            )?);
+            if node.right.as_ref().is_some_and(|right| {
+                super::scratch_store::authenticated_map_priority_order(
+                    right.key,
+                    node.batch_id.as_uuid().into_bytes(),
+                )
+                .is_lt()
+            }) {
+                rotate_batch_map_left(connection, node)
+            } else {
+                write_batch_map_node(connection, &node)
+            }
+        }
+    }
+}
+
+fn rotate_batch_map_right(
+    connection: &Connection,
+    mut node: BatchMapNode,
+) -> Result<MapLink, ProjectionError> {
+    let left_link = node.left.take().ok_or_else(|| {
+        ProjectionError::Corrupt("accepted batch-map rotation has no left child".into())
+    })?;
+    let mut left = load_batch_map_node(connection, &left_link)?;
+    node.left = left.right.take();
+    left.right = Some(write_batch_map_node(connection, &node)?);
+    write_batch_map_node(connection, &left)
+}
+
+fn rotate_batch_map_left(
+    connection: &Connection,
+    mut node: BatchMapNode,
+) -> Result<MapLink, ProjectionError> {
+    let right_link = node.right.take().ok_or_else(|| {
+        ProjectionError::Corrupt("accepted batch-map rotation has no right child".into())
+    })?;
+    let mut right = load_batch_map_node(connection, &right_link)?;
+    node.right = right.left.take();
+    right.left = Some(write_batch_map_node(connection, &node)?);
+    write_batch_map_node(connection, &right)
+}
+
+fn write_batch_map_node(
+    connection: &Connection,
+    node: &BatchMapNode,
+) -> Result<MapLink, ProjectionError> {
+    let key = node.batch_id.as_uuid().into_bytes();
+    let digest = super::scratch_store::authenticated_map_node_digest(
+        key,
+        node.value_digest,
+        node.left.as_ref().map(|child| (child.key, child.digest)),
+        node.right.as_ref().map(|child| (child.key, child.digest)),
+    );
+    let link = MapLink { key, digest };
+    connection.execute(
+        "INSERT OR IGNORE INTO accepted_batch_nodes (
+             node_digest, batch_id, value_digest, left_batch_id, left_digest,
+             right_batch_id, right_digest
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            digest.as_bytes().as_slice(),
+            key.as_slice(),
+            node.value_digest.as_bytes().as_slice(),
+            node.left.as_ref().map(|child| child.key.as_slice()),
+            node.left
+                .as_ref()
+                .map(|child| child.digest.as_bytes().as_slice()),
+            node.right.as_ref().map(|child| child.key.as_slice()),
+            node.right
+                .as_ref()
+                .map(|child| child.digest.as_bytes().as_slice()),
+        ],
+    )?;
+    let _ = load_batch_map_node(connection, &link)?;
+    Ok(link)
 }
 
 fn encode_batch_ids(batch_ids: &[BatchId]) -> Result<Vec<u8>, ProjectionError> {
@@ -3246,11 +3952,24 @@ fn prepare_database_path(path: &Path) -> Result<PathBuf, ProjectionError> {
 
 fn prepare_application_runtime_root(path: &Path) -> Result<PathBuf, ProjectionError> {
     fs::create_dir_all(path)?;
+    let direct_metadata = fs::symlink_metadata(path)?;
+    if direct_metadata.file_type().is_symlink() || !direct_metadata.is_dir() {
+        return Err(ProjectionError::UnsafePath(
+            "application runtime root is not a no-follow directory".into(),
+        ));
+    }
     let canonical = fs::canonicalize(path)?;
     let metadata = fs::symlink_metadata(&canonical)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(ProjectionError::UnsafePath(
             "application runtime root is not a real directory".into(),
+        ));
+    }
+    #[cfg(unix)]
+    // SAFETY: `geteuid` takes no arguments and has no memory-safety preconditions.
+    if metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(ProjectionError::UnsafePath(
+            "application runtime root is not owned by the current user".into(),
         ));
     }
     Ok(canonical)
@@ -3846,7 +4565,7 @@ mod tests {
         source: RebuildSource<'_>,
     ) -> Result<OpenProjection, ProjectionError> {
         let parent = path.parent().expect("test database parent");
-        let runtime = ApplicationRuntimeRoot::open(&parent.join(".application-runtime"))?;
+        let runtime = ApplicationRuntimeRoot::open_for_test(&parent.join(".application-runtime"))?;
         SqliteFrontier::open_or_rebuild(path, &runtime, claim, source)
     }
 
@@ -3904,6 +4623,19 @@ mod tests {
             author_device_id: DeviceId::from_uuid(uuid(seed + 60_000)),
             author_session_id: SessionId::from_uuid(uuid(seed + 70_000)),
             crdt_peer_id: CrdtPeerId::from_u64((seed + 80_000) as u64),
+        }
+    }
+
+    fn fresh_peer_author(seed: u128, index: usize) -> AuthorBatch {
+        AuthorBatch {
+            batch_id: batch(seed + 50_000 + index as u128),
+            author_device_id: DeviceId::from_uuid(uuid(seed + 60_000 + index as u128)),
+            author_session_id: SessionId::from_uuid(uuid(seed + 70_000 + index as u128)),
+            crdt_peer_id: CrdtPeerId::from_u64(
+                (seed + 80_000 + index as u128)
+                    .try_into()
+                    .expect("test peer fits u64"),
+            ),
         }
     }
 
@@ -4121,6 +4853,11 @@ mod tests {
             root.manifest().causal_dependency_heads(),
         )
         .unwrap();
+        let root_entry = test_causal_record_entry(
+            &root,
+            root_binding,
+            vec![(root.manifest().causal_dot().peer_id(), 1)],
+        );
         let root_evidence = super::super::AcceptedBatchEvidence::for_test(
             root_id,
             root_fingerprint,
@@ -4128,6 +4865,7 @@ mod tests {
             AcceptedFrontierRoot::empty(),
             vec![root_document.clone()],
             vec![root_document],
+            vec![root_entry],
             validated_retained_bytes(&root),
         );
         let root_event = AcceptedBatchEvent::from_validated(&root, &root_evidence).unwrap();
@@ -4148,6 +4886,14 @@ mod tests {
             child.manifest().causal_dependency_heads(),
         )
         .unwrap();
+        let child_entry = test_causal_record_entry(
+            &child,
+            child_binding,
+            vec![
+                (root.manifest().causal_dot().peer_id(), 1),
+                (child.manifest().causal_dot().peer_id(), 1),
+            ],
+        );
         let child_evidence = super::super::AcceptedBatchEvidence::for_test(
             child_id,
             child_fingerprint,
@@ -4155,6 +4901,7 @@ mod tests {
             root_event.post_frontier_root.clone(),
             vec![child_document.clone()],
             vec![child_document],
+            vec![root_entry, child_entry],
             validated_retained_bytes(&child),
         );
         let child_event = AcceptedBatchEvent::from_validated(&child, &child_evidence).unwrap();
@@ -4169,6 +4916,27 @@ mod tests {
             .fold(manifest.len() as u64, |total, object| {
                 total + object.encode().unwrap().len() as u64
             })
+    }
+
+    fn test_causal_record_entry(
+        batch: &ValidatedBatch,
+        binding: ContentDigest,
+        mut clock: Vec<(CausalPeerId, u64)>,
+    ) -> (BatchId, ContentDigest) {
+        clock.sort_unstable_by_key(|(peer, _)| *peer);
+        let (root_key, root_digest) =
+            super::super::hot_engine::authenticated_causal_clock_root(&clock).unwrap();
+        (
+            batch.manifest().batch_id(),
+            super::super::hot_engine::accepted_causal_record_digest(
+                batch.manifest().batch_id(),
+                ContentDigest::of(&batch.manifest().encode().unwrap()),
+                binding,
+                batch.manifest().causal_dot(),
+                root_key,
+                root_digest,
+            ),
+        )
     }
 
     #[test]
@@ -4199,7 +4967,10 @@ mod tests {
         }
 
         if mode == "canonical-lease-contender" {
-            let runtime = ApplicationRuntimeRoot::open(&root.join("runtime")).unwrap();
+            let would_be_runtime =
+                PathBuf::from(std::env::var_os("TINE_SQLITE_HELPER_WOULD_BE_RUNTIME").unwrap());
+            assert_ne!(would_be_runtime, root.join("runtime"));
+            let runtime = ApplicationRuntimeRoot::open_for_test(&root.join("runtime")).unwrap();
             let engine = ids.engine();
             let result = SqliteFrontier::open_or_rebuild(
                 &root.join("db-b/frontier.sqlite"),
@@ -4208,6 +4979,21 @@ mod tests {
                 RebuildSource::new(&engine, &store).unwrap(),
             );
             assert!(matches!(result, Err(ProjectionError::LeaseContended(_))));
+            return;
+        }
+
+        if mode == "injected-would-be-root-acquires" {
+            let would_be_runtime =
+                PathBuf::from(std::env::var_os("TINE_SQLITE_HELPER_WOULD_BE_RUNTIME").unwrap());
+            let runtime = ApplicationRuntimeRoot::open_for_test(&would_be_runtime).unwrap();
+            let engine = ids.engine();
+            let _opened = SqliteFrontier::open_or_rebuild(
+                &root.join("db-b/fail-before.sqlite"),
+                &runtime,
+                ids.claim(),
+                RebuildSource::new(&engine, &store).unwrap(),
+            )
+            .unwrap();
             return;
         }
 
@@ -4413,6 +5199,80 @@ mod tests {
         .unwrap()])
         .unwrap();
         assert!(!database.contains_frontier(&missing_peer).unwrap());
+    }
+
+    #[test]
+    fn ancestry_rejects_valid_local_clock_substitution_not_committed_by_accepted_root() {
+        let ids = TestIds::new(2_025);
+        let dir = TestDir::new("authenticated-clock-substitution");
+        let (mut database, _engine, store) = open_empty(&dir, ids);
+        let (root, child) = root_and_child_events(&store, ids);
+        database.apply_accepted(&root).unwrap();
+        database.apply_accepted(&child).unwrap();
+        let root_record = load_batch(&database.connection, root.batch_id())
+            .unwrap()
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "UPDATE applied_batches
+                 SET causal_clock_root_key = ?1, causal_clock_root_digest = ?2
+                 WHERE batch_id = ?3",
+                params![
+                    root_record.causal_clock_root_key,
+                    root_record.causal_clock_root_digest,
+                    uuid_blob(&child.batch_id().as_uuid()),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            database.contains_frontier(&root.exact_frontier()),
+            Err(ProjectionError::Corrupt(message))
+                if message.contains("authenticated causal record")
+        ));
+    }
+
+    #[test]
+    fn ancestry_missing_authenticated_records_or_clock_nodes_require_rebuild() {
+        for (case, seed) in [("batch-record", 2_050), ("clock-node", 2_075)] {
+            let ids = TestIds::new(seed);
+            let dir = TestDir::new(&format!("missing-authenticated-{case}"));
+            let (mut database, _engine, store) = open_empty(&dir, ids);
+            let (root, child) = root_and_child_events(&store, ids);
+            database.apply_accepted(&root).unwrap();
+            database.apply_accepted(&child).unwrap();
+            let child_record = load_batch(&database.connection, child.batch_id())
+                .unwrap()
+                .unwrap();
+            match case {
+                "batch-record" => {
+                    database
+                        .connection
+                        .execute(
+                            "DELETE FROM applied_batches WHERE batch_id = ?1",
+                            [uuid_blob(&child.batch_id().as_uuid())],
+                        )
+                        .unwrap();
+                }
+                "clock-node" => {
+                    database
+                        .connection
+                        .execute(
+                            "DELETE FROM causal_clock_nodes WHERE node_digest = ?1",
+                            [child_record.causal_clock_root_digest],
+                        )
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    database.contains_frontier(&root.exact_frontier()),
+                    Err(ProjectionError::Corrupt(_))
+                ),
+                "missing {case} did not fail closed"
+            );
+        }
     }
 
     #[test]
@@ -4845,10 +5705,26 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct CausalStorageStats {
+        clock_nodes: usize,
+        clock_node_bytes: usize,
+        batch_nodes: usize,
+        batch_node_bytes: usize,
+        database_bytes: usize,
+        ancestry_rows_read: usize,
+    }
+
     fn measured_streaming_rebuild(
         batch_count: usize,
         seed: u128,
-    ) -> (RebuildInstrumentation, Duration, Duration) {
+        fresh_peers: bool,
+    ) -> (
+        RebuildInstrumentation,
+        Duration,
+        Duration,
+        CausalStorageStats,
+    ) {
         let ids = TestIds::new(seed);
         let dir = TestDir::new(&format!("streaming-rebuild-{batch_count}"));
         let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
@@ -4857,7 +5733,11 @@ mod tests {
             ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
         let root = engine
             .prepare_transaction(
-                constant_peer_author(seed, 0),
+                if fresh_peers {
+                    fresh_peer_author(seed, 0)
+                } else {
+                    constant_peer_author(seed, 0)
+                },
                 &root_transaction(ids, "pages/linear.md", "0"),
             )
             .unwrap();
@@ -4865,7 +5745,11 @@ mod tests {
         for index in 1..batch_count {
             let edit = engine
                 .prepare_transaction(
-                    constant_peer_author(seed, index),
+                    if fresh_peers {
+                        fresh_peer_author(seed, index)
+                    } else {
+                        constant_peer_author(seed, index)
+                    },
                     &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
                         block: BlockLocation {
                             block_id: ids.block,
@@ -4915,7 +5799,60 @@ mod tests {
             batch_descends_from_database_measured(&opened.database.connection, last, first)
                 .unwrap();
         assert!(descends);
-        assert_eq!(batch_rows_read, 2);
+        assert!(
+            batch_rows_read <= 96,
+            "authenticated ancestry point lookup read {batch_rows_read} rows"
+        );
+        let (clock_nodes, clock_node_bytes): (i64, i64) = opened
+            .database
+            .connection
+            .query_row(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(length(node_digest) + length(peer_id) + 8
+                            + length(value_digest)
+                            + COALESCE(length(left_peer_id), 0)
+                            + COALESCE(length(left_digest), 0)
+                            + COALESCE(length(right_peer_id), 0)
+                            + COALESCE(length(right_digest), 0)), 0)
+                 FROM causal_clock_nodes",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let (batch_nodes, batch_node_bytes): (i64, i64) = opened
+            .database
+            .connection
+            .query_row(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(length(node_digest) + length(batch_id)
+                            + length(value_digest)
+                            + COALESCE(length(left_batch_id), 0)
+                            + COALESCE(length(left_digest), 0)
+                            + COALESCE(length(right_batch_id), 0)
+                            + COALESCE(length(right_digest), 0)), 0)
+                 FROM accepted_batch_nodes",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let page_count: i64 = opened
+            .database
+            .connection
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .unwrap();
+        let page_size: i64 = opened
+            .database
+            .connection
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let causal_stats = CausalStorageStats {
+            clock_nodes: usize::try_from(clock_nodes).unwrap(),
+            clock_node_bytes: usize::try_from(clock_node_bytes).unwrap(),
+            batch_nodes: usize::try_from(batch_nodes).unwrap(),
+            batch_node_bytes: usize::try_from(batch_node_bytes).unwrap(),
+            database_bytes: usize::try_from(page_count * page_size).unwrap(),
+            ancestry_rows_read: batch_rows_read,
+        };
         let rebuild = opened.rebuild;
         drop(opened);
         let started = Instant::now();
@@ -4927,13 +5864,13 @@ mod tests {
         .unwrap();
         let startup_elapsed = started.elapsed();
         assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
-        (rebuild, rebuild_elapsed, startup_elapsed)
+        (rebuild, rebuild_elapsed, startup_elapsed, causal_stats)
     }
 
     #[test]
     fn rebuild_streams_linearly_with_one_live_event_and_evidence_record() {
-        let (small, small_elapsed, small_startup) = measured_streaming_rebuild(24, 2_500);
-        let (large, large_elapsed, large_startup) = measured_streaming_rebuild(48, 2_700);
+        let (small, small_elapsed, small_startup, _) = measured_streaming_rebuild(24, 2_500, false);
+        let (large, large_elapsed, large_startup, _) = measured_streaming_rebuild(48, 2_700, false);
         assert_eq!(small.accepted_events_validated, 24);
         assert_eq!(small.accepted_events_applied, 24);
         assert_eq!(large.accepted_events_validated, 48);
@@ -4969,8 +5906,8 @@ mod tests {
     #[ignore = "explicit constant-peer SQLite rebuild scaling sweep"]
     fn sqlite_streaming_rebuild_constant_peer_scaling_sweep() {
         for (index, batch_count) in [100_usize, 200, 400, 800].into_iter().enumerate() {
-            let (work, rebuild_elapsed, startup_elapsed) =
-                measured_streaming_rebuild(batch_count, 2_800 + index as u128 * 10_000);
+            let (work, rebuild_elapsed, startup_elapsed, _) =
+                measured_streaming_rebuild(batch_count, 2_800 + index as u128 * 10_000, false);
             let leaf_pages = batch_count;
             assert_eq!(work.accepted_events_validated, batch_count);
             assert_eq!(work.accepted_events_applied, batch_count);
@@ -5004,9 +5941,57 @@ mod tests {
     }
 
     #[test]
+    fn fresh_peer_clocks_use_structural_sharing_instead_of_full_vectors() {
+        let (_, _, _, small) = measured_streaming_rebuild(24, 2_750, true);
+        let (_, _, _, large) = measured_streaming_rebuild(48, 2_775, true);
+        assert!(small.clock_nodes < 24 * 32);
+        assert!(large.clock_nodes < 48 * 32);
+        assert!(
+            large.clock_nodes < small.clock_nodes.saturating_mul(3),
+            "doubling fresh-peer history grew clock nodes from {} to {}",
+            small.clock_nodes,
+            large.clock_nodes
+        );
+        assert!(large.ancestry_rows_read <= 96);
+    }
+
+    #[test]
+    #[ignore = "explicit fresh-peer authenticated SQLite scaling sweep"]
+    fn sqlite_streaming_rebuild_fresh_peer_scaling_sweep() {
+        for (index, batch_count) in [100_usize, 200, 400].into_iter().enumerate() {
+            let (work, rebuild_elapsed, startup_elapsed, storage) =
+                measured_streaming_rebuild(batch_count, 40_000 + index as u128 * 100_000, true);
+            let logarithmic_path_bound =
+                usize::try_from(usize::BITS - batch_count.leading_zeros()).unwrap() * 8 + 8;
+            assert!(storage.clock_nodes <= batch_count * logarithmic_path_bound);
+            assert!(storage.batch_nodes <= batch_count * logarithmic_path_bound);
+            assert!(storage.clock_node_bytes <= storage.clock_nodes * 256);
+            assert!(storage.batch_node_bytes <= storage.batch_nodes * 256);
+            assert!(storage.database_bytes <= batch_count * 192 * 1024);
+            assert!(storage.ancestry_rows_read <= 96);
+            assert!(startup_elapsed < Duration::from_secs(2));
+            eprintln!(
+                "sqlite_fresh_peer_sweep batches={} rebuild_ms={} startup_ms={} clock_nodes={} clock_bytes={} batch_nodes={} batch_bytes={} database_bytes={} ancestry_rows={} sequence_pages={} sequence_bytes={}",
+                batch_count,
+                rebuild_elapsed.as_millis(),
+                startup_elapsed.as_millis(),
+                storage.clock_nodes,
+                storage.clock_node_bytes,
+                storage.batch_nodes,
+                storage.batch_node_bytes,
+                storage.database_bytes,
+                storage.ancestry_rows_read,
+                work.accepted_sequence_page_reads,
+                work.accepted_sequence_bytes_read,
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "explicit authenticated SQLite cold-rebuild performance gate"]
     fn sqlite_streaming_rebuild_cold_gate() {
-        let (work, rebuild_elapsed, startup_elapsed) = measured_streaming_rebuild(1_000, 2_900);
+        let (work, rebuild_elapsed, startup_elapsed, _) =
+            measured_streaming_rebuild(1_000, 2_900, false);
         assert_eq!(work.accepted_events_validated, 1_000);
         assert_eq!(work.accepted_events_applied, 1_000);
         assert_eq!(work.max_live_events, 1);
@@ -5194,20 +6179,50 @@ mod tests {
             root.exact_frontier(),
         );
         let sibling_document = frontier(ids.document, 3, vec![batch(102)]).documents()[0].clone();
+        let sibling_binding = super::super::AcceptedBatchEvidence::binding_digest_for(
+            batch(102),
+            ContentDigest::of(&sibling.manifest().encode().unwrap()),
+            sibling.manifest().semantic_effect_digest(),
+            sibling.manifest().dependency_frontier(),
+            sibling.manifest().causal_dependency_heads(),
+        )
+        .unwrap();
+        let sibling_entry = test_causal_record_entry(
+            &sibling,
+            sibling_binding,
+            vec![
+                (root.causal_dot().peer_id(), 1),
+                (sibling.manifest().causal_dot().peer_id(), 1),
+            ],
+        );
+        let mut batch_entries = vec![
+            (
+                root.batch_id(),
+                load_batch(&database.connection, root.batch_id())
+                    .unwrap()
+                    .unwrap()
+                    .causal_record_digest()
+                    .unwrap(),
+            ),
+            (
+                child.batch_id(),
+                load_batch(&database.connection, child.batch_id())
+                    .unwrap()
+                    .unwrap()
+                    .causal_record_digest()
+                    .unwrap(),
+            ),
+            sibling_entry,
+        ];
+        batch_entries.sort_unstable_by_key(|(batch_id, _)| *batch_id);
         let sibling_evidence = super::super::AcceptedBatchEvidence::for_test(
             batch(102),
             ContentDigest::of(&sibling.manifest().encode().unwrap()),
-            super::super::AcceptedBatchEvidence::binding_digest_for(
-                batch(102),
-                ContentDigest::of(&sibling.manifest().encode().unwrap()),
-                sibling.manifest().semantic_effect_digest(),
-                sibling.manifest().dependency_frontier(),
-                sibling.manifest().causal_dependency_heads(),
-            )
-            .unwrap(),
+            sibling_binding,
             child.post_frontier_root.clone(),
             vec![sibling_document.clone()],
             vec![sibling_document],
+            batch_entries,
             validated_retained_bytes(&sibling),
         );
         let mut regressing =
@@ -5530,7 +6545,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_runtime_lease_contends_across_database_parents_and_subprocess() {
+    fn production_shaped_runtime_lease_ignores_distinct_would_be_roots_across_processes() {
         let seed = 7_400;
         let ids = TestIds::new(seed);
         let dir = TestDir::new("canonical-runtime-lease");
@@ -5538,7 +6553,35 @@ mod tests {
         fs::create_dir_all(dir.path().join("db-b")).unwrap();
         let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
         let engine = ids.engine();
-        let runtime = ApplicationRuntimeRoot::open(&dir.path().join("runtime")).unwrap();
+        let would_be_a = dir.path().join("db-a/runtime");
+        let would_be_b = dir.path().join("db-b/runtime");
+        assert_ne!(would_be_a, would_be_b);
+
+        // Fail-before witness for the rejected API: when test-only injection
+        // deliberately models two caller-selected roots, separate processes
+        // can both acquire the same WorkspaceId. Production cannot construct
+        // either injected root.
+        let injected_a = ApplicationRuntimeRoot::open_for_test(&would_be_a).unwrap();
+        let vulnerable_first = SqliteFrontier::open_or_rebuild(
+            &dir.path().join("db-a/fail-before.sqlite"),
+            &injected_a,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        let mut fail_before = spawn_test_helper(
+            "injected-would-be-root-acquires",
+            dir.path(),
+            seed,
+            &[(
+                "TINE_SQLITE_HELPER_WOULD_BE_RUNTIME",
+                would_be_b.to_str().unwrap(),
+            )],
+        );
+        assert!(fail_before.wait().unwrap().success());
+        drop(vulnerable_first);
+
+        let runtime = ApplicationRuntimeRoot::open_for_test(&dir.path().join("runtime")).unwrap();
         let first = SqliteFrontier::open_or_rebuild(
             &dir.path().join("db-a/frontier.sqlite"),
             &runtime,
@@ -5555,7 +6598,15 @@ mod tests {
             ),
             Err(ProjectionError::LeaseContended(_))
         ));
-        let mut child = spawn_test_helper("canonical-lease-contender", dir.path(), seed, &[]);
+        let mut child = spawn_test_helper(
+            "canonical-lease-contender",
+            dir.path(),
+            seed,
+            &[(
+                "TINE_SQLITE_HELPER_WOULD_BE_RUNTIME",
+                would_be_b.to_str().unwrap(),
+            )],
+        );
         assert!(child.wait().unwrap().success());
 
         drop(first);

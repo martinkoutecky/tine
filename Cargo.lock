@@ -5533,6 +5533,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "chrono",
+ "dirs",
  "fs2",
  "libc",
  "loro",
