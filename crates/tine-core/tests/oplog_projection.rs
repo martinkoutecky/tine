@@ -1451,7 +1451,7 @@ fn normal_replacement_catalogs_local_evidence_outside_stable_completion() {
 }
 
 #[test]
-fn crash_recovery_probes_only_reserved_names_and_catalogs_multiple_attempts() {
+fn crash_recovery_reuses_one_reserved_name_and_catalogs_it_once() {
     let engine_dir = TestDir::new("multiple-recovery-engine");
     let graph_dir = TestDir::new("multiple-recovery-graph");
     fs::create_dir_all(graph_dir.path().join("pages")).unwrap();
@@ -1471,35 +1471,29 @@ fn crash_recovery_probes_only_reserved_names_and_catalogs_multiple_attempts() {
     store.publish_intent(plan.intent(), None).unwrap();
     let first = store.reserve_attempt(plan.intent()).unwrap();
     let second = store.reserve_attempt(plan.intent()).unwrap();
+    assert_eq!(first, second);
     fs::write(
         graph_dir.path().join("pages/multiple-recovery.md"),
         plan.target(),
     )
     .unwrap();
-    for (name, bytes) in [
-        (
-            second.recovery_filename(),
-            b"- second displaced\n".as_slice(),
-        ),
-        (first.recovery_filename(), b"- first displaced\n".as_slice()),
-    ] {
-        fs::write(graph_dir.path().join("pages").join(name), bytes).unwrap();
-    }
+    fs::write(
+        graph_dir
+            .path()
+            .join("pages")
+            .join(first.recovery_filename()),
+        b"- displaced once\n",
+    )
+    .unwrap();
 
     let recovered = recover_incomplete_projections(&graph, &store, &engine).unwrap();
     let evidence = store
         .local_forensic_evidence(recovered[0].plan.intent())
         .unwrap();
-    assert_eq!(evidence.len(), 2);
-    assert!(
-        evidence
-        .iter()
-            .any(|record| record.recovery_filename() == first.recovery_filename())
-    );
-    assert!(
-        evidence
-        .iter()
-            .any(|record| record.recovery_filename() == second.recovery_filename())
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(
+        evidence[0].recovery_filename(),
+        first.recovery_filename()
     );
 }
 

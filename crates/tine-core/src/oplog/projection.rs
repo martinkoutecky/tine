@@ -410,12 +410,13 @@ fn execute_manifested_projection_work_with_runtime(
     };
     let recovered = match recovery_result {
         Some((Ok(proof), authority)) => Some((proof, authority)),
-        Some((Err(error), _))
+        Some((Err(error), authority))
             if matches!(
                 error.kind(),
                 io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
             ) =>
         {
+            authority.release_failed_recovery()?;
             None
         }
         Some((Err(error), _)) => return Err(error.into()),
@@ -425,7 +426,8 @@ fn execute_manifested_projection_work_with_runtime(
         Some(recovered) => recovered,
         None => {
             let mut authority = if has_attempts {
-                receipts.begin_mutation(&local_attempt_intent, None)?
+                let reservation = receipts.reserve_fallback_attempt(&local_attempt_intent)?;
+                receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?
             } else {
                 let reservation = receipts.reserve_attempt(&local_attempt_intent)?;
                 receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?
@@ -559,8 +561,10 @@ pub fn recover_incomplete_projections(
                             io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                         ) =>
                     {
-                        drop(recovery_authority);
-                        let mut write_authority = store.begin_mutation(&intent, None)?;
+                        recovery_authority.release_failed_recovery()?;
+                        let reservation = store.reserve_fallback_attempt(&intent)?;
+                        let mut write_authority =
+                            store.begin_mutation(&intent, Some(&reservation))?;
                         let proof = graph.write_page_projection(
                             intent.path().as_str(),
                             expected_base,
@@ -578,8 +582,9 @@ pub fn recover_incomplete_projections(
                     io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                 ) =>
             {
-                drop(recovery_authority);
-                let mut authority = store.begin_mutation(&intent, None)?;
+                recovery_authority.release_failed_recovery()?;
+                let reservation = store.reserve_fallback_attempt(&intent)?;
+                let mut authority = store.begin_mutation(&intent, Some(&reservation))?;
                 let proof = graph.write_page_projection(
                     intent.path().as_str(),
                     expected_base,

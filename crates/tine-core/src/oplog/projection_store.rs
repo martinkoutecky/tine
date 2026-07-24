@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Read as _};
 #[cfg(unix)]
 use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _};
 #[cfg(unix)]
@@ -77,6 +77,8 @@ thread_local! {
         std::cell::RefCell::new(None);
     static MUTATION_AUTHORITY_DROP_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static ATTEMPT_PUBLICATION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
     static COMPLETION_PUBLICATION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
     static COMPLETION_PUBLICATION_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -130,6 +132,18 @@ fn mutation_authority_drop_hook() {
 
 #[cfg(not(test))]
 fn mutation_authority_drop_hook() {}
+
+#[cfg(test)]
+fn attempt_publication_hook() {
+    ATTEMPT_PUBLICATION_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn attempt_publication_hook() {}
 
 #[cfg(test)]
 fn completion_publication_hook() {
@@ -687,27 +701,75 @@ impl ProjectionReceiptStore {
         intent: &ProjectionIntent,
         intent_id: ProjectionIntentId,
     ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
+        self.reserve_deterministic_attempt_under_lease(
+            intent,
+            intent_id,
+            deterministic_mutation_uuid(
+                b"tine/projection-attempt/v1\0",
+                self.store_id,
+                intent_id,
+            ),
+            true,
+        )
+    }
+
+    pub(crate) fn reserve_fallback_attempt(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
+        let intent_id = self.require_published_intent(intent)?;
+        let _lease = self.acquire_mutation_lease(intent_id)?;
+        mutation_authority_leased_hook();
+        self.reserve_deterministic_attempt_under_lease(
+            intent,
+            intent_id,
+            deterministic_mutation_uuid(
+                b"tine/projection-fallback-attempt/v1\0",
+                self.store_id,
+                intent_id,
+            ),
+            false,
+        )
+    }
+
+    fn reserve_deterministic_attempt_under_lease(
+        &self,
+        intent: &ProjectionIntent,
+        intent_id: ProjectionIntentId,
+        attempt_id: Uuid,
+        reuse_any: bool,
+    ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
         let durable_name = mutation_authority_filename(intent_id);
-        if read_optional_regular(
-            &self.capability,
-            &durable_name,
-            MAX_MUTATION_AUTHORITY_BYTES as u64,
-            None,
-        )?
-        .is_some()
-        {
+        if read_optional_mutation_authority(&self.capability, &durable_name, None)?.is_some() {
             return Err(ProjectionStoreError::MutationAuthorityPending);
         }
-        let reservation = ProjectionAttemptReservation::new(intent, Uuid::new_v4())?;
-        let bytes = serde_json::to_vec(&reservation)
-            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
         let attempts = self.required_intent_namespace(ATTEMPTS_DIR, intent_id)?;
-        publish_immutable_exact(
-            &attempts,
-            &attempt_filename(reservation.attempt_id),
-            &bytes,
-            "projection attempt reservation",
-        )?;
+        let reservations = self.load_attempt_reservations_from(intent, &attempts)?;
+        let existing = reservations
+            .iter()
+            .find(|reservation| reservation.attempt_id() == attempt_id)
+            .or_else(|| if reuse_any { reservations.first() } else { None });
+        let reservation = if let Some(existing) = existing {
+            existing.clone()
+        } else {
+            if reservations.len() == MAX_MUTATION_ATTEMPTS {
+                return Err(ProjectionStoreError::MutationAuthorityTooLarge {
+                    attempts: reservations.len() + 1,
+                    bytes: 0,
+                });
+            }
+            let reservation = ProjectionAttemptReservation::new(intent, attempt_id)?;
+            let bytes = serde_json::to_vec(&reservation)
+                .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+            publish_immutable_exact(
+                &attempts,
+                &attempt_filename(reservation.attempt_id),
+                &bytes,
+                "projection attempt reservation",
+            )?;
+            reservation
+        };
+        attempt_publication_hook();
         Ok(reservation)
     }
 
@@ -780,12 +842,8 @@ impl ProjectionReceiptStore {
         let lease = self.acquire_mutation_lease(intent_id)?;
         mutation_authority_leased_hook();
         let durable_name = mutation_authority_filename(intent_id);
-        let existing_durable_bytes = read_optional_regular(
-            &self.capability,
-            &durable_name,
-            MAX_MUTATION_AUTHORITY_BYTES as u64,
-            None,
-        )?;
+        let existing_durable_bytes =
+            read_optional_mutation_authority(&self.capability, &durable_name, None)?;
         // A newly established recovery slot carries one fresh current attempt
         // in addition to all retained evidence. If proof-only recovery finds
         // that the target was retired before publication, the same immutable
@@ -885,7 +943,11 @@ impl ProjectionReceiptStore {
                 let authority_active = requested_active;
                 let durable = DurableProjectionMutationAuthority {
                     schema_version: MUTATION_AUTHORITY_SCHEMA_VERSION,
-                    authority_id: Uuid::new_v4(),
+                    authority_id: deterministic_mutation_uuid(
+                        b"tine/projection-mutation-authority/v1\0",
+                        self.store_id,
+                        intent_id,
+                    ),
                     store_id: self.store_id,
                     store_claim_digest,
                     workspace_id: self.workspace_id,
@@ -1022,6 +1084,7 @@ impl ProjectionReceiptStore {
         if completion.encode()? != bytes {
             return Err(ProjectionStoreError::NonCanonical("projection completion"));
         }
+        self.reconcile_completed_mutation(intent, intent_id)?;
         Ok(Some(completion))
     }
 
@@ -1228,6 +1291,7 @@ impl ProjectionReceiptStore {
             if completion.encode()? != bytes {
                 return Err(ProjectionStoreError::NonCanonical("projection completion"));
             }
+            self.reconcile_completed_mutation(intent, intent.id()?)?;
             catalog_bytes = catalog_bytes.checked_add(bytes.len() as u64).ok_or(
                 ProjectionStoreError::EvidenceTooLarge {
                     kind: "projection catalog",
@@ -1581,6 +1645,70 @@ impl ProjectionReceiptStore {
         Ok(())
     }
 
+    fn reconcile_completed_mutation(
+        &self,
+        intent: &ProjectionIntent,
+        intent_id: ProjectionIntentId,
+    ) -> Result<(), ProjectionStoreError> {
+        let _lease = self.acquire_mutation_lease(intent_id)?;
+        mutation_authority_leased_hook();
+        let durable_name = mutation_authority_filename(intent_id);
+        let Some(durable_bytes) =
+            read_optional_mutation_authority(&self.capability, &durable_name, None)?
+        else {
+            return Ok(());
+        };
+
+        let store_claim = read_optional_regular(
+            &self.capability,
+            STORE_CLAIM_FILE,
+            STORE_CLAIM_LEN as u64,
+            Some(STORE_CLAIM_LEN as u64),
+        )?
+        .ok_or(ProjectionStoreError::MalformedStoreClaim)?;
+        let bases = self.namespace(BASES_DIR)?;
+        let attempts = self.required_intent_namespace(ATTEMPTS_DIR, intent_id)?;
+        let forensics = self.required_intent_namespace(FORENSICS_DIR, intent_id)?;
+        let reservations = self.load_attempt_reservations_from(intent, &attempts)?;
+        let intent_bytes = intent.encode()?;
+        let base = match intent.precondition() {
+            ProjectionPrecondition::Absent => None,
+            ProjectionPrecondition::Base(description) => {
+                let bytes = read_optional_regular(
+                    &bases,
+                    &base_filename(*description),
+                    MAX_PROJECTION_EVIDENCE_BYTES,
+                    Some(description.byte_length()),
+                )?
+                .ok_or(ProjectionStoreError::MissingBase(*description))?;
+                if BlobDescription::of(&bytes) != *description {
+                    return Err(ProjectionStoreError::BaseEvidenceMismatch(*description));
+                }
+                Some(*description)
+            }
+        };
+        decode_durable_mutation_authority(
+            &durable_bytes,
+            intent,
+            self.store_id,
+            Sha256::digest(&store_claim).into(),
+            self.workspace_id,
+            self.endpoint.map(endpoint_binding_bytes).as_deref(),
+            intent_id,
+            Sha256::digest(&intent_bytes).into(),
+            base,
+            self.namespaces.identities(),
+            canonical_directory_identity(&attempts)?,
+            canonical_directory_identity(&forensics)?,
+            &reservations,
+        )?;
+        remove_mutation_authority_if_exact(
+            &self.capability,
+            &durable_name,
+            &durable_bytes,
+        )
+    }
+
     fn acquire_mutation_lease(
         &self,
         intent_id: ProjectionIntentId,
@@ -1736,6 +1864,14 @@ impl ProjectionMutationAuthority {
         operation(&self.reservations)
     }
 
+    /// Release a slot after Graph's read-only recovery probe rejected the
+    /// current target. Callers may then admit the one deterministic fallback
+    /// attempt without ever overwriting an occupied recovery filename.
+    pub(crate) fn release_failed_recovery(self) -> Result<(), ProjectionStoreError> {
+        self.require_consumed()?;
+        self.remove_durable_record_if_exact()
+    }
+
     fn consume_completion_publication<T>(
         &mut self,
         store: &ProjectionReceiptStore,
@@ -1757,21 +1893,11 @@ impl ProjectionMutationAuthority {
     }
 
     fn remove_durable_record_if_exact(&self) -> Result<(), ProjectionStoreError> {
-        let Some(bytes) = read_optional_regular(
+        remove_mutation_authority_if_exact(
             &self.root,
             &self.durable_name,
-            MAX_MUTATION_AUTHORITY_BYTES as u64,
-            Some(self.durable_bytes.len() as u64),
-        )?
-        else {
-            return Ok(());
-        };
-        if bytes != self.durable_bytes {
-            return Err(ProjectionStoreError::MutationAuthorityMismatch);
-        }
-        self.root.remove_file(&self.durable_name)?;
-        sync_dir_required(&self.root)?;
-        Ok(())
+            &self.durable_bytes,
+        )
     }
 
     fn consume_graph_operation(&mut self, relative_path: &str) -> io::Result<()> {
@@ -1844,10 +1970,9 @@ impl ProjectionMutationAuthority {
         if <[u8; 32]>::from(Sha256::digest(&store_claim)) != self.durable.store_claim_digest {
             return Err(ProjectionStoreError::MutationAuthorityMismatch);
         }
-        let stored = read_optional_regular(
+        let stored = read_optional_mutation_authority(
             &self.root,
             &self.durable_name,
-            MAX_MUTATION_AUTHORITY_BYTES as u64,
             Some(self.durable_bytes.len() as u64),
         )?
         .ok_or_else(|| {
@@ -2535,6 +2660,25 @@ fn completion_filename(intent_id: ProjectionIntentId) -> String {
     format!("{}.completion", hex(intent_id.as_bytes()))
 }
 
+fn deterministic_mutation_uuid(
+    domain: &[u8],
+    store_id: ProjectionReceiptStoreId,
+    intent_id: ProjectionIntentId,
+) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(store_id.as_bytes());
+    hasher.update(intent_id.as_bytes());
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // RFC 9562 UUIDv8 marks these SHA-256-derived bytes as application-defined
+    // while preserving the standard UUID variant.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
 fn mutation_authority_filename(intent_id: ProjectionIntentId) -> String {
     format!(
         "{}{}",
@@ -2549,6 +2693,110 @@ fn mutation_authority_lease_filename(intent_id: ProjectionIntentId) -> String {
         hex(intent_id.as_bytes()),
         MUTATION_AUTHORITY_LEASE_SUFFIX
     )
+}
+
+#[cfg(unix)]
+fn open_mutation_authority_file(directory: &Dir, name: &str) -> io::Result<File> {
+    let name = CString::new(name)
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "invalid authority file name"))?;
+    // SAFETY: `name` is a live NUL-terminated relative name and `directory`
+    // retains the receipt-store capability. O_NOFOLLOW binds validation and
+    // reading to the same opened authority file.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        // SAFETY: `openat` returned a newly owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(windows)]
+fn open_mutation_authority_file(directory: &Dir, name: &str) -> io::Result<File> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    Ok(directory.open_with(name, &options)?.into_std())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_mutation_authority_file(_directory: &Dir, _name: &str) -> io::Result<File> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "atomic no-follow projection mutation authorities are unsupported on this target",
+    ))
+}
+
+fn read_optional_mutation_authority(
+    directory: &Dir,
+    name: &str,
+    expected_length: Option<u64>,
+) -> Result<Option<Vec<u8>>, ProjectionStoreError> {
+    let mut file = match open_mutation_authority_file(directory, name) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation authority is not a regular file: {name}"
+        )));
+    }
+    #[cfg(unix)]
+    if metadata.uid() !=
+        // SAFETY: `geteuid` takes no arguments and has no memory-safety preconditions.
+        unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+    {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation authority has unsafe ownership or links: {name}"
+        )));
+    }
+    #[cfg(windows)]
+    if metadata.file_attributes()
+        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+        != 0
+    {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation authority is a reparse point: {name}"
+        )));
+    }
+    let length = metadata.len();
+    if length > MAX_MUTATION_AUTHORITY_BYTES as u64
+        || expected_length.is_some_and(|expected| expected != length)
+    {
+        return Err(ProjectionStoreError::MutationAuthorityMismatch);
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != length {
+        return Err(ProjectionStoreError::MutationAuthorityMismatch);
+    }
+    Ok(Some(bytes))
+}
+
+fn remove_mutation_authority_if_exact(
+    directory: &Dir,
+    name: &str,
+    expected: &[u8],
+) -> Result<(), ProjectionStoreError> {
+    let Some(bytes) =
+        read_optional_mutation_authority(directory, name, Some(expected.len() as u64))?
+    else {
+        return Ok(());
+    };
+    if bytes != expected {
+        return Err(ProjectionStoreError::MutationAuthorityMismatch);
+    }
+    directory.remove_file(name)?;
+    sync_dir_required(directory)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -2811,9 +3059,55 @@ mod tests {
                     .to_string_lossy()
                     .ends_with(".attempt")
             })
-            .fold((0, 0), |(count, bytes), entry| {
-                (count + 1, bytes + entry.metadata().unwrap().len())
+                .fold((0, 0), |(count, bytes), entry| {
+                    (count + 1, bytes + entry.metadata().unwrap().len())
+                })
+        }
+
+        fn attempt_snapshot(&self, intent: &ProjectionIntent) -> BTreeMap<String, Vec<u8>> {
+            fs::read_dir(
+                self.store
+                    .root_path()
+                    .join(ATTEMPTS_DIR)
+                    .join(hex(intent.id().unwrap().as_bytes())),
+            )
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                name.ends_with(".attempt")
+                    .then(|| (name, fs::read(entry.path()).unwrap()))
             })
+            .collect()
+        }
+
+        fn leave_durable_completion_with_slot(&self) -> ProjectionCompletion {
+            let reservation = self.store.reserve_attempt(&self.intent).unwrap();
+            let mut authority = self
+                .store
+                .begin_mutation(&self.intent, Some(&reservation))
+                .unwrap();
+            let proof = self
+                .graph
+                .write_page_projection(
+                    self.intent.path().as_str(),
+                    None,
+                    &self.target,
+                    &mut authority,
+                )
+                .unwrap();
+            let completion = ProjectionCompletion::for_intent(&self.intent, proof.bytes()).unwrap();
+            let bytes = completion.encode().unwrap();
+            publish_immutable_exact(
+                &authority.completions,
+                &completion_filename(self.intent.id().unwrap()),
+                &bytes,
+                "projection completion",
+            )
+            .unwrap();
+            drop(authority);
+            assert!(self.authority_path(&self.intent).exists());
+            completion
         }
     }
 
@@ -3171,6 +3465,116 @@ mod tests {
     }
 
     #[test]
+    fn crashes_after_attempt_publication_reuse_one_byte_stable_reservation() {
+        let fixture = Fixture::new("attempt-publication-crash");
+        let mut stable = None;
+
+        for _ in 0..16 {
+            ATTEMPT_PUBLICATION_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(|| panic!("simulated process crash")));
+            });
+            let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = fixture.store.begin_mutation(&fixture.intent, None);
+            }));
+            assert!(crashed.is_err());
+            assert_eq!(fixture.authority_stats(), (0, 0));
+            assert_eq!(fixture.attempt_stats(&fixture.intent).0, 1);
+            let snapshot = fixture.attempt_snapshot(&fixture.intent);
+            if let Some(expected) = &stable {
+                assert_eq!(&snapshot, expected);
+            } else {
+                stable = Some(snapshot);
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_publication_crashes_reuse_one_second_exact_attempt() {
+        let fixture = Fixture::new("fallback-attempt-publication-crash");
+        let primary = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut recovery = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&primary))
+            .unwrap();
+        assert!(fixture
+            .graph
+            .recover_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut recovery,
+            )
+            .is_err());
+        recovery.release_failed_recovery().unwrap();
+        let mut stable = None;
+
+        for _ in 0..8 {
+            ATTEMPT_PUBLICATION_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(|| panic!("simulated process crash")));
+            });
+            let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = fixture.store.reserve_fallback_attempt(&fixture.intent);
+            }));
+            assert!(crashed.is_err());
+            assert_eq!(fixture.authority_stats(), (0, 0));
+            assert_eq!(fixture.attempt_stats(&fixture.intent).0, 2);
+            let snapshot = fixture.attempt_snapshot(&fixture.intent);
+            if let Some(expected) = &stable {
+                assert_eq!(&snapshot, expected);
+            } else {
+                stable = Some(snapshot);
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_reservations_across_handles_return_one_exact_attempt() {
+        let fixture = Fixture::new("attempt-reservation-reuse");
+        let first = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let stable = fixture.attempt_snapshot(&fixture.intent);
+        let reopened = fixture.reopen_store();
+        let second = reopened.reserve_attempt(&fixture.intent).unwrap();
+        let third = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(fixture.attempt_stats(&fixture.intent).0, 1);
+        assert_eq!(fixture.attempt_snapshot(&fixture.intent), stable);
+    }
+
+    #[test]
+    fn repeated_pregraph_drops_keep_attempt_and_next_authority_bytes_stable() {
+        let fixture = Fixture::new("pregraph-byte-stability");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let stable_attempts = fixture.attempt_snapshot(&fixture.intent);
+        let authority_path = fixture.authority_path(&fixture.intent);
+        let mut stable_authority = None;
+
+        for iteration in 0..12 {
+            let authority = if iteration % 2 == 0 {
+                fixture
+                    .store
+                    .begin_mutation(&fixture.intent, Some(&reservation))
+                    .unwrap()
+            } else {
+                fixture
+                    .store
+                    .begin_mutation(&fixture.intent, None)
+                    .unwrap()
+            };
+            let bytes = fs::read(&authority_path).unwrap();
+            if let Some(expected) = &stable_authority {
+                assert_eq!(&bytes, expected);
+            } else {
+                stable_authority = Some(bytes);
+            }
+            drop(authority);
+            assert!(!authority_path.exists());
+            assert_eq!(fixture.attempt_snapshot(&fixture.intent), stable_attempts);
+        }
+    }
+
+    #[test]
     fn interrupted_recoveries_reuse_one_exact_authority_slot() {
         let fixture = Fixture::new("bounded-interrupted-recovery");
         let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
@@ -3235,10 +3639,11 @@ mod tests {
     }
 
     #[test]
-    fn pending_recovery_blocks_new_active_mutation_and_attempt_reservation() {
+    fn pending_recovery_reopens_same_attempt_and_blocks_new_reservation() {
         let fixture = Fixture::new("pending-recovery-blocks-active");
         let active = fixture.store.reserve_attempt(&fixture.intent).unwrap();
-        let blocked = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let same = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        assert_eq!(same, active);
         let mut authority = fixture
             .store
             .begin_mutation(&fixture.intent, Some(&active))
@@ -3262,14 +3667,11 @@ mod tests {
             .join(ATTEMPTS_DIR)
             .join(hex(fixture.intent.id().unwrap().as_bytes()));
         let attempt_count = fs::read_dir(&attempts_path).unwrap().count();
-        let error = fixture
+        let reopened = fixture
             .store
-            .begin_mutation(&fixture.intent, Some(&blocked))
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            ProjectionStoreError::MutationAuthorityPending
-        ));
+            .begin_mutation(&fixture.intent, Some(&same))
+            .unwrap();
+        drop(reopened);
         assert!(matches!(
             fixture.store.reserve_attempt(&fixture.intent),
             Err(ProjectionStoreError::MutationAuthorityPending)
@@ -3510,6 +3912,108 @@ mod tests {
         assert!(!first_path.exists());
         assert_eq!(fs::read(second_path).unwrap(), second_witness);
         assert_eq!(fixture.authority_stats(), (1, second_witness.len() as u64));
+    }
+
+    #[test]
+    fn load_completion_reconciles_a_crash_retained_slot_idempotently() {
+        let fixture = Fixture::new("completion-load-reconciliation");
+        let expected = fixture.leave_durable_completion_with_slot();
+        let authority_path = fixture.authority_path(&fixture.intent);
+        let reopened = fixture.reopen_store();
+
+        assert_eq!(
+            reopened.load_completion(&fixture.intent).unwrap(),
+            Some(expected.clone())
+        );
+        assert!(!authority_path.exists());
+        assert_eq!(
+            reopened.load_completion(&fixture.intent).unwrap(),
+            Some(expected)
+        );
+        assert!(!authority_path.exists());
+    }
+
+    #[test]
+    fn catalog_paths_reconcile_one_exact_completed_slot_per_row() {
+        let incomplete_fixture = Fixture::new("completion-incomplete-catalog-reconciliation");
+        incomplete_fixture.leave_durable_completion_with_slot();
+        assert!(
+            incomplete_fixture
+                .store
+                .incomplete_intents()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !incomplete_fixture
+                .authority_path(&incomplete_fixture.intent)
+                .exists()
+        );
+
+        let validated_fixture = Fixture::new("completion-validated-catalog-reconciliation");
+        let expected = validated_fixture.leave_durable_completion_with_slot();
+        let catalog = validated_fixture.store.validated_catalog().unwrap();
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].completion, Some(expected));
+        assert!(
+            !validated_fixture
+                .authority_path(&validated_fixture.intent)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn completed_slot_bound_to_another_intent_fails_closed_without_removal() {
+        let fixture = Fixture::new("completion-slot-intent-mismatch");
+        fixture.leave_durable_completion_with_slot();
+        let first_path = fixture.authority_path(&fixture.intent);
+
+        let second_target = b"- second target\n".to_vec();
+        let second_intent = ProjectionIntent::new(
+            fixture.store.workspace_id(),
+            PageId::from_uuid(Uuid::from_u128(3)),
+            ManagedPath::parse("pages/second-authority.md").unwrap(),
+            FrontierV2::default(),
+            Vec::new(),
+            ProjectionPrecondition::Absent,
+            BlobDescription::of(&second_target),
+            Vec::new(),
+        )
+        .unwrap();
+        fixture.store.publish_intent(&second_intent, None).unwrap();
+        let second_reservation = fixture.store.reserve_attempt(&second_intent).unwrap();
+        let second_authority = fixture
+            .store
+            .begin_mutation(&second_intent, Some(&second_reservation))
+            .unwrap();
+        let second_path = fixture.authority_path(&second_intent);
+        let mismatched_bytes = fs::read(&second_path).unwrap();
+        fs::write(&first_path, &mismatched_bytes).unwrap();
+
+        assert!(matches!(
+            fixture.store.load_completion(&fixture.intent),
+            Err(ProjectionStoreError::MutationAuthorityMismatch)
+        ));
+        assert_eq!(fs::read(&first_path).unwrap(), mismatched_bytes);
+        assert!(second_path.exists());
+        drop(second_authority);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn completed_hardlinked_slot_fails_closed_without_removal() {
+        let fixture = Fixture::new("completion-slot-hardlink");
+        fixture.leave_durable_completion_with_slot();
+        let authority_path = fixture.authority_path(&fixture.intent);
+        let extra_link = fixture.root.join("authority-extra-link");
+        fs::hard_link(&authority_path, &extra_link).unwrap();
+
+        assert!(matches!(
+            fixture.store.load_completion(&fixture.intent),
+            Err(ProjectionStoreError::UnsafeEntry(_))
+        ));
+        assert!(authority_path.exists());
+        assert!(extra_link.exists());
     }
 
     #[test]
