@@ -14,6 +14,10 @@ use crate::crdt::{
 };
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
+use crate::oplog::projection_store::MAX_PROJECTION_EVIDENCE_BYTES;
+use crate::oplog::{CanonicalGraphResourceId, ManagedPath, ProjectionAttemptReservation};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -135,6 +139,133 @@ fn twin_error(name: &str) -> io::Error {
 /// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
 fn bad_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
+}
+
+/// Capability-issued evidence that one exact projection target was durably
+/// published or recovered at one exact graph-relative path.
+#[derive(Debug)]
+pub(crate) struct ProjectionWriteProof {
+    relative_path: String,
+    bytes: Vec<u8>,
+    digest: [u8; 32],
+    recovery_evidence: Vec<ProjectionRecoveryEvidence>,
+}
+
+/// Durable identity and freshly-synced observation of the inode displaced by
+/// an existing-file projection. The inode is retained without GC in the first
+/// rollout so a writer holding its old handle can still be detected later.
+#[derive(Debug)]
+pub(crate) struct ProjectionRecoveryEvidence {
+    relative_path: String,
+    filename: String,
+    digest: [u8; 32],
+    len: u64,
+}
+
+impl ProjectionRecoveryEvidence {
+    fn new(target_relative_path: &str, filename: String, bytes: &[u8]) -> Self {
+        let parent = target_relative_path
+            .rsplit_once('/')
+            .expect("projection paths always include a configured root")
+            .0;
+        Self {
+            relative_path: format!("{parent}/{filename}"),
+            filename,
+            digest: Sha256::digest(bytes).into(),
+            len: bytes.len() as u64,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.relative_path
+    }
+
+    pub(crate) fn filename(&self) -> &str {
+        &self.filename
+    }
+
+    pub(crate) fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    pub(crate) fn len(&self) -> u64 {
+        self.len
+    }
+}
+
+impl ProjectionWriteProof {
+    fn new(
+        relative_path: String,
+        bytes: Vec<u8>,
+        mut recovery_evidence: Vec<ProjectionRecoveryEvidence>,
+    ) -> Self {
+        recovery_evidence.sort_by(|left, right| {
+            (&left.relative_path, &left.filename).cmp(&(&right.relative_path, &right.filename))
+        });
+        let digest = Sha256::digest(&bytes).into();
+        Self {
+            relative_path,
+            bytes,
+            digest,
+            recovery_evidence,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.relative_path
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    pub(crate) fn recovery_evidence(&self) -> &[ProjectionRecoveryEvidence] {
+        &self.recovery_evidence
+    }
+}
+
+struct ProjectionTarget {
+    absolute_path: PathBuf,
+    relative_path: String,
+    parent_components: Vec<String>,
+    filename: String,
+    twin_filename: String,
+}
+
+struct ProjectionParent {
+    chain: Vec<Dir>,
+}
+
+impl ProjectionParent {
+    fn final_dir(&self) -> &Dir {
+        self.chain
+            .last()
+            .expect("projection parent chain always contains the graph root")
+    }
+}
+
+fn validate_projection_attempt(
+    target: &ProjectionTarget,
+    attempt: &ProjectionAttemptReservation,
+) -> io::Result<()> {
+    let expected = format!(
+        ".{}.{}.projection.recovery",
+        target.filename,
+        attempt.attempt_id().simple()
+    );
+    if attempt.target_path().as_str() != target.relative_path
+        || attempt.recovery_filename() != expected
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection attempt is not bound to the target capability",
+        ));
+    }
+    Ok(())
 }
 
 /// Parse a page file's bytes into a [`Document`] using the parser for its
@@ -471,6 +602,9 @@ pub struct ManagedSyncPull {
 
 pub struct Graph {
     pub root: PathBuf,
+    /// Retained no-follow identity of the graph root. Sparse projection writes
+    /// fail closed when this capability could not be established at graph open.
+    projection_root: Option<Dir>,
     /// The canonical filesystem capability used for every asset operation. For
     /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
     /// approved an external assets symlink/junction it is that exact resolved
@@ -1111,10 +1245,26 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
 }
 
 #[cfg(test)]
+struct ProjectionParentRetarget {
+    parent: PathBuf,
+    moved: PathBuf,
+    outside: PathBuf,
+}
+
+#[cfg(test)]
 thread_local! {
     static FAIL_NEXT_RENAME_SOURCE_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WITHDRAW_RACE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
     static GUIDE_TWIN_RACE_CONTENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_LAST_MOMENT_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_PUBLICATION_RACE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_AFTER_RETIRE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_STALE_RECOVERY_WRITE: std::cell::RefCell<Option<(fs::File, Vec<u8>)>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_POST_PUBLISH_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static PROJECTION_PARENT_RETARGET: std::cell::RefCell<Option<ProjectionParentRetarget>> = const { std::cell::RefCell::new(None) };
+    static FAIL_NEXT_PROJECTION_DIRECTORY_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TEST_PROJECTION_ATTEMPTS: std::cell::RefCell<std::collections::BTreeMap<String, Vec<ProjectionAttemptReservation>>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    static PROJECTION_EXACT_OPEN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -1158,6 +1308,112 @@ fn guide_twin_race_hook(path: &Path) -> io::Result<()> {
 
 #[cfg(not(test))]
 fn guide_twin_race_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn projection_last_moment_hook(path: &Path) -> io::Result<()> {
+    PROJECTION_PARENT_RETARGET.with(|retarget| -> io::Result<()> {
+        if let Some(retarget) = retarget.borrow_mut().take() {
+            fs::rename(&retarget.parent, &retarget.moved)?;
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&retarget.outside, &retarget.parent)?;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = retarget.outside;
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "projection retarget hook is unavailable on this platform",
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    PROJECTION_LAST_MOMENT_REPLACEMENT.with(|replacement| {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn projection_last_moment_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn projection_publication_race_hook(path: &Path) -> io::Result<()> {
+    PROJECTION_PUBLICATION_RACE_REPLACEMENT.with(|replacement| {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn projection_publication_race_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn projection_after_retire_hook(path: &Path) -> io::Result<()> {
+    PROJECTION_AFTER_RETIRE_REPLACEMENT.with(|replacement| {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn projection_after_retire_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn projection_post_publish_hook(path: &Path) -> io::Result<()> {
+    PROJECTION_POST_PUBLISH_REPLACEMENT.with(|replacement| -> io::Result<()> {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })?;
+    PROJECTION_STALE_RECOVERY_WRITE.with(|write| {
+        if let Some((mut file, bytes)) = write.borrow_mut().take() {
+            file.set_len(0)?;
+            file.seek(io::SeekFrom::Start(0))?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn projection_post_publish_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn projection_directory_sync_hook(_dir: &Path) -> io::Result<()> {
+    FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| {
+        if fail.replace(false) {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected projection directory sync failure",
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn projection_directory_sync_hook(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -1333,6 +1589,7 @@ impl Graph {
     /// Open a graph directory, reading `logseq/config.edn` if present.
     pub fn open(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
+        let projection_root = open_projection_root_nofollow(&root).ok();
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
@@ -1342,6 +1599,7 @@ impl Graph {
         );
         Graph {
             assets_root: root.join("assets"),
+            projection_root,
             root,
             config,
             journal_format,
@@ -1365,6 +1623,32 @@ impl Graph {
             managed_sync: std::sync::Mutex::new(None),
             search_lanes: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Stable identity of the exact no-follow directory capability retained at
+    /// graph open. This is the only graph-root identity accepted by sparse
+    /// projection enrollment; the ambient path in `Graph::root` is not authority.
+    pub fn canonical_resource_id(&self) -> io::Result<CanonicalGraphResourceId> {
+        let root = self.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?;
+        canonical_graph_resource_id(root)
+    }
+
+    /// Capture exact current page bytes through the same retained graph
+    /// capability used by the guarded writer.
+    pub(crate) fn read_projection_input(&self, path: &ManagedPath) -> io::Result<Option<Vec<u8>>> {
+        require_projection_platform()?;
+        let target = self.projection_page_target(path.as_str())?;
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        read_projection_optional(parent.final_dir(), &target.filename)
     }
 
     /// Construct a read-only graph projection from one caller-owned document
@@ -2017,6 +2301,137 @@ impl Graph {
             Some("md") | Some("org") => Some(abs),
             _ => None,
         }
+    }
+
+    fn projection_page_target(&self, relative_path: &str) -> io::Result<ProjectionTarget> {
+        if relative_path != relative_path.trim()
+            || relative_path.is_empty()
+            || relative_path.starts_with('/')
+            || relative_path.contains('\\')
+            || relative_path.contains('\0')
+        {
+            return Err(bad_path());
+        }
+        let components = relative_path.split('/').collect::<Vec<_>>();
+        let configured_root_len = [&self.config.journals_dir, &self.config.pages_dir]
+            .into_iter()
+            .filter_map(|configured_root| {
+                let root_components = configured_root.split('/').collect::<Vec<_>>();
+                (components.len() > root_components.len()
+                    && root_components
+                        .iter()
+                        .all(|component| projection_component_is_portable(component))
+                    && components.starts_with(&root_components))
+                .then_some(root_components.len())
+            })
+            .max();
+        if components.len() < 2
+            || components
+                .iter()
+                .any(|component| !projection_component_is_portable(component))
+            || configured_root_len.is_none()
+        {
+            return Err(bad_path());
+        }
+        let filename = components.last().expect("checked component count");
+        let (stem, extension) = filename.rsplit_once('.').ok_or_else(bad_path)?;
+        if stem.is_empty() || !matches!(extension, "md" | "org") {
+            return Err(bad_path());
+        }
+        let twin_extension = if extension == "md" { "org" } else { "md" };
+        let twin_filename = format!("{stem}.{twin_extension}");
+        let parent_components = components[..components.len() - 1]
+            .iter()
+            .map(|component| (*component).to_owned())
+            .collect::<Vec<_>>();
+        Ok(ProjectionTarget {
+            absolute_path: self.root.join(relative_path),
+            relative_path: relative_path.to_owned(),
+            parent_components,
+            filename: (*filename).to_owned(),
+            twin_filename,
+        })
+    }
+
+    fn projection_parent(
+        &self,
+        target: &ProjectionTarget,
+        create_missing: bool,
+    ) -> io::Result<ProjectionParent> {
+        let root = self.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?;
+        let mut chain = vec![root.try_clone()?];
+        for component in &target.parent_components {
+            let current = chain.last().expect("projection chain contains root");
+            match projection_real_directory(current, component) {
+                Ok(()) => {}
+                Err(error) if create_missing && error.kind() == io::ErrorKind::NotFound => {
+                    current.create_dir(component)?;
+                    sync_projection_directory_required(current)?;
+                }
+                Err(error) => return Err(error),
+            }
+            chain.push(open_projection_dir_nofollow(current, component)?);
+        }
+        Ok(ProjectionParent { chain })
+    }
+
+    fn ensure_projection_target_shape(
+        &self,
+        parent: &ProjectionParent,
+        target: &ProjectionTarget,
+    ) -> io::Result<()> {
+        projection_optional_regular_metadata(parent.final_dir(), &target.filename)?;
+        match parent.final_dir().symlink_metadata(&target.twin_filename) {
+            Ok(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection page has an .md/.org twin",
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ensure_projection_parent_binding(
+        &self,
+        parent: &ProjectionParent,
+        target: &ProjectionTarget,
+    ) -> io::Result<()> {
+        let rebound = self.projection_parent(target, false)?;
+        if projection_dir_identity(rebound.final_dir())?
+            != projection_dir_identity(parent.final_dir())?
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection parent changed during publication",
+            ));
+        }
+        Ok(())
+    }
+
+    fn cache_projection_page_text(&self, path: &Path, content: &str) -> io::Result<()> {
+        if self.path_is_cacheable(path) {
+            let rev = content_rev(content);
+            {
+                let _cache = self.cache.read().unwrap();
+                if self
+                    .disk_revs
+                    .read()
+                    .unwrap()
+                    .get(path)
+                    .is_some_and(|current| *current == rev)
+                {
+                    return Ok(());
+                }
+            }
+            let entry = self.entry_for_path(path).ok_or_else(bad_path)?;
+            self.cache_upsert(entry, parse_doc(path, content), rev);
+        }
+        Ok(())
     }
 
     /// Resolve the exact on-disk source file for an explicit user file action.
@@ -5744,7 +6159,7 @@ impl Graph {
                 format,
             );
             let content = serialize_pdf_hls_page(&page_path, &page_doc, None)?;
-            let page_rev = self.commit_write(&page_path, &content, None, true)?;
+            let page_rev = self.commit_editor_write(&page_path, &content, None, true)?;
             let name = crate::pdf::hls_page_name(&key);
             let entry = PageEntry {
                 name,
@@ -6017,8 +6432,12 @@ impl Graph {
         // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
         let page_md = serialize_pdf_hls_page(&page_path, &page_doc, existing_raw.as_deref())?;
-        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
-        {
+        let page_rev = match self.commit_editor_write(
+            &page_path,
+            &page_md,
+            page_baseline.as_deref(),
+            true,
+        ) {
             Ok(rev) => rev,
             Err(page_error) => {
                 if let Err(rollback_error) = self.rollback_highlight_sidecar(
@@ -6169,6 +6588,714 @@ impl Graph {
         }
     }
 
+    /// Oplog entry into the singular page serializer and commit boundary.
+    /// The exact recovery reservation is durable before this can mutate a name.
+    pub(crate) fn write_page_projection(
+        &self,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        target: &[u8],
+        reservation: &ProjectionAttemptReservation,
+        known_attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<ProjectionWriteProof> {
+        require_projection_platform()?;
+        if target.len() as u64 > MAX_PROJECTION_EVIDENCE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "projection target exceeds the evidence reload bound",
+            ));
+        }
+        let target_text = std::str::from_utf8(target).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection target is not valid UTF-8",
+            )
+        })?;
+        if let Some(base) = expected_base {
+            std::str::from_utf8(base).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "projection base is not valid UTF-8",
+                )
+            })?;
+        }
+        let target_path = self.projection_page_target(relative_path)?;
+        validate_projection_attempt(&target_path, reservation)?;
+        for attempt in known_attempts {
+            validate_projection_attempt(&target_path, attempt)?;
+        }
+        if !known_attempts
+            .iter()
+            .any(|attempt| attempt.attempt_id() == reservation.attempt_id())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "active projection attempt was not durably catalogued",
+            ));
+        }
+        let lock = self.page_lock(&target_path.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target_path, true)?;
+        self.ensure_projection_target_shape(&parent, &target_path)?;
+        preflight_projection_chain(&parent.chain)?;
+
+        let current = read_projection_optional(parent.final_dir(), &target_path.filename)?;
+        let current_text = current
+            .as_deref()
+            .map(std::str::from_utf8)
+            .transpose()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "projection base is not valid UTF-8",
+                )
+            })?;
+        let target_doc = parse_doc(&target_path.absolute_path, target_text);
+        let serialization_base =
+            current_text.or_else(|| expected_base.and_then(|base| std::str::from_utf8(base).ok()));
+        let (_, guarded_target) = self.serialize_page_document(
+            target_doc,
+            &target_path.absolute_path,
+            serialization_base,
+        )?;
+        if guarded_target.as_bytes() != target {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "manifested projection target differs from guarded page serialization",
+            ));
+        }
+        let resumed_retirement = current.is_none()
+            && expected_base.is_some()
+            && self
+                .projection_recovery_evidence_exact(&parent, &target_path, known_attempts)?
+                .iter()
+                .any(|evidence| {
+                    expected_base.is_some_and(|base| {
+                        evidence.len == base.len() as u64
+                            && evidence.digest == <[u8; 32]>::from(Sha256::digest(base))
+                    })
+                });
+        if current.as_deref() != expected_base && !resumed_retirement {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection precondition conflict",
+            ));
+        }
+        if current.as_deref() == Some(target) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection target is already visible; use exact recovery",
+            ));
+        }
+        match parent
+            .final_dir()
+            .symlink_metadata(reservation.recovery_filename())
+        {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "reserved projection recovery name already exists",
+                ))
+            }
+            Err(error) => return Err(error),
+        }
+
+        let (rev, proof) = self.commit_write(
+            &target_path.absolute_path,
+            target_text,
+            current_text,
+            false,
+            false,
+            || {
+                let mut published = false;
+                let mut recovery_name = None;
+                let mut result = (|| {
+                    let temp_name =
+                        create_projection_temp(parent.final_dir(), &target_path.filename, target)?;
+                    let result = (|| {
+                        projection_last_moment_hook(&target_path.absolute_path)?;
+                        self.ensure_projection_target_shape(&parent, &target_path)?;
+                        let now =
+                            read_projection_optional(parent.final_dir(), &target_path.filename)?;
+                        if now.as_deref() != expected_base && !resumed_retirement {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "projection precondition conflict",
+                            ));
+                        }
+
+                        // This hook is deliberately after the final ordinary reread.
+                        // Existing-file publication must capture, rather than overwrite,
+                        // any external bytes that arrive in this former loss window.
+                        projection_publication_race_hook(&target_path.absolute_path)?;
+
+                        if let Some(expected_base) = expected_base.filter(|_| !resumed_retirement) {
+                            let retired = reservation.recovery_filename().to_owned();
+                            retire_projection_target(
+                                parent.final_dir(),
+                                &target_path.filename,
+                                &retired,
+                            )?;
+                            recovery_name = Some(retired.clone());
+                            let displaced =
+                                sync_and_read_projection_regular(parent.final_dir(), &retired)?;
+                            preflight_projection_chain(&parent.chain)?;
+                            projection_after_retire_hook(&target_path.absolute_path)?;
+                            if displaced != expected_base {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::AlreadyExists,
+                                    format!(
+                                        "projection precondition changed at publication boundary; \
+                                 displaced bytes retained as {retired}"
+                                    ),
+                                ));
+                            }
+                        }
+
+                        self.ensure_projection_parent_binding(&parent, &target_path)?;
+                        self.ensure_projection_target_shape(&parent, &target_path)?;
+                        rename_projection_noreplace(
+                            parent.final_dir(),
+                            &temp_name,
+                            &target_path.filename,
+                        )?;
+                        published = true;
+                        sync_projection_chain_required(&parent.chain)?;
+                        projection_post_publish_hook(&target_path.absolute_path)?;
+                        self.ensure_projection_parent_binding(&parent, &target_path)?;
+                        self.ensure_projection_target_shape(&parent, &target_path)?;
+                        let reread =
+                            read_projection_optional(parent.final_dir(), &target_path.filename)?
+                                .ok_or_else(|| {
+                                    io::Error::new(
+                                        io::ErrorKind::AlreadyExists,
+                                        "projection target disappeared after publish",
+                                    )
+                                })?;
+                        if reread != target {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "projection target changed after publish",
+                            ));
+                        }
+
+                        let recovery_evidence = self.projection_recovery_evidence_exact(
+                            &parent,
+                            &target_path,
+                            known_attempts,
+                        )?;
+
+                        self.ensure_projection_parent_binding(&parent, &target_path)?;
+                        self.ensure_projection_target_shape(&parent, &target_path)?;
+                        let final_reread =
+                            read_projection_optional(parent.final_dir(), &target_path.filename)?
+                                .ok_or_else(|| {
+                                    io::Error::new(
+                                        io::ErrorKind::AlreadyExists,
+                                        "projection target disappeared before proof",
+                                    )
+                                })?;
+                        if final_reread != target {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "projection target changed before proof",
+                            ));
+                        }
+                        let reread_text = std::str::from_utf8(&final_reread).map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "projection reread is not valid UTF-8",
+                            )
+                        })?;
+                        self.cache_projection_page_text(&target_path.absolute_path, reread_text)?;
+                        Ok(ProjectionWriteProof::new(
+                            target_path.relative_path.clone(),
+                            final_reread,
+                            recovery_evidence,
+                        ))
+                    })();
+                    let cleanup = parent.final_dir().remove_file(&temp_name);
+                    if result.is_ok()
+                        && cleanup
+                            .as_ref()
+                            .is_err_and(|error| error.kind() != io::ErrorKind::NotFound)
+                    {
+                        cleanup?;
+                    }
+                    result
+                })();
+
+                if result.is_err() {
+                    if let Some(retired) = recovery_name.as_deref() {
+                        if let Err(recovery_error) = preserve_and_restore_projection_recovery(
+                            &parent.chain,
+                            parent.final_dir(),
+                            retired,
+                            &target_path.filename,
+                        ) {
+                            let primary = match result {
+                                Err(error) => error,
+                                Ok(_) => unreachable!("checked projection failure"),
+                            };
+                            result = Err(io::Error::new(
+                                primary.kind(),
+                                format!(
+                                    "{primary}; displaced projection remains at {retired}, \
+                                     but recovery verification failed: {recovery_error}"
+                                ),
+                            ));
+                        }
+                    }
+                }
+
+                if result.is_err()
+                    && published
+                    && self
+                        .ensure_projection_parent_binding(&parent, &target_path)
+                        .is_ok()
+                {
+                    if let Ok(Some(reread)) =
+                        read_projection_optional(parent.final_dir(), &target_path.filename)
+                    {
+                        if reread == target {
+                            if let Ok(reread_text) = std::str::from_utf8(&reread) {
+                                let _ = self.cache_projection_page_text(
+                                    &target_path.absolute_path,
+                                    reread_text,
+                                );
+                            }
+                        }
+                    }
+                }
+                result
+            },
+        )?;
+        self.drop_self_write_marker(&target_path.absolute_path, &rev);
+        Ok(proof)
+    }
+
+    /// Oplog entry into the singular guarded removal boundary. The exact
+    /// source bytes are retained under the durable attempt reservation before
+    /// absence can be reported as complete.
+    pub(crate) fn remove_page_projection(
+        &self,
+        relative_path: &str,
+        expected_base: &[u8],
+        reservation: &ProjectionAttemptReservation,
+        known_attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<ProjectionWriteProof> {
+        require_projection_platform()?;
+        std::str::from_utf8(expected_base).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection removal base is not valid UTF-8",
+            )
+        })?;
+        let target = self.projection_page_target(relative_path)?;
+        validate_projection_attempt(&target, reservation)?;
+        for attempt in known_attempts {
+            validate_projection_attempt(&target, attempt)?;
+        }
+        if !known_attempts
+            .iter()
+            .any(|attempt| attempt.attempt_id() == reservation.attempt_id())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "active projection removal attempt was not durably catalogued",
+            ));
+        }
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        preflight_projection_chain(&parent.chain)?;
+        let current = read_projection_optional(parent.final_dir(), &target.filename)?;
+        if current.as_deref() != Some(expected_base) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection removal precondition conflict",
+            ));
+        }
+        match parent
+            .final_dir()
+            .symlink_metadata(reservation.recovery_filename())
+        {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "reserved projection recovery name already exists",
+                ))
+            }
+            Err(error) => return Err(error),
+        }
+        let cached_entry = self.entry_for_path(&target.absolute_path);
+        let rev = content_rev("");
+        self.note_self_write(&target.absolute_path, rev.clone());
+        let result = (|| {
+            projection_last_moment_hook(&target.absolute_path)?;
+            self.ensure_projection_target_shape(&parent, &target)?;
+            if read_projection_optional(parent.final_dir(), &target.filename)?.as_deref()
+                != Some(expected_base)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "projection removal precondition changed at publication boundary",
+                ));
+            }
+            let retired = reservation.recovery_filename();
+            retire_projection_target(parent.final_dir(), &target.filename, retired)?;
+            let result = (|| {
+                let displaced = sync_and_read_projection_regular(parent.final_dir(), retired)?;
+                if displaced != expected_base {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "projection removal displaced bytes changed",
+                    ));
+                }
+                sync_projection_chain_required(&parent.chain)?;
+                projection_post_publish_hook(&target.absolute_path)?;
+                self.ensure_projection_parent_binding(&parent, &target)?;
+                if read_projection_optional(parent.final_dir(), &target.filename)?.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "projection removal target reappeared",
+                    ));
+                }
+                let final_displaced =
+                    sync_and_read_projection_regular(parent.final_dir(), retired)?;
+                if final_displaced != expected_base {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "projection removal recovery evidence changed before proof",
+                    ));
+                }
+                if let Some(entry) = &cached_entry {
+                    self.cache_remove_path(entry);
+                }
+                let recovery_evidence =
+                    self.projection_recovery_evidence_exact(&parent, &target, known_attempts)?;
+                Ok(ProjectionWriteProof::new(
+                    target.relative_path.clone(),
+                    Vec::new(),
+                    recovery_evidence,
+                ))
+            })();
+            if result.is_err() {
+                preserve_and_restore_projection_recovery(
+                    &parent.chain,
+                    parent.final_dir(),
+                    retired,
+                    &target.filename,
+                )?;
+            }
+            result
+        })();
+        self.drop_self_write_marker(&target.absolute_path, &rev);
+        result
+    }
+
+    #[cfg(test)]
+    fn write_projection_exact(
+        &self,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        target: &[u8],
+    ) -> io::Result<ProjectionWriteProof> {
+        self.projection_page_target(relative_path)?;
+        let reservation = ProjectionAttemptReservation::for_test(relative_path);
+        let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
+            let mut catalog = catalog.borrow_mut();
+            let attempts = catalog.entry(relative_path.to_owned()).or_default();
+            attempts.push(reservation.clone());
+            attempts.clone()
+        });
+        self.write_page_projection(
+            relative_path,
+            expected_base,
+            target,
+            &reservation,
+            &attempts,
+        )
+    }
+
+    #[cfg(test)]
+    fn projection_recovery_evidence(
+        &self,
+        target_relative_path: &str,
+    ) -> io::Result<Vec<ProjectionRecoveryEvidence>> {
+        require_projection_platform()?;
+        let target = self.projection_page_target(target_relative_path)?;
+        let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
+            catalog
+                .borrow()
+                .get(target_relative_path)
+                .cloned()
+                .unwrap_or_default()
+        });
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        self.projection_recovery_evidence_exact(&parent, &target, &attempts)
+    }
+
+    #[cfg(test)]
+    fn recover_projection_exact(
+        &self,
+        relative_path: &str,
+        expected_target: &[u8],
+    ) -> io::Result<ProjectionWriteProof> {
+        let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
+            catalog
+                .borrow()
+                .get(relative_path)
+                .cloned()
+                .unwrap_or_default()
+        });
+        self.recover_page_projection(relative_path, None, expected_target, &attempts)
+    }
+
+    /// Reread retained displacement through the same target-parent capability.
+    /// The descriptor is proof-issued, and its exact relative path/name binding
+    /// prevents startup/import code from treating anonymous hidden files as
+    /// recovery evidence.
+    #[allow(dead_code)] // Retained for the later importer/startup evidence reader.
+    pub(crate) fn read_projection_recovery_evidence(
+        &self,
+        target_relative_path: &str,
+        evidence: &ProjectionRecoveryEvidence,
+    ) -> io::Result<Vec<u8>> {
+        require_projection_platform()?;
+        let target = self.projection_page_target(target_relative_path)?;
+        let parent_relative = target
+            .relative_path
+            .rsplit_once('/')
+            .expect("projection paths always include a configured root")
+            .0;
+        let expected_evidence_path = format!("{parent_relative}/{}", evidence.filename);
+        let expected_prefix = format!(".{}.", target.filename);
+        if evidence.relative_path != expected_evidence_path
+            || !evidence.filename.starts_with(&expected_prefix)
+            || !evidence.filename.ends_with(".projection.recovery")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection recovery evidence is not bound to its target",
+            ));
+        }
+
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        let bytes = sync_and_read_projection_regular(parent.final_dir(), &evidence.filename)?;
+        preflight_projection_chain(&parent.chain)?;
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        Ok(bytes)
+    }
+
+    fn projection_recovery_evidence_exact(
+        &self,
+        parent: &ProjectionParent,
+        target: &ProjectionTarget,
+        attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<Vec<ProjectionRecoveryEvidence>> {
+        let mut evidence = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for attempt in attempts {
+            validate_projection_attempt(target, attempt)?;
+            let filename = attempt.recovery_filename();
+            if !seen.insert(filename) {
+                continue;
+            }
+            let bytes = match sync_and_read_projection_regular(parent.final_dir(), filename) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            evidence.push(ProjectionRecoveryEvidence::new(
+                &target.relative_path,
+                filename.to_owned(),
+                &bytes,
+            ));
+        }
+        preflight_projection_chain(&parent.chain)?;
+        self.ensure_projection_parent_binding(parent, target)?;
+        evidence.sort_by(|left, right| {
+            (&left.relative_path, &left.filename).cmp(&(&right.relative_path, &right.filename))
+        });
+        Ok(evidence)
+    }
+
+    /// Reconstruct an exact deletion proof only when a durable attempt names
+    /// retained displaced bytes matching the manifested base and the target is
+    /// freshly synced and still absent through the same graph capability.
+    pub(crate) fn recover_removed_page_projection(
+        &self,
+        relative_path: &str,
+        expected_base: &[u8],
+        attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<ProjectionWriteProof> {
+        require_projection_platform()?;
+        std::str::from_utf8(expected_base).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection removal recovery base is not valid UTF-8",
+            )
+        })?;
+        if attempts.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "projection removal recovery has no durable attempt",
+            ));
+        }
+        let target = self.projection_page_target(relative_path)?;
+        for attempt in attempts {
+            validate_projection_attempt(&target, attempt)?;
+        }
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        if read_projection_optional(parent.final_dir(), &target.filename)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection removal recovery target is present",
+            ));
+        }
+        let evidence = self.projection_recovery_evidence_exact(&parent, &target, attempts)?;
+        let expected = <[u8; 32]>::from(Sha256::digest(expected_base));
+        if !evidence
+            .iter()
+            .any(|item| item.len == expected_base.len() as u64 && item.digest == expected)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "projection removal recovery has no exact retained base evidence",
+            ));
+        }
+        sync_projection_chain_required(&parent.chain)?;
+        projection_post_publish_hook(&target.absolute_path)?;
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        if read_projection_optional(parent.final_dir(), &target.filename)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection removal recovery target reappeared",
+            ));
+        }
+        Ok(ProjectionWriteProof::new(
+            target.relative_path,
+            Vec::new(),
+            evidence,
+        ))
+    }
+
+    /// Reconstruct projection evidence only from an exact target that is freshly
+    /// synced and reread through the same retained no-follow capability.
+    pub(crate) fn recover_page_projection(
+        &self,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        expected_target: &[u8],
+        attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<ProjectionWriteProof> {
+        require_projection_platform()?;
+        if attempts.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "projection recovery has no durable attempt",
+            ));
+        }
+        let expected_target_text = std::str::from_utf8(expected_target).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection recovery target is not valid UTF-8",
+            )
+        })?;
+        let target_path = self.projection_page_target(relative_path)?;
+        for attempt in attempts {
+            validate_projection_attempt(&target_path, attempt)?;
+        }
+        let lock = self.page_lock(&target_path.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target_path, false)?;
+        self.ensure_projection_target_shape(&parent, &target_path)?;
+        let base_text = expected_base
+            .map(std::str::from_utf8)
+            .transpose()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "projection recovery base is not valid UTF-8",
+                )
+            })?;
+        let target_doc = parse_doc(&target_path.absolute_path, expected_target_text);
+        let (_, guarded_target) =
+            self.serialize_page_document(target_doc, &target_path.absolute_path, base_text)?;
+        if guarded_target.as_bytes() != expected_target {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "replayed projection target differs from guarded page serialization",
+            ));
+        }
+
+        let (file, current) =
+            open_and_read_projection_regular(parent.final_dir(), &target_path.filename)?;
+        if current != expected_target {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection recovery target mismatch",
+            ));
+        }
+
+        let text = std::str::from_utf8(&current).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "projection recovery target is not valid UTF-8",
+            )
+        })?;
+        let rev = content_rev(text);
+        self.note_self_write(&target_path.absolute_path, rev.clone());
+        let result = (|| {
+            file.sync_all()?;
+            sync_projection_chain_required(&parent.chain)?;
+            projection_post_publish_hook(&target_path.absolute_path)?;
+            self.ensure_projection_parent_binding(&parent, &target_path)?;
+            self.ensure_projection_target_shape(&parent, &target_path)?;
+            let reread = read_projection_optional(parent.final_dir(), &target_path.filename)?
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "projection recovery target disappeared",
+                    )
+                })?;
+            if reread != expected_target {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "projection recovery target changed after sync",
+                ));
+            }
+            let recovery_evidence =
+                self.projection_recovery_evidence_exact(&parent, &target_path, attempts)?;
+            let reread_text = std::str::from_utf8(&reread).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "projection recovery reread is not valid UTF-8",
+                )
+            })?;
+            self.cache_projection_page_text(&target_path.absolute_path, reread_text)?;
+            Ok(ProjectionWriteProof::new(
+                target_path.relative_path.clone(),
+                reread,
+                recovery_evidence,
+            ))
+        })();
+        self.drop_self_write_marker(&target_path.absolute_path, &rev);
+        result
+    }
+
     /// Restore a PDF highlight sidecar after the paired `hls__` page failed to
     /// commit. The sidecar is restored only while it still contains the exact
     /// bytes this call published; a later external edit is never knowingly
@@ -6258,29 +7385,33 @@ impl Graph {
         }
     }
 
-    /// The shared page-write commit protocol, written ONCE so `write_page` and
-    /// `write_highlights` can't drift apart on it (a missed step = a stale marker
-    /// suppressing a real external edit, or a phantom conflict):
-    ///   record self-write marker → ensure parent dir → (A3) optional last-moment
-    ///   recheck that disk still == `baseline` → atomic_write.
+    /// The shared page-write commit protocol, written ONCE so editor saves,
+    /// highlight saves, and oplog projections cannot drift on marker lifecycle
+    /// or cross the mutation boundary through a second writer:
+    ///   record self-write marker → optional parent preparation / last-moment
+    ///   baseline recheck → the selected guarded publication strategy.
     /// We hold the page lock, so no other Tine writer raced us; the recheck guards
     /// a non-cooperating external writer (OG/Syncthing) that touched the file since
     /// our baseline read — on mismatch we abort WITHOUT writing and drop our marker
     /// so the watcher still sees the external change. Returns the new content rev.
     /// The post-publish marker drop is `drop_self_write_marker` (it must run AFTER
     /// the caller's cache_upsert, so it stays the caller's responsibility).
-    fn commit_write(
+    fn commit_write<T>(
         &self,
         path: &Path,
         content: &str,
         baseline: Option<&str>,
         recheck: bool,
-    ) -> io::Result<String> {
+        create_parent: bool,
+        publish: impl FnOnce() -> io::Result<T>,
+    ) -> io::Result<(String, T)> {
         let rev = content_rev(content);
         self.note_self_write(path, rev.clone());
         let result = (|| {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
+            if create_parent {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
             }
             if recheck {
                 // Only NotFound means "no baseline file". Permission errors, invalid
@@ -6296,16 +7427,31 @@ impl Graph {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
                 }
             }
+            publish()
+        })();
+        match result {
+            Ok(published) => Ok((rev, published)),
+            Err(error) => {
+                self.drop_self_write_marker(path, &rev);
+                Err(error)
+            }
+        }
+    }
+
+    fn commit_editor_write(
+        &self,
+        path: &Path,
+        content: &str,
+        baseline: Option<&str>,
+        recheck: bool,
+    ) -> io::Result<String> {
+        let (rev, ()) = self.commit_write(path, content, baseline, recheck, true, || {
             if baseline.is_none() {
                 atomic_write_new(path, content.as_bytes())
             } else {
                 atomic_write(path, content.as_bytes())
             }
-        })();
-        if let Err(error) = result {
-            self.drop_self_write_marker(path, &rev);
-            return Err(error);
-        }
+        })?;
         Ok(rev)
     }
 
@@ -6882,11 +8028,8 @@ impl Graph {
         recheck: bool,
         cache: bool,
     ) -> io::Result<String> {
-        // (A new journal's `path` was named by `path_for` using the graph's
-        // `:journal/file-name-format` — so custom-format graphs create the correct
-        // file for the day instead of a misplaced default-named duplicate.)
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
-        let mut doc = Document {
+        let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page
                 .blocks
@@ -6894,6 +8037,96 @@ impl Graph {
                 .map(|b| dto_to_doc(b, dto_is_org))
                 .collect(),
         };
+        let (doc, content) = self.serialize_page_document(doc, path, existing)?;
+        // No-op save: identical bytes already on disk (e.g. focus/blur with no real
+        // edit, or a forced flush of an unchanged page). Skip the write, the
+        // watcher record, AND — crucially — the cache update below.
+        let changed = existing != Some(content.as_str());
+        // The shared commit protocol (marker → A3 recheck vs `existing` →
+        // atomic_write); `force_save_page` passes recheck=false so "keep mine"
+        // overwrites unconditionally. On a no-op, just hash the unchanged bytes for
+        // the returned/cached rev — no write, no marker.
+        let rev = if changed {
+            self.commit_editor_write(&path, &content, existing, recheck)?
+        } else {
+            content_rev(&content)
+        };
+        // Touch the cache only when the bytes changed, or the page isn't in an
+        // already-built cache yet (fold a cold page in). A no-op save of an
+        // already-cached page MUST NOT call cache_upsert: it bumps `cache_gen`,
+        // which keys every memoized query/backlink/derived result — so an unchanged
+        // re-save would force a whole-graph requery on every open dashboard.
+        // A path-pinned save (`cache == false`, a duplicate-day stray, #21) NEVER
+        // touches the `(kind,name)` cache: that slot belongs to the canonical file,
+        // and folding the stray's content in would make name-resolution serve it.
+        // The stray is re-parsed from disk on its next path-addressed load.
+        let need_cache_update = cache
+            && (changed || {
+                let guard = self.cache.read().unwrap();
+                guard
+                    .as_ref()
+                    .is_some_and(|pages| self.cached_page_index_for_path(pages, &path).is_none())
+            });
+        if need_cache_update {
+            // For a brand-new journal, derive its date_key from the name so it's
+            // recognized as a dated journal by `journals_desc` (which reads this
+            // cache) — otherwise today's freshly-created page would be missing.
+            let entry = self.entry_for_path(&path).unwrap_or_else(|| {
+                let date_key = if page.kind == PageKind::Journal {
+                    crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
+                } else {
+                    None
+                };
+                PageEntry {
+                    name: page.name.clone(),
+                    kind: page.kind,
+                    date_key,
+                    rel_path: self.rel_path(&path),
+                    path: path.to_path_buf(),
+                }
+            });
+            // H4: for org, the on-disk bytes are authoritative. If the user typed a
+            // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
+            // into a block body, `content` re-parses to a DIFFERENT tree than the
+            // frontend `doc` — cache what's actually on disk so the next load shows
+            // the real structure instead of a cache that silently disagrees. Common
+            // case: structures match → keep `doc` (block uuids stay stable). Markdown
+            // continuation lines are indented, so they can't re-read differently.
+            let cache_doc = if Format::from_path(&path) == Format::Org {
+                let reparsed = crate::org::parse_org(&content);
+                if reparsed == doc {
+                    doc
+                } else {
+                    reparsed
+                }
+            } else {
+                doc
+            };
+            self.cache_upsert(entry, cache_doc, rev.clone());
+        }
+        // Drop the self-write marker now the write is published + cached (it only
+        // had to cover the atomic-write → cache_upsert window; disk_revs now
+        // suppresses the watcher). See drop_self_write_marker.
+        if changed {
+            self.drop_self_write_marker(&path, &rev);
+        }
+        // The new baseline rev = hash of exactly what's now on disk (the content we
+        // serialized, or the identical existing bytes on a no-op) — no re-read.
+        Ok(rev)
+    }
+
+    /// The one page serialization and corruption-firewall boundary used by
+    /// ordinary editor saves and oplog projections.
+    fn serialize_page_document(
+        &self,
+        mut doc: Document,
+        path: &Path,
+        existing: Option<&str>,
+    ) -> io::Result<(Document, String)> {
+        // (A new journal's `path` was named by `path_for` using the graph's
+        // `:journal/file-name-format` — so custom-format graphs create the correct
+        // file for the day instead of a misplaced default-named duplicate.)
+        let dto_is_org = matches!(Format::from_path(path), Format::Org);
         // Data-preservation firewall for page-header properties (GH #163).
         // A frontend/store bug once reclassified a suffix of the page pre-block
         // as the first outline block (`A::` stayed in the header while `B::` and
@@ -6933,7 +8166,7 @@ impl Graph {
         // root through the ordinary editor, but the persisted/cache shape is an
         // unbulleted page header. Existing nonempty preambles were rejected above.
         if !dto_is_org
-            && page.pre_block.as_deref().unwrap_or("").is_empty()
+            && doc.pre_block.as_deref().unwrap_or("").is_empty()
             && existing
                 .map(doc::parse)
                 .and_then(|parsed| parsed.pre_block)
@@ -6943,9 +8176,7 @@ impl Graph {
         {
             promote_first_root_page_header(&mut doc);
         }
-        // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
-        let path = path.to_path_buf();
-        let content = match Format::from_path(&path) {
+        let content = match Format::from_path(path) {
             Format::Md => {
                 // Reproduce the existing file's formatting (trailing newline,
                 // post-property blank line, indent) so an unchanged save is
@@ -6990,81 +8221,7 @@ impl Graph {
                 crate::org::serialize_org_detect(&doc, existing)
             }
         };
-        // No-op save: identical bytes already on disk (e.g. focus/blur with no real
-        // edit, or a forced flush of an unchanged page). Skip the write, the
-        // watcher record, AND — crucially — the cache update below.
-        let changed = existing != Some(content.as_str());
-        // The shared commit protocol (marker → A3 recheck vs `existing` →
-        // atomic_write); `force_save_page` passes recheck=false so "keep mine"
-        // overwrites unconditionally. On a no-op, just hash the unchanged bytes for
-        // the returned/cached rev — no write, no marker.
-        let rev = if changed {
-            self.commit_write(&path, &content, existing, recheck)?
-        } else {
-            content_rev(&content)
-        };
-        // Touch the cache only when the bytes changed, or the page isn't in an
-        // already-built cache yet (fold a cold page in). A no-op save of an
-        // already-cached page MUST NOT call cache_upsert: it bumps `cache_gen`,
-        // which keys every memoized query/backlink/derived result — so an unchanged
-        // re-save would force a whole-graph requery on every open dashboard.
-        // A path-pinned save (`cache == false`, a duplicate-day stray, #21) NEVER
-        // touches the `(kind,name)` cache: that slot belongs to the canonical file,
-        // and folding the stray's content in would make name-resolution serve it.
-        // The stray is re-parsed from disk on its next path-addressed load.
-        let need_cache_update = cache
-            && (changed || {
-                let guard = self.cache.read().unwrap();
-                guard
-                    .as_ref()
-                    .is_some_and(|pages| self.cached_page_index_for_path(pages, &path).is_none())
-            });
-        if need_cache_update {
-            // For a brand-new journal, derive its date_key from the name so it's
-            // recognized as a dated journal by `journals_desc` (which reads this
-            // cache) — otherwise today's freshly-created page would be missing.
-            let entry = self.entry_for_path(&path).unwrap_or_else(|| {
-                let date_key = if page.kind == PageKind::Journal {
-                    crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
-                } else {
-                    None
-                };
-                PageEntry {
-                    name: page.name.clone(),
-                    kind: page.kind,
-                    date_key,
-                    rel_path: self.rel_path(&path),
-                    path: path.clone(),
-                }
-            });
-            // H4: for org, the on-disk bytes are authoritative. If the user typed a
-            // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
-            // into a block body, `content` re-parses to a DIFFERENT tree than the
-            // frontend `doc` — cache what's actually on disk so the next load shows
-            // the real structure instead of a cache that silently disagrees. Common
-            // case: structures match → keep `doc` (block uuids stay stable). Markdown
-            // continuation lines are indented, so they can't re-read differently.
-            let cache_doc = if Format::from_path(&path) == Format::Org {
-                let reparsed = crate::org::parse_org(&content);
-                if reparsed == doc {
-                    doc
-                } else {
-                    reparsed
-                }
-            } else {
-                doc
-            };
-            self.cache_upsert(entry, cache_doc, rev.clone());
-        }
-        // Drop the self-write marker now the write is published + cached (it only
-        // had to cover the atomic-write → cache_upsert window; disk_revs now
-        // suppresses the watcher). See drop_self_write_marker.
-        if changed {
-            self.drop_self_write_marker(&path, &rev);
-        }
-        // The new baseline rev = hash of exactly what's now on disk (the content we
-        // serialized, or the identical existing bytes on a no-op) — no re-read.
-        Ok(rev)
+        Ok((doc, content))
     }
 }
 
@@ -8668,6 +9825,586 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::File::open(dir).and_then(|d| d.sync_all());
     }
     res
+}
+
+fn projection_component_is_portable(component: &str) -> bool {
+    if component.is_empty()
+        || matches!(component, "." | "..")
+        || component.ends_with(' ')
+        || component.ends_with('.')
+        || component
+            .chars()
+            .any(|character| character == ':' || character.is_control())
+    {
+        return false;
+    }
+    let device_stem = component
+        .split_once('.')
+        .map_or(component, |(stem, _)| stem)
+        .to_ascii_uppercase();
+    !matches!(
+        device_stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    windows
+))]
+fn require_projection_platform() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    windows
+)))]
+fn require_projection_platform() -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "exact projection durability is unsupported on this platform",
+    ))
+}
+
+fn open_projection_root_nofollow(root: &Path) -> io::Result<Dir> {
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "graph root is not UTF-8"))?;
+    let parent = root
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = fs::canonicalize(parent)?;
+    let parent = Dir::open_ambient_dir(parent, ambient_authority())?;
+    open_projection_dir_nofollow(&parent, name)
+}
+
+fn projection_real_directory(dir: &Dir, name: &str) -> io::Result<()> {
+    let metadata = dir.symlink_metadata(name)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection path contains a symlink, reparse point, or special parent",
+        ));
+    }
+    #[cfg(windows)]
+    {
+        use cap_fs_ext::OsMetadataExt as _;
+        if metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection parent is a reparse point",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn projection_optional_regular_metadata(dir: &Dir, name: &str) -> io::Result<()> {
+    let metadata = match dir.symlink_metadata(name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection target is a symlink, reparse point, or special file",
+        ));
+    }
+    #[cfg(windows)]
+    {
+        use cap_fs_ext::OsMetadataExt as _;
+        if metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "projection target is a reparse point",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_projection_dir_nofollow(dir: &Dir, name: &str) -> io::Result<Dir> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+
+    let name = CString::new(name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid directory name"))?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(Dir::from_std_file(unsafe { fs::File::from_raw_fd(fd) }))
+}
+
+#[cfg(windows)]
+fn open_projection_dir_nofollow(dir: &Dir, name: &str) -> io::Result<Dir> {
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
+    use std::os::windows::fs::MetadataExt;
+
+    let mut options = CapOpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .maybe_dir(true);
+    let file = dir.open_with(name, &options)?.into_std();
+    let metadata = file.metadata()?;
+    if !metadata.is_dir()
+        || metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection parent is not a real no-follow directory",
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_projection_dir_nofollow(_dir: &Dir, _name: &str) -> io::Result<Dir> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no-follow projection directories are unsupported on this platform",
+    ))
+}
+
+#[cfg(unix)]
+fn open_projection_file_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+
+    #[cfg(test)]
+    PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(count.get() + 1));
+    let name = CString::new(name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid page filename"))?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection target is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn open_projection_file_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+    use std::os::windows::fs::MetadataExt;
+
+    #[cfg(test)]
+    PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(count.get() + 1));
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = dir.open_with(name, &options)?.into_std();
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection target is not a regular no-follow file",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_projection_file_nofollow(_dir: &Dir, _name: &str) -> io::Result<fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no-follow projection reads are unsupported on this platform",
+    ))
+}
+
+fn open_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<(fs::File, Vec<u8>)> {
+    let mut file = open_projection_file_nofollow(dir, name)?;
+    let len = file.metadata()?.len();
+    if len > MAX_PROJECTION_EVIDENCE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence exceeds the reload bound",
+        ));
+    }
+    let capacity = usize::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence length is not addressable",
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.read_to_end(&mut bytes)?;
+    Ok((file, bytes))
+}
+
+fn sync_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<Vec<u8>> {
+    let mut file = open_projection_file_nofollow(dir, name)?;
+    let len = file.metadata()?.len();
+    if len > MAX_PROJECTION_EVIDENCE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence exceeds the reload bound",
+        ));
+    }
+    file.sync_all()?;
+    let capacity = usize::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence length is not addressable",
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn read_projection_optional(dir: &Dir, name: &str) -> io::Result<Option<Vec<u8>>> {
+    match open_and_read_projection_regular(dir, name) {
+        Ok((_file, bytes)) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn create_projection_temp(dir: &Dir, filename: &str, bytes: &[u8]) -> io::Result<String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    for _ in 0..128 {
+        let name = format!(
+            ".{filename}.{}.{}.projection.tmp",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        let mut options = CapOpenOptions::new();
+        options.write(true).create_new(true);
+        match dir.open_with(&name, &options) {
+            Ok(mut file) => {
+                let result = file.write_all(bytes).and_then(|()| file.sync_all());
+                drop(file);
+                if let Err(error) = result {
+                    let _ = dir.remove_file(&name);
+                    return Err(error);
+                }
+                return Ok(name);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve projection temporary file",
+    ))
+}
+
+fn retire_projection_target(dir: &Dir, filename: &str, recovery: &str) -> io::Result<()> {
+    rename_projection_noreplace(dir, filename, recovery)
+}
+
+/// Keep the retired inode as durable evidence on every failed publication. If
+/// the live name is still absent, restore a durable copy with no-replace; a
+/// concurrent creator wins and the recovery file remains available for import.
+fn preserve_and_restore_projection_recovery(
+    chain: &[Dir],
+    dir: &Dir,
+    recovery: &str,
+    filename: &str,
+) -> io::Result<()> {
+    let displaced = sync_and_read_projection_regular(dir, recovery)?;
+    preflight_projection_chain(chain)?;
+
+    match read_projection_optional(dir, filename) {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+
+    let temp = create_projection_temp(dir, filename, &displaced)?;
+    let restore = rename_projection_noreplace(dir, &temp, filename);
+    match restore {
+        Ok(()) => {
+            preflight_projection_chain(chain)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = dir.remove_file(&temp);
+            preflight_projection_chain(chain)
+        }
+        Err(error) => {
+            let _ = dir.remove_file(&temp);
+            Err(error)
+        }
+    }
+}
+
+/// Verify directory durability support before the first live-name mutation.
+/// Linux/Android/macOS and Windows can all reject directory flushing on a
+/// particular filesystem; that must fail before retirement/publication.
+fn preflight_projection_chain(chain: &[Dir]) -> io::Result<()> {
+    for dir in chain.iter().rev() {
+        sync_projection_directory_required(dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_projection_noreplace(dir: &Dir, from: &str, to: &str) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd};
+
+    let from = CString::new(from)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid temporary name"))?;
+    let to = CString::new(to)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid target name"))?;
+    let result = unsafe {
+        // Use the syscall entry point on Android: bionic's renameat2 wrapper is
+        // API-30-only, while the kernel primitive and syscall() are available
+        // on the supported Android baseline. Linux uses the identical path.
+        libc::syscall(
+            libc::SYS_renameat2,
+            dir.as_fd().as_raw_fd(),
+            from.as_ptr(),
+            dir.as_fd().as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
+    (result == 0)
+        .then_some(())
+        .ok_or_else(io::Error::last_os_error)
+}
+
+#[cfg(target_os = "macos")]
+fn rename_projection_noreplace(dir: &Dir, from: &str, to: &str) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd};
+
+    let from = CString::new(from)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let to = CString::new(to)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid target name"))?;
+    let result = unsafe {
+        libc::renameatx_np(
+            dir.as_fd().as_raw_fd(),
+            from.as_ptr(),
+            dir.as_fd().as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_EXCL as libc::c_uint,
+        )
+    };
+    (result == 0)
+        .then_some(())
+        .ok_or_else(io::Error::last_os_error)
+}
+
+#[cfg(windows)]
+fn rename_projection_noreplace(dir: &Dir, from: &str, to: &str) -> io::Result<()> {
+    // Windows rename is an atomic move that fails when the destination exists.
+    // Keeping it relative to the retained Dir preserves the capability boundary;
+    // the caller rebinds and compares the directory's stable file identity.
+    dir.rename(from, dir, to)
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    windows
+)))]
+fn rename_projection_noreplace(_dir: &Dir, _from: &str, _to: &str) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-clobber projection publication is unsupported on this platform",
+    ))
+}
+
+fn sync_projection_chain_required(chain: &[Dir]) -> io::Result<()> {
+    projection_directory_sync_hook(Path::new("."))?;
+    for dir in chain.iter().rev() {
+        sync_projection_directory_required(dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_projection_directory_required(dir: &Dir) -> io::Result<()> {
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+
+    let fd = unsafe {
+        libc::openat(
+            dir.as_fd().as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    unsafe { fs::File::from_raw_fd(fd) }.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_projection_directory_required(dir: &Dir) -> io::Result<()> {
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
+    use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{FlushFileBuffers, FILE_ATTRIBUTE_REPARSE_POINT};
+
+    let mut options = CapOpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .follow(FollowSymlinks::No)
+        .maybe_dir(true);
+    let file = dir.open_with(".", &options)?.into_std();
+    let metadata = file.metadata()?;
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "projection durability handle is not a real no-follow directory",
+        ));
+    }
+    if unsafe { FlushFileBuffers(file.as_raw_handle()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_projection_directory_required(_dir: &Dir) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "projection directory durability is unsupported on this platform",
+    ))
+}
+
+#[cfg(unix)]
+fn projection_dir_identity(dir: &Dir) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(unix)]
+fn canonical_graph_resource_id(dir: &Dir) -> io::Result<CanonicalGraphResourceId> {
+    let (device, inode) = projection_dir_identity(dir)?;
+    let mut identity = [0_u8; 16];
+    identity[..8].copy_from_slice(&device.to_be_bytes());
+    identity[8..].copy_from_slice(&inode.to_be_bytes());
+    Ok(CanonicalGraphResourceId::from_capability_identity(
+        b"unix-dev-inode",
+        &identity,
+    ))
+}
+
+#[cfg(windows)]
+fn projection_dir_identity(dir: &Dir) -> io::Result<(u64, [u8; 16])> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    let file = dir.try_clone()?.into_std_file();
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((
+        information.VolumeSerialNumber,
+        information.FileId.Identifier,
+    ))
+}
+
+#[cfg(windows)]
+fn canonical_graph_resource_id(dir: &Dir) -> io::Result<CanonicalGraphResourceId> {
+    let (volume, file_id) = projection_dir_identity(dir)?;
+    let mut identity = [0_u8; 24];
+    identity[..8].copy_from_slice(&volume.to_be_bytes());
+    identity[8..].copy_from_slice(&file_id);
+    Ok(CanonicalGraphResourceId::from_capability_identity(
+        b"windows-volume-file-id",
+        &identity,
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn projection_dir_identity(_dir: &Dir) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "projection directory identity is unsupported on this platform",
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn canonical_graph_resource_id(_dir: &Dir) -> io::Result<CanonicalGraphResourceId> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "canonical graph resource identity is unsupported on this platform",
+    ))
 }
 
 /// Like [`atomic_write`] but the payload is COPIED from `src` (so a large import —
@@ -12829,6 +14566,696 @@ mod tests {
         assert!(!derived.as_ref().unwrap().results.contains_key(&oldest));
         assert!(!advanced.as_ref().unwrap().results.contains_key(&oldest));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- sparse projection exact-write bridge ----
+
+    fn projection_recovery_bytes(parent: &Path) -> Vec<Vec<u8>> {
+        fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".projection.recovery"))
+            })
+            .map(|entry| fs::read(entry.path()).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn projection_exact_proof_binds_path_bytes_digest_and_exact_preconditions() {
+        let dir = scratch("projection-exact-base");
+        let path = dir.join("pages/Projection.md");
+        let graph = Graph::open(&dir);
+
+        let proof = graph
+            .write_projection_exact("pages/Projection.md", None, b"- first\n")
+            .unwrap();
+        assert_eq!(proof.path(), "pages/Projection.md");
+        assert_eq!(proof.bytes(), b"- first\n");
+        let expected_digest: [u8; 32] = Sha256::digest(b"- first\n").into();
+        assert_eq!(proof.digest(), &expected_digest);
+        assert!(proof.recovery_evidence().is_empty());
+
+        let proof = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- first\n"), b"- second\n")
+            .unwrap();
+        assert_eq!(proof.path(), "pages/Projection.md");
+        assert_eq!(proof.bytes(), b"- second\n");
+        let evidence = proof
+            .recovery_evidence()
+            .first()
+            .expect("replacement must bind retained displacement");
+        assert_eq!(evidence.len(), b"- first\n".len() as u64);
+        assert_eq!(
+            evidence.digest(),
+            &<[u8; 32]>::from(Sha256::digest(b"- first\n"))
+        );
+        assert!(evidence.path().starts_with("pages/.Projection.md."));
+        assert!(evidence.filename().ends_with(".projection.recovery"));
+        assert_eq!(
+            graph
+                .read_projection_recovery_evidence("pages/Projection.md", evidence)
+                .unwrap(),
+            b"- first\n"
+        );
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- stale\n"), b"- clobber\n")
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- second\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projection_replacement_retains_and_records_late_stale_handle_writes() {
+        let dir = scratch("projection-stale-handle-evidence");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let stale_handle = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let graph = Graph::open(&dir);
+
+        PROJECTION_STALE_RECOVERY_WRITE.with(|write| {
+            *write.borrow_mut() = Some((stale_handle, b"- late stale handle\n".to_vec()));
+        });
+        let proof = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .unwrap();
+        let evidence = proof
+            .recovery_evidence()
+            .first()
+            .expect("replacement must retain its displaced inode");
+
+        assert_eq!(fs::read(&path).unwrap(), b"- target\n");
+        assert_eq!(evidence.len(), b"- late stale handle\n".len() as u64);
+        assert_eq!(
+            evidence.digest(),
+            &<[u8; 32]>::from(Sha256::digest(b"- late stale handle\n"))
+        );
+        assert_eq!(
+            graph
+                .read_projection_recovery_evidence("pages/Projection.md", evidence)
+                .unwrap(),
+            b"- late stale handle\n"
+        );
+        let enumerated = graph
+            .projection_recovery_evidence("pages/Projection.md")
+            .unwrap();
+        let rediscovered = enumerated
+            .iter()
+            .find(|candidate| candidate.filename() == evidence.filename())
+            .expect("retained evidence must be discoverable after proof");
+        assert_eq!(rediscovered.digest(), evidence.digest());
+        assert_eq!(rediscovered.len(), evidence.len());
+        assert!(dir.join(evidence.path()).exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_write_proof_catalogs_all_retained_displacements_canonically() {
+        let dir = scratch("projection-multiple-retained-evidence");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        let first = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- first\n")
+            .unwrap();
+        assert_eq!(first.recovery_evidence().len(), 1);
+        let second = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- first\n"), b"- second\n")
+            .unwrap();
+        assert_eq!(second.recovery_evidence().len(), 2);
+        assert!(second
+            .recovery_evidence()
+            .windows(2)
+            .all(|pair| pair[0].filename() < pair[1].filename()));
+        assert!(second
+            .recovery_evidence()
+            .iter()
+            .any(|evidence| evidence.digest() == &<[u8; 32]>::from(Sha256::digest(b"- base\n"))));
+        assert!(second
+            .recovery_evidence()
+            .iter()
+            .any(|evidence| evidence.digest() == &<[u8; 32]>::from(Sha256::digest(b"- first\n"))));
+        assert_eq!(fs::read(&path).unwrap(), b"- second\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_displacement_digest_drift_is_rediscovered_without_deletion() {
+        let dir = scratch("projection-late-post-proof-write");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let mut stale_handle = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let graph = Graph::open(&dir);
+
+        let proof = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .unwrap();
+        let first = proof
+            .recovery_evidence()
+            .first()
+            .expect("replacement must retain evidence");
+        assert_eq!(
+            first.digest(),
+            &<[u8; 32]>::from(Sha256::digest(b"- base\n"))
+        );
+
+        stale_handle.set_len(0).unwrap();
+        stale_handle.rewind().unwrap();
+        stale_handle.write_all(b"- late after proof\n").unwrap();
+        stale_handle.sync_all().unwrap();
+        let later = graph
+            .projection_recovery_evidence("pages/Projection.md")
+            .unwrap();
+        let rediscovered = later
+            .iter()
+            .find(|evidence| evidence.filename() == first.filename())
+            .expect("retained inode must remain discoverable");
+        assert_eq!(
+            rediscovered.digest(),
+            &<[u8; 32]>::from(Sha256::digest(b"- late after proof\n"))
+        );
+        assert_ne!(rediscovered.digest(), first.digest());
+        assert!(dir.join(rediscovered.path()).is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_exact_never_clobbers_pre_publish_or_proves_post_publish_changes() {
+        let dir = scratch("projection-exact-reread");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        PROJECTION_PUBLICATION_RACE_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- external race\n".to_vec());
+        });
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- external race\n");
+        assert!(projection_recovery_bytes(&dir.join("pages"))
+            .iter()
+            .any(|bytes| bytes == b"- external race\n"));
+        assert!(!graph.recent_writes.lock().unwrap().contains_key(&path));
+
+        fs::write(&path, b"- base again\n").unwrap();
+        graph.warm_cache();
+        let generation = graph.cache_generation();
+        PROJECTION_POST_PUBLISH_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- changed after publish\n".to_vec());
+        });
+        assert!(graph
+            .write_projection_exact(
+                "pages/Projection.md",
+                Some(b"- base again\n"),
+                b"- target again\n",
+            )
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- changed after publish\n");
+        assert_eq!(graph.cache_generation(), generation);
+        assert_eq!(
+            graph.disk_revs.read().unwrap().get(&path).cloned(),
+            Some(content_rev("- base again\n"))
+        );
+        assert!(!graph.recent_writes.lock().unwrap().contains_key(&path));
+        assert!(graph.sync_file(&path).is_some());
+        assert_eq!(graph.cache_generation(), generation + 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_boundary_race_preserves_displaced_and_newer_external_versions() {
+        let dir = scratch("projection-boundary-race-evidence");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        PROJECTION_PUBLICATION_RACE_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- displaced external\n".to_vec());
+        });
+        PROJECTION_AFTER_RETIRE_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- newer external\n".to_vec());
+        });
+        let result =
+            graph.write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n");
+
+        assert!(result.is_err(), "a raced publication returned write proof");
+        assert_eq!(fs::read(&path).unwrap(), b"- newer external\n");
+        assert!(projection_recovery_bytes(&dir.join("pages"))
+            .iter()
+            .any(|bytes| bytes == b"- displaced external\n"));
+        assert!(graph
+            .projection_recovery_evidence("pages/Projection.md")
+            .unwrap()
+            .iter()
+            .any(|evidence| evidence.digest()
+                == &<[u8; 32]>::from(Sha256::digest(b"- displaced external\n"))));
+        assert!(!graph.recent_writes.lock().unwrap().contains_key(&path));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_exact_updates_warm_cache_once_and_suppresses_watcher_echo() {
+        let dir = scratch("projection-exact-cache");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- before\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let generation = graph.cache_generation();
+
+        let proof = graph
+            .write_projection_exact("pages/Projection.md", Some(b"- before\n"), b"- after\n")
+            .unwrap();
+        assert_eq!(proof.bytes(), b"- after\n");
+        assert_eq!(graph.cache_generation(), generation + 1);
+        assert_eq!(
+            graph
+                .load_by_path("pages/Projection.md")
+                .unwrap()
+                .unwrap()
+                .blocks[0]
+                .raw,
+            "after"
+        );
+        assert_eq!(
+            graph.disk_revs.read().unwrap().get(&path).cloned(),
+            Some(content_rev("- after\n"))
+        );
+        assert!(graph.sync_file(&path).is_none());
+        assert!(!graph.recent_writes.lock().unwrap().contains_key(&path));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_sync_failure_requires_recovery_and_stale_write_remains_conflict() {
+        let dir = scratch("projection-exact-durability");
+        let path = dir.join("pages/Projection.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let generation = graph.cache_generation();
+
+        FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| fail.set(true));
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- target\n");
+        assert_eq!(graph.cache_generation(), generation + 1);
+        assert_eq!(
+            graph
+                .load_by_path("pages/Projection.md")
+                .unwrap()
+                .unwrap()
+                .blocks[0]
+                .raw,
+            "target"
+        );
+        assert!(!graph.recent_writes.lock().unwrap().contains_key(&path));
+
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .is_err());
+        FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| fail.set(true));
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- target\n"), b"- target\n")
+            .is_err());
+        FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| {
+            assert!(
+                fail.replace(false),
+                "an already-visible target must not be synced or accepted by ordinary write"
+            );
+        });
+
+        FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| fail.set(true));
+        assert!(graph
+            .recover_projection_exact("pages/Projection.md", b"- target\n")
+            .is_err());
+        let proof = graph
+            .recover_projection_exact("pages/Projection.md", b"- target\n")
+            .unwrap();
+        assert_eq!(proof.path(), "pages/Projection.md");
+        assert_eq!(proof.bytes(), b"- target\n");
+        assert_eq!(
+            graph.cache_generation(),
+            generation + 1,
+            "recovery of already-cached exact bytes must not double-invalidate"
+        );
+        assert!(graph.sync_file(&path).is_none());
+        assert!(graph
+            .recover_projection_exact("pages/Projection.md", b"- wrong\n")
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- target\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_exact_creates_and_recovers_nested_parent_chain() {
+        let dir = scratch("projection-exact-nested-parent");
+        let path = dir.join("pages/nested/deeper/Projection.md");
+        let graph = Graph::open(&dir);
+
+        let proof = graph
+            .write_projection_exact("pages/nested/deeper/Projection.md", None, b"- nested\n")
+            .unwrap();
+        assert_eq!(proof.bytes(), b"- nested\n");
+        assert_eq!(fs::read(&path).unwrap(), b"- nested\n");
+        assert_eq!(
+            graph
+                .recover_projection_exact("pages/nested/deeper/Projection.md", b"- nested\n")
+                .unwrap()
+                .bytes(),
+            b"- nested\n"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_exact_accepts_nested_configured_pages_and_journals_roots() {
+        let dir = scratch("projection-configured-nested-roots");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"archive/pages\"\n\
+              :journals-directory \"archive/journals\"}\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+
+        let page = graph
+            .write_projection_exact(
+                "archive/pages/topic/Projection.md",
+                None,
+                b"- nested page\n",
+            )
+            .unwrap();
+        let journal = graph
+            .write_projection_exact(
+                "archive/journals/2026/07/23.org",
+                None,
+                b"* nested journal\n",
+            )
+            .unwrap();
+        assert_eq!(page.path(), "archive/pages/topic/Projection.md");
+        assert_eq!(journal.path(), "archive/journals/2026/07/23.org");
+        assert_eq!(
+            fs::read(dir.join("archive/pages/topic/Projection.md")).unwrap(),
+            b"- nested page\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("archive/journals/2026/07/23.org")).unwrap(),
+            b"* nested journal\n"
+        );
+        assert!(graph
+            .write_projection_exact("archive/pagesish/Wrong.md", None, b"- wrong\n")
+            .is_err());
+        assert!(graph
+            .write_projection_exact("pages/Wrong.md", None, b"- wrong\n")
+            .is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projection_exact_parent_retarget_cannot_redirect_absent_publication() {
+        let dir = scratch("projection-retarget-absent");
+        let outside = scratch("projection-retarget-absent-outside");
+        let moved = dir.join("pages-retained");
+        fs::write(outside.join("Projection.md"), b"- outside\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        PROJECTION_PARENT_RETARGET.with(|retarget| {
+            *retarget.borrow_mut() = Some(ProjectionParentRetarget {
+                parent: dir.join("pages"),
+                moved: moved.clone(),
+                outside: outside.clone(),
+            });
+        });
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", None, b"- target\n")
+            .is_err());
+        assert_eq!(
+            fs::read(outside.join("Projection.md")).unwrap(),
+            b"- outside\n"
+        );
+        assert!(!moved.join("Projection.md").exists());
+        assert!(!graph
+            .recent_writes
+            .lock()
+            .unwrap()
+            .contains_key(&dir.join("pages/Projection.md")));
+
+        fs::remove_file(dir.join("pages")).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projection_exact_parent_retarget_cannot_redirect_replacement() {
+        let dir = scratch("projection-retarget-base");
+        let outside = scratch("projection-retarget-base-outside");
+        let moved = dir.join("pages-retained");
+        fs::write(dir.join("pages/Projection.md"), b"- base\n").unwrap();
+        fs::write(outside.join("Projection.md"), b"- outside\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        PROJECTION_PARENT_RETARGET.with(|retarget| {
+            *retarget.borrow_mut() = Some(ProjectionParentRetarget {
+                parent: dir.join("pages"),
+                moved: moved.clone(),
+                outside: outside.clone(),
+            });
+        });
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(b"- base\n"), b"- target\n")
+            .is_err());
+        assert_eq!(
+            fs::read(outside.join("Projection.md")).unwrap(),
+            b"- outside\n"
+        );
+        assert_eq!(fs::read(moved.join("Projection.md")).unwrap(), b"- base\n");
+
+        fs::remove_file(dir.join("pages")).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projection_exact_rejects_unsafe_symlink_special_twin_and_non_utf8_paths() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("projection-exact-paths");
+        let graph = Graph::open(&dir);
+        for invalid in [
+            "/tmp/Projection.md",
+            "pages/../Projection.md",
+            "assets/Projection.md",
+            "pages/Projection.md:stream.md",
+            "pages/CON.md",
+            "pages/NUL.md",
+        ] {
+            assert!(
+                graph
+                    .write_projection_exact(invalid, None, b"- target\n")
+                    .is_err(),
+                "unsafe path {invalid:?} was accepted"
+            );
+        }
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", None, &[0xff])
+            .is_err());
+        assert!(graph
+            .write_projection_exact("pages/Projection.md", Some(&[0xff]), b"- target\n")
+            .is_err());
+        fs::write(dir.join("pages/NonUtf8.md"), [0xff]).unwrap();
+        assert!(graph
+            .write_projection_exact("pages/NonUtf8.md", Some(&[0xff]), b"- target\n")
+            .is_err());
+        assert!(graph
+            .recover_projection_exact("pages/NonUtf8.md", &[0xff])
+            .is_err());
+
+        let real = dir.join("pages/Real.md");
+        let linked = dir.join("pages/Linked.md");
+        fs::write(&real, b"- real\n").unwrap();
+        symlink(&real, &linked).unwrap();
+        assert!(graph
+            .write_projection_exact("pages/Linked.md", Some(b"- real\n"), b"- target\n")
+            .is_err());
+
+        symlink(dir.join("journals"), dir.join("pages/LinkedParent")).unwrap();
+        assert!(graph
+            .write_projection_exact("pages/LinkedParent/Projection.md", None, b"- target\n")
+            .is_err());
+        assert!(!dir.join("journals/Projection.md").exists());
+
+        fs::create_dir_all(dir.join("pages/Special.md")).unwrap();
+        assert!(graph
+            .write_projection_exact("pages/Special.md", None, b"- target\n")
+            .is_err());
+
+        let twin_md = dir.join("pages/Twin.md");
+        let twin_org = dir.join("pages/Twin.org");
+        fs::write(&twin_md, b"- markdown\n").unwrap();
+        fs::write(&twin_org, b"* org\n").unwrap();
+        assert!(graph
+            .write_projection_exact("pages/Twin.md", Some(b"- markdown\n"), b"- target\n")
+            .is_err());
+        assert_eq!(fs::read(&twin_md).unwrap(), b"- markdown\n");
+        assert_eq!(fs::read(&twin_org).unwrap(), b"* org\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_uses_editor_corruption_firewalls_before_mutation() {
+        let dir = scratch("projection-shared-firewalls");
+        let graph = Graph::open(&dir);
+
+        let org_path = dir.join("pages/Unsafe.org");
+        let unsafe_org = "* a\n*** c\n";
+        fs::write(&org_path, unsafe_org).unwrap();
+        let error = graph
+            .write_projection_exact(
+                "pages/Unsafe.org",
+                Some(unsafe_org.as_bytes()),
+                b"* replacement\n",
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(&org_path).unwrap(), unsafe_org.as_bytes());
+
+        let header_path = dir.join("pages/Header.md");
+        let header_base = "A:: header\nB:: retained\n\n- body\n";
+        fs::write(&header_path, header_base).unwrap();
+        let error = graph
+            .write_projection_exact(
+                "pages/Header.md",
+                Some(header_base.as_bytes()),
+                b"A:: header\n\n- B:: retained\n- body\n",
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&header_path).unwrap(), header_base.as_bytes());
+
+        let crlf_path = dir.join("pages/Crlf.md");
+        fs::write(&crlf_path, b"- before\r\n").unwrap();
+        let proof = graph
+            .write_projection_exact("pages/Crlf.md", Some(b"- before\r\n"), b"- after\r\n")
+            .unwrap();
+        assert_eq!(proof.bytes(), b"- after\r\n");
+        assert_eq!(fs::read(&crlf_path).unwrap(), b"- after\r\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_reserved_name_collision_fails_no_replace() {
+        let dir = scratch("projection-reserved-collision");
+        let path = dir.join("pages/Collision.md");
+        fs::write(&path, b"- base\n").unwrap();
+        let graph = Graph::open(&dir);
+        let reservation = ProjectionAttemptReservation::for_test("pages/Collision.md");
+        let reserved = dir.join("pages").join(reservation.recovery_filename());
+        fs::write(&reserved, b"- forged\n").unwrap();
+
+        assert!(graph
+            .write_page_projection(
+                "pages/Collision.md",
+                Some(b"- base\n"),
+                b"- target\n",
+                &reservation,
+                std::slice::from_ref(&reservation),
+            )
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"- base\n");
+        assert_eq!(fs::read(&reserved).unwrap(), b"- forged\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_exact_probes_are_constant_with_ten_thousand_siblings() {
+        let dir = scratch("projection-exact-probe-count");
+        let pages = dir.join("pages");
+        for index in 0..10_000 {
+            fs::write(
+                pages.join(format!("unrelated-{index}.md")),
+                b"- unrelated\n",
+            )
+            .unwrap();
+        }
+        TEST_PROJECTION_ATTEMPTS.with(|catalog| catalog.borrow_mut().clear());
+        PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(0));
+        let graph = Graph::open(&dir);
+        graph
+            .write_projection_exact("pages/Constant.md", None, b"- target\n")
+            .unwrap();
+        let with_siblings = PROJECTION_EXACT_OPEN_COUNT.with(std::cell::Cell::get);
+
+        let empty = scratch("projection-exact-probe-control");
+        TEST_PROJECTION_ATTEMPTS.with(|catalog| catalog.borrow_mut().clear());
+        PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(0));
+        let graph = Graph::open(&empty);
+        graph
+            .write_projection_exact("pages/Constant.md", None, b"- target\n")
+            .unwrap();
+        let without_siblings = PROJECTION_EXACT_OPEN_COUNT.with(std::cell::Cell::get);
+        assert_eq!(with_siblings, without_siblings);
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn sparse_giant_projection_file_is_rejected_before_allocation_and_untouched() {
+        let dir = scratch("projection-giant-evidence");
+        let path = dir.join("pages/Giant.md");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(MAX_PROJECTION_EVIDENCE_BYTES + 1).unwrap();
+        drop(file);
+        let graph = Graph::open(&dir);
+
+        let error = graph
+            .write_projection_exact("pages/Giant.md", None, b"- target\n")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            MAX_PROJECTION_EVIDENCE_BYTES + 1
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn production_projection_has_no_alternate_graph_writer_entrypoint() {
+        let source = include_str!("model.rs");
+        let forbidden = ["pub(crate) fn write_projection", "_exact"].concat();
+        assert!(!source.contains(&forbidden));
+        assert!(source.contains("pub(crate) fn write_page_projection"));
+        assert!(source.contains("self.serialize_page_document("));
     }
 
     // ---- #21: path-pinned pages + duplicate-day reconcile ----

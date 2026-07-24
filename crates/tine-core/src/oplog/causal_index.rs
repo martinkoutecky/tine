@@ -314,6 +314,7 @@ mod tests {
             BatchId::from_uuid(Uuid::from_u128(batch)),
             DeviceId::from_uuid(Uuid::from_u128(device)),
             SessionId::from_uuid(Uuid::from_u128(batch + 1_000)),
+            crate::oplog::BatchOrigin::BootstrapImport,
             dot,
             dependencies,
             FrontierV2::new(Vec::new()).unwrap(),

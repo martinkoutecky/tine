@@ -95,7 +95,7 @@ fn wire_batch_with_lineage(
 ) -> WireBatch {
     let engine = ShardedHotEngine::new(ids.workspace, lineage, ids.catalog);
     let prepared = engine
-        .prepare_transaction(
+        .prepare_bootstrap_transaction(
             AuthorBatch {
                 batch_id,
                 author_device_id: DeviceId::from_uuid(uuid(2_000 + peer as u128)),

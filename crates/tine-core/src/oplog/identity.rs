@@ -76,6 +76,14 @@ opaque_uuid_id!(
     SessionId
 );
 opaque_uuid_id!(
+    /// Device-local identity of one canonical graph projection endpoint.
+    ///
+    /// Enrollment later binds this identity to one WorkspaceId, DeviceId, and
+    /// canonical graph root. It is intentionally not derived from a portable
+    /// path because receiver-local roots and formatting are not universal.
+    ProjectionEndpointId
+);
+opaque_uuid_id!(
     /// Sharding-neutral identity of a causal document.
     DocumentId
 );
@@ -171,6 +179,70 @@ impl ImportId {
 
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+/// Stable identity of one canonical graph-root filesystem resource.
+///
+/// The digest is derived only from a retained no-follow directory capability:
+/// device/inode on Unix (including Android) and volume/file ID on Windows.
+/// Ambient path strings never enter this identity, so moving or renaming the
+/// graph preserves enrollment while substituting another directory does not.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CanonicalGraphResourceId([u8; 32]);
+
+impl CanonicalGraphResourceId {
+    pub(crate) fn from_capability_identity(platform: &[u8], identity: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/canonical-graph-resource/v1\0");
+        hasher.update((platform.len() as u64).to_be_bytes());
+        hasher.update(platform);
+        hasher.update((identity.len() as u64).to_be_bytes());
+        hasher.update(identity);
+        Self(hasher.finalize().into())
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CanonicalGraphResourceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CanonicalGraphResourceId({self})")
+    }
+}
+
+impl fmt::Display for CanonicalGraphResourceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(&self.0, f)
+    }
+}
+
+impl FromStr for CanonicalGraphResourceId {
+    type Err = DigestParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_digest(value).map(Self)
+    }
+}
+
+impl Serialize for CanonicalGraphResourceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for CanonicalGraphResourceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
     }
 }
 

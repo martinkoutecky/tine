@@ -65,6 +65,20 @@ identity evidence. Valid imported IDs populate it; invalid or duplicate raw `id:
 values remain byte-preserved but authorize no overwrite. External removal or
 replacement is imported exactly and clears/changes `LogseqUuid`; it is not repaired.
 
+`ManagedPath` retains the exact valid UTF-8 spelling used by operation, object, and
+projection bytes. Portable ownership uses a separate `PortablePathKey` version 1:
+for every slash-separated component it computes
+`Q(X) = NFC(default_case_fold(NFD(X)))`, then joins the results with a literal `/`.
+This is full non-Turkic Unicode default case folding, not lowercase/simple fold,
+and deliberately excludes NFKC. Version 1 pins `unicode-normalization` 0.1.25
+(normalization tables 17.0.0) and `caseless` 0.2.2 (case-fold tables 16.0.0);
+either table snapshot changing requires a new key version. Authenticated indexes
+use the domain-separated SHA-256 digest of the version and key bytes. Managed
+components also reject trailing ASCII space/dot, Win32 forbidden characters and
+controls, and case-insensitive device stems before the first dot, including
+`COM1` through `COM9`, `LPT1` through `LPT9`, and superscript `COM¹/²/³` and
+`LPT¹/²/³` aliases. Accepted spelling is never rewritten.
+
 The production logical documents are:
 
 1. A small catalog shard containing the sole live page state and `PageId -> path`
@@ -119,19 +133,25 @@ construction. `CrdtPeerId` remains an opaque engine-neutral interchange identity
 populated from the current Loro peer identity without making Loro's type part of
 this API. Application IDs remain separate from CRDT peer/operation IDs.
 
-This is an incompatible disconnected candidate-format correction:
-`manifest_encoding_version` and `operation_schema_version` advance to 3 and
-`receipt_schema_version` remains 2. The internal CRDT update payload advances to
-version 5, compact batch status to version 3, and block-claim records to version 2.
-The causal, document-state, and scratch-page formats begin at their explicitly
-versioned experimental schemas. None of these bytes are activated for graph startup,
-v1 reinterpretation, or production writes.
+This is an incompatible disconnected candidate-format correction.
+`manifest_encoding_version` is 4 and `operation_schema_version` is 5.
+`receipt_schema_version` is 5 and the device-local projection receipt schema is 4.
+The internal CRDT update payload is 6, compact batch status is 3, block-claim records
+are 2, Logseq claim records are 1, portable-path key/index records are 1, and engine
+scratch is 3. Canonical manifested projection intents are schema 2 and annotated
+bases remain schema 1; the authenticated device-local projection-work index/work
+row is schema 2. Endpoint-scoped durable engine-history records are schema 4 and
+their accepted head/root envelope is schema 2. The causal, document-state, and scratch-page
+formats retain their explicitly versioned experimental schemas. None of these bytes
+are activated for graph startup, v1 reinterpretation, or production writes.
 
 Each semantic `OperationBatch` has exactly one manifest. The manifest contains all
 compatibility versions, workspace and lineage/genesis hash, batch/author/device/
-session IDs, `FrontierV2`, the canonical semantic-effect digest, and a canonical
-sorted list of every required object's document ID, type, SHA-256 content digest,
-and byte length. Its closed object set is:
+session IDs, an explicit origin (`LocalMutation`, deterministic
+`ExternalReconciliation { ImportId }`, or `BootstrapImport`), `FrontierV2`, the
+canonical semantic-effect digest, and a canonical sorted list of every required
+object's document ID, type, SHA-256 content digest, and byte length. Its closed
+object set is:
 
 - exactly one typed semantic-effect object;
 - exactly one immutable CRDT update object for each changed catalog/page shard;
@@ -180,19 +200,90 @@ materialization load the current checkpoint and revalidate its one latest immuta
 manifest/object anchor. Missing, truncated, tampered, misbound, or noncanonical
 scratch data fails closed without live ancestry reconstruction.
 
+An authenticated content-addressed Patricia index records portable-path ownership
+under `PortablePathKeyDigest`. Occupied records bind page, exact path and exact-path
+digest, acquisition batch, and causal dot; released records retain the prior page
+and acquisition plus release batch/dot as reuse fences. The durable engine root
+atomically binds the portable key version, current path-index root, catalog
+checkpoint binding, and terminal evidence summary. Missing, tampered, or misbound
+nodes/roots fail closed.
+
+Normal acceptance reads only the union of old and fully merged prospective keys for
+`SemanticEffect::pages()`: it performs point lookups, applies net releases before
+acquisitions (so swaps are atomic), checks occupied points against the winning
+catalog register, and publishes the candidate root only with accepted document and
+status roots. A losing concurrent tombstone does not release a winning live path.
+A different page may reuse a released key only in the same release/acquire batch or
+when its causal frontier contains the release. Release fences remain retained after
+acquisition.
+
+A duplicate already present at the declared dependency frontier is malformed and
+rejects. A valid concurrent merge that creates portable aliases enters terminal
+quarantine before the conflicting document or path-index roots advance. Canonical
+evidence binds key version/digest and sorted `(PageId, exact ManagedPath,
+introducing BatchId)` participants, independent of delivery order. The terminal
+latch blocks document reads, materialization, SQLite/projection authorization, new
+projection, and recovery.
+
 ### Projection, external import, and handoff
 
-A `ProjectionIntent` durably binds workspace, page/path, an explicit
-`projection_schema_version` separate from `receipt_format_version`,
-`projection_policy_version`, and `managed_entity_set_version`, the exact affected
-dependency frontier, precondition (`Absent` or base hash plus
-immutable annotated base blob), target hash, and structural locator/span to internal
-`BlockId` plus optional `LogseqUuid`. A hash alone grants no authority. Operations,
-intent, and base are durable before the singular guarded `Graph::write_page` /
-`commit_write` path runs. `ProjectionCompletion` is published only after guarded
-write success, reread hash verification, required durability sync, and watcher
-accounting. Missing/corrupt base evidence blocks unless current bytes exactly equal
-a replayed target, when completion can be reconstructed.
+A device-local `ProjectionEndpointId` is enrolled later against exactly one
+`WorkspaceId`, `DeviceId`, and canonical graph root. A source manifested projection
+intent binds its workspace, source batch/author/session/endpoint, page/path, exact
+post-state frontier, `Present`/`Absent` precondition and target, target bytes and
+structural annotations, claim evidence, and exact immutable annotated-base object
+references. Descriptor `DocumentId`s are deterministic and domain-separated. Raw
+base bytes occur only in the annotated-base object, which additionally binds the
+endpoint, source page/path, prior logical completion/frontier, exact digest/length,
+complete identity annotations, and claim evidence.
+
+The author endpoint's complete projection journal and annotated bases are therefore
+immutable members of the `OperationBatch` closed set before manifest commit.
+Receiver-local formatting is not universal: every replica validates and retains the
+source intent, but only the enrolled matching endpoint may execute it. A non-source
+receiver derives a separate device-local receipt intent from accepted semantic state
+and its exact local base; this may preserve CRLF or other local formatting and
+references, but never mutates or gains authority from the source intent.
+
+Acceptance validates the complete manifested projection set before hot, SQLite, or
+projection visibility and may durably prepare immutable matching-endpoint rows.
+Preparation also adds a batch-keyed record to the current authenticated
+pending-activation root, binding the workspace, endpoint, exact manifest
+fingerprint, prepared digest, and work set without making any row Ready or
+path-visible. The authenticated durable engine-status transition is committed
+before one projection-work root transition removes that pending record and adds
+the accepted witness plus Ready/path/row changes.
+
+Endpoint-engine startup pages only the current authenticated pending-activation
+root and performs exact batch point lookups in authenticated durable engine
+history. An accepted record with the exact fingerprint activates the bound
+prepared set; nonaccepted terminal, absent, and restart-discarded staged records
+retire it without execution. Missing, tampered, or misbound pending, prepared,
+work-set, history, witness, node, or root evidence fails closed. Recovery never
+scans object-store history, manifest or prepared directories, or lifetime work
+roots, and does not depend on duplicate delivery. Execution still requires both
+the matching endpoint and the authenticated durable accepted record plus the
+projection-work accepted witness at the exact manifest fingerprint. Work is
+point-keyed by endpoint/batch/page/path, deterministically ordered, idempotent
+under duplicate/reordered delivery, and recovered directly. Remote-source work
+creates no executable row. Same-path work is superseded only by a causally
+containing frontier; incomparable work is retained.
+
+Operations, intent, base, and work are durable before the singular guarded
+`Graph` page write/removal boundary runs. Stable completion references
+the immutable work/intent objects and is published only after guarded success, exact
+reread/absence verification, required durability sync, and watcher accounting.
+Missing/corrupt base evidence blocks unless current bytes exactly equal a replayed
+target, when completion can be reconstructed. Exact base bytes and annotations are
+retained without garbage collection in the first rollout.
+
+Manifested projection intents and durable work rows bind the portable key version,
+the digest for their exact path, and the accepted authenticated path-index root.
+The closed manifest object descriptor authenticates that intent binding, and the
+accepted projection witness retains the complete bound work row. Execution and
+recovery revalidate the accepted durable engine-history root and the current exact
+portable ownership point under the endpoint/session boundary before reaching the
+singular graph publication call.
 
 External reconciliation is one revalidated deterministic inventory transaction over
 `Present(bytes)` and `Absent` for all managed paths. It compares exact annotated

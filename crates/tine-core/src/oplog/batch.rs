@@ -6,13 +6,14 @@ use sha2::{Digest, Sha256};
 
 use super::identity::{parse_digest, write_hex};
 use super::{
-    BatchId, DeviceId, DocumentId, FrontierV2, SessionId, WorkspaceId, MANAGED_ENTITY_SET_VERSION,
+    BatchId, DeviceId, DocumentId, FrontierV2, ImportId, SessionId, WorkspaceId,
+    MANAGED_ENTITY_SET_VERSION,
 };
 
 pub const OPLOG_PROTOCOL_VERSION: u32 = 2;
-pub const OPERATION_SCHEMA_VERSION: u32 = 3;
+pub const OPERATION_SCHEMA_VERSION: u32 = 5;
 pub const OBJECT_ENVELOPE_SCHEMA_VERSION: u32 = 1;
-pub const MANIFEST_ENCODING_VERSION: u32 = 3;
+pub const MANIFEST_ENCODING_VERSION: u32 = 4;
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
@@ -96,6 +97,14 @@ pub enum ObjectKind {
     CrdtUpdate,
     ProjectionIntent,
     AnnotatedBaseBlob,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchOrigin {
+    LocalMutation,
+    ExternalReconciliation { import_id: ImportId },
+    BootstrapImport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -216,6 +225,7 @@ pub struct OperationBatch {
     batch_id: BatchId,
     author_device_id: DeviceId,
     author_session_id: SessionId,
+    origin: BatchOrigin,
     causal_dot: BatchCausalDot,
     causal_dependency_heads: Vec<BatchId>,
     dependency_frontier: FrontierV2,
@@ -236,6 +246,7 @@ struct OperationBatchWire {
     batch_id: BatchId,
     author_device_id: DeviceId,
     author_session_id: SessionId,
+    origin: BatchOrigin,
     causal_dot: BatchCausalDot,
     causal_dependency_heads: Vec<BatchId>,
     dependency_frontier: FrontierV2,
@@ -251,6 +262,7 @@ impl OperationBatch {
         batch_id: BatchId,
         author_device_id: DeviceId,
         author_session_id: SessionId,
+        origin: BatchOrigin,
         causal_dot: BatchCausalDot,
         mut causal_dependency_heads: Vec<BatchId>,
         dependency_frontier: FrontierV2,
@@ -271,6 +283,7 @@ impl OperationBatch {
             batch_id,
             author_device_id,
             author_session_id,
+            origin,
             causal_dot,
             causal_dependency_heads,
             dependency_frontier,
@@ -327,6 +340,10 @@ impl OperationBatch {
         self.author_session_id
     }
 
+    pub const fn origin(&self) -> BatchOrigin {
+        self.origin
+    }
+
     pub const fn causal_dot(&self) -> BatchCausalDot {
         self.causal_dot
     }
@@ -359,6 +376,7 @@ impl OperationBatch {
             batch_id: wire.batch_id,
             author_device_id: wire.author_device_id,
             author_session_id: wire.author_session_id,
+            origin: wire.origin,
             causal_dot: wire.causal_dot,
             causal_dependency_heads: wire.causal_dependency_heads,
             dependency_frontier: wire.dependency_frontier,
@@ -693,17 +711,12 @@ impl PreparedBatch {
                 actual: actual_semantic_digest,
             });
         }
+        super::projection_manifest::validate_projection_object_set(&manifest, &ordered)
+            .map_err(|error| BatchError::ProjectionObject(error.to_string()))?;
         Ok(Self {
             manifest,
             objects: ordered,
         })
-    }
-
-    pub(crate) fn from_store_validated(
-        manifest: OperationBatch,
-        objects: Vec<OperationObject>,
-    ) -> Self {
-        Self { manifest, objects }
     }
 
     pub fn manifest(&self) -> &OperationBatch {
@@ -759,6 +772,7 @@ pub enum BatchError {
         expected: SemanticEffectDigest,
         actual: SemanticEffectDigest,
     },
+    ProjectionObject(String),
     InvalidObjectLength(u64),
     TruncatedObject,
     InvalidObjectMagic,
@@ -827,6 +841,9 @@ impl fmt::Display for BatchError {
                 f,
                 "semantic-effect payload digest mismatch: expected {expected}, found {actual}"
             ),
+            Self::ProjectionObject(error) => {
+                write!(f, "projection object-set validation failed: {error}")
+            }
             Self::InvalidObjectLength(length) => {
                 write!(f, "invalid encoded object length {length}")
             }

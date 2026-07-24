@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tine_core::oplog::{
-    BatchCausalDot, BatchError, BatchId, BatchInspection, CausalPeerId, ContentDigest,
-    CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId, FrontierV2,
-    LineageDigest, ObjectDescriptor, ObjectKind, ObjectStore, OperationBatch, OperationObject,
-    PreparedBatch, SemanticEffectDigest, SessionId, StoreError, WorkspaceId, MAX_MANIFEST_BYTES,
-    MAX_OBJECT_BYTES,
+    AnnotatedProjectionBase, BatchCausalDot, BatchError, BatchId, BatchInspection, BatchOrigin,
+    CausalPeerId, ContentDigest, CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies,
+    DocumentId, FrontierV2, LineageDigest, ManagedPath, ManifestObjectRef,
+    ManifestProjectionPrecondition, ManifestProjectionTarget, ManifestedProjectionIntent,
+    ObjectDescriptor, ObjectKind, ObjectStore, OperationBatch, OperationObject, PreparedBatch,
+    ProjectionEndpointId, SemanticEffectDigest, SessionId, StoreError, WorkspaceId,
+    MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
 };
 use uuid::Uuid;
 
@@ -79,6 +81,7 @@ fn test_manifest(
         batch_id,
         author_device_id,
         author_session_id,
+        BatchOrigin::BootstrapImport,
         BatchCausalDot::new(CausalPeerId::from_device_id(author_device_id), 1).unwrap(),
         causal_dependency_heads,
         dependency_frontier,
@@ -129,18 +132,54 @@ fn sample(workspace_id: WorkspaceId, batch_id: BatchId, semantic_payload: &[u8])
         ObjectKind::CrdtUpdate,
         b"crdt update bytes",
     );
-    let intent = object(
+    let endpoint_id = ProjectionEndpointId::from_uuid(uuid(32));
+    let page_id = tine_core::oplog::PageId::from_uuid(uuid(33));
+    let managed_path = ManagedPath::parse("pages/sample.md").unwrap();
+    let empty_frontier = FrontierV2::new(Vec::new()).unwrap();
+    let base = AnnotatedProjectionBase::new(
         workspace_id,
-        document(20),
-        ObjectKind::ProjectionIntent,
-        b"projection intent bytes",
-    );
-    let base = object(
+        endpoint_id,
+        page_id,
+        managed_path.clone(),
+        None,
+        empty_frontier.clone(),
+        b"large base bytes stay binary".to_vec(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let base = OperationObject::new(
         workspace_id,
-        document(20),
+        base.descriptor_document_id().unwrap(),
         ObjectKind::AnnotatedBaseBlob,
-        b"large base bytes stay binary",
-    );
+        base.encode().unwrap(),
+    )
+    .unwrap();
+    let intent = ManifestedProjectionIntent::new(
+        workspace_id,
+        batch_id,
+        DeviceId::from_uuid(uuid(30)),
+        SessionId::from_uuid(uuid(31)),
+        endpoint_id,
+        page_id,
+        managed_path,
+        tine_core::oplog::PortablePathIndexRoot::empty(),
+        ManifestProjectionPrecondition::Present {
+            base: ManifestObjectRef::from_descriptor(&base.descriptor().unwrap()),
+        },
+        None,
+        ManifestProjectionTarget::present(b"target".to_vec(), Vec::new()).unwrap(),
+        empty_frontier,
+        Vec::new(),
+    )
+    .unwrap();
+    let intent = OperationObject::new(
+        workspace_id,
+        intent.descriptor_document_id(),
+        ObjectKind::ProjectionIntent,
+        intent.encode().unwrap(),
+    )
+    .unwrap();
     let objects = vec![intent, semantic, base, update];
     let descriptors = objects
         .iter()
@@ -599,9 +638,9 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     let prepared = sample(workspace(1), batch(6), b"semantic");
     let encoded = prepared.manifest().encode().unwrap();
     let current: Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(current["manifest_encoding_version"], json!(3));
+    assert_eq!(current["manifest_encoding_version"], json!(4));
     assert_eq!(current["protocol_version"], json!(2));
-    assert_eq!(current["operation_schema_version"], json!(3));
+    assert_eq!(current["operation_schema_version"], json!(5));
     assert_eq!(current["object_envelope_schema_version"], json!(1));
     assert_eq!(current["managed_entity_set_version"], json!(1));
 
@@ -661,6 +700,74 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     assert!(matches!(
         OperationObject::decode(&unknown_header),
         Err(BatchError::Decode(_))
+    ));
+}
+
+#[test]
+fn projection_closed_set_rejects_malformed_missing_and_orphan_objects_before_ready() {
+    let prepared = sample(workspace(1), batch(60), b"semantic");
+    let rebuild = |objects: Vec<OperationObject>| {
+        let manifest = prepared.manifest();
+        let descriptors = objects
+            .iter()
+            .map(OperationObject::descriptor)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let rebuilt = OperationBatch::new_with_causality(
+            manifest.workspace_id(),
+            manifest.lineage_digest(),
+            manifest.batch_id(),
+            manifest.author_device_id(),
+            manifest.author_session_id(),
+            manifest.origin(),
+            manifest.causal_dot(),
+            manifest.causal_dependency_heads().to_vec(),
+            manifest.dependency_frontier().clone(),
+            manifest.semantic_effect_digest(),
+            descriptors,
+        )
+        .unwrap();
+        PreparedBatch::new(rebuilt, objects).unwrap_err()
+    };
+
+    let mut malformed = prepared.objects().to_vec();
+    let index = malformed
+        .iter()
+        .position(|object| object.kind() == ObjectKind::ProjectionIntent)
+        .unwrap();
+    let original = &malformed[index];
+    malformed[index] = OperationObject::new(
+        original.workspace_id(),
+        original.document_id(),
+        original.kind(),
+        b"malformed manifested intent".to_vec(),
+    )
+    .unwrap();
+    assert!(matches!(
+        rebuild(malformed),
+        BatchError::ProjectionObject(_)
+    ));
+
+    let missing_base = prepared
+        .objects()
+        .iter()
+        .filter(|object| object.kind() != ObjectKind::AnnotatedBaseBlob)
+        .cloned()
+        .collect();
+    assert!(matches!(
+        rebuild(missing_base),
+        BatchError::ProjectionObject(_)
+    ));
+
+    let orphan_base = prepared
+        .objects()
+        .iter()
+        .filter(|object| object.kind() != ObjectKind::ProjectionIntent)
+        .cloned()
+        .collect();
+    assert!(matches!(
+        rebuild(orphan_base),
+        BatchError::ProjectionObject(_)
     ));
 }
 

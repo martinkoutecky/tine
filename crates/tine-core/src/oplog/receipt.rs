@@ -4,16 +4,31 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
+
+use caseless::Caseless;
 
 use super::identity::{parse_digest, write_hex};
 use super::{BatchId, BlockId, CrdtPeerId, DocumentId, ImportId, LogseqUuid, PageId, WorkspaceId};
 
 /// Candidate receipt schema. These bytes are explicitly not a stable wire format.
-pub const RECEIPT_SCHEMA_VERSION: u32 = 2;
-pub const PROJECTION_SCHEMA_VERSION: u32 = 1;
+pub const RECEIPT_SCHEMA_VERSION: u32 = 5;
+pub const PROJECTION_SCHEMA_VERSION: u32 = 4;
 pub const PROJECTION_POLICY_VERSION: u32 = 1;
 pub const MANAGED_ENTITY_SET_VERSION: u32 = 1;
 pub const DIFF_SCHEMA_VERSION: u32 = 1;
+pub const PORTABLE_PATH_KEY_VERSION: u32 = 1;
+pub const PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION: (u8, u8, u8) = (17, 0, 0);
+pub const PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION: (u64, u64, u64) = (16, 0, 0);
+
+const _: () = {
+    let (major, minor, patch) = unicode_normalization::UNICODE_VERSION;
+    assert!(major == 17 && minor == 0 && patch == 0);
+};
+const _: () = {
+    let (major, minor, patch) = caseless::UNICODE_VERSION;
+    assert!(major == 16 && minor == 0 && patch == 0);
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReceiptError {
@@ -38,13 +53,18 @@ pub enum ReceiptError {
     NonCanonicalDependencies,
     CausalStateDigestMismatch(DocumentId),
     NonCanonicalAnnotations,
+    EmptyProjectionClaimEvidence(LogseqUuid),
+    NonCanonicalProjectionClaimEvidence,
+    MissingProjectionClaimEvidence(LogseqUuid),
+    MissingProjectionClaimDocument(DocumentId),
     NonCanonicalInventory,
-    NonCanonicalCompletionIds,
+    NonCanonicalLogicalCompletionIds,
     BaseLengthMismatch { declared: u64, actual: u64 },
     BaseDigestMismatch,
     SpanOutsideTarget { end: u64, target_length: u64 },
     CompletionTargetMismatch,
     CompletionIntentMismatch,
+    CompletionIdentityMismatch,
 }
 
 impl fmt::Display for ReceiptError {
@@ -105,11 +125,27 @@ impl fmt::Display for ReceiptError {
             Self::NonCanonicalAnnotations => {
                 f.write_str("identity annotations are not canonically sorted")
             }
+            Self::EmptyProjectionClaimEvidence(uuid) => {
+                write!(
+                    f,
+                    "projection claim evidence for {uuid} has no participants"
+                )
+            }
+            Self::NonCanonicalProjectionClaimEvidence => {
+                f.write_str("projection claim evidence is not canonical")
+            }
+            Self::MissingProjectionClaimEvidence(uuid) => {
+                write!(f, "projection annotation for {uuid} has no claim evidence")
+            }
+            Self::MissingProjectionClaimDocument(document_id) => write!(
+                f,
+                "projection claim participant home {document_id} is absent from the frontier"
+            ),
             Self::NonCanonicalInventory => {
                 f.write_str("import inventory is not canonically sorted")
             }
-            Self::NonCanonicalCompletionIds => {
-                f.write_str("base completion IDs are not canonically sorted")
+            Self::NonCanonicalLogicalCompletionIds => {
+                f.write_str("base logical completion IDs are not canonically sorted")
             }
             Self::BaseLengthMismatch { declared, actual } => write!(
                 f,
@@ -126,13 +162,19 @@ impl fmt::Display for ReceiptError {
             Self::CompletionIntentMismatch => {
                 f.write_str("projection completion is not bound to this intent")
             }
+            Self::CompletionIdentityMismatch => {
+                f.write_str("projection completion semantic identity does not match its evidence")
+            }
         }
     }
 }
 
 impl std::error::Error for ReceiptError {}
 
-/// A graph-relative path inside the explicitly managed page/journal scope.
+/// A canonical graph-relative Markdown/Org path.
+///
+/// This type establishes portable lexical safety only. Whether the path belongs
+/// to a configured managed root is authorized by the graph capability.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ManagedPath(String);
 
@@ -147,6 +189,61 @@ impl ManagedPath {
     }
 
     pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Compute the versioned portable comparison key without changing the
+    /// exact spelling retained and projected by this managed path.
+    pub fn portable_key(&self) -> PortablePathKey {
+        PortablePathKey::from_managed_path(self)
+    }
+}
+
+/// Canonical portable comparison bytes. This value is not a projected path.
+///
+/// Each component uses `NFC(default_case_fold(NFD(component)))`; components
+/// are then joined by a literal slash. Compatibility normalization is
+/// deliberately excluded.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PortablePathKey(String);
+
+impl PortablePathKey {
+    fn from_managed_path(path: &ManagedPath) -> Self {
+        let mut key = String::with_capacity(path.as_str().len());
+        for (index, component) in path.as_str().split('/').enumerate() {
+            if index != 0 {
+                key.push('/');
+            }
+            key.extend(component.chars().nfd().default_case_fold().nfc());
+        }
+        Self(key)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub fn digest(&self) -> PortablePathKeyDigest {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/portable-path-key/v1\0");
+        hasher.update(PORTABLE_PATH_KEY_VERSION.to_be_bytes());
+        hasher.update((self.0.len() as u64).to_be_bytes());
+        hasher.update(self.0.as_bytes());
+        PortablePathKeyDigest(hasher.finalize().into())
+    }
+}
+
+/// Domain-separated authenticated-index key for a portable path.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PortablePathKeyDigest([u8; 32]);
+
+impl PortablePathKeyDigest {
+    pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
@@ -186,35 +283,80 @@ impl<'de> Deserialize<'de> for ManagedPath {
 
 fn is_managed_path(value: &str) -> bool {
     if value.is_empty()
+        || value != value.trim()
         || value.starts_with('/')
         || value.contains('\\')
-        || value.contains('\0')
-        || value.chars().any(char::is_control)
+        || value.chars().any(is_forbidden_win32_path_character)
     {
         return false;
     }
-    let mut segments = value.split('/');
-    let Some(scope) = segments.next() else {
-        return false;
-    };
-    if !matches!(scope, "pages" | "journals") {
-        return false;
-    }
-    let remainder: Vec<_> = segments.collect();
-    if remainder.is_empty()
-        || remainder
+    let segments: Vec<_> = value.split('/').collect();
+    if segments.len() < 2
+        || segments
             .iter()
-            .any(|part| part.is_empty() || *part == "." || *part == ".." || part.contains(':'))
+            .any(|part| !is_portable_managed_component(part))
     {
         return false;
     }
     matches!(
-        remainder
+        segments
             .last()
             .and_then(|name| name.rsplit_once('.'))
+            .filter(|(stem, _)| !stem.is_empty())
             .map(|(_, extension)| extension),
-        Some("md" | "org")
+        Some("md" | "org"),
     )
+}
+
+fn is_portable_managed_component(component: &str) -> bool {
+    if component.is_empty()
+        || matches!(component, "." | "..")
+        || component.ends_with(' ')
+        || component.ends_with('.')
+    {
+        return false;
+    }
+    let device_stem = component
+        .split_once('.')
+        .map_or(component, |(stem, _)| stem)
+        .to_ascii_uppercase();
+    !matches!(
+        device_stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "COM¹"
+            | "COM²"
+            | "COM³"
+            | "LPT¹"
+            | "LPT²"
+            | "LPT³"
+    )
+}
+
+fn is_forbidden_win32_path_character(character: char) -> bool {
+    character == '\0'
+        || character.is_control()
+        || matches!(character, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
 }
 
 /// A structural address expressed as zero-based child indexes from the page root.
@@ -438,10 +580,8 @@ impl<'de> Deserialize<'de> for BaseBlob {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProjectionPolicy {
+enum ProjectionPolicyWire {
     SparseLogseqIds,
-    /// Test/developer instrumentation only; never a production migration mode.
-    DenseLogseqIds,
 }
 
 /// One peer's inclusive maximum counter in a document's CRDT frontier.
@@ -734,7 +874,72 @@ impl AnnotatedIdentity {
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionPrecondition {
     Absent,
-    Base(BaseBlob),
+    Base(BlobDescription),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionClaimParticipant {
+    block_id: BlockId,
+    home_document_id: DocumentId,
+}
+
+impl ProjectionClaimParticipant {
+    pub const fn new(block_id: BlockId, home_document_id: DocumentId) -> Self {
+        Self {
+            block_id,
+            home_document_id,
+        }
+    }
+
+    pub const fn block_id(self) -> BlockId {
+        self.block_id
+    }
+
+    pub const fn home_document_id(self) -> DocumentId {
+        self.home_document_id
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionClaimEvidence {
+    logseq_uuid: LogseqUuid,
+    participants: Vec<ProjectionClaimParticipant>,
+}
+
+impl ProjectionClaimEvidence {
+    pub fn new(
+        logseq_uuid: LogseqUuid,
+        mut participants: Vec<ProjectionClaimParticipant>,
+    ) -> Result<Self, ReceiptError> {
+        participants.sort_unstable();
+        participants.dedup();
+        let evidence = Self {
+            logseq_uuid,
+            participants,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
+    pub const fn logseq_uuid(&self) -> LogseqUuid {
+        self.logseq_uuid
+    }
+
+    pub fn participants(&self) -> &[ProjectionClaimParticipant] {
+        &self.participants
+    }
+
+    fn validate(&self) -> Result<(), ReceiptError> {
+        if self.participants.is_empty() {
+            return Err(ReceiptError::EmptyProjectionClaimEvidence(self.logseq_uuid));
+        }
+        if !is_strictly_sorted(&self.participants) {
+            return Err(ReceiptError::NonCanonicalProjectionClaimEvidence);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -746,8 +951,9 @@ pub struct ProjectionIntent {
     workspace_id: WorkspaceId,
     page_id: PageId,
     path: ManagedPath,
-    policy: ProjectionPolicy,
+    policy: ProjectionPolicyWire,
     frontier: FrontierV2,
+    claim_evidence: Vec<ProjectionClaimEvidence>,
     precondition: ProjectionPrecondition,
     target: BlobDescription,
     annotations: Vec<AnnotatedIdentity>,
@@ -763,8 +969,9 @@ struct ProjectionIntentWire {
     workspace_id: WorkspaceId,
     page_id: PageId,
     path: ManagedPath,
-    policy: ProjectionPolicy,
+    policy: ProjectionPolicyWire,
     frontier: FrontierV2,
+    claim_evidence: Vec<ProjectionClaimEvidence>,
     precondition: ProjectionPrecondition,
     target: BlobDescription,
     annotations: Vec<AnnotatedIdentity>,
@@ -776,13 +983,14 @@ impl ProjectionIntent {
         workspace_id: WorkspaceId,
         page_id: PageId,
         path: ManagedPath,
-        policy: ProjectionPolicy,
         frontier: FrontierV2,
+        mut claim_evidence: Vec<ProjectionClaimEvidence>,
         precondition: ProjectionPrecondition,
         target: BlobDescription,
         mut annotations: Vec<AnnotatedIdentity>,
     ) -> Result<Self, ReceiptError> {
         annotations.sort_unstable_by(|left, right| left.locator.cmp(&right.locator));
+        claim_evidence.sort_unstable_by_key(ProjectionClaimEvidence::logseq_uuid);
         let intent = Self {
             receipt_schema_version: RECEIPT_SCHEMA_VERSION,
             projection_schema_version: PROJECTION_SCHEMA_VERSION,
@@ -791,8 +999,9 @@ impl ProjectionIntent {
             workspace_id,
             page_id,
             path,
-            policy,
+            policy: ProjectionPolicyWire::SparseLogseqIds,
             frontier,
+            claim_evidence,
             precondition,
             target,
             annotations,
@@ -809,7 +1018,7 @@ impl ProjectionIntent {
         serde_json::from_slice(bytes).map_err(|error| ReceiptError::Decode(error.to_string()))
     }
 
-    pub fn id(&self) -> Result<CompletionId, ReceiptError> {
+    pub fn id(&self) -> Result<ProjectionIntentId, ReceiptError> {
         let mut hasher = Sha256::new();
         hasher.update(b"tine/projection-intent-semantic-id/v1\0");
         hasher.update(self.receipt_schema_version.to_be_bytes());
@@ -819,10 +1028,7 @@ impl ProjectionIntent {
         hasher.update(self.workspace_id.as_uuid().as_bytes());
         hasher.update(self.page_id.as_uuid().as_bytes());
         hash_length_delimited(&mut hasher, self.path.as_str().as_bytes());
-        hasher.update([match self.policy {
-            ProjectionPolicy::SparseLogseqIds => 0,
-            ProjectionPolicy::DenseLogseqIds => 1,
-        }]);
+        hasher.update([0]);
 
         hasher.update((self.frontier.documents().len() as u64).to_be_bytes());
         for document in self.frontier.documents() {
@@ -839,11 +1045,21 @@ impl ProjectionIntent {
             hasher.update(document.causal_state_digest().as_bytes());
         }
 
+        hasher.update((self.claim_evidence.len() as u64).to_be_bytes());
+        for evidence in &self.claim_evidence {
+            hasher.update(evidence.logseq_uuid.as_uuid().as_bytes());
+            hasher.update((evidence.participants.len() as u64).to_be_bytes());
+            for participant in &evidence.participants {
+                hasher.update(participant.block_id.as_uuid().as_bytes());
+                hasher.update(participant.home_document_id.as_uuid().as_bytes());
+            }
+        }
+
         match &self.precondition {
             ProjectionPrecondition::Absent => hasher.update([0]),
-            ProjectionPrecondition::Base(base) => {
+            ProjectionPrecondition::Base(description) => {
                 hasher.update([1]);
-                hash_blob_description(&mut hasher, base.description());
+                hash_blob_description(&mut hasher, *description);
             }
         }
         hash_blob_description(&mut hasher, self.target);
@@ -866,7 +1082,7 @@ impl ProjectionIntent {
             }
         }
 
-        Ok(CompletionId::from_digest(hasher.finalize().into()))
+        Ok(ProjectionIntentId::from_digest(hasher.finalize().into()))
     }
 
     pub const fn workspace_id(&self) -> WorkspaceId {
@@ -881,12 +1097,12 @@ impl ProjectionIntent {
         &self.path
     }
 
-    pub const fn policy(&self) -> ProjectionPolicy {
-        self.policy
-    }
-
     pub fn frontier(&self) -> &FrontierV2 {
         &self.frontier
+    }
+
+    pub fn claim_evidence(&self) -> &[ProjectionClaimEvidence] {
+        &self.claim_evidence
     }
 
     pub fn precondition(&self) -> &ProjectionPrecondition {
@@ -912,6 +1128,7 @@ impl ProjectionIntent {
             path: wire.path,
             policy: wire.policy,
             frontier: wire.frontier,
+            claim_evidence: wire.claim_evidence,
             precondition: wire.precondition,
             target: wire.target,
             annotations: wire.annotations,
@@ -928,10 +1145,42 @@ impl ProjectionIntent {
             self.managed_entity_set_version,
         )?;
         self.frontier.validate()?;
-        if let ProjectionPrecondition::Base(base) = &self.precondition {
-            base.validate()?;
+        validate_annotations(&self.annotations, self.target.byte_length)?;
+        if !is_strictly_sorted_by_key(&self.claim_evidence, |evidence| evidence.logseq_uuid) {
+            return Err(ReceiptError::NonCanonicalProjectionClaimEvidence);
         }
-        validate_annotations(&self.annotations, self.target.byte_length)
+        for evidence in &self.claim_evidence {
+            evidence.validate()?;
+            for participant in evidence.participants() {
+                if self
+                    .frontier
+                    .documents()
+                    .binary_search_by_key(
+                        &participant.home_document_id(),
+                        DocumentDependencies::document_id,
+                    )
+                    .is_err()
+                {
+                    return Err(ReceiptError::MissingProjectionClaimDocument(
+                        participant.home_document_id(),
+                    ));
+                }
+            }
+        }
+        for uuid in self
+            .annotations
+            .iter()
+            .filter_map(AnnotatedIdentity::logseq_uuid)
+        {
+            if self
+                .claim_evidence
+                .binary_search_by_key(&uuid, ProjectionClaimEvidence::logseq_uuid)
+                .is_err()
+            {
+                return Err(ReceiptError::MissingProjectionClaimEvidence(uuid));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -980,11 +1229,11 @@ fn validate_annotations(
     Ok(())
 }
 
-/// Digest binding a completion to the complete candidate intent semantics.
+/// Replica-stable digest binding one immutable projection intent.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CompletionId([u8; 32]);
+pub struct ProjectionIntentId([u8; 32]);
 
-impl CompletionId {
+impl ProjectionIntentId {
     const fn from_digest(digest: [u8; 32]) -> Self {
         Self(digest)
     }
@@ -992,21 +1241,26 @@ impl CompletionId {
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
-}
 
-impl fmt::Debug for CompletionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CompletionId({self})")
+    #[cfg(test)]
+    pub(crate) const fn test_only_zero() -> Self {
+        Self([0; 32])
     }
 }
 
-impl fmt::Display for CompletionId {
+impl fmt::Debug for ProjectionIntentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ProjectionIntentId({self})")
+    }
+}
+
+impl fmt::Display for ProjectionIntentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_hex(&self.0, f)
     }
 }
 
-impl Serialize for CompletionId {
+impl Serialize for ProjectionIntentId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1015,7 +1269,7 @@ impl Serialize for CompletionId {
     }
 }
 
-impl<'de> Deserialize<'de> for CompletionId {
+impl<'de> Deserialize<'de> for ProjectionIntentId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -1027,15 +1281,65 @@ impl<'de> Deserialize<'de> for CompletionId {
     }
 }
 
-/// Candidate completion evidence. Publishing and durability are intentionally
-/// outside P0B; this type only expresses and verifies intent binding.
+/// Replica-stable logical completion identity. This type is intentionally
+/// distinct from local projection-attempt and forensic-evidence identities so
+/// the importer cannot accidentally derive an ImportId from device-local data.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LogicalCompletionId([u8; 32]);
+
+impl LogicalCompletionId {
+    const fn from_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for LogicalCompletionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LogicalCompletionId({self})")
+    }
+}
+
+impl fmt::Display for LogicalCompletionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(&self.0, f)
+    }
+}
+
+impl Serialize for LogicalCompletionId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for LogicalCompletionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        parse_digest(&value)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Stable completion receipt. Local recovery filenames and displacement
+/// observations live only in the separate immutable forensic catalog.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProjectionCompletion {
     receipt_schema_version: u32,
     projection_schema_version: u32,
     projection_policy_version: u32,
     managed_entity_set_version: u32,
-    intent_id: CompletionId,
+    intent_id: ProjectionIntentId,
+    logical_completion_id: LogicalCompletionId,
     workspace_id: WorkspaceId,
     page_id: PageId,
     path: ManagedPath,
@@ -1049,7 +1353,8 @@ struct ProjectionCompletionWire {
     projection_schema_version: u32,
     projection_policy_version: u32,
     managed_entity_set_version: u32,
-    intent_id: CompletionId,
+    intent_id: ProjectionIntentId,
+    logical_completion_id: LogicalCompletionId,
     workspace_id: WorkspaceId,
     page_id: PageId,
     path: ManagedPath,
@@ -1065,12 +1370,14 @@ impl ProjectionCompletion {
         if observed != intent.target {
             return Err(ReceiptError::CompletionTargetMismatch);
         }
+        let intent_id = intent.id()?;
         Ok(Self {
             receipt_schema_version: RECEIPT_SCHEMA_VERSION,
             projection_schema_version: PROJECTION_SCHEMA_VERSION,
             projection_policy_version: PROJECTION_POLICY_VERSION,
             managed_entity_set_version: MANAGED_ENTITY_SET_VERSION,
-            intent_id: intent.id()?,
+            intent_id,
+            logical_completion_id: logical_completion_id(intent_id, observed),
             workspace_id: intent.workspace_id,
             page_id: intent.page_id,
             path: intent.path.clone(),
@@ -1091,6 +1398,9 @@ impl ProjectionCompletion {
     }
 
     pub fn validate_against(&self, intent: &ProjectionIntent) -> Result<(), ReceiptError> {
+        if self.logical_completion_id != logical_completion_id(self.intent_id, self.target) {
+            return Err(ReceiptError::CompletionIdentityMismatch);
+        }
         if self.intent_id != intent.id()?
             || self.workspace_id != intent.workspace_id
             || self.page_id != intent.page_id
@@ -1102,8 +1412,12 @@ impl ProjectionCompletion {
         Ok(())
     }
 
-    pub const fn intent_id(&self) -> CompletionId {
+    pub const fn intent_id(&self) -> ProjectionIntentId {
         self.intent_id
+    }
+
+    pub const fn logical_completion_id(&self) -> LogicalCompletionId {
+        self.logical_completion_id
     }
 
     fn from_wire(wire: ProjectionCompletionWire) -> Result<Self, ReceiptError> {
@@ -1113,18 +1427,36 @@ impl ProjectionCompletion {
             wire.projection_policy_version,
             wire.managed_entity_set_version,
         )?;
-        Ok(Self {
+        let completion = Self {
             receipt_schema_version: wire.receipt_schema_version,
             projection_schema_version: wire.projection_schema_version,
             projection_policy_version: wire.projection_policy_version,
             managed_entity_set_version: wire.managed_entity_set_version,
             intent_id: wire.intent_id,
+            logical_completion_id: wire.logical_completion_id,
             workspace_id: wire.workspace_id,
             page_id: wire.page_id,
             path: wire.path,
             target: wire.target,
-        })
+        };
+        if completion.logical_completion_id
+            != logical_completion_id(completion.intent_id, completion.target)
+        {
+            return Err(ReceiptError::CompletionIdentityMismatch);
+        }
+        Ok(completion)
     }
+}
+
+fn logical_completion_id(
+    intent_id: ProjectionIntentId,
+    target: BlobDescription,
+) -> LogicalCompletionId {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/logical-projection-completion-id/v1\0");
+    hasher.update(intent_id.as_bytes());
+    hash_blob_description(&mut hasher, target);
+    LogicalCompletionId::from_digest(hasher.finalize().into())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1192,15 +1524,15 @@ impl ImportId {
     /// Derive a reconciliation identity from canonical completion and inventory evidence.
     pub fn derive(
         workspace_id: WorkspaceId,
-        completion_ids: &[CompletionId],
+        logical_completion_ids: &[LogicalCompletionId],
         inventory: &[ImportInventoryEntry],
         diff_schema_version: u32,
     ) -> Result<Self, ReceiptError> {
         if diff_schema_version != DIFF_SCHEMA_VERSION {
             return Err(ReceiptError::UnknownDiffSchema(diff_schema_version));
         }
-        if !is_strictly_sorted(completion_ids) && completion_ids.len() > 1 {
-            return Err(ReceiptError::NonCanonicalCompletionIds);
+        if !is_strictly_sorted(logical_completion_ids) && logical_completion_ids.len() > 1 {
+            return Err(ReceiptError::NonCanonicalLogicalCompletionIds);
         }
         if !is_strictly_sorted_by_key(inventory, |entry| entry.path.clone()) && inventory.len() > 1
         {
@@ -1211,8 +1543,8 @@ impl ImportId {
         hasher.update(b"tine/import/reconciliation-id/v1\0");
         hasher.update(workspace_id.as_uuid().as_bytes());
         hasher.update(diff_schema_version.to_be_bytes());
-        hasher.update((completion_ids.len() as u64).to_be_bytes());
-        for id in completion_ids {
+        hasher.update((logical_completion_ids.len() as u64).to_be_bytes());
+        for id in logical_completion_ids {
             hasher.update(id.as_bytes());
         }
         hasher.update((inventory.len() as u64).to_be_bytes());

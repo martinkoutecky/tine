@@ -1,10 +1,11 @@
 use serde_json::{json, Value};
 use tine_core::oplog::{
-    AnnotatedIdentity, BaseBlob, BatchId, BlobDescription, BlockId, CrdtPeerCounter, CrdtPeerId,
-    DeviceId, DocumentDependencies, DocumentId, FrontierV2, ImportId, ImportInventoryEntry,
-    ImportInventoryState, ImportLocator, LogseqUuid, ManagedPath, PageId, ProjectionCompletion,
-    ProjectionIntent, ProjectionPolicy, ProjectionPrecondition, ReceiptError, SessionId,
-    StructuralLocator, StructuralSpan, WorkspaceId, DIFF_SCHEMA_VERSION,
+    AnnotatedIdentity, BatchId, BlobDescription, BlockId, CrdtPeerCounter, CrdtPeerId, DeviceId,
+    DocumentDependencies, DocumentId, FrontierV2, ImportId, ImportInventoryEntry,
+    ImportInventoryState, ImportLocator, LogseqUuid, ManagedPath, PageId, PortablePathKey,
+    ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionCompletion, ProjectionIntent,
+    ProjectionPrecondition, ReceiptError, SessionId, StructuralLocator, StructuralSpan,
+    WorkspaceId, DIFF_SCHEMA_VERSION,
 };
 use uuid::Uuid;
 
@@ -59,7 +60,7 @@ fn annotation(
     )
 }
 
-fn sample_intent(policy: ProjectionPolicy) -> ProjectionIntent {
+fn sample_intent() -> ProjectionIntent {
     let frontier = FrontierV2::new(vec![
         DocumentDependencies::new(
             document(20),
@@ -72,24 +73,50 @@ fn sample_intent(policy: ProjectionPolicy) -> ProjectionIntent {
     ])
     .unwrap();
 
-    intent_with_frontier(policy, frontier)
+    intent_with_frontier(frontier)
 }
 
-fn intent_with_frontier(policy: ProjectionPolicy, frontier: FrontierV2) -> ProjectionIntent {
+fn intent_with_frontier(frontier: FrontierV2) -> ProjectionIntent {
     let base = b"- old\n".to_vec();
     let target = b"- first\n  - second\n";
+    let participant_home = frontier
+        .documents()
+        .first()
+        .map(DocumentDependencies::document_id);
+    let claim_evidence = participant_home
+        .map(|home| {
+            vec![
+                ProjectionClaimEvidence::new(
+                    LogseqUuid::from_uuid(uuid(111)),
+                    vec![ProjectionClaimParticipant::new(block(11), home)],
+                )
+                .unwrap(),
+                ProjectionClaimEvidence::new(
+                    LogseqUuid::from_uuid(uuid(112)),
+                    vec![ProjectionClaimParticipant::new(block(12), home)],
+                )
+                .unwrap(),
+            ]
+        })
+        .unwrap_or_default();
 
     ProjectionIntent::new(
         workspace(1),
         page(2),
         ManagedPath::parse("pages/hello.md").unwrap(),
-        policy,
         frontier,
-        ProjectionPrecondition::Base(BaseBlob::new(base)),
+        claim_evidence,
+        ProjectionPrecondition::Base(BlobDescription::of(&base)),
         BlobDescription::of(target),
         vec![
-            annotation(&[1, 0], 10, target.len() as u64, 12, Some(112)),
-            annotation(&[0], 0, 8, 11, Some(111)),
+            annotation(
+                &[1, 0],
+                10,
+                target.len() as u64,
+                12,
+                participant_home.map(|_| 112),
+            ),
+            annotation(&[0], 0, 8, 11, participant_home.map(|_| 111)),
         ],
     )
     .unwrap()
@@ -97,7 +124,7 @@ fn intent_with_frontier(policy: ProjectionPolicy, frontier: FrontierV2) -> Proje
 
 #[test]
 fn intent_and_completion_semantic_roundtrip() {
-    let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
+    let intent = sample_intent();
     let intent_bytes = intent.encode().unwrap();
     let decoded = ProjectionIntent::decode(&intent_bytes).unwrap();
     assert_eq!(decoded, intent);
@@ -124,11 +151,11 @@ fn ordinary_application_ids_are_minted_as_uuid_v4() {
 
 #[test]
 fn decode_rejects_truncation_corruption_and_unknown_versions() {
-    let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
+    let intent = sample_intent();
     let encoded = intent.encode().unwrap();
     let current: Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(current["receipt_schema_version"], json!(2));
-    assert_eq!(current["projection_schema_version"], json!(1));
+    assert_eq!(current["receipt_schema_version"], json!(5));
+    assert_eq!(current["projection_schema_version"], json!(4));
     assert_eq!(current["projection_policy_version"], json!(1));
     assert_eq!(current["managed_entity_set_version"], json!(1));
     assert!(current["frontier"][0]["direct_dependency_heads"].is_array());
@@ -154,15 +181,75 @@ fn decode_rejects_truncation_corruption_and_unknown_versions() {
     let mut unknown_policy: Value = serde_json::from_slice(&encoded).unwrap();
     unknown_policy["policy"] = json!("future_policy");
     assert!(ProjectionIntent::decode(&serde_json::to_vec(&unknown_policy).unwrap()).is_err());
+
+    for (field, old_version) in [
+        ("receipt_schema_version", 4),
+        ("projection_schema_version", 3),
+    ] {
+        let mut old: Value = serde_json::from_slice(&encoded).unwrap();
+        old[field] = json!(old_version);
+        assert!(
+            ProjectionIntent::decode(&serde_json::to_vec(&old).unwrap()).is_err(),
+            "accepted old {field}"
+        );
+    }
+    let mut old_shape: Value = serde_json::from_slice(&encoded).unwrap();
+    old_shape.as_object_mut().unwrap().remove("claim_evidence");
+    assert!(ProjectionIntent::decode(&serde_json::to_vec(&old_shape).unwrap()).is_err());
+
+    let mut embedded_base: Value = serde_json::from_slice(&encoded).unwrap();
+    let description = embedded_base["precondition"]["base"].clone();
+    embedded_base["precondition"]["base"] = json!({
+        "description": description,
+        "bytes": [45, 32, 111, 108, 100, 10]
+    });
+    assert!(ProjectionIntent::decode(&serde_json::to_vec(&embedded_base).unwrap()).is_err());
+
+    let mut omitted_home: Value = serde_json::from_slice(&encoded).unwrap();
+    omitted_home["claim_evidence"][0]["participants"][0]["home_document_id"] =
+        json!(document(999).to_string());
+    assert!(ProjectionIntent::decode(&serde_json::to_vec(&omitted_home).unwrap()).is_err());
 }
 
 #[test]
-fn managed_paths_are_graph_relative_and_scoped() {
+fn intent_wire_size_does_not_scale_with_base_byte_length() {
+    let make = |description| {
+        ProjectionIntent::new(
+            workspace(1),
+            page(2),
+            ManagedPath::parse("archive/pages/size.md").unwrap(),
+            FrontierV2::default(),
+            Vec::new(),
+            ProjectionPrecondition::Base(description),
+            BlobDescription::of(b"- target\n"),
+            Vec::new(),
+        )
+        .unwrap()
+        .encode()
+        .unwrap()
+    };
+    let tiny = make(BlobDescription::of(b"x"));
+    let huge = make(BlobDescription::from_parts([7; 32], 32 * 1024 * 1024));
+
+    assert!(tiny.len() < 1024);
+    assert!(huge.len() < 1024);
+    assert!(tiny.len().abs_diff(huge.len()) < 16);
+    let wire: Value = serde_json::from_slice(&tiny).unwrap();
+    assert!(wire["precondition"]["base"]["sha256"].is_string());
+    assert!(wire["precondition"]["base"].get("bytes").is_none());
+}
+
+#[test]
+fn managed_paths_are_canonical_safe_graph_relative_paths() {
     for valid in [
         "pages/a.md",
         "pages/nested/a.org",
         "journals/2026_07_22.md",
         "journals/archive/day.org",
+        "archive/pages/foo.md",
+        "custom/notes/topic.org",
+        "assets/a.md",
+        ".tine-sync/page.md",
     ] {
         assert_eq!(ManagedPath::parse(valid).unwrap().as_str(), valid);
     }
@@ -178,13 +265,54 @@ fn managed_paths_are_graph_relative_and_scoped() {
         "pages//a.md",
         "pages\\a.md",
         "pages/C:a.md",
-        "assets/a.md",
+        "pages/a<b.md",
+        "pages/a>b.md",
+        "pages/a\"b.md",
+        "pages/a|b.md",
+        "pages/a?b.md",
+        "pages/a*b.md",
+        "pages/CON.md",
+        "pages/Lpt9.org",
+        "pages/COM¹.md",
+        "pages/com².any.md",
+        "pages/LpT³.org",
+        "pages/trailing /a.md",
+        "pages/.md",
         "config.edn",
-        ".tine-sync/page.md",
         "journals/a.MD",
+        " pages/a.md",
+        "pages/a.md ",
     ] {
         assert!(ManagedPath::parse(invalid).is_err(), "accepted {invalid:?}");
     }
+}
+
+#[test]
+fn portable_path_keys_use_versioned_canonical_full_case_folding() {
+    fn key(path: &str) -> PortablePathKey {
+        ManagedPath::parse(path).unwrap().portable_key()
+    }
+
+    for (left, right) in [
+        ("pages/Foo.md", "pages/foo.md"),
+        ("pages/Café.md", "pages/Cafe\u{301}.md"),
+        ("pages/Straße.md", "pages/STRASSE.md"),
+        ("pages/Σίσυφος.md", "pages/σίσυφοσ.md"),
+        ("pages/Kelvin.md", "pages/kelvin.md"),
+    ] {
+        assert_eq!(key(left), key(right), "{left:?} and {right:?}");
+        assert_eq!(key(left).digest(), key(right).digest());
+    }
+    assert_ne!(
+        key("pages/①.md"),
+        key("pages/1.md"),
+        "compatibility-only normalization must remain distinct"
+    );
+    assert_eq!(
+        ManagedPath::parse("pages/Cafe\u{301}.md").unwrap().as_str(),
+        "pages/Cafe\u{301}.md",
+        "the projected spelling must remain untouched"
+    );
 }
 
 #[test]
@@ -197,8 +325,8 @@ fn malformed_and_duplicate_identity_evidence_is_rejected() {
         workspace(1),
         page(1),
         ManagedPath::parse("pages/a.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::default(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(target),
         vec![
@@ -213,8 +341,8 @@ fn malformed_and_duplicate_identity_evidence_is_rejected() {
         workspace(1),
         page(1),
         ManagedPath::parse("pages/a.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::default(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(target),
         vec![
@@ -232,8 +360,8 @@ fn malformed_and_duplicate_identity_evidence_is_rejected() {
         workspace(1),
         page(1),
         ManagedPath::parse("pages/a.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::default(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(target),
         vec![
@@ -250,9 +378,7 @@ fn malformed_and_duplicate_identity_evidence_is_rejected() {
 
 #[test]
 fn decode_rejects_noncanonical_dependencies_and_annotations() {
-    let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
-        .encode()
-        .unwrap();
+    let encoded = sample_intent().encode().unwrap();
 
     let mut unsorted_documents: Value = serde_json::from_slice(&encoded).unwrap();
     unsorted_documents["frontier"]
@@ -285,9 +411,7 @@ fn decode_rejects_noncanonical_dependencies_and_annotations() {
 
 #[test]
 fn decode_rejects_duplicate_document_and_batch_dependencies() {
-    let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
-        .encode()
-        .unwrap();
+    let encoded = sample_intent().encode().unwrap();
 
     let mut duplicate_document: Value = serde_json::from_slice(&encoded).unwrap();
     duplicate_document["frontier"][1]["document_id"] =
@@ -344,8 +468,7 @@ fn frontier_construction_is_canonical_and_true_empty_baseline_is_valid() {
     );
 
     assert!(FrontierV2::default().documents().is_empty());
-    let empty_intent =
-        intent_with_frontier(ProjectionPolicy::SparseLogseqIds, FrontierV2::default());
+    let empty_intent = intent_with_frontier(FrontierV2::default());
     assert_eq!(
         ProjectionIntent::decode(&empty_intent.encode().unwrap()).unwrap(),
         empty_intent
@@ -356,9 +479,7 @@ fn frontier_construction_is_canonical_and_true_empty_baseline_is_valid() {
 
 #[test]
 fn frontier_decode_recomputes_causal_digest_and_rejects_malformed_entries() {
-    let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
-        .encode()
-        .unwrap();
+    let encoded = sample_intent().encode().unwrap();
 
     let mut mismatch: Value = serde_json::from_slice(&encoded).unwrap();
     mismatch["frontier"][0]["causal_state_digest"] =
@@ -380,7 +501,6 @@ fn frontier_decode_recomputes_causal_digest_and_rejects_malformed_entries() {
         workspace(1),
         page(1),
         ManagedPath::parse("pages/a.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::new(vec![DocumentDependencies::new(
             document(1),
             vec![peer(1, 0)],
@@ -388,6 +508,7 @@ fn frontier_decode_recomputes_causal_digest_and_rejects_malformed_entries() {
         )
         .unwrap()])
         .unwrap(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(b""),
         vec![],
@@ -400,9 +521,7 @@ fn frontier_decode_recomputes_causal_digest_and_rejects_malformed_entries() {
 
 #[test]
 fn decode_rejects_empty_locator_and_reversed_span() {
-    let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
-        .encode()
-        .unwrap();
+    let encoded = sample_intent().encode().unwrap();
 
     let mut empty_locator: Value = serde_json::from_slice(&encoded).unwrap();
     empty_locator["annotations"][0]["locator"] = json!([]);
@@ -415,9 +534,7 @@ fn decode_rejects_empty_locator_and_reversed_span() {
 
 #[test]
 fn base_blob_and_target_consistency_is_validated() {
-    let encoded = sample_intent(ProjectionPolicy::SparseLogseqIds)
-        .encode()
-        .unwrap();
+    let encoded = sample_intent().encode().unwrap();
 
     let mut bad_length: Value = serde_json::from_slice(&encoded).unwrap();
     bad_length["precondition"]["base"]["description"]["byte_length"] = json!(999);
@@ -432,8 +549,8 @@ fn base_blob_and_target_consistency_is_validated() {
         workspace(1),
         page(1),
         ManagedPath::parse("pages/a.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::default(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(b"short"),
         vec![annotation(&[0], 0, 6, 1, None)],
@@ -444,8 +561,13 @@ fn base_blob_and_target_consistency_is_validated() {
 
 #[test]
 fn import_id_and_unmatched_ids_are_deterministic_and_domain_separated() {
-    let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
-    let completion_ids = [intent.id().unwrap()];
+    let intent = sample_intent();
+    let logical_completion_ids =
+        [
+            ProjectionCompletion::for_intent(&intent, b"- first\n  - second\n")
+                .unwrap()
+                .logical_completion_id(),
+        ];
     let inventory = [
         ImportInventoryEntry::new(
             ManagedPath::parse("journals/2026_07_22.md").unwrap(),
@@ -459,14 +581,14 @@ fn import_id_and_unmatched_ids_are_deterministic_and_domain_separated() {
 
     let first = ImportId::derive(
         workspace(1),
-        &completion_ids,
+        &logical_completion_ids,
         &inventory,
         DIFF_SCHEMA_VERSION,
     )
     .unwrap();
     let second = ImportId::derive(
         workspace(1),
-        &completion_ids,
+        &logical_completion_ids,
         &inventory,
         DIFF_SCHEMA_VERSION,
     )
@@ -507,35 +629,42 @@ fn import_id_and_unmatched_ids_are_deterministic_and_domain_separated() {
         first,
         ImportId::derive(
             workspace(1),
-            &completion_ids,
+            &logical_completion_ids,
             &changed_inventory,
             DIFF_SCHEMA_VERSION,
         )
         .unwrap()
     );
-    assert!(ImportId::derive(workspace(1), &completion_ids, &inventory, 99).is_err());
+    assert!(ImportId::derive(workspace(1), &logical_completion_ids, &inventory, 99).is_err());
 }
 
 #[test]
 fn import_derivation_rejects_noncanonical_evidence() {
-    let intent_a = sample_intent(ProjectionPolicy::SparseLogseqIds);
+    let intent_a = sample_intent();
     let intent_b = ProjectionIntent::new(
         workspace(2),
         page(2),
         ManagedPath::parse("pages/b.md").unwrap(),
-        ProjectionPolicy::SparseLogseqIds,
         FrontierV2::default(),
+        Vec::new(),
         ProjectionPrecondition::Absent,
         BlobDescription::of(b"b"),
         vec![],
     )
     .unwrap();
-    let mut completions = vec![intent_a.id().unwrap(), intent_b.id().unwrap()];
+    let mut completions = vec![
+        ProjectionCompletion::for_intent(&intent_a, b"- first\n  - second\n")
+            .unwrap()
+            .logical_completion_id(),
+        ProjectionCompletion::for_intent(&intent_b, b"b")
+            .unwrap()
+            .logical_completion_id(),
+    ];
     completions.sort_unstable();
     completions.reverse();
     assert!(matches!(
         ImportId::derive(workspace(1), &completions, &[], DIFF_SCHEMA_VERSION),
-        Err(ReceiptError::NonCanonicalCompletionIds)
+        Err(ReceiptError::NonCanonicalLogicalCompletionIds)
     ));
 
     let reversed_inventory = [
@@ -555,25 +684,17 @@ fn import_derivation_rejects_noncanonical_evidence() {
 }
 
 #[test]
-fn sparse_and_dense_policies_are_distinct() {
-    let sparse = sample_intent(ProjectionPolicy::SparseLogseqIds);
-    let dense = sample_intent(ProjectionPolicy::DenseLogseqIds);
-    assert_ne!(sparse.policy(), dense.policy());
-    assert_ne!(sparse.id().unwrap(), dense.id().unwrap());
-
-    assert_eq!(
-        serde_json::to_value(ProjectionPolicy::SparseLogseqIds).unwrap(),
-        json!("sparse_logseq_ids")
-    );
-    assert_eq!(
-        serde_json::to_value(ProjectionPolicy::DenseLogseqIds).unwrap(),
-        json!("dense_logseq_ids")
-    );
+fn dense_projection_policy_wire_is_rejected() {
+    let intent = sample_intent();
+    let mut wire: Value = serde_json::from_slice(&intent.encode().unwrap()).unwrap();
+    assert_eq!(wire["policy"], json!("sparse_logseq_ids"));
+    wire["policy"] = json!("dense_logseq_ids");
+    assert!(ProjectionIntent::decode(&serde_json::to_vec(&wire).unwrap()).is_err());
 }
 
 #[test]
-fn completion_id_is_stable_across_equivalent_encodings() {
-    let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
+fn projection_intent_id_is_stable_across_equivalent_encodings() {
+    let intent = sample_intent();
     let compact = intent.encode().unwrap();
     let value: Value = serde_json::from_slice(&compact).unwrap();
     let pretty = serde_json::to_vec_pretty(&value).unwrap();
@@ -587,10 +708,9 @@ fn completion_id_is_stable_across_equivalent_encodings() {
 }
 
 #[test]
-fn completion_id_binds_peer_counters_and_direct_dependency_heads() {
+fn projection_intent_id_binds_peer_counters_and_direct_dependency_heads() {
     let make_intent = |peer_id, max_counter, dependencies| {
         intent_with_frontier(
-            ProjectionPolicy::SparseLogseqIds,
             FrontierV2::new(vec![DocumentDependencies::new(
                 document(10),
                 vec![peer(peer_id, max_counter)],
@@ -611,13 +731,13 @@ fn completion_id_binds_peer_counters_and_direct_dependency_heads() {
     assert_ne!(baseline.id().unwrap(), changed_heads.id().unwrap());
 
     let encoded: Value = serde_json::from_slice(&baseline.encode().unwrap()).unwrap();
-    assert_eq!(encoded["projection_schema_version"], json!(1));
+    assert_eq!(encoded["projection_schema_version"], json!(4));
     assert!(encoded["frontier"][0]["causal_state_digest"].is_string());
 }
 
 #[test]
 fn completion_version_corruption_is_rejected_by_bound_decode() {
-    let intent = sample_intent(ProjectionPolicy::SparseLogseqIds);
+    let intent = sample_intent();
     let completion = ProjectionCompletion::for_intent(&intent, b"- first\n  - second\n").unwrap();
     let encoded = completion.encode().unwrap();
 
@@ -637,8 +757,45 @@ fn completion_version_corruption_is_rejected_by_bound_decode() {
 }
 
 #[test]
+fn logical_completion_is_replica_stable_and_contains_no_local_artifacts() {
+    let intent = sample_intent();
+    let target = b"- first\n  - second\n";
+    let first_device = ProjectionCompletion::for_intent(&intent, target).unwrap();
+    let second_device = ProjectionCompletion::for_intent(&intent, target).unwrap();
+    let bytes = first_device.encode().unwrap();
+    assert_eq!(bytes, second_device.encode().unwrap());
+    assert_eq!(
+        first_device.logical_completion_id(),
+        second_device.logical_completion_id()
+    );
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(wire.get("displacements").is_none());
+    assert!(wire.get("attempt_id").is_none());
+    assert!(wire.get("recovery_filename").is_none());
+    assert!(wire.get("base").is_none());
+    let decoded = ProjectionCompletion::decode_bound(&bytes, &intent).unwrap();
+    assert_eq!(decoded, first_device);
+
+    for field in ["logical_completion_id", "intent_id"] {
+        let mut old_shape: Value = serde_json::from_slice(&bytes).unwrap();
+        old_shape.as_object_mut().unwrap().remove(field);
+        assert!(
+            ProjectionCompletion::decode_bound(&serde_json::to_vec(&old_shape).unwrap(), &intent)
+                .is_err(),
+            "accepted completion without {field}"
+        );
+    }
+    let mut old_shape: Value = serde_json::from_slice(&bytes).unwrap();
+    old_shape["displacements"] = json!([]);
+    assert!(
+        ProjectionCompletion::decode_bound(&serde_json::to_vec(&old_shape).unwrap(), &intent)
+            .is_err()
+    );
+}
+
+#[test]
 fn trusted_completion_cannot_be_obtained_without_exact_bound_decode() {
-    let sparse = sample_intent(ProjectionPolicy::SparseLogseqIds);
+    let sparse = sample_intent();
     assert_eq!(
         ProjectionCompletion::for_intent(&sparse, b"wrong bytes").unwrap_err(),
         ReceiptError::CompletionTargetMismatch
@@ -646,12 +803,14 @@ fn trusted_completion_cannot_be_obtained_without_exact_bound_decode() {
 
     let target = b"- first\n  - second\n";
     let completion = ProjectionCompletion::for_intent(&sparse, target).unwrap();
-    let dense = sample_intent(ProjectionPolicy::DenseLogseqIds);
+    let mut other_wire: Value = serde_json::from_slice(&sparse.encode().unwrap()).unwrap();
+    other_wire["path"] = json!("pages/other.md");
+    let other = ProjectionIntent::decode(&serde_json::to_vec(&other_wire).unwrap()).unwrap();
     assert_eq!(
-        completion.validate_against(&dense).unwrap_err(),
+        completion.validate_against(&other).unwrap_err(),
         ReceiptError::CompletionIntentMismatch
     );
     // Completion has no public unbound decoder and does not implement Deserialize.
     // The only byte-decoding API requires the exact intent and rejects this mismatch.
-    assert!(ProjectionCompletion::decode_bound(&completion.encode().unwrap(), &dense).is_err());
+    assert!(ProjectionCompletion::decode_bound(&completion.encode().unwrap(), &other).is_err());
 }

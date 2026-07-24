@@ -1,0 +1,1163 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::io::ErrorKind;
+use std::path::{Component, Path, PathBuf};
+
+use cap_std::ambient_authority;
+use cap_std::fs::Dir;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+use super::object_store::{
+    ensure_directory_nofollow, is_temp_name, open_dir_nofollow, publish_immutable_exact,
+    read_optional_regular, require_regular_entry, StoreError,
+};
+use super::{
+    BaseBlob, BlobDescription, CapabilityCapturedProjectionInput,
+    CapabilityCapturedProjectionState, ManagedPath, ProjectionCompletion,
+    ProjectionEndpointBinding, ProjectionIntent, ProjectionIntentId, ProjectionPrecondition,
+    ProjectionWork, ProjectionWorkCompletionAuthority, ProjectionWorkTarget, ReceiptError,
+    WorkspaceId,
+};
+use crate::model::{Graph, ProjectionWriteProof};
+
+const STORE_CLAIM_FILE: &str = "projection-receipts.claim";
+const BASES_DIR: &str = "bases";
+const INTENTS_DIR: &str = "intents";
+const COMPLETIONS_DIR: &str = "completions";
+const ATTEMPTS_DIR: &str = "attempts";
+const FORENSICS_DIR: &str = "forensics";
+const STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR3\0";
+const STORE_CLAIM_VERSION: u32 = 3;
+const STORE_CLAIM_LEN: usize = STORE_CLAIM_MAGIC.len() + 4 + 16 + 1 + 16 + 16 + 32;
+pub(crate) const MAX_PROJECTION_EVIDENCE_BYTES: u64 = 64 * 1024 * 1024;
+const LOCAL_ATTEMPT_SCHEMA_VERSION: u32 = 1;
+const LOCAL_FORENSIC_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionAttemptReservation {
+    schema_version: u32,
+    intent_id: ProjectionIntentId,
+    attempt_id: Uuid,
+    target_path: ManagedPath,
+    recovery_filename: String,
+}
+
+impl ProjectionAttemptReservation {
+    pub const fn intent_id(&self) -> ProjectionIntentId {
+        self.intent_id
+    }
+
+    pub const fn attempt_id(&self) -> Uuid {
+        self.attempt_id
+    }
+
+    pub fn target_path(&self) -> &ManagedPath {
+        &self.target_path
+    }
+
+    pub fn recovery_filename(&self) -> &str {
+        &self.recovery_filename
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(target_path: &str) -> Self {
+        let target_path = ManagedPath::parse(target_path).expect("valid test projection path");
+        let target_filename = target_path
+            .as_str()
+            .rsplit_once('/')
+            .expect("managed paths contain a parent")
+            .1
+            .to_owned();
+        let attempt_id = Uuid::new_v4();
+        Self {
+            schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
+            intent_id: ProjectionIntentId::test_only_zero(),
+            attempt_id,
+            target_path,
+            recovery_filename: format!(
+                ".{target_filename}.{}.projection.recovery",
+                attempt_id.simple()
+            ),
+        }
+    }
+
+    fn new(intent: &ProjectionIntent, attempt_id: Uuid) -> Result<Self, ProjectionStoreError> {
+        let target_filename = intent
+            .path()
+            .as_str()
+            .rsplit_once('/')
+            .expect("managed paths contain a parent")
+            .1;
+        let reservation = Self {
+            schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
+            intent_id: intent.id()?,
+            attempt_id,
+            target_path: intent.path().clone(),
+            recovery_filename: format!(
+                ".{target_filename}.{}.projection.recovery",
+                attempt_id.simple()
+            ),
+        };
+        reservation.validate(intent)?;
+        Ok(reservation)
+    }
+
+    fn validate(&self, intent: &ProjectionIntent) -> Result<(), ProjectionStoreError> {
+        let expected = Self::new_unchecked(intent, self.attempt_id)?;
+        if self.schema_version != LOCAL_ATTEMPT_SCHEMA_VERSION
+            || self.intent_id != intent.id()?
+            || self.target_path != *intent.path()
+            || self.recovery_filename != expected.recovery_filename
+        {
+            return Err(ProjectionStoreError::AttemptBindingMismatch);
+        }
+        Ok(())
+    }
+
+    fn new_unchecked(
+        intent: &ProjectionIntent,
+        attempt_id: Uuid,
+    ) -> Result<Self, ProjectionStoreError> {
+        let target_filename = intent
+            .path()
+            .as_str()
+            .rsplit_once('/')
+            .expect("managed paths contain a parent")
+            .1;
+        Ok(Self {
+            schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
+            intent_id: intent.id()?,
+            attempt_id,
+            target_path: intent.path().clone(),
+            recovery_filename: format!(
+                ".{target_filename}.{}.projection.recovery",
+                attempt_id.simple()
+            ),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalProjectionEvidenceRecord {
+    schema_version: u32,
+    intent_id: ProjectionIntentId,
+    attempt_id: Uuid,
+    target_path: ManagedPath,
+    recovery_relative_path: String,
+    recovery_filename: String,
+    observed: BlobDescription,
+}
+
+impl LocalProjectionEvidenceRecord {
+    pub const fn intent_id(&self) -> ProjectionIntentId {
+        self.intent_id
+    }
+
+    pub const fn attempt_id(&self) -> Uuid {
+        self.attempt_id
+    }
+
+    pub fn recovery_relative_path(&self) -> &str {
+        &self.recovery_relative_path
+    }
+
+    pub fn recovery_filename(&self) -> &str {
+        &self.recovery_filename
+    }
+
+    pub const fn observed(&self) -> BlobDescription {
+        self.observed
+    }
+}
+
+/// Disconnected immutable storage for projection bases, intents, and completions.
+///
+/// Opening this store is never performed by graph startup. Every path operation
+/// remains relative to the retained no-follow directory capability.
+#[derive(Debug)]
+pub struct ProjectionReceiptStore {
+    root_path: PathBuf,
+    workspace_id: WorkspaceId,
+    endpoint: Option<ProjectionEndpointBinding>,
+    capability: Dir,
+}
+
+impl ProjectionReceiptStore {
+    pub fn open(root: &Path, workspace_id: WorkspaceId) -> Result<Self, ProjectionStoreError> {
+        Self::open_with_binding(root, workspace_id, None)
+    }
+
+    /// Open a receipt namespace durably enrolled to one endpoint and one exact
+    /// graph-root filesystem resource.
+    pub fn open_for_endpoint(
+        root: &Path,
+        workspace_id: WorkspaceId,
+        endpoint: ProjectionEndpointBinding,
+    ) -> Result<Self, ProjectionStoreError> {
+        Self::open_with_binding(root, workspace_id, Some(endpoint))
+    }
+
+    fn open_with_binding(
+        root: &Path,
+        workspace_id: WorkspaceId,
+        endpoint: Option<ProjectionEndpointBinding>,
+    ) -> Result<Self, ProjectionStoreError> {
+        let name = root
+            .file_name()
+            .ok_or_else(|| ProjectionStoreError::UnsafeEntry("store root has no name".into()))?;
+        if !matches!(root.components().next_back(), Some(Component::Normal(_))) {
+            return Err(ProjectionStoreError::UnsafeEntry(
+                "store root must end in a normal path component".into(),
+            ));
+        }
+        let name = name.to_str().ok_or_else(|| {
+            ProjectionStoreError::UnsafeEntry("store root name is not UTF-8".into())
+        })?;
+        let parent = root.parent().ok_or_else(|| {
+            ProjectionStoreError::UnsafeEntry("store root has no existing parent".into())
+        })?;
+        let canonical_parent = std::fs::canonicalize(parent)?;
+        let parent_capability = Dir::open_ambient_dir(&canonical_parent, ambient_authority())?;
+        ensure_directory_nofollow(&parent_capability, name)?;
+        let capability = open_dir_nofollow(&parent_capability, name)?;
+
+        let store = Self {
+            root_path: canonical_parent.join(name),
+            workspace_id,
+            endpoint,
+            capability,
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    pub fn root_path(&self) -> &Path {
+        &self.root_path
+    }
+
+    pub const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub const fn endpoint_binding(&self) -> Option<ProjectionEndpointBinding> {
+        self.endpoint
+    }
+
+    /// Capture an exact authoring precondition through Graph's retained
+    /// no-follow capability. A present input is accepted only with a completion
+    /// reloaded from this enrolled store and bound to the exact current bytes.
+    pub fn capture_projection_input(
+        &self,
+        graph: &Graph,
+        endpoint: ProjectionEndpointBinding,
+        path: ManagedPath,
+        prior_intent: Option<&ProjectionIntent>,
+    ) -> Result<CapabilityCapturedProjectionInput, ProjectionStoreError> {
+        self.require_endpoint(endpoint)?;
+        let graph_resource_id = graph
+            .canonical_resource_id()
+            .map_err(ProjectionStoreError::Io)?;
+        if graph_resource_id != endpoint.graph_resource_id {
+            return Err(ProjectionStoreError::GraphResourceMismatch);
+        }
+        let current = graph
+            .read_projection_input(&path)
+            .map_err(ProjectionStoreError::Io)?;
+        let state = match (current, prior_intent) {
+            (None, None) => CapabilityCapturedProjectionState::Absent,
+            (None, Some(_)) => return Err(ProjectionStoreError::CapturedInputMismatch),
+            (Some(_), None) => return Err(ProjectionStoreError::MissingPriorCompletion),
+            (Some(bytes), Some(intent)) => {
+                if intent.workspace_id() != self.workspace_id
+                    || intent.path() != &path
+                    || intent.target() != BlobDescription::of(&bytes)
+                {
+                    return Err(ProjectionStoreError::CapturedInputMismatch);
+                }
+                let prior_completion = self
+                    .load_completion(intent)?
+                    .ok_or(ProjectionStoreError::MissingPriorCompletion)?;
+                CapabilityCapturedProjectionState::Present {
+                    bytes,
+                    prior_intent: intent.clone(),
+                    prior_completion,
+                }
+            }
+        };
+        Ok(CapabilityCapturedProjectionInput::from_graph_capability(
+            path, endpoint, state,
+        ))
+    }
+
+    /// Publish immutable base bytes first and the canonical intent last.
+    pub fn publish_intent(
+        &self,
+        intent: &ProjectionIntent,
+        base_bytes: Option<&[u8]>,
+    ) -> Result<ProjectionIntentId, ProjectionStoreError> {
+        self.require_workspace(intent)?;
+        let bytes = intent.encode()?;
+        require_evidence_length(
+            "projection target",
+            intent.target().byte_length(),
+            MAX_PROJECTION_EVIDENCE_BYTES,
+        )?;
+        require_evidence_length(
+            "projection intent",
+            bytes.len() as u64,
+            MAX_PROJECTION_EVIDENCE_BYTES,
+        )?;
+
+        let intent_id = intent.id()?;
+        match (intent.precondition(), base_bytes) {
+            (ProjectionPrecondition::Absent, None) => {}
+            (ProjectionPrecondition::Absent, Some(_)) => {
+                return Err(ProjectionStoreError::UnexpectedBase)
+            }
+            (ProjectionPrecondition::Base(description), None) => {
+                return Err(ProjectionStoreError::MissingBase(*description))
+            }
+            (ProjectionPrecondition::Base(description), Some(base_bytes)) => {
+                require_evidence_length(
+                    "projection base",
+                    description.byte_length(),
+                    MAX_PROJECTION_EVIDENCE_BYTES,
+                )?;
+                if BlobDescription::of(base_bytes) != *description {
+                    return Err(ProjectionStoreError::BaseEvidenceMismatch(*description));
+                }
+                let bases = self.namespace(BASES_DIR)?;
+                publish_immutable_exact(
+                    &bases,
+                    &base_filename(*description),
+                    base_bytes,
+                    "projection base",
+                )?;
+            }
+        }
+
+        let intents = self.namespace(INTENTS_DIR)?;
+        publish_immutable_exact(
+            &intents,
+            &intent_filename(intent_id),
+            &bytes,
+            "projection intent",
+        )?;
+        Ok(intent_id)
+    }
+
+    /// Load and validate the intent and every base byte needed to authorize it.
+    pub fn load_intent(
+        &self,
+        intent_id: ProjectionIntentId,
+    ) -> Result<Option<ProjectionIntent>, ProjectionStoreError> {
+        let intents = self.namespace(INTENTS_DIR)?;
+        let Some(bytes) = read_optional_regular(
+            &intents,
+            &intent_filename(intent_id),
+            MAX_PROJECTION_EVIDENCE_BYTES,
+            None,
+        )?
+        else {
+            return Ok(None);
+        };
+        let intent = ProjectionIntent::decode(&bytes)?;
+        self.require_workspace(&intent)?;
+        if intent.id()? != intent_id {
+            return Err(ProjectionStoreError::PathBindingMismatch(
+                "projection intent",
+            ));
+        }
+        if intent.encode()? != bytes {
+            return Err(ProjectionStoreError::NonCanonical("projection intent"));
+        }
+        self.load_base(&intent)?;
+        Ok(Some(intent))
+    }
+
+    /// Retrieve exact base bytes from the immutable base namespace.
+    pub fn load_base(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<Option<BaseBlob>, ProjectionStoreError> {
+        self.require_workspace(intent)?;
+        let ProjectionPrecondition::Base(description) = intent.precondition() else {
+            return Ok(None);
+        };
+        require_evidence_length(
+            "projection base",
+            description.byte_length(),
+            MAX_PROJECTION_EVIDENCE_BYTES,
+        )?;
+        let bases = self.namespace(BASES_DIR)?;
+        let filename = base_filename(*description);
+        let bytes = read_optional_regular(
+            &bases,
+            &filename,
+            MAX_PROJECTION_EVIDENCE_BYTES,
+            Some(description.byte_length()),
+        )?
+        .ok_or(ProjectionStoreError::MissingBase(*description))?;
+        if BlobDescription::of(&bytes) != *description {
+            return Err(ProjectionStoreError::BaseEvidenceMismatch(*description));
+        }
+        Ok(Some(BaseBlob::from_parts(*description, bytes)?))
+    }
+
+    /// Durably reserve the exact recovery filename Graph must use before any
+    /// live page name can be retired or published.
+    pub fn reserve_attempt(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
+        let intent_id = self.require_published_intent(intent)?;
+        let reservation = ProjectionAttemptReservation::new(intent, Uuid::new_v4())?;
+        let bytes = serde_json::to_vec(&reservation)
+            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+        let attempts = self.intent_namespace(ATTEMPTS_DIR, intent_id)?;
+        publish_immutable_exact(
+            &attempts,
+            &attempt_filename(reservation.attempt_id),
+            &bytes,
+            "projection attempt reservation",
+        )?;
+        Ok(reservation)
+    }
+
+    /// Load only this intent's bounded attempt namespace. Recovery never scans
+    /// graph page directories or other intents for generated-name patterns.
+    pub fn load_attempt_reservations(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<Vec<ProjectionAttemptReservation>, ProjectionStoreError> {
+        let intent_id = self.require_published_intent(intent)?;
+        let attempts = self.intent_namespace(ATTEMPTS_DIR, intent_id)?;
+        let mut reservations = Vec::new();
+        for entry in attempts.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                ProjectionStoreError::UnsafeEntry("non-UTF-8 projection attempt entry".into())
+            })?;
+            require_regular_entry(&entry.file_type()?, name)?;
+            if is_temp_name(name) {
+                continue;
+            }
+            let attempt_id = parse_attempt_filename(name)?;
+            let bytes =
+                read_optional_regular(&attempts, name, MAX_PROJECTION_EVIDENCE_BYTES, None)?
+                    .ok_or_else(|| {
+                        ProjectionStoreError::UnsafeEntry(format!(
+                            "projection attempt disappeared during enumeration: {name}"
+                        ))
+                    })?;
+            let reservation: ProjectionAttemptReservation = serde_json::from_slice(&bytes)
+                .map_err(|error| ProjectionStoreError::Decode(error.to_string()))?;
+            reservation.validate(intent)?;
+            if reservation.attempt_id != attempt_id
+                || serde_json::to_vec(&reservation)
+                    .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?
+                    != bytes
+            {
+                return Err(ProjectionStoreError::AttemptBindingMismatch);
+            }
+            reservations.push(reservation);
+        }
+        reservations.sort_unstable_by_key(ProjectionAttemptReservation::attempt_id);
+        Ok(reservations)
+    }
+
+    /// Publish completion only from Graph's capability-issued exact-write proof.
+    pub(crate) fn publish_completion(
+        &self,
+        intent: &ProjectionIntent,
+        proof: &ProjectionWriteProof,
+    ) -> Result<ProjectionCompletion, ProjectionStoreError> {
+        self.require_write_proof(intent, proof)?;
+        let intent_id = self.require_published_intent(intent)?;
+        let reservations = self.load_attempt_reservations(intent)?;
+        for evidence in proof.recovery_evidence() {
+            let reservation = reservations
+                .iter()
+                .find(|reservation| reservation.recovery_filename() == evidence.filename())
+                .ok_or(ProjectionStoreError::UnreservedRecoveryEvidence)?;
+            let record = LocalProjectionEvidenceRecord {
+                schema_version: LOCAL_FORENSIC_SCHEMA_VERSION,
+                intent_id,
+                attempt_id: reservation.attempt_id(),
+                target_path: intent.path().clone(),
+                recovery_relative_path: evidence.path().to_owned(),
+                recovery_filename: evidence.filename().to_owned(),
+                observed: BlobDescription::from_parts(*evidence.digest(), evidence.len()),
+            };
+            self.publish_forensic_record(intent, &record)?;
+        }
+        let completion = ProjectionCompletion::for_intent(intent, proof.bytes())?;
+        let bytes = completion.encode()?;
+        require_evidence_length(
+            "projection completion",
+            bytes.len() as u64,
+            MAX_PROJECTION_EVIDENCE_BYTES,
+        )?;
+        let completions = self.namespace(COMPLETIONS_DIR)?;
+        publish_immutable_exact(
+            &completions,
+            &completion_filename(intent_id),
+            &bytes,
+            "projection completion",
+        )?;
+        Ok(completion)
+    }
+
+    pub fn load_completion(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<Option<ProjectionCompletion>, ProjectionStoreError> {
+        let intent_id = self.require_published_intent(intent)?;
+        let completions = self.namespace(COMPLETIONS_DIR)?;
+        let Some(bytes) = read_optional_regular(
+            &completions,
+            &completion_filename(intent_id),
+            MAX_PROJECTION_EVIDENCE_BYTES,
+            None,
+        )?
+        else {
+            return Ok(None);
+        };
+        let completion = ProjectionCompletion::decode_bound(&bytes, intent)?;
+        if completion.encode()? != bytes {
+            return Err(ProjectionStoreError::NonCanonical("projection completion"));
+        }
+        Ok(Some(completion))
+    }
+
+    pub(crate) fn completed_work_authority(
+        &self,
+        work: &ProjectionWork,
+        intent: &ProjectionIntent,
+    ) -> Result<ProjectionWorkCompletionAuthority, ProjectionStoreError> {
+        let endpoint = self
+            .endpoint
+            .ok_or(ProjectionStoreError::EndpointBindingMismatch)?;
+        self.require_endpoint(endpoint)?;
+        let target_matches = match work.target() {
+            ProjectionWorkTarget::Absent => intent.target() == BlobDescription::of(&[]),
+            ProjectionWorkTarget::Present(target) => intent.target() == target,
+        };
+        if work.workspace_id() != self.workspace_id
+            || work.endpoint_id() != endpoint.endpoint_id
+            || work.graph_resource_id() != endpoint.graph_resource_id
+            || intent.workspace_id() != work.workspace_id()
+            || intent.page_id() != work.page_id()
+            || intent.path() != work.path()
+            || intent.frontier() != work.post_frontier()
+            || !target_matches
+        {
+            return Err(ProjectionStoreError::EndpointBindingMismatch);
+        }
+        let completion = self
+            .load_completion(intent)?
+            .ok_or(ProjectionStoreError::MissingPriorCompletion)?;
+        completion.validate_against(intent)?;
+        Ok(ProjectionWorkCompletionAuthority::from_durable_completion(
+            work,
+            completion.intent_id(),
+            completion.logical_completion_id(),
+        ))
+    }
+
+    pub fn local_forensic_evidence(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<Vec<LocalProjectionEvidenceRecord>, ProjectionStoreError> {
+        let intent_id = self.require_published_intent(intent)?;
+        let forensics = self.intent_namespace(FORENSICS_DIR, intent_id)?;
+        let mut records = Vec::new();
+        for entry in forensics.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                ProjectionStoreError::UnsafeEntry("non-UTF-8 forensic evidence entry".into())
+            })?;
+            require_regular_entry(&entry.file_type()?, name)?;
+            if is_temp_name(name) {
+                continue;
+            }
+            require_canonical_evidence_name(name, ".evidence")?;
+            let bytes =
+                read_optional_regular(&forensics, name, MAX_PROJECTION_EVIDENCE_BYTES, None)?
+                    .ok_or_else(|| {
+                        ProjectionStoreError::UnsafeEntry(format!(
+                            "forensic evidence disappeared during enumeration: {name}"
+                        ))
+                    })?;
+            let record: LocalProjectionEvidenceRecord = serde_json::from_slice(&bytes)
+                .map_err(|error| ProjectionStoreError::Decode(error.to_string()))?;
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            if name != format!("{}.evidence", hex(&digest)) {
+                return Err(ProjectionStoreError::ForensicBindingMismatch);
+            }
+            self.validate_forensic_record(intent, &record)?;
+            records.push(record);
+        }
+        records.sort_unstable_by_key(LocalProjectionEvidenceRecord::attempt_id);
+        Ok(records)
+    }
+
+    /// Enumerate every durably published intent that has no valid completion.
+    ///
+    /// Both namespaces are validated as a whole. Only exact immutable-publication
+    /// temporary names are ignored; malformed names and non-regular entries fail
+    /// closed instead of disappearing from recovery.
+    pub fn incomplete_intents(&self) -> Result<Vec<ProjectionIntent>, ProjectionStoreError> {
+        let intents_dir = self.namespace(INTENTS_DIR)?;
+        let mut intents = BTreeMap::new();
+        for entry in intents_dir.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                ProjectionStoreError::UnsafeEntry("non-UTF-8 projection intent entry".into())
+            })?;
+            require_regular_entry(&entry.file_type()?, name)?;
+            if is_temp_name(name) {
+                continue;
+            }
+            require_canonical_evidence_name(name, ".intent")?;
+            let bytes =
+                read_optional_regular(&intents_dir, name, MAX_PROJECTION_EVIDENCE_BYTES, None)?
+                    .ok_or_else(|| {
+                        ProjectionStoreError::UnsafeEntry(format!(
+                            "projection intent disappeared during enumeration: {name}"
+                        ))
+                    })?;
+            let intent = ProjectionIntent::decode(&bytes)?;
+            self.require_workspace(&intent)?;
+            if intent.encode()? != bytes || intent_filename(intent.id()?) != name {
+                return Err(ProjectionStoreError::PathBindingMismatch(
+                    "projection intent",
+                ));
+            }
+            self.load_base(&intent)?;
+            intents.insert(completion_filename(intent.id()?), intent);
+        }
+
+        let completions_dir = self.namespace(COMPLETIONS_DIR)?;
+        let mut completed = BTreeSet::new();
+        for entry in completions_dir.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                ProjectionStoreError::UnsafeEntry("non-UTF-8 projection completion entry".into())
+            })?;
+            require_regular_entry(&entry.file_type()?, name)?;
+            if is_temp_name(name) {
+                continue;
+            }
+            require_canonical_evidence_name(name, ".completion")?;
+            let intent = intents
+                .get(name)
+                .ok_or_else(|| ProjectionStoreError::OrphanCompletion(name.into()))?;
+            let bytes =
+                read_optional_regular(&completions_dir, name, MAX_PROJECTION_EVIDENCE_BYTES, None)?
+                    .ok_or_else(|| {
+                        ProjectionStoreError::UnsafeEntry(format!(
+                            "projection completion disappeared during enumeration: {name}"
+                        ))
+                    })?;
+            let completion = ProjectionCompletion::decode_bound(&bytes, intent)?;
+            if completion.encode()? != bytes {
+                return Err(ProjectionStoreError::NonCanonical("projection completion"));
+            }
+            completed.insert(name.to_owned());
+        }
+
+        Ok(intents
+            .into_iter()
+            .filter_map(|(completion_name, intent)| {
+                (!completed.contains(&completion_name)).then_some(intent)
+            })
+            .collect())
+    }
+
+    /// Reconstruct completion only from an authorized replay and Graph's fresh
+    /// capability-bound durable-target proof.
+    pub(crate) fn reconstruct_completion(
+        &self,
+        intent: &ProjectionIntent,
+        replayed_target: &[u8],
+        proof: &ProjectionWriteProof,
+    ) -> Result<ProjectionCompletion, ProjectionStoreError> {
+        if BlobDescription::of(replayed_target) != intent.target() {
+            return Err(ProjectionStoreError::RecoveryTargetMismatch);
+        }
+        self.require_write_proof(intent, proof)?;
+        self.publish_completion(intent, proof)
+    }
+
+    fn initialize(&self) -> Result<(), ProjectionStoreError> {
+        let claim = claim_bytes(self.workspace_id, self.endpoint);
+        match read_optional_regular(
+            &self.capability,
+            STORE_CLAIM_FILE,
+            STORE_CLAIM_LEN as u64,
+            Some(STORE_CLAIM_LEN as u64),
+        )? {
+            Some(bytes) => validate_claim(&bytes, self.workspace_id, self.endpoint)?,
+            None => publish_immutable_exact(
+                &self.capability,
+                STORE_CLAIM_FILE,
+                &claim,
+                "projection receipt store claim",
+            )?,
+        }
+        for namespace in [
+            BASES_DIR,
+            INTENTS_DIR,
+            COMPLETIONS_DIR,
+            ATTEMPTS_DIR,
+            FORENSICS_DIR,
+        ] {
+            ensure_directory_nofollow(&self.capability, namespace)?;
+        }
+        Ok(())
+    }
+
+    fn namespace(&self, name: &str) -> Result<Dir, ProjectionStoreError> {
+        ensure_directory_nofollow(&self.capability, name)?;
+        open_dir_nofollow(&self.capability, name).map_err(Into::into)
+    }
+
+    fn intent_namespace(
+        &self,
+        namespace: &str,
+        intent_id: ProjectionIntentId,
+    ) -> Result<Dir, ProjectionStoreError> {
+        let parent = self.namespace(namespace)?;
+        let name = hex(intent_id.as_bytes());
+        ensure_directory_nofollow(&parent, &name)?;
+        open_dir_nofollow(&parent, &name).map_err(Into::into)
+    }
+
+    fn publish_forensic_record(
+        &self,
+        intent: &ProjectionIntent,
+        record: &LocalProjectionEvidenceRecord,
+    ) -> Result<(), ProjectionStoreError> {
+        self.validate_forensic_record(intent, record)?;
+        let bytes = serde_json::to_vec(record)
+            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let forensics = self.intent_namespace(FORENSICS_DIR, record.intent_id)?;
+        publish_immutable_exact(
+            &forensics,
+            &format!("{}.evidence", hex(&digest)),
+            &bytes,
+            "local projection forensic evidence",
+        )?;
+        Ok(())
+    }
+
+    fn validate_forensic_record(
+        &self,
+        intent: &ProjectionIntent,
+        record: &LocalProjectionEvidenceRecord,
+    ) -> Result<(), ProjectionStoreError> {
+        if record.schema_version != LOCAL_FORENSIC_SCHEMA_VERSION
+            || record.intent_id != intent.id()?
+            || record.target_path != *intent.path()
+        {
+            return Err(ProjectionStoreError::ForensicBindingMismatch);
+        }
+        require_evidence_length(
+            "local projection forensic evidence",
+            record.observed.byte_length(),
+            MAX_PROJECTION_EVIDENCE_BYTES,
+        )?;
+        let reservation = self
+            .load_attempt_reservations(intent)?
+            .into_iter()
+            .find(|reservation| reservation.attempt_id() == record.attempt_id)
+            .ok_or(ProjectionStoreError::ForensicBindingMismatch)?;
+        let parent = intent
+            .path()
+            .as_str()
+            .rsplit_once('/')
+            .expect("managed paths contain a parent")
+            .0;
+        if reservation.recovery_filename() != record.recovery_filename
+            || record.recovery_relative_path != format!("{parent}/{}", record.recovery_filename)
+        {
+            return Err(ProjectionStoreError::ForensicBindingMismatch);
+        }
+        Ok(())
+    }
+
+    fn require_workspace(&self, intent: &ProjectionIntent) -> Result<(), ProjectionStoreError> {
+        if intent.workspace_id() != self.workspace_id {
+            return Err(ProjectionStoreError::WorkspaceMismatch {
+                expected: self.workspace_id,
+                found: intent.workspace_id(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn require_endpoint(
+        &self,
+        endpoint: ProjectionEndpointBinding,
+    ) -> Result<(), ProjectionStoreError> {
+        if self.endpoint != Some(endpoint) {
+            return Err(ProjectionStoreError::EndpointBindingMismatch);
+        }
+        Ok(())
+    }
+
+    fn require_write_proof(
+        &self,
+        intent: &ProjectionIntent,
+        proof: &ProjectionWriteProof,
+    ) -> Result<(), ProjectionStoreError> {
+        if proof.path() != intent.path().as_str()
+            || proof.digest() != intent.target().sha256()
+            || BlobDescription::of(proof.bytes()) != intent.target()
+        {
+            return Err(ProjectionStoreError::WriteProofMismatch);
+        }
+        Ok(())
+    }
+
+    fn require_published_intent(
+        &self,
+        intent: &ProjectionIntent,
+    ) -> Result<ProjectionIntentId, ProjectionStoreError> {
+        self.require_workspace(intent)?;
+        let intent_id = intent.id()?;
+        let stored = self
+            .load_intent(intent_id)?
+            .ok_or(ProjectionStoreError::MissingIntent(intent_id))?;
+        if stored != *intent {
+            return Err(ProjectionStoreError::IntentCollision(intent_id));
+        }
+        Ok(intent_id)
+    }
+}
+
+#[derive(Debug)]
+pub enum ProjectionStoreError {
+    Io(std::io::Error),
+    Store(Box<StoreError>),
+    Receipt(ReceiptError),
+    UnsafeEntry(String),
+    UnknownStoreVersion(u32),
+    MalformedStoreClaim,
+    EndpointBindingMismatch,
+    GraphResourceMismatch,
+    CapturedInputMismatch,
+    MissingPriorCompletion,
+    WorkspaceMismatch {
+        expected: WorkspaceId,
+        found: WorkspaceId,
+    },
+    MissingBase(BlobDescription),
+    UnexpectedBase,
+    MissingIntent(ProjectionIntentId),
+    BaseEvidenceMismatch(BlobDescription),
+    PathBindingMismatch(&'static str),
+    NonCanonical(&'static str),
+    IntentCollision(ProjectionIntentId),
+    EvidenceTooLarge {
+        kind: &'static str,
+        declared: u64,
+        limit: u64,
+    },
+    MalformedEvidenceName(String),
+    OrphanCompletion(String),
+    WriteProofMismatch,
+    RecoveryTargetMismatch,
+    AttemptBindingMismatch,
+    ForensicBindingMismatch,
+    UnreservedRecoveryEvidence,
+    Decode(String),
+    Encode(String),
+}
+
+impl fmt::Display for ProjectionStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => error.fmt(f),
+            Self::Store(error) => error.fmt(f),
+            Self::Receipt(error) => error.fmt(f),
+            Self::UnsafeEntry(message) => write!(f, "unsafe projection store entry: {message}"),
+            Self::UnknownStoreVersion(version) => {
+                write!(f, "unknown projection store version {version}")
+            }
+            Self::MalformedStoreClaim => f.write_str("malformed projection store claim"),
+            Self::EndpointBindingMismatch => {
+                f.write_str("projection receipt store endpoint enrollment mismatch")
+            }
+            Self::GraphResourceMismatch => {
+                f.write_str("projection graph capability does not match endpoint enrollment")
+            }
+            Self::CapturedInputMismatch => {
+                f.write_str("capability-captured projection input does not match its completion")
+            }
+            Self::MissingPriorCompletion => {
+                f.write_str("present projection input has no durable prior completion")
+            }
+            Self::WorkspaceMismatch { expected, found } => {
+                write!(f, "workspace mismatch: expected {expected}, found {found}")
+            }
+            Self::MissingBase(description) => {
+                write!(f, "missing immutable projection base {description:?}")
+            }
+            Self::UnexpectedBase => {
+                f.write_str("base bytes were supplied for an absent projection precondition")
+            }
+            Self::MissingIntent(intent_id) => {
+                write!(f, "missing immutable projection intent {intent_id}")
+            }
+            Self::BaseEvidenceMismatch(description) => {
+                write!(f, "projection base evidence mismatch for {description:?}")
+            }
+            Self::PathBindingMismatch(kind) => {
+                write!(f, "{kind} bytes do not match their canonical path")
+            }
+            Self::NonCanonical(kind) => write!(f, "{kind} bytes are not canonical"),
+            Self::IntentCollision(intent_id) => {
+                write!(f, "stored projection intent differs at {intent_id}")
+            }
+            Self::EvidenceTooLarge {
+                kind,
+                declared,
+                limit,
+            } => {
+                write!(
+                    f,
+                    "{kind} declares {declared} bytes, exceeding reload limit {limit}"
+                )
+            }
+            Self::MalformedEvidenceName(name) => {
+                write!(f, "malformed projection evidence name: {name}")
+            }
+            Self::OrphanCompletion(name) => {
+                write!(f, "projection completion has no matching intent: {name}")
+            }
+            Self::WriteProofMismatch => {
+                f.write_str("Graph write proof does not match the exact projection intent")
+            }
+            Self::RecoveryTargetMismatch => {
+                f.write_str("current bytes do not equal the exact replayed projection target")
+            }
+            Self::AttemptBindingMismatch => {
+                f.write_str("local projection attempt is not canonically bound to its intent")
+            }
+            Self::ForensicBindingMismatch => {
+                f.write_str("local projection forensic evidence is not bound to its attempt")
+            }
+            Self::UnreservedRecoveryEvidence => {
+                f.write_str("Graph returned recovery evidence without a durable reservation")
+            }
+            Self::Decode(error) => write!(f, "local projection evidence decode failed: {error}"),
+            Self::Encode(error) => write!(f, "local projection evidence encode failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectionStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Store(error) => Some(error),
+            Self::Receipt(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ProjectionStoreError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<StoreError> for ProjectionStoreError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Io(error) if error.kind() == ErrorKind::InvalidData => Self::Io(error),
+            other => Self::Store(Box::new(other)),
+        }
+    }
+}
+
+impl From<ReceiptError> for ProjectionStoreError {
+    fn from(error: ReceiptError) -> Self {
+        Self::Receipt(error)
+    }
+}
+
+fn claim_bytes(workspace_id: WorkspaceId, endpoint: Option<ProjectionEndpointBinding>) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(STORE_CLAIM_LEN);
+    bytes.extend_from_slice(STORE_CLAIM_MAGIC);
+    bytes.extend_from_slice(&STORE_CLAIM_VERSION.to_be_bytes());
+    bytes.extend_from_slice(workspace_id.as_uuid().as_bytes());
+    match endpoint {
+        Some(endpoint) => {
+            bytes.push(1);
+            bytes.extend_from_slice(endpoint.endpoint_id.as_uuid().as_bytes());
+            bytes.extend_from_slice(endpoint.device_id.as_uuid().as_bytes());
+            bytes.extend_from_slice(endpoint.graph_resource_id.as_bytes());
+        }
+        None => {
+            bytes.push(0);
+            bytes.extend_from_slice(&[0_u8; 16]);
+            bytes.extend_from_slice(&[0_u8; 16]);
+            bytes.extend_from_slice(&[0_u8; 32]);
+        }
+    }
+    bytes
+}
+
+fn validate_claim(
+    bytes: &[u8],
+    expected_workspace: WorkspaceId,
+    expected_endpoint: Option<ProjectionEndpointBinding>,
+) -> Result<(), ProjectionStoreError> {
+    if bytes.len() != STORE_CLAIM_LEN || &bytes[..STORE_CLAIM_MAGIC.len()] != STORE_CLAIM_MAGIC {
+        return Err(ProjectionStoreError::MalformedStoreClaim);
+    }
+    let version = u32::from_be_bytes(
+        bytes[STORE_CLAIM_MAGIC.len()..STORE_CLAIM_MAGIC.len() + 4]
+            .try_into()
+            .expect("claim version slice"),
+    );
+    if version != STORE_CLAIM_VERSION {
+        return Err(ProjectionStoreError::UnknownStoreVersion(version));
+    }
+    let workspace_offset = STORE_CLAIM_MAGIC.len() + 4;
+    let workspace = WorkspaceId::from_uuid(
+        Uuid::from_slice(&bytes[workspace_offset..workspace_offset + 16])
+            .map_err(|_| ProjectionStoreError::MalformedStoreClaim)?,
+    );
+    if workspace != expected_workspace {
+        return Err(ProjectionStoreError::WorkspaceMismatch {
+            expected: expected_workspace,
+            found: workspace,
+        });
+    }
+    if bytes != claim_bytes(expected_workspace, expected_endpoint) {
+        return Err(ProjectionStoreError::EndpointBindingMismatch);
+    }
+    Ok(())
+}
+
+fn base_filename(description: BlobDescription) -> String {
+    format!("{}.base", hex(description.sha256()))
+}
+
+fn intent_filename(intent_id: ProjectionIntentId) -> String {
+    format!("{}.intent", hex(intent_id.as_bytes()))
+}
+
+fn completion_filename(intent_id: ProjectionIntentId) -> String {
+    format!("{}.completion", hex(intent_id.as_bytes()))
+}
+
+fn attempt_filename(attempt_id: Uuid) -> String {
+    format!("{}.attempt", attempt_id.simple())
+}
+
+fn parse_attempt_filename(name: &str) -> Result<Uuid, ProjectionStoreError> {
+    let value = name
+        .strip_suffix(".attempt")
+        .ok_or_else(|| ProjectionStoreError::MalformedEvidenceName(name.into()))?;
+    if value.len() != 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ProjectionStoreError::MalformedEvidenceName(name.into()));
+    }
+    Uuid::parse_str(value).map_err(|_| ProjectionStoreError::MalformedEvidenceName(name.into()))
+}
+
+fn require_evidence_length(
+    kind: &'static str,
+    declared: u64,
+    limit: u64,
+) -> Result<(), ProjectionStoreError> {
+    if declared > limit {
+        return Err(ProjectionStoreError::EvidenceTooLarge {
+            kind,
+            declared,
+            limit,
+        });
+    }
+    Ok(())
+}
+
+fn require_canonical_evidence_name(
+    name: &str,
+    suffix: &'static str,
+) -> Result<(), ProjectionStoreError> {
+    let Some(digest) = name.strip_suffix(suffix) else {
+        return Err(ProjectionStoreError::MalformedEvidenceName(name.into()));
+    };
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ProjectionStoreError::MalformedEvidenceName(name.into()));
+    }
+    Ok(())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_published_evidence_class_obeys_the_reload_limit() {
+        for kind in [
+            "projection base",
+            "projection target",
+            "projection intent",
+            "projection completion",
+        ] {
+            assert!(require_evidence_length(
+                kind,
+                MAX_PROJECTION_EVIDENCE_BYTES,
+                MAX_PROJECTION_EVIDENCE_BYTES
+            )
+            .is_ok());
+            assert!(matches!(
+                require_evidence_length(
+                    kind,
+                    MAX_PROJECTION_EVIDENCE_BYTES + 1,
+                    MAX_PROJECTION_EVIDENCE_BYTES
+                ),
+                Err(ProjectionStoreError::EvidenceTooLarge {
+                    kind: found,
+                    declared,
+                    limit,
+                }) if found == kind
+                    && declared == MAX_PROJECTION_EVIDENCE_BYTES + 1
+                    && limit == MAX_PROJECTION_EVIDENCE_BYTES
+            ));
+        }
+    }
+}

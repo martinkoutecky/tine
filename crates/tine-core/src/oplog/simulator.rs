@@ -1353,7 +1353,7 @@ impl DeterministicSimulator {
         let prepared = self
             .device(device)?
             .engine()?
-            .prepare_transaction(
+            .prepare_bootstrap_transaction(
                 AuthorBatch {
                     batch_id,
                     author_device_id: identity.device_id,

@@ -1,3 +1,14 @@
+//! Projection work namespaces cannot be opened by external callers from a
+//! caller-constructed endpoint binding:
+//!
+//! ```compile_fail
+//! use tine_core::oplog::{ObjectStore, ProjectionEndpointBinding};
+//!
+//! fn preclaim(store: &ObjectStore, binding: ProjectionEndpointBinding) {
+//!     let _ = store.open_projection_work_index(binding);
+//! }
+//! ```
+
 #[cfg(windows)]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
 use std::collections::BTreeMap;
@@ -23,17 +34,23 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use uuid::Uuid;
 
+use super::identity::parse_digest;
 use super::{
     BatchError, BatchId, ContentDigest, LineageDigest, ObjectDescriptor, OperationBatch,
-    OperationObject, PreparedBatch, SemanticEffectDigest, ValidatedBatch, WorkspaceId,
-    MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
+    OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId, MAX_MANIFEST_BYTES,
+    MAX_OBJECT_BYTES,
 };
 
 const OBJECTS_DIR: &str = "objects";
 const BATCHES_DIR: &str = "batches";
 const LINEAGE_CLAIM_FILE: &str = "lineage.claim";
-#[cfg(test)]
 const ENGINE_HISTORY_DIR: &str = "engine-history";
+const ENGINE_HISTORY_NODES_DIR: &str = "nodes";
+const ENGINE_HISTORY_ROOTS_DIR: &str = "roots";
+const ENGINE_HISTORY_CLAIM_FILE: &str = "engine-history.claim";
+const ENGINE_HISTORY_HEAD_FILE: &str = "engine-history.head";
+const ENGINE_HISTORY_ROOT_SUFFIX: &str = ".history-root";
+const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 3;
 const MAX_ENGINE_HISTORY_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENGINE_HISTORY_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const ENGINE_HISTORY_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -41,6 +58,9 @@ const ENGINE_HISTORY_RADIX_DEPTH: u8 = 32;
 #[cfg(test)]
 const BLOCK_CLAIM_INDEX_DIR: &str = "block-claim-index";
 const BLOCK_CLAIM_INDEX_FILE: &str = "pages.index";
+const LOGSEQ_CLAIM_INDEX_DIR: &str = "logseq-uuid-claim-index-v1";
+const PORTABLE_PATH_INDEX_DIR: &str = "portable-path-index-v1";
+const PROJECTION_WORK_DIR: &str = "projection-work-index-v1";
 const BLOCK_CLAIM_INDEX_SCHEMA_VERSION: u32 = 1;
 const BLOCK_CLAIM_RADIX_DEPTH: u8 = 32;
 // Large replay batches touch most hash prefixes. Keeping tens of thousands of
@@ -108,6 +128,69 @@ struct StoreCounters {
 pub(crate) struct EngineHistoryStore {
     capability: Dir,
     counters: Arc<StoreCounters>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DurableEngineHistoryStore {
+    workspace_id: WorkspaceId,
+    endpoint_id: super::ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    control: Dir,
+    roots: Dir,
+    index: EngineHistoryStore,
+    transition: Mutex<()>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableEngineHistoryRoot {
+    schema_version: u32,
+    workspace_id: WorkspaceId,
+    endpoint_id: super::ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    generation: u64,
+    index_root: ContentDigest,
+    latest_batch_id: Option<BatchId>,
+    binding: EngineHistoryBinding,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EngineHistoryAuthority {
+    pub generation: u64,
+    pub index_root: ContentDigest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EngineHistoryBinding {
+    pub portable_path_key_version: u32,
+    pub portable_path_root: ContentDigest,
+    pub catalog_checkpoint_binding: ContentDigest,
+    pub portable_path_conflicts: Vec<super::PortablePathConflict>,
+    pub terminal_evidence: Option<EngineTerminalEvidenceBinding>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EngineTerminalEvidenceBinding {
+    pub conflict_root: ContentDigest,
+    pub conflict_count: u64,
+    pub participant_count: u64,
+    pub canonical_digest: ContentDigest,
+}
+
+impl EngineHistoryBinding {
+    fn empty() -> Self {
+        Self {
+            portable_path_key_version: super::PORTABLE_PATH_KEY_VERSION,
+            portable_path_root: super::PortablePathIndexRoot::empty().digest(),
+            catalog_checkpoint_binding: ContentDigest::of(
+                b"tine/empty-catalog-checkpoint-binding/v1",
+            ),
+            portable_path_conflicts: Vec::new(),
+            terminal_evidence: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -409,20 +492,7 @@ impl ObjectStore {
         // claim keeps the Ready path independent of archive cardinality.
         // Store open and explicit `committed_manifests` remain full audits.
         self.require_lineage(manifest.lineage_digest())?;
-        let semantic = objects
-            .iter()
-            .find(|object| object.kind() == super::ObjectKind::SemanticEffect)
-            .expect("validated manifest has exactly one semantic effect object");
-        let actual_semantic_digest = SemanticEffectDigest::of(semantic.payload());
-        if actual_semantic_digest != manifest.semantic_effect_digest() {
-            return Err(StoreError::Batch(
-                BatchError::SemanticEffectDigestMismatch {
-                    expected: manifest.semantic_effect_digest(),
-                    actual: actual_semantic_digest,
-                },
-            ));
-        }
-        let prepared = PreparedBatch::from_store_validated(manifest, objects);
+        let prepared = PreparedBatch::new(manifest, objects)?;
         Ok(BatchInspection::Ready(ValidatedBatch::new(prepared)))
     }
 
@@ -526,6 +596,31 @@ impl ObjectStore {
         self.counters.snapshot()
     }
 
+    pub(crate) fn open_engine_history(
+        &self,
+        endpoint: super::ProjectionEndpointBinding,
+    ) -> Result<DurableEngineHistoryStore, StoreError> {
+        ensure_directory_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
+        let histories = open_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
+        let endpoint_name = endpoint.endpoint_id.to_string();
+        ensure_directory_nofollow(&histories, &endpoint_name)?;
+        let control = open_dir_nofollow(&histories, &endpoint_name)?;
+        for name in [ENGINE_HISTORY_NODES_DIR, ENGINE_HISTORY_ROOTS_DIR] {
+            ensure_directory_nofollow(&control, name)?;
+        }
+        DurableEngineHistoryStore::new(
+            self.workspace_id,
+            endpoint.endpoint_id,
+            endpoint.graph_resource_id,
+            control.try_clone()?,
+            open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
+            EngineHistoryStore {
+                capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
+                counters: Arc::clone(&self.counters),
+            },
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn start_engine_history(&self) -> Result<EngineHistoryStore, StoreError> {
         ensure_directory(&self.capability, ENGINE_HISTORY_DIR)?;
@@ -578,6 +673,51 @@ impl ObjectStore {
             counters: Arc::clone(&self.counters),
         };
         Ok((scratch, claim_index))
+    }
+
+    pub(crate) fn open_logseq_claim_index(
+        &self,
+    ) -> Result<super::uuid_claim_index::LogseqClaimIndexStore, StoreError> {
+        ensure_directory_nofollow(&self.capability, LOGSEQ_CLAIM_INDEX_DIR)?;
+        Ok(super::uuid_claim_index::LogseqClaimIndexStore::new(
+            open_dir_nofollow(&self.capability, LOGSEQ_CLAIM_INDEX_DIR)?,
+        ))
+    }
+
+    pub(crate) fn open_portable_path_index(
+        &self,
+    ) -> Result<super::portable_path_index::PortablePathIndexStore, StoreError> {
+        ensure_directory_nofollow(&self.capability, PORTABLE_PATH_INDEX_DIR)?;
+        Ok(super::portable_path_index::PortablePathIndexStore::new(
+            super::authenticated_patricia::PatriciaIndexStore::new(open_dir_nofollow(
+                &self.capability,
+                PORTABLE_PATH_INDEX_DIR,
+            )?),
+        ))
+    }
+
+    pub(crate) fn open_projection_work_index(
+        &self,
+        endpoint: super::ProjectionEndpointBinding,
+    ) -> Result<super::ProjectionWorkIndex, StoreError> {
+        ensure_directory_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
+        let root = open_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
+        let endpoint_name = endpoint.endpoint_id.to_string();
+        ensure_directory_nofollow(&root, &endpoint_name)?;
+        let endpoint_dir = open_dir_nofollow(&root, &endpoint_name)?;
+        for name in ["nodes", "roots", "prepared"] {
+            ensure_directory_nofollow(&endpoint_dir, name)?;
+        }
+        super::ProjectionWorkIndex::new(
+            self.workspace_id,
+            endpoint.endpoint_id,
+            endpoint.graph_resource_id,
+            endpoint_dir.try_clone()?,
+            open_dir_nofollow(&endpoint_dir, "nodes")?,
+            open_dir_nofollow(&endpoint_dir, "roots")?,
+            open_dir_nofollow(&endpoint_dir, "prepared")?,
+        )
+        .map_err(|error| StoreError::Scratch(error.to_string()))
     }
 
     /// Enumerate all manifest commit markers in deterministic BatchId order.
@@ -1002,6 +1142,254 @@ impl EngineHistoryStore {
     }
 }
 
+impl DurableEngineHistoryStore {
+    fn new(
+        workspace_id: WorkspaceId,
+        endpoint_id: super::ProjectionEndpointId,
+        graph_resource_id: super::CanonicalGraphResourceId,
+        control: Dir,
+        roots: Dir,
+        index: EngineHistoryStore,
+    ) -> Result<Self, StoreError> {
+        let store = Self {
+            workspace_id,
+            endpoint_id,
+            graph_resource_id,
+            control,
+            roots,
+            index,
+            transition: Mutex::new(()),
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    pub(crate) fn current(&self) -> Result<(u64, ContentDigest), StoreError> {
+        let (_, root) = self.load_head_root()?;
+        Ok((root.generation, root.index_root))
+    }
+
+    pub(crate) fn current_authority(&self) -> Result<EngineHistoryAuthority, StoreError> {
+        let (_, root) = self.load_head_root()?;
+        Ok(EngineHistoryAuthority {
+            generation: root.generation,
+            index_root: root.index_root,
+        })
+    }
+
+    pub(crate) fn current_with_binding(
+        &self,
+    ) -> Result<(u64, ContentDigest, Option<BatchId>, EngineHistoryBinding), StoreError> {
+        let (_, root) = self.load_head_root()?;
+        Ok((
+            root.generation,
+            root.index_root,
+            root.latest_batch_id,
+            root.binding.clone(),
+        ))
+    }
+
+    pub(crate) fn lookup(
+        &self,
+        index_root: ContentDigest,
+        batch_id: BatchId,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.index.lookup(index_root, batch_id)
+    }
+
+    pub(crate) fn materialize(
+        &self,
+        index_root: ContentDigest,
+    ) -> Result<Vec<(BatchId, Vec<u8>)>, StoreError> {
+        self.index.materialize(index_root)
+    }
+
+    pub(crate) fn note_history_decode(&self) {
+        self.index.note_history_decode();
+    }
+
+    pub(crate) fn publish(
+        &self,
+        batch_id: BatchId,
+        bytes: &[u8],
+        binding: EngineHistoryBinding,
+    ) -> Result<(u64, ContentDigest), StoreError> {
+        let _guard = self
+            .transition
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let (before_digest, before) = self.load_head_root()?;
+        let index_root = self.index.insert(before.index_root, batch_id, bytes)?;
+        if index_root == before.index_root {
+            return Ok((before.generation, before.index_root));
+        }
+        let after = DurableEngineHistoryRoot {
+            schema_version: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            endpoint_id: self.endpoint_id,
+            graph_resource_id: self.graph_resource_id,
+            generation: before
+                .generation
+                .checked_add(1)
+                .ok_or(StoreError::MalformedHistoryIndex)?,
+            index_root,
+            latest_batch_id: Some(batch_id),
+            binding,
+        };
+        let after_digest = self.publish_root(&after)?;
+        self.replace_head(before_digest, after_digest)?;
+        Ok((after.generation, after.index_root))
+    }
+
+    fn initialize(&self) -> Result<(), StoreError> {
+        let empty = DurableEngineHistoryRoot {
+            schema_version: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            endpoint_id: self.endpoint_id,
+            graph_resource_id: self.graph_resource_id,
+            generation: 0,
+            index_root: EngineHistoryStore::empty_root(),
+            latest_batch_id: None,
+            binding: EngineHistoryBinding::empty(),
+        };
+        let empty_digest = self.publish_root(&empty)?;
+        let head = read_optional_regular(&self.control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
+        let claim = read_optional_regular(&self.control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?;
+        if head.is_none() {
+            if claim.is_some() {
+                return Err(StoreError::MalformedHistoryIndex);
+            }
+            publish_immutable_exact(
+                &self.control,
+                ENGINE_HISTORY_HEAD_FILE,
+                empty_digest.to_string().as_bytes(),
+                "engine history head",
+            )?;
+        }
+        let expected_claim = postcard::to_allocvec(&(
+            ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+        ))
+        .map_err(|_| StoreError::MalformedHistoryIndex)?;
+        publish_immutable_exact(
+            &self.control,
+            ENGINE_HISTORY_CLAIM_FILE,
+            &expected_claim,
+            "engine history claim",
+        )?;
+        self.load_head_root()?;
+        Ok(())
+    }
+
+    fn publish_root(&self, root: &DurableEngineHistoryRoot) -> Result<ContentDigest, StoreError> {
+        self.require_root_binding(root)?;
+        let bytes = postcard::to_allocvec(root).map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let digest = ContentDigest::of(&bytes);
+        publish_immutable_exact(
+            &self.roots,
+            &engine_history_root_filename(digest),
+            &bytes,
+            "engine history authenticated root",
+        )?;
+        Ok(digest)
+    }
+
+    fn load_head_root(&self) -> Result<(ContentDigest, DurableEngineHistoryRoot), StoreError> {
+        let head = read_optional_regular(&self.control, ENGINE_HISTORY_HEAD_FILE, 64, None)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        let text = std::str::from_utf8(&head).map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let digest = parse_digest(text)
+            .map(ContentDigest::from_bytes)
+            .map_err(|_| StoreError::MalformedHistoryIndex)?;
+        if digest.to_string().as_bytes() != head {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        let bytes = read_optional_regular(
+            &self.roots,
+            &engine_history_root_filename(digest),
+            MAX_ENGINE_HISTORY_INDEX_BYTES,
+            None,
+        )?
+        .ok_or(StoreError::MalformedHistoryIndex)?;
+        if ContentDigest::of(&bytes) != digest {
+            return Err(StoreError::HistoryIndexPathMismatch(digest));
+        }
+        let root: DurableEngineHistoryRoot =
+            postcard::from_bytes(&bytes).map_err(|_| StoreError::MalformedHistoryIndex)?;
+        if postcard::to_allocvec(&root).map_err(|_| StoreError::MalformedHistoryIndex)? != bytes {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        self.require_root_binding(&root)?;
+        Ok((digest, root))
+    }
+
+    fn require_root_binding(&self, root: &DurableEngineHistoryRoot) -> Result<(), StoreError> {
+        if root.schema_version != ENGINE_HISTORY_ROOT_SCHEMA_VERSION
+            || root.workspace_id != self.workspace_id
+            || root.endpoint_id != self.endpoint_id
+            || root.graph_resource_id != self.graph_resource_id
+            || root.binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
+            || (root.generation == 0) != root.latest_batch_id.is_none()
+            || root
+                .binding
+                .portable_path_conflicts
+                .windows(2)
+                .any(|pair| pair[0].key_digest() >= pair[1].key_digest())
+            || root.binding.portable_path_conflicts.iter().any(|conflict| {
+                conflict.key_version() != super::PORTABLE_PATH_KEY_VERSION
+                    || conflict.participants().len() < 2
+                    || conflict
+                        .participants()
+                        .windows(2)
+                        .any(|pair| pair[0] >= pair[1])
+            })
+            || (!root.binding.portable_path_conflicts.is_empty()
+                && root.binding.terminal_evidence.is_none())
+        {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        Ok(())
+    }
+
+    fn replace_head(
+        &self,
+        expected: ContentDigest,
+        replacement: ContentDigest,
+    ) -> Result<(), StoreError> {
+        let (current, _) = self.load_head_root()?;
+        if current != expected {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        let temp_name = format!(".tmp-{}", Uuid::new_v4());
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut temp = self.control.open_with(&temp_name, &options)?;
+        let result = (|| {
+            temp.write_all(replacement.to_string().as_bytes())?;
+            temp.sync_all()?;
+            drop(temp);
+            self.control
+                .rename(&temp_name, &self.control, ENGINE_HISTORY_HEAD_FILE)?;
+            sync_dir_required(&self.control)?;
+            Ok::<_, StoreError>(())
+        })();
+        let cleanup = self.control.remove_file(&temp_name);
+        if let Err(error) = result {
+            let _ = cleanup;
+            return Err(error);
+        }
+        if cleanup
+            .as_ref()
+            .is_err_and(|error| error.kind() != ErrorKind::NotFound)
+        {
+            cleanup?;
+        }
+        Ok(())
+    }
+}
+
 impl BlockClaimIndexStore {
     pub(crate) fn lookup_many(
         &self,
@@ -1408,6 +1796,7 @@ enum Collision {
     Batch(BatchId),
     HistoryIndex(ContentDigest),
     Lineage(LineageDigest),
+    Exact(&'static str),
 }
 
 fn ensure_single_lineage(manifests: &[OperationBatch]) -> Result<(), StoreError> {
@@ -1470,8 +1859,12 @@ pub enum StoreError {
     MalformedHistoryIndex,
     BlockClaimIndexPathMismatch(ContentDigest),
     MalformedBlockClaimIndex,
+    MissingLogseqClaimIndexNode(ContentDigest),
+    LogseqClaimIndexPathMismatch(ContentDigest),
+    MalformedLogseqClaimIndex,
     Scratch(String),
     LineageClaimCollision(LineageDigest),
+    ImmutableCollision(&'static str),
     StoredLengthMismatch {
         path: String,
         expected: u64,
@@ -1539,9 +1932,22 @@ impl fmt::Display for StoreError {
             Self::MalformedBlockClaimIndex => {
                 f.write_str("authenticated block-claim index is malformed or non-canonical")
             }
+            Self::MissingLogseqClaimIndexNode(digest) => {
+                write!(f, "authenticated Logseq claim index node {digest} is missing")
+            }
+            Self::LogseqClaimIndexPathMismatch(digest) => write!(
+                f,
+                "authenticated Logseq claim index bytes do not match path {digest}"
+            ),
+            Self::MalformedLogseqClaimIndex => {
+                f.write_str("authenticated Logseq claim index is malformed or non-canonical")
+            }
             Self::Scratch(error) => write!(f, "engine scratch failed: {error}"),
             Self::LineageClaimCollision(lineage) => {
                 write!(f, "immutable lineage claim collision for {lineage}")
+            }
+            Self::ImmutableCollision(kind) => {
+                write!(f, "immutable {kind} collision")
             }
             Self::StoredLengthMismatch {
                 path,
@@ -1650,6 +2056,15 @@ fn publish_immutable(
     Ok(())
 }
 
+pub(crate) fn publish_immutable_exact(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+    kind: &'static str,
+) -> Result<(), StoreError> {
+    publish_immutable(dir, filename, bytes, Collision::Exact(kind))
+}
+
 fn verify_existing(
     dir: &Dir,
     filename: &str,
@@ -1680,6 +2095,7 @@ fn collision_error(collision: Collision) -> StoreError {
         Collision::Batch(batch_id) => StoreError::BatchCollision(batch_id),
         Collision::HistoryIndex(digest) => StoreError::HistoryIndexPathMismatch(digest),
         Collision::Lineage(lineage) => StoreError::LineageClaimCollision(lineage),
+        Collision::Exact(kind) => StoreError::ImmutableCollision(kind),
     }
 }
 
@@ -1694,7 +2110,7 @@ fn open_file_nofollow(dir: &Dir, path: &str) -> std::io::Result<fs::File> {
         libc::openat(
             dir.as_fd().as_raw_fd(),
             path.as_ptr(),
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
         )
     };
     if fd < 0 {
@@ -1785,7 +2201,7 @@ pub(crate) fn open_dir_nofollow(_dir: &Dir, _path: &str) -> Result<Dir, StoreErr
     .into())
 }
 
-fn read_optional_regular(
+pub(crate) fn read_optional_regular(
     dir: &Dir,
     path: &str,
     limit: u64,
@@ -1868,6 +2284,10 @@ fn history_filename(batch_id: BatchId) -> String {
 
 fn history_index_filename(digest: ContentDigest) -> String {
     format!("{digest}.index")
+}
+
+fn engine_history_root_filename(digest: ContentDigest) -> String {
+    format!("{digest}{ENGINE_HISTORY_ROOT_SUFFIX}")
 }
 
 fn history_key_nibble(key: &[u8; 16], depth: u8) -> u8 {
@@ -2153,7 +2573,7 @@ fn parse_manifest_filename(name: &str) -> Result<BatchId, StoreError> {
     Ok(parsed)
 }
 
-fn is_temp_name(name: &str) -> bool {
+pub(crate) fn is_temp_name(name: &str) -> bool {
     name.strip_prefix(".tmp-")
         .and_then(|value| Uuid::parse_str(value).ok())
         .is_some()
@@ -2262,6 +2682,57 @@ mod history_index_tests {
         assert!(matches!(
             history.publish_node(&collision_node),
             Err(StoreError::HistoryIndexPathMismatch(found)) if found == collision_digest
+        ));
+        drop(history);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn durable_history_head_and_root_fail_closed() {
+        let root = test_root("durable-root");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(5));
+        let endpoint = crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(7));
+        let endpoint_binding = crate::oplog::ProjectionEndpointBinding {
+            endpoint_id: endpoint,
+            device_id: crate::oplog::DeviceId::from_uuid(Uuid::from_u128(8)),
+            graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                b"test",
+                b"durable-root",
+            ),
+        };
+        let store = ObjectStore::open(&root.join("archive"), workspace).unwrap();
+        let history = store.open_engine_history(endpoint_binding).unwrap();
+        history
+            .publish(
+                BatchId::from_uuid(Uuid::from_u128(6)),
+                b"bound durable record",
+                EngineHistoryBinding::empty(),
+            )
+            .unwrap();
+
+        let control = root
+            .join("archive")
+            .join(ENGINE_HISTORY_DIR)
+            .join(endpoint.to_string());
+        let head = std::fs::read_to_string(control.join(ENGINE_HISTORY_HEAD_FILE)).unwrap();
+        let root_path = control
+            .join(ENGINE_HISTORY_ROOTS_DIR)
+            .join(format!("{head}{ENGINE_HISTORY_ROOT_SUFFIX}"));
+        let original = std::fs::read(&root_path).unwrap();
+        let mut tampered = original.clone();
+        tampered[0] ^= 0x80;
+        std::fs::write(&root_path, tampered).unwrap();
+        assert!(matches!(
+            history.current(),
+            Err(StoreError::HistoryIndexPathMismatch(_))
+        ));
+
+        std::fs::write(&root_path, original).unwrap();
+        std::fs::remove_file(control.join(ENGINE_HISTORY_HEAD_FILE)).unwrap();
+        assert!(matches!(
+            history.current(),
+            Err(StoreError::MalformedHistoryIndex)
         ));
         drop(history);
         drop(store);
@@ -2514,7 +2985,10 @@ mod history_index_tests {
     }
 }
 
-fn require_regular_entry(file_type: &cap_std::fs::FileType, name: &str) -> Result<(), StoreError> {
+pub(crate) fn require_regular_entry(
+    file_type: &cap_std::fs::FileType,
+    name: &str,
+) -> Result<(), StoreError> {
     if file_type.is_symlink() || !file_type.is_file() {
         Err(StoreError::UnsafeEntry(format!(
             "namespace entry is not a regular no-follow file: {name}"
@@ -2571,7 +3045,7 @@ fn rename_noreplace(_dir: &Dir, _from: &str, _to: &str) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
     // cap-std may retain an O_PATH directory capability, which is suitable for
     // openat but cannot itself be fsynced. Open the capability's `.` as a real
     // directory descriptor and propagate the result of syncing that handle.
@@ -2593,12 +3067,12 @@ fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
 }
 
 #[cfg(windows)]
-fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(dir: &Dir) -> Result<(), StoreError> {
     PublicationDirSync::open(dir)?.sync()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn sync_dir_required(_dir: &Dir) -> Result<(), StoreError> {
+pub(crate) fn sync_dir_required(_dir: &Dir) -> Result<(), StoreError> {
     Err(std::io::Error::new(
         ErrorKind::Unsupported,
         "directory durability is unsupported on this target",

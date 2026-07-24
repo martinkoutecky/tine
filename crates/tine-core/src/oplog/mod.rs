@@ -6,6 +6,7 @@
 //! Nothing here is wired to graph startup, enrollment, or mutation paths; the
 //! store persists only when explicitly opened on a caller-supplied root.
 
+pub(crate) mod authenticated_patricia;
 pub mod batch;
 pub(crate) mod causal_index;
 pub(crate) mod dependency_queue;
@@ -15,40 +16,81 @@ pub mod hot_engine;
 pub mod identity;
 pub(crate) mod loro_store;
 pub mod object_store;
+pub(crate) mod portable_path_index;
+pub mod projection;
+pub mod projection_manifest;
+pub mod projection_store;
+pub mod projection_work_index;
 pub mod receipt;
 pub(crate) mod scratch_store;
 pub mod semantic;
 pub mod simulator;
+pub(crate) mod uuid_claim_index;
 
 pub use batch::{
-    BatchCausalDot, BatchError, CausalPeerId, ContentDigest, LineageDigest, ObjectDescriptor,
-    ObjectKind, OperationBatch, OperationObject, PreparedBatch, SemanticEffectDigest,
-    ValidatedBatch, MANIFEST_ENCODING_VERSION, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
-    OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
+    BatchCausalDot, BatchError, BatchOrigin, CausalPeerId, ContentDigest, LineageDigest,
+    ObjectDescriptor, ObjectKind, OperationBatch, OperationObject, PreparedBatch,
+    SemanticEffectDigest, ValidatedBatch, MANIFEST_ENCODING_VERSION, MAX_MANIFEST_BYTES,
+    MAX_OBJECT_BYTES, OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION,
+    OPLOG_PROTOCOL_VERSION,
 };
 pub use hot_engine::{
-    AcceptedBatch, AuthorBatch, BatchDisposition, BlockLocation, EngineError,
+    AcceptedBatch, AuthorBatch, AuthorTransactionDraft, BatchDisposition, BlockLocation,
+    CapabilityCapturedProjectionInput, CapabilityCapturedProjectionState, EngineError,
     EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
-    ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats, MaterializedBlock,
-    MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine, StageOutcome,
-    WorkspaceStatus,
+    ImmutableHomeConflict, ImmutableHomeEvidence, LogseqIdentityMutation, LogseqIdentityTrigger,
+    LogseqUuidClaim, LogseqUuidResolution, MaterializationStats, MaterializedBlock,
+    MaterializedPage, OperationTransaction, PortablePathConflict, PortablePathConflictParticipant,
+    ProjectionEndpointBinding, ProjectionPageState, ProjectionRequirement,
+    ProjectionRequirementState, ProjectionWriteAuthorization, SemanticOperation, ShardedHotEngine,
+    StageOutcome, WorkspaceStatus,
 };
 pub use identity::{
-    BatchId, BlockId, CrdtPeerId, DeviceId, DocumentId, ImportId, LogseqUuid, PageId, SessionId,
-    WorkspaceId,
+    BatchId, BlockId, CanonicalGraphResourceId, CrdtPeerId, DeviceId, DocumentId, ImportId,
+    LogseqUuid, PageId, ProjectionEndpointId, SessionId, WorkspaceId,
 };
 pub use object_store::{BatchInspection, ObjectStore, ObjectStoreStats, StoreError};
+pub use portable_path_index::{
+    PortablePathIndexRoot, PortablePathOccupied, PortablePathRecord, PortablePathReleased,
+};
+pub use projection::{
+    derive_receiver_local_projection, execute_manifested_projection_work, plan_projection,
+    recover_incomplete_projections, write_projection_exact, PolicyGeneratedAnchor, ProjectionError,
+    ProjectionPlan, ProjectionWrite,
+};
+pub use projection_manifest::{
+    annotated_base_document_id, projection_intent_document_id, AnnotatedProjectionBase,
+    ManifestObjectRef, ManifestProjectionPrecondition, ManifestProjectionTarget,
+    ManifestedProjectionIntent, ProjectionManifestError, ValidatedProjectionObjects,
+    ANNOTATED_BASE_SCHEMA_VERSION, MANIFESTED_PROJECTION_SCHEMA_VERSION, MAX_ANNOTATED_BASE_BYTES,
+    MAX_MANIFESTED_PROJECTION_BYTES,
+};
+pub use projection_store::{
+    LocalProjectionEvidenceRecord, ProjectionAttemptReservation, ProjectionReceiptStore,
+    ProjectionStoreError,
+};
+pub use projection_work_index::{
+    ProjectionPendingActivation, ProjectionPendingCursor, ProjectionPendingPage, ProjectionWork,
+    ProjectionWorkCursor, ProjectionWorkError, ProjectionWorkId, ProjectionWorkIndex,
+    ProjectionWorkIndexStats, ProjectionWorkPage, ProjectionWorkStatus, ProjectionWorkTarget,
+};
+pub(crate) use projection_work_index::{
+    ProjectionWorkBlockAuthority, ProjectionWorkCompletionAuthority,
+};
 pub use receipt::{
-    AnnotatedIdentity, BaseBlob, BlobDescription, CompletionId, CrdtPeerCounter,
-    DocumentCausalDigest, DocumentDependencies, FrontierV2, ImportInventoryEntry,
-    ImportInventoryState, ImportLocator, ManagedPath, ProjectionCompletion, ProjectionIntent,
-    ProjectionPolicy, ProjectionPrecondition, ReceiptError, StructuralLocator, StructuralSpan,
-    DIFF_SCHEMA_VERSION, MANAGED_ENTITY_SET_VERSION, PROJECTION_POLICY_VERSION,
-    PROJECTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION,
+    AnnotatedIdentity, BaseBlob, BlobDescription, CrdtPeerCounter, DocumentCausalDigest,
+    DocumentDependencies, FrontierV2, ImportInventoryEntry, ImportInventoryState, ImportLocator,
+    LogicalCompletionId, ManagedPath, PortablePathKey, PortablePathKeyDigest,
+    ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionCompletion, ProjectionIntent,
+    ProjectionIntentId, ProjectionPrecondition, ReceiptError, StructuralLocator, StructuralSpan,
+    DIFF_SCHEMA_VERSION, MANAGED_ENTITY_SET_VERSION, PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION,
+    PORTABLE_PATH_KEY_VERSION, PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION,
+    PROJECTION_POLICY_VERSION, PROJECTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION,
 };
 pub use semantic::{
-    BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, MembershipClaim, MembershipDelta,
-    PageDelta, PageState, SemanticEffect, SemanticError, VisibleMembership,
+    BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogseqIdentityOrigin, MembershipClaim,
+    MembershipDelta, PageDelta, PagePreambleDelta, PagePreambleState, PageState,
+    PolicyGeneratedAnchorReason, SemanticEffect, SemanticError, VisibleMembership,
     SEMANTIC_EFFECT_SCHEMA_VERSION,
 };
 pub use simulator::{
