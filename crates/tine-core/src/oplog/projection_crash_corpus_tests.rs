@@ -27,14 +27,15 @@ use crate::oplog::{
     ShardedHotEngine, SqliteFrontier, WorkspaceId,
 };
 use crate::model::{
-    projection_graph_test_counters, reset_projection_graph_test_counters,
+    fail_next_projection_directory_sync_for_test, projection_graph_test_counters,
+    reset_projection_graph_test_counters, reset_projection_graph_test_hooks,
     ProjectionGraphTestCounters,
 };
 
 use super::super::{
     completion_filename, projection_store_test_counters, reset_projection_store_test_counters,
-    ProjectionStoreTestCounters, ATTEMPT_PUBLICATION_HOOK, COMPLETIONS_DIR,
-    COMPLETION_RETAINED_SLOT_HOOK,
+    reset_projection_store_test_hooks, ProjectionStoreTestCounters, ATTEMPT_PUBLICATION_HOOK,
+    COMPLETIONS_DIR, COMPLETION_RETAINED_SLOT_HOOK, MUTATION_AUTHORITY_CAPTURED_HOOK,
 };
 use super::Fixture;
 
@@ -168,6 +169,23 @@ impl Drop for CorpusDir {
     }
 }
 
+struct CrashCorpusTestStateGuard;
+
+impl CrashCorpusTestStateGuard {
+    fn new() -> Self {
+        reset_projection_store_test_hooks();
+        reset_projection_graph_test_hooks();
+        Self
+    }
+}
+
+impl Drop for CrashCorpusTestStateGuard {
+    fn drop(&mut self) {
+        reset_projection_store_test_hooks();
+        reset_projection_graph_test_hooks();
+    }
+}
+
 fn corpus_manifest() -> CorpusManifest {
     const FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -264,7 +282,7 @@ fn parsed_sparse_ids(blocks: &[crate::doc::DocBlock]) -> BTreeSet<String> {
     ids
 }
 
-fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
+fn assert_live_fixture_pages_semantics(pages: &[SemanticFixturePage]) {
     let root = CorpusDir::new("semantic-fixtures");
     let graph_root = root.path().join("graph");
     fs::create_dir_all(graph_root.join("pages")).unwrap();
@@ -286,7 +304,7 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
     let mut paths = BTreeSet::new();
     let mut next_block = 81_100_u128;
 
-    for (index, page) in manifest.pages.iter().enumerate() {
+    for (index, page) in pages.iter().enumerate() {
         let path = ManagedPath::parse(&page.path).unwrap();
         assert!(paths.insert(path.clone()), "duplicate fixture path {path}");
         assert_eq!(
@@ -366,7 +384,7 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
     ));
 
     for (index, page_id, path) in &live {
-        let page = &manifest.pages[*index];
+        let page = &pages[*index];
         let state = engine.materialize_page_for_projection(*page_id).unwrap();
         assert_eq!(state.page.path, *path);
         assert_eq!(state.page.preamble.as_deref(), page.preamble.as_deref());
@@ -431,7 +449,7 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
 
     let snapshot = engine.canonical_snapshot().unwrap();
     for (index, page_id, path) in &live {
-        let page = &manifest.pages[*index];
+        let page = &pages[*index];
         assert!(snapshot.pages.iter().any(|(observed_id, state)| {
             *observed_id == *page_id
                 && matches!(state, PageState::Live { path: observed_path, kind, .. }
@@ -449,7 +467,7 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
     assert_eq!(matches.pages().len(), live.len());
     assert!(matches.rejected_raw_ids().is_empty());
     for (index, _, path) in &live {
-        let page = &manifest.pages[*index];
+        let page = &pages[*index];
         assert_eq!(inventory.present(path.as_str()).unwrap().bytes(), page.bytes.as_bytes());
         if !page.sparse_ids.is_empty() {
             assert!(matches.blocks().iter().any(|matched| matched.path() == path));
@@ -458,7 +476,7 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
 }
 
 fn assert_fixture_semantics(manifest: &CorpusManifest) {
-    assert_live_fixture_semantics(manifest);
+    assert_live_fixture_pages_semantics(&manifest.pages);
     let deleted = manifest
         .pages
         .iter()
@@ -1766,6 +1784,7 @@ fn run_sigkill_attempt_publication(case: &CorpusCase) -> CaseReceipt {
 
 #[test]
 fn crash_corpus_subprocess_worker() {
+    let _state = CrashCorpusTestStateGuard::new();
     let Ok(mode) = std::env::var("TINE_PROJECTION_CRASH_CORPUS_WORKER") else {
         return;
     };
@@ -1811,8 +1830,90 @@ fn run_unix_only_case(case: &CorpusCase) -> CaseReceipt {
     }
 }
 
+fn minimal_semantic_fixture_pages() -> Vec<SemanticFixturePage> {
+    vec![SemanticFixturePage {
+        kind: FixtureKind::Page,
+        path: "pages/guard.md".to_owned(),
+        format: "markdown".to_owned(),
+        bytes: "- guard\n".to_owned(),
+        preamble: None,
+        sparse_ids: Vec::new(),
+        deleted: false,
+    }]
+}
+
+#[test]
+fn crash_corpus_state_guard_scopes_stale_and_intentional_prelude_hooks() {
+    let stale_receipt_hook_fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    MUTATION_AUTHORITY_CAPTURED_HOOK.with(|hook| {
+        let fired = stale_receipt_hook_fired.clone();
+        *hook.borrow_mut() = Some(Box::new(move || {
+            fired.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
+    });
+    fail_next_projection_directory_sync_for_test();
+
+    let _state = CrashCorpusTestStateGuard::new();
+    let stale_prelude = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_live_fixture_pages_semantics(&minimal_semantic_fixture_pages());
+    }));
+    assert!(
+        stale_prelude.is_ok(),
+        "the guard must clear stale receipt and projection controls before the semantic prelude"
+    );
+    assert!(
+        !stale_receipt_hook_fired.load(std::sync::atomic::Ordering::SeqCst),
+        "the semantic prelude fired an abandoned receipt hook"
+    );
+
+    let intentional_receipt_hook_fired =
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    MUTATION_AUTHORITY_CAPTURED_HOOK.with(|hook| {
+        let fired = intentional_receipt_hook_fired.clone();
+        *hook.borrow_mut() = Some(Box::new(move || {
+            fired.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
+    });
+    fail_next_projection_directory_sync_for_test();
+    let intentional_prelude = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_live_fixture_pages_semantics(&minimal_semantic_fixture_pages());
+    }));
+    assert!(
+        intentional_prelude.is_err(),
+        "a directory-sync failpoint installed after guard construction must remain active"
+    );
+    assert!(
+        intentional_receipt_hook_fired.load(std::sync::atomic::Ordering::SeqCst),
+        "a receipt hook installed after guard construction must remain active"
+    );
+}
+
+#[test]
+fn crash_corpus_state_guard_clears_hooks_during_panic_unwind() {
+    let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _state = CrashCorpusTestStateGuard::new();
+        MUTATION_AUTHORITY_CAPTURED_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|| {
+                panic!("receipt hook escaped corpus-state guard drop")
+            }));
+        });
+        fail_next_projection_directory_sync_for_test();
+        panic!("simulate an ordinary crash-corpus panic");
+    }));
+    assert!(interrupted.is_err());
+
+    let later_prelude = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_live_fixture_pages_semantics(&minimal_semantic_fixture_pages());
+    }));
+    assert!(
+        later_prelude.is_ok(),
+        "guard drop must clear corpus hooks before a reused worker enters the next prelude"
+    );
+}
+
 #[test]
 fn crash_corpus_v2_executes_every_declared_cut() {
+    let _state = CrashCorpusTestStateGuard::new();
     let manifest = corpus_manifest();
     assert_fixture_semantics(&manifest);
     let mut seen = BTreeSet::new();

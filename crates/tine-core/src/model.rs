@@ -1328,6 +1328,35 @@ pub(crate) fn reset_projection_graph_test_counters() {
     PROJECTION_GRAPH_CALLS.with(|counters| counters.set(ProjectionGraphTestCounters::default()));
 }
 
+/// Clear thread-local projection test controls without affecting measurements.
+/// The crash corpus owns this state for the duration of one corpus run because
+/// libtest can reuse a worker thread after ordinary panic unwinding.
+#[cfg(test)]
+pub(crate) fn reset_projection_graph_test_hooks() {
+    WITHDRAW_RACE_REPLACEMENT.with(|replacement| drop(replacement.borrow_mut().take()));
+    GUIDE_TWIN_RACE_CONTENT.with(|content| drop(content.borrow_mut().take()));
+    PROJECTION_LAST_MOMENT_REPLACEMENT.with(|replacement| drop(replacement.borrow_mut().take()));
+    PROJECTION_PUBLICATION_RACE_REPLACEMENT
+        .with(|replacement| drop(replacement.borrow_mut().take()));
+    PROJECTION_AFTER_RETIRE_REPLACEMENT.with(|replacement| drop(replacement.borrow_mut().take()));
+    PROJECTION_STALE_RECOVERY_WRITE.with(|write| drop(write.borrow_mut().take()));
+    PROJECTION_POST_PUBLISH_REPLACEMENT.with(|replacement| drop(replacement.borrow_mut().take()));
+    PROJECTION_PARENT_RETARGET.with(|retarget| drop(retarget.borrow_mut().take()));
+    FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| fail.set(false));
+    TEST_PROJECTION_ATTEMPTS.with(|catalog| catalog.borrow_mut().clear());
+    PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(0));
+    MANAGED_INVENTORY_READ_RACE.with(|hook| drop(hook.borrow_mut().take()));
+    INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| drop(hook.borrow_mut().take()));
+    BOUNDED_READ_AFTER_METADATA.with(|hook| drop(hook.borrow_mut().take()));
+    // The corpus does not exercise rename_page, so its rename-only source
+    // removal failpoint has no corpus-state lifetime.
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_projection_directory_sync_for_test() {
+    FAIL_NEXT_PROJECTION_DIRECTORY_SYNC.with(|fail| fail.set(true));
+}
+
 #[cfg(test)]
 pub(crate) fn projection_graph_test_counters() -> ProjectionGraphTestCounters {
     PROJECTION_GRAPH_CALLS.with(std::cell::Cell::get)
