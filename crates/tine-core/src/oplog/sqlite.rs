@@ -5069,8 +5069,7 @@ mod tests {
         ManagedPath, ManagedTextKind, MaterializationChange, MaterializedBlockInput,
         MaterializedEntityId, MaterializedPageInput, MaterializedProperty, MaterializedReference,
         MaterializedReferenceKind, MaterializedReferrerRow, MaterializedTask, OperationBatch,
-        OperationObject, OperationTransaction, PageId, PreparedBatch, SemanticOperation,
-        SessionId,
+        OperationObject, OperationTransaction, PageId, PreparedBatch, SemanticOperation, SessionId,
     };
 
     struct TestDir(PathBuf);
@@ -6054,8 +6053,15 @@ mod tests {
             assert_eq!(materialization_sequence, 0);
         }
 
-        database.apply_materialized_accepted(&event, &valid).unwrap();
-        let page = database.materialized_read().unwrap().page(ids.page).unwrap().unwrap();
+        database
+            .apply_materialized_accepted(&event, &valid)
+            .unwrap();
+        let page = database
+            .materialized_read()
+            .unwrap()
+            .page(ids.page)
+            .unwrap()
+            .unwrap();
         assert_eq!(page.name, "CAFÉ");
         assert_eq!(page.name_key, "café");
         assert_eq!(page.path.as_str(), path);
@@ -6069,7 +6075,10 @@ mod tests {
             let (mut database, mut engine, store) = open_empty(&dir, ids);
             let path = "pages/root-fixture.md";
             let root_prepared = engine
-                .prepare_bootstrap_transaction(author(1_761 + index as u128 * 100), &root_transaction(ids, path, "initial"))
+                .prepare_bootstrap_transaction(
+                    author(1_761 + index as u128 * 100),
+                    &root_transaction(ids, path, "initial"),
+                )
                 .unwrap();
             publish_and_stage(&mut engine, &store, &root_prepared);
             let root_event = AcceptedBatchEvent::from_accepted(
@@ -6129,8 +6138,12 @@ mod tests {
                 update_prepared.manifest().batch_id(),
             )
             .unwrap();
-            let effect = crate::oplog::SemanticEffect::decode(update_event.semantic_effect()).unwrap();
-            assert!(effect.pages().is_empty(), "{case} effect must not replace page metadata");
+            let effect =
+                crate::oplog::SemanticEffect::decode(update_event.semantic_effect()).unwrap();
+            assert!(
+                effect.pages().is_empty(),
+                "{case} effect must not replace page metadata"
+            );
             match case {
                 "block" => assert!(!effect.blocks().is_empty()),
                 "membership" => assert!(!effect.memberships().is_empty()),
@@ -6144,7 +6157,11 @@ mod tests {
                 path,
                 ManagedTextKind::Page,
                 "Root Fixture Page",
-                if case == "block" { "updated" } else { "initial" },
+                if case == "block" {
+                    "updated"
+                } else {
+                    "initial"
+                },
             );
             let mut exact_replacements = exact_prior_metadata.replacements().to_vec();
             if case == "membership" {
@@ -6159,15 +6176,15 @@ mod tests {
 
             let corruptions: [(&str, fn(&mut MaterializedPageInput)); 5] = [
                 ("name", |page| page.name = "Contradictory Name".into()),
-                ("name key", |page| page.name_key = "contradictory-name".into()),
-                (
-                    "path",
-                    |page| page.path = ManagedPath::parse("pages/contradictory.md").unwrap(),
-                ),
-                (
-                    "home document",
-                    |page| page.home_document_id = DocumentId::from_uuid(uuid(9_999)),
-                ),
+                ("name key", |page| {
+                    page.name_key = "contradictory-name".into()
+                }),
+                ("path", |page| {
+                    page.path = ManagedPath::parse("pages/contradictory.md").unwrap()
+                }),
+                ("home document", |page| {
+                    page.home_document_id = DocumentId::from_uuid(uuid(9_999))
+                }),
                 ("kind", |page| page.kind = ManagedTextKind::Journal),
             ];
             for (field, corrupt) in corruptions {
@@ -6176,20 +6193,27 @@ mod tests {
                 let contradiction =
                     MaterializationChange::new(update_event.batch_id(), replacements, Vec::new())
                         .unwrap();
-                assert!(matches!(
-                    database.apply_materialized_accepted(&update_event, &contradiction),
-                    Err(ProjectionError::Materialization(_))
-                ), "{case} {field} contradiction must fail");
+                assert!(
+                    matches!(
+                        database.apply_materialized_accepted(&update_event, &contradiction),
+                        Err(ProjectionError::Materialization(_))
+                    ),
+                    "{case} {field} contradiction must fail"
+                );
                 assert_eq!(database.applied_batch_count().unwrap(), 1, "{case} {field}");
                 let read = database.materialized_read().unwrap();
-                assert_eq!(read.page(ids.page).unwrap(), Some(prior_page.clone()), "{case} {field}");
+                assert_eq!(
+                    read.page(ids.page).unwrap(),
+                    Some(prior_page.clone()),
+                    "{case} {field}"
+                );
                 let stamp: i64 = database
                     .connection
                     .query_row(
                         "SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1",
                         [],
                         |row| row.get(0),
-                )
+                    )
                     .unwrap();
                 assert_eq!(stamp, 1, "{case} {field}");
             }
@@ -6234,12 +6258,9 @@ mod tests {
             .prepare_bootstrap_transaction(author(2_001), &root_transaction(ids, path, "initial"))
             .unwrap();
         publish_and_stage(&mut engine, &store, &root_prepared);
-        let root_event = AcceptedBatchEvent::from_accepted(
-            &engine,
-            &store,
-            root_prepared.manifest().batch_id(),
-        )
-        .unwrap();
+        let root_event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, root_prepared.manifest().batch_id())
+                .unwrap();
         let root_change = rich_materialization(
             &root_event,
             ids,
@@ -6317,7 +6338,9 @@ mod tests {
         ));
 
         assert_eq!(
-            database.rebuild_materialization(vec![root_change, valid]).unwrap(),
+            database
+                .rebuild_materialization(vec![root_change, valid])
+                .unwrap(),
             2
         );
         let page = database
@@ -6399,7 +6422,10 @@ mod tests {
         else {
             panic!("schema-7 database was reopened without a disposable rebuild");
         };
-        assert!(reason.contains("user_version 7 != 8"), "unexpected rebuild reason: {reason}");
+        assert!(
+            reason.contains("user_version 7 != 8"),
+            "unexpected rebuild reason: {reason}"
+        );
         let stale_rows: i64 = reopened
             .database
             .connection
@@ -6411,7 +6437,13 @@ mod tests {
             Err(ProjectionError::Materialization(_))
         ));
 
-        assert_eq!(reopened.database.rebuild_materialization(vec![current]).unwrap(), 1);
+        assert_eq!(
+            reopened
+                .database
+                .rebuild_materialization(vec![current])
+                .unwrap(),
+            1
+        );
         let page = reopened
             .database
             .materialized_read()
@@ -6719,9 +6751,15 @@ mod tests {
             let dir = TestDir::new(&format!("cross-page-materialization-move-{case}"));
             let (mut database, mut engine, store) = open_empty(&dir, ids);
             let (source_page, destination_page) = if source_before_destination {
-                (PageId::from_uuid(uuid(2_600 + case * 100)), PageId::from_uuid(uuid(2_601 + case * 100)))
+                (
+                    PageId::from_uuid(uuid(2_600 + case * 100)),
+                    PageId::from_uuid(uuid(2_601 + case * 100)),
+                )
             } else {
-                (PageId::from_uuid(uuid(2_701 + case * 100)), PageId::from_uuid(uuid(2_700 + case * 100)))
+                (
+                    PageId::from_uuid(uuid(2_701 + case * 100)),
+                    PageId::from_uuid(uuid(2_700 + case * 100)),
+                )
             };
             let source_document = DocumentId::from_uuid(uuid(2_800 + case * 100));
             let destination_document = DocumentId::from_uuid(uuid(2_801 + case * 100));
@@ -6888,7 +6926,10 @@ mod tests {
                 .unwrap();
 
             let read = database.materialized_read().unwrap();
-            assert_eq!(read.block(target_block).unwrap().unwrap().page_id, destination_page);
+            assert_eq!(
+                read.block(target_block).unwrap().unwrap().page_id,
+                destination_page
+            );
             assert_eq!(
                 read.referrers_to(MaterializedEntityId::Block(target_block), 10)
                     .unwrap(),

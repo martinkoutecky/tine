@@ -700,9 +700,9 @@ fn validate_operation_shape(operation: &SemanticOperation) -> Result<(), EngineE
                 "rename block rewrite exceeds the semantic bound".into(),
             ));
         }
-        bytes = bytes.checked_add(rewrite.new_content.len()).ok_or_else(|| {
-            EngineError::InvalidTransaction("rename byte count overflow".into())
-        })?;
+        bytes = bytes
+            .checked_add(rewrite.new_content.len())
+            .ok_or_else(|| EngineError::InvalidTransaction("rename byte count overflow".into()))?;
     }
     for rewrite in page_preamble_rewrites {
         if rewrite
@@ -9281,8 +9281,7 @@ impl ShardedHotEngine {
                     }
                 }
                 for rewrite in page_preamble_rewrites {
-                    let page_document_id =
-                        self.page_home_from_working(working, rewrite.page_id)?;
+                    let page_document_id = self.page_home_from_working(working, rewrite.page_id)?;
                     let shard = self.ensure_working_document(
                         working,
                         before_vectors,
@@ -9390,10 +9389,7 @@ impl ShardedHotEngine {
                     peer_id,
                 )?;
                 let state = require_live_page(catalog, *page_id)?;
-                if state.name() == name
-                    && state.path() == Some(path)
-                    && state.kind() == *kind
-                {
+                if state.name() == name && state.path() == Some(path) && state.kind() == *kind {
                     return Err(EngineError::InvalidTransaction(format!(
                         "external page-state reconciliation for {page_id} is unchanged"
                     )));
@@ -9420,19 +9416,13 @@ impl ShardedHotEngine {
     ) -> Result<(), EngineError> {
         let mut content_blocks = BTreeSet::new();
         for operation in &transaction.operations {
-            if let SemanticOperation::RenamePagesAndRewriteReferrers {
-                block_rewrites, ..
-            } = operation
+            if let SemanticOperation::RenamePagesAndRewriteReferrers { block_rewrites, .. } =
+                operation
             {
                 content_blocks.extend(
                     block_rewrites
                         .iter()
-                        .map(|rewrite| {
-                            (
-                                rewrite.block.home_document_id,
-                                rewrite.block.block_id,
-                            )
-                        }),
+                        .map(|rewrite| (rewrite.block.home_document_id, rewrite.block.block_id)),
                 );
             } else if let Some(block) = operation_content_block(operation) {
                 content_blocks.insert((block.home_document_id, block.block_id));
@@ -12694,8 +12684,11 @@ mod validation_tests {
         let catalog = DocumentId::from_uuid(Uuid::from_u128(68_001));
         let page_id = PageId::from_uuid(Uuid::from_u128(68_002));
         let home_document_id = DocumentId::from_uuid(Uuid::from_u128(68_003));
-        let mut engine =
-            ShardedHotEngine::new(workspace, LineageDigest::of(b"external-page-state"), catalog);
+        let mut engine = ShardedHotEngine::new(
+            workspace,
+            LineageDigest::of(b"external-page-state"),
+            catalog,
+        );
         let create = engine
             .prepare_bootstrap_transaction(
                 test_author(68_004, 68_004),
@@ -12713,15 +12706,14 @@ mod validation_tests {
             engine.stage_ready(ValidatedBatch::new(create)).disposition,
             BatchDisposition::Accepted { .. }
         ));
-        let operation = OperationTransaction::new(vec![
-            SemanticOperation::ReconcileExternalPageState {
+        let operation =
+            OperationTransaction::new(vec![SemanticOperation::ReconcileExternalPageState {
                 page_id,
                 name: LogicalPageName::parse("Journal Display Title").unwrap(),
                 path: ManagedPath::parse("deep/journals/2026_07_24.org").unwrap(),
                 kind: ManagedTextKind::Journal,
-            },
-        ])
-        .unwrap();
+            }])
+            .unwrap();
 
         let mut working = BTreeMap::new();
         let mut before_vectors = BTreeMap::new();
@@ -12756,12 +12748,9 @@ mod validation_tests {
                 &operation.operations[0],
             )
             .unwrap();
-        let after = read_page_state(
-            working.get(&catalog).unwrap().document(),
-            page_id,
-        )
-        .unwrap()
-        .unwrap();
+        let after = read_page_state(working.get(&catalog).unwrap().document(), page_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after.name().as_str(), "Journal Display Title");
         assert_eq!(
             after.path().unwrap().as_str(),

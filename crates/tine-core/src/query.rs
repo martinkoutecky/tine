@@ -703,10 +703,7 @@ fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
 /// cached page. This is the projection used by the reconstructible candidate
 /// index; query-time occurrence verification still uses the full evidence
 /// engine below and remains authoritative.
-pub(crate) fn document_explicit_reference_names(
-    entry: &PageEntry,
-    doc: &Document,
-) -> Vec<String> {
+pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Document) -> Vec<String> {
     fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
         for block in blocks {
             names.extend(
@@ -4568,7 +4565,14 @@ mod tests {
 
         let (bounded, exceeded) = autocomplete_property_facets_bounded(&graph, 3, usize::MAX);
         assert!(exceeded);
-        assert!(bounded.len() + bounded.iter().map(|(_, values)| values.len()).sum::<usize>() <= 3);
+        assert!(
+            bounded.len()
+                + bounded
+                    .iter()
+                    .map(|(_, values)| values.len())
+                    .sum::<usize>()
+                <= 3
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

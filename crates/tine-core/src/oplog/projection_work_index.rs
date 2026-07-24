@@ -16,8 +16,8 @@
 use std::fmt;
 use std::io::{ErrorKind, Write};
 use std::str::FromStr;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
@@ -26,13 +26,13 @@ use uuid::Uuid;
 
 use super::identity::{parse_digest, write_hex};
 use super::object_store::{
-    StoreError, open_dir_nofollow, publish_immutable_exact, read_optional_regular,
-    sync_dir_required,
+    open_dir_nofollow, publish_immutable_exact, read_optional_regular, sync_dir_required,
+    StoreError,
 };
 use super::{
     BatchId, BlobDescription, ContentDigest, FrontierV2, LogicalCompletionId, ManagedPath,
-    ManifestObjectRef, PORTABLE_PATH_KEY_VERSION, PageId, PortablePathIndexRoot,
-    PortablePathKeyDigest, ProjectionEndpointId, ProjectionIntentId, WorkspaceId,
+    ManifestObjectRef, PageId, PortablePathIndexRoot, PortablePathKeyDigest, ProjectionEndpointId,
+    ProjectionIntentId, WorkspaceId, PORTABLE_PATH_KEY_VERSION,
 };
 
 const WORK_SCHEMA_VERSION: u32 = 3;
@@ -586,7 +586,7 @@ impl ProjectionWorkIndex {
             preflight_roots: self.counters.preflight_roots.load(Ordering::Relaxed),
             preflight_bytes: self.counters.preflight_bytes.load(Ordering::Relaxed),
         }
-        }
+    }
 
     fn record_preflight(&self, stats: ProjectionWorkPreflightStats) {
         self.counters
@@ -2842,13 +2842,11 @@ mod tests {
             std::slice::from_ref(&work.work_id())
         );
         assert!(pending.next().is_none());
-        assert!(
-            fixture
+        assert!(fixture
             .index
             .pending_for_path(work.path())
             .unwrap()
-                .is_empty()
-        );
+            .is_empty());
     }
 
     #[test]
@@ -2912,7 +2910,11 @@ mod tests {
         ] {
             let fixture = Fixture::new(&format!("sealed-{label}-swap"));
             let history_store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
-            drop(history_store.open_engine_history(fixture.binding()).unwrap());
+            drop(
+                history_store
+                    .open_engine_history(fixture.binding())
+                    .unwrap(),
+            );
             let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
             let open = store.seal_enrolled_projection(fixture.binding()).unwrap();
             let work_control = fixture
@@ -2923,11 +2925,12 @@ mod tests {
                 Swap::WorkHead => work_control.join(HEAD_FILE),
                 Swap::WorkClaim => work_control.join(CLAIM_FILE),
                 Swap::WorkRoot => {
-                    let digest = std::str::from_utf8(&fs::read(work_control.join(HEAD_FILE)).unwrap())
-                        .map(parse_digest)
-                        .unwrap()
-                        .map(ContentDigest::from_bytes)
-                        .unwrap();
+                    let digest =
+                        std::str::from_utf8(&fs::read(work_control.join(HEAD_FILE)).unwrap())
+                            .map(parse_digest)
+                            .unwrap()
+                            .map(ContentDigest::from_bytes)
+                            .unwrap();
                     work_control.join("roots").join(root_filename(digest))
                 }
                 Swap::HistoryHead => fixture
@@ -3025,25 +3028,21 @@ mod tests {
             .accept_batch(work.batch_id(), fingerprint)
             .unwrap();
 
-        assert!(
-            fixture
+        assert!(fixture
             .index
             .pending_activation_page(None, 8)
             .unwrap()
             .pending()
-                .is_empty()
-        );
+            .is_empty());
         assert_eq!(fixture.index.next().unwrap(), Some(work.clone()));
         fixture
             .index
             .require_accepted_ready(&work, fingerprint)
             .unwrap();
-        assert!(
-            fixture
+        assert!(fixture
             .index
             .require_accepted_ready(&work, ContentDigest::of(b"wrong manifest"))
-                .is_err()
-        );
+            .is_err());
     }
 
     #[test]
@@ -3231,12 +3230,10 @@ mod tests {
             .index
             .accept_batch(foreign_work.batch_id(), fingerprint)
             .unwrap();
-        assert!(
-            foreign
+        assert!(foreign
             .index
             .mark_completed(fixture.completion_authority(&first))
-                .is_err()
-        );
+            .is_err());
         assert_eq!(
             foreign.index.status(foreign_work.work_id()).unwrap(),
             Some(ProjectionWorkStatus::Ready)
@@ -3325,13 +3322,11 @@ mod tests {
             fixture.index.ready_page(Some(&cursor), 2).unwrap().work(),
             &rows[2..]
         );
-        assert!(
-            fixture
+        assert!(fixture
             .index
             .pending_for_path(rows[2].path())
             .unwrap()
-                .is_empty()
-        );
+            .is_empty());
     }
 
     #[test]
@@ -3377,15 +3372,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![rows[2].batch_id()]
         );
-        assert!(
-            fixture
+        assert!(fixture
             .index
             .pending_activation_page(None, 8)
             .unwrap()
             .pending()
             .iter()
-                .all(|pending| pending.batch_id() != rows[2].batch_id())
-        );
+            .all(|pending| pending.batch_id() != rows[2].batch_id()));
     }
 
     #[test]
@@ -3617,12 +3610,10 @@ mod tests {
                 ));
             }
             assert_eq!(snapshot(&fixture.path), before);
-            assert!(
-                !fixture
-                    .path
-                    .join(super::super::scratch_store::SCRATCH_DIR)
-                    .exists()
-            );
+            assert!(!fixture
+                .path
+                .join(super::super::scratch_store::SCRATCH_DIR)
+                .exists());
         }
     }
 }

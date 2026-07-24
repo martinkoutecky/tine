@@ -958,13 +958,10 @@ impl PartialOrd for ScoredBlock<'_> {
 impl Ord for ScoredBlock<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap root is the WORST retained candidate, ready for eviction.
-        other
-            .relevance
-            .cmp_quality(&self.relevance)
-            .then_with(|| {
-                (self.page.rel_path.as_str(), self.index)
-                    .cmp(&(other.page.rel_path.as_str(), other.index))
-            })
+        other.relevance.cmp_quality(&self.relevance).then_with(|| {
+            (self.page.rel_path.as_str(), self.index)
+                .cmp(&(other.page.rel_path.as_str(), other.index))
+        })
     }
 }
 
@@ -1241,8 +1238,7 @@ fn best_page_match(
     aliases: &[String],
 ) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
     let page_match = page_base_score(plan, expr, page_name, &canonical_fold(page_name));
-    let mut best = page_match
-        .map(|(score, class)| (score, class, page_name.to_string(), None));
+    let mut best = page_match.map(|(score, class)| (score, class, page_name.to_string(), None));
     for alias in aliases {
         let Some((score, class)) = page_base_score(plan, expr, alias, &canonical_fold(alias))
         else {
@@ -1260,13 +1256,23 @@ fn best_page_match(
     // bypassing NOT/OR/regex membership semantics for syntax-looking names.
     if let Some(exact) = plan.page_exact.as_deref() {
         if page_match.is_some() && canonical_fold(page_name) == exact {
-            return Some((1500, ObjectiveMatchClass::Exact, page_name.to_string(), None));
+            return Some((
+                1500,
+                ObjectiveMatchClass::Exact,
+                page_name.to_string(),
+                None,
+            ));
         }
         if let Some(alias) = aliases.iter().find(|alias| {
             canonical_fold(alias) == exact
                 && page_base_score(plan, expr, alias, &canonical_fold(alias)).is_some()
         }) {
-            return Some((1500, ObjectiveMatchClass::Exact, alias.clone(), Some(alias.clone())));
+            return Some((
+                1500,
+                ObjectiveMatchClass::Exact,
+                alias.clone(),
+                Some(alias.clone()),
+            ));
         }
     }
     best
@@ -1499,12 +1505,9 @@ fn execute_blocks(
         }
         let mut winners = heap.into_vec();
         winners.sort_by(|a, b| {
-            b.relevance
-                .cmp_quality(&a.relevance)
-                .then_with(|| {
-                    (a.page.rel_path.as_str(), a.index)
-                        .cmp(&(b.page.rel_path.as_str(), b.index))
-                })
+            b.relevance.cmp_quality(&a.relevance).then_with(|| {
+                (a.page.rel_path.as_str(), a.index).cmp(&(b.page.rel_path.as_str(), b.index))
+            })
         });
         Some((
             winners
@@ -1638,11 +1641,7 @@ mod tests {
             .collect()
     }
 
-    fn reference_literal_search(
-        graph: &Graph,
-        query: &str,
-        limit: usize,
-    ) -> Vec<(String, String)> {
+    fn reference_literal_search(graph: &Graph, query: &str, limit: usize) -> Vec<(String, String)> {
         if limit == 0 || query.is_empty() {
             return Vec::new();
         }
@@ -1773,20 +1772,12 @@ mod tests {
         assert_eq!(multiword_page.1, ObjectiveMatchClass::Exact);
 
         let syntax = QueryPlan::friendly("foo -draft", 8, 8);
-        assert!(best_page_match(
-            &syntax,
-            &syntax.branches[0].predicate,
-            "foo -draft",
-            &[],
-        )
-        .is_none());
-        assert!(best_page_match(
-            &syntax,
-            &syntax.branches[0].predicate,
-            "foo ready",
-            &[],
-        )
-        .is_some());
+        assert!(
+            best_page_match(&syntax, &syntax.branches[0].predicate, "foo -draft", &[],).is_none()
+        );
+        assert!(
+            best_page_match(&syntax, &syntax.branches[0].predicate, "foo ready", &[],).is_some()
+        );
 
         let page_plan = QueryPlan::page_name_fuzzy("Café", 8);
         let page_pred = &page_plan.branches[0].predicate;
@@ -1968,9 +1959,7 @@ mod tests {
                     match_class,
                     matched_alias,
                     ..
-                } if !page.rel_path.is_empty() => {
-                    Some((page.rel_path, match_class, matched_alias))
-                }
+                } if !page.rel_path.is_empty() => Some((page.rel_path, match_class, matched_alias)),
                 QueryHit::Page { .. } => None,
                 QueryHit::Block { .. } => None,
             })
@@ -1995,9 +1984,7 @@ mod tests {
                     match_class,
                     matched_alias,
                     ..
-                } if !page.rel_path.is_empty() => {
-                    Some((page.rel_path, match_class, matched_alias))
-                }
+                } if !page.rel_path.is_empty() => Some((page.rel_path, match_class, matched_alias)),
                 QueryHit::Page { .. } => None,
                 QueryHit::Block { .. } => None,
             })

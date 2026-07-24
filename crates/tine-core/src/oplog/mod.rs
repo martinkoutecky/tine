@@ -91,6 +91,7 @@ pub use projection_work_index::{
 pub(crate) use projection_work_index::{
     ProjectionWorkBlockAuthority, ProjectionWorkCompletionAuthority,
 };
+pub(crate) use receipt::managed_component_is_portable;
 pub use receipt::{
     AnnotatedIdentity, BaseBlob, BlobDescription, CrdtPeerCounter, DocumentCausalDigest,
     DocumentDependencies, FrontierV2, ImportInventoryEntry, ImportInventoryState, ImportLocator,
@@ -101,7 +102,6 @@ pub use receipt::{
     PORTABLE_PATH_KEY_VERSION, PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION,
     PROJECTION_POLICY_VERSION, PROJECTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION,
 };
-pub(crate) use receipt::managed_component_is_portable;
 pub use semantic::{
     BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogicalPageName, LogicalPageNameError,
     LogseqIdentityOrigin, MembershipClaim, MembershipDelta, PageDelta, PagePreambleDelta,

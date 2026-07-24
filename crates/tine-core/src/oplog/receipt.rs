@@ -282,11 +282,7 @@ impl<'de> Deserialize<'de> for ManagedPath {
 }
 
 fn is_managed_path(value: &str) -> bool {
-    if value.is_empty()
-        || value != value.trim()
-        || value.starts_with('/')
-        || value.contains('\\')
-    {
+    if value.is_empty() || value != value.trim() || value.starts_with('/') || value.contains('\\') {
         return false;
     }
     let segments: Vec<_> = value.split('/').collect();

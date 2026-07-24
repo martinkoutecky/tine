@@ -90,7 +90,10 @@ impl fmt::Display for LogicalPageNameError {
                 formatter.write_str("logical page name has an empty canonical key")
             }
             Self::RawTooLarge(bytes) => {
-                write!(formatter, "logical page name is too large: {bytes} raw bytes")
+                write!(
+                    formatter,
+                    "logical page name is too large: {bytes} raw bytes"
+                )
             }
             Self::CanonicalTooLarge(bytes) => write!(
                 formatter,
@@ -123,11 +126,7 @@ fn validate_logical_page_name(value: &str) -> Result<(), LogicalPageNameError> {
 }
 
 fn canonical_page_name_key(value: &str) -> String {
-    let lowered: String = value
-        .trim()
-        .chars()
-        .flat_map(char::to_lowercase)
-        .collect();
+    let lowered: String = value.trim().chars().flat_map(char::to_lowercase).collect();
     let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
     without_leading
         .strip_suffix('/')
@@ -819,7 +818,10 @@ mod tests {
             let name = LogicalPageName::parse(exact).unwrap();
             assert_eq!(name.as_str(), exact);
             assert_eq!(name.canonical_key(), expected_key);
-            assert_eq!(serde_json::to_string(&name).unwrap(), serde_json::to_string(exact).unwrap());
+            assert_eq!(
+                serde_json::to_string(&name).unwrap(),
+                serde_json::to_string(exact).unwrap()
+            );
         }
         assert_eq!(PAGE_NAME_KEY_VERSION, 1);
     }
@@ -859,7 +861,10 @@ mod tests {
             json["catalog_page_state_schema_version"],
             serde_json::json!(CATALOG_PAGE_STATE_SCHEMA_VERSION)
         );
-        assert_eq!(serde_json::from_value::<PageState>(json.clone()).unwrap(), state);
+        assert_eq!(
+            serde_json::from_value::<PageState>(json.clone()).unwrap(),
+            state
+        );
 
         json["catalog_page_state_schema_version"] =
             serde_json::json!(CATALOG_PAGE_STATE_SCHEMA_VERSION - 1);
@@ -911,8 +916,8 @@ mod tests {
         .unwrap();
 
         let mut json = serde_json::to_value(&effect).unwrap();
-        json["blocks"][0]["after"]["logseq_identity_origin"]["policy_generated"]
-            ["future_field"] = serde_json::json!(true);
+        json["blocks"][0]["after"]["logseq_identity_origin"]["policy_generated"]["future_field"] =
+            serde_json::json!(true);
         assert!(serde_json::from_value::<SemanticEffect>(json).is_err());
     }
 

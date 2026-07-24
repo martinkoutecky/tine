@@ -7396,12 +7396,7 @@ impl Graph {
                 .cloned()
                 .unwrap_or_default()
         });
-        self.recover_page_projection_with_attempts(
-            relative_path,
-            None,
-            expected_target,
-            &attempts,
-        )
+        self.recover_page_projection_with_attempts(relative_path, None, expected_target, &attempts)
     }
 
     /// Reread retained displacement through the same target-parent capability.
@@ -11978,9 +11973,7 @@ mod tests {
             graph.config.pages_dir = malformed_pages_root.to_owned();
             graph.config.journals_dir = "journals".to_owned();
             assert!(graph
-                .classify_managed_text_path(
-                    &ManagedPath::parse("journals/2026/07/24.md").unwrap()
-                )
+                .classify_managed_text_path(&ManagedPath::parse("journals/2026/07/24.md").unwrap())
                 .is_err());
         }
         let _ = fs::remove_dir_all(&dir);

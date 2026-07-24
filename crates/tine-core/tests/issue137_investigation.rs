@@ -262,9 +262,7 @@ fn issue232_merge_output_matches_destination_reload_identity() {
     fixture.page("Destination", "- kept\n");
     let graph = fixture.graph();
     graph.warm_cache();
-    let destination = graph
-        .find_entry("Destination", PageKind::Page)
-        .unwrap();
+    let destination = graph.find_entry("Destination", PageKind::Page).unwrap();
 
     graph
         .merge_pages("pages/Source.md", "pages/Destination.md")

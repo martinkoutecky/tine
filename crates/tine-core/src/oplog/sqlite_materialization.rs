@@ -484,18 +484,13 @@ impl MaterializationChange {
         let mut input_budget = MaterializationInputBudget::default();
         input_budget.add_pages(self.replacements.len())?;
         input_budget.add_pages(self.deletions.len())?;
-        input_budget.add_bytes(
-            self.deletions
-                .len()
-                .checked_mul(32)
-                .ok_or_else(|| {
-                    resource_limit(
-                        "materialization change bytes",
-                        usize::MAX,
-                        MAX_MATERIALIZATION_CHANGE_BYTES,
-                    )
-                })?,
-        )?;
+        input_budget.add_bytes(self.deletions.len().checked_mul(32).ok_or_else(|| {
+            resource_limit(
+                "materialization change bytes",
+                usize::MAX,
+                MAX_MATERIALIZATION_CHANGE_BYTES,
+            )
+        })?)?;
         let replacement_ids = self
             .replacements
             .iter()
@@ -874,7 +869,11 @@ fn validate_page(
     input_budget: &mut MaterializationInputBudget,
 ) -> Result<(), MaterializationError> {
     input_budget.add_bytes(MATERIALIZATION_PAGE_OVERHEAD_BYTES)?;
-    input_budget.add_field("page name bytes", &page.name, MAX_MATERIALIZATION_FIELD_BYTES)?;
+    input_budget.add_field(
+        "page name bytes",
+        &page.name,
+        MAX_MATERIALIZATION_FIELD_BYTES,
+    )?;
     input_budget.add_field(
         "page name key bytes",
         &page.name_key,
@@ -1762,9 +1761,7 @@ fn referrer_row_output_bytes(_: &MaterializedReferrerRow) -> Result<usize, Mater
     checked_output_bytes(64, [])
 }
 
-fn property_row_output_bytes(
-    row: &MaterializedPropertyRow,
-) -> Result<usize, MaterializationError> {
+fn property_row_output_bytes(row: &MaterializedPropertyRow) -> Result<usize, MaterializationError> {
     checked_output_bytes(64, [Some(row.name.as_str()), Some(row.value.as_str())])
 }
 
@@ -1920,7 +1917,10 @@ impl<'a> SqliteMaterializedRead<'a> {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(params![value, limit], page_row)?;
-        collect_read_rows(rows.map(|row| row.map_err(MaterializationError::from)), page_row_output_bytes)
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            page_row_output_bytes,
+        )
     }
 
     pub fn blocks_on_page(
@@ -1936,12 +1936,14 @@ impl<'a> SqliteMaterializedRead<'a> {
              FROM blocks WHERE page_id = ?1
              ORDER BY order_key, block_id LIMIT ?2",
         )?;
-        let rows = statement
-            .query_map(
-                params![page_id.as_uuid().as_bytes().as_slice(), limit],
-                block_row,
-            )?;
-        collect_read_rows(rows.map(|row| row.map_err(MaterializationError::from)), block_row_output_bytes)
+        let rows = statement.query_map(
+            params![page_id.as_uuid().as_bytes().as_slice(), limit],
+            block_row,
+        )?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            block_row_output_bytes,
+        )
     }
 
     pub fn referrers_to(
@@ -2027,10 +2029,8 @@ impl<'a> SqliteMaterializedRead<'a> {
             ),
         };
         let mut statement = self.connection.prepare(sql)?;
-        let rows = property_rows(statement.query_map(
-            rusqlite::params_from_iter(args),
-            property_tuple,
-        )?);
+        let rows =
+            property_rows(statement.query_map(rusqlite::params_from_iter(args), property_tuple)?);
         rows
     }
 
@@ -2384,8 +2384,14 @@ pub enum MaterializationError {
     InvalidInput(String),
     Incomplete(String),
     Contradiction(String),
-    BatchMismatch { expected: BatchId, found: BatchId },
-    Stale { materialized: u64, frontier: u64 },
+    BatchMismatch {
+        expected: BatchId,
+        found: BatchId,
+    },
+    Stale {
+        materialized: u64,
+        frontier: u64,
+    },
     DuplicateCollision(BatchId),
     InvalidQuery(String),
 }
@@ -2522,8 +2528,7 @@ mod tests {
             kind: MaterializedReferenceKind::Reference,
         };
         let mut oversized_facet_count = page_input(page_id(3), String::new());
-        oversized_facet_count.references =
-            vec![reference; MAX_MATERIALIZATION_FACET_VALUES + 1];
+        oversized_facet_count.references = vec![reference; MAX_MATERIALIZATION_FACET_VALUES + 1];
         resource_limit(
             MaterializationChange::new(batch_id(2), vec![oversized_facet_count], Vec::new()),
             "reference facet values",
@@ -2536,7 +2541,8 @@ mod tests {
         let mut oversized_facet_bytes = page_input(page_id(4), String::new());
         oversized_facet_bytes.properties = vec![
             oversized_property;
-            MAX_MATERIALIZATION_FACET_BYTES / MAX_MATERIALIZATION_FIELD_BYTES
+            MAX_MATERIALIZATION_FACET_BYTES
+                / MAX_MATERIALIZATION_FIELD_BYTES
         ];
         resource_limit(
             MaterializationChange::new(batch_id(3), vec![oversized_facet_bytes], Vec::new()),
@@ -2551,7 +2557,8 @@ mod tests {
             "materialization change pages",
         );
 
-        let oversized_change = (0..=MAX_MATERIALIZATION_CHANGE_BYTES / MAX_MATERIALIZATION_FIELD_BYTES)
+        let oversized_change = (0..=MAX_MATERIALIZATION_CHANGE_BYTES
+            / MAX_MATERIALIZATION_FIELD_BYTES)
             .map(|index| {
                 page_input(
                     page_id(200_000 + index as u128),
@@ -2628,7 +2635,9 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
                 .unwrap();
             let batch_count: i64 = connection
-                .query_row("SELECT COUNT(*) FROM materialization_batches", [], |row| row.get(0))
+                .query_row("SELECT COUNT(*) FROM materialization_batches", [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             let stamp_sequence: i64 = connection
                 .query_row(
@@ -2702,10 +2711,7 @@ mod tests {
     fn materialized_reads_reject_oversized_queries_and_aggregate_output() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_schema(&connection, ContentDigest::of(b"empty")).unwrap();
-        let searchable_text = format!(
-            "needle {}",
-            "x".repeat(1024 * 1024 - "needle ".len())
-        );
+        let searchable_text = format!("needle {}", "x".repeat(1024 * 1024 - "needle ".len()));
         let pages_per_change = 33;
         let mut final_frontier = ContentDigest::of(b"empty");
         for group in 0..2 {

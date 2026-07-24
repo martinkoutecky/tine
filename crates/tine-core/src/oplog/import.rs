@@ -11,13 +11,13 @@ use sha2::{Digest, Sha256};
 
 use super::hot_engine::AcceptedFrontierRoot;
 use super::{
-    AnnotatedIdentity, BlobDescription, BlockId, ContentDigest, CurrentPageAtPath,
-    DIFF_SCHEMA_VERSION, ImportId, ImportInventoryEntry, ImportInventoryState, LogicalCompletionId,
-    LogseqUuid, ManagedPath, PageId, ProjectionCompletion, ProjectionIntent,
-    ProjectionReceiptStore, ShardedHotEngine, StructuralLocator, WorkspaceId, plan_projection,
+    plan_projection, AnnotatedIdentity, BlobDescription, BlockId, ContentDigest, CurrentPageAtPath,
+    ImportId, ImportInventoryEntry, ImportInventoryState, LogicalCompletionId, LogseqUuid,
+    ManagedPath, PageId, ProjectionCompletion, ProjectionIntent, ProjectionReceiptStore,
+    ShardedHotEngine, StructuralLocator, WorkspaceId, DIFF_SCHEMA_VERSION,
 };
 use crate::doc::Document;
-use crate::model::{Graph, path_is_sync_conflict};
+use crate::model::{path_is_sync_conflict, Graph};
 
 #[cfg(test)]
 thread_local! {
@@ -2029,12 +2029,12 @@ fn structural_classes(
                 instrumentation.structural_class_allocations = instrumentation
                     .structural_class_allocations
                     .saturating_add(1);
-            bucket.push(StructuralClassEntry {
-                raw: node.raw.clone(),
-                child_classes,
-                class,
-            });
-            class
+                bucket.push(StructuralClassEntry {
+                    raw: node.raw.clone(),
+                    child_classes,
+                    class,
+                });
+                class
             }
         };
         classes[index] = class;
@@ -2523,9 +2523,9 @@ mod tests {
 
     use super::*;
     use crate::oplog::{
-        AuthorBatch, BatchId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
-        ManagedTextKind, ObjectStore, OperationTransaction, ProjectionEndpointBinding,
-        ProjectionEndpointId, SemanticOperation, SessionId, write_projection_exact,
+        write_projection_exact, AuthorBatch, BatchId, BlockLocation, CrdtPeerId, DeviceId,
+        DocumentId, LineageDigest, ManagedTextKind, ObjectStore, OperationTransaction,
+        ProjectionEndpointBinding, ProjectionEndpointId, SemanticOperation, SessionId,
     };
 
     struct TestRoot(PathBuf);
@@ -2595,10 +2595,8 @@ mod tests {
                 operations.push(SemanticOperation::CreatePage {
                     page_id,
                     home_document_id: home,
-                    name: crate::oplog::LogicalPageName::parse(format!(
-                        "Snapshot Page {index}"
-                    ))
-                    .unwrap(),
+                    name: crate::oplog::LogicalPageName::parse(format!("Snapshot Page {index}"))
+                        .unwrap(),
                     path: ManagedPath::parse((*path).to_owned()).unwrap(),
                     kind,
                 });

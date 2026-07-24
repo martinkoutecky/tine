@@ -165,8 +165,7 @@ impl QueryCache {
             .source_len()
             .saturating_add(crate::model::ref_groups_estimated_bytes(&groups.groups))
             .saturating_add(256);
-        if bytes > QUERY_CACHE_MAX_BYTES
-            || self.bytes.saturating_add(bytes) > QUERY_CACHE_MAX_BYTES
+        if bytes > QUERY_CACHE_MAX_BYTES || self.bytes.saturating_add(bytes) > QUERY_CACHE_MAX_BYTES
         {
             return;
         }
@@ -3371,11 +3370,7 @@ mod tests {
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
-        fs::write(
-            dir.join("pages/Source.md"),
-            "- [[Target]] from source\n",
-        )
-        .unwrap();
+        fs::write(dir.join("pages/Source.md"), "- [[Target]] from source\n").unwrap();
 
         let graph = Graph::open(&dir);
         let live_id = graph.backlinks("Target")[0].blocks[0].id.clone();
@@ -3899,7 +3894,10 @@ mod tests {
             dashboard.contains("BEGIN_QUERY_PUBLIC_RESULT"),
             "{dashboard}"
         );
-        assert!(!dashboard.contains("class=\"query-omitted\""), "{dashboard}");
+        assert!(
+            !dashboard.contains("class=\"query-omitted\""),
+            "{dashboard}"
+        );
         assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
         assert!(!dashboard.contains("#+END_QUERY"), "{dashboard}");
         let _ = fs::remove_dir_all(&dir);
@@ -4142,11 +4140,7 @@ mod tests {
 
         let oversized = "x".repeat(crate::query::QUERY_SOURCE_MAX_BYTES + 1);
         assert!(render_query(&graph, &oversized, &ctx, 0).contains("publication limit"));
-        let nested = format!(
-            "{}(task TODO){}",
-            "(and ".repeat(1_000),
-            ")".repeat(1_000)
-        );
+        let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
         assert!(render_query(&graph, &nested, &ctx, 0).contains("nesting is too deep"));
         assert!(cache.borrow().entries.is_empty());
 

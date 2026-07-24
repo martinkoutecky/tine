@@ -393,7 +393,9 @@ pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
                 return Ok(());
             }
         }
-        let parent = path.parent().ok_or_else(|| "page source has no parent directory".to_string())?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| "page source has no parent directory".to_string())?;
         opener_command("xdg-open")
             .arg(parent)
             .spawn()
@@ -564,9 +566,18 @@ mod opener_tests {
         );
         assert_eq!(clean.get("HOME").map(String::as_str), Some("/home/test"));
         assert_eq!(clean.get("DISPLAY").map(String::as_str), Some(":0"));
-        assert_eq!(clean.get("XDG_SESSION_TYPE").map(String::as_str), Some("wayland"));
-        assert_eq!(clean.get("KDE_FULL_SESSION").map(String::as_str), Some("true"));
-        assert_eq!(clean.get("KDE_SESSION_VERSION").map(String::as_str), Some("6"));
+        assert_eq!(
+            clean.get("XDG_SESSION_TYPE").map(String::as_str),
+            Some("wayland")
+        );
+        assert_eq!(
+            clean.get("KDE_FULL_SESSION").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            clean.get("KDE_SESSION_VERSION").map(String::as_str),
+            Some("6")
+        );
         assert_eq!(clean.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
         assert!(!clean.contains_key("LD_LIBRARY_PATH"));
         assert!(!clean.contains_key("GST_PLUGIN_PATH"));

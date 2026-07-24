@@ -2721,10 +2721,8 @@ fn sparse_archive_open_cost_is_independent_of_unrelated_batch_count() {
                 &tx(vec![SemanticOperation::CreatePage {
                     page_id: PageId::from_uuid(uuid(60_000 + index as u128)),
                     home_document_id: DocumentId::from_uuid(uuid(70_000 + index as u128)),
-                    name: tine_core::oplog::LogicalPageName::parse(format!(
-                        "Unrelated {index:08}"
-                    ))
-                    .unwrap(),
+                    name: tine_core::oplog::LogicalPageName::parse(format!("Unrelated {index:08}"))
+                        .unwrap(),
                     path: path(&format!("pages/Unrelated {index:08}.md")),
                     kind: ManagedTextKind::Page,
                 }]),
@@ -4212,10 +4210,8 @@ fn rename_shape_state_and_wire_validation_fail_before_mutation() {
     };
     let transaction = tx(vec![operation.clone()]);
     assert_eq!(
-        postcard::from_bytes::<OperationTransaction>(
-            &postcard::to_allocvec(&transaction).unwrap()
-        )
-        .unwrap(),
+        postcard::from_bytes::<OperationTransaction>(&postcard::to_allocvec(&transaction).unwrap())
+            .unwrap(),
         transaction
     );
 
@@ -4237,8 +4233,8 @@ fn rename_shape_state_and_wire_validation_fail_before_mutation() {
         block_id: ids.block_a,
         home_document_id: ids.home_a,
     };
-    assert!(OperationTransaction::new(vec![
-        SemanticOperation::RenamePagesAndRewriteReferrers {
+    assert!(
+        OperationTransaction::new(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
             page_changes: vec![page_a.clone()],
             block_rewrites: vec![
                 tine_core::oplog::BlockContentRewrite {
@@ -4251,11 +4247,11 @@ fn rename_shape_state_and_wire_validation_fail_before_mutation() {
                 },
             ],
             page_preamble_rewrites: Vec::new(),
-        }
-    ])
-    .is_err());
-    assert!(OperationTransaction::new(vec![
-        SemanticOperation::RenamePagesAndRewriteReferrers {
+        }])
+        .is_err()
+    );
+    assert!(
+        OperationTransaction::new(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
             page_changes: vec![page_a.clone()],
             block_rewrites: Vec::new(),
             page_preamble_rewrites: vec![
@@ -4268,20 +4264,20 @@ fn rename_shape_state_and_wire_validation_fail_before_mutation() {
                     new_preamble: Some("two".into()),
                 },
             ],
-        }
-    ])
-    .is_err());
-    assert!(OperationTransaction::new(vec![
-        SemanticOperation::RenamePagesAndRewriteReferrers {
+        }])
+        .is_err()
+    );
+    assert!(
+        OperationTransaction::new(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
             page_changes: vec![page_a.clone()],
             block_rewrites: vec![tine_core::oplog::BlockContentRewrite {
                 block,
                 new_content: "x".repeat(4 * 1024 * 1024 + 1),
             }],
             page_preamble_rewrites: Vec::new(),
-        }
-    ])
-    .is_err());
+        }])
+        .is_err()
+    );
 
     let mut malformed_name = serde_json::to_value(&operation).unwrap();
     malformed_name["rename_pages_and_rewrite_referrers"]["page_changes"][0]["new_name"] =
@@ -4292,8 +4288,8 @@ fn rename_shape_state_and_wire_validation_fail_before_mutation() {
         serde_json::json!(true);
     assert!(serde_json::from_value::<SemanticOperation>(unknown_variant_field).is_err());
     let mut forbidden_home = serde_json::to_value(&operation).unwrap();
-    forbidden_home["rename_pages_and_rewrite_referrers"]["page_changes"][0]
-        ["home_document_id"] = serde_json::json!(ids.home_a);
+    forbidden_home["rename_pages_and_rewrite_referrers"]["page_changes"][0]["home_document_id"] =
+        serde_json::json!(ids.home_a);
     assert!(serde_json::from_value::<SemanticOperation>(forbidden_home).is_err());
     let mut forbidden_kind = serde_json::to_value(&operation).unwrap();
     forbidden_kind["rename_pages_and_rewrite_referrers"]["page_changes"][0]["kind"] =

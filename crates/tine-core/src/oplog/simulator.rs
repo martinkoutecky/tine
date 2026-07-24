@@ -2146,9 +2146,8 @@ fn shrink_operation_content(operation: &SemanticOperation) -> Option<SemanticOpe
             if !block_rewrites.is_empty() =>
         {
             let mut operation = operation.clone();
-            let SemanticOperation::RenamePagesAndRewriteReferrers {
-                block_rewrites, ..
-            } = &mut operation
+            let SemanticOperation::RenamePagesAndRewriteReferrers { block_rewrites, .. } =
+                &mut operation
             else {
                 unreachable!("cloned rename changed kind")
             };

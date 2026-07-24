@@ -380,28 +380,58 @@ mod journal_feed_tests {
     #[test]
     fn cursor_handles_second_page_loss_empty_suffix_exact_limit_zero_and_hard_errors() {
         let first = collect_journal_feed_page(
-            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, None, 5, |e| Ok(dto(e)),
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            None,
+            5,
+            |e| Ok(dto(e)),
         )
         .unwrap();
         assert_eq!(first.next_before_day, Some(3));
         let second = collect_journal_feed_page(
-            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, first.next_before_day, 5, |e| {
-                if e.date_key == Some(2) { Err(std::io::Error::from(std::io::ErrorKind::NotFound)) } else { Ok(dto(e)) }
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            first.next_before_day,
+            5,
+            |e| {
+                if e.date_key == Some(2) {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                } else {
+                    Ok(dto(e))
+                }
             },
         )
         .unwrap();
-        assert_eq!(second.pages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["1"]);
-        assert!(second.done, "a missing second-page row still exhausts the suffix");
+        assert_eq!(
+            second
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        assert!(
+            second.done,
+            "a missing second-page row still exhausts the suffix"
+        );
 
         let empty = collect_journal_feed_page(
-            [5, 4].into_iter().map(entry).collect(), 3, Some(4), 5, |e| Ok(dto(e)),
+            [5, 4].into_iter().map(entry).collect(),
+            3,
+            Some(4),
+            5,
+            |e| Ok(dto(e)),
         )
         .unwrap();
         assert!(empty.pages.is_empty());
         assert!(empty.done);
 
         let exact = collect_journal_feed_page(
-            [3, 2, 1].into_iter().map(entry).collect(), 3, None, 3, |e| Ok(dto(e)),
+            [3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            None,
+            3,
+            |e| Ok(dto(e)),
         )
         .unwrap();
         assert!(exact.done, "an exactly-full final page is done");
@@ -409,7 +439,11 @@ mod journal_feed_tests {
 
         let mut loads = 0;
         let zero = collect_journal_feed_page(
-            [3, 2, 1].into_iter().map(entry).collect(), 0, None, 3, |_e| {
+            [3, 2, 1].into_iter().map(entry).collect(),
+            0,
+            None,
+            3,
+            |_e| {
                 loads += 1;
                 Ok(dto(&entry(0)))
             },
@@ -418,11 +452,13 @@ mod journal_feed_tests {
         assert_eq!(loads, 0, "zero limit loads no entries");
         assert!(!zero.done);
 
-        let hard = collect_journal_feed_page(
-            [3].into_iter().map(entry).collect(), 1, None, 3, |_e| {
-                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"))
-            },
-        );
+        let hard =
+            collect_journal_feed_page([3].into_iter().map(entry).collect(), 1, None, 3, |_e| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))
+            });
         assert!(matches!(hard, Err(err) if err.contains("denied")));
     }
 }
@@ -715,9 +751,7 @@ mod graph_wide_command_boundary_tests {
             let signature = format!("pub(crate) async fn {name}(");
             let start = source.find(&signature).expect("command stays async");
             let tail = &source[start..];
-            let end = tail
-                .find("\n#[tauri::command]")
-                .unwrap_or(tail.len());
+            let end = tail.find("\n#[tauri::command]").unwrap_or(tail.len());
             assert!(
                 tail[..end].contains("tauri::async_runtime::spawn_blocking"),
                 "{name} must not run graph-wide work on the command/UI thread"
@@ -951,10 +985,7 @@ pub(crate) fn set_timetracking_enabled(
 }
 
 #[tauri::command]
-pub(crate) fn set_show_brackets(
-    enabled: bool,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
+pub(crate) fn set_show_brackets(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
     with_graph(&state, |g| {
         g.set_show_brackets(enabled).map_err(|e| e.to_string())
     })?;
@@ -976,13 +1007,9 @@ pub(crate) fn set_doc_mode_enter_for_new_block(
 }
 
 #[tauri::command]
-pub(crate) fn set_logical_outdenting(
-    enabled: bool,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
+pub(crate) fn set_logical_outdenting(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
     with_graph(&state, |g| {
-        g.set_logical_outdenting(enabled)
-            .map_err(|e| e.to_string())
+        g.set_logical_outdenting(enabled).map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
     Ok(())

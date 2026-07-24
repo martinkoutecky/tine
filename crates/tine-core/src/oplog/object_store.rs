@@ -36,8 +36,9 @@ use uuid::Uuid;
 
 use super::identity::parse_digest;
 use super::{
-    BatchError, BatchId, ContentDigest, LineageDigest, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
-    ObjectDescriptor, OperationBatch, OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId,
+    BatchError, BatchId, ContentDigest, LineageDigest, ObjectDescriptor, OperationBatch,
+    OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId, MAX_MANIFEST_BYTES,
+    MAX_OBJECT_BYTES,
 };
 
 const OBJECTS_DIR: &str = "objects";
@@ -1057,12 +1058,12 @@ impl ObjectStore {
         match (head, claim) {
             (None, None) => Ok(()),
             (Some(_), Some(_)) => super::ProjectionWorkIndex::preflight_existing(
-            &control,
-            self.workspace_id,
-            binding.endpoint.endpoint_id,
-            binding.endpoint.graph_resource_id,
-            binding.receipt_store_id,
-        )
+                &control,
+                self.workspace_id,
+                binding.endpoint.endpoint_id,
+                binding.endpoint.graph_resource_id,
+                binding.receipt_store_id,
+            )
             .map_err(|error| StoreError::Scratch(error.to_string())),
             _ => Err(StoreError::MalformedHistoryIndex),
         }
@@ -1281,7 +1282,11 @@ impl EnrolledProjectionOpen {
     > {
         enrolled_open_use_hook();
         let validation = (|| {
-            match self.history.as_ref().expect("sealed history control is present") {
+            match self
+                .history
+                .as_ref()
+                .expect("sealed history control is present")
+            {
                 SealedControl::Existing(history) => history.validate_sealed_open()?,
                 SealedControl::Absent(_) => {}
             }
@@ -1299,35 +1304,47 @@ impl EnrolledProjectionOpen {
 
         let store = self.store.take().expect("sealed store is present");
         let post_hook_validation = (|| {
-            match self.history.as_ref().expect("sealed history control is present") {
+            match self
+                .history
+                .as_ref()
+                .expect("sealed history control is present")
+            {
                 SealedControl::Existing(history) => history.validate_sealed_open()?,
-                SealedControl::Absent(absence) => absence.validate_still_absent(&store.capability)?,
+                SealedControl::Absent(absence) => {
+                    absence.validate_still_absent(&store.capability)?
+                }
             }
             match self.work.as_ref().expect("sealed work control is present") {
                 SealedControl::Existing(work) => work
                     .validate_sealed_open()
                     .map_err(|error| StoreError::Scratch(error.to_string())),
-                SealedControl::Absent(absence) => {
-                    absence.validate_still_absent(&store.capability)
-                }
+                SealedControl::Absent(absence) => absence.validate_still_absent(&store.capability),
             }
         })();
         if let Err(error) = post_hook_validation {
             return Err((store, error));
         }
-        let history = match self.history.take().expect("sealed history control is present") {
+        let history = match self
+            .history
+            .take()
+            .expect("sealed history control is present")
+        {
             SealedControl::Existing(history) => history,
-            SealedControl::Absent(absence) => match store.open_absent_engine_history(absence, self.binding) {
-                Ok(history) => history,
-                Err(error) => return Err((store, error)),
-            },
+            SealedControl::Absent(absence) => {
+                match store.open_absent_engine_history(absence, self.binding) {
+                    Ok(history) => history,
+                    Err(error) => return Err((store, error)),
+                }
+            }
         };
         let work = match self.work.take().expect("sealed work control is present") {
             SealedControl::Existing(work) => work,
-            SealedControl::Absent(absence) => match store.open_absent_projection_work_index(absence, self.binding) {
-                Ok(work) => work,
-                Err(error) => return Err((store, error)),
-            },
+            SealedControl::Absent(absence) => {
+                match store.open_absent_projection_work_index(absence, self.binding) {
+                    Ok(work) => work,
+                    Err(error) => return Err((store, error)),
+                }
+            }
         };
         Ok((store, history, work))
     }
@@ -1435,16 +1452,18 @@ impl AbsentControlName {
         let namespace = match self.namespace {
             Some(namespace) => namespace,
             None => {
-                store_root.create_dir(self.namespace_name).map_err(|error| {
-                    if error.kind() == ErrorKind::AlreadyExists {
-                        StoreError::UnsafeEntry(format!(
-                            "formerly absent {} was created before enrolled open consumed it",
-                            self.namespace_name
-                        ))
-                    } else {
-                        error.into()
-                    }
-                })?;
+                store_root
+                    .create_dir(self.namespace_name)
+                    .map_err(|error| {
+                        if error.kind() == ErrorKind::AlreadyExists {
+                            StoreError::UnsafeEntry(format!(
+                                "formerly absent {} was created before enrolled open consumed it",
+                                self.namespace_name
+                            ))
+                        } else {
+                            error.into()
+                        }
+                    })?;
                 sync_dir_required(store_root)?;
                 open_dir_nofollow(store_root, self.namespace_name)?
             }
@@ -2793,7 +2812,7 @@ fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, Sto
 #[cfg(windows)]
 fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
     };
 
     let file = dir.try_clone()?.into_std_file();
@@ -3440,9 +3459,7 @@ mod history_index_tests {
         result
     }
 
-    fn snapshot_tree_with_identity(
-        path: &Path,
-    ) -> BTreeMap<PathBuf, (Vec<u8>, Option<Vec<u8>>)> {
+    fn snapshot_tree_with_identity(path: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<Vec<u8>>)> {
         fn identity(path: &Path) -> Vec<u8> {
             #[cfg(unix)]
             {
@@ -3458,8 +3475,8 @@ mod history_index_tests {
             {
                 use std::os::windows::fs::OpenOptionsExt as _;
                 use windows_sys::Win32::Storage::FileSystem::{
-                    FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo,
-                    GetFileInformationByHandleEx,
+                    FileIdInfo, GetFileInformationByHandleEx, FILE_FLAG_BACKUP_SEMANTICS,
+                    FILE_ID_INFO,
                 };
 
                 let file = std::fs::OpenOptions::new()
@@ -3510,9 +3527,7 @@ mod history_index_tests {
         result
     }
 
-    fn enrolled_binding(
-        endpoint: u128,
-    ) -> crate::oplog::hot_engine::ProjectionStorageBinding {
+    fn enrolled_binding(endpoint: u128) -> crate::oplog::hot_engine::ProjectionStorageBinding {
         crate::oplog::hot_engine::ProjectionStorageBinding {
             endpoint: crate::oplog::ProjectionEndpointBinding {
                 endpoint_id: crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(
@@ -3524,11 +3539,10 @@ mod history_index_tests {
                     &endpoint.to_be_bytes(),
                 ),
             },
-            receipt_store_id:
-                crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
-                    b"test",
-                    &(endpoint + 2).to_be_bytes(),
-                ),
+            receipt_store_id: crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                b"test",
+                &(endpoint + 2).to_be_bytes(),
+            ),
         }
     }
 
@@ -3543,11 +3557,7 @@ mod history_index_tests {
         for (label, control_name, attack) in [
             ("history-create", ENGINE_HISTORY_DIR, Attack::Create),
             ("work-create", PROJECTION_WORK_DIR, Attack::Create),
-            (
-                "history-substitute",
-                ENGINE_HISTORY_DIR,
-                Attack::Substitute,
-            ),
+            ("history-substitute", ENGINE_HISTORY_DIR, Attack::Substitute),
             ("work-substitute", PROJECTION_WORK_DIR, Attack::Substitute),
         ] {
             let root = test_root(&format!("absent-enrolled-{label}"));
@@ -3573,8 +3583,7 @@ mod history_index_tests {
                     }
                 }
                 std::fs::write(control.join("foreign-owner"), b"foreign archive").unwrap();
-                *snapshot_hook.lock().unwrap() =
-                    Some(snapshot_tree_with_identity(&archive_hook));
+                *snapshot_hook.lock().unwrap() = Some(snapshot_tree_with_identity(&archive_hook));
             });
 
             assert!(
@@ -3615,8 +3624,7 @@ mod history_index_tests {
                 std::fs::create_dir(&namespace).unwrap();
                 std::fs::create_dir(&endpoint).unwrap();
                 std::fs::write(endpoint.join("foreign-owner"), b"foreign archive").unwrap();
-                *snapshot_hook.lock().unwrap() =
-                    Some(snapshot_tree_with_identity(&archive_hook));
+                *snapshot_hook.lock().unwrap() = Some(snapshot_tree_with_identity(&archive_hook));
             });
 
             assert!(open.into_runtime().is_err());
@@ -3705,7 +3713,10 @@ mod history_index_tests {
         assert_eq!(history.current().unwrap().0, 1);
         std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), &original).unwrap();
         let attacked = snapshot_tree(&archive);
-        assert!(history.current().is_err(), "rollback was accepted on reread");
+        assert!(
+            history.current().is_err(),
+            "rollback was accepted on reread"
+        );
         assert_eq!(snapshot_tree(&archive), attacked);
 
         std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), accepted).unwrap();
@@ -4069,11 +4080,9 @@ mod history_index_tests {
                 ));
             }
             assert_eq!(snapshot_tree(&archive_path), before);
-            assert!(
-                !archive_path
-                    .join(super::super::scratch_store::SCRATCH_DIR)
-                    .exists()
-            );
+            assert!(!archive_path
+                .join(super::super::scratch_store::SCRATCH_DIR)
+                .exists());
             assert!(!archive_path.join(PROJECTION_WORK_DIR).exists());
         }
 
