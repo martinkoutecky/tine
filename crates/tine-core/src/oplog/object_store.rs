@@ -165,8 +165,8 @@ struct ControlDirectoryIdentity {
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ControlDirectoryIdentity {
-    volume: u32,
-    file_index: u64,
+    volume: u64,
+    file_id: [u8; 16],
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -2792,20 +2792,26 @@ fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, Sto
 
 #[cfg(windows)]
 fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
-    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let file = dir.try_clone()?.into_std_file();
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(StoreError::Io(std::io::Error::last_os_error()));
+    }
     Ok(ControlDirectoryIdentity {
-        volume: metadata.volume_serial_number().ok_or_else(|| {
-            StoreError::Io(std::io::Error::new(
-                ErrorKind::Unsupported,
-                "directory volume identity is unavailable",
-            ))
-        })?,
-        file_index: metadata.file_index().ok_or_else(|| {
-            StoreError::Io(std::io::Error::new(
-                ErrorKind::Unsupported,
-                "directory file identity is unavailable",
-            ))
-        })?,
+        volume: information.VolumeSerialNumber,
+        file_id: information.FileId.Identifier,
     })
 }
 
@@ -3438,11 +3444,11 @@ mod history_index_tests {
         path: &Path,
     ) -> BTreeMap<PathBuf, (Vec<u8>, Option<Vec<u8>>)> {
         fn identity(path: &Path) -> Vec<u8> {
-            let metadata = std::fs::symlink_metadata(path).unwrap();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
 
+                let metadata = std::fs::symlink_metadata(path).unwrap();
                 let mut identity = Vec::with_capacity(16);
                 identity.extend_from_slice(&metadata.dev().to_be_bytes());
                 identity.extend_from_slice(&metadata.ino().to_be_bytes());
@@ -3450,21 +3456,30 @@ mod history_index_tests {
             }
             #[cfg(windows)]
             {
-                use std::os::windows::fs::MetadataExt as _;
+                use std::os::windows::fs::OpenOptionsExt as _;
+                use windows_sys::Win32::Storage::FileSystem::{
+                    FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo,
+                    GetFileInformationByHandleEx,
+                };
 
-                let mut identity = Vec::with_capacity(12);
-                identity.extend_from_slice(
-                    &metadata
-                        .volume_serial_number()
-                        .expect("test filesystem volume identity")
-                        .to_be_bytes(),
-                );
-                identity.extend_from_slice(
-                    &metadata
-                        .file_index()
-                        .expect("test filesystem file identity")
-                        .to_be_bytes(),
-                );
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(path)
+                    .unwrap();
+                let mut information = FILE_ID_INFO::default();
+                let result = unsafe {
+                    GetFileInformationByHandleEx(
+                        file.as_raw_handle(),
+                        FileIdInfo,
+                        (&mut information as *mut FILE_ID_INFO).cast(),
+                        std::mem::size_of::<FILE_ID_INFO>() as u32,
+                    )
+                };
+                assert_ne!(result, 0, "test filesystem identity");
+                let mut identity = Vec::with_capacity(24);
+                identity.extend_from_slice(&information.VolumeSerialNumber.to_be_bytes());
+                identity.extend_from_slice(&information.FileId.Identifier);
                 identity
             }
             #[cfg(not(any(unix, windows)))]
