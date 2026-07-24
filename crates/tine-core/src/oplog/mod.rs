@@ -91,7 +91,7 @@ pub(crate) use projection_work_index::{
 pub use receipt::{
     AnnotatedIdentity, BaseBlob, BlobDescription, CrdtPeerCounter, DocumentCausalDigest,
     DocumentDependencies, FrontierV2, ImportInventoryEntry, ImportInventoryState, ImportLocator,
-    LogicalCompletionId, ManagedPath, PortablePathKey, PortablePathKeyDigest,
+    LogicalCompletionId, ManagedPath, ManagedTextKind, PortablePathKey, PortablePathKeyDigest,
     ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionCompletion, ProjectionIntent,
     ProjectionIntentId, ProjectionPrecondition, ReceiptError, StructuralLocator, StructuralSpan,
     DIFF_SCHEMA_VERSION, MANAGED_ENTITY_SET_VERSION, PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION,

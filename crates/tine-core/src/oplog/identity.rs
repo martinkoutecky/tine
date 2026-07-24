@@ -103,6 +103,24 @@ impl CrdtPeerId {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
+
+    /// Derive one deterministic candidate for the synthetic external-import
+    /// author. Collision probing and selection are deliberately left to the
+    /// importer that owns the target CRDT document.
+    pub(crate) fn external_import_candidate(
+        workspace_id: WorkspaceId,
+        import_id: ImportId,
+        attempt: u64,
+    ) -> Self {
+        Self(derived_u64(
+            b"tine/import/crdt-peer-id/v1\0",
+            &[
+                workspace_id.as_uuid().as_bytes(),
+                import_id.as_bytes(),
+                &attempt.to_be_bytes(),
+            ],
+        ))
+    }
 }
 
 impl fmt::Display for CrdtPeerId {
@@ -359,6 +377,54 @@ impl BatchId {
     }
 }
 
+impl DocumentId {
+    /// Derive the home document for one unmatched external page from its
+    /// workspace and exact managed relative path.
+    pub(crate) fn for_unmatched_import_page(
+        workspace_id: WorkspaceId,
+        managed_relative_path: &[u8],
+    ) -> Self {
+        Self(derived_uuid(
+            b"tine/import/unmatched-page-home-document-id/v1\0",
+            &[workspace_id.as_uuid().as_bytes(), managed_relative_path],
+        ))
+    }
+
+    /// Derive the external-observation document for one import transaction.
+    pub(crate) fn for_external_import_observation(
+        workspace_id: WorkspaceId,
+        import_id: ImportId,
+    ) -> Self {
+        Self(derived_uuid(
+            b"tine/import/external-observation-document-id/v1\0",
+            &[workspace_id.as_uuid().as_bytes(), import_id.as_bytes()],
+        ))
+    }
+}
+
+impl DeviceId {
+    /// Derive the synthetic external author device for a workspace.
+    pub(crate) fn for_external_import_author(workspace_id: WorkspaceId) -> Self {
+        Self(derived_uuid(
+            b"tine/import/external-author-device-id/v1\0",
+            &[workspace_id.as_uuid().as_bytes()],
+        ))
+    }
+}
+
+impl SessionId {
+    /// Derive the synthetic external author session for one import transaction.
+    pub(crate) fn for_external_import_author(
+        workspace_id: WorkspaceId,
+        import_id: ImportId,
+    ) -> Self {
+        Self(derived_uuid(
+            b"tine/import/external-author-session-id/v1\0",
+            &[workspace_id.as_uuid().as_bytes(), import_id.as_bytes()],
+        ))
+    }
+}
+
 impl PageId {
     /// Derive the identity of an unmatched imported page.
     pub fn for_unmatched_import(import_id: ImportId, locator: &[u8]) -> Self {
@@ -393,6 +459,19 @@ fn derived_uuid(domain: &[u8], parts: &[&[u8]]) -> Uuid {
     bytes[6] = (bytes[6] & 0x0f) | 0x80;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Uuid::from_bytes(bytes)
+}
+
+fn derived_u64(domain: &[u8], parts: &[&[u8]]) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(bytes)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -438,4 +517,72 @@ pub(crate) fn write_hex(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid(Uuid::from_u128(0x1020_3040_5060_7080_90a0_b0c0_d0e0_f001))
+    }
+
+    fn import_id() -> ImportId {
+        ImportId::from_digest([0x5a; 32])
+    }
+
+    #[test]
+    fn publisher_p1_external_import_derivations_are_deterministic_and_domain_separated() {
+        let workspace = workspace();
+        let import = import_id();
+        let home = DocumentId::for_unmatched_import_page(workspace, b"pages/nested/naive.md");
+        let device = DeviceId::for_external_import_author(workspace);
+        let session = SessionId::for_external_import_author(workspace, import);
+        let observation = DocumentId::for_external_import_observation(workspace, import);
+        let peer = CrdtPeerId::external_import_candidate(workspace, import, 7);
+
+        assert_eq!(
+            home,
+            DocumentId::for_unmatched_import_page(workspace, b"pages/nested/naive.md")
+        );
+        assert_eq!(device, DeviceId::for_external_import_author(workspace));
+        assert_eq!(
+            session,
+            SessionId::for_external_import_author(workspace, import)
+        );
+        assert_eq!(
+            observation,
+            DocumentId::for_external_import_observation(workspace, import)
+        );
+        assert_eq!(
+            peer,
+            CrdtPeerId::external_import_candidate(workspace, import, 7)
+        );
+
+        let rendered = [
+            home.to_string(),
+            device.to_string(),
+            session.to_string(),
+            observation.to_string(),
+            peer.to_string(),
+        ];
+        for (left_index, left) in rendered.iter().enumerate() {
+            for right in rendered.iter().skip(left_index + 1) {
+                assert_ne!(left, right, "derivation domains must remain separate");
+            }
+        }
+        assert_ne!(
+            peer,
+            CrdtPeerId::external_import_candidate(workspace, import, 8)
+        );
+
+        assert_eq!(home.to_string(), "737b3bff-157d-8cfe-a3e8-be0ca069e2d6");
+        assert_eq!(device.to_string(), "6c3c7276-a0d6-803e-9e0c-e24f8b58d13c");
+        assert_eq!(session.to_string(), "5e69f6b5-0b83-8916-904c-36f09da566e1");
+        assert_eq!(
+            observation.to_string(),
+            "54588e2e-938c-8f75-bc5c-f9ddbcf4ddb7"
+        );
+        assert_eq!(peer.as_u64(), 2_725_213_283_319_468_303);
+    }
 }
