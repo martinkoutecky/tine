@@ -1265,6 +1265,7 @@ pub(crate) fn apply_change(
     input_digest: ContentDigest,
     post_frontier_digest: ContentDigest,
 ) -> Result<(), MaterializationError> {
+    change.validate_shape()?;
     let effect = SemanticEffect::decode(semantic_effect)
         .map_err(|error| MaterializationError::InvalidInput(error.to_string()))?;
     change.validate_against_effect(&effect)?;
