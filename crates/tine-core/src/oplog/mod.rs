@@ -98,6 +98,7 @@ pub use receipt::{
     PORTABLE_PATH_KEY_VERSION, PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION,
     PROJECTION_POLICY_VERSION, PROJECTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION,
 };
+pub(crate) use receipt::managed_component_is_portable;
 pub use semantic::{
     BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogseqIdentityOrigin, MembershipClaim,
     MembershipDelta, PageDelta, PagePreambleDelta, PagePreambleState, PageState,

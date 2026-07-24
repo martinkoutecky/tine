@@ -16,8 +16,8 @@ use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
-    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath, ManagedTextKind,
-    ProjectionAttemptReservation, ReceiptError,
+    managed_component_is_portable, BlobDescription, CanonicalGraphResourceId, ContentDigest,
+    ManagedPath, ManagedTextKind, ProjectionAttemptReservation, ReceiptError,
 };
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
@@ -10165,45 +10165,7 @@ fn managed_root_components(root: &str) -> Option<Vec<&str>> {
 }
 
 fn projection_component_is_portable(component: &str) -> bool {
-    if component.is_empty()
-        || matches!(component, "." | "..")
-        || component.ends_with(' ')
-        || component.ends_with('.')
-        || component
-            .chars()
-            .any(|character| character == ':' || character.is_control())
-    {
-        return false;
-    }
-    let device_stem = component
-        .split_once('.')
-        .map_or(component, |(stem, _)| stem)
-        .to_ascii_uppercase();
-    !matches!(
-        device_stem.as_str(),
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    )
+    managed_component_is_portable(component)
 }
 
 #[cfg(any(
@@ -11954,6 +11916,16 @@ mod tests {
         assert!(graph
             .classify_managed_text_path(&ManagedPath::parse("pages/a.md").unwrap())
             .is_err());
+
+        for malformed_pages_root in ["bad*", "COM¹"] {
+            graph.config.pages_dir = malformed_pages_root.to_owned();
+            graph.config.journals_dir = "journals".to_owned();
+            assert!(graph
+                .classify_managed_text_path(
+                    &ManagedPath::parse("journals/2026/07/24.md").unwrap()
+                )
+                .is_err());
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 
