@@ -157,7 +157,7 @@ fn decode_rejects_truncation_corruption_and_unknown_versions() {
     assert_eq!(current["receipt_schema_version"], json!(5));
     assert_eq!(current["projection_schema_version"], json!(4));
     assert_eq!(current["projection_policy_version"], json!(1));
-    assert_eq!(current["managed_entity_set_version"], json!(1));
+    assert_eq!(current["managed_entity_set_version"], json!(2));
     assert!(current["frontier"][0]["direct_dependency_heads"].is_array());
     assert!(current["frontier"][0]["causal_state_digest"].is_string());
     assert!(ProjectionIntent::decode(&encoded[..encoded.len() - 3]).is_err());
