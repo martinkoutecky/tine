@@ -11,6 +11,7 @@ use super::ContentDigest;
 
 const NODE_SCHEMA_VERSION: u32 = 1;
 const MAX_KEY_BYTES: usize = 96;
+const MAX_KEY_BITS: usize = MAX_KEY_BYTES * 8;
 // Values are one immutable introduction each. Accumulated per-UUID history is
 // structurally sharded across Patricia leaves and therefore never approaches
 // this per-event corruption bound.
@@ -83,6 +84,22 @@ enum Node {
     },
 }
 
+#[derive(Clone, Debug)]
+struct ChildPathConstraint {
+    parent_prefix: Vec<u8>,
+    parent_prefix_bit_len: usize,
+    right: bool,
+}
+
+#[derive(Debug)]
+struct BranchFrame {
+    prefix: Vec<u8>,
+    prefix_bit_len: u16,
+    left: ContentDigest,
+    right: ContentDigest,
+    rightward: bool,
+}
+
 impl PatriciaIndexStore {
     pub(crate) fn new(nodes: Dir) -> Self {
         Self {
@@ -117,8 +134,13 @@ impl PatriciaIndexStore {
             return Ok(None);
         }
         let mut digest = root.digest();
+        let mut constraint = None;
+        let mut remaining_nodes = traversal_node_budget(key.len())?;
         loop {
-            match self.read_node(digest)? {
+            remaining_nodes = consume_node_budget(remaining_nodes)?;
+            let node = self.read_node(digest)?;
+            validate_node_path(&node, constraint.as_ref())?;
+            match node {
                 Node::Leaf {
                     key: found, value, ..
                 } => return Ok((found == key).then_some(value)),
@@ -129,17 +151,38 @@ impl PatriciaIndexStore {
                     right,
                     ..
                 } => {
-                    if !prefix_matches(key, &prefix, prefix_bit_len as usize) {
+                    let split = prefix_bit_len as usize;
+                    if !prefix_matches(key, &prefix, split)? {
                         return Ok(None);
                     }
-                    digest = if key_bit(key, prefix_bit_len as usize)? {
-                        right
-                    } else {
-                        left
-                    };
+                    let rightward = key_bit(key, split)?;
+                    digest = if rightward { right } else { left };
+                    constraint = Some(ChildPathConstraint {
+                        parent_prefix: prefix,
+                        parent_prefix_bit_len: split,
+                        right: rightward,
+                    });
                 }
             }
         }
+    }
+
+    #[allow(dead_code)] // consumed by the intentionally unwired P2N2 foundation
+    pub(crate) fn lookup_many(
+        &self,
+        root: PatriciaIndexRoot,
+        keys: &[Vec<u8>],
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StoreError> {
+        if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(StoreError::MalformedLogseqClaimIndex);
+        }
+        keys.iter()
+            .filter_map(|key| {
+                self.lookup(root, key)
+                    .transpose()
+                    .map(|result| result.map(|value| (key.clone(), value)))
+            })
+            .collect()
     }
 
     pub(crate) fn lookup_prefix(
@@ -187,69 +230,97 @@ impl PatriciaIndexStore {
 
     fn insert_at(
         &self,
-        digest: ContentDigest,
+        root: ContentDigest,
         key: &[u8],
         value: &[u8],
     ) -> Result<ContentDigest, StoreError> {
-        let node = self.read_node(digest)?;
-        let node_prefix = node_prefix(&node);
-        let node_prefix_bits = node_prefix_bits(&node);
-        let shared = common_prefix_bits(key, node_prefix, node_prefix_bits);
-        if shared < node_prefix_bits {
-            let leaf = self.publish_node(&Node::Leaf {
-                schema_version: NODE_SCHEMA_VERSION,
-                key: key.to_vec(),
-                value: value.to_vec(),
-            })?;
-            return self.publish_split(key, shared, digest, node_prefix, leaf);
-        }
-
-        match node {
-            Node::Leaf {
-                key: found_key,
-                value: found_value,
-                ..
-            } => {
-                if found_key == key {
-                    if found_value == value {
-                        return Ok(digest);
-                    }
-                    return self.publish_node(&Node::Leaf {
-                        schema_version: NODE_SCHEMA_VERSION,
-                        key: key.to_vec(),
-                        value: value.to_vec(),
-                    });
-                }
-                let shared = common_prefix_bits(key, &found_key, key.len() * 8);
+        let mut digest = root;
+        let mut constraint = None;
+        let mut remaining_nodes = traversal_node_budget(key.len())?;
+        let mut ancestors = Vec::new();
+        let replacement = loop {
+            remaining_nodes = consume_node_budget(remaining_nodes)?;
+            let node = self.read_node(digest)?;
+            validate_node_path(&node, constraint.as_ref())?;
+            let node_prefix = node_prefix(&node);
+            let node_prefix_bits = node_prefix_bits(&node)?;
+            let shared = common_prefix_bits(key, node_prefix, node_prefix_bits)?;
+            if shared < node_prefix_bits {
                 let leaf = self.publish_node(&Node::Leaf {
                     schema_version: NODE_SCHEMA_VERSION,
                     key: key.to_vec(),
                     value: value.to_vec(),
                 })?;
-                self.publish_split(key, shared, digest, &found_key, leaf)
+                break self.publish_split(key, shared, digest, node_prefix, leaf)?;
             }
-            Node::Branch {
-                prefix,
-                prefix_bit_len,
-                left,
-                right,
-                ..
-            } => {
-                let split = prefix_bit_len as usize;
-                let (left, right) = if key_bit(key, split)? {
-                    (left, self.insert_at(right, key, value)?)
-                } else {
-                    (self.insert_at(left, key, value)?, right)
-                };
-                self.publish_node(&Node::Branch {
-                    schema_version: NODE_SCHEMA_VERSION,
+
+            match node {
+                Node::Leaf {
+                    key: found_key,
+                    value: found_value,
+                    ..
+                } => {
+                    if found_key == key {
+                        if found_value == value {
+                            break digest;
+                        }
+                        break self.publish_node(&Node::Leaf {
+                            schema_version: NODE_SCHEMA_VERSION,
+                            key: key.to_vec(),
+                            value: value.to_vec(),
+                        })?;
+                    }
+                    let shared = common_prefix_bits(key, &found_key, key_bit_len(key)?)?;
+                    let leaf = self.publish_node(&Node::Leaf {
+                        schema_version: NODE_SCHEMA_VERSION,
+                        key: key.to_vec(),
+                        value: value.to_vec(),
+                    })?;
+                    break self.publish_split(key, shared, digest, &found_key, leaf)?;
+                }
+                Node::Branch {
                     prefix,
                     prefix_bit_len,
                     left,
                     right,
-                })
+                    ..
+                } => {
+                    let split = prefix_bit_len as usize;
+                    let rightward = key_bit(key, split)?;
+                    digest = if rightward { right } else { left };
+                    constraint = Some(ChildPathConstraint {
+                        parent_prefix: prefix.clone(),
+                        parent_prefix_bit_len: split,
+                        right: rightward,
+                    });
+                    ancestors.push(BranchFrame {
+                        prefix,
+                        prefix_bit_len,
+                        left,
+                        right,
+                        rightward,
+                    });
+                }
             }
-        }
+        };
+
+        ancestors
+            .into_iter()
+            .rev()
+            .try_fold(replacement, |child, ancestor| {
+                let (left, right) = if ancestor.rightward {
+                    (ancestor.left, child)
+                } else {
+                    (child, ancestor.right)
+                };
+                self.publish_node(&Node::Branch {
+                    schema_version: NODE_SCHEMA_VERSION,
+                    prefix: ancestor.prefix,
+                    prefix_bit_len: ancestor.prefix_bit_len,
+                    left,
+                    right,
+                })
+            })
     }
 
     fn publish_split(
@@ -282,36 +353,66 @@ impl PatriciaIndexStore {
 
     fn collect_prefix(
         &self,
-        digest: ContentDigest,
+        root: ContentDigest,
         requested: &[u8],
         found: &mut BTreeMap<Vec<u8>, Vec<u8>>,
     ) -> Result<(), StoreError> {
-        match self.read_node(digest)? {
-            Node::Leaf { key, value, .. } => {
-                if key.starts_with(requested) {
-                    found.insert(key, value);
+        let budget = traversal_node_budget(MAX_KEY_BYTES)?;
+        let mut pending = vec![(root, None, budget)];
+        while let Some((digest, constraint, remaining_nodes)) = pending.pop() {
+            let remaining_nodes = consume_node_budget(remaining_nodes)?;
+            let node = self.read_node(digest)?;
+            validate_node_path(&node, constraint.as_ref())?;
+            match node {
+                Node::Leaf { key, value, .. } => {
+                    if key.starts_with(requested) {
+                        found.insert(key, value);
+                    }
                 }
-            }
-            Node::Branch {
-                prefix,
-                prefix_bit_len,
-                left,
-                right,
-                ..
-            } => {
-                let split = prefix_bit_len as usize;
-                let requested_bits = requested.len() * 8;
-                let compared = split.min(requested_bits);
-                if !prefix_matches(requested, &prefix, compared) {
-                    return Ok(());
-                }
-                if requested_bits <= split {
-                    self.collect_prefix(left, requested, found)?;
-                    self.collect_prefix(right, requested, found)?;
-                } else if key_bit(requested, split)? {
-                    self.collect_prefix(right, requested, found)?;
-                } else {
-                    self.collect_prefix(left, requested, found)?;
+                Node::Branch {
+                    prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    let split = prefix_bit_len as usize;
+                    let requested_bits = key_bit_len(requested)?;
+                    let compared = split.min(requested_bits);
+                    if !prefix_matches(requested, &prefix, compared)? {
+                        continue;
+                    }
+                    if requested_bits <= split {
+                        pending.push((
+                            right,
+                            Some(ChildPathConstraint {
+                                parent_prefix: prefix.clone(),
+                                parent_prefix_bit_len: split,
+                                right: true,
+                            }),
+                            remaining_nodes,
+                        ));
+                        pending.push((
+                            left,
+                            Some(ChildPathConstraint {
+                                parent_prefix: prefix,
+                                parent_prefix_bit_len: split,
+                                right: false,
+                            }),
+                            remaining_nodes,
+                        ));
+                    } else {
+                        let rightward = key_bit(requested, split)?;
+                        pending.push((
+                            if rightward { right } else { left },
+                            Some(ChildPathConstraint {
+                                parent_prefix: prefix,
+                                parent_prefix_bit_len: split,
+                                right: rightward,
+                            }),
+                            remaining_nodes,
+                        ));
+                    }
                 }
             }
         }
@@ -373,6 +474,7 @@ fn validate_key(key: &[u8]) -> Result<(), StoreError> {
     if key.is_empty() || key.len() > MAX_KEY_BYTES {
         return Err(StoreError::MalformedLogseqClaimIndex);
     }
+    key_bit_len(key)?;
     Ok(())
 }
 
@@ -397,7 +499,7 @@ fn validate_node(node: &Node) -> Result<(), StoreError> {
         } => {
             let bits = *prefix_bit_len as usize;
             if *schema_version != NODE_SCHEMA_VERSION
-                || bits >= MAX_KEY_BYTES * 8
+                || bits >= MAX_KEY_BITS
                 || prefix.len() != bits.div_ceil(8)
                 || masked_prefix(prefix, bits) != *prefix
                 || left == right
@@ -411,6 +513,28 @@ fn validate_node(node: &Node) -> Result<(), StoreError> {
     }
 }
 
+fn validate_node_path(
+    node: &Node,
+    constraint: Option<&ChildPathConstraint>,
+) -> Result<(), StoreError> {
+    let Some(constraint) = constraint else {
+        return Ok(());
+    };
+    let prefix = node_prefix(node);
+    let bits = node_prefix_bits(node)?;
+    if bits <= constraint.parent_prefix_bit_len
+        || !prefix_matches(
+            prefix,
+            &constraint.parent_prefix,
+            constraint.parent_prefix_bit_len,
+        )?
+        || key_bit(prefix, constraint.parent_prefix_bit_len)? != constraint.right
+    {
+        return Err(StoreError::MalformedLogseqClaimIndex);
+    }
+    Ok(())
+}
+
 fn node_prefix(node: &Node) -> &[u8] {
     match node {
         Node::Leaf { key, .. } => key,
@@ -418,31 +542,50 @@ fn node_prefix(node: &Node) -> &[u8] {
     }
 }
 
-fn node_prefix_bits(node: &Node) -> usize {
+fn node_prefix_bits(node: &Node) -> Result<usize, StoreError> {
     match node {
-        Node::Leaf { key, .. } => key.len() * 8,
-        Node::Branch { prefix_bit_len, .. } => *prefix_bit_len as usize,
+        Node::Leaf { key, .. } => key_bit_len(key),
+        Node::Branch { prefix_bit_len, .. } => Ok(*prefix_bit_len as usize),
     }
 }
 
-fn common_prefix_bits(left: &[u8], right: &[u8], limit: usize) -> usize {
-    let limit = limit.min(left.len() * 8).min(right.len() * 8);
-    (0..limit)
+fn common_prefix_bits(left: &[u8], right: &[u8], limit: usize) -> Result<usize, StoreError> {
+    let limit = limit.min(key_bit_len(left)?).min(key_bit_len(right)?);
+    Ok((0..limit)
         .find(|bit| key_bit_unchecked(left, *bit) != key_bit_unchecked(right, *bit))
-        .unwrap_or(limit)
+        .unwrap_or(limit))
 }
 
-fn prefix_matches(key: &[u8], prefix: &[u8], bits: usize) -> bool {
-    key.len() * 8 >= bits
-        && prefix.len() * 8 >= bits
-        && common_prefix_bits(key, prefix, bits) == bits
+fn prefix_matches(key: &[u8], prefix: &[u8], bits: usize) -> Result<bool, StoreError> {
+    Ok(key_bit_len(key)? >= bits
+        && key_bit_len(prefix)? >= bits
+        && common_prefix_bits(key, prefix, bits)? == bits)
 }
 
 fn key_bit(key: &[u8], bit: usize) -> Result<bool, StoreError> {
-    if bit >= key.len() * 8 {
+    if bit >= key_bit_len(key)? {
         return Err(StoreError::MalformedLogseqClaimIndex);
     }
     Ok(key_bit_unchecked(key, bit))
+}
+
+fn key_bit_len(key: &[u8]) -> Result<usize, StoreError> {
+    key.len()
+        .checked_mul(8)
+        .ok_or(StoreError::MalformedLogseqClaimIndex)
+}
+
+fn traversal_node_budget(key_bytes: usize) -> Result<usize, StoreError> {
+    key_bytes
+        .checked_mul(8)
+        .and_then(|bits| bits.checked_add(1))
+        .ok_or(StoreError::MalformedLogseqClaimIndex)
+}
+
+fn consume_node_budget(remaining_nodes: usize) -> Result<usize, StoreError> {
+    remaining_nodes
+        .checked_sub(1)
+        .ok_or(StoreError::MalformedLogseqClaimIndex)
 }
 
 fn key_bit_unchecked(key: &[u8], bit: usize) -> bool {
@@ -481,6 +624,56 @@ mod tests {
         ensure_directory_nofollow(&root, "nodes").unwrap();
         let nodes = open_dir_nofollow(&root, "nodes").unwrap();
         (path, PatriciaIndexStore::new(nodes))
+    }
+
+    fn publish_leaf(store: &PatriciaIndexStore, key: &[u8]) -> ContentDigest {
+        store
+            .publish_node(&Node::Leaf {
+                schema_version: NODE_SCHEMA_VERSION,
+                key: key.to_vec(),
+                value: b"value".to_vec(),
+            })
+            .unwrap()
+    }
+
+    fn publish_branch(
+        store: &PatriciaIndexStore,
+        prefix_source: &[u8],
+        split: usize,
+        left: ContentDigest,
+        right: ContentDigest,
+    ) -> ContentDigest {
+        store
+            .publish_node(&Node::Branch {
+                schema_version: NODE_SCHEMA_VERSION,
+                prefix: masked_prefix(prefix_source, split),
+                prefix_bit_len: u16::try_from(split).unwrap(),
+                left,
+                right,
+            })
+            .unwrap()
+    }
+
+    fn assert_point_traversals_reject(
+        store: &PatriciaIndexStore,
+        root: PatriciaIndexRoot,
+        key: &[u8],
+    ) {
+        assert!(matches!(
+            store.lookup(root, key),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
+        assert!(matches!(
+            store.insert_many(
+                root,
+                &BTreeMap::from([(key.to_vec(), b"replacement".to_vec())])
+            ),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
+        assert!(matches!(
+            store.lookup_prefix(root, key),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
     }
 
     #[test]
@@ -558,6 +751,78 @@ mod tests {
             after.reads - before.reads <= INTRODUCTIONS * 3,
             "prefix lookup must read only the participant subtree"
         );
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn repeated_nonprogressing_branches_and_wrong_path_leaves_refuse() {
+        let (path, store) = store("malformed-paths");
+        let key = [0_u8];
+        let left = publish_leaf(&store, &key);
+        let right = publish_leaf(&store, &[0x80]);
+
+        let repeated_child = publish_branch(&store, &key, 0, left, right);
+        let repeated_root =
+            PatriciaIndexRoot::from_digest(publish_branch(&store, &key, 0, repeated_child, right));
+        assert_point_traversals_reject(&store, repeated_root, &key);
+
+        let shallower_child = publish_branch(&store, &key, 1, left, right);
+        let nonprogressing_root =
+            PatriciaIndexRoot::from_digest(publish_branch(&store, &key, 2, shallower_child, right));
+        assert_point_traversals_reject(&store, nonprogressing_root, &key);
+
+        let wrong_direction_leaf = publish_leaf(&store, &[0x40]);
+        let wrong_leaf_root = PatriciaIndexRoot::from_digest(publish_branch(
+            &store,
+            &key,
+            1,
+            wrong_direction_leaf,
+            right,
+        ));
+        assert_point_traversals_reject(&store, wrong_leaf_root, &key);
+
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn overdeep_content_addressed_branch_chain_refuses_within_key_bound() {
+        let (path, store) = store("overdeep");
+        let key = vec![0_u8; MAX_KEY_BYTES];
+        let matching_leaf = publish_leaf(&store, &key);
+        let other_leaf = publish_leaf(&store, &vec![0xff; MAX_KEY_BYTES]);
+
+        let mut chain = publish_branch(&store, &key, MAX_KEY_BITS - 1, matching_leaf, other_leaf);
+        for split in (0..MAX_KEY_BITS).rev() {
+            chain = publish_branch(&store, &key, split, chain, other_leaf);
+        }
+        let root = PatriciaIndexRoot::from_digest(chain);
+        let hard_bound = traversal_node_budget(key.len()).unwrap();
+
+        let before = store.stats();
+        assert!(matches!(
+            store.lookup(root, &key),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
+        let after_lookup = store.stats();
+        assert!(after_lookup.reads - before.reads <= hard_bound);
+
+        assert!(matches!(
+            store.insert_many(
+                root,
+                &BTreeMap::from([(key.clone(), b"replacement".to_vec())])
+            ),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
+        let after_insert = store.stats();
+        assert!(after_insert.reads - after_lookup.reads <= hard_bound);
+
+        assert!(matches!(
+            store.lookup_prefix(root, &key),
+            Err(StoreError::MalformedLogseqClaimIndex)
+        ));
+        let after_prefix = store.stats();
+        assert!(after_prefix.reads - after_insert.reads <= hard_bound);
+
         fs::remove_dir_all(path).unwrap();
     }
 }

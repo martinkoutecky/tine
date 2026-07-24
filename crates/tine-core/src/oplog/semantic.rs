@@ -1,6 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use super::{BlockId, DocumentId, LogseqUuid, ManagedPath, ManagedTextKind, PageId};
@@ -32,6 +33,39 @@ impl LogicalPageName {
 
     pub fn canonical_key(&self) -> String {
         canonical_page_name_key(&self.0)
+    }
+
+    pub fn key_digest(&self) -> PageNameKeyDigest {
+        PageNameKeyDigest::of_canonical_key(&self.canonical_key())
+    }
+}
+
+/// Transparent authenticated-index key for page-name key version 1.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PageNameKeyDigest([u8; 32]);
+
+impl PageNameKeyDigest {
+    fn of_canonical_key(canonical_key: &str) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/page-name-key/v1\0");
+        hasher.update(PAGE_NAME_KEY_VERSION.to_be_bytes());
+        hasher.update((canonical_key.len() as u64).to_be_bytes());
+        hasher.update(canonical_key.as_bytes());
+        Self(hasher.finalize().into())
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Display for PageNameKeyDigest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -824,6 +858,33 @@ mod tests {
             );
         }
         assert_eq!(PAGE_NAME_KEY_VERSION, 1);
+    }
+
+    #[test]
+    fn page_name_key_digest_v1_golden_vectors() {
+        let vectors = [
+            (
+                "Foo",
+                "foo",
+                "77a942d3d10ffd4ccb1cc5a779720da867b9a444d98bed64dd02bda4b9b345eb",
+            ),
+            (
+                " /Namespace/Page/ ",
+                "namespace/page",
+                "3ca340a434639833783bdf29b2f156048e11bfbaaf07380dc75eeb33b6f894c8",
+            ),
+            (
+                "A\u{0308}",
+                "\u{00e4}",
+                "9e7cfc07c40adc60d24fab6cf66311853fc12f909d5739b0be650267ce4eb806",
+            ),
+        ];
+
+        for (exact, canonical, expected) in vectors {
+            let name = LogicalPageName::parse(exact).unwrap();
+            assert_eq!(name.canonical_key(), canonical);
+            assert_eq!(name.key_digest().to_string(), expected);
+        }
     }
 
     #[test]
