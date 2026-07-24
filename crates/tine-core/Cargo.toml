@@ -17,11 +17,14 @@ slotmap = { version = "1", features = ["serde"] }
 ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.4" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dirs = "6"
 regex = "1"
 loro = { path = "../../vendor/loro-1.13.6", version = "=1.13.6" }
 libc = "0.2"
 cap-std = "4.0.2"
 same-file = "1.0.6"
+fs2 = "0.4.3"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 unicode-normalization = "=0.1.25"
 unicode-segmentation = "1"
 

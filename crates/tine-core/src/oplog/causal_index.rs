@@ -32,6 +32,10 @@ impl CausalBatchRecord {
             .map(|index| self.clock[index].1)
             .unwrap_or(0)
     }
+
+    pub(crate) fn clock(&self) -> &[(CausalPeerId, u64)] {
+        &self.clock
+    }
 }
 
 pub(crate) fn next_dot(

@@ -25,6 +25,7 @@ pub mod receipt;
 pub(crate) mod scratch_store;
 pub mod semantic;
 pub mod simulator;
+pub mod sqlite;
 pub(crate) mod uuid_claim_index;
 
 pub use batch::{
@@ -35,9 +36,9 @@ pub use batch::{
     OPLOG_PROTOCOL_VERSION,
 };
 pub use hot_engine::{
-    AcceptedBatch, AuthorBatch, AuthorTransactionDraft, BatchDisposition, BlockLocation,
-    CapabilityCapturedProjectionInput, CapabilityCapturedProjectionState, EngineError,
-    EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
+    AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, AuthorTransactionDraft, BatchDisposition,
+    BlockLocation, CapabilityCapturedProjectionInput, CapabilityCapturedProjectionState,
+    EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
     ImmutableHomeConflict, ImmutableHomeEvidence, LogseqIdentityMutation, LogseqIdentityTrigger,
     LogseqUuidClaim, LogseqUuidResolution, MaterializationStats, MaterializedBlock,
     MaterializedPage, OperationTransaction, PortablePathConflict, PortablePathConflictParticipant,
@@ -97,4 +98,11 @@ pub use simulator::{
     DeterministicSimulator, FailureCapsule, FailureIdentity, MinimizedScenario, Scenario,
     ScenarioAction, ScenarioDevice, ScenarioError, SimulatorDeviceState,
     FAILURE_CAPSULE_SCHEMA_VERSION, SCENARIO_SCHEMA_VERSION,
+};
+pub use sqlite::{
+    AcceptedBatchEvent, ApplicationRuntimeRoot, ApplyDisposition, ForensicEvidence, OpenProjection,
+    ProjectionClaim, ProjectionError as SqliteProjectionError, ProjectionRecovery,
+    RebuildInstrumentation, RebuildSource, SqliteFrontier, TailOverlay, TailOverlayError,
+    TailOverlayStatus, TailReservation, SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION,
+    TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
 };
