@@ -641,7 +641,7 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     assert_eq!(current["manifest_encoding_version"], json!(4));
     assert_eq!(current["protocol_version"], json!(2));
     assert_eq!(current["operation_schema_version"], json!(6));
-    assert_eq!(current["object_envelope_schema_version"], json!(1));
+    assert_eq!(current["object_envelope_schema_version"], json!(2));
     assert_eq!(current["managed_entity_set_version"], json!(2));
 
     for field in [
@@ -656,6 +656,17 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
         assert!(matches!(
             OperationBatch::decode(&serde_json::to_vec(&value).unwrap()),
             Err(BatchError::UnknownVersion { .. })
+        ));
+    }
+    for version in [1, 3] {
+        let mut value: Value = serde_json::from_slice(&encoded).unwrap();
+        value["object_envelope_schema_version"] = json!(version);
+        assert!(matches!(
+            OperationBatch::decode(&serde_json::to_vec(&value).unwrap()),
+            Err(BatchError::UnknownVersion {
+                field: "object_envelope_schema_version",
+                ..
+            })
         ));
     }
 
@@ -687,13 +698,18 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     ));
 
     let object = prepared.objects()[0].encode().unwrap();
-    let future = rewrite_object_header(&object, |header| {
-        header["envelope_schema_version"] = json!(99);
-    });
-    assert!(matches!(
-        OperationObject::decode(&future),
-        Err(BatchError::UnknownVersion { .. })
-    ));
+    for version in [1, 3] {
+        let incompatible = rewrite_object_header(&object, |header| {
+            header["envelope_schema_version"] = json!(version);
+        });
+        assert!(matches!(
+            OperationObject::decode(&incompatible),
+            Err(BatchError::UnknownVersion {
+                field: "object_envelope_schema_version",
+                ..
+            })
+        ));
+    }
     let unknown_header = rewrite_object_header(&object, |header| {
         header["future_field"] = json!(true);
     });
@@ -701,6 +717,23 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
         OperationObject::decode(&unknown_header),
         Err(BatchError::Decode(_))
     ));
+
+    let header_len = u32::from_be_bytes(object[8..12].try_into().unwrap()) as usize;
+    let payload_len = u64::from_be_bytes(object[12..20].try_into().unwrap()) as usize;
+    let header: Value = serde_json::from_slice(&object[20..20 + header_len]).unwrap();
+    let noncanonical_header = serde_json::to_vec_pretty(&header).unwrap();
+    let mut noncanonical_object = Vec::new();
+    noncanonical_object.extend_from_slice(&object[..8]);
+    noncanonical_object.extend_from_slice(&(noncanonical_header.len() as u32).to_be_bytes());
+    noncanonical_object.extend_from_slice(&(payload_len as u64).to_be_bytes());
+    noncanonical_object.extend_from_slice(&noncanonical_header);
+    noncanonical_object.extend_from_slice(&object[20 + header_len..20 + header_len + payload_len]);
+    let checksum = Sha256::digest(&noncanonical_object);
+    noncanonical_object.extend_from_slice(&checksum);
+    assert_eq!(
+        OperationObject::decode(&noncanonical_object).unwrap_err(),
+        BatchError::NonCanonicalObjectHeader
+    );
 }
 
 #[test]

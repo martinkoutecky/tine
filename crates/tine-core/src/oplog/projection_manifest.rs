@@ -603,7 +603,9 @@ pub fn validate_projection_object_set(
                     return Err(ProjectionManifestError::DuplicateBase);
                 }
             }
-            ObjectKind::SemanticEffect | ObjectKind::CrdtUpdate => {}
+            ObjectKind::SemanticEffect
+            | ObjectKind::CrdtUpdate
+            | ObjectKind::ExternalImportObservation => {}
         }
     }
 

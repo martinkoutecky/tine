@@ -12,6 +12,7 @@ pub(crate) mod causal_index;
 pub(crate) mod dependency_queue;
 pub(crate) mod document_state;
 pub(crate) mod evidence_index;
+pub(crate) mod external_import;
 pub mod hot_engine;
 pub mod identity;
 pub mod import;

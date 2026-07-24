@@ -6467,7 +6467,9 @@ impl ShardedHotEngine {
                         return Err(EngineError::DuplicateDocumentUpdate(object.document_id()));
                     }
                 }
-                ObjectKind::ProjectionIntent | ObjectKind::AnnotatedBaseBlob => {}
+                ObjectKind::ProjectionIntent
+                | ObjectKind::AnnotatedBaseBlob
+                | ObjectKind::ExternalImportObservation => {}
             }
         }
         self.validate_dependency_witnesses(&frontier, &updates)?;

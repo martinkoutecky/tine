@@ -1194,7 +1194,7 @@ impl<'de> Deserialize<'de> for ProjectionIntent {
     }
 }
 
-fn validate_annotations(
+pub(crate) fn validate_annotations(
     annotations: &[AnnotatedIdentity],
     target_length: u64,
 ) -> Result<(), ReceiptError> {

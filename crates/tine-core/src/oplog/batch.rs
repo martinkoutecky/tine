@@ -12,7 +12,7 @@ use super::{
 
 pub const OPLOG_PROTOCOL_VERSION: u32 = 2;
 pub const OPERATION_SCHEMA_VERSION: u32 = 6;
-pub const OBJECT_ENVELOPE_SCHEMA_VERSION: u32 = 1;
+pub const OBJECT_ENVELOPE_SCHEMA_VERSION: u32 = 2;
 pub const MANIFEST_ENCODING_VERSION: u32 = 4;
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
@@ -97,6 +97,7 @@ pub enum ObjectKind {
     CrdtUpdate,
     ProjectionIntent,
     AnnotatedBaseBlob,
+    ExternalImportObservation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -466,7 +467,9 @@ impl OperationBatch {
                         return Err(BatchError::DuplicateCrdtDocument(descriptor.document_id));
                     }
                 }
-                ObjectKind::ProjectionIntent | ObjectKind::AnnotatedBaseBlob => {}
+                ObjectKind::ProjectionIntent
+                | ObjectKind::AnnotatedBaseBlob
+                | ObjectKind::ExternalImportObservation => {}
             }
         }
         if semantic_count != 1 {
@@ -713,6 +716,8 @@ impl PreparedBatch {
         }
         super::projection_manifest::validate_projection_object_set(&manifest, &ordered)
             .map_err(|error| BatchError::ProjectionObject(error.to_string()))?;
+        super::external_import::validate_external_import_object_set(&manifest, &ordered)
+            .map_err(|error| BatchError::ExternalImportObject(error.to_string()))?;
         Ok(Self {
             manifest,
             objects: ordered,
@@ -773,6 +778,7 @@ pub enum BatchError {
         actual: SemanticEffectDigest,
     },
     ProjectionObject(String),
+    ExternalImportObject(String),
     InvalidObjectLength(u64),
     TruncatedObject,
     InvalidObjectMagic,
@@ -843,6 +849,9 @@ impl fmt::Display for BatchError {
             ),
             Self::ProjectionObject(error) => {
                 write!(f, "projection object-set validation failed: {error}")
+            }
+            Self::ExternalImportObject(error) => {
+                write!(f, "external-import object-set validation failed: {error}")
             }
             Self::InvalidObjectLength(length) => {
                 write!(f, "invalid encoded object length {length}")
