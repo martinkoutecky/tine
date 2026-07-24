@@ -75,6 +75,31 @@ const BLOCK_CLAIM_GLOBAL_FILTER_BYTES: usize = 1024 * 1024;
 const MAX_BLOCK_CLAIM_RECORD_BYTES: usize = 64 * 1024;
 const MAX_BLOCK_CLAIM_PAGE_BYTES: usize = 8 * 1024 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static ENROLLED_OPEN_USE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_enrolled_open_use_hook(hook: impl FnOnce() + 'static) {
+    ENROLLED_OPEN_USE_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn enrolled_open_use_hook() {
+    ENROLLED_OPEN_USE_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn enrolled_open_use_hook() {}
+
 /// A caller-rooted, v2-candidate immutable object and batch-manifest store.
 ///
 /// Opening this type is the only persistence trigger. It is intentionally not
@@ -85,6 +110,16 @@ pub struct ObjectStore {
     workspace_id: WorkspaceId,
     capability: Dir,
     counters: Arc<StoreCounters>,
+}
+
+/// One-shot enrolled-engine open token. Existing controls are exact retained
+/// capabilities with authenticated heads pinned by the comprehensive
+/// preflight; absent controls are rechecked before any layout is created.
+pub(crate) struct EnrolledProjectionOpen {
+    store: Option<ObjectStore>,
+    binding: super::hot_engine::ProjectionStorageBinding,
+    history: Option<DurableEngineHistoryStore>,
+    work: Option<super::ProjectionWorkIndex>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -139,6 +174,7 @@ pub(crate) struct DurableEngineHistoryStore {
     roots: Dir,
     index: EngineHistoryStore,
     transition: Mutex<()>,
+    authoritative_head: Mutex<Option<ContentDigest>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -601,6 +637,83 @@ impl ObjectStore {
         self.counters.snapshot()
     }
 
+    pub(crate) fn seal_enrolled_projection(
+        self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<EnrolledProjectionOpen, (Self, StoreError)> {
+        let history = match self.seal_existing_engine_history(binding) {
+            Ok(history) => history,
+            Err(error) => return Err((self, error)),
+        };
+        let work = match self.seal_existing_projection_work(binding) {
+            Ok(work) => work,
+            Err(error) => return Err((self, error)),
+        };
+        Ok(EnrolledProjectionOpen {
+            store: Some(self),
+            binding,
+            history,
+            work,
+        })
+    }
+
+    fn seal_existing_engine_history(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<Option<DurableEngineHistoryStore>, StoreError> {
+        let Some(histories) = open_existing_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?
+        else {
+            return Ok(None);
+        };
+        let endpoint_name = binding.endpoint.endpoint_id.to_string();
+        let Some(control) = open_existing_dir_nofollow(&histories, &endpoint_name)? else {
+            return Ok(None);
+        };
+        let head = read_optional_regular(&control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
+        let claim = read_optional_regular(&control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?;
+        match (head, claim) {
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => DurableEngineHistoryStore::open_sealed_existing(
+                self.workspace_id,
+                binding.endpoint.endpoint_id,
+                binding.endpoint.graph_resource_id,
+                binding.receipt_store_id,
+                control,
+                Arc::clone(&self.counters),
+            )
+            .map(Some),
+            _ => Err(StoreError::MalformedHistoryIndex),
+        }
+    }
+
+    fn seal_existing_projection_work(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<Option<super::ProjectionWorkIndex>, StoreError> {
+        let Some(root) = open_existing_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)? else {
+            return Ok(None);
+        };
+        let endpoint_name = binding.endpoint.endpoint_id.to_string();
+        let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
+            return Ok(None);
+        };
+        let head = read_optional_regular(&control, "projection-work.head", 64, None)?;
+        let claim = read_optional_regular(&control, "projection-work.claim", 256, None)?;
+        match (head, claim) {
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => super::ProjectionWorkIndex::open_sealed_existing(
+                control,
+                self.workspace_id,
+                binding.endpoint.endpoint_id,
+                binding.endpoint.graph_resource_id,
+                binding.receipt_store_id,
+            )
+            .map(Some)
+            .map_err(|error| StoreError::Scratch(error.to_string())),
+            _ => Err(StoreError::MalformedHistoryIndex),
+        }
+    }
+
     pub(crate) fn open_engine_history(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -731,14 +844,6 @@ impl ObjectStore {
         .map_err(|error| StoreError::Scratch(error.to_string()))
     }
 
-    pub(crate) fn preflight_enrolled_projection(
-        &self,
-        binding: super::hot_engine::ProjectionStorageBinding,
-    ) -> Result<(), StoreError> {
-        self.preflight_engine_history(binding)?;
-        self.preflight_projection_work_index(binding)
-    }
-
     fn preflight_engine_history(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -815,14 +920,29 @@ impl ObjectStore {
         let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
             return Ok(());
         };
-        super::ProjectionWorkIndex::preflight_existing(
+        let head = read_optional_regular(&control, "projection-work.head", 64, None)?;
+        let claim = read_optional_regular(&control, "projection-work.claim", 256, None)?;
+        match (head, claim) {
+            (None, None) => Ok(()),
+            (Some(_), Some(_)) => super::ProjectionWorkIndex::preflight_existing(
             &control,
             self.workspace_id,
             binding.endpoint.endpoint_id,
             binding.endpoint.graph_resource_id,
             binding.receipt_store_id,
         )
-        .map_err(|error| StoreError::Scratch(error.to_string()))
+            .map_err(|error| StoreError::Scratch(error.to_string())),
+            _ => Err(StoreError::MalformedHistoryIndex),
+        }
+    }
+
+    #[cfg(test)]
+    fn preflight_enrolled_projection(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<(), StoreError> {
+        self.preflight_engine_history(binding)?;
+        self.preflight_projection_work_index(binding)
     }
 
     /// Enumerate all manifest commit markers in deterministic BatchId order.
@@ -1009,6 +1129,58 @@ impl ObjectStore {
             )));
         }
         open_dir_nofollow(&self.capability, name)
+    }
+}
+
+impl EnrolledProjectionOpen {
+    pub(crate) const fn binding(&self) -> super::hot_engine::ProjectionStorageBinding {
+        self.binding
+    }
+
+    pub(crate) fn into_runtime(
+        mut self,
+    ) -> Result<
+        (
+            ObjectStore,
+            DurableEngineHistoryStore,
+            super::ProjectionWorkIndex,
+        ),
+        (ObjectStore, StoreError),
+    > {
+        enrolled_open_use_hook();
+        let validation = (|| {
+            let store = self.store.as_ref().expect("sealed store is present");
+            self.history.as_ref().map_or_else(
+                || store.preflight_engine_history(self.binding),
+                DurableEngineHistoryStore::validate_sealed_open,
+            )?;
+            match self.work.as_ref() {
+                Some(work) => work
+                    .validate_sealed_open()
+                    .map_err(|error| StoreError::Scratch(error.to_string())),
+                None => store.preflight_projection_work_index(self.binding),
+            }
+        })();
+        if let Err(error) = validation {
+            return Err((self.store.take().expect("sealed store is present"), error));
+        }
+
+        let store = self.store.take().expect("sealed store is present");
+        let history = match self.history.take() {
+            Some(history) => history,
+            None => match store.open_engine_history(self.binding) {
+                Ok(history) => history,
+                Err(error) => return Err((store, error)),
+            },
+        };
+        let work = match self.work.take() {
+            Some(work) => work,
+            None => match store.open_projection_work_index(self.binding) {
+                Ok(work) => work,
+                Err(error) => return Err((store, error)),
+            },
+        };
+        Ok((store, history, work))
     }
 }
 
@@ -1248,6 +1420,50 @@ impl EngineHistoryStore {
 }
 
 impl DurableEngineHistoryStore {
+    fn open_sealed_existing(
+        workspace_id: WorkspaceId,
+        endpoint_id: super::ProjectionEndpointId,
+        graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
+        control: Dir,
+        counters: Arc<StoreCounters>,
+    ) -> Result<Self, StoreError> {
+        let claim = read_optional_regular(&control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        validate_engine_history_claim(
+            &claim,
+            workspace_id,
+            endpoint_id,
+            graph_resource_id,
+            receipt_store_id,
+        )?;
+        let roots = open_existing_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        let nodes = open_existing_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        let store = Self {
+            workspace_id,
+            endpoint_id,
+            graph_resource_id,
+            receipt_store_id,
+            control,
+            roots,
+            index: EngineHistoryStore {
+                capability: nodes,
+                counters,
+            },
+            transition: Mutex::new(()),
+            authoritative_head: Mutex::new(None),
+        };
+        let (digest, root) = store.read_live_head_root()?;
+        store.require_root_binding(&root)?;
+        *store
+            .authoritative_head
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)? = Some(digest);
+        Ok(store)
+    }
+
     fn new(
         workspace_id: WorkspaceId,
         endpoint_id: super::ProjectionEndpointId,
@@ -1266,6 +1482,7 @@ impl DurableEngineHistoryStore {
             roots,
             index,
             transition: Mutex::new(()),
+            authoritative_head: Mutex::new(None),
         };
         store.initialize()?;
         Ok(store)
@@ -1294,6 +1511,28 @@ impl DurableEngineHistoryStore {
             root.latest_batch_id,
             root.binding.clone(),
         ))
+    }
+
+    fn validate_sealed_open(&self) -> Result<(), StoreError> {
+        let claim = read_optional_regular(&self.control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        validate_engine_history_claim(
+            &claim,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+            self.receipt_store_id,
+        )?;
+        let expected = self
+            .authoritative_head
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)?
+            .ok_or(StoreError::MalformedHistoryIndex)?;
+        let (live, root) = self.read_live_head_root()?;
+        if live != expected {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        self.require_root_binding(&root)
     }
 
     pub(crate) fn lookup(
@@ -1396,7 +1635,7 @@ impl DurableEngineHistoryStore {
             )?,
             _ => return Err(StoreError::MalformedHistoryIndex),
         }
-        self.load_head_root()?;
+        self.read_live_head_root()?;
         Ok(())
     }
 
@@ -1414,6 +1653,18 @@ impl DurableEngineHistoryStore {
     }
 
     fn load_head_root(&self) -> Result<(ContentDigest, DurableEngineHistoryRoot), StoreError> {
+        let sealed = self
+            .authoritative_head
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)?
+            .take();
+        match sealed {
+            Some(digest) => Ok((digest, self.load_root(digest)?)),
+            None => self.read_live_head_root(),
+        }
+    }
+
+    fn read_live_head_root(&self) -> Result<(ContentDigest, DurableEngineHistoryRoot), StoreError> {
         let head = read_optional_regular(&self.control, ENGINE_HISTORY_HEAD_FILE, 64, None)?
             .ok_or(StoreError::MalformedHistoryIndex)?;
         let text = std::str::from_utf8(&head).map_err(|_| StoreError::MalformedHistoryIndex)?;
@@ -1423,6 +1674,10 @@ impl DurableEngineHistoryStore {
         if digest.to_string().as_bytes() != head {
             return Err(StoreError::MalformedHistoryIndex);
         }
+        Ok((digest, self.load_root(digest)?))
+    }
+
+    fn load_root(&self, digest: ContentDigest) -> Result<DurableEngineHistoryRoot, StoreError> {
         let bytes = read_optional_regular(
             &self.roots,
             &engine_history_root_filename(digest),
@@ -1439,7 +1694,7 @@ impl DurableEngineHistoryStore {
             return Err(StoreError::MalformedHistoryIndex);
         }
         self.require_root_binding(&root)?;
-        Ok((digest, root))
+        Ok(root)
     }
 
     fn require_root_binding(&self, root: &DurableEngineHistoryRoot) -> Result<(), StoreError> {
@@ -1457,7 +1712,7 @@ impl DurableEngineHistoryStore {
         expected: ContentDigest,
         replacement: ContentDigest,
     ) -> Result<(), StoreError> {
-        let (current, _) = self.load_head_root()?;
+        let (current, _) = self.read_live_head_root()?;
         if current != expected {
             return Err(StoreError::MalformedHistoryIndex);
         }
@@ -1485,6 +1740,10 @@ impl DurableEngineHistoryStore {
         {
             cleanup?;
         }
+        *self
+            .authoritative_head
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)? = None;
         Ok(())
     }
 }

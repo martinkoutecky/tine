@@ -382,16 +382,17 @@ fn execute_manifested_projection_work_with_runtime(
             .map_err(|error| ProjectionError::Work(error.to_string()))?;
         return Ok(());
     }
-    let mut attempts = receipts.load_attempt_reservations(&local_attempt_intent)?;
+    let attempts = receipts.load_attempt_reservations(&local_attempt_intent)?;
     let recovery_result = if attempts.is_empty() {
         None
     } else {
-        Some(match target {
+        let mut authority = receipts.begin_mutation(&local_attempt_intent, None)?;
+        let result = match target {
             Some(target) => graph.recover_page_projection(
                 manifested.path().as_str(),
                 expected_base.as_ref().map(AnnotatedProjectionBase::bytes),
                 target,
-                &attempts,
+                &mut authority,
             ),
             None => {
                 let base = expected_base
@@ -400,14 +401,15 @@ fn execute_manifested_projection_work_with_runtime(
                 graph.recover_removed_page_projection(
                     manifested.path().as_str(),
                     base.bytes(),
-                    &attempts,
+                    &mut authority,
                 )
             }
-        })
+        };
+        Some((result, authority))
     };
     let recovered = match recovery_result {
-        Some(Ok(proof)) => Some(proof),
-        Some(Err(error))
+        Some((Ok(proof), authority)) => Some((proof, authority)),
+        Some((Err(error), _))
             if matches!(
                 error.kind(),
                 io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
@@ -415,21 +417,21 @@ fn execute_manifested_projection_work_with_runtime(
         {
             None
         }
-        Some(Err(error)) => return Err(error.into()),
+        Some((Err(error), _)) => return Err(error.into()),
         None => None,
     };
-    let proof = match recovered {
-        Some(proof) => proof,
+    let (proof, authority) = match recovered {
+        Some(recovered) => recovered,
         None => {
             let reservation = receipts.reserve_attempt(&local_attempt_intent)?;
-            attempts = receipts.load_attempt_reservations(&local_attempt_intent)?;
+            let mut authority =
+                receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?;
             let write_result = match target {
                 Some(target) => graph.write_page_projection(
                     manifested.path().as_str(),
                     expected_base.as_ref().map(AnnotatedProjectionBase::bytes),
                     target,
-                    &reservation,
-                    &attempts,
+                    &mut authority,
                 ),
                 None => {
                     let base = expected_base
@@ -438,13 +440,12 @@ fn execute_manifested_projection_work_with_runtime(
                     graph.remove_page_projection(
                         manifested.path().as_str(),
                         base.bytes(),
-                        &reservation,
-                        &attempts,
+                        &mut authority,
                     )
                 }
             };
             match write_result {
-                Ok(proof) => proof,
+                Ok(proof) => (proof, authority),
                 Err(error)
                     if matches!(
                         error.kind(),
@@ -469,7 +470,7 @@ fn execute_manifested_projection_work_with_runtime(
             }
         }
     };
-    receipts.publish_completion(&local_attempt_intent, &proof)?;
+    receipts.publish_completion(authority, &local_attempt_intent, &proof)?;
     let authority = receipts.completed_work_authority(work, &local_attempt_intent)?;
     work_index
         .mark_completed(authority)
@@ -491,15 +492,14 @@ pub fn write_projection_exact(
     let plan = plan_projection(engine.workspace_id(), authorization.state(), expected_base)?;
     store.publish_intent(plan.intent(), plan.base().map(BaseBlob::bytes))?;
     let reservation = store.reserve_attempt(plan.intent())?;
-    let attempts = store.load_attempt_reservations(plan.intent())?;
+    let mut authority = store.begin_mutation(plan.intent(), Some(&reservation))?;
     let proof = graph.write_page_projection(
         plan.intent().path().as_str(),
         expected_base,
         plan.target(),
-        &reservation,
-        &attempts,
+        &mut authority,
     )?;
-    let completion = store.publish_completion(plan.intent(), &proof)?;
+    let completion = store.publish_completion(authority, plan.intent(), &proof)?;
     debug_assert_eq!(authorization.state().page.page_id, page_id);
     Ok(ProjectionWrite { plan, completion })
 }
@@ -526,62 +526,68 @@ pub fn recover_incomplete_projections(
             return Err(ProjectionError::RecoveryIntentMismatch);
         }
         let attempts = store.load_attempt_reservations(&intent)?;
-        let recovery_attempt = (!attempts.is_empty()).then(|| {
-            graph.recover_page_projection(
+        let recovery_attempt = if attempts.is_empty() {
+            None
+        } else {
+            let mut authority = store.begin_mutation(&intent, None)?;
+            let result = graph.recover_page_projection(
                 intent.path().as_str(),
                 expected_base,
                 plan.target(),
-                &attempts,
-            )
-        });
-        let proof = match recovery_attempt {
-            Some(Ok(proof)) => proof,
+                &mut authority,
+            );
+            Some((result, authority))
+        };
+        let (proof, authority) = match recovery_attempt {
+            Some((Ok(proof), authority)) => (proof, authority),
             None => {
                 let reservation = store.reserve_attempt(&intent)?;
-                let attempts = store.load_attempt_reservations(&intent)?;
+                let mut recovery_authority = store.begin_mutation(&intent, None)?;
                 match graph.recover_page_projection(
                     intent.path().as_str(),
                     expected_base,
                     plan.target(),
-                    &attempts,
+                    &mut recovery_authority,
                 ) {
-                    Ok(proof) => proof,
+                    Ok(proof) => (proof, recovery_authority),
                     Err(recovery_error)
                         if matches!(
                             recovery_error.kind(),
                             io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                         ) =>
                     {
-                        graph.write_page_projection(
+                        let mut write_authority =
+                            store.begin_mutation(&intent, Some(&reservation))?;
+                        let proof = graph.write_page_projection(
                             intent.path().as_str(),
                             expected_base,
                             plan.target(),
-                            &reservation,
-                            &attempts,
-                        )?
+                            &mut write_authority,
+                        )?;
+                        (proof, write_authority)
                     }
                     Err(error) => return Err(error.into()),
                 }
             }
-            Some(Err(recovery_error))
+            Some((Err(recovery_error), _))
                 if matches!(
                     recovery_error.kind(),
                     io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                 ) =>
             {
                 let reservation = store.reserve_attempt(&intent)?;
-                let attempts = store.load_attempt_reservations(&intent)?;
-                graph.write_page_projection(
+                let mut authority = store.begin_mutation(&intent, Some(&reservation))?;
+                let proof = graph.write_page_projection(
                     intent.path().as_str(),
                     expected_base,
                     plan.target(),
-                    &reservation,
-                    &attempts,
-                )?
+                    &mut authority,
+                )?;
+                (proof, authority)
             }
-            Some(Err(error)) => return Err(error.into()),
+            Some((Err(error), _)) => return Err(error.into()),
         };
-        let completion = store.reconstruct_completion(&intent, plan.target(), &proof)?;
+        let completion = store.reconstruct_completion(authority, &intent, plan.target(), &proof)?;
         debug_assert_eq!(authorization.state().page.page_id, intent.page_id());
         recovered.push(ProjectionWrite { plan, completion });
     }

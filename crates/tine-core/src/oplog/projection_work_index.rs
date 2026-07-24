@@ -43,6 +43,10 @@ const MAX_INDEX_NODE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_INDEX_KEY_BYTES: usize = 4 * 1024;
 const MAX_READY_PAGE: usize = 256;
 const MAX_PENDING_PAGE: usize = 256;
+const MAX_PREFLIGHT_NODES: usize = 2_000_000;
+const MAX_PREFLIGHT_RECORDS: usize = 2_000_000;
+const MAX_PREFLIGHT_ROOTS: usize = 2_000_000;
+const MAX_PREFLIGHT_BYTES: usize = 512 * 1024 * 1024;
 const CLAIM_FILE: &str = "projection-work.claim";
 const HEAD_FILE: &str = "projection-work.head";
 const PREPARED_SUFFIX: &str = ".prepared";
@@ -380,6 +384,10 @@ pub struct ProjectionWorkIndexStats {
     pub root_reads: usize,
     pub prepared_reads: usize,
     pub pending_entries_read: usize,
+    pub preflight_nodes: usize,
+    pub preflight_records: usize,
+    pub preflight_roots: usize,
+    pub preflight_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -389,6 +397,10 @@ struct ProjectionWorkCounters {
     root_reads: AtomicUsize,
     prepared_reads: AtomicUsize,
     pending_entries_read: AtomicUsize,
+    preflight_nodes: AtomicUsize,
+    preflight_records: AtomicUsize,
+    preflight_roots: AtomicUsize,
+    preflight_bytes: AtomicUsize,
 }
 
 pub struct ProjectionWorkIndex {
@@ -401,7 +413,25 @@ pub struct ProjectionWorkIndex {
     roots: Dir,
     prepared: Dir,
     transition: Mutex<()>,
+    authoritative_head: Mutex<Option<ContentDigest>>,
     counters: ProjectionWorkCounters,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ProjectionWorkPreflightStats {
+    nodes: usize,
+    records: usize,
+    roots: usize,
+    bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum PreflightTree {
+    Rows,
+    Ready,
+    Paths,
+    Accepted,
+    Pending,
 }
 
 impl fmt::Debug for ProjectionWorkIndex {
@@ -421,10 +451,27 @@ impl ProjectionWorkIndex {
         graph_resource_id: super::CanonicalGraphResourceId,
         receipt_store_id: super::ProjectionReceiptStoreId,
     ) -> Result<(), ProjectionWorkError> {
-        let head = read_optional_regular(control, HEAD_FILE, 64, None)?;
-        let claim = read_optional_regular(control, CLAIM_FILE, 256, None)?;
+        Self::open_sealed_existing(
+            control.try_clone()?,
+            workspace_id,
+            endpoint_id,
+            graph_resource_id,
+            receipt_store_id,
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn open_sealed_existing(
+        control: Dir,
+        workspace_id: WorkspaceId,
+        endpoint_id: ProjectionEndpointId,
+        graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
+    ) -> Result<Self, ProjectionWorkError> {
+        let head = read_optional_regular(&control, HEAD_FILE, 64, None)?;
+        let claim = read_optional_regular(&control, CLAIM_FILE, 256, None)?;
         match (head, claim) {
-            (None, None) => Ok(()),
+            (None, None) => Err(ProjectionWorkError::MissingHead),
             (Some(head), Some(claim)) => {
                 validate_projection_index_claim(
                     &claim,
@@ -433,9 +480,9 @@ impl ProjectionWorkIndex {
                     graph_resource_id,
                     receipt_store_id,
                 )?;
-                let _nodes = open_dir_nofollow(control, "nodes")?;
-                let roots = open_dir_nofollow(control, "roots")?;
-                let _prepared = open_dir_nofollow(control, "prepared")?;
+                let nodes = open_dir_nofollow(&control, "nodes")?;
+                let roots = open_dir_nofollow(&control, "roots")?;
+                let prepared = open_dir_nofollow(&control, "prepared")?;
                 let text =
                     std::str::from_utf8(&head).map_err(|_| ProjectionWorkError::NonCanonical)?;
                 let digest = parse_digest(text)
@@ -461,7 +508,23 @@ impl ProjectionWorkIndex {
                     endpoint_id,
                     graph_resource_id,
                     receipt_store_id,
-                )
+                )?;
+                let index = Self {
+                    workspace_id,
+                    endpoint_id,
+                    graph_resource_id,
+                    receipt_store_id,
+                    control,
+                    nodes,
+                    roots,
+                    prepared,
+                    transition: Mutex::new(()),
+                    authoritative_head: Mutex::new(Some(digest)),
+                    counters: ProjectionWorkCounters::default(),
+                };
+                let stats = index.preflight_reachable(&root)?;
+                index.record_preflight(stats);
+                Ok(index)
             }
             _ => Err(ProjectionWorkError::MissingHead),
         }
@@ -487,6 +550,7 @@ impl ProjectionWorkIndex {
             roots,
             prepared,
             transition: Mutex::new(()),
+            authoritative_head: Mutex::new(None),
             counters: ProjectionWorkCounters::default(),
         };
         index.initialize()?;
@@ -516,7 +580,237 @@ impl ProjectionWorkIndex {
             root_reads: self.counters.root_reads.load(Ordering::Relaxed),
             prepared_reads: self.counters.prepared_reads.load(Ordering::Relaxed),
             pending_entries_read: self.counters.pending_entries_read.load(Ordering::Relaxed),
+            preflight_nodes: self.counters.preflight_nodes.load(Ordering::Relaxed),
+            preflight_records: self.counters.preflight_records.load(Ordering::Relaxed),
+            preflight_roots: self.counters.preflight_roots.load(Ordering::Relaxed),
+            preflight_bytes: self.counters.preflight_bytes.load(Ordering::Relaxed),
         }
+        }
+
+    fn record_preflight(&self, stats: ProjectionWorkPreflightStats) {
+        self.counters
+            .preflight_nodes
+            .store(stats.nodes, Ordering::Relaxed);
+        self.counters
+            .preflight_records
+            .store(stats.records, Ordering::Relaxed);
+        self.counters
+            .preflight_roots
+            .store(stats.roots, Ordering::Relaxed);
+        self.counters
+            .preflight_bytes
+            .store(stats.bytes, Ordering::Relaxed);
+    }
+
+    /// Validate exactly the records reachable from the current authenticated
+    /// root. Complexity is O(reachable nodes + reachable records + referenced
+    /// pending-source roots/prepared batches); unrelated archived roots and
+    /// prepared files are never enumerated.
+    fn preflight_reachable(
+        &self,
+        root: &ProjectionRoot,
+    ) -> Result<ProjectionWorkPreflightStats, ProjectionWorkError> {
+        let mut stats = ProjectionWorkPreflightStats {
+            roots: 1,
+            ..ProjectionWorkPreflightStats::default()
+        };
+        charge_preflight(
+            &mut stats.bytes,
+            encode_canonical(root)?.len(),
+            MAX_PREFLIGHT_BYTES,
+        )?;
+        let mut pending = vec![
+            (PreflightTree::Rows, root.rows_root),
+            (PreflightTree::Ready, root.ready_root),
+            (PreflightTree::Paths, root.paths_root),
+            (PreflightTree::Accepted, root.accepted_root),
+            (PreflightTree::Pending, root.pending_root),
+        ];
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some((tree, digest)) = pending.pop() {
+            if digest == empty_tree_root() || !visited.insert((tree, digest)) {
+                continue;
+            }
+            let node = self.preflight_read_node(digest, &mut stats)?;
+            match node {
+                IndexNode::Branch { left, right, .. } => {
+                    pending.push((tree, right));
+                    pending.push((tree, left));
+                }
+                IndexNode::Leaf { value, .. } => {
+                    charge_preflight(&mut stats.records, 1, MAX_PREFLIGHT_RECORDS)?;
+                    match tree {
+                        PreflightTree::Rows => {
+                            let state: StoredWork = decode_canonical(&value)?;
+                            if state.schema_version != INDEX_SCHEMA_VERSION {
+                                return Err(ProjectionWorkError::BindingMismatch);
+                            }
+                            self.require_binding(&state.work)?;
+                        }
+                        PreflightTree::Ready => {
+                            decode_work_id(&value)?;
+                        }
+                        PreflightTree::Paths => {
+                            let ids: Vec<ProjectionWorkId> = decode_canonical(&value)?;
+                            if !strictly_sorted(&ids) {
+                                return Err(ProjectionWorkError::NonCanonical);
+                            }
+                        }
+                        PreflightTree::Pending => {
+                            let activation: ProjectionPendingActivation = decode_canonical(&value)?;
+                            self.require_pending_binding(&activation)?;
+                            self.preflight_prepared(&activation, &mut stats)?;
+                        }
+                        PreflightTree::Accepted => {
+                            let witness: AcceptedBatchWitness = decode_canonical(&value)?;
+                            self.preflight_accepted(&witness, &mut stats)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(stats)
+    }
+
+    fn preflight_read_node(
+        &self,
+        digest: ContentDigest,
+        stats: &mut ProjectionWorkPreflightStats,
+    ) -> Result<IndexNode, ProjectionWorkError> {
+        charge_preflight(&mut stats.nodes, 1, MAX_PREFLIGHT_NODES)?;
+        let bytes = read_optional_regular(
+            &self.nodes,
+            &node_filename(digest),
+            MAX_INDEX_NODE_BYTES,
+            None,
+        )?
+        .ok_or(ProjectionWorkError::MissingNode(digest))?;
+        charge_preflight(&mut stats.bytes, bytes.len(), MAX_PREFLIGHT_BYTES)?;
+        if ContentDigest::of(&bytes) != digest {
+            return Err(ProjectionWorkError::NodeDigestMismatch(digest));
+        }
+        let node: IndexNode = decode_canonical(&bytes)?;
+        validate_node(&node)?;
+        self.counters.node_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(node)
+    }
+
+    fn preflight_prepared(
+        &self,
+        pending: &ProjectionPendingActivation,
+        stats: &mut ProjectionWorkPreflightStats,
+    ) -> Result<(), ProjectionWorkError> {
+        let prepared = self.load_prepared(pending.batch_id)?;
+        let bytes = encode_canonical(&prepared)?;
+        charge_preflight(&mut stats.bytes, bytes.len(), MAX_PREFLIGHT_BYTES)?;
+        if prepared.manifest_fingerprint != pending.manifest_fingerprint
+            || ContentDigest::of(&bytes) != pending.prepared_digest
+            || prepared
+                .work
+                .iter()
+                .map(ProjectionWork::work_id)
+                .collect::<Vec<_>>()
+                != pending.work_ids
+        {
+            return Err(ProjectionWorkError::PendingActivationMismatch);
+        }
+        Ok(())
+    }
+
+    fn preflight_accepted(
+        &self,
+        witness: &AcceptedBatchWitness,
+        stats: &mut ProjectionWorkPreflightStats,
+    ) -> Result<(), ProjectionWorkError> {
+        if witness.schema_version != INDEX_SCHEMA_VERSION
+            || witness.workspace_id != self.workspace_id
+            || witness.endpoint_id != self.endpoint_id
+            || !strictly_sorted(&witness.work_ids)
+        {
+            return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+        }
+        charge_preflight(&mut stats.roots, 1, MAX_PREFLIGHT_ROOTS)?;
+        let source_root = self.load_root(witness.pending_root_digest)?;
+        charge_preflight(
+            &mut stats.bytes,
+            encode_canonical(&source_root)?.len(),
+            MAX_PREFLIGHT_BYTES,
+        )?;
+        let value = self
+            .preflight_lookup(
+                source_root.pending_root,
+                &batch_key(witness.batch_id),
+                stats,
+            )?
+            .ok_or(ProjectionWorkError::PendingActivationMissing)?;
+        let pending: ProjectionPendingActivation = decode_canonical(&value)?;
+        self.require_pending_binding(&pending)?;
+        if witness.batch_id != pending.batch_id
+            || witness.manifest_fingerprint != pending.manifest_fingerprint
+            || witness.prepared_digest != pending.prepared_digest
+            || witness.work_ids != pending.work_ids
+        {
+            return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+        }
+        self.preflight_prepared(&pending, stats)
+    }
+
+    fn preflight_lookup(
+        &self,
+        root: ContentDigest,
+        key: &[u8],
+        stats: &mut ProjectionWorkPreflightStats,
+    ) -> Result<Option<Vec<u8>>, ProjectionWorkError> {
+        validate_key(key)?;
+        if root == empty_tree_root() {
+            return Ok(None);
+        }
+        let mut digest = root;
+        loop {
+            match self.preflight_read_node(digest, stats)? {
+                IndexNode::Leaf {
+                    key: found, value, ..
+                } => return Ok((found == key).then_some(value)),
+                IndexNode::Branch {
+                    prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    if !prefix_matches(key, &prefix, prefix_bit_len as usize) {
+                        return Ok(None);
+                    }
+                    digest = if key_bit(key, prefix_bit_len as usize)? {
+                        right
+                    } else {
+                        left
+                    };
+                }
+            }
+        }
+    }
+
+    pub(crate) fn validate_sealed_open(&self) -> Result<(), ProjectionWorkError> {
+        let claim = read_optional_regular(&self.control, CLAIM_FILE, 256, None)?
+            .ok_or(ProjectionWorkError::MissingHead)?;
+        validate_projection_index_claim(
+            &claim,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+            self.receipt_store_id,
+        )?;
+        let expected = self
+            .authoritative_head
+            .lock()
+            .map_err(|_| ProjectionWorkError::Poisoned)?
+            .ok_or(ProjectionWorkError::MissingHead)?;
+        let (live, root) = self.read_live_head_root()?;
+        if live != expected {
+            return Err(ProjectionWorkError::ConcurrentRootTransition);
+        }
+        self.require_root_binding(&root)
     }
 
     pub(crate) fn prepare_batch(
@@ -1221,8 +1515,9 @@ impl ProjectionWorkIndex {
             )?,
             _ => return Err(ProjectionWorkError::MissingHead),
         }
-        let (_, root) = self.load_head_root()?;
-        self.require_root_binding(&root)
+        let (_, root) = self.read_live_head_root()?;
+        self.require_root_binding(&root)?;
+        Ok(())
     }
 
     fn transition(
@@ -1283,10 +1578,26 @@ impl ProjectionWorkIndex {
         {
             cleanup?;
         }
+        *self
+            .authoritative_head
+            .lock()
+            .map_err(|_| ProjectionWorkError::Poisoned)? = None;
         Ok(())
     }
 
     fn load_head_root(&self) -> Result<(ContentDigest, ProjectionRoot), ProjectionWorkError> {
+        let sealed = self
+            .authoritative_head
+            .lock()
+            .map_err(|_| ProjectionWorkError::Poisoned)?
+            .take();
+        match sealed {
+            Some(digest) => Ok((digest, self.load_root(digest)?)),
+            None => self.read_live_head_root(),
+        }
+    }
+
+    fn read_live_head_root(&self) -> Result<(ContentDigest, ProjectionRoot), ProjectionWorkError> {
         let digest = self.read_head_digest()?;
         Ok((digest, self.load_root(digest)?))
     }
@@ -2193,6 +2504,20 @@ fn strictly_sorted_by<T, K: Ord>(values: &[T], key: impl Fn(&T) -> K) -> bool {
     values.windows(2).all(|pair| key(&pair[0]) < key(&pair[1]))
 }
 
+fn charge_preflight(
+    current: &mut usize,
+    amount: usize,
+    limit: usize,
+) -> Result<(), ProjectionWorkError> {
+    *current = current
+        .checked_add(amount)
+        .ok_or(ProjectionWorkError::PreflightLimitExceeded)?;
+    if *current > limit {
+        return Err(ProjectionWorkError::PreflightLimitExceeded);
+    }
+    Ok(())
+}
+
 fn common_prefix_bits(left: &[u8], right: &[u8], limit: usize) -> usize {
     let limit = limit.min(left.len() * 8).min(right.len() * 8);
     (0..limit)
@@ -2254,6 +2579,7 @@ pub enum ProjectionWorkError {
     ConflictingStatus,
     ConcurrentRootTransition,
     InvalidPageLimit(usize),
+    PreflightLimitExceeded,
     Poisoned,
 }
 
@@ -2314,6 +2640,9 @@ impl fmt::Display for ProjectionWorkError {
             Self::InvalidPageLimit(limit) => {
                 write!(f, "projection work page limit {limit} is invalid")
             }
+            Self::PreflightLimitExceeded => {
+                f.write_str("projection work reachable preflight limit exceeded")
+            }
             Self::Poisoned => f.write_str("projection work transition lock is poisoned"),
         }
     }
@@ -2335,14 +2664,33 @@ impl From<std::io::Error> for ProjectionWorkError {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
+    use std::rc::Rc;
 
     use uuid::Uuid;
 
     use super::*;
     use crate::oplog::{DocumentId, ObjectDescriptor, ObjectKind, ObjectStore};
+
+    fn snapshot_tree(root: &std::path::Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        let mut snapshot = BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(path) = pending.pop() {
+            let relative = path.strip_prefix(root).unwrap().to_path_buf();
+            if path.is_dir() {
+                snapshot.insert(relative, None);
+                for entry in fs::read_dir(path).unwrap() {
+                    pending.push(entry.unwrap().path());
+                }
+            } else {
+                snapshot.insert(relative, Some(fs::read(path).unwrap()));
+            }
+        }
+        snapshot
+    }
 
     struct Fixture {
         path: PathBuf,
@@ -2438,6 +2786,17 @@ mod tests {
                     .unwrap(),
             }
         }
+
+        fn binding(&self) -> super::super::hot_engine::ProjectionStorageBinding {
+            super::super::hot_engine::ProjectionStorageBinding {
+                endpoint: super::super::ProjectionEndpointBinding {
+                    endpoint_id: self.endpoint_id,
+                    device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(3)),
+                    graph_resource_id: self.graph_resource_id,
+                },
+                receipt_store_id: self.index.receipt_store_id(),
+            }
+        }
     }
 
     impl Drop for Fixture {
@@ -2469,6 +2828,111 @@ mod tests {
             .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn enrolled_seal_rejects_reachable_future_prepared_work_without_mutation() {
+        let fixture = Fixture::new("future-prepared-preflight");
+        let work = fixture.work(1, "pages/future-prepared.md");
+        fixture.prepare(&work);
+        let mut pending = fixture
+            .index
+            .pending_activation_page(None, 1)
+            .unwrap()
+            .pending()[0]
+            .clone();
+        let prepared_path = fixture
+            .path
+            .join("projection-work-index-v1")
+            .join(fixture.endpoint_id.to_string())
+            .join("prepared")
+            .join(prepared_filename(work.batch_id()));
+        let mut prepared: PreparedBatch =
+            decode_canonical(&fs::read(&prepared_path).unwrap()).unwrap();
+        prepared.work[0].schema_version = WORK_SCHEMA_VERSION + 1;
+        let prepared_bytes = encode_canonical(&prepared).unwrap();
+        fs::write(&prepared_path, &prepared_bytes).unwrap();
+        pending.prepared_digest = ContentDigest::of(&prepared_bytes);
+        fixture
+            .index
+            .transition(|index, _, mut root| {
+                root.pending_root = index.tree_insert(
+                    root.pending_root,
+                    batch_key(pending.batch_id),
+                    encode_canonical(&pending)?,
+                )?;
+                Ok(root)
+            })
+            .unwrap();
+
+        let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+        let before = snapshot_tree(&fixture.path);
+        assert!(store.seal_enrolled_projection(fixture.binding()).is_err());
+        assert_eq!(snapshot_tree(&fixture.path), before);
+        assert!(!fixture.path.join("scratch-v1").exists());
+        assert!(!fixture.path.join("logseq-uuid-claim-index-v1").exists());
+        assert!(!fixture.path.join("portable-path-index-v1").exists());
+    }
+
+    #[test]
+    fn sealed_head_claim_or_root_swap_before_consumption_rejects_without_mutation() {
+        enum Swap {
+            WorkHead,
+            WorkClaim,
+            WorkRoot,
+            HistoryHead,
+        }
+
+        for (label, swap) in [
+            ("work-head", Swap::WorkHead),
+            ("work-claim", Swap::WorkClaim),
+            ("work-root", Swap::WorkRoot),
+            ("history-head", Swap::HistoryHead),
+        ] {
+            let fixture = Fixture::new(&format!("sealed-{label}-swap"));
+            let history_store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+            drop(history_store.open_engine_history(fixture.binding()).unwrap());
+            let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+            let open = store.seal_enrolled_projection(fixture.binding()).unwrap();
+            let work_control = fixture
+                .path
+                .join("projection-work-index-v1")
+                .join(fixture.endpoint_id.to_string());
+            let target = match swap {
+                Swap::WorkHead => work_control.join(HEAD_FILE),
+                Swap::WorkClaim => work_control.join(CLAIM_FILE),
+                Swap::WorkRoot => {
+                    let digest = std::str::from_utf8(&fs::read(work_control.join(HEAD_FILE)).unwrap())
+                        .map(parse_digest)
+                        .unwrap()
+                        .map(ContentDigest::from_bytes)
+                        .unwrap();
+                    work_control.join("roots").join(root_filename(digest))
+                }
+                Swap::HistoryHead => fixture
+                    .path
+                    .join("engine-history")
+                    .join(fixture.endpoint_id.to_string())
+                    .join("engine-history.head"),
+            };
+            let attacked = Rc::new(RefCell::new(None));
+            let attacked_hook = Rc::clone(&attacked);
+            let root = fixture.path.clone();
+            super::super::object_store::set_enrolled_open_use_hook(move || {
+                fs::write(&target, b"substituted authenticated name").unwrap();
+                *attacked_hook.borrow_mut() = Some(snapshot_tree(&root));
+            });
+
+            assert!(open.into_runtime().is_err(), "swap {label} was accepted");
+            assert_eq!(
+                snapshot_tree(&fixture.path),
+                attacked.borrow().clone().expect("open cut hook ran"),
+                "swap {label} mutated storage after rejection"
+            );
+            assert!(!fixture.path.join("scratch-v1").exists());
+            assert!(!fixture.path.join("logseq-uuid-claim-index-v1").exists());
+            assert!(!fixture.path.join("portable-path-index-v1").exists());
+        }
     }
 
     #[test]

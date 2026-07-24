@@ -2387,7 +2387,7 @@ fn completion_namespace_replacement_blocks_recovery_of_exact_target() {
     .unwrap();
     assert!(write_projection_exact(&graph, &store, &engine, page_id, Some(base)).is_err());
     let target = fs::read(graph_dir.path().join("pages/completion-failure.md")).unwrap();
-    assert_eq!(text(&target), "- landed\n");
+    assert_eq!(target, base);
 
     fs::remove_file(receipts_dir.path().join("completions")).unwrap();
     fs::create_dir(receipts_dir.path().join("completions")).unwrap();

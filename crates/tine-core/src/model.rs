@@ -14,7 +14,7 @@ use crate::crdt::{
 };
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
-use crate::oplog::projection_store::MAX_PROJECTION_EVIDENCE_BYTES;
+use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
     BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath,
     ProjectionAttemptReservation,
@@ -6817,6 +6817,23 @@ impl Graph {
         relative_path: &str,
         expected_base: Option<&[u8]>,
         target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        let (reservation, known_attempts) = authority.consume_write_evidence(relative_path)?;
+        self.write_page_projection_with_attempts(
+            relative_path,
+            expected_base,
+            target,
+            &reservation,
+            &known_attempts,
+        )
+    }
+
+    fn write_page_projection_with_attempts(
+        &self,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        target: &[u8],
         reservation: &ProjectionAttemptReservation,
         known_attempts: &[ProjectionAttemptReservation],
     ) -> io::Result<ProjectionWriteProof> {
@@ -7104,6 +7121,21 @@ impl Graph {
         &self,
         relative_path: &str,
         expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        let (reservation, known_attempts) = authority.consume_write_evidence(relative_path)?;
+        self.remove_page_projection_with_attempts(
+            relative_path,
+            expected_base,
+            &reservation,
+            &known_attempts,
+        )
+    }
+
+    fn remove_page_projection_with_attempts(
+        &self,
+        relative_path: &str,
+        expected_base: &[u8],
         reservation: &ProjectionAttemptReservation,
         known_attempts: &[ProjectionAttemptReservation],
     ) -> io::Result<ProjectionWriteProof> {
@@ -7234,7 +7266,7 @@ impl Graph {
             attempts.push(reservation.clone());
             attempts.clone()
         });
-        self.write_page_projection(
+        self.write_page_projection_with_attempts(
             relative_path,
             expected_base,
             target,
@@ -7276,7 +7308,12 @@ impl Graph {
                 .cloned()
                 .unwrap_or_default()
         });
-        self.recover_page_projection(relative_path, None, expected_target, &attempts)
+        self.recover_page_projection_with_attempts(
+            relative_path,
+            None,
+            expected_target,
+            &attempts,
+        )
     }
 
     /// Reread retained displacement through the same target-parent capability.
@@ -7357,6 +7394,20 @@ impl Graph {
         &self,
         relative_path: &str,
         expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        let attempts = authority.consume_recovery_evidence(relative_path)?;
+        self.recover_removed_page_projection_with_attempts(
+            relative_path,
+            expected_base,
+            &attempts,
+        )
+    }
+
+    fn recover_removed_page_projection_with_attempts(
+        &self,
+        relative_path: &str,
+        expected_base: &[u8],
         attempts: &[ProjectionAttemptReservation],
     ) -> io::Result<ProjectionWriteProof> {
         require_projection_platform()?;
@@ -7417,6 +7468,22 @@ impl Graph {
     /// Reconstruct projection evidence only from an exact target that is freshly
     /// synced and reread through the same retained no-follow capability.
     pub(crate) fn recover_page_projection(
+        &self,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        expected_target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        let attempts = authority.consume_recovery_evidence(relative_path)?;
+        self.recover_page_projection_with_attempts(
+            relative_path,
+            expected_base,
+            expected_target,
+            &attempts,
+        )
+    }
+
+    fn recover_page_projection_with_attempts(
         &self,
         relative_path: &str,
         expected_base: Option<&[u8]>,
@@ -16069,7 +16136,7 @@ mod tests {
         fs::write(&reserved, b"- forged\n").unwrap();
 
         assert!(graph
-            .write_page_projection(
+            .write_page_projection_with_attempts(
                 "pages/Collision.md",
                 Some(b"- base\n"),
                 b"- target\n",

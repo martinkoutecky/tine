@@ -1588,6 +1588,10 @@ pub struct EngineInstrumentation {
     pub projection_work_root_reads: usize,
     pub projection_work_prepared_reads: usize,
     pub projection_pending_entries_read: usize,
+    pub projection_preflight_nodes: usize,
+    pub projection_preflight_records: usize,
+    pub projection_preflight_roots: usize,
+    pub projection_preflight_bytes: usize,
     pub block_claim_validation_nanos: usize,
     pub block_claim_lookup_nanos: usize,
     pub block_claim_encode_nanos: usize,
@@ -1847,25 +1851,33 @@ impl ShardedHotEngine {
                 EngineError::Archive(error),
             );
         }
-        Self::with_archive_store_for_endpoint(
+        let binding = ProjectionStorageBinding {
+            endpoint: endpoint.expect("validated enrolled endpoint"),
+            receipt_store_id,
+        };
+        match store.seal_enrolled_projection(binding) {
+            Ok(open) => {
+                Self::with_archive_store_for_endpoint(open, lineage_digest, catalog_document_id)
+            }
+            Err((store, error)) => Self::failed_archive_open(
             store,
             lineage_digest,
             catalog_document_id,
-            ProjectionStorageBinding {
-                endpoint: endpoint.expect("validated enrolled endpoint"),
-                receipt_store_id,
-            },
-        )
+                EngineError::Archive(error.to_string()),
+            ),
+        }
     }
 
     pub(crate) fn with_archive_store_for_endpoint(
-        store: ObjectStore,
+        open: super::object_store::EnrolledProjectionOpen,
         lineage_digest: LineageDigest,
         catalog_document_id: DocumentId,
-        binding: ProjectionStorageBinding,
     ) -> Self {
+        let binding = open.binding();
         let endpoint = binding.endpoint;
-        if let Err(error) = store.preflight_enrolled_projection(binding) {
+        let (store, history, projection_work_index) = match open.into_runtime() {
+            Ok(runtime) => runtime,
+            Err((store, error)) => {
             return Self::failed_archive_open(
                 store,
                 lineage_digest,
@@ -1873,14 +1885,9 @@ impl ShardedHotEngine {
                 EngineError::Archive(error.to_string()),
             );
         }
+        };
         let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
-        let history = engine
-            .archive_store
-            .as_ref()
-            .expect("archive store was installed")
-            .open_engine_history(binding);
-        match history {
-            Ok(history) => match history.current_with_binding() {
+        match history.current_with_binding() {
                 Ok((generation, root, _, binding)) => {
                     engine.history_generation = generation;
                     engine.history_root = root;
@@ -1923,8 +1930,7 @@ impl ShardedHotEngine {
                         .map(|conflict| (conflict.key_digest(), conflict))
                         .collect();
                     if !engine.portable_path_conflicts.is_empty() {
-                        let expected =
-                            portable_path_evidence_handle(&engine.portable_path_conflicts);
+                    let expected = portable_path_evidence_handle(&engine.portable_path_conflicts);
                         if engine.fatal_handle != Some(expected) {
                             engine.history_failure = Some(EngineError::Archive(
                                 "durable portable-path evidence binding mismatch".into(),
@@ -1932,34 +1938,18 @@ impl ShardedHotEngine {
                         }
                     }
                 }
-                Err(error) => {
-                    engine.history_failure = Some(EngineError::Archive(error.to_string()))
-                }
-            },
             Err(error) => engine.history_failure = Some(EngineError::Archive(error.to_string())),
         }
         if engine.history_failure.is_none() {
-            let result = engine
-                .archive_store
-                .as_ref()
-                .expect("archive store was installed")
-                .open_projection_work_index(binding);
-            match result {
-                Ok(index) => {
                     engine.projection_endpoint = Some(endpoint);
                     engine.projection_receipt_store_id = Some(binding.receipt_store_id);
-                    engine.projection_work_index = Some(Arc::new(index));
+            engine.projection_work_index = Some(Arc::new(projection_work_index));
                     if engine.fatal_handle.is_none() {
                         if let Err(error) = engine.reconcile_pending_projection_work() {
                             engine.history_failure = Some(error);
                         }
                     }
                 }
-                Err(error) => {
-                    engine.history_failure = Some(EngineError::Archive(error.to_string()))
-                }
-            }
-        }
         engine
     }
 
@@ -2107,6 +2097,10 @@ impl ShardedHotEngine {
             projection_work_root_reads: projection_work.root_reads,
             projection_work_prepared_reads: projection_work.prepared_reads,
             projection_pending_entries_read: projection_work.pending_entries_read,
+            projection_preflight_nodes: projection_work.preflight_nodes,
+            projection_preflight_records: projection_work.preflight_records,
+            projection_preflight_roots: projection_work.preflight_roots,
+            projection_preflight_bytes: projection_work.preflight_bytes,
             block_claim_validation_nanos: work.block_claim_validation_nanos,
             block_claim_lookup_nanos: work.block_claim_lookup_nanos,
             block_claim_encode_nanos: work.block_claim_encode_nanos,
