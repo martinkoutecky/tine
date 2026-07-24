@@ -2735,21 +2735,17 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         bytes
     );
 
+    let accepted_head = fs::read(&work_head).unwrap();
     fs::write(&work_head, rollback_head).unwrap();
-    let resurrected = engine
-        .projection_work_index()
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap();
-    assert_eq!(resurrected.work_id(), delete_work.work_id());
     assert!(
-        execute_manifested_projection_work(&graph, &receipts, &mut engine, &resurrected,).is_err()
+        engine.projection_work_index().unwrap().next().is_err(),
+        "a valid older work HEAD was accepted after the live transition"
     );
     assert_eq!(
         fs::read(dir.path().join("graph/pages/reused.md")).unwrap(),
         bytes
     );
+    fs::write(&work_head, accepted_head).unwrap();
 }
 
 #[test]
@@ -3464,28 +3460,6 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
     );
     fs::write(&work_head, &accepted_head).unwrap();
 
-    // Model a crash after durable engine acceptance but before the singular
-    // pending -> accepted/Ready projection-work root publication.
-    fs::write(&work_head, pending_head.to_string()).unwrap();
-    assert!(
-        engine
-        .projection_work_index()
-        .unwrap()
-        .next()
-        .unwrap()
-            .is_none()
-    );
-    assert_eq!(
-        engine
-            .projection_work_index()
-            .unwrap()
-            .pending_activation_page(None, 8)
-            .unwrap()
-            .pending()
-            .len(),
-        1
-    );
-
     let crlf = String::from_utf8(source_target.to_vec())
         .unwrap()
         .replace('\n', "\r\n")
@@ -3504,7 +3478,12 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
         &ProjectionPrecondition::Base(BlobDescription::of(&crlf))
     );
 
+    // Model a crash after durable engine acceptance but before the singular
+    // pending -> accepted/Ready projection-work root publication. The live
+    // engine would reject this rollback, so crash first and let the reopen
+    // seal the exact durable pending HEAD it actually observes.
     drop(engine);
+    fs::write(&work_head, pending_head.to_string()).unwrap();
     let recovery_reader = ObjectStore::open(&archive_path, workspace_id).unwrap();
     let recovery_engine = ShardedHotEngine::with_enrolled_projection(
         recovery_reader,

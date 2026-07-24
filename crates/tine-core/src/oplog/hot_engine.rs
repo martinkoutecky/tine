@@ -1841,7 +1841,7 @@ impl ShardedHotEngine {
                 Err(error) => Some(format!(
                     "projection graph capability identity could not be verified: {error}"
                 )),
-            }
+        }
         };
         if let Some(error) = enrollment_error {
             return Self::failed_archive_open(
@@ -1884,10 +1884,28 @@ impl ShardedHotEngine {
                 catalog_document_id,
                 EngineError::Archive(error.to_string()),
             );
-        }
+            }
         };
+        let history_current = history.current_with_binding();
+        let work_current = projection_work_index.validate_runtime_open();
+        if let Err(error) = &history_current {
+            return Self::failed_archive_open(
+                store,
+                lineage_digest,
+                catalog_document_id,
+                EngineError::Archive(error.to_string()),
+            );
+        }
+        if let Err(error) = &work_current {
+            return Self::failed_archive_open(
+                store,
+                lineage_digest,
+                catalog_document_id,
+                EngineError::ProjectionWork(error.to_string()),
+            );
+        }
         let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
-        match history.current_with_binding() {
+        match history_current {
                 Ok((generation, root, _, binding)) => {
                     engine.history_generation = generation;
                     engine.history_root = root;

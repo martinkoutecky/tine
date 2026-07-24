@@ -444,6 +444,7 @@ impl fmt::Debug for ProjectionWorkIndex {
 }
 
 impl ProjectionWorkIndex {
+    #[cfg(test)]
     pub(crate) fn preflight_existing(
         control: &Dir,
         workspace_id: WorkspaceId,
@@ -810,6 +811,20 @@ impl ProjectionWorkIndex {
         if live != expected {
             return Err(ProjectionWorkError::ConcurrentRootTransition);
         }
+        self.require_root_binding(&root)
+    }
+
+    pub(crate) fn validate_runtime_open(&self) -> Result<(), ProjectionWorkError> {
+        let claim = read_optional_regular(&self.control, CLAIM_FILE, 256, None)?
+            .ok_or(ProjectionWorkError::MissingHead)?;
+        validate_projection_index_claim(
+            &claim,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+            self.receipt_store_id,
+        )?;
+        let (_, root) = self.load_head_root()?;
         self.require_root_binding(&root)
     }
 
@@ -1581,7 +1596,7 @@ impl ProjectionWorkIndex {
         *self
             .authoritative_head
             .lock()
-            .map_err(|_| ProjectionWorkError::Poisoned)? = None;
+            .map_err(|_| ProjectionWorkError::Poisoned)? = Some(replacement);
         Ok(())
     }
 
@@ -1590,9 +1605,15 @@ impl ProjectionWorkIndex {
             .authoritative_head
             .lock()
             .map_err(|_| ProjectionWorkError::Poisoned)?
-            .take();
+            .to_owned();
         match sealed {
-            Some(digest) => Ok((digest, self.load_root(digest)?)),
+            Some(expected) => {
+                let (live, root) = self.read_live_head_root()?;
+                if live != expected {
+                    return Err(ProjectionWorkError::ConcurrentRootTransition);
+                }
+                Ok((live, root))
+            }
             None => self.read_live_head_root(),
         }
     }
@@ -2933,6 +2954,60 @@ mod tests {
             assert!(!fixture.path.join("logseq-uuid-claim-index-v1").exists());
             assert!(!fixture.path.join("portable-path-index-v1").exists());
         }
+    }
+
+    #[test]
+    fn sealed_work_head_rollback_after_validation_rejects_without_mutation() {
+        let fixture = Fixture::new("sealed-work-valid-rollback");
+        let endpoint = fixture
+            .path
+            .join("projection-work-index-v1")
+            .join(fixture.endpoint_id.to_string());
+        let original = fs::read(endpoint.join(HEAD_FILE)).unwrap();
+        fixture.prepare(&fixture.work(1, "pages/rollback.md"));
+        let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+        let open = store.seal_enrolled_projection(fixture.binding()).unwrap();
+        let attacked = Rc::new(RefCell::new(None));
+        let attacked_hook = Rc::clone(&attacked);
+        let root = fixture.path.clone();
+        super::super::object_store::set_enrolled_open_act_hook(move || {
+            fs::write(endpoint.join(HEAD_FILE), original).unwrap();
+            *attacked_hook.borrow_mut() = Some(snapshot_tree(&root));
+        });
+
+        assert!(open.into_runtime().is_err());
+        assert_eq!(
+            snapshot_tree(&fixture.path),
+            attacked.borrow().clone().expect("attack hook ran")
+        );
+    }
+
+    #[test]
+    fn sealed_work_baseline_survives_reads_until_its_transition_advances() {
+        let fixture = Fixture::new("sealed-work-subsequent-rollback");
+        let endpoint = fixture
+            .path
+            .join("projection-work-index-v1")
+            .join(fixture.endpoint_id.to_string());
+        let original = fs::read(endpoint.join(HEAD_FILE)).unwrap();
+        let work = fixture.work(1, "pages/rollback.md");
+        fixture.prepare(&work);
+        let accepted = fs::read(endpoint.join(HEAD_FILE)).unwrap();
+        let (_, _, reopened) = ObjectStore::open(&fixture.path, fixture.workspace_id)
+            .unwrap()
+            .seal_enrolled_projection(fixture.binding())
+            .unwrap()
+            .into_runtime()
+            .unwrap();
+        assert!(reopened.next().unwrap().is_none());
+
+        fs::write(endpoint.join(HEAD_FILE), original).unwrap();
+        let attacked = snapshot_tree(&fixture.path);
+        assert!(reopened.next().is_err());
+        assert_eq!(snapshot_tree(&fixture.path), attacked);
+
+        fs::write(endpoint.join(HEAD_FILE), accepted).unwrap();
+        assert!(reopened.next().unwrap().is_none());
     }
 
     #[test]

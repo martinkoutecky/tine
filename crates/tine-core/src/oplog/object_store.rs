@@ -79,11 +79,20 @@ const MAX_BLOCK_CLAIM_PAGE_BYTES: usize = 8 * 1024 * 1024;
 thread_local! {
     static ENROLLED_OPEN_USE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static ENROLLED_OPEN_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
 pub(crate) fn set_enrolled_open_use_hook(hook: impl FnOnce() + 'static) {
     ENROLLED_OPEN_USE_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn set_enrolled_open_act_hook(hook: impl FnOnce() + 'static) {
+    ENROLLED_OPEN_ACT_HOOK.with(|slot| {
         *slot.borrow_mut() = Some(Box::new(hook));
     });
 }
@@ -99,6 +108,18 @@ fn enrolled_open_use_hook() {
 
 #[cfg(not(test))]
 fn enrolled_open_use_hook() {}
+
+#[cfg(test)]
+fn enrolled_open_act_hook() {
+    ENROLLED_OPEN_ACT_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn enrolled_open_act_hook() {}
 
 /// A caller-rooted, v2-candidate immutable object and batch-manifest store.
 ///
@@ -118,9 +139,39 @@ pub struct ObjectStore {
 pub(crate) struct EnrolledProjectionOpen {
     store: Option<ObjectStore>,
     binding: super::hot_engine::ProjectionStorageBinding,
-    history: Option<DurableEngineHistoryStore>,
-    work: Option<super::ProjectionWorkIndex>,
+    history: Option<SealedControl<DurableEngineHistoryStore>>,
+    work: Option<SealedControl<super::ProjectionWorkIndex>>,
 }
+
+enum SealedControl<T> {
+    Existing(T),
+    Absent(AbsentControlName),
+}
+
+struct AbsentControlName {
+    namespace_name: &'static str,
+    namespace: Option<Dir>,
+    namespace_identity: Option<ControlDirectoryIdentity>,
+    endpoint_name: String,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ControlDirectoryIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ControlDirectoryIdentity {
+    volume: u32,
+    file_index: u64,
+}
+
+#[cfg(not(any(unix, windows)))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ControlDirectoryIdentity;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AcceptedReadStats {
@@ -641,38 +692,58 @@ impl ObjectStore {
         self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<EnrolledProjectionOpen, (Self, StoreError)> {
-        let history = match self.seal_existing_engine_history(binding) {
+        let mut history = match self.seal_existing_engine_history(binding) {
             Ok(history) => history,
             Err(error) => return Err((self, error)),
         };
-        let work = match self.seal_existing_projection_work(binding) {
+        let mut work = match self.seal_existing_projection_work(binding) {
             Ok(work) => work,
             Err(error) => return Err((self, error)),
         };
+        let history_parent_created = match history.bind_absent_parent(&self.capability) {
+            Ok(created) => created,
+            Err(error) => return Err((self, error)),
+        };
+        if let Err(error) = work.bind_absent_parent(&self.capability) {
+            if history_parent_created {
+                history.release_empty_parent(&self.capability);
+            }
+            return Err((self, error));
+        }
         Ok(EnrolledProjectionOpen {
             store: Some(self),
             binding,
-            history,
-            work,
+            history: Some(history),
+            work: Some(work),
         })
     }
 
     fn seal_existing_engine_history(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
-    ) -> Result<Option<DurableEngineHistoryStore>, StoreError> {
+    ) -> Result<SealedControl<DurableEngineHistoryStore>, StoreError> {
         let Some(histories) = open_existing_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?
         else {
-            return Ok(None);
+            return Ok(SealedControl::Absent(AbsentControlName {
+                namespace_name: ENGINE_HISTORY_DIR,
+                namespace: None,
+                namespace_identity: None,
+                endpoint_name: binding.endpoint.endpoint_id.to_string(),
+            }));
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
         let Some(control) = open_existing_dir_nofollow(&histories, &endpoint_name)? else {
-            return Ok(None);
+            return Ok(SealedControl::Absent(AbsentControlName {
+                namespace_name: ENGINE_HISTORY_DIR,
+                namespace_identity: Some(control_directory_identity(&histories)?),
+                namespace: Some(histories),
+                endpoint_name,
+            }));
         };
         let head = read_optional_regular(&control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
         let claim = read_optional_regular(&control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?;
         match (head, claim) {
-            (None, None) => Ok(None),
+            (None, None) => Err(StoreError::MalformedHistoryIndex),
             (Some(_), Some(_)) => DurableEngineHistoryStore::open_sealed_existing(
                 self.workspace_id,
                 binding.endpoint.endpoint_id,
@@ -681,7 +752,7 @@ impl ObjectStore {
                 control,
                 Arc::clone(&self.counters),
             )
-            .map(Some),
+            .map(SealedControl::Existing),
             _ => Err(StoreError::MalformedHistoryIndex),
         }
     }
@@ -689,18 +760,28 @@ impl ObjectStore {
     fn seal_existing_projection_work(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
-    ) -> Result<Option<super::ProjectionWorkIndex>, StoreError> {
+    ) -> Result<SealedControl<super::ProjectionWorkIndex>, StoreError> {
         let Some(root) = open_existing_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)? else {
-            return Ok(None);
+            return Ok(SealedControl::Absent(AbsentControlName {
+                namespace_name: PROJECTION_WORK_DIR,
+                namespace: None,
+                namespace_identity: None,
+                endpoint_name: binding.endpoint.endpoint_id.to_string(),
+            }));
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
         let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
-            return Ok(None);
+            return Ok(SealedControl::Absent(AbsentControlName {
+                namespace_name: PROJECTION_WORK_DIR,
+                namespace_identity: Some(control_directory_identity(&root)?),
+                namespace: Some(root),
+                endpoint_name,
+            }));
         };
         let head = read_optional_regular(&control, "projection-work.head", 64, None)?;
         let claim = read_optional_regular(&control, "projection-work.claim", 256, None)?;
         match (head, claim) {
-            (None, None) => Ok(None),
+            (None, None) => Err(StoreError::MalformedHistoryIndex),
             (Some(_), Some(_)) => super::ProjectionWorkIndex::open_sealed_existing(
                 control,
                 self.workspace_id,
@@ -708,12 +789,13 @@ impl ObjectStore {
                 binding.endpoint.graph_resource_id,
                 binding.receipt_store_id,
             )
-            .map(Some)
+            .map(SealedControl::Existing)
             .map_err(|error| StoreError::Scratch(error.to_string())),
             _ => Err(StoreError::MalformedHistoryIndex),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn open_engine_history(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -732,6 +814,30 @@ impl ObjectStore {
             self.workspace_id,
             endpoint.endpoint_id,
             endpoint.graph_resource_id,
+            binding.receipt_store_id,
+            control.try_clone()?,
+            open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
+            EngineHistoryStore {
+                capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
+                counters: Arc::clone(&self.counters),
+            },
+        )
+    }
+
+    fn open_absent_engine_history(
+        &self,
+        absence: AbsentControlName,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<DurableEngineHistoryStore, StoreError> {
+        let control = absence.claim(&self.capability)?;
+        for name in [ENGINE_HISTORY_NODES_DIR, ENGINE_HISTORY_ROOTS_DIR] {
+            control.create_dir(name)?;
+        }
+        sync_dir_required(&control)?;
+        DurableEngineHistoryStore::new(
+            self.workspace_id,
+            binding.endpoint.endpoint_id,
+            binding.endpoint.graph_resource_id,
             binding.receipt_store_id,
             control.try_clone()?,
             open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
@@ -817,6 +923,7 @@ impl ObjectStore {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn open_projection_work_index(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -844,6 +951,30 @@ impl ObjectStore {
         .map_err(|error| StoreError::Scratch(error.to_string()))
     }
 
+    fn open_absent_projection_work_index(
+        &self,
+        absence: AbsentControlName,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<super::ProjectionWorkIndex, StoreError> {
+        let endpoint_dir = absence.claim(&self.capability)?;
+        for name in ["nodes", "roots", "prepared"] {
+            endpoint_dir.create_dir(name)?;
+        }
+        sync_dir_required(&endpoint_dir)?;
+        super::ProjectionWorkIndex::new(
+            self.workspace_id,
+            binding.endpoint.endpoint_id,
+            binding.endpoint.graph_resource_id,
+            binding.receipt_store_id,
+            endpoint_dir.try_clone()?,
+            open_dir_nofollow(&endpoint_dir, "nodes")?,
+            open_dir_nofollow(&endpoint_dir, "roots")?,
+            open_dir_nofollow(&endpoint_dir, "prepared")?,
+        )
+        .map_err(|error| StoreError::Scratch(error.to_string()))
+    }
+
+    #[cfg(test)]
     fn preflight_engine_history(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -909,6 +1040,7 @@ impl ObjectStore {
         }
     }
 
+    #[cfg(test)]
     fn preflight_projection_work_index(
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
@@ -1149,38 +1281,186 @@ impl EnrolledProjectionOpen {
     > {
         enrolled_open_use_hook();
         let validation = (|| {
-            let store = self.store.as_ref().expect("sealed store is present");
-            self.history.as_ref().map_or_else(
-                || store.preflight_engine_history(self.binding),
-                DurableEngineHistoryStore::validate_sealed_open,
-            )?;
-            match self.work.as_ref() {
-                Some(work) => work
+            match self.history.as_ref().expect("sealed history control is present") {
+                SealedControl::Existing(history) => history.validate_sealed_open()?,
+                SealedControl::Absent(_) => {}
+            }
+            match self.work.as_ref().expect("sealed work control is present") {
+                SealedControl::Existing(work) => work
                     .validate_sealed_open()
                     .map_err(|error| StoreError::Scratch(error.to_string())),
-                None => store.preflight_projection_work_index(self.binding),
+                SealedControl::Absent(_) => Ok(()),
             }
         })();
         if let Err(error) = validation {
             return Err((self.store.take().expect("sealed store is present"), error));
         }
+        enrolled_open_act_hook();
 
         let store = self.store.take().expect("sealed store is present");
-        let history = match self.history.take() {
-            Some(history) => history,
-            None => match store.open_engine_history(self.binding) {
+        let post_hook_validation = (|| {
+            match self.history.as_ref().expect("sealed history control is present") {
+                SealedControl::Existing(history) => history.validate_sealed_open()?,
+                SealedControl::Absent(absence) => absence.validate_still_absent(&store.capability)?,
+            }
+            match self.work.as_ref().expect("sealed work control is present") {
+                SealedControl::Existing(work) => work
+                    .validate_sealed_open()
+                    .map_err(|error| StoreError::Scratch(error.to_string())),
+                SealedControl::Absent(absence) => {
+                    absence.validate_still_absent(&store.capability)
+                }
+            }
+        })();
+        if let Err(error) = post_hook_validation {
+            return Err((store, error));
+        }
+        let history = match self.history.take().expect("sealed history control is present") {
+            SealedControl::Existing(history) => history,
+            SealedControl::Absent(absence) => match store.open_absent_engine_history(absence, self.binding) {
                 Ok(history) => history,
                 Err(error) => return Err((store, error)),
             },
         };
-        let work = match self.work.take() {
-            Some(work) => work,
-            None => match store.open_projection_work_index(self.binding) {
+        let work = match self.work.take().expect("sealed work control is present") {
+            SealedControl::Existing(work) => work,
+            SealedControl::Absent(absence) => match store.open_absent_projection_work_index(absence, self.binding) {
                 Ok(work) => work,
                 Err(error) => return Err((store, error)),
             },
         };
         Ok((store, history, work))
+    }
+}
+
+impl<T> SealedControl<T> {
+    fn bind_absent_parent(&mut self, store_root: &Dir) -> Result<bool, StoreError> {
+        let Self::Absent(absence) = self else {
+            return Ok(false);
+        };
+        if absence.namespace.is_some() {
+            return Ok(false);
+        }
+        store_root
+            .create_dir(absence.namespace_name)
+            .map_err(|error| {
+                if error.kind() == ErrorKind::AlreadyExists {
+                    StoreError::UnsafeEntry(format!(
+                        "formerly absent {} was created while enrolled open was sealed",
+                        absence.namespace_name
+                    ))
+                } else {
+                    error.into()
+                }
+            })?;
+        sync_dir_required(store_root)?;
+        let namespace = open_dir_nofollow(store_root, absence.namespace_name)?;
+        absence.namespace_identity = Some(control_directory_identity(&namespace)?);
+        absence.namespace = Some(namespace);
+        Ok(true)
+    }
+
+    fn release_empty_parent(&mut self, store_root: &Dir) {
+        let Self::Absent(absence) = self else {
+            return;
+        };
+        let Some(namespace) = &absence.namespace else {
+            return;
+        };
+        let Some(expected) = absence.namespace_identity else {
+            return;
+        };
+        let is_unchanged_empty = control_directory_identity(namespace).ok() == Some(expected)
+            && namespace
+                .entries()
+                .ok()
+                .is_some_and(|mut entries| entries.next().is_none());
+        if is_unchanged_empty {
+            let _ = store_root.remove_dir(absence.namespace_name);
+            let _ = sync_dir_required(store_root);
+        }
+    }
+}
+
+impl AbsentControlName {
+    fn validate_still_absent(&self, store_root: &Dir) -> Result<(), StoreError> {
+        let parent = match &self.namespace {
+            Some(namespace) => {
+                let live = open_existing_dir_nofollow(store_root, self.namespace_name)?
+                    .ok_or_else(|| {
+                        StoreError::UnsafeEntry(format!(
+                            "enrolled-open parent {} disappeared",
+                            self.namespace_name
+                        ))
+                    })?;
+                let expected = self.namespace_identity.ok_or_else(|| {
+                    StoreError::UnsafeEntry(format!(
+                        "enrolled-open parent {} has no sealed identity",
+                        self.namespace_name
+                    ))
+                })?;
+                if control_directory_identity(&live)? != expected
+                    || control_directory_identity(namespace)? != expected
+                {
+                    return Err(StoreError::UnsafeEntry(format!(
+                        "enrolled-open parent {} was substituted",
+                        self.namespace_name
+                    )));
+                }
+                namespace
+            }
+            None => {
+                return match store_root.symlink_metadata(self.namespace_name) {
+                    Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                    Ok(_) => Err(StoreError::UnsafeEntry(format!(
+                        "formerly absent {} was created before enrolled open consumed it",
+                        self.namespace_name
+                    ))),
+                    Err(error) => Err(error.into()),
+                };
+            }
+        };
+        match parent.symlink_metadata(&self.endpoint_name) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Ok(_) => Err(StoreError::UnsafeEntry(format!(
+                "formerly absent {}/{} was created before enrolled open consumed it",
+                self.namespace_name, self.endpoint_name
+            ))),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn claim(self, store_root: &Dir) -> Result<Dir, StoreError> {
+        self.validate_still_absent(store_root)?;
+        let namespace = match self.namespace {
+            Some(namespace) => namespace,
+            None => {
+                store_root.create_dir(self.namespace_name).map_err(|error| {
+                    if error.kind() == ErrorKind::AlreadyExists {
+                        StoreError::UnsafeEntry(format!(
+                            "formerly absent {} was created before enrolled open consumed it",
+                            self.namespace_name
+                        ))
+                    } else {
+                        error.into()
+                    }
+                })?;
+                sync_dir_required(store_root)?;
+                open_dir_nofollow(store_root, self.namespace_name)?
+            }
+        };
+        namespace.create_dir(&self.endpoint_name).map_err(|error| {
+            if error.kind() == ErrorKind::AlreadyExists {
+                StoreError::UnsafeEntry(format!(
+                    "formerly absent {}/{} was created before enrolled open consumed it",
+                    self.namespace_name, self.endpoint_name
+                ))
+            } else {
+                error.into()
+            }
+        })?;
+        sync_dir_required(&namespace)?;
+        open_dir_nofollow(&namespace, &self.endpoint_name)
     }
 }
 
@@ -1657,9 +1937,15 @@ impl DurableEngineHistoryStore {
             .authoritative_head
             .lock()
             .map_err(|_| StoreError::MalformedHistoryIndex)?
-            .take();
+            .to_owned();
         match sealed {
-            Some(digest) => Ok((digest, self.load_root(digest)?)),
+            Some(expected) => {
+                let (live, root) = self.read_live_head_root()?;
+                if live != expected {
+                    return Err(StoreError::MalformedHistoryIndex);
+                }
+                Ok((live, root))
+            }
             None => self.read_live_head_root(),
         }
     }
@@ -1743,7 +2029,7 @@ impl DurableEngineHistoryStore {
         *self
             .authoritative_head
             .lock()
-            .map_err(|_| StoreError::MalformedHistoryIndex)? = None;
+            .map_err(|_| StoreError::MalformedHistoryIndex)? = Some(replacement);
         Ok(())
     }
 }
@@ -2493,6 +2779,44 @@ fn open_existing_dir_nofollow(root: &Dir, name: &str) -> Result<Option<Dir>, Sto
     }
 }
 
+#[cfg(unix)]
+fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    Ok(ControlDirectoryIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    Ok(ControlDirectoryIdentity {
+        volume: metadata.volume_serial_number().ok_or_else(|| {
+            StoreError::Io(std::io::Error::new(
+                ErrorKind::Unsupported,
+                "directory volume identity is unavailable",
+            ))
+        })?,
+        file_index: metadata.file_index().ok_or_else(|| {
+            StoreError::Io(std::io::Error::new(
+                ErrorKind::Unsupported,
+                "directory file identity is unavailable",
+            ))
+        })?,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn control_directory_identity(_dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+    Err(StoreError::Io(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "directory identity is unavailable on this platform",
+    )))
+}
+
 pub(crate) fn ensure_directory_nofollow(root: &Dir, name: &str) -> Result<(), StoreError> {
     match root.symlink_metadata(name) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
@@ -3108,6 +3432,274 @@ mod history_index_tests {
             }
         }
         result
+    }
+
+    fn snapshot_tree_with_identity(
+        path: &Path,
+    ) -> BTreeMap<PathBuf, (Vec<u8>, Option<Vec<u8>>)> {
+        fn identity(path: &Path) -> Vec<u8> {
+            let metadata = std::fs::symlink_metadata(path).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+
+                let mut identity = Vec::with_capacity(16);
+                identity.extend_from_slice(&metadata.dev().to_be_bytes());
+                identity.extend_from_slice(&metadata.ino().to_be_bytes());
+                identity
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt as _;
+
+                let mut identity = Vec::with_capacity(12);
+                identity.extend_from_slice(
+                    &metadata
+                        .volume_serial_number()
+                        .expect("test filesystem volume identity")
+                        .to_be_bytes(),
+                );
+                identity.extend_from_slice(
+                    &metadata
+                        .file_index()
+                        .expect("test filesystem file identity")
+                        .to_be_bytes(),
+                );
+                identity
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                Vec::new()
+            }
+        }
+
+        let mut result = BTreeMap::new();
+        let mut pending = vec![path.to_path_buf()];
+        while let Some(entry_path) = pending.pop() {
+            let relative = entry_path.strip_prefix(path).unwrap().to_path_buf();
+            if entry_path.is_dir() {
+                result.insert(relative, (identity(&entry_path), None));
+                for entry in std::fs::read_dir(&entry_path).unwrap() {
+                    pending.push(entry.unwrap().path());
+                }
+            } else {
+                result.insert(
+                    relative,
+                    (
+                        identity(&entry_path),
+                        Some(std::fs::read(&entry_path).unwrap()),
+                    ),
+                );
+            }
+        }
+        result
+    }
+
+    fn enrolled_binding(
+        endpoint: u128,
+    ) -> crate::oplog::hot_engine::ProjectionStorageBinding {
+        crate::oplog::hot_engine::ProjectionStorageBinding {
+            endpoint: crate::oplog::ProjectionEndpointBinding {
+                endpoint_id: crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(
+                    endpoint,
+                )),
+                device_id: crate::oplog::DeviceId::from_uuid(Uuid::from_u128(endpoint + 1)),
+                graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"test",
+                    &endpoint.to_be_bytes(),
+                ),
+            },
+            receipt_store_id:
+                crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                    b"test",
+                    &(endpoint + 2).to_be_bytes(),
+                ),
+        }
+    }
+
+    #[test]
+    fn absent_enrolled_controls_are_not_adopted_after_last_validation() {
+        #[derive(Clone, Copy)]
+        enum Attack {
+            Create,
+            Substitute,
+        }
+
+        for (label, control_name, attack) in [
+            ("history-create", ENGINE_HISTORY_DIR, Attack::Create),
+            ("work-create", PROJECTION_WORK_DIR, Attack::Create),
+            (
+                "history-substitute",
+                ENGINE_HISTORY_DIR,
+                Attack::Substitute,
+            ),
+            ("work-substitute", PROJECTION_WORK_DIR, Attack::Substitute),
+        ] {
+            let root = test_root(&format!("absent-enrolled-{label}"));
+            let archive = root.join("archive");
+            let workspace = WorkspaceId::from_uuid(Uuid::from_u128(100));
+            let binding = enrolled_binding(110);
+            let store = ObjectStore::open(&archive, workspace).unwrap();
+            let open = store.seal_enrolled_projection(binding).unwrap();
+            let control = archive
+                .join(control_name)
+                .join(binding.endpoint.endpoint_id.to_string());
+            let snapshot = Arc::new(Mutex::new(None));
+            let snapshot_hook = Arc::clone(&snapshot);
+            let archive_hook = archive.clone();
+            set_enrolled_open_act_hook(move || {
+                match attack {
+                    Attack::Create => std::fs::create_dir_all(&control).unwrap(),
+                    Attack::Substitute => {
+                        std::fs::create_dir_all(control.parent().unwrap()).unwrap();
+                        let foreign = archive_hook.join(format!("foreign-{label}"));
+                        std::fs::create_dir(&foreign).unwrap();
+                        std::fs::rename(foreign, &control).unwrap();
+                    }
+                }
+                std::fs::write(control.join("foreign-owner"), b"foreign archive").unwrap();
+                *snapshot_hook.lock().unwrap() =
+                    Some(snapshot_tree_with_identity(&archive_hook));
+            });
+
+            assert!(
+                open.into_runtime().is_err(),
+                "formerly absent {label} control was adopted"
+            );
+            assert_eq!(
+                snapshot_tree_with_identity(&archive),
+                snapshot.lock().unwrap().clone().expect("attack hook ran"),
+                "rejection mutated the foreign {label} archive"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn absent_endpoint_rejects_sealed_parent_namespace_substitution() {
+        for (label, namespace_name) in [
+            ("history-parent", ENGINE_HISTORY_DIR),
+            ("work-parent", PROJECTION_WORK_DIR),
+        ] {
+            let root = test_root(&format!("absent-parent-{label}"));
+            let archive = root.join("archive");
+            let workspace = WorkspaceId::from_uuid(Uuid::from_u128(105));
+            let binding = enrolled_binding(115);
+            let store = ObjectStore::open(&archive, workspace).unwrap();
+            let namespace = archive.join(namespace_name);
+            std::fs::create_dir(&namespace).unwrap();
+            std::fs::create_dir(namespace.join("unrelated-endpoint")).unwrap();
+            let open = store.seal_enrolled_projection(binding).unwrap();
+            let moved = archive.join(format!("{namespace_name}-moved"));
+            let endpoint = namespace.join(binding.endpoint.endpoint_id.to_string());
+            let snapshot = Arc::new(Mutex::new(None));
+            let snapshot_hook = Arc::clone(&snapshot);
+            let archive_hook = archive.clone();
+            set_enrolled_open_act_hook(move || {
+                std::fs::rename(&namespace, &moved).unwrap();
+                std::fs::create_dir(&namespace).unwrap();
+                std::fs::create_dir(&endpoint).unwrap();
+                std::fs::write(endpoint.join("foreign-owner"), b"foreign archive").unwrap();
+                *snapshot_hook.lock().unwrap() =
+                    Some(snapshot_tree_with_identity(&archive_hook));
+            });
+
+            assert!(open.into_runtime().is_err());
+            assert_eq!(
+                snapshot_tree_with_identity(&archive),
+                snapshot.lock().unwrap().clone().expect("attack hook ran")
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn enrolled_history_head_rollback_after_validation_is_rejected() {
+        let root = test_root("enrolled-head-rollback-at-act");
+        let archive = root.join("archive");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(120));
+        let binding = enrolled_binding(130);
+        let store = ObjectStore::open(&archive, workspace).unwrap();
+        let history = store.open_engine_history(binding).unwrap();
+        let control = archive
+            .join(ENGINE_HISTORY_DIR)
+            .join(binding.endpoint.endpoint_id.to_string());
+        let original = std::fs::read(control.join(ENGINE_HISTORY_HEAD_FILE)).unwrap();
+        history
+            .publish(
+                BatchId::from_uuid(Uuid::from_u128(140)),
+                b"accepted history",
+                EngineHistoryBinding::empty(),
+            )
+            .unwrap();
+        drop(history);
+        drop(store.open_projection_work_index(binding).unwrap());
+        drop(store);
+
+        let open = ObjectStore::open(&archive, workspace)
+            .unwrap()
+            .seal_enrolled_projection(binding)
+            .unwrap();
+        let attacked = Arc::new(Mutex::new(None));
+        let attacked_hook = Arc::clone(&attacked);
+        let archive_hook = archive.clone();
+        set_enrolled_open_act_hook(move || {
+            std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), original).unwrap();
+            *attacked_hook.lock().unwrap() = Some(snapshot_tree_with_identity(&archive_hook));
+        });
+
+        assert!(open.into_runtime().is_err());
+        assert_eq!(
+            snapshot_tree_with_identity(&archive),
+            attacked.lock().unwrap().clone().expect("attack hook ran"),
+            "rollback rejection mutated the archive"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sealed_history_baseline_survives_reads_until_an_anchored_transition() {
+        let root = test_root("enrolled-head-rollback-subsequent-read");
+        let archive = root.join("archive");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(150));
+        let binding = enrolled_binding(160);
+        let store = ObjectStore::open(&archive, workspace).unwrap();
+        let history = store.open_engine_history(binding).unwrap();
+        let control = archive
+            .join(ENGINE_HISTORY_DIR)
+            .join(binding.endpoint.endpoint_id.to_string());
+        let original = std::fs::read(control.join(ENGINE_HISTORY_HEAD_FILE)).unwrap();
+        history
+            .publish(
+                BatchId::from_uuid(Uuid::from_u128(170)),
+                b"accepted history",
+                EngineHistoryBinding::empty(),
+            )
+            .unwrap();
+        let accepted = std::fs::read(control.join(ENGINE_HISTORY_HEAD_FILE)).unwrap();
+        drop(history);
+        drop(store.open_projection_work_index(binding).unwrap());
+        drop(store);
+
+        let (_, history, _) = ObjectStore::open(&archive, workspace)
+            .unwrap()
+            .seal_enrolled_projection(binding)
+            .unwrap()
+            .into_runtime()
+            .unwrap();
+        assert_eq!(history.current().unwrap().0, 1);
+        std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), &original).unwrap();
+        let attacked = snapshot_tree(&archive);
+        assert!(history.current().is_err(), "rollback was accepted on reread");
+        assert_eq!(snapshot_tree(&archive), attacked);
+
+        std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), accepted).unwrap();
+        assert_eq!(
+            history.current().unwrap().0,
+            1,
+            "the sealed baseline was forgotten after a rejected rollback"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

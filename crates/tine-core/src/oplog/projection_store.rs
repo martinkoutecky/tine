@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::object_store::{
     StoreError, ensure_directory_nofollow, is_temp_name, open_dir_nofollow,
-    publish_immutable_exact, read_optional_regular, require_regular_entry,
+    publish_immutable_exact, read_optional_regular, require_regular_entry, sync_dir_required,
 };
 use super::{
     BaseBlob, BlobDescription, CapabilityCapturedProjectionInput,
@@ -56,7 +56,11 @@ type DirectoryIdentity = [u8; 32];
 thread_local! {
     static MUTATION_AUTHORITY_CAPTURED_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static MUTATION_AUTHORITY_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
     static COMPLETION_PUBLICATION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static COMPLETION_PUBLICATION_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
 }
 
@@ -73,6 +77,18 @@ fn mutation_authority_captured_hook() {
 fn mutation_authority_captured_hook() {}
 
 #[cfg(test)]
+fn mutation_authority_act_hook() {
+    MUTATION_AUTHORITY_ACT_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn mutation_authority_act_hook() {}
+
+#[cfg(test)]
 fn completion_publication_hook() {
     COMPLETION_PUBLICATION_HOOK.with(|hook| {
         if let Some(hook) = hook.borrow_mut().take() {
@@ -83,6 +99,18 @@ fn completion_publication_hook() {
 
 #[cfg(not(test))]
 fn completion_publication_hook() {}
+
+#[cfg(test)]
+fn completion_publication_act_hook() {
+    COMPLETION_PUBLICATION_ACT_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn completion_publication_act_hook() {}
 
 #[derive(Debug)]
 struct BoundNamespace {
@@ -332,6 +360,7 @@ pub(crate) struct ProjectionMutationAuthority {
     reservations: Vec<ProjectionAttemptReservation>,
     active: Option<ProjectionAttemptReservation>,
     graph_operation_consumed: bool,
+    completion_published: bool,
 }
 
 impl fmt::Debug for ProjectionMutationAuthority {
@@ -778,6 +807,7 @@ impl ProjectionReceiptStore {
             reservations,
             active: active.cloned(),
             graph_operation_consumed: false,
+            completion_published: false,
         };
         authority.validate_live_names()?;
         mutation_authority_captured_hook();
@@ -788,57 +818,56 @@ impl ProjectionReceiptStore {
     /// that Graph consumed for the exact mutation or recovery operation.
     pub(crate) fn publish_completion(
         &self,
-        authority: ProjectionMutationAuthority,
+        mut authority: ProjectionMutationAuthority,
         intent: &ProjectionIntent,
         proof: &ProjectionWriteProof,
     ) -> Result<ProjectionCompletion, ProjectionStoreError> {
         completion_publication_hook();
-        authority.require_store_and_intent(self, intent)?;
-        authority.require_consumed()?;
-        authority.validate_live_names()?;
-        self.require_write_proof(intent, proof)?;
-        let intent_id = authority.durable.intent_id;
-        for evidence in proof.recovery_evidence() {
-            let reservation = authority
-                .reservations
-                .iter()
-                .find(|reservation| reservation.recovery_filename() == evidence.filename())
-                .ok_or(ProjectionStoreError::UnreservedRecoveryEvidence)?;
-            let record = LocalProjectionEvidenceRecord {
-                schema_version: LOCAL_FORENSIC_SCHEMA_VERSION,
-                intent_id,
-                attempt_id: reservation.attempt_id(),
-                target_path: intent.path().clone(),
-                recovery_relative_path: evidence.path().to_owned(),
-                recovery_filename: evidence.filename().to_owned(),
-                observed: BlobDescription::from_parts(*evidence.digest(), evidence.len()),
-            };
-            self.validate_forensic_record_with_reservation(intent, &record, reservation)?;
-            let record_bytes = serde_json::to_vec(&record)
-                .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
-            let digest: [u8; 32] = Sha256::digest(&record_bytes).into();
-            publish_immutable_exact(
-                &authority.forensics,
-                &format!("{}.evidence", hex(&digest)),
-                &record_bytes,
-                "local projection forensic evidence",
+        completion_publication_act_hook();
+        authority.consume_completion_publication(self, intent, |authority| {
+            self.require_write_proof(intent, proof)?;
+            let intent_id = authority.durable.intent_id;
+            for evidence in proof.recovery_evidence() {
+                let reservation = authority
+                    .reservations
+                    .iter()
+                    .find(|reservation| reservation.recovery_filename() == evidence.filename())
+                    .ok_or(ProjectionStoreError::UnreservedRecoveryEvidence)?;
+                let record = LocalProjectionEvidenceRecord {
+                    schema_version: LOCAL_FORENSIC_SCHEMA_VERSION,
+                    intent_id,
+                    attempt_id: reservation.attempt_id(),
+                    target_path: intent.path().clone(),
+                    recovery_relative_path: evidence.path().to_owned(),
+                    recovery_filename: evidence.filename().to_owned(),
+                    observed: BlobDescription::from_parts(*evidence.digest(), evidence.len()),
+                };
+                self.validate_forensic_record_with_reservation(intent, &record, reservation)?;
+                let record_bytes = serde_json::to_vec(&record)
+                    .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+                let digest: [u8; 32] = Sha256::digest(&record_bytes).into();
+                publish_immutable_exact(
+                    &authority.forensics,
+                    &format!("{}.evidence", hex(&digest)),
+                    &record_bytes,
+                    "local projection forensic evidence",
+                )?;
+            }
+            let completion = ProjectionCompletion::for_intent(intent, proof.bytes())?;
+            let bytes = completion.encode()?;
+            require_evidence_length(
+                "projection completion",
+                bytes.len() as u64,
+                MAX_PROJECTION_EVIDENCE_BYTES,
             )?;
-        }
-        let completion = ProjectionCompletion::for_intent(intent, proof.bytes())?;
-        let bytes = completion.encode()?;
-        require_evidence_length(
-            "projection completion",
-            bytes.len() as u64,
-            MAX_PROJECTION_EVIDENCE_BYTES,
-        )?;
-        publish_immutable_exact(
-            &authority.completions,
-            &completion_filename(intent_id),
-            &bytes,
-            "projection completion",
-        )?;
-        authority.validate_live_names()?;
-        Ok(completion)
+            publish_immutable_exact(
+                &authority.completions,
+                &completion_filename(intent_id),
+                &bytes,
+                "projection completion",
+            )?;
+            Ok(completion)
+        })
     }
 
     pub fn load_completion(
@@ -1436,27 +1465,31 @@ impl ProjectionReceiptStore {
 }
 
 impl ProjectionMutationAuthority {
-    pub(crate) fn consume_write_evidence(
+    pub(crate) fn consume_write_evidence<T>(
         &mut self,
         relative_path: &str,
-    ) -> io::Result<(
-        ProjectionAttemptReservation,
-        Vec<ProjectionAttemptReservation>,
-    )> {
+        operation: impl FnOnce(
+            &ProjectionAttemptReservation,
+            &[ProjectionAttemptReservation],
+        ) -> io::Result<T>,
+    ) -> io::Result<T> {
+        mutation_authority_act_hook();
         self.consume_graph_operation(relative_path)?;
-        let active = self.active.clone().ok_or_else(|| {
+        let active = self.active.as_ref().ok_or_else(|| {
             io::Error::new(
                 ErrorKind::PermissionDenied,
                 "projection mutation authority has no active reserved attempt",
             )
         })?;
-        Ok((active, self.reservations.clone()))
+        operation(active, &self.reservations)
     }
 
-    pub(crate) fn consume_recovery_evidence(
+    pub(crate) fn consume_recovery_evidence<T>(
         &mut self,
         relative_path: &str,
-    ) -> io::Result<Vec<ProjectionAttemptReservation>> {
+        operation: impl FnOnce(&[ProjectionAttemptReservation]) -> io::Result<T>,
+    ) -> io::Result<T> {
+        mutation_authority_act_hook();
         self.consume_graph_operation(relative_path)?;
         if self.reservations.is_empty() {
             return Err(io::Error::new(
@@ -1464,7 +1497,75 @@ impl ProjectionMutationAuthority {
                 "projection recovery authority has no durable attempts",
             ));
         }
-        Ok(self.reservations.clone())
+        operation(&self.reservations)
+    }
+
+    fn consume_completion_publication<T>(
+        &mut self,
+        store: &ProjectionReceiptStore,
+        intent: &ProjectionIntent,
+        operation: impl FnOnce(&Self) -> Result<T, ProjectionStoreError>,
+    ) -> Result<T, ProjectionStoreError> {
+        self.require_store_and_intent(store, intent)?;
+        self.require_consumed()?;
+        self.validate_live_names()?;
+        let result = operation(self)?;
+        self.validate_live_names()?;
+        self.completion_published = true;
+        self.retire_completed_durable_records()?;
+        Ok(result)
+    }
+
+    fn retire_completed_durable_records(&self) -> Result<(), ProjectionStoreError> {
+        let prefix = format!("{}.", hex(self.durable.intent_id.as_bytes()));
+        for entry in self.root.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(authority_id) = name
+                .strip_prefix(&prefix)
+                .and_then(|name| name.strip_suffix(MUTATION_AUTHORITY_SUFFIX))
+                .and_then(|value| Uuid::parse_str(value).ok())
+            else {
+                continue;
+            };
+            if authority_id.simple().to_string()
+                != name[prefix.len()..name.len() - MUTATION_AUTHORITY_SUFFIX.len()]
+            {
+                continue;
+            }
+            require_regular_entry(&entry.file_type()?, name)?;
+            let Some(bytes) = read_optional_regular(
+                &self.root,
+                name,
+                MAX_MUTATION_AUTHORITY_BYTES as u64,
+                None,
+            )?
+            else {
+                continue;
+            };
+            let Ok(record) =
+                serde_json::from_slice::<DurableProjectionMutationAuthority>(&bytes)
+            else {
+                continue;
+            };
+            if serde_json::to_vec(&record).ok().as_deref() != Some(bytes.as_slice())
+                || record.schema_version != MUTATION_AUTHORITY_SCHEMA_VERSION
+                || record.authority_id != authority_id
+                || record.store_id != self.durable.store_id
+                || record.workspace_id != self.durable.workspace_id
+                || record.endpoint_binding != self.durable.endpoint_binding
+                || record.intent_id != self.durable.intent_id
+                || record.intent_digest != self.durable.intent_digest
+            {
+                continue;
+            }
+            self.root.remove_file(name)?;
+        }
+        sync_dir_required(&self.root)?;
+        Ok(())
     }
 
     fn consume_graph_operation(&mut self, relative_path: &str) -> io::Result<()> {
@@ -1606,21 +1707,43 @@ impl ProjectionMutationAuthority {
         if self.reservations.len() != self.durable.reservation_bytes.len() {
             return Err(ProjectionStoreError::MutationAuthorityMismatch);
         }
-        for (reservation, expected_bytes) in self
+        let expected_attempts = self
             .reservations
             .iter()
             .zip(&self.durable.reservation_bytes)
-        {
+            .map(|(reservation, bytes)| (attempt_filename(reservation.attempt_id()), bytes))
+            .collect::<BTreeMap<_, _>>();
+        let mut live_attempts = BTreeMap::new();
+        for entry in self.attempts.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                ProjectionStoreError::UnsafeEntry(
+                    "non-UTF-8 projection attempt entry".into(),
+                )
+            })?;
+            require_regular_entry(&entry.file_type()?, name)?;
+            if is_temp_name(name) {
+                continue;
+            }
+            parse_attempt_filename(name)?;
+            let expected_bytes = expected_attempts
+                .get(name)
+                .ok_or(ProjectionStoreError::AttemptBindingMismatch)?;
             let bytes = read_optional_regular(
                 &self.attempts,
-                &attempt_filename(reservation.attempt_id()),
+                name,
                 MAX_PROJECTION_EVIDENCE_BYTES,
                 Some(expected_bytes.len() as u64),
             )?
             .ok_or(ProjectionStoreError::AttemptBindingMismatch)?;
-            if bytes != *expected_bytes {
+            if bytes.as_slice() != expected_bytes.as_slice() {
                 return Err(ProjectionStoreError::AttemptBindingMismatch);
             }
+            live_attempts.insert(name.to_owned(), bytes);
+        }
+        if live_attempts.len() != expected_attempts.len() {
+            return Err(ProjectionStoreError::AttemptBindingMismatch);
         }
         validate_live_intent_namespace(
             &self.attempts_parent,
@@ -1636,6 +1759,15 @@ impl ProjectionMutationAuthority {
             self.durable.intent_id,
             self.durable.forensics_identity,
         )
+    }
+}
+
+impl Drop for ProjectionMutationAuthority {
+    fn drop(&mut self) {
+        if !self.graph_operation_consumed || self.completion_published {
+            let _ = self.root.remove_file(&self.durable_name);
+            let _ = sync_dir_required(&self.root);
+        }
     }
 }
 
@@ -2279,6 +2411,10 @@ mod tests {
 
     impl Fixture {
         fn new(label: &str) -> Self {
+            Self::new_at(label, "pages/authority.md")
+        }
+
+        fn new_at(label: &str, target_path: &str) -> Self {
             let root =
                 std::env::temp_dir().join(format!("tine-receipt-authority-{label}-{}", Uuid::new_v4()));
             fs::create_dir(&root).unwrap();
@@ -2295,7 +2431,7 @@ mod tests {
             let intent = ProjectionIntent::new(
                 store.workspace_id(),
                 PageId::from_uuid(Uuid::from_u128(2)),
-                ManagedPath::parse("pages/authority.md").unwrap(),
+                ManagedPath::parse(target_path).unwrap(),
                 FrontierV2::default(),
                 Vec::new(),
                 ProjectionPrecondition::Absent,
@@ -2396,13 +2532,105 @@ mod tests {
                 )
                 .is_err());
             assert_eq!(fixture.snapshot_graph(), before);
-            assert!(fs::read_dir(fixture.store.root_path())
+            drop(authority);
+            assert!(!fs::read_dir(fixture.store.root_path())
                 .unwrap()
                 .any(|entry| entry
                     .unwrap()
                     .file_name()
                     .to_string_lossy()
                     .ends_with(MUTATION_AUTHORITY_SUFFIX)));
+        }
+    }
+
+    #[test]
+    fn authority_or_attempt_change_after_validation_denies_before_graph_mutation() {
+        enum Attack {
+            RemoveRootAuthority,
+            RemoveActiveAttempt,
+            SubstituteAttemptNamespace,
+            InsertCanonicalAttempt,
+        }
+
+        for (label, attack) in [
+            ("remove-root-authority-at-act", Attack::RemoveRootAuthority),
+            ("remove-active-attempt-at-act", Attack::RemoveActiveAttempt),
+            (
+                "substitute-attempt-namespace-at-act",
+                Attack::SubstituteAttemptNamespace,
+            ),
+            ("insert-canonical-attempt-at-act", Attack::InsertCanonicalAttempt),
+        ] {
+            let fixture = Fixture::new(label);
+            let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+            let before = fixture.snapshot_graph();
+            let intent_name = hex(fixture.intent.id().unwrap().as_bytes());
+            let attempt_dir = fixture
+                .store
+                .root_path()
+                .join(ATTEMPTS_DIR)
+                .join(&intent_name);
+            let attempt_file = attempt_dir.join(attempt_filename(reservation.attempt_id()));
+            let root = fixture.store.root_path().to_path_buf();
+            let reservation_for_hook = reservation.clone();
+            MUTATION_AUTHORITY_ACT_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || match attack {
+                    Attack::RemoveRootAuthority => {
+                        let authority = fs::read_dir(&root)
+                            .unwrap()
+                            .map(Result::unwrap)
+                            .find(|entry| {
+                                entry
+                                    .file_name()
+                                    .to_string_lossy()
+                                    .ends_with(MUTATION_AUTHORITY_SUFFIX)
+                            })
+                            .expect("published mutation authority");
+                        fs::remove_file(authority.path()).unwrap();
+                    }
+                    Attack::RemoveActiveAttempt => fs::remove_file(attempt_file).unwrap(),
+                    Attack::SubstituteAttemptNamespace => {
+                        fs::remove_file(attempt_file).unwrap();
+                        fs::remove_dir(&attempt_dir).unwrap();
+                        fs::create_dir(&attempt_dir).unwrap();
+                    }
+                    Attack::InsertCanonicalAttempt => {
+                        let mut extra = reservation_for_hook;
+                        extra.attempt_id = Uuid::new_v4();
+                        extra.recovery_filename = format!(
+                            ".authority.md.{}.projection.recovery",
+                            extra.attempt_id.simple()
+                        );
+                        fs::write(
+                            attempt_dir.join(attempt_filename(extra.attempt_id)),
+                            serde_json::to_vec(&extra).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                }));
+            });
+            let mut authority = fixture
+                .store
+                .begin_mutation(&fixture.intent, Some(&reservation))
+                .unwrap();
+
+            assert!(
+                fixture
+                    .graph
+                    .write_page_projection(
+                        fixture.intent.path().as_str(),
+                        None,
+                        &fixture.target,
+                        &mut authority,
+                    )
+                    .is_err(),
+                "attack {label} reached the graph act"
+            );
+            assert_eq!(
+                fixture.snapshot_graph(),
+                before,
+                "attack {label} mutated the graph"
+            );
         }
     }
 
@@ -2486,7 +2714,7 @@ mod tests {
         let completions_hook = completions.clone();
         let replacement_hook = completions.clone();
         let moved_hook = moved.clone();
-        COMPLETION_PUBLICATION_HOOK.with(|hook| {
+        COMPLETION_PUBLICATION_ACT_HOOK.with(|hook| {
             *hook.borrow_mut() = Some(Box::new(move || {
                 fs::rename(completions_hook, moved_hook).unwrap();
                 fs::create_dir(replacement_hook).unwrap();
@@ -2528,6 +2756,185 @@ mod tests {
             .publish_completion(recovery, &fixture.intent, &proof)
             .unwrap();
         assert!(reopened.load_completion(&fixture.intent).unwrap().is_some());
+    }
+
+    #[test]
+    fn root_authority_removal_before_completion_publication_preserves_recovery() {
+        let fixture = Fixture::new("completion-root-authority");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        let proof = fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut authority,
+            )
+            .unwrap();
+        let root = fixture.store.root_path().to_path_buf();
+        COMPLETION_PUBLICATION_ACT_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let authority = fs::read_dir(root)
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .ends_with(MUTATION_AUTHORITY_SUFFIX)
+                    })
+                    .expect("live mutation authority");
+                fs::remove_file(authority.path()).unwrap();
+            }));
+        });
+        assert!(
+            fixture
+                .store
+                .publish_completion(authority, &fixture.intent, &proof)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read(fixture.graph_root.join("pages/authority.md")).unwrap(),
+            fixture.target
+        );
+
+        let mut recovery = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        let proof = fixture
+            .graph
+            .recover_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut recovery,
+            )
+            .unwrap();
+        fixture
+            .store
+            .publish_completion(recovery, &fixture.intent, &proof)
+            .unwrap();
+    }
+
+    #[test]
+    fn completed_mutation_authorities_do_not_accumulate_at_store_root() {
+        let fixture = Fixture::new("completed-authority-lifecycle");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        let proof = fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut authority,
+            )
+            .unwrap();
+        fixture
+            .store
+            .publish_completion(authority, &fixture.intent, &proof)
+            .unwrap();
+
+        let mut interrupted = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        fixture
+            .graph
+            .recover_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut interrupted,
+            )
+            .unwrap();
+        drop(interrupted);
+        assert_eq!(
+            fs::read_dir(fixture.store.root_path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(MUTATION_AUTHORITY_SUFFIX))
+                .count(),
+            1,
+            "post-graph interruption must retain recovery authority"
+        );
+
+        for _ in 0..3 {
+            let mut recovery = fixture
+                .store
+                .begin_mutation(&fixture.intent, None)
+                .unwrap();
+            let proof = fixture
+                .graph
+                .recover_page_projection(
+                    fixture.intent.path().as_str(),
+                    None,
+                    &fixture.target,
+                    &mut recovery,
+                )
+                .unwrap();
+            fixture
+                .store
+                .publish_completion(recovery, &fixture.intent, &proof)
+                .unwrap();
+            assert_eq!(
+                fs::read_dir(fixture.store.root_path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(MUTATION_AUTHORITY_SUFFIX))
+                    .count(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn mutation_authority_preserves_deeply_nested_projection_layouts() {
+        let fixture = Fixture::new_at(
+            "nested-authority-layout",
+            "pages/topic/subtopic/archive/a.md",
+        );
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        let proof = fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut authority,
+            )
+            .unwrap();
+        fixture
+            .store
+            .publish_completion(authority, &fixture.intent, &proof)
+            .unwrap();
+        assert_eq!(
+            fs::read(
+                fixture
+                    .graph_root
+                    .join("pages/topic/subtopic/archive/a.md")
+            )
+            .unwrap(),
+            fixture.target
+        );
     }
 
     #[test]

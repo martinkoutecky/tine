@@ -6819,14 +6819,15 @@ impl Graph {
         target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
-        let (reservation, known_attempts) = authority.consume_write_evidence(relative_path)?;
-        self.write_page_projection_with_attempts(
-            relative_path,
-            expected_base,
-            target,
-            &reservation,
-            &known_attempts,
-        )
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            self.write_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                target,
+                reservation,
+                known_attempts,
+            )
+        })
     }
 
     fn write_page_projection_with_attempts(
@@ -7123,13 +7124,14 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
-        let (reservation, known_attempts) = authority.consume_write_evidence(relative_path)?;
-        self.remove_page_projection_with_attempts(
-            relative_path,
-            expected_base,
-            &reservation,
-            &known_attempts,
-        )
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            self.remove_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                reservation,
+                known_attempts,
+            )
+        })
     }
 
     fn remove_page_projection_with_attempts(
@@ -7396,12 +7398,13 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
-        let attempts = authority.consume_recovery_evidence(relative_path)?;
-        self.recover_removed_page_projection_with_attempts(
-            relative_path,
-            expected_base,
-            &attempts,
-        )
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            self.recover_removed_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                attempts,
+            )
+        })
     }
 
     fn recover_removed_page_projection_with_attempts(
@@ -7474,13 +7477,14 @@ impl Graph {
         expected_target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
-        let attempts = authority.consume_recovery_evidence(relative_path)?;
-        self.recover_page_projection_with_attempts(
-            relative_path,
-            expected_base,
-            expected_target,
-            &attempts,
-        )
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            self.recover_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                expected_target,
+                attempts,
+            )
+        })
     }
 
     fn recover_page_projection_with_attempts(
