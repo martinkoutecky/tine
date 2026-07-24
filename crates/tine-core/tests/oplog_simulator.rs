@@ -1,7 +1,10 @@
+use sha2::{Digest, Sha256};
 use tine_core::oplog::simulator::{
-    ByteMutation, DeterministicSimulator, ExternalFileFixture, IngressExpectation,
-    InvariantAssertion, InvariantPredicate, ScenarioWorkspace, ScheduledAction,
-    ScheduledActionKind, StageExpectation, WireBatch, WireBytes, WireItem,
+    ByteMutation, DeterministicSimulator, ExpectedWorkspaceState, ExternalFileFixture,
+    IngressExpectation, InvariantAssertion, InvariantPredicate, ProviderLocation, ProviderSource,
+    ProviderTree, ReplicaExpectation, ScenarioError, ScenarioWorkspace, ScheduledAction,
+    ScheduledActionKind, SimulatorDeviceState, StageExpectation, WireBatch, WireBytes, WireItem,
+    MAX_PROVIDER_RESCAN_BYTES, MAX_PROVIDER_RESCAN_DEPTH,
 };
 use tine_core::oplog::{
     AuthorBatch, BatchId, BlockId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
@@ -59,6 +62,74 @@ fn device(name: &str, value: u64) -> ScenarioDevice {
         device_id: DeviceId::from_uuid(uuid(1_000 + value as u128)),
         crdt_peer_id: CrdtPeerId::from_u64(value),
     }
+}
+
+#[test]
+fn scenario_device_names_are_portable_display_components() {
+    let ids = Ids::new();
+    for name in [
+        "",
+        ".",
+        "..",
+        "/var/tmp/escape",
+        "name/child",
+        r"\\server\share",
+        r"name\child",
+        r"C:\\provider",
+        "C:relative",
+        "name:stream",
+        "NUL",
+        "COM1.trace",
+        "trailing.",
+        "trailing ",
+    ] {
+        let result = Scenario::from_schedule(
+            "portable-device-name",
+            1,
+            ids.workspace(),
+            vec![device(name, 1)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert!(
+            matches!(result, Err(ScenarioError::InvalidDevice)),
+            "accepted non-portable device name {name:?}"
+        );
+    }
+}
+
+#[test]
+fn device_runtime_paths_use_internal_ordinals_not_display_names() {
+    let ids = Ids::new();
+    let scenario = Scenario::from_schedule(
+        "internal-device-root",
+        1,
+        ids.workspace(),
+        vec![device("display-alpha", 1), device("display-beta", 2)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let simulator = DeterministicSimulator::new(scenario).unwrap();
+    let alpha = simulator
+        .provider_tree_path("display-alpha", ProviderTree::Inbox)
+        .unwrap();
+    let beta = simulator
+        .provider_tree_path("display-beta", ProviderTree::Inbox)
+        .unwrap();
+    let alpha_root = alpha.parent().unwrap().parent().unwrap();
+    let beta_root = beta.parent().unwrap().parent().unwrap();
+    assert_eq!(alpha_root.file_name().unwrap(), "device-0000");
+    assert_eq!(beta_root.file_name().unwrap(), "device-0001");
+    assert_eq!(alpha_root.parent(), beta_root.parent());
+    assert!(!alpha_root.to_string_lossy().contains("display-alpha"));
+    assert!(!beta_root.to_string_lossy().contains("display-beta"));
 }
 
 fn path(value: &str) -> ManagedPath {
@@ -142,6 +213,30 @@ fn create_page_batch(
             home_document_id: home,
             path: path(name),
         }]),
+    )
+}
+
+fn provider_location(
+    device: &str,
+    tree: ProviderTree,
+    path: impl Into<String>,
+) -> ProviderLocation {
+    ProviderLocation {
+        device: device.into(),
+        tree,
+        path: path.into(),
+    }
+}
+
+fn provider_copy(event_id: u64, item_id: &str, destination: ProviderLocation) -> ScheduledAction {
+    event(
+        event_id,
+        ScheduledActionKind::ProviderCopy {
+            source: ProviderSource::Mailbox {
+                item_id: item_id.into(),
+            },
+            destination,
+        },
     )
 }
 
@@ -992,6 +1087,1314 @@ fn corpus_keeps_same_page_cross_page_and_moved_away_family_seeds_visible() {
 }
 
 #[test]
+fn filesystem_provider_partial_manifest_partition_rescan_and_duplicate_are_deterministic() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 150, 150, ids.page_a, ids.home_a, "pages/A.md");
+    let object_len = batch.objects[0].bytes_b64.0.len();
+    let alpha_object = ProviderLocation {
+        device: "alpha".into(),
+        tree: ProviderTree::Outbox,
+        path: "objects/nested/archive/object-0".into(),
+    };
+    let beta_object = ProviderLocation {
+        device: "beta".into(),
+        tree: ProviderTree::Inbox,
+        path: "objects/incoming/nested/object-0".into(),
+    };
+    let beta_manifest = ProviderLocation {
+        device: "beta".into(),
+        tree: ProviderTree::Inbox,
+        path: "manifests/incoming/nested/manifest-0".into(),
+    };
+    let mut actions = vec![
+        event(
+            1,
+            ScheduledActionKind::ProviderCopy {
+                source: ProviderSource::Mailbox {
+                    item_id: batch.manifest.item_id.clone(),
+                },
+                destination: beta_manifest.clone(),
+            },
+        ),
+        event(
+            2,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        ),
+        event(
+            3,
+            ScheduledActionKind::AssertInvariant {
+                assertion: InvariantAssertion::NoVisibleEffect {
+                    device: "beta".into(),
+                    snapshot: Default::default(),
+                },
+            },
+        ),
+        event(
+            4,
+            ScheduledActionKind::BeginProviderWrite {
+                source: ProviderSource::Mailbox {
+                    item_id: batch.objects[0].item_id.clone(),
+                },
+                destination: beta_object.clone(),
+                transfer_id: "partial-object".into(),
+            },
+        ),
+        event(
+            5,
+            ScheduledActionKind::AppendProviderWrite {
+                device: "beta".into(),
+                transfer_id: "partial-object".into(),
+                len: object_len / 2,
+            },
+        ),
+        event(
+            6,
+            ScheduledActionKind::AssertInvariant {
+                assertion: InvariantAssertion::ProviderResidue {
+                    device: "beta".into(),
+                    max_entries: 3,
+                    max_bytes: object_len + batch.manifest.bytes_b64.0.len() * 2,
+                },
+            },
+        ),
+        event(
+            7,
+            ScheduledActionKind::Crash {
+                device: "beta".into(),
+            },
+        ),
+        event(
+            8,
+            ScheduledActionKind::Restart {
+                device: "beta".into(),
+            },
+        ),
+        event(
+            9,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        ),
+        event(
+            10,
+            ScheduledActionKind::AssertInvariant {
+                assertion: InvariantAssertion::NoVisibleEffect {
+                    device: "beta".into(),
+                    snapshot: Default::default(),
+                },
+            },
+        ),
+        event(
+            11,
+            ScheduledActionKind::SetProviderPartition {
+                device: "beta".into(),
+                partitioned: true,
+            },
+        ),
+        event(
+            12,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        ),
+        event(
+            13,
+            ScheduledActionKind::SetProviderPartition {
+                device: "beta".into(),
+                partitioned: false,
+            },
+        ),
+        event(
+            14,
+            ScheduledActionKind::ProviderCopy {
+                source: ProviderSource::Mailbox {
+                    item_id: batch.objects[0].item_id.clone(),
+                },
+                destination: alpha_object.clone(),
+            },
+        ),
+        event(
+            15,
+            ScheduledActionKind::ProviderCopy {
+                source: ProviderSource::Tree {
+                    location: alpha_object.clone(),
+                },
+                destination: beta_object.clone(),
+            },
+        ),
+    ];
+    let mut next = 16;
+    for (index, object) in batch.objects.iter().enumerate().skip(1) {
+        actions.push(event(
+            next,
+            ScheduledActionKind::ProviderCopy {
+                source: ProviderSource::Mailbox {
+                    item_id: object.item_id.clone(),
+                },
+                destination: ProviderLocation {
+                    device: "beta".into(),
+                    tree: ProviderTree::Inbox,
+                    path: format!("objects/incoming/nested/object-{index}"),
+                },
+            },
+        ));
+        next += 1;
+    }
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ProbeBatch {
+            device: "beta".into(),
+            batch_id: batch.batch_id,
+            expected: Some(StageExpectation::Accepted),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::RestartReplay {
+                device: "beta".into(),
+            },
+        },
+    ));
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-partial-manifest-partition-rescan",
+        150,
+        ids.workspace(),
+        vec![device("alpha", 1), device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        actions,
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+    let provider = simulator.provider_snapshots().unwrap();
+    assert_eq!(
+        provider[1]
+            .entries
+            .iter()
+            .filter(|entry| !entry.temporary)
+            .count(),
+        batch.objects.len() + 1
+    );
+    assert!(provider[1]
+        .entries
+        .iter()
+        .filter(|entry| !entry.temporary)
+        .all(|entry| entry.path.starts_with("objects/incoming/nested/")
+            || entry.path.starts_with("manifests/incoming/nested/")));
+}
+
+#[test]
+fn filesystem_provider_conflicting_same_name_bytes_fail_closed() {
+    let ids = Ids::new();
+    let first = create_page_batch(ids, 151, 151, ids.page_a, ids.home_a, "pages/A.md");
+    let second = create_page_batch(ids, 152, 152, ids.page_b, ids.home_b, "pages/B.md");
+    let destination = ProviderLocation {
+        device: "beta".into(),
+        tree: ProviderTree::Inbox,
+        path: "objects/conflict/object".into(),
+    };
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-conflicting-same-name-bytes",
+        151,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![first.clone(), second.clone()],
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::ProviderCopy {
+                    source: ProviderSource::Mailbox {
+                        item_id: first.objects[0].item_id.clone(),
+                    },
+                    destination: destination.clone(),
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::ProviderCopy {
+                    source: ProviderSource::Mailbox {
+                        item_id: second.objects[0].item_id.clone(),
+                    },
+                    destination,
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    assert!(matches!(
+        simulator.run(),
+        Err(tine_core::oplog::simulator::ScenarioError::ProviderConflictingBytes(_))
+    ));
+}
+
+#[test]
+fn filesystem_transport_replay_is_byte_identical_for_snapshots_receipts_and_signature() {
+    let ids = Ids::new();
+    let batch = create_page_batch(
+        ids,
+        151,
+        151,
+        ids.page_a,
+        ids.home_a,
+        "pages/Replay.md",
+    );
+    let mut actions = Vec::new();
+    let mut event_id = 1_u64;
+    let source_path = "objects/nested/source-0";
+    let destination_path = "objects/nested/final-0";
+    actions.push(provider_copy(
+        event_id,
+        &batch.objects[0].item_id,
+        provider_location("beta", ProviderTree::Inbox, source_path),
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::ProviderRename {
+            device: "beta".into(),
+            tree: ProviderTree::Inbox,
+            from_path: source_path.into(),
+            to_path: destination_path.into(),
+        },
+    ));
+    for (index, object) in batch.objects.iter().enumerate().skip(1) {
+        event_id += 1;
+        actions.push(provider_copy(
+            event_id,
+            &object.item_id,
+            provider_location(
+                "beta",
+                ProviderTree::Inbox,
+                format!("objects/nested/object-{index}"),
+            ),
+        ));
+    }
+    event_id += 1;
+    actions.push(provider_copy(
+        event_id,
+        &batch.manifest.item_id,
+        provider_location(
+            "beta",
+            ProviderTree::Inbox,
+            "manifests/nested/manifest",
+        ),
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::ProviderRemove {
+            location: provider_location(
+                "beta",
+                ProviderTree::Inbox,
+                destination_path,
+            ),
+        },
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::ProviderResidue {
+                device: "beta".into(),
+                max_entries: 0,
+                max_bytes: 0,
+            },
+        },
+    ));
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-byte-identical-transport-replay",
+        151,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch],
+        Vec::new(),
+        actions,
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let run = |scenario: Scenario| {
+        let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+        let signature = match simulator.run() {
+            Err(ScenarioError::Invariant { signature, .. }) => signature,
+            other => panic!("expected deterministic terminal signature, got {other:?}"),
+        };
+        assert!(!simulator.provider_ingress_receipts().is_empty());
+        let receipts = simulator
+            .provider_ingress_receipts()
+            .iter()
+            .map(|(key, receipt)| (key.clone(), receipt.clone()))
+            .collect::<Vec<_>>();
+        (
+            serde_json::to_vec(&simulator.provider_snapshots().unwrap()).unwrap(),
+            serde_json::to_vec(&receipts).unwrap(),
+            simulator.states().unwrap(),
+            signature,
+        )
+    };
+    let first = run(scenario.clone());
+    let second = run(scenario);
+    assert_eq!(first, second);
+}
+
+#[test]
+fn filesystem_provider_failure_minimizes_and_replays_end_to_end() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 1521, 1521, ids.page_a, ids.home_a, "pages/Reduced.md");
+    let mut actions = vec![provider_copy(
+        1,
+        &batch.objects[0].item_id,
+        provider_location("beta", ProviderTree::Outbox, "objects/reducer-noise"),
+    )];
+    let mut event_id = 2;
+    for (index, object) in batch.objects.iter().enumerate() {
+        actions.push(provider_copy(
+            event_id,
+            &object.item_id,
+            provider_location(
+                "beta",
+                ProviderTree::Inbox,
+                format!("objects/reduced-{index}"),
+            ),
+        ));
+        event_id += 1;
+    }
+    actions.push(provider_copy(
+        event_id,
+        &batch.manifest.item_id,
+        provider_location("beta", ProviderTree::Inbox, "manifests/reduced"),
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    event_id += 1;
+    actions.push(event(
+        event_id,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::NoVisibleEffect {
+                device: "beta".into(),
+                snapshot: Default::default(),
+            },
+        },
+    ));
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-minimization",
+        1521,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch],
+        Vec::new(),
+        actions,
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let minimized = scenario.minimize_failure().unwrap();
+    assert!(minimized.scenario.actions.len() < scenario.actions.len());
+    let mut replay = DeterministicSimulator::new(minimized.scenario).unwrap();
+    assert!(matches!(replay.run(), Err(ScenarioError::Invariant { .. })));
+}
+
+#[test]
+fn filesystem_distinct_copy_rejects_same_bytes_and_leaves_bounded_residue() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 1523, 1523, ids.page_a, ids.home_a, "pages/Bounded.md");
+    let destination = provider_location("beta", ProviderTree::Inbox, "objects/same-bytes");
+    let actions = vec![
+        provider_copy(
+            1,
+            &batch.objects[0].item_id,
+            destination.clone(),
+        ),
+        provider_copy(2, &batch.objects[0].item_id, destination),
+    ];
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-same-byte-residue",
+        1523,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        actions,
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    assert!(matches!(
+        simulator.run(),
+        Err(ScenarioError::ProviderConflictingBytes(path)) if path == "objects/same-bytes"
+    ));
+    let snapshot = simulator.provider_snapshots().unwrap();
+    assert_eq!(
+        snapshot[0]
+            .entries
+            .iter()
+            .filter(|entry| !entry.temporary)
+            .count(),
+        1
+    );
+    assert!(snapshot[0].entries.iter().all(|entry| !entry.temporary));
+}
+
+#[test]
+fn filesystem_rescan_reconstructs_from_disk_after_tine_crash_without_hidden_metadata() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 153, 153, ids.page_a, ids.home_a, "pages/Disk.md");
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-disk-only-restart",
+        153,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Crash {
+                    device: "beta".into(),
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Restart {
+                    device: "beta".into(),
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::ReceiverRescan {
+                    device: "beta".into(),
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    let inbox = simulator
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    std::fs::create_dir_all(inbox.join("objects/from-disk")).unwrap();
+    std::fs::create_dir_all(inbox.join("manifests/from-disk")).unwrap();
+    for (index, object) in batch.objects.iter().enumerate() {
+        std::fs::write(
+            inbox.join(format!("objects/from-disk/object-{index}")),
+            &object.bytes_b64.0,
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        inbox.join("manifests/from-disk/batch"),
+        &batch.manifest.bytes_b64.0,
+    )
+    .unwrap();
+
+    simulator.run().unwrap();
+    let states = simulator.states().unwrap();
+    let [SimulatorDeviceState::Operational(snapshot)] = states.as_slice() else {
+        panic!("disk-only restart did not reconstruct an operational replica");
+    };
+    assert_eq!(snapshot.pages.len(), 1);
+    assert_eq!(snapshot.pages[0].0, ids.page_a);
+    assert_eq!(snapshot.pages[0].1.path(), Some(&path("pages/Disk.md")));
+    assert_eq!(
+        std::fs::read(inbox.join("manifests/from-disk/batch")).unwrap(),
+        batch.manifest.bytes_b64.0
+    );
+    let expected_manifest_digest = format!("{:x}", Sha256::digest(&batch.manifest.bytes_b64.0));
+    let provider = simulator.provider_snapshots().unwrap();
+    assert!(provider[0].entries.iter().any(|entry| {
+        entry.path == "manifests/from-disk/batch" && entry.digest == expected_manifest_digest
+    }));
+    assert_eq!(
+        simulator.provider_ingress_receipts().len(),
+        batch.objects.len() + 1
+    );
+}
+
+#[test]
+fn filesystem_rescan_propagates_malformed_canonical_bytes_with_stable_receipt() {
+    let ids = Ids::new();
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-malformed-rescan",
+        154,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        Vec::new(),
+        Vec::new(),
+        vec![event(
+            1,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        )],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    let inbox = simulator
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    std::fs::write(inbox.join("objects/malformed"), b"not an operation object").unwrap();
+
+    assert!(matches!(simulator.run(), Err(ScenarioError::Store(_))));
+    let receipt = simulator
+        .provider_ingress_receipts()
+        .get(&(1, "objects/malformed".into()))
+        .unwrap();
+    assert!(!receipt.accepted);
+    assert_eq!(receipt.item_id, "provider/inbox/objects/malformed");
+}
+
+#[test]
+fn filesystem_unknown_top_namespace_is_diagnostic_residue_only() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 1541, 1541, ids.page_a, ids.home_a, "pages/Residue.md");
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-unknown-residue",
+        1541,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        vec![event(
+            1,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        )],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    let inbox = simulator
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    std::fs::create_dir(inbox.join("unknown")).unwrap();
+    std::fs::write(
+        inbox.join("unknown/valid-manifest-bytes"),
+        &batch.manifest.bytes_b64.0,
+    )
+    .unwrap();
+
+    simulator.run().unwrap();
+    assert!(simulator.provider_ingress_receipts().is_empty());
+    let states = simulator.states().unwrap();
+    let [SimulatorDeviceState::Operational(snapshot)] = states.as_slice() else {
+        panic!("residue-only scan changed workspace status");
+    };
+    assert_eq!(snapshot, &Default::default());
+    let provider = simulator.provider_snapshots().unwrap();
+    assert!(provider[0]
+        .entries
+        .iter()
+        .any(|entry| entry.path == "unknown/valid-manifest-bytes" && entry.item_kind.is_none()));
+}
+
+#[test]
+fn filesystem_complete_copy_into_internal_provider_namespaces_is_rejected() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 155, 155, ids.page_a, ids.home_a, "pages/Part.md");
+    for path in [
+        ".part/complete-copy.part",
+        "removed/forged",
+        "rename-evidence/forged",
+    ] {
+        let result = Scenario::from_schedule(
+            "filesystem-provider-direct-internal-copy",
+            155,
+            ids.workspace(),
+            vec![device("beta", 2)],
+            vec![batch.clone()],
+            Vec::new(),
+            vec![provider_copy(
+                1,
+                &batch.objects[0].item_id,
+                provider_location("beta", ProviderTree::Inbox, path),
+            )],
+            Vec::new(),
+            Vec::new(),
+        );
+        assert!(
+            matches!(result, Err(ScenarioError::InvalidProviderPath(_))),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn filesystem_provider_temporary_creation_is_exclusive_and_non_truncating() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 1551, 1551, ids.page_a, ids.home_a, "pages/Temp.md");
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-temp-collision",
+        1551,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        vec![event(
+            1,
+            ScheduledActionKind::BeginProviderWrite {
+                source: ProviderSource::Mailbox {
+                    item_id: batch.objects[0].item_id.clone(),
+                },
+                destination: provider_location("beta", ProviderTree::Inbox, "objects/destination"),
+                transfer_id: "collision".into(),
+            },
+        )],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    let temporary = simulator
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap()
+        .join(".part/collision.part");
+    std::fs::write(&temporary, b"must not be truncated").unwrap();
+
+    assert!(matches!(
+        simulator.run(),
+        Err(ScenarioError::UnsafeProviderEntry(_))
+    ));
+    assert_eq!(std::fs::read(temporary).unwrap(), b"must not be truncated");
+}
+
+#[test]
+fn filesystem_same_bytes_relabel_requires_visible_rename_and_then_fails_validation() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 156, 156, ids.page_a, ids.home_a, "pages/Relabel.md");
+    let scenario = Scenario::from_schedule(
+        "filesystem-provider-visible-relabel",
+        156,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        vec![
+            provider_copy(
+                1,
+                &batch.objects[0].item_id,
+                provider_location("beta", ProviderTree::Inbox, "objects/relabel"),
+            ),
+            event(
+                2,
+                ScheduledActionKind::ProviderRename {
+                    device: "beta".into(),
+                    tree: ProviderTree::Inbox,
+                    from_path: "objects/relabel".into(),
+                    to_path: "manifests/relabel".into(),
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::ReceiverRescan {
+                    device: "beta".into(),
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    let inbox = simulator
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    assert!(matches!(simulator.run(), Err(ScenarioError::Store(_))));
+    assert!(!inbox.join("objects/relabel").exists());
+    assert_eq!(
+        std::fs::read(inbox.join("manifests/relabel")).unwrap(),
+        batch.objects[0].bytes_b64.0
+    );
+    std::fs::write(inbox.join("objects/relabel"), b"later source mutation").unwrap();
+    assert_eq!(
+        std::fs::read(inbox.join("manifests/relabel")).unwrap(),
+        batch.objects[0].bytes_b64.0
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_provider_rejects_intermediate_and_final_symlinks_and_hardlinks() {
+    use std::os::unix::fs::symlink;
+
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 157, 157, ids.page_a, ids.home_a, "pages/Links.md");
+    let make_simulator = |path: &str| {
+        let scenario = Scenario::from_schedule(
+            "filesystem-provider-link-confinement",
+            157,
+            ids.workspace(),
+            vec![device("beta", 2)],
+            vec![batch.clone()],
+            Vec::new(),
+            vec![provider_copy(
+                1,
+                &batch.objects[0].item_id,
+                provider_location("beta", ProviderTree::Inbox, path),
+            )],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        DeterministicSimulator::new(scenario).unwrap()
+    };
+
+    let outside = std::env::temp_dir().join(format!("tine-provider-link-test-{}", Uuid::new_v4()));
+    std::fs::create_dir(&outside).unwrap();
+
+    let mut intermediate = make_simulator("objects/escape/item");
+    let intermediate_root = intermediate
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    symlink(&outside, intermediate_root.join("objects/escape")).unwrap();
+    assert!(matches!(
+        intermediate.run(),
+        Err(ScenarioError::UnsafeProviderEntry(_))
+    ));
+    assert!(!outside.join("item").exists());
+
+    let mut final_link = make_simulator("objects/final-link");
+    let final_root = final_link
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    let outside_file = outside.join("outside");
+    std::fs::write(&outside_file, b"untouched").unwrap();
+    symlink(&outside_file, final_root.join("objects/final-link")).unwrap();
+    assert!(matches!(
+        final_link.run(),
+        Err(ScenarioError::UnsafeProviderEntry(_))
+    ));
+    assert_eq!(std::fs::read(&outside_file).unwrap(), b"untouched");
+
+    let mut hardlink = make_simulator("objects/hardlink");
+    let hardlink_root = hardlink
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    std::fs::hard_link(&outside_file, hardlink_root.join("objects/hardlink")).unwrap();
+    assert!(matches!(
+        hardlink.run(),
+        Err(ScenarioError::UnsafeProviderEntry(_))
+    ));
+    assert_eq!(std::fs::read(&outside_file).unwrap(), b"untouched");
+
+    std::fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
+fn filesystem_rescan_enforces_depth_and_actual_byte_bounds() {
+    let ids = Ids::new();
+    let make_simulator = || {
+        let scenario = Scenario::from_schedule(
+            "filesystem-provider-rescan-bounds",
+            158,
+            ids.workspace(),
+            vec![device("beta", 2)],
+            Vec::new(),
+            Vec::new(),
+            vec![event(
+                1,
+                ScheduledActionKind::ReceiverRescan {
+                    device: "beta".into(),
+                },
+            )],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        DeterministicSimulator::new(scenario).unwrap()
+    };
+
+    let mut deep = make_simulator();
+    let deep_root = deep
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    let mut deep_path = deep_root.join("objects");
+    for index in 0..=MAX_PROVIDER_RESCAN_DEPTH {
+        deep_path.push(format!("d{index}"));
+    }
+    std::fs::create_dir_all(&deep_path).unwrap();
+    std::fs::write(deep_path.join("object"), b"x").unwrap();
+    assert!(matches!(
+        deep.run(),
+        Err(ScenarioError::ProviderRescanLimit)
+    ));
+
+    let mut large = make_simulator();
+    let large_root = large
+        .provider_tree_path("beta", ProviderTree::Inbox)
+        .unwrap();
+    let large_file = std::fs::File::create(large_root.join("objects/oversized")).unwrap();
+    large_file
+        .set_len(u64::try_from(MAX_PROVIDER_RESCAN_BYTES).unwrap() + 1)
+        .unwrap();
+    assert!(matches!(
+        large.run(),
+        Err(ScenarioError::ProviderRescanLimit)
+    ));
+}
+
+#[test]
+fn filesystem_two_phase_rescan_accepts_manifest_before_or_after_objects() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 159, 159, ids.page_a, ids.home_a, "pages/Ordering.md");
+    let run_order = |manifest_first: bool| {
+        let mut actions = Vec::new();
+        let mut next = 1;
+        if manifest_first {
+            actions.push(provider_copy(
+                next,
+                &batch.manifest.item_id,
+                provider_location("beta", ProviderTree::Inbox, "manifests/batch"),
+            ));
+            next += 1;
+        }
+        for (index, object) in batch.objects.iter().enumerate() {
+            actions.push(provider_copy(
+                next,
+                &object.item_id,
+                provider_location(
+                    "beta",
+                    ProviderTree::Inbox,
+                    format!("objects/object-{index}"),
+                ),
+            ));
+            next += 1;
+        }
+        if !manifest_first {
+            actions.push(provider_copy(
+                next,
+                &batch.manifest.item_id,
+                provider_location("beta", ProviderTree::Inbox, "manifests/batch"),
+            ));
+            next += 1;
+        }
+        actions.push(event(
+            next,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        ));
+        let scenario = Scenario::from_schedule(
+            "filesystem-provider-two-phase-order",
+            159,
+            ids.workspace(),
+            vec![device("beta", 2)],
+            vec![batch.clone()],
+            Vec::new(),
+            actions,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+        simulator.run().unwrap();
+        simulator.states().unwrap()
+    };
+
+    let manifest_first = run_order(true);
+    let object_first = run_order(false);
+    assert_eq!(manifest_first, object_first);
+    let [SimulatorDeviceState::Operational(snapshot)] = object_first.as_slice() else {
+        panic!("two-phase rescan did not accept the complete batch");
+    };
+    assert_eq!(snapshot.pages[0].1.path(), Some(&path("pages/Ordering.md")));
+}
+
+#[test]
+fn filesystem_provider_fixture_matches_deterministic_authored_scenario() {
+    let ids = Ids::new();
+    let batch = create_page_batch(ids, 160, 160, ids.page_a, ids.home_a, "pages/Fixture.md");
+    let mut reference_actions = Vec::new();
+    let mut reference_next = 1;
+    deliver_all(&mut reference_actions, &mut reference_next, "beta", &batch);
+    let reference = Scenario::from_schedule(
+        "filesystem-provider-fixture-reference",
+        160,
+        ids.workspace(),
+        vec![device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        reference_actions,
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut reference = DeterministicSimulator::new(reference).unwrap();
+    reference.run().unwrap();
+    let reference_states = reference.states().unwrap();
+    let [SimulatorDeviceState::Operational(expected_snapshot)] = reference_states.as_slice() else {
+        panic!("reference fixture batch was not operational");
+    };
+
+    let mut actions = vec![
+        provider_copy(
+            1,
+            &batch.objects[0].item_id,
+            provider_location("beta", ProviderTree::Inbox, "objects/object-0"),
+        ),
+        event(
+            2,
+            ScheduledActionKind::BeginProviderWrite {
+                source: ProviderSource::Mailbox {
+                    item_id: batch.objects[0].item_id.clone(),
+                },
+                destination: provider_location(
+                    "beta",
+                    ProviderTree::Inbox,
+                    "objects/abandoned-partial",
+                ),
+                transfer_id: "fixture-partial".into(),
+            },
+        ),
+        event(
+            3,
+            ScheduledActionKind::AppendProviderWrite {
+                device: "beta".into(),
+                transfer_id: "fixture-partial".into(),
+                len: batch.objects[0].bytes_b64.0.len() / 2,
+            },
+        ),
+        event(
+            4,
+            ScheduledActionKind::ReceiverRescan {
+                device: "beta".into(),
+            },
+        ),
+    ];
+    let mut next = 5;
+    for (index, object) in batch.objects.iter().enumerate().skip(1) {
+        actions.push(provider_copy(
+            next,
+            &object.item_id,
+            provider_location(
+                "beta",
+                ProviderTree::Inbox,
+                format!("objects/object-{index}"),
+            ),
+        ));
+        next += 1;
+    }
+    actions.push(provider_copy(
+        next,
+        &batch.manifest.item_id,
+        provider_location("beta", ProviderTree::Inbox, "manifests/batch"),
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::SetProviderPartition {
+            device: "beta".into(),
+            partitioned: true,
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::NoVisibleEffect {
+                device: "beta".into(),
+                snapshot: Default::default(),
+            },
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::SetProviderPartition {
+            device: "beta".into(),
+            partitioned: false,
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::Replica {
+                device: "beta".into(),
+                expected: ReplicaExpectation {
+                    accepted: vec![batch.batch_id],
+                    offered: vec![batch.batch_id],
+                    state: ExpectedWorkspaceState::Operational,
+                    snapshot: Some(expected_snapshot.clone()),
+                },
+            },
+        },
+    ));
+    next += 1;
+    actions.push(provider_copy(
+        next,
+        &batch.objects[0].item_id,
+        provider_location(
+            "beta",
+            ProviderTree::Inbox,
+            "objects/object-0-duplicate",
+        ),
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::Crash {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::Restart {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::ReceiverRescan {
+            device: "beta".into(),
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::RestartReplay {
+                device: "beta".into(),
+            },
+        },
+    ));
+    next += 1;
+    actions.push(event(
+        next,
+        ScheduledActionKind::AssertInvariant {
+            assertion: InvariantAssertion::ProviderResidue {
+                device: "beta".into(),
+                // Complete publication consumes named or anonymous staging;
+                // only explicit provider files and abandoned partials remain.
+                max_entries: batch.objects.len() * 2 + 4,
+                max_bytes: MAX_PROVIDER_RESCAN_BYTES,
+            },
+        },
+    ));
+    let fixture = Scenario::from_schedule(
+        "filesystem-provider-transport",
+        160,
+        ids.workspace(),
+        vec![device("alpha", 1), device("beta", 2)],
+        vec![batch.clone()],
+        Vec::new(),
+        actions,
+        vec![tine_core::oplog::simulator::InitialReplica {
+            device: "beta".into(),
+            stored_items: Vec::new(),
+            expected: ReplicaExpectation {
+                accepted: vec![batch.batch_id],
+                offered: vec![batch.batch_id],
+                state: ExpectedWorkspaceState::Operational,
+                snapshot: Some(expected_snapshot.clone()),
+            },
+        }],
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.encode().unwrap(),
+        include_str!("fixtures/oplog-simulator/filesystem-provider-transport.scenario.json")
+            .trim_end()
+            .as_bytes()
+    );
+}
+
+#[test]
+fn filesystem_provider_fixture_executes_real_transport_and_terminal_oracles() {
+    let fixture =
+        include_str!("fixtures/oplog-simulator/filesystem-provider-transport.scenario.json")
+            .trim_end();
+    let scenario = Scenario::decode(fixture.as_bytes()).unwrap();
+    let expected_manifest_digest = format!(
+        "{:x}",
+        Sha256::digest(&scenario.wire_batches[0].manifest.bytes_b64.0)
+    );
+    let partition_index = scenario
+        .actions
+        .iter()
+        .position(|action| {
+            matches!(
+                action.action,
+                ScheduledActionKind::SetProviderPartition {
+                    partitioned: true,
+                    ..
+                }
+            )
+        })
+        .expect("fixture omitted the partition");
+    let blocked_rescan_event = match &scenario.actions[partition_index + 1] {
+        ScheduledAction {
+            event_id,
+            action: ScheduledActionKind::ReceiverRescan { device },
+            ..
+        } if device == "beta" => *event_id,
+        _ => panic!("fixture omitted the blocked beta rescan"),
+    };
+    let complete_copies_before_partition = scenario.actions[..partition_index]
+        .iter()
+        .filter(|action| {
+            matches!(
+                &action.action,
+                ScheduledActionKind::ProviderCopy {
+                    destination: ProviderLocation {
+                        device,
+                        tree: ProviderTree::Inbox,
+                        ..
+                    },
+                    ..
+                } if device == "beta"
+            )
+        })
+        .count();
+    assert_eq!(
+        complete_copies_before_partition,
+        scenario.wire_batches[0].objects.len() + 1,
+        "the complete batch must already be disk-visible before partitioning"
+    );
+    let rejoin_index = scenario
+        .actions
+        .iter()
+        .position(|action| {
+            matches!(
+                action.action,
+                ScheduledActionKind::SetProviderPartition {
+                    partitioned: false,
+                    ..
+                }
+            )
+        })
+        .expect("fixture omitted the rejoin");
+    let rejoined_rescan_event = match &scenario.actions[rejoin_index + 1] {
+        ScheduledAction {
+            event_id,
+            action: ScheduledActionKind::ReceiverRescan { device },
+            ..
+        } if device == "beta" => *event_id,
+        _ => panic!("fixture omitted the post-rejoin beta rescan"),
+    };
+    assert!(!scenario.wire_batches.is_empty());
+    assert!(scenario.actions.iter().any(|action| matches!(
+        action.action,
+        ScheduledActionKind::BeginProviderWrite { .. }
+    )));
+    assert!(scenario
+        .actions
+        .iter()
+        .any(|action| matches!(action.action, ScheduledActionKind::Crash { .. })));
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+    assert!(
+        !simulator
+            .provider_ingress_receipts()
+            .keys()
+            .any(|(event_id, _)| *event_id == blocked_rescan_event),
+        "partitioned rescan produced an ingestion receipt"
+    );
+    assert!(
+        simulator
+            .provider_ingress_receipts()
+            .keys()
+            .any(|(event_id, _)| *event_id == rejoined_rescan_event),
+        "post-rejoin rescan did not ingest the same disk-visible bytes"
+    );
+    let snapshot = simulator.provider_snapshots().unwrap();
+    let beta = snapshot
+        .iter()
+        .find(|snapshot| snapshot.device == "beta")
+        .unwrap();
+    assert!(beta.entries.iter().any(|entry| entry.temporary));
+    assert!(beta
+        .entries
+        .iter()
+        .any(|entry| entry.item_kind
+            == Some(tine_core::oplog::simulator::ProviderItemKind::Manifest)));
+    assert!(beta.entries.iter().any(|entry| {
+        entry.path == "manifests/batch" && entry.digest == expected_manifest_digest
+    }));
+    let states = simulator.states().unwrap();
+    let semantic = states
+        .iter()
+        .find_map(|state| match state {
+            SimulatorDeviceState::Operational(snapshot) if !snapshot.pages.is_empty() => {
+                Some(snapshot)
+            }
+            _ => None,
+        })
+        .expect("fixture did not finish with the expected operational replica");
+    assert_eq!(semantic.pages.len(), 1);
+    assert_eq!(semantic.pages[0].1.path(), Some(&path("pages/Fixture.md")));
+}
+
+#[test]
 fn fixture_seed_corpus_is_canonical_v2_json() {
     let fixtures = [
         include_str!("fixtures/oplog-simulator/object-before-manifest.scenario.json"),
@@ -1007,6 +2410,7 @@ fn fixture_seed_corpus_is_canonical_v2_json() {
             "fixtures/oplog-simulator/local-author-whole-batch-to-two-replicas.scenario.json"
         ),
         include_str!("fixtures/oplog-simulator/moved-away-move-delete.scenario.json"),
+        include_str!("fixtures/oplog-simulator/filesystem-provider-transport.scenario.json"),
     ];
     for fixture in fixtures {
         let fixture = fixture.trim_end();
