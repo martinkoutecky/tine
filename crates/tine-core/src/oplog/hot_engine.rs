@@ -5570,6 +5570,19 @@ impl ShardedHotEngine {
         })
     }
 
+    /// Test-only exact catalog lookup used by durability corpus assertions.
+    /// Normal callers intentionally receive only live materialization or
+    /// authenticated path-release views, never raw tombstones.
+    #[cfg(test)]
+    pub(crate) fn page_state_for_test(
+        &self,
+        page_id: PageId,
+    ) -> Result<Option<PageState>, EngineError> {
+        self.ensure_not_blocked()?;
+        let catalog = self.clone_validation_document(self.catalog_document_id, 1)?;
+        validate_catalog_page(self.catalog_document_id, &catalog, page_id)
+    }
+
     /// Recovery/debug view of immutable home content, including content whose
     /// owner is tombstoned and therefore absent from normal materialization.
     pub fn recover_block_state(

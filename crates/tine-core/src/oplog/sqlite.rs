@@ -1576,6 +1576,28 @@ impl SqliteFrontier {
         Ok(ContentDigest::of(&bytes))
     }
 
+    /// Test-only recovery inspection of the exact semantic records rebuilt into
+    /// this frontier. Production consumers retain only the authenticated
+    /// frontier APIs above.
+    #[cfg(test)]
+    pub(crate) fn applied_semantic_effects_for_test(
+        &self,
+    ) -> Result<Vec<SemanticEffect>, ProjectionError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT semantic_effect FROM applied_batches ORDER BY sequence")?;
+        let mut rows = statement.query([])?;
+        let mut effects = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes: Vec<u8> = row.get(0)?;
+            effects.push(
+                SemanticEffect::decode(&bytes)
+                    .map_err(|error| ProjectionError::Corrupt(error.to_string()))?,
+            );
+        }
+        Ok(effects)
+    }
+
     fn rebuild_stream(
         &mut self,
         source: &RebuildSource<'_>,
