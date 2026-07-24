@@ -610,7 +610,7 @@ impl CrdtPeerCounter {
 pub struct DocumentCausalDigest([u8; 32]);
 
 impl DocumentCausalDigest {
-    fn of(
+    pub(crate) fn of(
         document_id: DocumentId,
         peer_counters: &[CrdtPeerCounter],
         direct_dependency_heads: &[BatchId],

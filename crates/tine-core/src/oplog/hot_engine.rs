@@ -14,6 +14,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::object_store::{BlockClaimIndexRoot, BlockClaimIndexStore, BlockClaimIndexValue};
+use super::page_name_index::{
+    extract_authenticated_catalog_page_names, extract_authoritative_catalog_page_names,
+    prepare_ephemeral_page_name_transition, prepare_page_name_transition,
+    AuthenticatedCatalogPageNameCheckpointV1, AuthoritativeCatalogPageNameObservationsV1,
+    EphemeralPageNameOwnershipStateV1, PageNameConflictEvidenceV1, PageNameOwnershipRootV1,
+    PageNameOwnershipStore, PageNamePublicationCandidateV1, PageNameTransitionError,
+};
 use super::portable_path_index::{
     PortablePathIndexRoot, PortablePathIndexStore, PortablePathOccupied, PortablePathRecord,
     PortablePathReleased,
@@ -84,6 +91,35 @@ struct PreparedTransactionParts {
     semantic_effect: SemanticEffect,
     prospective_documents: BTreeMap<DocumentId, LoroDoc>,
     portable_path_root: PortablePathIndexRoot,
+}
+
+/// Opaque object-store proof paired with one authenticated scratch checkpoint.
+///
+/// Fields are private and the only production minter revalidates the immutable
+/// source manifest/object anchor below.
+pub(crate) struct AuthenticatedCatalogCheckpointArchiveProof {
+    catalog_document_id: DocumentId,
+    catalog_causal_digest: DocumentCausalDigest,
+    checkpoint_binding: ContentDigest,
+    checkpoint_content_digest: ContentDigest,
+}
+
+impl AuthenticatedCatalogCheckpointArchiveProof {
+    pub(crate) const fn catalog_document_id(&self) -> DocumentId {
+        self.catalog_document_id
+    }
+
+    pub(crate) const fn catalog_causal_digest(&self) -> DocumentCausalDigest {
+        self.catalog_causal_digest
+    }
+
+    pub(crate) const fn checkpoint_binding(&self) -> ContentDigest {
+        self.checkpoint_binding
+    }
+
+    pub(crate) const fn checkpoint_content_digest(&self) -> ContentDigest {
+        self.checkpoint_content_digest
+    }
 }
 
 #[derive(Debug)]
@@ -420,6 +456,43 @@ fn portable_path_evidence_handle(
     FatalEvidenceHandle {
         conflict_root,
         conflicting_block_count,
+        claim_count,
+        canonical_digest: ContentDigest::of(&summary),
+    }
+}
+
+fn page_name_evidence_handle(
+    conflicts: &BTreeMap<ContentDigest, PageNameConflictEvidenceV1>,
+) -> FatalEvidenceHandle {
+    let encoded = conflicts
+        .values()
+        .map(|evidence| {
+            evidence
+                .encode()
+                .expect("validated page-name evidence remains canonical")
+        })
+        .collect::<Vec<_>>();
+    let bytes = postcard::to_allocvec(&(
+        b"tine/page-name-terminal-conflict-set/v1".as_slice(),
+        super::PAGE_NAME_KEY_VERSION,
+        encoded,
+    ))
+    .expect("page-name evidence has an infallible canonical encoding");
+    let conflict_root = ContentDigest::of(&bytes);
+    let claim_count = conflicts
+        .values()
+        .map(|conflict| conflict.participants().len() as u64)
+        .sum();
+    let summary = postcard::to_allocvec(&(
+        b"tine/page-name-terminal-conflict-summary/v1".as_slice(),
+        conflict_root,
+        conflicts.len() as u64,
+        claim_count,
+    ))
+    .expect("page-name evidence summary has an infallible canonical encoding");
+    FatalEvidenceHandle {
+        conflict_root,
+        conflicting_block_count: conflicts.len() as u64,
         claim_count,
         canonical_digest: ContentDigest::of(&summary),
     }
@@ -1806,6 +1879,12 @@ pub struct ShardedHotEngine {
     portable_path_root: PortablePathIndexRoot,
     ephemeral_portable_paths: BTreeMap<PortablePathKeyDigest, PortablePathRecord>,
     portable_path_conflicts: BTreeMap<PortablePathKeyDigest, PortablePathConflict>,
+    // I4-I6 prepares and advances this run-local derived candidate. I7-I8 own
+    // binding it into durable engine history and restoring it at activation.
+    page_name_index: Option<Arc<PageNameOwnershipStore>>,
+    page_name_root: PageNameOwnershipRootV1,
+    ephemeral_page_names: EphemeralPageNameOwnershipStateV1,
+    page_name_conflicts: BTreeMap<ContentDigest, PageNameConflictEvidenceV1>,
     fatal_evidence: Option<ImmutableHomeEvidence>,
     fatal_handle: Option<FatalEvidenceHandle>,
     visible_documents: BTreeMap<DocumentId, LoroDoc>,
@@ -1888,6 +1967,10 @@ impl ShardedHotEngine {
             portable_path_root: PortablePathIndexRoot::empty(),
             ephemeral_portable_paths: BTreeMap::new(),
             portable_path_conflicts: BTreeMap::new(),
+            page_name_index: None,
+            page_name_root: PageNameOwnershipRootV1::empty(),
+            ephemeral_page_names: EphemeralPageNameOwnershipStateV1::default(),
+            page_name_conflicts: BTreeMap::new(),
             fatal_evidence: None,
             fatal_handle: None,
             visible_documents: BTreeMap::new(),
@@ -1930,6 +2013,10 @@ impl ShardedHotEngine {
         }
         match store.open_portable_path_index() {
             Ok(index) => engine.portable_path_index = Some(Arc::new(index)),
+            Err(error) => engine.history_failure = Some(EngineError::Archive(error.to_string())),
+        }
+        match store.open_page_name_ownership_index() {
+            Ok(index) => engine.page_name_index = Some(Arc::new(index)),
             Err(error) => engine.history_failure = Some(EngineError::Archive(error.to_string())),
         }
         match store.start_engine_scratch() {
@@ -2690,34 +2777,66 @@ impl ShardedHotEngine {
         &self,
         manifest: &OperationBatch,
     ) -> Result<Vec<(CausalPeerId, u64)>, EngineError> {
+        self.derive_inline_causal_clock(
+            &self.scratch_roots,
+            manifest.causal_dot(),
+            manifest.causal_dependency_heads(),
+        )
+    }
+
+    /// Derive one candidate sparse causal clock from its declared direct heads.
+    ///
+    /// This is used before a candidate has an authenticated causal record of
+    /// its own.  It intentionally reads only the direct parent records (or
+    /// inline parent clocks), so callers never need to walk causal ancestry to
+    /// answer causal-containment questions for a pending transition.
+    fn derive_inline_causal_clock(
+        &self,
+        scratch_roots: &ScratchRoots,
+        causal_dot: BatchCausalDot,
+        direct_causal_heads: &[BatchId],
+    ) -> Result<Vec<(CausalPeerId, u64)>, EngineError> {
         let mut clock = BTreeMap::<CausalPeerId, u64>::new();
-        for parent in manifest.causal_dependency_heads() {
-            let parent_clock = self
-                .ephemeral_causal_clocks
-                .get(parent)
-                .ok_or(EngineError::MissingDependency(*parent))?;
-            for (peer, counter) in parent_clock {
-                clock
-                    .entry(*peer)
-                    .and_modify(|current| *current = (*current).max(*counter))
-                    .or_insert(*counter);
+        if let Some(store) = &self.scratch {
+            for parent in direct_causal_heads {
+                let parent_clock = super::causal_index::batch_record(store, scratch_roots, *parent)
+                    .map_err(|error| EngineError::Archive(error.to_string()))?
+                    .ok_or(EngineError::MissingDependency(*parent))?;
+                for (peer, counter) in parent_clock.clock() {
+                    clock
+                        .entry(*peer)
+                        .and_modify(|current| *current = (*current).max(*counter))
+                        .or_insert(*counter);
+                }
+            }
+        } else {
+            for parent in direct_causal_heads {
+                let parent_clock = self
+                    .ephemeral_causal_clocks
+                    .get(parent)
+                    .ok_or(EngineError::MissingDependency(*parent))?;
+                for (peer, counter) in parent_clock {
+                    clock
+                        .entry(*peer)
+                        .and_modify(|current| *current = (*current).max(*counter))
+                        .or_insert(*counter);
+                }
             }
         }
-        let dot = manifest.causal_dot();
         let expected = clock
-            .get(&dot.peer_id())
+            .get(&causal_dot.peer_id())
             .copied()
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| EngineError::Archive("causal counter overflowed".into()))?;
-        if dot.counter() != expected {
+        if causal_dot.counter() != expected {
             return Err(EngineError::InvalidCrdt(format!(
                 "causal dot {:?}:{} is not gap-free; expected {expected}",
-                dot.peer_id(),
-                dot.counter()
+                causal_dot.peer_id(),
+                causal_dot.counter()
             )));
         }
-        clock.insert(dot.peer_id(), dot.counter());
+        clock.insert(causal_dot.peer_id(), causal_dot.counter());
         Ok(clock.into_iter().collect())
     }
 
@@ -2752,6 +2871,14 @@ impl ShardedHotEngine {
 
     pub const fn portable_path_index_root(&self) -> PortablePathIndexRoot {
         self.portable_path_root
+    }
+
+    pub const fn page_name_index_root(&self) -> &PageNameOwnershipRootV1 {
+        &self.page_name_root
+    }
+
+    pub fn page_name_conflicts(&self) -> Vec<PageNameConflictEvidenceV1> {
+        self.page_name_conflicts.values().cloned().collect()
     }
 
     /// Authenticated point lookup used by import scope capture.
@@ -2864,11 +2991,18 @@ impl ShardedHotEngine {
     fn workspace_status(&self) -> WorkspaceStatus {
         self.fatal_handle
             .map(WorkspaceStatus::Blocked)
+            .or_else(|| {
+                (!self.page_name_conflicts.is_empty()).then(|| {
+                    WorkspaceStatus::Blocked(page_name_evidence_handle(&self.page_name_conflicts))
+                })
+            })
             .unwrap_or(WorkspaceStatus::Operational)
     }
 
     fn is_blocked(&self) -> bool {
-        self.fatal_handle.is_some() || self.fatal_evidence.is_some()
+        self.fatal_handle.is_some()
+            || self.fatal_evidence.is_some()
+            || !self.page_name_conflicts.is_empty()
     }
 
     fn outcome(
@@ -4027,6 +4161,37 @@ impl ShardedHotEngine {
         } else {
             self.portable_path_root
         };
+        if !effect.pages().is_empty() {
+            let current_catalog = self.clone_validation_document(self.catalog_document_id, 1)?;
+            let prospective_catalog = working
+                .get(&self.catalog_document_id)
+                .ok_or_else(|| {
+                    EngineError::InvalidTransaction(
+                        "page effect has no prospective catalog document".into(),
+                    )
+                })?
+                .document();
+            let exact_before_pages =
+                self.exact_page_name_observations(&effect, &current_catalog)?;
+            let candidate = self
+                .prepare_page_name_updates(
+                    &self.scratch_roots,
+                    author.batch_id,
+                    manifest.causal_dot(),
+                    manifest.causal_dependency_heads(),
+                    manifest.dependency_frontier(),
+                    &effect,
+                    &exact_before_pages,
+                    &current_catalog,
+                    prospective_catalog,
+                )?
+                .expect("non-empty page effect produced a page-name candidate");
+            if !candidate.conflicts.is_empty() {
+                return Err(EngineError::InvalidTransaction(
+                    "locally authored transaction would create a page-name conflict".into(),
+                ));
+            }
+        }
         let prepared = PreparedBatch::new(manifest, objects).map_err(EngineError::from)?;
         let prospective_documents = if capture_prospective_documents {
             working
@@ -4066,6 +4231,12 @@ impl ShardedHotEngine {
             .map_err(|error| EngineError::Archive(error.to_string()))?;
         bytes.extend_from_slice(&super::PORTABLE_PATH_KEY_VERSION.to_be_bytes());
         bytes.extend_from_slice(self.portable_path_root.digest().as_bytes());
+        bytes.extend_from_slice(
+            self.page_name_root
+                .external_digest()
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .as_bytes(),
+        );
         bytes.extend_from_slice(&self.history_generation.to_be_bytes());
         bytes.extend_from_slice(self.history_root.as_bytes());
         for (document_id, heads) in &self.visible_document_heads {
@@ -5773,6 +5944,9 @@ impl ShardedHotEngine {
                         .expect("checked in-memory fatal evidence"),
                 )))
             }
+            None if !self.page_name_conflicts.is_empty() => Err(EngineError::WorkspaceBlocked(
+                page_name_evidence_handle(&self.page_name_conflicts),
+            )),
             None => Ok(()),
         }
     }
@@ -6705,6 +6879,14 @@ impl ShardedHotEngine {
                 before.insert(*document_id, document);
             }
         }
+        let exact_page_name_before = if declared_effect.pages().is_empty() {
+            AuthoritativeCatalogPageNameObservationsV1::default()
+        } else {
+            let exact_catalog = before
+                .get(&self.catalog_document_id)
+                .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
+            self.exact_page_name_observations(&declared_effect, exact_catalog.document())?
+        };
         let exact_before_vectors = before
             .iter()
             .map(|(document_id, document)| (*document_id, document.document().oplog_vv()))
@@ -6958,6 +7140,26 @@ impl ShardedHotEngine {
             validated_catalog_pages.as_ref(),
             true,
         )?;
+        let page_names = if declared_effect.pages().is_empty() {
+            None
+        } else {
+            let current_catalog = self.clone_validation_document(self.catalog_document_id, 1)?;
+            let prospective_catalog = replacements
+                .get(&self.catalog_document_id)
+                .ok_or(EngineError::MissingDocument(self.catalog_document_id))?
+                .document();
+            self.prepare_page_name_updates(
+                &starting_roots,
+                batch_id,
+                self.archive[&batch_id].manifest().causal_dot(),
+                self.archive[&batch_id].manifest().causal_dependency_heads(),
+                &frontier,
+                &declared_effect,
+                &exact_page_name_before,
+                &current_catalog,
+                prospective_catalog,
+            )?
+        };
         self.validate_manifested_portable_path_binding(
             batch_id,
             portable_paths.root,
@@ -6976,6 +7178,10 @@ impl ShardedHotEngine {
             phase_started = Instant::now();
         }
         let portable_path_blocked = !portable_paths.conflicts.is_empty();
+        let page_name_blocked = page_names
+            .as_ref()
+            .is_some_and(|candidate| !candidate.conflicts.is_empty());
+        let page_name_conflicts = self.prepare_page_name_conflicts(page_names.as_ref())?;
         if portable_path_blocked {
             for conflict in &portable_paths.conflicts {
                 self.portable_path_conflicts
@@ -6983,8 +7189,11 @@ impl ShardedHotEngine {
             }
             self.fatal_handle = Some(portable_path_evidence_handle(&self.portable_path_conflicts));
         }
-        let quarantined =
-            identity.blocked || portable_path_blocked || !allow_publication || self.is_blocked();
+        let quarantined = identity.blocked
+            || portable_path_blocked
+            || page_name_blocked
+            || !allow_publication
+            || self.is_blocked();
         let logseq_claim_candidate = if quarantined {
             None
         } else {
@@ -7037,6 +7246,9 @@ impl ShardedHotEngine {
                 }
             }
             self.commit_terminal_replacements(batch_id, &updates, replacements)?;
+            if let Some(conflicts) = page_name_conflicts {
+                self.page_name_conflicts = conflicts;
+            }
             return Ok(BatchApplication::Quarantined);
         }
         let (post_documents, accepted_evidence, candidate_roots) = self
@@ -7057,6 +7269,7 @@ impl ShardedHotEngine {
             logseq_claim_candidate.expect("visible batch prepared Logseq claim updates"),
         );
         self.commit_portable_path_updates(portable_paths);
+        self.commit_page_name_updates(page_names);
         let status_evidence = accepted_evidence.clone();
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
         let bulk_hot_documents = self.scratch.as_ref().and_then(|_| {
@@ -7206,6 +7419,255 @@ impl ShardedHotEngine {
             .insert_many(self.logseq_claim_root, &encoded)
             .map_err(|error| EngineError::Archive(error.to_string()))?;
         Ok((root, additions))
+    }
+
+    fn authenticate_catalog_checkpoint_archive(
+        &self,
+        checkpoint: &super::document_state::AuthenticatedExternalExactCheckpoint,
+    ) -> Result<AuthenticatedCatalogCheckpointArchiveProof, EngineError> {
+        if let Some((source_batch, manifest_fingerprint, update_digest)) =
+            checkpoint.archive_anchor()
+        {
+            let manifest = self.load_observed_manifest(source_batch)?;
+            let object = self.load_archive_document_object(
+                source_batch,
+                &manifest,
+                self.catalog_document_id,
+            )?;
+            if batch_fingerprint_from_manifest(&manifest) != manifest_fingerprint
+                || object
+                    .descriptor()
+                    .map_err(EngineError::from)?
+                    .content_digest()
+                    != update_digest
+            {
+                return Err(EngineError::Archive(
+                    "authenticated exact catalog checkpoint archive anchor mismatch".into(),
+                ));
+            }
+        } else if !checkpoint.peer_counters().is_empty()
+            || !checkpoint.exact_direct_heads().is_empty()
+            || !checkpoint.document().oplog_vv().is_empty()
+        {
+            return Err(EngineError::Archive(
+                "non-empty catalog checkpoint has no immutable archive anchor".into(),
+            ));
+        }
+        Ok(AuthenticatedCatalogCheckpointArchiveProof {
+            catalog_document_id: checkpoint.document_id(),
+            catalog_causal_digest: checkpoint.causal_digest(),
+            checkpoint_binding: checkpoint.checkpoint_binding(),
+            checkpoint_content_digest: checkpoint.checkpoint_content_digest(),
+        })
+    }
+
+    fn authenticated_exact_catalog_page_names(
+        &self,
+        frontier: &FrontierV2,
+        effect: &SemanticEffect,
+    ) -> Result<Option<AuthenticatedCatalogPageNameCheckpointV1>, EngineError> {
+        let Some(store) = &self.scratch else {
+            return Ok(None);
+        };
+        if effect.pages().is_empty() {
+            return Ok(None);
+        }
+        let dependencies = frontier
+            .documents()
+            .iter()
+            .find(|dependencies| dependencies.document_id() == self.catalog_document_id);
+        let lane = if self.is_blocked() {
+            super::document_state::DocumentLane::Terminal
+        } else {
+            super::document_state::DocumentLane::Visible
+        };
+        let mut checkpoint = super::document_state::load_authenticated_external_exact(
+            store,
+            &self.scratch_roots,
+            lane,
+            self.catalog_document_id,
+            dependencies,
+        )
+        .map_err(|error| EngineError::Archive(error.to_string()))?;
+        if checkpoint.is_none() && lane == super::document_state::DocumentLane::Terminal {
+            checkpoint = super::document_state::load_authenticated_external_exact(
+                store,
+                &self.scratch_roots,
+                super::document_state::DocumentLane::Visible,
+                self.catalog_document_id,
+                dependencies,
+            )
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        }
+        let checkpoint = checkpoint.ok_or_else(|| {
+            EngineError::Archive(
+                "authenticated exact catalog checkpoint is unavailable at the declared frontier"
+                    .into(),
+            )
+        })?;
+        let archive_proof = self.authenticate_catalog_checkpoint_archive(&checkpoint)?;
+        let page_ids = effect
+            .pages()
+            .iter()
+            .map(|delta| delta.page_id)
+            .collect::<Vec<_>>();
+        extract_authenticated_catalog_page_names(
+            &checkpoint,
+            &archive_proof,
+            self.catalog_document_id,
+            dependencies,
+            &page_ids,
+        )
+        .map(Some)
+        .map_err(|error| EngineError::Archive(error.to_string()))
+    }
+
+    fn exact_page_name_observations(
+        &self,
+        effect: &SemanticEffect,
+        exact_catalog: &LoroDoc,
+    ) -> Result<AuthoritativeCatalogPageNameObservationsV1, EngineError> {
+        let page_ids = effect
+            .pages()
+            .iter()
+            .map(|delta| delta.page_id)
+            .collect::<Vec<_>>();
+        extract_authoritative_catalog_page_names(self.catalog_document_id, exact_catalog, &page_ids)
+            .map_err(|error| EngineError::Archive(error.to_string()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_page_name_updates(
+        &self,
+        scratch_roots: &ScratchRoots,
+        batch_id: BatchId,
+        causal_dot: BatchCausalDot,
+        causal_dependency_heads: &[BatchId],
+        frontier: &FrontierV2,
+        effect: &SemanticEffect,
+        exact_before: &AuthoritativeCatalogPageNameObservationsV1,
+        current_catalog: &LoroDoc,
+        prospective_catalog: &LoroDoc,
+    ) -> Result<Option<PageNamePublicationCandidateV1>, EngineError> {
+        if effect.pages().is_empty() {
+            return Ok(None);
+        }
+        let mut current_pages = BTreeMap::new();
+        let mut prospective_pages = BTreeMap::new();
+        for delta in effect.pages() {
+            current_pages.insert(
+                delta.page_id,
+                validate_catalog_page(self.catalog_document_id, current_catalog, delta.page_id)?,
+            );
+            prospective_pages.insert(
+                delta.page_id,
+                validate_catalog_page(
+                    self.catalog_document_id,
+                    prospective_catalog,
+                    delta.page_id,
+                )?,
+            );
+        }
+        let candidate_clock = self
+            .scratch
+            .as_ref()
+            .map(|store| super::causal_index::batch_record(store, scratch_roots, batch_id))
+            .transpose()
+            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .flatten();
+        let candidate_clock = if let Some(record) = candidate_clock {
+            record.clock().to_vec()
+        } else {
+            self.derive_inline_causal_clock(scratch_roots, causal_dot, causal_dependency_heads)?
+        };
+        let contains = |dot: BatchCausalDot, introducing_batch: BatchId| {
+            candidate_clock
+                .binary_search_by_key(&dot.peer_id(), |(peer, _)| *peer)
+                .ok()
+                .is_some_and(|index| candidate_clock[index].1 >= dot.counter())
+                || introducing_batch == batch_id
+        };
+        let frontier_for_batch = |introducing_batch: BatchId| {
+            if introducing_batch == batch_id {
+                Some(frontier.clone())
+            } else {
+                self.load_observed_manifest(introducing_batch)
+                    .ok()
+                    .map(|manifest| manifest.dependency_frontier().clone())
+            }
+        };
+        let candidate = if let Some(index) = &self.page_name_index {
+            let exact_checkpoint = self
+                .authenticated_exact_catalog_page_names(frontier, effect)?
+                .ok_or_else(|| {
+                    EngineError::Archive(
+                        "page-name transition has no authenticated dependency checkpoint".into(),
+                    )
+                })?;
+            prepare_page_name_transition(
+                index,
+                &self.page_name_root,
+                batch_id,
+                causal_dot,
+                frontier,
+                &exact_checkpoint,
+                effect.pages(),
+                &current_pages,
+                &prospective_pages,
+                contains,
+                frontier_for_batch,
+            )
+        } else {
+            prepare_ephemeral_page_name_transition(
+                &self.ephemeral_page_names,
+                batch_id,
+                causal_dot,
+                frontier,
+                exact_before,
+                effect.pages(),
+                &current_pages,
+                &prospective_pages,
+                contains,
+                frontier_for_batch,
+            )
+        };
+        candidate.map(Some).map_err(|error| match error {
+            PageNameTransitionError::Store(error) => EngineError::Archive(error.to_string()),
+            PageNameTransitionError::MalformedBatch(reason) => {
+                EngineError::InvalidTransaction(reason.into())
+            }
+        })
+    }
+
+    fn commit_page_name_updates(&mut self, candidate: Option<PageNamePublicationCandidateV1>) {
+        let Some(candidate) = candidate else {
+            return;
+        };
+        debug_assert!(candidate.conflicts.is_empty());
+        if self.page_name_index.is_some() {
+            self.page_name_root = candidate.root.clone();
+        } else {
+            self.ephemeral_page_names.commit(candidate);
+        }
+    }
+
+    fn prepare_page_name_conflicts(
+        &self,
+        candidate: Option<&PageNamePublicationCandidateV1>,
+    ) -> Result<Option<BTreeMap<ContentDigest, PageNameConflictEvidenceV1>>, EngineError> {
+        let Some(candidate) = candidate.filter(|candidate| !candidate.conflicts.is_empty()) else {
+            return Ok(None);
+        };
+        let mut conflicts = self.page_name_conflicts.clone();
+        for conflict in &candidate.conflicts {
+            conflicts.insert(
+                conflict
+                    .digest()
+                    .map_err(|error| EngineError::Archive(error.to_string()))?,
+                conflict.clone(),
+            );
+        }
+        Ok(Some(conflicts))
     }
 
     #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -7536,6 +7998,14 @@ impl ShardedHotEngine {
             snapshot_documents_with_validation(self.catalog_document_id, &before_documents, false)?;
         let after_snapshots = snapshot_documents(self.catalog_document_id, &pending_documents)?;
         let declared_effect = SemanticEffect::decode(semantic_payload)?;
+        let exact_page_name_before = if declared_effect.pages().is_empty() {
+            AuthoritativeCatalogPageNameObservationsV1::default()
+        } else {
+            let exact_catalog = before_documents
+                .get(&self.catalog_document_id)
+                .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
+            self.exact_page_name_observations(&declared_effect, exact_catalog)?
+        };
         let derived_catalog_pages = compare_declared_effect_against_snapshots_with_catalog(
             &declared_effect,
             &before_snapshots,
@@ -7584,6 +8054,27 @@ impl ShardedHotEngine {
             validated_catalog_pages.as_ref(),
             true,
         )?;
+        let page_names = if declared_effect.pages().is_empty() {
+            None
+        } else {
+            let current_catalog = before_documents
+                .get(&self.catalog_document_id)
+                .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
+            let prospective_catalog = pending_documents
+                .get(&self.catalog_document_id)
+                .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
+            self.prepare_page_name_updates(
+                &self.scratch_roots,
+                batch_id,
+                causal_dot,
+                self.archive[&batch_id].manifest().causal_dependency_heads(),
+                frontier,
+                &declared_effect,
+                &exact_page_name_before,
+                current_catalog,
+                prospective_catalog,
+            )?
+        };
         self.validate_manifested_portable_path_binding(
             batch_id,
             portable_paths.root,
@@ -7609,6 +8100,10 @@ impl ShardedHotEngine {
             &declared_effect,
         )?;
         let portable_path_blocked = !portable_paths.conflicts.is_empty();
+        let page_name_blocked = page_names
+            .as_ref()
+            .is_some_and(|candidate| !candidate.conflicts.is_empty());
+        let page_name_conflicts = self.prepare_page_name_conflicts(page_names.as_ref())?;
         if portable_path_blocked {
             for conflict in &portable_paths.conflicts {
                 self.portable_path_conflicts
@@ -7616,7 +8111,12 @@ impl ShardedHotEngine {
             }
             self.fatal_handle = Some(portable_path_evidence_handle(&self.portable_path_conflicts));
         }
-        if identity.blocked || portable_path_blocked || !allow_publication || self.is_blocked() {
+        if identity.blocked
+            || portable_path_blocked
+            || page_name_blocked
+            || !allow_publication
+            || self.is_blocked()
+        {
             self.commit_terminal_replacements(
                 batch_id,
                 updates,
@@ -7627,6 +8127,9 @@ impl ShardedHotEngine {
                     })
                     .collect(),
             )?;
+            if let Some(conflicts) = page_name_conflicts {
+                self.page_name_conflicts = conflicts;
+            }
             return Ok(Some(BatchApplication::Quarantined));
         }
         let logseq_claim_candidate =
@@ -7648,6 +8151,7 @@ impl ShardedHotEngine {
         }
         self.commit_logseq_claim_updates(logseq_claim_candidate);
         self.commit_portable_path_updates(portable_paths);
+        self.commit_page_name_updates(page_names);
         let status_evidence = accepted_evidence.clone();
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
 
@@ -10721,7 +11225,7 @@ fn validate_catalog(
     Ok(pages)
 }
 
-fn validate_catalog_page(
+pub(super) fn validate_catalog_page(
     catalog_document_id: DocumentId,
     document: &LoroDoc,
     page_id: PageId,
@@ -15428,6 +15932,622 @@ mod validation_tests {
             "unexpected tampered materialization: {tampered_materialization:?}"
         );
         drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn no_store_page_name_preparation_source_guard_uses_direct_causal_heads() {
+        let source = include_str!("hot_engine.rs");
+        let prepare_start = source
+            .find("    fn prepare_page_name_updates(")
+            .expect("page-name prepare function remains present");
+        let prepare_end = source[prepare_start..]
+            .find("\n    fn commit_page_name_updates(")
+            .expect("page-name prepare function remains bounded")
+            + prepare_start;
+        let prepare = &source[prepare_start..prepare_end];
+        assert!(prepare.contains("derive_inline_causal_clock("));
+        assert!(prepare.contains("if let Some(record) = candidate_clock"));
+        assert!(
+            !prepare.contains("collect_batch_ancestry")
+                && !prepare.contains("unwrap_or(self.derive_inline_causal_clock"),
+            "page-name preparation must use a lazy direct-head fallback"
+        );
+
+        let clock_start = source
+            .find("    fn derive_inline_causal_clock(")
+            .expect("inline causal-clock helper remains present");
+        let clock_end = source[clock_start..]
+            .find("\n    fn accepted_document_dependencies(")
+            .expect("inline causal-clock helper remains bounded")
+            + clock_start;
+        let clock = &source[clock_start..clock_end];
+        assert!(clock.contains("for parent in direct_causal_heads"));
+        assert!(
+            !clock.contains("collect_batch_ancestry") && !clock.contains("self.archive"),
+            "inline causal-clock construction must use only direct-head lookups"
+        );
+    }
+
+    #[test]
+    fn no_store_local_page_name_duplicates_never_produce_a_prepared_batch() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(8_300));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(8_301));
+        let lineage = LineageDigest::of(b"no-store-page-name-author-preflight");
+        let mut engine = ShardedHotEngine::new(workspace, lineage, catalog);
+
+        let intra_batch = engine.prepare_bootstrap_transaction(
+            test_author(8_310, 8_310),
+            &OperationTransaction::new(vec![
+                SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_311)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_312)),
+                    name: LogicalPageName::parse("Duplicate").unwrap(),
+                    path: ManagedPath::parse("pages/left.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_313)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_314)),
+                    name: LogicalPageName::parse("duplicate").unwrap(),
+                    path: ManagedPath::parse("pages/right.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                },
+            ])
+            .unwrap(),
+        );
+        assert!(matches!(
+            intra_batch,
+            Err(EngineError::InvalidTransaction(_))
+        ));
+        assert_eq!(engine.ephemeral_page_names.record_count(), 0);
+
+        let first = engine
+            .prepare_bootstrap_transaction(
+                test_author(8_320, 8_320),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_321)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_322)),
+                    name: LogicalPageName::parse("Owned").unwrap(),
+                    path: ManagedPath::parse("pages/owned.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.stage_ready(ValidatedBatch::new(first)).disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        assert_eq!(engine.ephemeral_page_names.record_count(), 1);
+        let prior_page_names = engine.ephemeral_page_names.clone();
+        let duplicate = engine.prepare_bootstrap_transaction(
+            test_author(8_323, 8_323),
+            &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                page_id: PageId::from_uuid(Uuid::from_u128(8_324)),
+                home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_325)),
+                name: LogicalPageName::parse("OWNED").unwrap(),
+                path: ManagedPath::parse("pages/other.md").unwrap(),
+                kind: ManagedTextKind::Page,
+            }])
+            .unwrap(),
+        );
+        assert!(matches!(duplicate, Err(EngineError::InvalidTransaction(_))));
+        assert_eq!(engine.ephemeral_page_names, prior_page_names);
+    }
+
+    #[test]
+    fn no_store_concurrent_page_name_claims_quarantine_identically_in_both_orders() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(8_400));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(8_401));
+        let lineage = LineageDigest::of(b"no-store-page-name-delivery-order");
+        let left_author = ShardedHotEngine::new(workspace, lineage, catalog);
+        let right_author = ShardedHotEngine::new(workspace, lineage, catalog);
+        let left = left_author
+            .prepare_bootstrap_transaction(
+                test_author(8_410, 8_410),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_411)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_412)),
+                    name: LogicalPageName::parse("Concurrent Shared").unwrap(),
+                    path: ManagedPath::parse("pages/left.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        let right = right_author
+            .prepare_bootstrap_transaction(
+                test_author(8_420, 8_420),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_421)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_422)),
+                    name: LogicalPageName::parse("concurrent shared").unwrap(),
+                    path: ManagedPath::parse("pages/right.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+
+        let deliver = |first: PreparedBatch, second: PreparedBatch| {
+            let mut receiver = ShardedHotEngine::new(workspace, lineage, catalog);
+            assert!(matches!(
+                receiver
+                    .stage_ready(ValidatedBatch::new(first))
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+            let prior_page_names = receiver.ephemeral_page_names.clone();
+            let second_outcome = receiver.stage_ready(ValidatedBatch::new(second));
+            assert!(
+                matches!(second_outcome.disposition(), BatchDisposition::Quarantined),
+                "unexpected second disposition: {:?}",
+                second_outcome.disposition()
+            );
+            assert_eq!(receiver.ephemeral_page_names, prior_page_names);
+            assert!(receiver.fatal_evidence_handle().is_none());
+            assert!(matches!(
+                receiver.workspace_status(),
+                WorkspaceStatus::Blocked(_)
+            ));
+            receiver.page_name_conflicts()[0].encode().unwrap()
+        };
+        let left_then_right = deliver(left.clone(), right.clone());
+        let right_then_left = deliver(right, left);
+        assert_eq!(left_then_right, right_then_left);
+    }
+
+    #[test]
+    fn store_backed_page_name_candidate_tracks_names_not_paths_and_requires_exact_checkpoint() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(8_500));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(8_501));
+        let first_page = PageId::from_uuid(Uuid::from_u128(8_502));
+        let second_page = PageId::from_uuid(Uuid::from_u128(8_503));
+        let first_home = DocumentId::from_uuid(Uuid::from_u128(8_504));
+        let second_home = DocumentId::from_uuid(Uuid::from_u128(8_505));
+        let lineage = LineageDigest::of(b"page-name-acceptance-seam");
+        let root =
+            std::env::temp_dir().join(format!("tine-oplog-page-name-seam-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let reader = ObjectStore::open(&archive_path, workspace).unwrap();
+        let mut engine = ShardedHotEngine::with_archive_store(reader, lineage, catalog);
+
+        let publish = |engine: &mut ShardedHotEngine,
+                       author: AuthorBatch,
+                       operations: Vec<SemanticOperation>| {
+            let prepared = engine
+                .prepare_bootstrap_transaction(
+                    author,
+                    &OperationTransaction::new(operations).unwrap(),
+                )
+                .unwrap();
+            writer.publish_prepared(&prepared).unwrap();
+            assert!(matches!(
+                engine
+                    .stage_archive_batch(prepared.manifest().batch_id())
+                    .unwrap()
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+        };
+
+        publish(
+            &mut engine,
+            test_author(8_510, 8_510),
+            vec![SemanticOperation::CreatePage {
+                page_id: first_page,
+                home_document_id: first_home,
+                name: LogicalPageName::parse("Original Name").unwrap(),
+                path: ManagedPath::parse("pages/original.md").unwrap(),
+                kind: ManagedTextKind::Page,
+            }],
+        );
+        let created_name_root = engine.page_name_index_root().clone();
+        let created_path_root = engine.portable_path_index_root();
+        assert_eq!(created_name_root.entry_count(), 1);
+
+        publish(
+            &mut engine,
+            test_author(8_511, 8_510),
+            vec![SemanticOperation::EditPagePath {
+                page_id: first_page,
+                path: ManagedPath::parse("deep/physical/move.md").unwrap(),
+            }],
+        );
+        assert_eq!(engine.page_name_index_root(), &created_name_root);
+        assert_ne!(engine.portable_path_index_root(), created_path_root);
+        let moved_path_root = engine.portable_path_index_root();
+
+        publish(
+            &mut engine,
+            test_author(8_512, 8_510),
+            vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![PageRename {
+                    page_id: first_page,
+                    new_name: LogicalPageName::parse("Renamed").unwrap(),
+                    new_path: ManagedPath::parse("deep/physical/move.md").unwrap(),
+                }],
+                block_rewrites: Vec::new(),
+                page_preamble_rewrites: Vec::new(),
+            }],
+        );
+        assert_ne!(engine.page_name_index_root(), &created_name_root);
+        assert_eq!(engine.portable_path_index_root(), moved_path_root);
+        let renamed_key = LogicalPageName::parse("Renamed").unwrap().key_digest();
+        assert_eq!(
+            engine
+                .page_name_index
+                .as_ref()
+                .unwrap()
+                .lookup(engine.page_name_index_root(), renamed_key)
+                .unwrap()
+                .unwrap()
+                .occupied()
+                .unwrap()
+                .page_id(),
+            first_page
+        );
+
+        publish(
+            &mut engine,
+            test_author(8_513, 8_510),
+            vec![SemanticOperation::DeletePage {
+                page_id: first_page,
+            }],
+        );
+        publish(
+            &mut engine,
+            test_author(8_514, 8_510),
+            vec![SemanticOperation::CreatePage {
+                page_id: second_page,
+                home_document_id: second_home,
+                name: LogicalPageName::parse("Renamed").unwrap(),
+                path: ManagedPath::parse("pages/reused.md").unwrap(),
+                kind: ManagedTextKind::Page,
+            }],
+        );
+        assert_eq!(
+            engine
+                .page_name_index
+                .as_ref()
+                .unwrap()
+                .lookup(engine.page_name_index_root(), renamed_key)
+                .unwrap()
+                .unwrap()
+                .occupied()
+                .unwrap()
+                .page_id(),
+            second_page
+        );
+
+        let authoritative_root = engine.page_name_index_root().clone();
+        let exact_root = engine.scratch_roots.external_document_state_root.clone();
+        engine.scratch_roots.external_document_state_root = Default::default();
+        assert!(engine
+            .prepare_bootstrap_transaction(
+                test_author(8_515, 8_510),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::RenamePagesAndRewriteReferrers {
+                        page_changes: vec![PageRename {
+                            page_id: second_page,
+                            new_name: LogicalPageName::parse("Must Not Mint").unwrap(),
+                            new_path: ManagedPath::parse("pages/reused.md").unwrap(),
+                        }],
+                        block_rewrites: Vec::new(),
+                        page_preamble_rewrites: Vec::new(),
+                    }
+                ])
+                .unwrap(),
+            )
+            .is_err());
+        assert_eq!(engine.page_name_index_root(), &authoritative_root);
+        engine.scratch_roots.external_document_state_root = exact_root;
+
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_page_name_claims_quarantine_identically_in_both_delivery_orders() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(8_600));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(8_601));
+        let seed_page = PageId::from_uuid(Uuid::from_u128(8_602));
+        let seed_home = DocumentId::from_uuid(Uuid::from_u128(8_603));
+        let left_page = PageId::from_uuid(Uuid::from_u128(8_604));
+        let left_home = DocumentId::from_uuid(Uuid::from_u128(8_605));
+        let right_page = PageId::from_uuid(Uuid::from_u128(8_606));
+        let right_home = DocumentId::from_uuid(Uuid::from_u128(8_607));
+        let lineage = LineageDigest::of(b"page-name-delivery-order");
+        let root =
+            std::env::temp_dir().join(format!("tine-oplog-page-name-order-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+
+        let mut base_author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let base = base_author
+            .prepare_bootstrap_transaction(
+                test_author(8_610, 8_610),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: seed_page,
+                    home_document_id: seed_home,
+                    name: LogicalPageName::parse("Seed").unwrap(),
+                    path: ManagedPath::parse("pages/seed.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&base).unwrap();
+        assert!(matches!(
+            base_author
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+
+        let mut right_author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        assert!(matches!(
+            right_author
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        let left = base_author
+            .prepare_bootstrap_transaction(
+                test_author(8_611, 8_611),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: left_page,
+                    home_document_id: left_home,
+                    name: LogicalPageName::parse("Concurrent Shared").unwrap(),
+                    path: ManagedPath::parse("pages/left.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        let right = right_author
+            .prepare_bootstrap_transaction(
+                test_author(8_612, 8_612),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: right_page,
+                    home_document_id: right_home,
+                    name: LogicalPageName::parse("concurrent shared").unwrap(),
+                    path: ManagedPath::parse("pages/right.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&left).unwrap();
+        writer.publish_prepared(&right).unwrap();
+
+        let deliver = |first: BatchId, second: BatchId| {
+            let mut receiver = ShardedHotEngine::with_archive_store(
+                ObjectStore::open(&archive_path, workspace).unwrap(),
+                lineage,
+                catalog,
+            );
+            assert!(matches!(
+                receiver
+                    .stage_archive_batch(base.manifest().batch_id())
+                    .unwrap()
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+            assert!(matches!(
+                receiver.stage_archive_batch(first).unwrap().disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+            let prior_root = receiver.page_name_index_root().clone();
+            assert!(matches!(
+                receiver.stage_archive_batch(second).unwrap().disposition(),
+                BatchDisposition::Quarantined
+            ));
+            assert_eq!(receiver.page_name_index_root(), &prior_root);
+            assert!(matches!(
+                receiver.status().workspace(),
+                WorkspaceStatus::Blocked(_)
+            ));
+            assert!(receiver.fatal_evidence_handle().is_none());
+            assert!(receiver.fatal_evidence_page(None, 1).unwrap().is_none());
+            receiver.page_name_conflicts()[0].encode().unwrap()
+        };
+        let left_then_right = deliver(left.manifest().batch_id(), right.manifest().batch_id());
+        let right_then_left = deliver(right.manifest().batch_id(), left.manifest().batch_id());
+        assert_eq!(left_then_right, right_then_left);
+        assert_eq!(ENGINE_HISTORY_SCHEMA_VERSION, 7);
+        assert_eq!(
+            super::super::page_name_index::PAGE_NAME_OWNERSHIP_ROOT_SCHEMA_VERSION,
+            1
+        );
+        let reopened = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        assert_eq!(reopened.workspace_status(), WorkspaceStatus::Operational);
+        assert!(reopened.fatal_evidence_handle().is_none());
+        assert!(reopened.fatal_evidence_page(None, 1).unwrap().is_none());
+
+        drop(base_author);
+        drop(right_author);
+        drop(reopened);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn late_external_failure_does_not_commit_staged_page_name_conflict_state() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(87_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(87_001));
+        let lineage = LineageDigest::of(b"page-name-late-publication-failure");
+        let root = std::env::temp_dir().join(format!(
+            "tine-oplog-page-name-late-failure-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let mut left_author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let mut right_author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let base = left_author
+            .prepare_bootstrap_transaction(
+                test_author(87_005, 87_005),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(87_006)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(87_007)),
+                    name: LogicalPageName::parse("Seed").unwrap(),
+                    path: ManagedPath::parse("pages/seed.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&base).unwrap();
+        assert!(matches!(
+            left_author
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        assert!(matches!(
+            right_author
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        let left = left_author
+            .prepare_bootstrap_transaction(
+                test_author(87_010, 87_010),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(87_011)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(87_012)),
+                    name: LogicalPageName::parse("Late Shared").unwrap(),
+                    path: ManagedPath::parse("pages/late-left.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        let right = right_author
+            .prepare_bootstrap_transaction(
+                test_author(87_020, 87_020),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(87_021)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(87_022)),
+                    name: LogicalPageName::parse("late shared").unwrap(),
+                    path: ManagedPath::parse("pages/late-right.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&left).unwrap();
+        writer.publish_prepared(&right).unwrap();
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(left.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        let prior_conflicts = receiver.page_name_conflicts.clone();
+        let prior_page_name_root = receiver.page_name_root.clone();
+        let prior_fatal_handle = receiver.fatal_handle;
+        let prior_fatal_evidence = receiver.fatal_evidence.clone();
+        let prior_roots = receiver.scratch_roots.clone();
+        let prior_block_claim_root = receiver.block_claim_root;
+        let prior_blocked = receiver.is_blocked();
+        let prior_status = receiver.workspace_status();
+
+        receiver.external_publication_failure_index = Some(1);
+        let outcome = receiver
+            .stage_archive_batch(right.manifest().batch_id())
+            .unwrap();
+        assert!(
+            matches!(
+                outcome.disposition(),
+                BatchDisposition::Rejected {
+                    error: EngineError::Archive(_),
+                }
+            ),
+            "unexpected late-failure disposition: {:?}",
+            outcome.disposition()
+        );
+        assert_eq!(receiver.page_name_conflicts, prior_conflicts);
+        assert_eq!(receiver.page_name_root, prior_page_name_root);
+        assert_eq!(receiver.fatal_handle, prior_fatal_handle);
+        assert_eq!(receiver.fatal_evidence, prior_fatal_evidence);
+        assert_eq!(receiver.block_claim_root, prior_block_claim_root);
+        assert_eq!(
+            receiver.scratch_roots.external_document_current_root,
+            prior_roots.external_document_current_root
+        );
+        assert_eq!(
+            receiver.scratch_roots.external_document_state_root,
+            prior_roots.external_document_state_root
+        );
+        assert_eq!(
+            receiver.scratch_roots.blob_dedup_root,
+            prior_roots.blob_dedup_root
+        );
+        assert_eq!(
+            receiver.scratch_roots.conflict_root,
+            prior_roots.conflict_root
+        );
+        assert_eq!(
+            receiver.scratch_roots.accepted_frontier_root,
+            prior_roots.accepted_frontier_root
+        );
+        assert_eq!(
+            receiver.scratch_roots.accepted_sequence_root,
+            prior_roots.accepted_sequence_root
+        );
+        assert_eq!(receiver.is_blocked(), prior_blocked);
+        assert_eq!(receiver.workspace_status(), prior_status);
+
+        drop(receiver);
+        drop(left_author);
+        drop(right_author);
         drop(writer);
         std::fs::remove_dir_all(root).unwrap();
     }

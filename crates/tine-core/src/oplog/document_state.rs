@@ -113,6 +113,57 @@ impl ExternalDocument {
     }
 }
 
+/// Opaque proof that one exact document checkpoint was authenticated against
+/// the scratch point root and its immutable Loro-history witness.
+///
+/// The record and document deliberately cannot be separated by callers.  This
+/// is the trust-bearing input used by derived authenticated indexes that need
+/// to inspect bounded values at an exact causal frontier.
+pub(crate) struct AuthenticatedExternalExactCheckpoint {
+    document_id: DocumentId,
+    causal_digest: DocumentCausalDigest,
+    peer_counters: Vec<CrdtPeerCounter>,
+    exact_direct_heads: Vec<BatchId>,
+    document: ExternalDocument,
+    checkpoint_binding: ContentDigest,
+    checkpoint_content_digest: ContentDigest,
+    archive_anchor: Option<(BatchId, ContentDigest, ContentDigest)>,
+}
+
+impl AuthenticatedExternalExactCheckpoint {
+    pub(crate) const fn document_id(&self) -> DocumentId {
+        self.document_id
+    }
+
+    pub(crate) const fn causal_digest(&self) -> DocumentCausalDigest {
+        self.causal_digest
+    }
+
+    pub(crate) fn peer_counters(&self) -> &[CrdtPeerCounter] {
+        &self.peer_counters
+    }
+
+    pub(crate) fn exact_direct_heads(&self) -> &[BatchId] {
+        &self.exact_direct_heads
+    }
+
+    pub(crate) const fn checkpoint_binding(&self) -> ContentDigest {
+        self.checkpoint_binding
+    }
+
+    pub(crate) const fn checkpoint_content_digest(&self) -> ContentDigest {
+        self.checkpoint_content_digest
+    }
+
+    pub(crate) const fn archive_anchor(&self) -> Option<(BatchId, ContentDigest, ContentDigest)> {
+        self.archive_anchor
+    }
+
+    pub(crate) const fn document(&self) -> &LoroDoc {
+        self.document.document()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DocumentStateWork {
     pub document_point_reads: usize,
@@ -359,6 +410,123 @@ pub(crate) fn load_external_exact(
                 && record.causal_digest == causal_digest
         },
     )
+}
+
+/// Load an authenticated exact checkpoint, including the true empty baseline.
+///
+/// An empty baseline is minted only after an authenticated absence lookup at
+/// the exact-state point root and only for canonical empty dependencies.  A
+/// missing non-empty checkpoint remains unavailable.
+pub(crate) fn load_authenticated_external_exact(
+    store: &Arc<ScratchStore>,
+    roots: &ScratchRoots,
+    lane: DocumentLane,
+    document_id: DocumentId,
+    dependencies: Option<&DocumentDependencies>,
+) -> Result<Option<AuthenticatedExternalExactCheckpoint>, DocumentStateError> {
+    if dependencies.is_some_and(|dependencies| dependencies.document_id() != document_id) {
+        return Err(DocumentStateError::MisboundRecord);
+    }
+    let peer_counters = dependencies
+        .map(DocumentDependencies::peer_counters)
+        .unwrap_or_default();
+    let direct_dependency_heads = dependencies
+        .map(DocumentDependencies::direct_dependency_heads)
+        .unwrap_or_default();
+    let causal_digest = dependencies
+        .map(DocumentDependencies::causal_state_digest)
+        .unwrap_or_else(|| DocumentCausalDigest::of(document_id, &[], &[]));
+    if let Some((record, document, _)) =
+        load_external_exact(store, roots, lane, document_id, causal_digest)?
+    {
+        if record.peer_counters != peer_counters
+            || record.exact_direct_heads != direct_dependency_heads
+        {
+            return Err(DocumentStateError::MisboundRecord);
+        }
+        let checkpoint_content_digest = record.state_checkpoint.digest;
+        let checkpoint_binding = exact_checkpoint_binding(
+            store,
+            roots,
+            lane,
+            document_id,
+            causal_digest,
+            peer_counters,
+            direct_dependency_heads,
+            checkpoint_content_digest,
+            record.state_checkpoint.encoded_len,
+            Some(&record.history_root),
+        )?;
+        return Ok(Some(AuthenticatedExternalExactCheckpoint {
+            document_id: record.document_id,
+            causal_digest: record.causal_digest,
+            peer_counters: record.peer_counters.clone(),
+            exact_direct_heads: record.exact_direct_heads.clone(),
+            archive_anchor: Some((
+                record.latest_source_batch,
+                record.latest_manifest_fingerprint,
+                record.latest_update_digest,
+            )),
+            document,
+            checkpoint_binding,
+            checkpoint_content_digest,
+        }));
+    }
+    if !peer_counters.is_empty() || !direct_dependency_heads.is_empty() {
+        return Ok(None);
+    }
+    let document = ExternalDocument::empty(Arc::clone(store))?;
+    let checkpoint_content_digest = ContentDigest::of(&[]);
+    let checkpoint_binding = exact_checkpoint_binding(
+        store,
+        roots,
+        lane,
+        document_id,
+        causal_digest,
+        peer_counters,
+        direct_dependency_heads,
+        checkpoint_content_digest,
+        0,
+        None,
+    )?;
+    Ok(Some(AuthenticatedExternalExactCheckpoint {
+        document_id,
+        causal_digest,
+        peer_counters: Vec::new(),
+        exact_direct_heads: Vec::new(),
+        archive_anchor: None,
+        document,
+        checkpoint_binding,
+        checkpoint_content_digest,
+    }))
+}
+
+fn exact_checkpoint_binding(
+    store: &ScratchStore,
+    roots: &ScratchRoots,
+    lane: DocumentLane,
+    document_id: DocumentId,
+    causal_digest: DocumentCausalDigest,
+    peer_counters: &[CrdtPeerCounter],
+    direct_dependency_heads: &[BatchId],
+    checkpoint_content_digest: ContentDigest,
+    checkpoint_encoded_len: u64,
+    history_root: Option<&LoroStoreRoot>,
+) -> Result<ContentDigest, DocumentStateError> {
+    let bytes = encode_canonical(&(
+        b"tine/authenticated-exact-document-checkpoint/v1".as_slice(),
+        store.workspace_id(),
+        lane as u8,
+        document_id,
+        causal_digest,
+        peer_counters,
+        direct_dependency_heads,
+        checkpoint_content_digest,
+        checkpoint_encoded_len,
+        history_root,
+        &roots.external_document_state_root,
+    ))?;
+    Ok(ContentDigest::of(&bytes))
 }
 
 fn load_external_record(

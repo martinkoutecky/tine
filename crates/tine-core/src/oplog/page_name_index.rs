@@ -14,8 +14,9 @@ use super::object_store::{
 };
 use super::scratch_store::{ScratchLsmRoot, ScratchPageKind, ScratchStore};
 use super::{
-    BatchCausalDot, BatchId, ContentDigest, DocumentCausalDigest, DocumentId, LogicalPageName,
-    PageId, PageNameKeyDigest, PageState, PAGE_NAME_KEY_VERSION,
+    BatchCausalDot, BatchId, ContentDigest, DocumentCausalDigest, DocumentDependencies, DocumentId,
+    FrontierV2, LogicalPageName, PageDelta, PageId, PageNameKeyDigest, PageState,
+    PAGE_NAME_KEY_VERSION,
 };
 
 pub const EXACT_LOGICAL_PAGE_NAME_BLOB_SCHEMA_VERSION: u32 = 1;
@@ -24,7 +25,11 @@ pub const PAGE_NAME_OWNERSHIP_STORE_SCHEMA_VERSION: u32 = 1;
 pub const PAGE_NAME_OWNERSHIP_RECORD_SCHEMA_VERSION: u32 = 1;
 pub const PAGE_NAME_OWNERSHIP_ROOT_SCHEMA_VERSION: u32 = 1;
 pub const PAGE_NAME_CATALOG_FRONTIER_SCHEMA_VERSION: u32 = 1;
+pub const PAGE_NAME_CONFLICT_EVIDENCE_SCHEMA_VERSION: u32 = 1;
 pub const MAX_PAGE_NAME_POINT_BATCH: usize = 100_000;
+pub const MAX_PAGE_NAME_CONFLICT_PARTICIPANTS: usize = 100_000;
+pub const MAX_PAGE_NAME_CONFLICT_EVIDENCE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_EPHEMERAL_PAGE_NAME_RECORDS: usize = 4_096;
 
 const EXACT_NAME_BLOB_SUFFIX: &str = ".exact-page-name";
 const MAX_EXACT_NAME_BLOB_BYTES: u64 = 4 * 1024 * 1024 + 1024;
@@ -32,6 +37,984 @@ const PAGE_NAME_INDEX_DOMAIN: &[u8] = b"tine/page-name-ownership-index/v1";
 const STORE_CLAIM_FILE: &str = "page-name-index.claim";
 const NODES_DIR: &str = "nodes";
 const EXACT_NAMES_DIR: &str = "exact-names";
+
+/// Opaque bounded page-name view extracted from one authenticated exact
+/// catalog checkpoint.
+///
+/// Callers can request affected PageIds, but cannot supply document identity,
+/// causal digests, checkpoint bindings, content digests, or decoded states.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AuthenticatedCatalogPageNameCheckpointV1 {
+    catalog_document_id: DocumentId,
+    catalog_causal_digest: DocumentCausalDigest,
+    catalog_checkpoint_binding: ContentDigest,
+    catalog_checkpoint_content_digest: ContentDigest,
+    entries: BTreeMap<PageId, Option<PageState>>,
+}
+
+impl AuthenticatedCatalogPageNameCheckpointV1 {
+    pub(crate) const fn catalog_document_id(&self) -> DocumentId {
+        self.catalog_document_id
+    }
+
+    pub(crate) const fn catalog_causal_digest(&self) -> DocumentCausalDigest {
+        self.catalog_causal_digest
+    }
+
+    pub(crate) const fn catalog_checkpoint_binding(&self) -> ContentDigest {
+        self.catalog_checkpoint_binding
+    }
+
+    pub(crate) const fn catalog_checkpoint_content_digest(&self) -> ContentDigest {
+        self.catalog_checkpoint_content_digest
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AuthoritativeCatalogPageNameObservationsV1 {
+    entries: BTreeMap<PageId, Option<PageState>>,
+}
+
+pub(crate) fn extract_authoritative_catalog_page_names(
+    catalog_document_id: DocumentId,
+    document: &loro::LoroDoc,
+    requested_page_ids: &[PageId],
+) -> Result<AuthoritativeCatalogPageNameObservationsV1, StoreError> {
+    if requested_page_ids.len() > MAX_PAGE_NAME_POINT_BATCH {
+        return Err(StoreError::PageNamePointBatchTooLarge {
+            actual: requested_page_ids.len(),
+            limit: MAX_PAGE_NAME_POINT_BATCH,
+        });
+    }
+    if requested_page_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(StoreError::NonCanonicalPageNamePointKeys);
+    }
+    let entries = requested_page_ids
+        .iter()
+        .map(|page_id| {
+            super::hot_engine::validate_catalog_page(catalog_document_id, document, *page_id)
+                .map(|state| (*page_id, state))
+                .map_err(|_| StoreError::MalformedPageNameIndex)
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(AuthoritativeCatalogPageNameObservationsV1 { entries })
+}
+
+pub(crate) fn extract_authenticated_catalog_page_names(
+    checkpoint: &super::document_state::AuthenticatedExternalExactCheckpoint,
+    archive_proof: &super::hot_engine::AuthenticatedCatalogCheckpointArchiveProof,
+    expected_catalog_document_id: DocumentId,
+    expected_dependencies: Option<&DocumentDependencies>,
+    requested_page_ids: &[PageId],
+) -> Result<AuthenticatedCatalogPageNameCheckpointV1, StoreError> {
+    if requested_page_ids.len() > MAX_PAGE_NAME_POINT_BATCH {
+        return Err(StoreError::PageNamePointBatchTooLarge {
+            actual: requested_page_ids.len(),
+            limit: MAX_PAGE_NAME_POINT_BATCH,
+        });
+    }
+    if requested_page_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(StoreError::NonCanonicalPageNamePointKeys);
+    }
+    let expected_causal_digest = expected_dependencies
+        .map(DocumentDependencies::causal_state_digest)
+        .unwrap_or_else(|| DocumentCausalDigest::of(expected_catalog_document_id, &[], &[]));
+    if checkpoint.document_id() != expected_catalog_document_id
+        || expected_dependencies
+            .is_some_and(|dependencies| checkpoint.document_id() != dependencies.document_id())
+        || checkpoint.causal_digest() != expected_causal_digest
+        || checkpoint.peer_counters()
+            != expected_dependencies
+                .map(DocumentDependencies::peer_counters)
+                .unwrap_or_default()
+        || checkpoint.exact_direct_heads()
+            != expected_dependencies
+                .map(DocumentDependencies::direct_dependency_heads)
+                .unwrap_or_default()
+        || archive_proof.catalog_document_id() != checkpoint.document_id()
+        || archive_proof.catalog_causal_digest() != checkpoint.causal_digest()
+        || archive_proof.checkpoint_binding() != checkpoint.checkpoint_binding()
+        || archive_proof.checkpoint_content_digest() != checkpoint.checkpoint_content_digest()
+    {
+        return Err(StoreError::MisboundPageNameCatalogFrontier);
+    }
+    let mut entries = BTreeMap::new();
+    for page_id in requested_page_ids {
+        let state = super::hot_engine::validate_catalog_page(
+            expected_catalog_document_id,
+            checkpoint.document(),
+            *page_id,
+        )
+        .map_err(|_| StoreError::MalformedPageNameIndex)?;
+        if entries.insert(*page_id, state).is_some() {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+    }
+    let entry_bytes = encode_canonical(&entries)?;
+    let catalog_checkpoint_binding = ContentDigest::of(
+        &[
+            b"tine/authenticated-catalog-page-names/v1\0".as_slice(),
+            checkpoint.checkpoint_binding().as_bytes(),
+            checkpoint.checkpoint_content_digest().as_bytes(),
+            ContentDigest::of(&entry_bytes).as_bytes(),
+        ]
+        .concat(),
+    );
+    Ok(AuthenticatedCatalogPageNameCheckpointV1 {
+        catalog_document_id: expected_catalog_document_id,
+        catalog_causal_digest: expected_causal_digest,
+        catalog_checkpoint_binding,
+        catalog_checkpoint_content_digest: checkpoint.checkpoint_content_digest(),
+        entries,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageNameCollisionClassV1 {
+    DifferentPagesSameCanonicalKey,
+    DivergentCanonicalRename,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageNameReleaseFenceV1 {
+    release_batch: BatchId,
+    release_dot: BatchCausalDot,
+}
+
+impl PageNameReleaseFenceV1 {
+    pub const fn release_batch(&self) -> BatchId {
+        self.release_batch
+    }
+
+    pub const fn release_dot(&self) -> BatchCausalDot {
+        self.release_dot
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageNameConflictParticipantV1 {
+    page_id: PageId,
+    exact_name: LogicalPageName,
+    canonical_key: PageNameKeyDigest,
+    acquisition_batch: BatchId,
+    acquisition_dot: BatchCausalDot,
+    exact_state_batch: BatchId,
+    exact_state_dot: BatchCausalDot,
+    release_fence: Option<PageNameReleaseFenceV1>,
+    declared_frontier: FrontierV2,
+}
+
+impl PageNameConflictParticipantV1 {
+    pub const fn page_id(&self) -> PageId {
+        self.page_id
+    }
+
+    pub const fn exact_name(&self) -> &LogicalPageName {
+        &self.exact_name
+    }
+
+    pub const fn canonical_key(&self) -> PageNameKeyDigest {
+        self.canonical_key
+    }
+
+    pub const fn acquisition_batch(&self) -> BatchId {
+        self.acquisition_batch
+    }
+
+    pub const fn acquisition_dot(&self) -> BatchCausalDot {
+        self.acquisition_dot
+    }
+
+    pub const fn exact_state_batch(&self) -> BatchId {
+        self.exact_state_batch
+    }
+
+    pub const fn exact_state_dot(&self) -> BatchCausalDot {
+        self.exact_state_dot
+    }
+
+    pub const fn release_fence(&self) -> Option<&PageNameReleaseFenceV1> {
+        self.release_fence.as_ref()
+    }
+
+    pub const fn declared_frontier(&self) -> &FrontierV2 {
+        &self.declared_frontier
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageNameConflictEvidenceV1 {
+    schema_version: u32,
+    key_version: u32,
+    collision_class: PageNameCollisionClassV1,
+    canonical_keys: Vec<PageNameKeyDigest>,
+    participants: Vec<PageNameConflictParticipantV1>,
+}
+
+impl PageNameConflictEvidenceV1 {
+    fn new(
+        collision_class: PageNameCollisionClassV1,
+        mut participants: Vec<PageNameConflictParticipantV1>,
+    ) -> Result<Self, StoreError> {
+        if !(2..=MAX_PAGE_NAME_CONFLICT_PARTICIPANTS).contains(&participants.len()) {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+        let mut ordered = participants
+            .drain(..)
+            .map(|participant| Ok((encode_canonical(&participant)?, participant)))
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        ordered.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        ordered.dedup_by(|left, right| left.0 == right.0);
+        let participants = ordered
+            .into_iter()
+            .map(|(_, participant)| participant)
+            .collect::<Vec<_>>();
+        let mut canonical_keys = participants
+            .iter()
+            .map(PageNameConflictParticipantV1::canonical_key)
+            .collect::<Vec<_>>();
+        canonical_keys.sort_unstable();
+        canonical_keys.dedup();
+        let evidence = Self {
+            schema_version: PAGE_NAME_CONFLICT_EVIDENCE_SCHEMA_VERSION,
+            key_version: PAGE_NAME_KEY_VERSION,
+            collision_class,
+            canonical_keys,
+            participants,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
+    pub const fn collision_class(&self) -> PageNameCollisionClassV1 {
+        self.collision_class
+    }
+
+    pub fn canonical_keys(&self) -> &[PageNameKeyDigest] {
+        &self.canonical_keys
+    }
+
+    pub fn participants(&self) -> &[PageNameConflictParticipantV1] {
+        &self.participants
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, StoreError> {
+        self.validate()?;
+        let bytes = encode_canonical(self)?;
+        if bytes.len() > MAX_PAGE_NAME_CONFLICT_EVIDENCE_BYTES {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
+        if bytes.len() > MAX_PAGE_NAME_CONFLICT_EVIDENCE_BYTES {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+        let evidence: Self = decode_canonical(bytes)?;
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
+    pub fn digest(&self) -> Result<ContentDigest, StoreError> {
+        Ok(ContentDigest::of(&self.encode()?))
+    }
+
+    fn validate(&self) -> Result<(), StoreError> {
+        require_version(
+            "page-name conflict evidence",
+            self.schema_version,
+            PAGE_NAME_CONFLICT_EVIDENCE_SCHEMA_VERSION,
+        )?;
+        require_version("page-name key", self.key_version, PAGE_NAME_KEY_VERSION)?;
+        if !(2..=MAX_PAGE_NAME_CONFLICT_PARTICIPANTS).contains(&self.participants.len())
+            || self.canonical_keys.is_empty()
+            || self.canonical_keys.len() > self.participants.len()
+            || self
+                .canonical_keys
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+        let participant_bytes = self
+            .participants
+            .iter()
+            .map(encode_canonical)
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        if participant_bytes.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.participants.iter().any(|participant| {
+                participant.exact_name.key_digest() != participant.canonical_key
+                    || self
+                        .canonical_keys
+                        .binary_search(&participant.canonical_key)
+                        .is_err()
+            })
+        {
+            return Err(StoreError::MalformedPageNameIndex);
+        }
+        match self.collision_class {
+            PageNameCollisionClassV1::DifferentPagesSameCanonicalKey => {
+                if self.canonical_keys.len() != 1
+                    || self
+                        .participants
+                        .iter()
+                        .map(PageNameConflictParticipantV1::page_id)
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        < 2
+                {
+                    return Err(StoreError::MalformedPageNameIndex);
+                }
+            }
+            PageNameCollisionClassV1::DivergentCanonicalRename => {
+                if self.canonical_keys.len() < 2
+                    || self
+                        .participants
+                        .iter()
+                        .map(PageNameConflictParticipantV1::page_id)
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        != 1
+                {
+                    return Err(StoreError::MalformedPageNameIndex);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum PageNameTransitionError {
+    Store(StoreError),
+    MalformedBatch(&'static str),
+}
+
+impl From<StoreError> for PageNameTransitionError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct EphemeralPageNameOwnershipStateV1 {
+    records: BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>,
+    exact_names: BTreeMap<(PageNameKeyDigest, ExactLogicalPageNameRefV1), LogicalPageName>,
+}
+
+#[derive(Debug)]
+struct EphemeralPageNameOwnershipCandidateV1 {
+    records: BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>,
+    exact_names: BTreeMap<(PageNameKeyDigest, ExactLogicalPageNameRefV1), LogicalPageName>,
+}
+
+pub(crate) struct PageNamePublicationCandidateV1 {
+    pub(crate) root: PageNameOwnershipRootV1,
+    pub(crate) conflicts: Vec<PageNameConflictEvidenceV1>,
+    ephemeral: Option<EphemeralPageNameOwnershipCandidateV1>,
+}
+
+impl EphemeralPageNameOwnershipStateV1 {
+    pub(crate) fn commit(&mut self, candidate: PageNamePublicationCandidateV1) {
+        let Some(candidate) = candidate.ephemeral else {
+            return;
+        };
+        debug_assert!(candidate.records.len() <= MAX_PAGE_NAME_POINT_BATCH);
+        for (key, record) in candidate.records {
+            if let Some(prior) = self.records.insert(key, record) {
+                if let Some(occupied) = prior.occupied {
+                    self.exact_names.remove(&(key, occupied.exact_name));
+                }
+                if let Some(released) = prior.latest_release {
+                    self.exact_names.remove(&(key, released.prior_exact_name));
+                }
+            }
+        }
+        self.exact_names.extend(candidate.exact_names);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_count(&self) -> usize {
+        self.records.len()
+    }
+}
+
+trait PageNameTransitionAccess {
+    fn lookup_many(
+        &self,
+        keys: &[PageNameKeyDigest],
+    ) -> Result<BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>, StoreError>;
+
+    fn read_exact_name(
+        &self,
+        expected_key: PageNameKeyDigest,
+        name_ref: &ExactLogicalPageNameRefV1,
+    ) -> Result<LogicalPageName, StoreError>;
+
+    fn put_exact_name(
+        &self,
+        name: &LogicalPageName,
+    ) -> Result<ExactLogicalPageNameRefV1, StoreError>;
+}
+
+struct PersistentPageNameTransitionAccess<'a> {
+    store: &'a PageNameOwnershipStore,
+    root: &'a PageNameOwnershipRootV1,
+}
+
+impl PageNameTransitionAccess for PersistentPageNameTransitionAccess<'_> {
+    fn lookup_many(
+        &self,
+        keys: &[PageNameKeyDigest],
+    ) -> Result<BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>, StoreError> {
+        self.store.lookup_many(self.root, keys)
+    }
+
+    fn read_exact_name(
+        &self,
+        expected_key: PageNameKeyDigest,
+        name_ref: &ExactLogicalPageNameRefV1,
+    ) -> Result<LogicalPageName, StoreError> {
+        self.store.read_exact_name(expected_key, name_ref)
+    }
+
+    fn put_exact_name(
+        &self,
+        name: &LogicalPageName,
+    ) -> Result<ExactLogicalPageNameRefV1, StoreError> {
+        self.store.put_exact_name(name)
+    }
+}
+
+struct EphemeralPageNameTransitionAccess<'a> {
+    state: &'a EphemeralPageNameOwnershipStateV1,
+    staged_exact_names: std::cell::RefCell<
+        BTreeMap<(PageNameKeyDigest, ExactLogicalPageNameRefV1), LogicalPageName>,
+    >,
+}
+
+impl PageNameTransitionAccess for EphemeralPageNameTransitionAccess<'_> {
+    fn lookup_many(
+        &self,
+        keys: &[PageNameKeyDigest],
+    ) -> Result<BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>, StoreError> {
+        if keys.len() > MAX_PAGE_NAME_POINT_BATCH {
+            return Err(StoreError::PageNamePointBatchTooLarge {
+                actual: keys.len(),
+                limit: MAX_PAGE_NAME_POINT_BATCH,
+            });
+        }
+        if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(StoreError::NonCanonicalPageNamePointKeys);
+        }
+        Ok(keys
+            .iter()
+            .filter_map(|key| {
+                self.state
+                    .records
+                    .get(key)
+                    .cloned()
+                    .map(|record| (*key, record))
+            })
+            .collect())
+    }
+
+    fn read_exact_name(
+        &self,
+        expected_key: PageNameKeyDigest,
+        name_ref: &ExactLogicalPageNameRefV1,
+    ) -> Result<LogicalPageName, StoreError> {
+        let lookup_key = (expected_key, name_ref.clone());
+        let name = self
+            .staged_exact_names
+            .borrow()
+            .get(&lookup_key)
+            .cloned()
+            .or_else(|| self.state.exact_names.get(&lookup_key).cloned())
+            .ok_or(StoreError::MissingExactLogicalPageNameBlob(
+                name_ref.content_digest,
+            ))?;
+        validate_exact_name_ref(expected_key, name_ref, &name)?;
+        Ok(name)
+    }
+
+    fn put_exact_name(
+        &self,
+        name: &LogicalPageName,
+    ) -> Result<ExactLogicalPageNameRefV1, StoreError> {
+        let (_, name_ref) = encode_exact_name_blob(name)?;
+        self.staged_exact_names
+            .borrow_mut()
+            .insert((name.key_digest(), name_ref.clone()), name.clone());
+        Ok(name_ref)
+    }
+}
+
+struct PageNameTransitionCoreCandidateV1 {
+    changed: BTreeMap<PageNameKeyDigest, PageNameOwnershipRecordV1>,
+    conflicts: Vec<PageNameConflictEvidenceV1>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_page_name_transition_core(
+    access: &impl PageNameTransitionAccess,
+    batch_id: BatchId,
+    causal_dot: BatchCausalDot,
+    declared_frontier: &FrontierV2,
+    exact_before_pages: &BTreeMap<PageId, Option<PageState>>,
+    deltas: &[PageDelta],
+    current_pages: &BTreeMap<PageId, Option<PageState>>,
+    prospective_pages: &BTreeMap<PageId, Option<PageState>>,
+    contains: impl Fn(BatchCausalDot, BatchId) -> bool,
+    frontier_for_batch: impl Fn(BatchId) -> Option<FrontierV2>,
+) -> Result<PageNameTransitionCoreCandidateV1, PageNameTransitionError> {
+    if deltas.len() > MAX_PAGE_NAME_POINT_BATCH {
+        return Err(StoreError::PageNamePointBatchTooLarge {
+            actual: deltas.len(),
+            limit: MAX_PAGE_NAME_POINT_BATCH,
+        }
+        .into());
+    }
+    let affected = deltas
+        .iter()
+        .map(|delta| delta.page_id)
+        .collect::<BTreeSet<_>>();
+    if affected.len() != deltas.len()
+        || affected.iter().any(|page_id| {
+            !exact_before_pages.contains_key(page_id)
+                || !current_pages.contains_key(page_id)
+                || !prospective_pages.contains_key(page_id)
+        })
+    {
+        return Err(PageNameTransitionError::MalformedBatch(
+            "page-name transition observations are incomplete or non-unique",
+        ));
+    }
+    for delta in deltas {
+        if exact_before_pages[&delta.page_id].as_ref() != delta.before.as_ref() {
+            return Err(PageNameTransitionError::MalformedBatch(
+                "page-name transition disagrees with the authenticated dependency catalog",
+            ));
+        }
+    }
+
+    let mut keys = BTreeSet::new();
+    for delta in deltas {
+        for state in [
+            delta.before.as_ref(),
+            delta.after.as_ref(),
+            current_pages[&delta.page_id].as_ref(),
+            prospective_pages[&delta.page_id].as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let key = state.name().key_digest();
+            if keys.len() == MAX_PAGE_NAME_POINT_BATCH && !keys.contains(&key) {
+                return Err(StoreError::PageNamePointBatchTooLarge {
+                    actual: MAX_PAGE_NAME_POINT_BATCH + 1,
+                    limit: MAX_PAGE_NAME_POINT_BATCH,
+                }
+                .into());
+            }
+            keys.insert(key);
+        }
+    }
+    let requested = keys.into_iter().collect::<Vec<_>>();
+    let mut records = access.lookup_many(&requested)?;
+
+    let participant_for_occupied = |key: PageNameKeyDigest,
+                                    occupied: &PageNameOwnershipOccupiedV1|
+     -> Result<PageNameConflictParticipantV1, StoreError> {
+        Ok(PageNameConflictParticipantV1 {
+            page_id: occupied.page_id,
+            exact_name: access.read_exact_name(key, &occupied.exact_name)?,
+            canonical_key: key,
+            acquisition_batch: occupied.acquisition_batch,
+            acquisition_dot: occupied.acquisition_dot,
+            exact_state_batch: occupied.exact_state_batch,
+            exact_state_dot: occupied.exact_state_dot,
+            release_fence: None,
+            declared_frontier: frontier_for_batch(occupied.acquisition_batch)
+                .ok_or(StoreError::MalformedPageNameIndex)?,
+        })
+    };
+    let participant_for_release = |key: PageNameKeyDigest,
+                                   released: &PageNameOwnershipReleasedV1|
+     -> Result<PageNameConflictParticipantV1, StoreError> {
+        Ok(PageNameConflictParticipantV1 {
+            page_id: released.prior_page_id,
+            exact_name: access.read_exact_name(key, &released.prior_exact_name)?,
+            canonical_key: key,
+            acquisition_batch: released.prior_acquisition_batch,
+            acquisition_dot: released.prior_acquisition_dot,
+            exact_state_batch: released.prior_exact_state_batch,
+            exact_state_dot: released.prior_exact_state_dot,
+            release_fence: Some(PageNameReleaseFenceV1 {
+                release_batch: released.release_batch,
+                release_dot: released.release_dot,
+            }),
+            declared_frontier: frontier_for_batch(released.prior_acquisition_batch)
+                .ok_or(StoreError::MalformedPageNameIndex)?,
+        })
+    };
+    let proposed_participant =
+        |page_id: PageId, name: LogicalPageName| -> PageNameConflictParticipantV1 {
+            PageNameConflictParticipantV1 {
+                page_id,
+                canonical_key: name.key_digest(),
+                exact_name: name,
+                acquisition_batch: batch_id,
+                acquisition_dot: causal_dot,
+                exact_state_batch: batch_id,
+                exact_state_dot: causal_dot,
+                release_fence: None,
+                declared_frontier: declared_frontier.clone(),
+            }
+        };
+
+    let mut conflicts = Vec::new();
+    for delta in deltas {
+        let (Some(before_name), Some(proposed_name), Some(current_name)) = (
+            delta.before.as_ref().and_then(PageState::live_name),
+            delta.after.as_ref().and_then(PageState::live_name),
+            current_pages[&delta.page_id]
+                .as_ref()
+                .and_then(PageState::live_name),
+        ) else {
+            continue;
+        };
+        let before_key = before_name.key_digest();
+        let proposed_key = proposed_name.key_digest();
+        let current_key = current_name.key_digest();
+        if proposed_key == before_key || current_key == before_key || current_key == proposed_key {
+            continue;
+        }
+        let existing = records
+            .get(&current_key)
+            .and_then(PageNameOwnershipRecordV1::occupied)
+            .filter(|occupied| occupied.page_id == delta.page_id)
+            .ok_or(StoreError::MalformedPageNameIndex)?;
+        if !contains(existing.acquisition_dot, existing.acquisition_batch) {
+            conflicts.push(PageNameConflictEvidenceV1::new(
+                PageNameCollisionClassV1::DivergentCanonicalRename,
+                vec![
+                    participant_for_occupied(current_key, existing)?,
+                    proposed_participant(delta.page_id, proposed_name.clone()),
+                ],
+            )?);
+        }
+    }
+    if !conflicts.is_empty() {
+        conflicts.sort_unstable_by(|left, right| {
+            left.encode()
+                .expect("constructed page-name evidence remains canonical")
+                .cmp(
+                    &right
+                        .encode()
+                        .expect("constructed page-name evidence remains canonical"),
+                )
+        });
+        conflicts.dedup();
+        return Ok(PageNameTransitionCoreCandidateV1 {
+            changed: BTreeMap::new(),
+            conflicts,
+        });
+    }
+
+    let mut changed = BTreeMap::new();
+    for key in &requested {
+        let Some(record) = records.get_mut(key) else {
+            continue;
+        };
+        let Some(occupied) = record.occupied().cloned() else {
+            continue;
+        };
+        if !affected.contains(&occupied.page_id) {
+            continue;
+        }
+        let desired = prospective_pages[&occupied.page_id]
+            .as_ref()
+            .and_then(PageState::live_name);
+        if desired.is_some_and(|name| name.key_digest() == *key) {
+            continue;
+        }
+        let latest_release = PageNameOwnershipReleasedV1::new(
+            occupied.page_id,
+            occupied.exact_name,
+            occupied.acquisition_batch,
+            occupied.acquisition_dot,
+            occupied.exact_state_batch,
+            occupied.exact_state_dot,
+            batch_id,
+            causal_dot,
+        );
+        let replacement = PageNameOwnershipRecordV1::new(*key, None, Some(latest_release))?;
+        *record = replacement.clone();
+        changed.insert(*key, replacement);
+    }
+
+    let mut acquisitions = deltas
+        .iter()
+        .filter_map(|delta| {
+            prospective_pages[&delta.page_id]
+                .as_ref()
+                .and_then(PageState::live_name)
+                .map(|name| (name.key_digest(), delta.page_id, name.clone(), delta))
+        })
+        .collect::<Vec<_>>();
+    acquisitions.sort_unstable_by(|left, right| {
+        (left.0, left.1, left.2.as_str()).cmp(&(right.0, right.1, right.2.as_str()))
+    });
+    for pair in acquisitions.windows(2) {
+        if pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1 {
+            return Err(PageNameTransitionError::MalformedBatch(
+                "two PageIds acquire one canonical page-name key in the same batch",
+            ));
+        }
+    }
+
+    for (key, page_id, exact_name, delta) in acquisitions {
+        if let Some(existing) = records
+            .get(&key)
+            .and_then(PageNameOwnershipRecordV1::occupied)
+        {
+            if existing.page_id == page_id {
+                let existing_name = access.read_exact_name(key, &existing.exact_name)?;
+                if existing_name == exact_name {
+                    continue;
+                }
+                let proposed_wins = delta
+                    .after
+                    .as_ref()
+                    .and_then(PageState::live_name)
+                    .is_some_and(|name| name == &exact_name);
+                let current_wins = current_pages[&page_id]
+                    .as_ref()
+                    .and_then(PageState::live_name)
+                    .is_some_and(|name| name == &exact_name);
+                let (state_batch, state_dot) = if proposed_wins {
+                    (batch_id, causal_dot)
+                } else if current_wins {
+                    (existing.exact_state_batch, existing.exact_state_dot)
+                } else {
+                    return Err(StoreError::MalformedPageNameIndex.into());
+                };
+                let replacement = PageNameOwnershipRecordV1::new(
+                    key,
+                    Some(PageNameOwnershipOccupiedV1::new(
+                        page_id,
+                        access.put_exact_name(&exact_name)?,
+                        existing.acquisition_batch,
+                        existing.acquisition_dot,
+                        state_batch,
+                        state_dot,
+                    )),
+                    records
+                        .get(&key)
+                        .and_then(PageNameOwnershipRecordV1::latest_release)
+                        .cloned(),
+                )?;
+                records.insert(key, replacement.clone());
+                changed.insert(key, replacement);
+                continue;
+            }
+            if contains(existing.acquisition_dot, existing.acquisition_batch) {
+                return Err(PageNameTransitionError::MalformedBatch(
+                    "canonical page-name key is occupied at the declared dependency frontier",
+                ));
+            }
+            conflicts.push(PageNameConflictEvidenceV1::new(
+                PageNameCollisionClassV1::DifferentPagesSameCanonicalKey,
+                vec![
+                    participant_for_occupied(key, existing)?,
+                    proposed_participant(page_id, exact_name),
+                ],
+            )?);
+            continue;
+        }
+        if let Some(released) = records
+            .get(&key)
+            .and_then(PageNameOwnershipRecordV1::latest_release)
+            .filter(|release| {
+                release.release_batch != batch_id
+                    && !contains(release.release_dot, release.release_batch)
+            })
+        {
+            conflicts.push(PageNameConflictEvidenceV1::new(
+                PageNameCollisionClassV1::DifferentPagesSameCanonicalKey,
+                vec![
+                    participant_for_release(key, released)?,
+                    proposed_participant(page_id, exact_name),
+                ],
+            )?);
+            continue;
+        }
+        let latest_release = records
+            .get(&key)
+            .and_then(PageNameOwnershipRecordV1::latest_release)
+            .cloned();
+        let replacement = PageNameOwnershipRecordV1::new(
+            key,
+            Some(PageNameOwnershipOccupiedV1::new(
+                page_id,
+                access.put_exact_name(&exact_name)?,
+                batch_id,
+                causal_dot,
+                batch_id,
+                causal_dot,
+            )),
+            latest_release,
+        )?;
+        records.insert(key, replacement.clone());
+        changed.insert(key, replacement);
+    }
+
+    if !conflicts.is_empty() {
+        conflicts.sort_unstable_by(|left, right| {
+            left.encode()
+                .expect("constructed page-name evidence remains canonical")
+                .cmp(
+                    &right
+                        .encode()
+                        .expect("constructed page-name evidence remains canonical"),
+                )
+        });
+        conflicts.dedup();
+        return Ok(PageNameTransitionCoreCandidateV1 {
+            changed: BTreeMap::new(),
+            conflicts,
+        });
+    }
+    Ok(PageNameTransitionCoreCandidateV1 { changed, conflicts })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_page_name_transition(
+    store: &PageNameOwnershipStore,
+    root: &PageNameOwnershipRootV1,
+    batch_id: BatchId,
+    causal_dot: BatchCausalDot,
+    declared_frontier: &FrontierV2,
+    exact_checkpoint: &AuthenticatedCatalogPageNameCheckpointV1,
+    deltas: &[PageDelta],
+    current_pages: &BTreeMap<PageId, Option<PageState>>,
+    prospective_pages: &BTreeMap<PageId, Option<PageState>>,
+    contains: impl Fn(BatchCausalDot, BatchId) -> bool,
+    frontier_for_batch: impl Fn(BatchId) -> Option<FrontierV2>,
+) -> Result<PageNamePublicationCandidateV1, PageNameTransitionError> {
+    let access = PersistentPageNameTransitionAccess { store, root };
+    let candidate = prepare_page_name_transition_core(
+        &access,
+        batch_id,
+        causal_dot,
+        declared_frontier,
+        &exact_checkpoint.entries,
+        deltas,
+        current_pages,
+        prospective_pages,
+        contains,
+        frontier_for_batch,
+    )?;
+    let next_root = if candidate.conflicts.is_empty() {
+        store.insert_many(root, &candidate.changed)?
+    } else {
+        root.clone()
+    };
+    Ok(PageNamePublicationCandidateV1 {
+        root: next_root,
+        conflicts: candidate.conflicts,
+        ephemeral: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_ephemeral_page_name_transition(
+    state: &EphemeralPageNameOwnershipStateV1,
+    batch_id: BatchId,
+    causal_dot: BatchCausalDot,
+    declared_frontier: &FrontierV2,
+    exact_before: &AuthoritativeCatalogPageNameObservationsV1,
+    deltas: &[PageDelta],
+    current_pages: &BTreeMap<PageId, Option<PageState>>,
+    prospective_pages: &BTreeMap<PageId, Option<PageState>>,
+    contains: impl Fn(BatchCausalDot, BatchId) -> bool,
+    frontier_for_batch: impl Fn(BatchId) -> Option<FrontierV2>,
+) -> Result<PageNamePublicationCandidateV1, PageNameTransitionError> {
+    let access = EphemeralPageNameTransitionAccess {
+        state,
+        staged_exact_names: std::cell::RefCell::new(BTreeMap::new()),
+    };
+    let candidate = prepare_page_name_transition_core(
+        &access,
+        batch_id,
+        causal_dot,
+        declared_frontier,
+        &exact_before.entries,
+        deltas,
+        current_pages,
+        prospective_pages,
+        contains,
+        frontier_for_batch,
+    )?;
+    let additions = candidate
+        .changed
+        .keys()
+        .filter(|key| !state.records.contains_key(key))
+        .count();
+    if state.records.len().saturating_add(additions) > MAX_EPHEMERAL_PAGE_NAME_RECORDS {
+        return Err(PageNameTransitionError::MalformedBatch(
+            "no-store page-name test index reached its fixed capacity",
+        ));
+    }
+    let ephemeral = if candidate.conflicts.is_empty() {
+        let staged = access.staged_exact_names.into_inner();
+        let required_exact_names = candidate
+            .changed
+            .iter()
+            .flat_map(|(key, record)| {
+                record
+                    .occupied()
+                    .map(|occupied| (*key, occupied.exact_name().clone()))
+                    .into_iter()
+                    .chain(
+                        record
+                            .latest_release()
+                            .map(|released| (*key, released.prior_exact_name().clone())),
+                    )
+            })
+            .collect::<BTreeSet<_>>();
+        let exact_names = required_exact_names
+            .into_iter()
+            .map(|lookup_key| {
+                let name = staged
+                    .get(&lookup_key)
+                    .cloned()
+                    .or_else(|| state.exact_names.get(&lookup_key).cloned())
+                    .ok_or(StoreError::MissingExactLogicalPageNameBlob(
+                        lookup_key.1.content_digest,
+                    ))?;
+                Ok((lookup_key, name))
+            })
+            .collect::<Result<BTreeMap<_, _>, StoreError>>()?;
+        Some(EphemeralPageNameOwnershipCandidateV1 {
+            records: candidate.changed,
+            exact_names,
+        })
+    } else {
+        None
+    };
+    Ok(PageNamePublicationCandidateV1 {
+        root: PageNameOwnershipRootV1::empty(),
+        conflicts: candidate.conflicts,
+        ephemeral,
+    })
+}
 
 /// Digest of an exact, pre-canonicalization logical page name.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -108,6 +1091,45 @@ impl ExactLogicalPageNameRefV1 {
         }
         Ok(())
     }
+}
+
+fn encode_exact_name_blob(
+    name: &LogicalPageName,
+) -> Result<(Vec<u8>, ExactLogicalPageNameRefV1), StoreError> {
+    let blob = ExactLogicalPageNameBlobV1 {
+        schema_version: EXACT_LOGICAL_PAGE_NAME_BLOB_SCHEMA_VERSION,
+        exact_name: name.clone(),
+    };
+    let bytes = encode_canonical(&blob)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_EXACT_NAME_BLOB_BYTES {
+        return Err(StoreError::MalformedPageNameIndex);
+    }
+    Ok((
+        bytes.clone(),
+        ExactLogicalPageNameRefV1 {
+            schema_version: EXACT_LOGICAL_PAGE_NAME_REF_SCHEMA_VERSION,
+            encoded_len: bytes.len() as u64,
+            content_digest: ContentDigest::of(&bytes),
+            exact_name_digest: ExactLogicalPageNameDigest::of(name),
+        },
+    ))
+}
+
+fn validate_exact_name_ref(
+    expected_key: PageNameKeyDigest,
+    name_ref: &ExactLogicalPageNameRefV1,
+    name: &LogicalPageName,
+) -> Result<(), StoreError> {
+    name_ref.validate_version_and_length()?;
+    let (bytes, expected_ref) = encode_exact_name_blob(name)?;
+    if bytes.len() as u64 != name_ref.encoded_len
+        || expected_ref.content_digest != name_ref.content_digest
+        || expected_ref.exact_name_digest != name_ref.exact_name_digest
+        || name.key_digest() != expected_key
+    {
+        return Err(StoreError::MalformedPageNameIndex);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -420,27 +1442,14 @@ impl PageNameOwnershipStore {
         &self,
         name: &LogicalPageName,
     ) -> Result<ExactLogicalPageNameRefV1, StoreError> {
-        let blob = ExactLogicalPageNameBlobV1 {
-            schema_version: EXACT_LOGICAL_PAGE_NAME_BLOB_SCHEMA_VERSION,
-            exact_name: name.clone(),
-        };
-        let bytes = encode_canonical(&blob)?;
-        if bytes.is_empty() || bytes.len() as u64 > MAX_EXACT_NAME_BLOB_BYTES {
-            return Err(StoreError::MalformedPageNameIndex);
-        }
-        let content_digest = ContentDigest::of(&bytes);
+        let (bytes, name_ref) = encode_exact_name_blob(name)?;
         publish_immutable_exact(
             &self.exact_names,
-            &exact_name_blob_filename(content_digest),
+            &exact_name_blob_filename(name_ref.content_digest),
             &bytes,
             "exact logical page-name blob",
         )?;
-        Ok(ExactLogicalPageNameRefV1 {
-            schema_version: EXACT_LOGICAL_PAGE_NAME_REF_SCHEMA_VERSION,
-            encoded_len: bytes.len() as u64,
-            content_digest,
-            exact_name_digest: ExactLogicalPageNameDigest::of(name),
-        })
+        Ok(name_ref)
     }
 
     pub(crate) fn read_exact_name(
@@ -470,11 +1479,7 @@ impl PageNameOwnershipStore {
             blob.schema_version,
             EXACT_LOGICAL_PAGE_NAME_BLOB_SCHEMA_VERSION,
         )?;
-        if ExactLogicalPageNameDigest::of(&blob.exact_name) != name_ref.exact_name_digest
-            || blob.exact_name.key_digest() != expected_key
-        {
-            return Err(StoreError::MalformedPageNameIndex);
-        }
+        validate_exact_name_ref(expected_key, name_ref, &blob.exact_name)?;
         Ok(blob.exact_name)
     }
 
@@ -1624,6 +2629,16 @@ mod tests {
         assert!(
             source.contains("#[cfg(test)]\n    fn from_authenticated_exact_checkpoint_for_test")
         );
+        assert!(source.contains(
+            "archive_proof: &super::hot_engine::AuthenticatedCatalogCheckpointArchiveProof"
+        ));
+        let hot_engine_source = include_str!("hot_engine.rs");
+        assert!(
+            !hot_engine_source.contains("pub(crate) fn authenticate_catalog_checkpoint_archive")
+        );
+        assert!(!hot_engine_source.contains(
+            "pub(crate) fn new(\n        catalog_document_id: DocumentId,\n        catalog_causal_digest"
+        ));
     }
 
     #[test]
@@ -1759,6 +2774,947 @@ mod tests {
 
         drop(claim_index);
         drop(scratch);
+        drop(index);
+        drop(archive);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    fn authenticated_page_points_for_test(
+        states: Vec<(PageId, Option<PageState>)>,
+    ) -> AuthenticatedCatalogPageNameCheckpointV1 {
+        AuthenticatedCatalogPageNameCheckpointV1 {
+            catalog_document_id: document(0x900),
+            catalog_causal_digest: causal_digest(document(0x900), 1),
+            catalog_checkpoint_binding: ContentDigest::of(b"authenticated catalog points"),
+            catalog_checkpoint_content_digest: ContentDigest::of(
+                b"authenticated catalog checkpoint bytes",
+            ),
+            entries: states.into_iter().collect(),
+        }
+    }
+
+    fn empty_frontier() -> FrontierV2 {
+        FrontierV2::new(Vec::new()).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn transition(
+        index: &PageNameOwnershipStore,
+        root: &PageNameOwnershipRootV1,
+        batch_id: BatchId,
+        causal_dot: BatchCausalDot,
+        checkpoint: &AuthenticatedCatalogPageNameCheckpointV1,
+        deltas: &[PageDelta],
+        current: Vec<(PageId, Option<PageState>)>,
+        prospective: Vec<(PageId, Option<PageState>)>,
+        contained: &[BatchId],
+    ) -> Result<PageNamePublicationCandidateV1, PageNameTransitionError> {
+        let contained = contained.iter().copied().collect::<BTreeSet<_>>();
+        prepare_page_name_transition(
+            index,
+            root,
+            batch_id,
+            causal_dot,
+            &empty_frontier(),
+            checkpoint,
+            deltas,
+            &current.into_iter().collect(),
+            &prospective.into_iter().collect(),
+            |_, introducing_batch| contained.contains(&introducing_batch),
+            |_| Some(empty_frontier()),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ephemeral_transition(
+        state: &EphemeralPageNameOwnershipStateV1,
+        batch_id: BatchId,
+        causal_dot: BatchCausalDot,
+        deltas: &[PageDelta],
+        exact_before: Vec<(PageId, Option<PageState>)>,
+        current: Vec<(PageId, Option<PageState>)>,
+        prospective: Vec<(PageId, Option<PageState>)>,
+        contained: &[BatchId],
+    ) -> Result<PageNamePublicationCandidateV1, PageNameTransitionError> {
+        let contained = contained.iter().copied().collect::<BTreeSet<_>>();
+        let exact_before = AuthoritativeCatalogPageNameObservationsV1 {
+            entries: exact_before.into_iter().collect(),
+        };
+        prepare_ephemeral_page_name_transition(
+            state,
+            batch_id,
+            causal_dot,
+            &empty_frontier(),
+            &exact_before,
+            deltas,
+            &current.into_iter().collect(),
+            &prospective.into_iter().collect(),
+            |_, introducing_batch| contained.contains(&introducing_batch),
+            |_| Some(empty_frontier()),
+        )
+    }
+
+    fn page_delta(
+        page_id: PageId,
+        before: Option<PageState>,
+        after: Option<PageState>,
+    ) -> PageDelta {
+        PageDelta {
+            page_id,
+            before,
+            after,
+        }
+    }
+
+    #[test]
+    fn transition_create_delete_causal_reuse_swap_replay_and_path_only_move() {
+        let (path, archive, index) = store("transition-basics");
+        let page_a = page(0xa01);
+        let page_b = page(0xa02);
+        let alpha = live_state("Alpha");
+        let beta = live_state("Beta");
+        let alpha_tombstone = PageState::Tombstone {
+            name: LogicalPageName::parse("Alpha").unwrap(),
+            home_document_id: alpha.home_document_id(),
+            kind: ManagedTextKind::Page,
+        };
+
+        let create = transition(
+            &index,
+            &PageNameOwnershipRootV1::empty(),
+            batch(0xa10),
+            dot(10),
+            &authenticated_page_points_for_test(vec![(page_a, None)]),
+            &[page_delta(page_a, None, Some(alpha.clone()))],
+            vec![(page_a, None)],
+            vec![(page_a, Some(alpha.clone()))],
+            &[],
+        )
+        .unwrap();
+        assert!(create.conflicts.is_empty());
+        let acquisition = index
+            .lookup(&create.root, alpha.name().key_digest())
+            .unwrap()
+            .unwrap()
+            .occupied()
+            .unwrap()
+            .clone();
+
+        let replay = transition(
+            &index,
+            &create.root,
+            batch(0xa11),
+            dot(11),
+            &authenticated_page_points_for_test(vec![(page_a, Some(alpha.clone()))]),
+            &[],
+            Vec::new(),
+            Vec::new(),
+            &[batch(0xa10)],
+        )
+        .unwrap();
+        assert_eq!(replay.root, create.root);
+
+        let moved = PageState::Live {
+            name: LogicalPageName::parse("Alpha").unwrap(),
+            path: ManagedPath::parse("journals/unrelated/physical.md").unwrap(),
+            home_document_id: alpha.home_document_id(),
+            kind: ManagedTextKind::Page,
+        };
+        let path_only = transition(
+            &index,
+            &create.root,
+            batch(0xa12),
+            dot(12),
+            &authenticated_page_points_for_test(vec![(page_a, Some(alpha.clone()))]),
+            &[page_delta(page_a, Some(alpha.clone()), Some(moved.clone()))],
+            vec![(page_a, Some(alpha.clone()))],
+            vec![(page_a, Some(moved))],
+            &[batch(0xa10)],
+        )
+        .unwrap();
+        assert_eq!(path_only.root, create.root);
+
+        let deleted = transition(
+            &index,
+            &create.root,
+            batch(0xa13),
+            dot(13),
+            &authenticated_page_points_for_test(vec![(page_a, Some(alpha.clone()))]),
+            &[page_delta(
+                page_a,
+                Some(alpha.clone()),
+                Some(alpha_tombstone.clone()),
+            )],
+            vec![(page_a, Some(alpha.clone()))],
+            vec![(page_a, Some(alpha_tombstone.clone()))],
+            &[batch(0xa10)],
+        )
+        .unwrap();
+        let released = index
+            .lookup(&deleted.root, alpha.name().key_digest())
+            .unwrap()
+            .unwrap();
+        assert!(released.occupied().is_none());
+        assert_eq!(
+            released.latest_release().unwrap().release_batch(),
+            batch(0xa13)
+        );
+
+        let reused = transition(
+            &index,
+            &deleted.root,
+            batch(0xa14),
+            dot(14),
+            &authenticated_page_points_for_test(vec![(page_b, None)]),
+            &[page_delta(page_b, None, Some(alpha.clone()))],
+            vec![(page_b, None)],
+            vec![(page_b, Some(alpha.clone()))],
+            &[batch(0xa13)],
+        )
+        .unwrap();
+        assert_eq!(
+            index
+                .lookup(&reused.root, alpha.name().key_digest())
+                .unwrap()
+                .unwrap()
+                .occupied()
+                .unwrap()
+                .page_id(),
+            page_b
+        );
+
+        let same_batch_reused = transition(
+            &index,
+            &create.root,
+            batch(0xa15),
+            dot(15),
+            &authenticated_page_points_for_test(vec![
+                (page_a, Some(alpha.clone())),
+                (page_b, None),
+            ]),
+            &[
+                page_delta(page_a, Some(alpha.clone()), Some(alpha_tombstone.clone())),
+                page_delta(page_b, None, Some(alpha.clone())),
+            ],
+            vec![(page_a, Some(alpha.clone())), (page_b, None)],
+            vec![
+                (page_a, Some(alpha_tombstone)),
+                (page_b, Some(alpha.clone())),
+            ],
+            &[batch(0xa10)],
+        )
+        .unwrap();
+        assert_eq!(
+            index
+                .lookup(&same_batch_reused.root, alpha.name().key_digest())
+                .unwrap()
+                .unwrap()
+                .occupied()
+                .unwrap()
+                .page_id(),
+            page_b
+        );
+
+        let root = transition(
+            &index,
+            &PageNameOwnershipRootV1::empty(),
+            batch(0xa20),
+            dot(20),
+            &authenticated_page_points_for_test(vec![(page_a, None), (page_b, None)]),
+            &[
+                page_delta(page_a, None, Some(alpha.clone())),
+                page_delta(page_b, None, Some(beta.clone())),
+            ],
+            vec![(page_a, None), (page_b, None)],
+            vec![(page_a, Some(alpha.clone())), (page_b, Some(beta.clone()))],
+            &[],
+        )
+        .unwrap()
+        .root;
+        let swapped = transition(
+            &index,
+            &root,
+            batch(0xa21),
+            dot(21),
+            &authenticated_page_points_for_test(vec![
+                (page_a, Some(alpha.clone())),
+                (page_b, Some(beta.clone())),
+            ]),
+            &[
+                page_delta(page_a, Some(alpha.clone()), Some(beta.clone())),
+                page_delta(page_b, Some(beta.clone()), Some(alpha.clone())),
+            ],
+            vec![(page_a, Some(alpha.clone())), (page_b, Some(beta.clone()))],
+            vec![(page_a, Some(beta.clone())), (page_b, Some(alpha.clone()))],
+            &[batch(0xa20)],
+        )
+        .unwrap();
+        assert_eq!(
+            index
+                .lookup(&swapped.root, alpha.name().key_digest())
+                .unwrap()
+                .unwrap()
+                .occupied()
+                .unwrap()
+                .page_id(),
+            page_b
+        );
+        assert_eq!(acquisition.acquisition_batch(), batch(0xa10));
+
+        drop(index);
+        drop(archive);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn dependency_duplicate_and_intra_batch_duplicate_reject_without_root_change() {
+        let (path, archive, index) = store("transition-duplicate-rejection");
+        let alpha = live_state("Duplicate");
+        let first_page = page(0xb01);
+        let second_page = page(0xb02);
+        let root = transition(
+            &index,
+            &PageNameOwnershipRootV1::empty(),
+            batch(0xb10),
+            dot(1),
+            &authenticated_page_points_for_test(vec![(first_page, None)]),
+            &[page_delta(first_page, None, Some(alpha.clone()))],
+            vec![(first_page, None)],
+            vec![(first_page, Some(alpha.clone()))],
+            &[],
+        )
+        .unwrap()
+        .root;
+        let digest = root.external_digest().unwrap();
+        assert!(matches!(
+            transition(
+                &index,
+                &root,
+                batch(0xb11),
+                dot(2),
+                &authenticated_page_points_for_test(vec![(second_page, None)]),
+                &[page_delta(second_page, None, Some(alpha.clone()))],
+                vec![(second_page, None)],
+                vec![(second_page, Some(alpha.clone()))],
+                &[batch(0xb10)],
+            ),
+            Err(PageNameTransitionError::MalformedBatch(_))
+        ));
+        assert_eq!(root.external_digest().unwrap(), digest);
+
+        assert!(matches!(
+            transition(
+                &index,
+                &PageNameOwnershipRootV1::empty(),
+                batch(0xb12),
+                dot(3),
+                &authenticated_page_points_for_test(vec![(first_page, None), (second_page, None),]),
+                &[
+                    page_delta(first_page, None, Some(alpha.clone())),
+                    page_delta(second_page, None, Some(alpha.clone())),
+                ],
+                vec![(first_page, None), (second_page, None)],
+                vec![
+                    (first_page, Some(alpha.clone())),
+                    (second_page, Some(alpha)),
+                ],
+                &[],
+            ),
+            Err(PageNameTransitionError::MalformedBatch(_))
+        ));
+
+        drop(index);
+        drop(archive);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_transition_preserves_frozen_reuse_swap_spelling_replay_path_and_tombstone_table() {
+        let page_a = page(0xb21);
+        let page_b = page(0xb22);
+        let alpha = live_state("Alpha");
+        let alpha_key = alpha.name().key_digest();
+        let alpha_upper = live_state("ALPHA");
+        let beta = live_state("Beta");
+        let beta_key = beta.name().key_digest();
+        let moved_alpha = PageState::Live {
+            name: LogicalPageName::parse("Alpha").unwrap(),
+            path: ManagedPath::parse("deep/physical/alpha.md").unwrap(),
+            home_document_id: alpha.home_document_id(),
+            kind: ManagedTextKind::Page,
+        };
+        let alpha_tombstone = PageState::Tombstone {
+            name: LogicalPageName::parse("ALPHA").unwrap(),
+            home_document_id: alpha.home_document_id(),
+            kind: ManagedTextKind::Page,
+        };
+        let mut state = EphemeralPageNameOwnershipStateV1::default();
+
+        let created = ephemeral_transition(
+            &state,
+            batch(0xb30),
+            dot(30),
+            &[page_delta(page_a, None, Some(alpha.clone()))],
+            vec![(page_a, None)],
+            vec![(page_a, None)],
+            vec![(page_a, Some(alpha.clone()))],
+            &[],
+        )
+        .unwrap();
+        state.commit(created);
+        assert_eq!(
+            state.records[&alpha_key].occupied().unwrap().page_id(),
+            page_a
+        );
+
+        let before_path_only = state.clone();
+        let path_only = ephemeral_transition(
+            &state,
+            batch(0xb31),
+            dot(31),
+            &[page_delta(
+                page_a,
+                Some(alpha.clone()),
+                Some(moved_alpha.clone()),
+            )],
+            vec![(page_a, Some(alpha.clone()))],
+            vec![(page_a, Some(alpha.clone()))],
+            vec![(page_a, Some(moved_alpha.clone()))],
+            &[batch(0xb30)],
+        )
+        .unwrap();
+        state.commit(path_only);
+        assert_eq!(state, before_path_only);
+
+        let spelling = ephemeral_transition(
+            &state,
+            batch(0xb32),
+            dot(32),
+            &[page_delta(
+                page_a,
+                Some(moved_alpha.clone()),
+                Some(alpha_upper.clone()),
+            )],
+            vec![(page_a, Some(moved_alpha.clone()))],
+            vec![(page_a, Some(moved_alpha.clone()))],
+            vec![(page_a, Some(alpha_upper.clone()))],
+            &[batch(0xb30), batch(0xb31)],
+        )
+        .unwrap();
+        state.commit(spelling);
+        let occupied = state.records[&alpha_key].occupied().unwrap();
+        assert_eq!(
+            state.exact_names[&(alpha_key, occupied.exact_name().clone())],
+            LogicalPageName::parse("ALPHA").unwrap()
+        );
+
+        let before_replay = state.clone();
+        let replay = ephemeral_transition(
+            &state,
+            batch(0xb32),
+            dot(32),
+            &[page_delta(
+                page_a,
+                Some(moved_alpha.clone()),
+                Some(alpha_upper.clone()),
+            )],
+            vec![(page_a, Some(moved_alpha))],
+            vec![(page_a, Some(alpha_upper.clone()))],
+            vec![(page_a, Some(alpha_upper.clone()))],
+            &[batch(0xb30), batch(0xb31), batch(0xb32)],
+        )
+        .unwrap();
+        state.commit(replay);
+        assert_eq!(state, before_replay);
+
+        let deleted = ephemeral_transition(
+            &state,
+            batch(0xb33),
+            dot(33),
+            &[page_delta(
+                page_a,
+                Some(alpha_upper.clone()),
+                Some(alpha_tombstone.clone()),
+            )],
+            vec![(page_a, Some(alpha_upper.clone()))],
+            vec![(page_a, Some(alpha_upper.clone()))],
+            vec![(page_a, Some(alpha_tombstone.clone()))],
+            &[batch(0xb30), batch(0xb32)],
+        )
+        .unwrap();
+        state.commit(deleted);
+        assert!(state.records[&alpha_key].occupied().is_none());
+
+        let reused = ephemeral_transition(
+            &state,
+            batch(0xb34),
+            dot(34),
+            &[page_delta(page_b, None, Some(alpha.clone()))],
+            vec![(page_b, None)],
+            vec![(page_b, None)],
+            vec![(page_b, Some(alpha.clone()))],
+            &[batch(0xb33)],
+        )
+        .unwrap();
+        state.commit(reused);
+        assert_eq!(
+            state.records[&alpha_key].occupied().unwrap().page_id(),
+            page_b
+        );
+
+        let before_losing_tombstone = state.clone();
+        let losing_tombstone = ephemeral_transition(
+            &state,
+            batch(0xb35),
+            dot(35),
+            &[page_delta(
+                page_a,
+                Some(alpha_upper.clone()),
+                Some(alpha_tombstone.clone()),
+            )],
+            vec![(page_a, Some(alpha_upper))],
+            vec![(page_a, Some(alpha_tombstone.clone()))],
+            vec![(page_a, Some(alpha_tombstone.clone()))],
+            &[batch(0xb30), batch(0xb32)],
+        )
+        .unwrap();
+        state.commit(losing_tombstone);
+        assert_eq!(state, before_losing_tombstone);
+
+        let created_beta = ephemeral_transition(
+            &state,
+            batch(0xb36),
+            dot(36),
+            &[page_delta(
+                page_a,
+                Some(alpha_tombstone.clone()),
+                Some(beta.clone()),
+            )],
+            vec![(page_a, Some(alpha_tombstone.clone()))],
+            vec![(page_a, Some(alpha_tombstone))],
+            vec![(page_a, Some(beta.clone()))],
+            &[batch(0xb33), batch(0xb34)],
+        )
+        .unwrap();
+        state.commit(created_beta);
+
+        let swapped = ephemeral_transition(
+            &state,
+            batch(0xb37),
+            dot(37),
+            &[
+                page_delta(page_a, Some(beta.clone()), Some(alpha.clone())),
+                page_delta(page_b, Some(alpha.clone()), Some(beta.clone())),
+            ],
+            vec![(page_a, Some(beta.clone())), (page_b, Some(alpha.clone()))],
+            vec![(page_a, Some(beta.clone())), (page_b, Some(alpha.clone()))],
+            vec![(page_a, Some(alpha)), (page_b, Some(beta))],
+            &[batch(0xb34), batch(0xb36)],
+        )
+        .unwrap();
+        assert!(swapped.conflicts.is_empty());
+        state.commit(swapped);
+        assert_eq!(
+            state.records[&alpha_key].occupied().unwrap().page_id(),
+            page_a
+        );
+        assert_eq!(
+            state.records[&beta_key].occupied().unwrap().page_id(),
+            page_b
+        );
+        assert_eq!(state.record_count(), 2);
+    }
+
+    #[test]
+    fn concurrent_claims_and_divergent_renames_have_delivery_independent_evidence() {
+        fn concurrent_claim_order(
+            first_batch: BatchId,
+            first_page: PageId,
+            second_batch: BatchId,
+            second_page: PageId,
+        ) -> Vec<u8> {
+            let (path, archive, index) = store("concurrent-claim-order");
+            let name = live_state("Shared");
+            let first = transition(
+                &index,
+                &PageNameOwnershipRootV1::empty(),
+                first_batch,
+                dot(first_batch.as_uuid().as_u128() as u64),
+                &authenticated_page_points_for_test(vec![(first_page, None)]),
+                &[page_delta(first_page, None, Some(name.clone()))],
+                vec![(first_page, None)],
+                vec![(first_page, Some(name.clone()))],
+                &[],
+            )
+            .unwrap();
+            let prior = first.root.external_digest().unwrap();
+            let second = transition(
+                &index,
+                &first.root,
+                second_batch,
+                dot(second_batch.as_uuid().as_u128() as u64),
+                &authenticated_page_points_for_test(vec![(second_page, None)]),
+                &[page_delta(second_page, None, Some(name.clone()))],
+                vec![(second_page, None)],
+                vec![(second_page, Some(name))],
+                &[],
+            )
+            .unwrap();
+            assert_eq!(second.root.external_digest().unwrap(), prior);
+            let encoded = second.conflicts[0].encode().unwrap();
+            drop(index);
+            drop(archive);
+            fs::remove_dir_all(path).unwrap();
+            encoded
+        }
+
+        let left = concurrent_claim_order(batch(0xc10), page(0xc01), batch(0xc20), page(0xc02));
+        let right = concurrent_claim_order(batch(0xc20), page(0xc02), batch(0xc10), page(0xc01));
+        assert_eq!(left, right);
+
+        fn divergent_order(
+            first_batch: BatchId,
+            first_name: &str,
+            second_batch: BatchId,
+            second_name: &str,
+            winner: &str,
+        ) -> Vec<u8> {
+            let (path, archive, index) = store("divergent-rename-order");
+            let page_id = page(0xc30);
+            let base = live_state("Base");
+            let base_batch = batch(0xc31);
+            let base_root = transition(
+                &index,
+                &PageNameOwnershipRootV1::empty(),
+                base_batch,
+                dot(31),
+                &authenticated_page_points_for_test(vec![(page_id, None)]),
+                &[page_delta(page_id, None, Some(base.clone()))],
+                vec![(page_id, None)],
+                vec![(page_id, Some(base.clone()))],
+                &[],
+            )
+            .unwrap()
+            .root;
+            let first = live_state(first_name);
+            let first_root = transition(
+                &index,
+                &base_root,
+                first_batch,
+                dot(first_batch.as_uuid().as_u128() as u64),
+                &authenticated_page_points_for_test(vec![(page_id, Some(base.clone()))]),
+                &[page_delta(page_id, Some(base.clone()), Some(first.clone()))],
+                vec![(page_id, Some(base.clone()))],
+                vec![(page_id, Some(first.clone()))],
+                &[base_batch],
+            )
+            .unwrap()
+            .root;
+            let second = live_state(second_name);
+            let conflict = transition(
+                &index,
+                &first_root,
+                second_batch,
+                dot(second_batch.as_uuid().as_u128() as u64),
+                &authenticated_page_points_for_test(vec![(page_id, Some(base.clone()))]),
+                &[page_delta(page_id, Some(base), Some(second))],
+                vec![(page_id, Some(first))],
+                vec![(page_id, Some(live_state(winner)))],
+                &[base_batch],
+            )
+            .unwrap();
+            let encoded = conflict.conflicts[0].encode().unwrap();
+            drop(index);
+            drop(archive);
+            fs::remove_dir_all(path).unwrap();
+            encoded
+        }
+
+        let left = divergent_order(
+            batch(0xc40),
+            "Branch A",
+            batch(0xc50),
+            "Branch B",
+            "Branch A",
+        );
+        let right = divergent_order(
+            batch(0xc50),
+            "Branch B",
+            batch(0xc40),
+            "Branch A",
+            "Branch A",
+        );
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn spelling_races_converge_losing_tombstone_does_not_release_and_names_ignore_paths() {
+        let (path, archive, index) = store("spelling-and-paths");
+        let page_id = page(0xd01);
+        let original = live_state("Foo");
+        let created = transition(
+            &index,
+            &PageNameOwnershipRootV1::empty(),
+            batch(0xd10),
+            dot(1),
+            &authenticated_page_points_for_test(vec![(page_id, None)]),
+            &[page_delta(page_id, None, Some(original.clone()))],
+            vec![(page_id, None)],
+            vec![(page_id, Some(original.clone()))],
+            &[],
+        )
+        .unwrap()
+        .root;
+        let upper = live_state("FOO");
+        let first = transition(
+            &index,
+            &created,
+            batch(0xd11),
+            dot(2),
+            &authenticated_page_points_for_test(vec![(page_id, Some(original.clone()))]),
+            &[page_delta(
+                page_id,
+                Some(original.clone()),
+                Some(upper.clone()),
+            )],
+            vec![(page_id, Some(original.clone()))],
+            vec![(page_id, Some(upper.clone()))],
+            &[batch(0xd10)],
+        )
+        .unwrap();
+        let lower = live_state("foo");
+        let converged = transition(
+            &index,
+            &first.root,
+            batch(0xd12),
+            dot(3),
+            &authenticated_page_points_for_test(vec![(page_id, Some(original.clone()))]),
+            &[page_delta(
+                page_id,
+                Some(original.clone()),
+                Some(lower.clone()),
+            )],
+            vec![(page_id, Some(upper))],
+            vec![(page_id, Some(lower.clone()))],
+            &[batch(0xd10)],
+        )
+        .unwrap();
+        assert!(converged.conflicts.is_empty());
+        let occupied = index
+            .lookup(&converged.root, lower.name().key_digest())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            occupied.occupied().unwrap().acquisition_batch(),
+            batch(0xd10)
+        );
+        assert_eq!(
+            index
+                .read_exact_name(
+                    lower.name().key_digest(),
+                    occupied.occupied().unwrap().exact_name()
+                )
+                .unwrap(),
+            LogicalPageName::parse("foo").unwrap()
+        );
+        let lower_first = transition(
+            &index,
+            &created,
+            batch(0xd12),
+            dot(3),
+            &authenticated_page_points_for_test(vec![(page_id, Some(original.clone()))]),
+            &[page_delta(
+                page_id,
+                Some(original.clone()),
+                Some(lower.clone()),
+            )],
+            vec![(page_id, Some(original.clone()))],
+            vec![(page_id, Some(lower.clone()))],
+            &[batch(0xd10)],
+        )
+        .unwrap();
+        let reverse = transition(
+            &index,
+            &lower_first.root,
+            batch(0xd11),
+            dot(2),
+            &authenticated_page_points_for_test(vec![(page_id, Some(original.clone()))]),
+            &[page_delta(
+                page_id,
+                Some(original.clone()),
+                Some(live_state("FOO")),
+            )],
+            vec![(page_id, Some(lower.clone()))],
+            vec![(page_id, Some(lower.clone()))],
+            &[batch(0xd10)],
+        )
+        .unwrap();
+        assert_eq!(reverse.root, converged.root);
+
+        let tombstone = PageState::Tombstone {
+            name: LogicalPageName::parse("Foo").unwrap(),
+            home_document_id: original.home_document_id(),
+            kind: ManagedTextKind::Page,
+        };
+        let losing_delete = transition(
+            &index,
+            &created,
+            batch(0xd13),
+            dot(4),
+            &authenticated_page_points_for_test(vec![(page_id, Some(original.clone()))]),
+            &[page_delta(page_id, Some(original.clone()), Some(tombstone))],
+            vec![(page_id, Some(original.clone()))],
+            vec![(page_id, Some(original))],
+            &[batch(0xd10)],
+        )
+        .unwrap();
+        assert_eq!(losing_delete.root, created);
+
+        let nested_a = PageState::Live {
+            name: LogicalPageName::parse("Area/One").unwrap(),
+            path: ManagedPath::parse("pages/flat-one.md").unwrap(),
+            home_document_id: document(0xd20),
+            kind: ManagedTextKind::Page,
+        };
+        let nested_b = PageState::Live {
+            name: LogicalPageName::parse("Area/Two").unwrap(),
+            path: ManagedPath::parse("pages/deep/physical/two.md").unwrap(),
+            home_document_id: document(0xd21),
+            kind: ManagedTextKind::Page,
+        };
+        let nested = transition(
+            &index,
+            &PageNameOwnershipRootV1::empty(),
+            batch(0xd22),
+            dot(5),
+            &authenticated_page_points_for_test(vec![(page(0xd20), None), (page(0xd21), None)]),
+            &[
+                page_delta(page(0xd20), None, Some(nested_a.clone())),
+                page_delta(page(0xd21), None, Some(nested_b.clone())),
+            ],
+            vec![(page(0xd20), None), (page(0xd21), None)],
+            vec![
+                (page(0xd20), Some(nested_a.clone())),
+                (page(0xd21), Some(nested_b.clone())),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_ne!(nested_a.name().key_digest(), nested_b.name().key_digest());
+        assert_eq!(nested.root.entry_count(), 2);
+
+        drop(index);
+        drop(archive);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn four_hundred_reuse_cycles_are_point_bounded_and_evidence_is_strict() {
+        let (path, archive, index) = store("bounded-reuse-sequence");
+        let name = live_state("Bounded");
+        let mut root = PageNameOwnershipRootV1::empty();
+        let before = index.stats();
+        for sequence in 0..420_u128 {
+            let page_id = page(0xe00 + sequence);
+            let create_batch = batch(0x10_000 + sequence * 2);
+            let delete_batch = batch(0x10_001 + sequence * 2);
+            let prior_release = (sequence != 0)
+                .then(|| batch(0x10_001 + (sequence - 1) * 2))
+                .into_iter()
+                .collect::<Vec<_>>();
+            root = transition(
+                &index,
+                &root,
+                create_batch,
+                dot(sequence as u64 * 2 + 1),
+                &authenticated_page_points_for_test(vec![(page_id, None)]),
+                &[page_delta(page_id, None, Some(name.clone()))],
+                vec![(page_id, None)],
+                vec![(page_id, Some(name.clone()))],
+                &prior_release,
+            )
+            .unwrap()
+            .root;
+            let tombstone = PageState::Tombstone {
+                name: name.name().clone(),
+                home_document_id: name.home_document_id(),
+                kind: ManagedTextKind::Page,
+            };
+            root = transition(
+                &index,
+                &root,
+                delete_batch,
+                dot(sequence as u64 * 2 + 2),
+                &authenticated_page_points_for_test(vec![(page_id, Some(name.clone()))]),
+                &[page_delta(
+                    page_id,
+                    Some(name.clone()),
+                    Some(tombstone.clone()),
+                )],
+                vec![(page_id, Some(name.clone()))],
+                vec![(page_id, Some(tombstone))],
+                &[create_batch],
+            )
+            .unwrap()
+            .root;
+        }
+        let after = index.stats();
+        let reads = after.reads - before.reads;
+        let bytes = after.bytes_read - before.bytes_read;
+        eprintln!("page-name transition point costs: cycles=420 reads={reads} bytes={bytes}");
+        assert!(reads <= 420 * 2 * 64);
+        assert!(bytes <= 420 * 2 * 64 * 1024);
+        assert_eq!(root.entry_count(), 1);
+
+        let evidence = PageNameConflictEvidenceV1::new(
+            PageNameCollisionClassV1::DifferentPagesSameCanonicalKey,
+            vec![
+                PageNameConflictParticipantV1 {
+                    page_id: page(1),
+                    exact_name: LogicalPageName::parse("Evidence").unwrap(),
+                    canonical_key: LogicalPageName::parse("Evidence").unwrap().key_digest(),
+                    acquisition_batch: batch(1),
+                    acquisition_dot: dot(1),
+                    exact_state_batch: batch(1),
+                    exact_state_dot: dot(1),
+                    release_fence: None,
+                    declared_frontier: empty_frontier(),
+                },
+                PageNameConflictParticipantV1 {
+                    page_id: page(2),
+                    exact_name: LogicalPageName::parse("evidence").unwrap(),
+                    canonical_key: LogicalPageName::parse("evidence").unwrap().key_digest(),
+                    acquisition_batch: batch(2),
+                    acquisition_dot: dot(2),
+                    exact_state_batch: batch(2),
+                    exact_state_dot: dot(2),
+                    release_fence: None,
+                    declared_frontier: empty_frontier(),
+                },
+            ],
+        )
+        .unwrap();
+        let encoded = evidence.encode().unwrap();
+        assert_eq!(
+            PageNameConflictEvidenceV1::decode(&encoded).unwrap(),
+            evidence
+        );
+        let mut corrupt = encoded.clone();
+        *corrupt.last_mut().unwrap() ^= 0x80;
+        assert!(PageNameConflictEvidenceV1::decode(&corrupt).is_err());
+        let mut prior = evidence.clone();
+        prior.schema_version = 0;
+        assert!(matches!(
+            PageNameConflictEvidenceV1::decode(&encode_canonical(&prior).unwrap()),
+            Err(StoreError::UpgradeRequired { .. })
+        ));
+        let mut future = evidence;
+        future.schema_version = 2;
+        assert!(matches!(
+            PageNameConflictEvidenceV1::decode(&encode_canonical(&future).unwrap()),
+            Err(StoreError::UnsupportedStoreVersion { .. })
+        ));
+
         drop(index);
         drop(archive);
         fs::remove_dir_all(path).unwrap();
