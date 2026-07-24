@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Entry};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -27,7 +27,7 @@ use super::{
     AnnotatedProjectionBase, BatchCausalDot, BatchId, BatchInspection, BatchOrigin, BlockDelta,
     BlockId, BlockOwner, BlockState, CausalPeerId, ContentDigest, CrdtPeerCounter, CrdtPeerId,
     DeviceId, DocumentCausalDigest, DocumentDependencies, DocumentId, FrontierV2, LineageDigest,
-    LogseqUuid, ManagedPath, ManifestObjectRef, ManifestProjectionPrecondition,
+    LogseqUuid, ManagedPath, ManagedTextKind, ManifestObjectRef, ManifestProjectionPrecondition,
     ManifestProjectionTarget, ManifestedProjectionIntent, MembershipClaim, MembershipDelta,
     ObjectKind, ObjectStore, OperationBatch, OperationObject, PageDelta, PageId, PageState,
     PortablePathKeyDigest, PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant,
@@ -497,10 +497,15 @@ pub enum SemanticOperation {
         page_id: PageId,
         home_document_id: DocumentId,
         path: ManagedPath,
+        kind: ManagedTextKind,
     },
     EditPagePath {
         page_id: PageId,
         path: ManagedPath,
+    },
+    SetPageKind {
+        page_id: PageId,
+        kind: ManagedTextKind,
     },
     SetPagePreamble {
         page_id: PageId,
@@ -1841,7 +1846,7 @@ impl ShardedHotEngine {
                 Err(error) => Some(format!(
                     "projection graph capability identity could not be verified: {error}"
                 )),
-        }
+            }
         };
         if let Some(error) = enrollment_error {
             return Self::failed_archive_open(
@@ -1860,9 +1865,9 @@ impl ShardedHotEngine {
                 Self::with_archive_store_for_endpoint(open, lineage_digest, catalog_document_id)
             }
             Err((store, error)) => Self::failed_archive_open(
-            store,
-            lineage_digest,
-            catalog_document_id,
+                store,
+                lineage_digest,
+                catalog_document_id,
                 EngineError::Archive(error.to_string()),
             ),
         }
@@ -1878,12 +1883,12 @@ impl ShardedHotEngine {
         let (store, history, projection_work_index) = match open.into_runtime() {
             Ok(runtime) => runtime,
             Err((store, error)) => {
-            return Self::failed_archive_open(
-                store,
-                lineage_digest,
-                catalog_document_id,
-                EngineError::Archive(error.to_string()),
-            );
+                return Self::failed_archive_open(
+                    store,
+                    lineage_digest,
+                    catalog_document_id,
+                    EngineError::Archive(error.to_string()),
+                );
             }
         };
         let history_current = history.current_with_binding();
@@ -1906,68 +1911,68 @@ impl ShardedHotEngine {
         }
         let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
         match history_current {
-                Ok((generation, root, _, binding)) => {
-                    engine.history_generation = generation;
-                    engine.history_root = root;
-                    engine.history_store = Some(Arc::new(history));
-                    if binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION {
-                        engine.history_failure = Some(EngineError::Archive(
-                            "durable history portable-path key version mismatch".into(),
-                        ));
-                    } else {
-                        let portable_root =
-                            PortablePathIndexRoot::from_digest(binding.portable_path_root);
-                        match engine
-                            .portable_path_index
-                            .as_ref()
-                            .ok_or_else(|| {
-                                EngineError::Archive(
-                                    "durable history has no portable-path index".into(),
-                                )
-                            })
-                            .and_then(|index| {
-                                index
-                                    .validate_root(portable_root)
-                                    .map_err(|error| EngineError::Archive(error.to_string()))
-                            }) {
-                            Ok(()) => engine.portable_path_root = portable_root,
-                            Err(error) => engine.history_failure = Some(error),
-                        }
-                    }
-                    if let Some(terminal) = binding.terminal_evidence {
-                        engine.fatal_handle = Some(FatalEvidenceHandle {
-                            conflict_root: terminal.conflict_root,
-                            conflicting_block_count: terminal.conflict_count,
-                            claim_count: terminal.participant_count,
-                            canonical_digest: terminal.canonical_digest,
-                        });
-                    }
-                    engine.portable_path_conflicts = binding
-                        .portable_path_conflicts
-                        .into_iter()
-                        .map(|conflict| (conflict.key_digest(), conflict))
-                        .collect();
-                    if !engine.portable_path_conflicts.is_empty() {
-                    let expected = portable_path_evidence_handle(&engine.portable_path_conflicts);
-                        if engine.fatal_handle != Some(expected) {
-                            engine.history_failure = Some(EngineError::Archive(
-                                "durable portable-path evidence binding mismatch".into(),
-                            ));
-                        }
+            Ok((generation, root, _, binding)) => {
+                engine.history_generation = generation;
+                engine.history_root = root;
+                engine.history_store = Some(Arc::new(history));
+                if binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION {
+                    engine.history_failure = Some(EngineError::Archive(
+                        "durable history portable-path key version mismatch".into(),
+                    ));
+                } else {
+                    let portable_root =
+                        PortablePathIndexRoot::from_digest(binding.portable_path_root);
+                    match engine
+                        .portable_path_index
+                        .as_ref()
+                        .ok_or_else(|| {
+                            EngineError::Archive(
+                                "durable history has no portable-path index".into(),
+                            )
+                        })
+                        .and_then(|index| {
+                            index
+                                .validate_root(portable_root)
+                                .map_err(|error| EngineError::Archive(error.to_string()))
+                        }) {
+                        Ok(()) => engine.portable_path_root = portable_root,
+                        Err(error) => engine.history_failure = Some(error),
                     }
                 }
+                if let Some(terminal) = binding.terminal_evidence {
+                    engine.fatal_handle = Some(FatalEvidenceHandle {
+                        conflict_root: terminal.conflict_root,
+                        conflicting_block_count: terminal.conflict_count,
+                        claim_count: terminal.participant_count,
+                        canonical_digest: terminal.canonical_digest,
+                    });
+                }
+                engine.portable_path_conflicts = binding
+                    .portable_path_conflicts
+                    .into_iter()
+                    .map(|conflict| (conflict.key_digest(), conflict))
+                    .collect();
+                if !engine.portable_path_conflicts.is_empty() {
+                    let expected = portable_path_evidence_handle(&engine.portable_path_conflicts);
+                    if engine.fatal_handle != Some(expected) {
+                        engine.history_failure = Some(EngineError::Archive(
+                            "durable portable-path evidence binding mismatch".into(),
+                        ));
+                    }
+                }
+            }
             Err(error) => engine.history_failure = Some(EngineError::Archive(error.to_string())),
         }
         if engine.history_failure.is_none() {
-                    engine.projection_endpoint = Some(endpoint);
-                    engine.projection_receipt_store_id = Some(binding.receipt_store_id);
+            engine.projection_endpoint = Some(endpoint);
+            engine.projection_receipt_store_id = Some(binding.receipt_store_id);
             engine.projection_work_index = Some(Arc::new(projection_work_index));
-                    if engine.fatal_handle.is_none() {
-                        if let Err(error) = engine.reconcile_pending_projection_work() {
-                            engine.history_failure = Some(error);
-                        }
-                    }
+            if engine.fatal_handle.is_none() {
+                if let Err(error) = engine.reconcile_pending_projection_work() {
+                    engine.history_failure = Some(error);
                 }
+            }
+        }
         engine
     }
 
@@ -5231,6 +5236,7 @@ impl ShardedHotEngine {
         let PageState::Live {
             path,
             home_document_id: page_document_id,
+            ..
         } = page_state
         else {
             return Err(EngineError::PageDeleted(page_id));
@@ -5330,6 +5336,7 @@ impl ShardedHotEngine {
         let PageState::Live {
             path,
             home_document_id: page_document_id,
+            ..
         } = page_state
         else {
             return Err(EngineError::PageDeleted(page_id));
@@ -8673,6 +8680,7 @@ impl ShardedHotEngine {
                 page_id,
                 home_document_id,
                 path,
+                kind,
             } => {
                 if *home_document_id == self.catalog_document_id {
                     return Err(EngineError::InvalidTransaction(
@@ -8695,6 +8703,7 @@ impl ShardedHotEngine {
                     &PageState::Live {
                         path: path.clone(),
                         home_document_id: *home_document_id,
+                        kind: *kind,
                     },
                 )?;
                 let shard = self.ensure_working_document(
@@ -8730,6 +8739,31 @@ impl ShardedHotEngine {
                     &PageState::Live {
                         path: path.clone(),
                         home_document_id: state.home_document_id(),
+                        kind: state.kind(),
+                    },
+                )?;
+            }
+            SemanticOperation::SetPageKind { page_id, kind } => {
+                let catalog = self.ensure_working_document(
+                    working,
+                    before_vectors,
+                    before_snapshots,
+                    self.catalog_document_id,
+                    peer_id,
+                )?;
+                let state = require_live_page(catalog, *page_id)?;
+                if state.kind() == *kind {
+                    return Err(EngineError::InvalidTransaction(format!(
+                        "page {page_id} already has semantic kind {kind:?}"
+                    )));
+                }
+                insert_page_state(
+                    catalog,
+                    *page_id,
+                    &PageState::Live {
+                        path: state.path().expect("required live page has a path").clone(),
+                        home_document_id: state.home_document_id(),
+                        kind: *kind,
                     },
                 )?;
             }
@@ -8784,6 +8818,7 @@ impl ShardedHotEngine {
                     *page_id,
                     &PageState::Tombstone {
                         home_document_id: state.home_document_id(),
+                        kind: state.kind(),
                     },
                 )?;
             }
@@ -12198,15 +12233,13 @@ mod validation_tests {
         frontier: FrontierV2,
         effect_bytes: Vec<u8>,
     ) -> ValidatedBatch {
-        let mut objects = vec![
-            OperationObject::new(
+        let mut objects = vec![OperationObject::new(
             engine.workspace_id,
             engine.catalog_document_id,
             ObjectKind::SemanticEffect,
             effect_bytes.clone(),
         )
-            .unwrap(),
-        ];
+        .unwrap()];
         let batch_dependency_heads: Vec<_> = frontier
             .documents()
             .iter()
@@ -12327,6 +12360,7 @@ mod validation_tests {
         PageState::Live {
             path: ManagedPath::parse(path).unwrap(),
             home_document_id,
+            kind: ManagedTextKind::Page,
         }
     }
 
@@ -12476,14 +12510,12 @@ mod validation_tests {
             BatchDisposition::Rejected { .. }
         ));
         assert!(fixture.engine.visible_documents.is_empty());
-        assert!(
-            fixture
+        assert!(fixture
             .engine
             .canonical_snapshot()
             .unwrap()
             .pages
-                .is_empty()
-        );
+            .is_empty());
     }
 
     fn catalog_snapshot(entries: Vec<(PageId, PageState)>) -> SemanticDocumentSnapshot {
@@ -12553,7 +12585,13 @@ mod validation_tests {
             ),
             _ => (
                 vec![(page_id, live_page(home_id, "pages/Removed.md"))],
-                Vec::new(),
+                vec![(
+                    page_id,
+                    PageState::Tombstone {
+                        home_document_id: home_id,
+                        kind: ManagedTextKind::Page,
+                    },
+                )],
                 vec![before_block.clone()],
                 vec![before_block],
                 vec![(block_id, before_claim)],
@@ -12808,14 +12846,12 @@ mod validation_tests {
         let disjoint_declared =
             derive_effect_from_snapshots(&before, &disjoint_duplicate_after).unwrap();
         assert_eq!(disjoint_declared.memberships().len(), 2);
-        assert!(
-            compare_declared_effect_against_snapshots_with_catalog(
+        assert!(compare_declared_effect_against_snapshots_with_catalog(
             &disjoint_declared,
             &before,
             &disjoint_duplicate_after
         )
-            .is_ok()
-        );
+        .is_ok());
 
         let duplicate_key_after = BTreeMap::from([
             (
@@ -12984,6 +13020,7 @@ mod validation_tests {
                     page_id: page_a,
                     home_document_id: home_a,
                     path: ManagedPath::parse("pages/A.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -12996,6 +13033,7 @@ mod validation_tests {
                     page_id: page_b,
                     home_document_id: home_b,
                     path: ManagedPath::parse("pages/B.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13014,12 +13052,10 @@ mod validation_tests {
             0
         );
         let snapshot = engine.canonical_snapshot().unwrap();
-        assert!(
-            !snapshot
+        assert!(!snapshot
             .pages
             .iter()
-                .any(|(candidate, _)| *candidate == page_a)
-        );
+            .any(|(candidate, _)| *candidate == page_a));
         assert_eq!(
             snapshot
                 .pages
@@ -13057,6 +13093,7 @@ mod validation_tests {
                     page_id: page,
                     home_document_id: home,
                     path: ManagedPath::parse("pages/Must Not Appear.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13069,6 +13106,7 @@ mod validation_tests {
                     page_id: PageId::from_uuid(Uuid::from_u128(116)),
                     home_document_id: DocumentId::from_uuid(Uuid::from_u128(117)),
                     path: ManagedPath::parse("pages/Foreign.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13112,11 +13150,13 @@ mod validation_tests {
                         page_id: page_a,
                         home_document_id: home_a,
                         path: ManagedPath::parse("pages/A.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_b,
                         home_document_id: home_b,
                         path: ManagedPath::parse("pages/B.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                 ])
                 .unwrap(),
@@ -13205,6 +13245,7 @@ mod validation_tests {
                     page_id: page,
                     home_document_id: home,
                     path: ManagedPath::parse("pages/Safe.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13216,6 +13257,7 @@ mod validation_tests {
                     page_id: PageId::from_uuid(Uuid::from_u128(146)),
                     home_document_id: DocumentId::from_uuid(Uuid::from_u128(147)),
                     path: ManagedPath::parse("pages/Never.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             ),
@@ -13298,6 +13340,7 @@ mod validation_tests {
                     page_id: page_a,
                     home_document_id: home_a,
                     path: ManagedPath::parse("pages/A.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13309,6 +13352,7 @@ mod validation_tests {
                     page_id: page_b,
                     home_document_id: home_b,
                     path: ManagedPath::parse("pages/B.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -13559,6 +13603,7 @@ mod validation_tests {
                         page_id: old_page,
                         home_document_id: old_home,
                         path: ManagedPath::parse("pages/Existing.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -13745,6 +13790,7 @@ mod validation_tests {
             &PageState::Live {
                 path: ManagedPath::parse("pages/A.md").unwrap(),
                 home_document_id: home_id,
+                kind: ManagedTextKind::Page,
             },
         )
         .unwrap();
@@ -13788,6 +13834,7 @@ mod validation_tests {
             &PageState::Live {
                 path: ManagedPath::parse("pages/Catalog Only.md").unwrap(),
                 home_document_id: home_id,
+                kind: ManagedTextKind::Page,
             },
         )
         .unwrap();
@@ -13839,6 +13886,7 @@ mod validation_tests {
             &PageState::Live {
                 path: ManagedPath::parse("pages/Missing Home.md").unwrap(),
                 home_document_id: home_id,
+                kind: ManagedTextKind::Page,
             },
         )
         .unwrap();
@@ -13881,6 +13929,7 @@ mod validation_tests {
                         page_id,
                         home_document_id: home_id,
                         path: ManagedPath::parse("pages/Coherent.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -13926,6 +13975,7 @@ mod validation_tests {
             &PageState::Live {
                 path: ManagedPath::parse("pages/Aliased.md").unwrap(),
                 home_document_id: catalog_id,
+                kind: ManagedTextKind::Page,
             },
         )
         .unwrap();
@@ -13959,6 +14009,7 @@ mod validation_tests {
                 after: Some(PageState::Live {
                     path: ManagedPath::parse("pages/Aliased.md").unwrap(),
                     home_document_id: catalog_id,
+                    kind: ManagedTextKind::Page,
                 }),
             }],
             Vec::new(),
@@ -14004,6 +14055,7 @@ mod validation_tests {
                     page_id: page_a,
                     home_document_id: home_id,
                     path: ManagedPath::parse("pages/A.md").unwrap(),
+                    kind: ManagedTextKind::Page,
                 }])
                 .unwrap(),
             )
@@ -14069,6 +14121,7 @@ mod validation_tests {
                         page_id,
                         home_document_id: home_id,
                         path: ManagedPath::parse("pages/Merge.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -14243,11 +14296,13 @@ mod validation_tests {
                             page_id: page_a,
                             home_document_id: home_a,
                             path: ManagedPath::parse("pages/A.md").unwrap(),
+                            kind: ManagedTextKind::Page,
                         },
                         SemanticOperation::CreatePage {
                             page_id: page_b,
                             home_document_id: home_b,
                             path: ManagedPath::parse("pages/B.md").unwrap(),
+                            kind: ManagedTextKind::Page,
                         },
                         SemanticOperation::CreateBlock {
                             block: BlockLocation {
@@ -14368,18 +14423,14 @@ mod validation_tests {
             } if found == same_batch_id
         ));
         assert_eq!(engine.fatal_evidence(), None);
-        assert!(
-            engine
+        assert!(engine
             .recover_block_state(home_a, same_batch_id)
             .unwrap()
-                .is_none()
-        );
-        assert!(
-            engine
+            .is_none());
+        assert!(engine
             .recover_block_state(home_b, same_batch_id)
             .unwrap()
-                .is_none()
-        );
+            .is_none());
         let accepted_after_rollback = engine
             .prepare_bootstrap_transaction(
                 test_author(605, 605),
@@ -14505,19 +14556,15 @@ mod validation_tests {
             relocation_engine.materialize_page(page_a).unwrap().blocks[0].content,
             "immutable home A"
         );
-        assert!(
-            relocation_engine
+        assert!(relocation_engine
             .materialize_page(page_b)
             .unwrap()
             .blocks
-                .is_empty()
-        );
-        assert!(
-            relocation_engine
+            .is_empty());
+        assert!(relocation_engine
             .recover_block_state(home_b, block_id)
             .unwrap()
-                .is_none()
-        );
+            .is_none());
     }
 
     #[test]
@@ -14542,16 +14589,19 @@ mod validation_tests {
                         page_id: page_a,
                         home_document_id: home_a,
                         path: ManagedPath::parse("pages/A.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_b,
                         home_document_id: home_b,
                         path: ManagedPath::parse("pages/B.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_c,
                         home_document_id: home_c,
                         path: ManagedPath::parse("pages/C.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                 ])
                 .unwrap(),
@@ -14615,8 +14665,7 @@ mod validation_tests {
                 .unwrap(),
             )
             .unwrap();
-        assert!(
-            authored_descendant
+        assert!(authored_descendant
             .manifest()
             .dependency_frontier()
             .documents()
@@ -14625,16 +14674,13 @@ mod validation_tests {
                 entry.document_id() == home_b
                     && entry.direct_dependency_heads()
                         == [BatchId::from_uuid(Uuid::from_u128(7_012))]
-                })
-        );
-        assert!(
-            !authored_descendant
+            }));
+        assert!(!authored_descendant
             .manifest()
             .dependency_frontier()
             .documents()
             .iter()
-                .any(|entry| entry.document_id() == home_a)
-        );
+            .any(|entry| entry.document_id() == home_a));
 
         let before_c = engine.clone_visible_document(home_c, 713).unwrap();
         let after_c = clone_doc(&before_c, 713).unwrap();
@@ -14715,6 +14761,7 @@ mod validation_tests {
                         page_id: page,
                         home_document_id: home,
                         path: ManagedPath::parse("pages/History.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -15002,6 +15049,7 @@ mod validation_tests {
                         page_id: page_a,
                         home_document_id: home_a,
                         path: ManagedPath::parse("pages/Baseline.md").unwrap(),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -15041,6 +15089,7 @@ mod validation_tests {
                 page_id,
                 home_document_id,
                 path: ManagedPath::parse(format!("pages/Rejected {offset}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
             });
             operations.push(SemanticOperation::CreateBlock {
                 block: BlockLocation {
@@ -15106,16 +15155,14 @@ mod validation_tests {
             engine.scratch_roots.causal_peer_root,
             prior_roots.causal_peer_root
         );
-        assert!(
-            engine
+        assert!(engine
             .batch_statuses()
             .unwrap()
             .iter()
             .any(|(batch_id, status)| {
                 *batch_id == rejected.manifest().batch_id()
                     && matches!(status, BatchDisposition::Rejected { .. })
-                })
-        );
+            }));
         drop(engine);
         drop(writer);
         std::fs::remove_dir_all(root).unwrap();
@@ -15203,6 +15250,7 @@ mod replay_benchmark {
                     page_id,
                     home_document_id: home,
                     path: ManagedPath::parse(format!("pages/Replay {page_index:08}.md")).unwrap(),
+                    kind: ManagedTextKind::Page,
                 });
                 for order in 0..BLOCKS_PER_PAGE {
                     if blocks_built >= BLOCK_TARGET {

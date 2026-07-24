@@ -4853,8 +4853,8 @@ mod tests {
     use crate::oplog::{
         AuthorBatch, BatchCausalDot, BatchDisposition, BatchOrigin, BlockId, BlockLocation,
         CausalPeerId, CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId,
-        ManagedPath, OperationBatch, OperationObject, OperationTransaction, PageId, PreparedBatch,
-        SemanticOperation, SessionId,
+        ManagedPath, ManagedTextKind, OperationBatch, OperationObject, OperationTransaction, PageId,
+        PreparedBatch, SemanticOperation, SessionId,
     };
 
     struct TestDir(PathBuf);
@@ -4964,6 +4964,7 @@ mod tests {
                 page_id: ids.page,
                 home_document_id: ids.document,
                 path: ManagedPath::parse(path).unwrap(),
+                kind: ManagedTextKind::Page,
             },
             SemanticOperation::CreateBlock {
                 block: BlockLocation {
@@ -5100,6 +5101,18 @@ mod tests {
             ProjectionRecovery::RebuiltMissing { applied_batches: 0 }
         );
         (opened.database, engine, store)
+    }
+
+    fn stored_semantic_effects(database: &SqliteFrontier) -> Vec<SemanticEffect> {
+        let mut statement = database
+            .connection
+            .prepare("SELECT semantic_effect FROM applied_batches ORDER BY sequence")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(|bytes| SemanticEffect::decode(&bytes.unwrap()).unwrap())
+            .collect()
     }
 
     fn fake_validated(
@@ -5753,6 +5766,7 @@ mod tests {
                 page_id,
                 home_document_id: document_id,
                 path: ManagedPath::parse(format!("pages/wide-{index}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
             });
             operations.push(SemanticOperation::CreateBlock {
                 block: BlockLocation {
@@ -5856,6 +5870,7 @@ mod tests {
                 page_id,
                 home_document_id: document_id,
                 path: ManagedPath::parse(format!("pages/auth-{index}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
             });
             operations.push(SemanticOperation::CreateBlock {
                 block: BlockLocation {
@@ -6841,6 +6856,7 @@ mod tests {
             page_id: ids.page,
             home_document_id: ids.document,
             path: ManagedPath::parse("pages/oversized.md").unwrap(),
+            kind: ManagedTextKind::Page,
         }];
         for index in 0..5_u128 {
             operations.push(SemanticOperation::CreateBlock {
@@ -7240,6 +7256,7 @@ mod tests {
                 page_id: ids.page,
                 home_document_id: ids.document,
                 path: ManagedPath::parse("pages/SQLite.md").unwrap(),
+                kind: ManagedTextKind::Page,
             },
             SemanticOperation::CreateBlock {
                 block: BlockLocation {
@@ -7331,6 +7348,156 @@ mod tests {
         assert_eq!(
             clean_replay.canonical_snapshot().unwrap(),
             expected_snapshot
+        );
+    }
+
+    #[test]
+    fn kind_only_effect_survives_sqlite_reopen_and_rebuild() {
+        let ids = TestIds::new(8_500);
+        let dir = TestDir::new("kind-only-rebuild");
+        let store_path = dir.path().join("objects");
+        let store = ObjectStore::open(&store_path, ids.workspace).unwrap();
+        let create = ids
+            .engine()
+            .prepare_bootstrap_transaction(
+                author(8_600),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: ids.page,
+                    home_document_id: ids.document,
+                    path: ManagedPath::parse("shared/SQLite.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        store.publish_prepared(&create).unwrap();
+        let reader = ObjectStore::open(&store_path, ids.workspace).unwrap();
+        let mut engine = ShardedHotEngine::with_archive_store(reader, ids.lineage, ids.catalog);
+        assert!(matches!(
+            engine
+                .stage_archive_batch(create.manifest().batch_id())
+                .unwrap()
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+
+        let change = engine
+            .prepare_bootstrap_transaction(
+                author(8_601),
+                &OperationTransaction::new(vec![SemanticOperation::SetPageKind {
+                    page_id: ids.page,
+                    kind: ManagedTextKind::Journal,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        store.publish_prepared(&change).unwrap();
+        assert!(matches!(
+            engine
+                .stage_archive_batch(change.manifest().batch_id())
+                .unwrap()
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+        let change_event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, change.manifest().batch_id())
+                .unwrap();
+        let change_effect = SemanticEffect::decode(change_event.semantic_effect()).unwrap();
+        assert_eq!(change_effect.pages().len(), 1);
+        assert_eq!(
+            change_effect.pages()[0].before.as_ref().unwrap().kind(),
+            ManagedTextKind::Page
+        );
+        assert_eq!(
+            change_effect.pages()[0].after.as_ref().unwrap().kind(),
+            ManagedTextKind::Journal
+        );
+        assert_eq!(
+            change_effect.pages()[0].before.as_ref().unwrap().path(),
+            change_effect.pages()[0].after.as_ref().unwrap().path()
+        );
+
+        let database_path = dir.path().join("frontier.sqlite");
+        let first = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            first.recovery,
+            ProjectionRecovery::RebuiltMissing { applied_batches: 2 }
+        );
+        assert_eq!(first.database.applied_batch_count().unwrap(), 2);
+        assert_eq!(
+            stored_semantic_effects(&first.database)[1].pages()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .kind(),
+            ManagedTextKind::Journal
+        );
+        let expected_digest = first.database.semantic_projection_digest().unwrap();
+        drop(first);
+
+        let reopened = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
+        assert_eq!(
+            stored_semantic_effects(&reopened.database)[1].pages()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .kind(),
+            ManagedTextKind::Journal
+        );
+        assert_eq!(
+            reopened.database.semantic_projection_digest().unwrap(),
+            expected_digest
+        );
+        drop(reopened);
+
+        remove_projection_files(&database_path);
+        let rebuilt = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            rebuilt.recovery,
+            ProjectionRecovery::RebuiltMissing { applied_batches: 2 }
+        );
+        assert_eq!(
+            stored_semantic_effects(&rebuilt.database)[1].pages()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .kind(),
+            ManagedTextKind::Journal
+        );
+        assert_eq!(
+            rebuilt.database.semantic_projection_digest().unwrap(),
+            expected_digest
+        );
+
+        let mut replay = ids.engine();
+        for manifest in store.committed_manifests().unwrap() {
+            assert!(matches!(
+                replay
+                    .stage_from_store(&store, manifest.batch_id())
+                    .unwrap()
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+        }
+        assert_eq!(
+            replay.canonical_snapshot().unwrap().pages[0].1.kind(),
+            ManagedTextKind::Journal
         );
     }
 

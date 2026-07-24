@@ -2,9 +2,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::{BlockId, DocumentId, LogseqUuid, ManagedPath, PageId};
+use super::{BlockId, DocumentId, LogseqUuid, ManagedPath, ManagedTextKind, PageId};
 
-pub const SEMANTIC_EFFECT_SCHEMA_VERSION: u32 = 3;
+pub const SEMANTIC_EFFECT_SCHEMA_VERSION: u32 = 4;
 pub const MAX_SEMANTIC_EFFECT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SEMANTIC_DELTA_ENTRIES: usize = 100_000;
 pub const MAX_BLOCK_CONTENT_BYTES: usize = 4 * 1024 * 1024;
@@ -17,9 +17,11 @@ pub enum PageState {
     Live {
         path: ManagedPath,
         home_document_id: DocumentId,
+        kind: ManagedTextKind,
     },
     Tombstone {
         home_document_id: DocumentId,
+        kind: ManagedTextKind,
     },
 }
 
@@ -29,7 +31,15 @@ impl PageState {
             Self::Live {
                 home_document_id, ..
             }
-            | Self::Tombstone { home_document_id } => *home_document_id,
+            | Self::Tombstone {
+                home_document_id, ..
+            } => *home_document_id,
+        }
+    }
+
+    pub const fn kind(&self) -> ManagedTextKind {
+        match self {
+            Self::Live { kind, .. } | Self::Tombstone { kind, .. } => *kind,
         }
     }
 
@@ -144,6 +154,33 @@ pub struct PageDelta {
     pub after: Option<PageState>,
 }
 
+impl PageDelta {
+    fn validate_lifecycle(&self) -> Result<(), SemanticError> {
+        if self.before == self.after {
+            return Err(SemanticError::UnchangedDelta);
+        }
+        if let (Some(before), Some(after)) = (&self.before, &self.after) {
+            if before.home_document_id() != after.home_document_id() {
+                return Err(SemanticError::HomeShardChanged);
+            }
+        }
+
+        match (&self.before, &self.after) {
+            (None, Some(PageState::Live { .. }))
+            | (Some(PageState::Live { .. }), Some(PageState::Live { .. })) => Ok(()),
+            (
+                Some(PageState::Live {
+                    kind: before_kind, ..
+                }),
+                Some(PageState::Tombstone {
+                    kind: after_kind, ..
+                }),
+            ) if before_kind == after_kind => Ok(()),
+            _ => Err(SemanticError::InvalidPageLifecycle),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PagePreambleDelta {
@@ -180,7 +217,7 @@ pub struct SemanticEffect {
     memberships: Vec<MembershipDelta>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SemanticEffectWire {
     semantic_effect_schema_version: u32,
@@ -313,14 +350,7 @@ impl SemanticEffect {
             return Err(SemanticError::NonCanonical);
         }
         for delta in &self.pages {
-            if delta.before == delta.after {
-                return Err(SemanticError::UnchangedDelta);
-            }
-            if let (Some(before), Some(after)) = (&delta.before, &delta.after) {
-                if before.home_document_id() != after.home_document_id() {
-                    return Err(SemanticError::HomeShardChanged);
-                }
-            }
+            delta.validate_lifecycle()?;
         }
         for delta in &self.page_preambles {
             if delta.before == delta.after {
@@ -416,6 +446,7 @@ pub enum SemanticError {
     InvalidLogseqIdentityState,
     NonCanonical,
     UnchangedDelta,
+    InvalidPageLifecycle,
     BlockStateRemoved,
     PagePreambleStateRemoved,
     HomeShardChanged,
@@ -444,6 +475,9 @@ impl fmt::Display for SemanticError {
             }
             Self::NonCanonical => f.write_str("semantic effect is not canonically ordered/encoded"),
             Self::UnchangedDelta => f.write_str("semantic effect contains an unchanged delta"),
+            Self::InvalidPageLifecycle => f.write_str(
+                "invalid page lifecycle transition: creation must be None -> Live; edits must be Live -> Live; deletion must be Live -> same-kind Tombstone",
+            ),
             Self::BlockStateRemoved => {
                 f.write_str("authoritative block state cannot be physically removed")
             }
@@ -459,4 +493,243 @@ impl std::error::Error for SemanticError {}
 
 fn strictly_sorted_by<T, K: Ord>(values: &[T], key: impl Fn(&T) -> K) -> bool {
     values.windows(2).all(|pair| key(&pair[0]) < key(&pair[1]))
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn page_id(value: u128) -> PageId {
+        PageId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn document_id(value: u128) -> DocumentId {
+        DocumentId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn live(kind: ManagedTextKind) -> PageState {
+        live_at("shared/name.md", document_id(2), kind)
+    }
+
+    fn live_at(path: &str, home_document_id: DocumentId, kind: ManagedTextKind) -> PageState {
+        PageState::Live {
+            path: ManagedPath::parse(path).unwrap(),
+            home_document_id,
+            kind,
+        }
+    }
+
+    fn tombstone(home_document_id: DocumentId, kind: ManagedTextKind) -> PageState {
+        PageState::Tombstone {
+            home_document_id,
+            kind,
+        }
+    }
+
+    fn page_effect(
+        before: Option<PageState>,
+        after: Option<PageState>,
+    ) -> Result<SemanticEffect, SemanticError> {
+        SemanticEffect::new(
+            vec![PageDelta {
+                page_id: page_id(1),
+                before,
+                after,
+            }],
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn effect(kind: ManagedTextKind) -> SemanticEffect {
+        page_effect(None, Some(live(kind))).unwrap()
+    }
+
+    #[test]
+    fn page_delta_lifecycle_allows_creation_live_edits_and_same_kind_deletion() {
+        let home = document_id(2);
+        let allowed = [
+            (
+                "creation",
+                None,
+                Some(live_at("shared/name.md", home, ManagedTextKind::Page)),
+            ),
+            (
+                "kind-only edit",
+                Some(live_at("shared/name.md", home, ManagedTextKind::Page)),
+                Some(live_at("shared/name.md", home, ManagedTextKind::Journal)),
+            ),
+            (
+                "path-only edit",
+                Some(live_at("shared/name.md", home, ManagedTextKind::Page)),
+                Some(live_at("renamed/name.md", home, ManagedTextKind::Page)),
+            ),
+            (
+                "path-and-kind edit",
+                Some(live_at("shared/name.md", home, ManagedTextKind::Page)),
+                Some(live_at("journals/name.md", home, ManagedTextKind::Journal)),
+            ),
+            (
+                "same-kind deletion",
+                Some(live_at("shared/name.md", home, ManagedTextKind::Journal)),
+                Some(tombstone(home, ManagedTextKind::Journal)),
+            ),
+        ];
+
+        for (name, before, after) in allowed {
+            assert!(page_effect(before, after).is_ok(), "{name} must be valid");
+        }
+    }
+
+    #[test]
+    fn page_delta_lifecycle_rejects_invalid_transitions() {
+        let home = document_id(2);
+        let rejected = [
+            (
+                "tombstone creation",
+                None,
+                Some(tombstone(home, ManagedTextKind::Page)),
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "physical removal of a live page",
+                Some(live(ManagedTextKind::Page)),
+                None,
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "tombstone physical removal",
+                Some(tombstone(home, ManagedTextKind::Page)),
+                None,
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "tombstone mutation",
+                Some(tombstone(home, ManagedTextKind::Page)),
+                Some(tombstone(home, ManagedTextKind::Journal)),
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "tombstone resurrection",
+                Some(tombstone(home, ManagedTextKind::Page)),
+                Some(live(ManagedTextKind::Page)),
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "kind-changing deletion",
+                Some(live(ManagedTextKind::Page)),
+                Some(tombstone(home, ManagedTextKind::Journal)),
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
+                "home change",
+                Some(live(ManagedTextKind::Page)),
+                Some(live_at(
+                    "shared/name.md",
+                    document_id(3),
+                    ManagedTextKind::Page,
+                )),
+                SemanticError::HomeShardChanged,
+            ),
+            (
+                "unchanged absent state",
+                None,
+                None,
+                SemanticError::UnchangedDelta,
+            ),
+            (
+                "unchanged live state",
+                Some(live(ManagedTextKind::Page)),
+                Some(live(ManagedTextKind::Page)),
+                SemanticError::UnchangedDelta,
+            ),
+        ];
+
+        for (name, before, after, expected) in rejected {
+            assert_eq!(page_effect(before, after).unwrap_err(), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn page_kind_is_canonical_semantic_state_and_effect_identity() {
+        let page = effect(ManagedTextKind::Page);
+        let journal = effect(ManagedTextKind::Journal);
+        let page_bytes = page.encode().unwrap();
+        let journal_bytes = journal.encode().unwrap();
+
+        assert_ne!(page, journal);
+        assert_ne!(page_bytes, journal_bytes);
+        assert_ne!(
+            super::super::SemanticEffectDigest::of(&page_bytes),
+            super::super::SemanticEffectDigest::of(&journal_bytes)
+        );
+        assert_eq!(
+            SemanticEffect::decode(&page_bytes).unwrap().pages()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .kind(),
+            ManagedTextKind::Page
+        );
+        assert_eq!(
+            SemanticEffect::decode(&journal_bytes).unwrap().pages()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .kind(),
+            ManagedTextKind::Journal
+        );
+    }
+
+    #[test]
+    fn tombstone_kind_round_trips_without_path_or_layout_inference() {
+        let effect = SemanticEffect::new(
+            vec![PageDelta {
+                page_id: page_id(1),
+                before: Some(live(ManagedTextKind::Journal)),
+                after: Some(PageState::Tombstone {
+                    home_document_id: document_id(2),
+                    kind: ManagedTextKind::Journal,
+                }),
+            }],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let decoded = SemanticEffect::decode(&effect.encode().unwrap()).unwrap();
+        let delta = &decoded.pages()[0];
+        assert_eq!(
+            delta.before.as_ref().unwrap().kind(),
+            ManagedTextKind::Journal
+        );
+        assert_eq!(
+            delta.after.as_ref().unwrap().kind(),
+            ManagedTextKind::Journal
+        );
+        assert_eq!(delta.after.as_ref().unwrap().path(), None);
+    }
+
+    #[test]
+    fn prior_semantic_effect_schema_fails_closed() {
+        let current = effect(ManagedTextKind::Page);
+        let wire = SemanticEffectWire {
+            semantic_effect_schema_version: SEMANTIC_EFFECT_SCHEMA_VERSION - 1,
+            pages: current.pages.clone(),
+            page_preambles: current.page_preambles.clone(),
+            blocks: current.blocks.clone(),
+            memberships: current.memberships.clone(),
+        };
+        let mut bytes = SEMANTIC_MAGIC.to_vec();
+        bytes.extend(postcard::to_allocvec(&wire).unwrap());
+
+        assert_eq!(
+            SemanticEffect::decode(&bytes),
+            Err(SemanticError::UnknownVersion(
+                SEMANTIC_EFFECT_SCHEMA_VERSION - 1
+            ))
+        );
+    }
 }

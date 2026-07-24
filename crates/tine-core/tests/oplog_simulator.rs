@@ -5,8 +5,8 @@ use tine_core::oplog::simulator::{
 };
 use tine_core::oplog::{
     AuthorBatch, BatchId, BlockId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
-    ManagedPath, OperationTransaction, PageId, Scenario, ScenarioDevice, SemanticOperation,
-    SessionId, ShardedHotEngine, WorkspaceId,
+    ManagedPath, ManagedTextKind, OperationTransaction, PageId, Scenario, ScenarioDevice,
+    SemanticOperation, SessionId, ShardedHotEngine, WorkspaceId,
 };
 use uuid::Uuid;
 
@@ -141,6 +141,7 @@ fn create_page_batch(
             page_id: page,
             home_document_id: home,
             path: path(name),
+            kind: ManagedTextKind::Page,
         }]),
     )
 }
@@ -583,6 +584,7 @@ fn delayed_parent_and_lineage_refusal_replay_from_the_receiver_store() {
             page_id: ids.page_b,
             home_document_id: ids.home_b,
             path: path("pages/Foreign.md"),
+            kind: ManagedTextKind::Page,
         }]),
     );
     let mut actions = Vec::new();
@@ -660,6 +662,7 @@ fn delayed_parent_and_lineage_refusal_replay_from_the_receiver_store() {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/A.md"),
+                    kind: ManagedTextKind::Page,
                 }]),
             },
             tine_core::oplog::ScenarioAction::LocalTransaction {
@@ -712,6 +715,7 @@ fn same_page_concurrent_text_converges_after_raw_whole_batch_exchange() {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
                         path: path("pages/A.md"),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreateBlock {
                         block: BlockLocation {
@@ -801,16 +805,19 @@ fn same_page_concurrent_text_and_moved_away_move_delete_converge_in_both_orders(
             page_id: ids.page_a,
             home_document_id: ids.home_a,
             path: path("pages/A.md"),
+            kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreatePage {
             page_id: ids.page_b,
             home_document_id: ids.home_b,
             path: path("pages/B.md"),
+            kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreatePage {
             page_id: ids.page_c,
             home_document_id: ids.home_c,
             path: path("pages/C.md"),
+            kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreateBlock {
             block: BlockLocation {
@@ -971,6 +978,7 @@ fn corpus_keeps_same_page_cross_page_and_moved_away_family_seeds_visible() {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/A.md"),
+                    kind: ManagedTextKind::Page,
                 }]),
             },
             tine_core::oplog::ScenarioAction::Deliver {
