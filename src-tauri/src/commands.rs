@@ -576,8 +576,8 @@ pub(crate) fn enable_managed_sync(
 }
 
 #[tauri::command]
-pub(crate) fn guide_pages() -> Vec<tine_core::onboarding::GuidePage> {
-    tine_core::onboarding::bundled_guide_pages()
+pub(crate) fn guide_pages() -> Result<Vec<tine_core::onboarding::GuidePage>, String> {
+    tine_core::onboarding::bundled_guide_pages().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -657,6 +657,7 @@ pub(crate) async fn block_ref_counts(
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
     tauri::async_runtime::spawn_blocking(move || graph.block_ref_counts())
         .await
+        .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
 }
 

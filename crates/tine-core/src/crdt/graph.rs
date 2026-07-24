@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
+use cap_std::fs::Dir;
 use loro::{
     Container, ExportMode, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId,
     UpdateOptions, ValueOrContainer, VersionVector,
@@ -44,11 +45,22 @@ impl CrdtGraph {
         Store::state(sync_root.as_ref())
     }
 
+    pub(crate) fn store_state_at(graph: &Dir) -> Result<ManagedSyncStoreState, CrdtError> {
+        Store::state_at(graph)
+    }
+
     pub fn validate_resume_device(
         sync_root: impl AsRef<Path>,
         device_id: Uuid,
     ) -> Result<(), CrdtError> {
         Store::validate_resume_device(sync_root.as_ref(), device_id)
+    }
+
+    pub(crate) fn validate_resume_device_at(
+        graph: &Dir,
+        device_id: Uuid,
+    ) -> Result<(), CrdtError> {
+        Store::validate_resume_device_at(graph, device_id)
     }
 
     /// Creates a new workspace and its single genesis chunk.
@@ -68,6 +80,39 @@ impl CrdtGraph {
         let payload = doc.export(ExportMode::all_updates()).map_err(loro_error)?;
 
         let store = Store::initialize(sync_root.as_ref(), device_id, session_id)?;
+        let affected_pages = pages
+            .iter()
+            .map(|page| AffectedPage {
+                page_id: page.id,
+                paths: vec![page.path.clone()],
+            })
+            .collect();
+        let chunk_id = store.publish(ChunkKind::Genesis, affected_pages, payload)?;
+
+        Ok(Self {
+            doc,
+            store,
+            imported_chunks: HashSet::from([chunk_id]),
+            pending_projection: HashMap::new(),
+            durability_blocked: None,
+        })
+    }
+
+    pub(crate) fn initialize_at_owned(
+        sync_root: &Path,
+        graph: &Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+        pages: Vec<PageSnapshot>,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<Self, CrdtError> {
+        validate_pages(&pages)?;
+
+        let doc = new_doc(session_id)?;
+        apply_pages(&doc, &pages)?;
+        let payload = doc.export(ExportMode::all_updates()).map_err(loro_error)?;
+
+        let store = Store::initialize_at(sync_root, graph, device_id, session_id)?;
         let affected_pages = pages
             .iter()
             .map(|page| AffectedPage {
@@ -109,6 +154,25 @@ impl CrdtGraph {
         })
     }
 
+    pub(crate) fn open_at(
+        sync_root: &Path,
+        graph: &Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<Self, CrdtError> {
+        let (store, chunks) = Store::open_at(sync_root, graph, device_id, session_id)?;
+        let doc = replay_chunks(&chunks, session_id)?;
+        materialize_pages_from(&doc)?;
+        store.recover_projection_intents(&chunks)?;
+        Ok(Self {
+            doc,
+            store,
+            imported_chunks: chunk_ids(&chunks),
+            pending_projection: HashMap::new(),
+            durability_blocked: None,
+        })
+    }
+
     /// Reconciles and durably records one complete page snapshot.
     ///
     /// Existing block IDs remain owned by their current page. Cross-page moves
@@ -116,6 +180,14 @@ impl CrdtGraph {
     /// a destination-only duplicate is ambiguous with an external file copy.
     pub fn commit_page(&mut self, snapshot: PageSnapshot) -> Result<CommitReport, CrdtError> {
         self.commit_pages(vec![snapshot])
+    }
+
+    pub(crate) fn commit_page_owned(
+        &mut self,
+        snapshot: PageSnapshot,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.commit_page(snapshot)
     }
 
     /// Reconciles several complete page snapshots as one Loro transaction and
@@ -169,6 +241,14 @@ impl CrdtGraph {
             });
         }
         self.persist_update(before, affected_pages)
+    }
+
+    pub(crate) fn commit_pages_owned(
+        &mut self,
+        snapshots: Vec<PageSnapshot>,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.commit_pages(snapshots)
     }
 
     /// Replaces the complete graph state as one operation. This is used for a
@@ -251,6 +331,15 @@ impl CrdtGraph {
         self.persist_update_with_intents(before, affected_pages, projection_preconditions)
     }
 
+    pub(crate) fn replace_pages_with_projection_preconditions_owned(
+        &mut self,
+        snapshots: Vec<PageSnapshot>,
+        projection_preconditions: Vec<ProjectionPrecondition>,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.replace_pages_with_projection_preconditions(snapshots, projection_preconditions)
+    }
+
     /// Deletes a page and its currently attached block subtree by ID or path.
     pub fn delete_page(
         &mut self,
@@ -277,6 +366,14 @@ impl CrdtGraph {
                 paths: vec![path],
             }],
         )
+    }
+
+    pub(crate) fn delete_page_owned(
+        &mut self,
+        page: impl Into<PageSelector>,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.delete_page(page)
     }
 
     /// Collapse a destination-first external copy into a move after the source
@@ -333,6 +430,16 @@ impl CrdtGraph {
             },
         ];
         self.persist_update(before, affected_pages)
+    }
+
+    pub(crate) fn promote_copy_owned(
+        &mut self,
+        source_page_id: PageId,
+        copy_page_id: PageId,
+        promoted: PageSnapshot,
+        _authority: &mut crate::model::PreparedCrdtMutationCapability<'_>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.promote_copy(source_page_id, copy_page_id, promoted)
     }
 
     /// Imports all newly delivered chunks and reports pages that need projection.
@@ -459,6 +566,11 @@ impl CrdtGraph {
             store_root: self.store.root.clone(),
             durability_blocked: self.durability_blocked.is_some(),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_frontier(&self) -> VersionVector {
+        self.doc.oplog_vv()
     }
 
     /// Publish immutable provenance for an exact Markdown/Org projection at the

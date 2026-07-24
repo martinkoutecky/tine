@@ -132,6 +132,10 @@ pub(crate) struct Store {
 impl Store {
     pub fn state(sync_root: &Path) -> Result<ManagedSyncStoreState, CrdtError> {
         let graph = Dir::open_ambient_dir(sync_root, ambient_authority())?;
+        Self::state_at(&graph)
+    }
+
+    pub(crate) fn state_at(graph: &Dir) -> Result<ManagedSyncStoreState, CrdtError> {
         match graph.symlink_metadata(".tine-sync") {
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 return Ok(ManagedSyncStoreState::Absent)
@@ -176,6 +180,21 @@ impl Store {
             return Ok(());
         }
         let (_, root) = open_store_capability(sync_root, false)?;
+        Self::validate_resume_device_at_root(&root, device_id)
+    }
+
+    pub(crate) fn validate_resume_device_at(
+        graph: &Dir,
+        device_id: Uuid,
+    ) -> Result<(), CrdtError> {
+        if Self::state_at(graph)? != ManagedSyncStoreState::Claimed {
+            return Ok(());
+        }
+        let root = open_store_capability_at(graph, false)?;
+        Self::validate_resume_device_at_root(&root, device_id)
+    }
+
+    fn validate_resume_device_at_root(root: &Dir, device_id: Uuid) -> Result<(), CrdtError> {
         let metadata = root.symlink_metadata("genesis.claim")?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(unsafe_store_entry(
@@ -202,6 +221,25 @@ impl Store {
         session_id: Uuid,
     ) -> Result<Self, CrdtError> {
         let (root_path, root) = open_store_capability(sync_root, true)?;
+        Self::initialize_at_root(root_path, root, device_id, session_id)
+    }
+
+    pub(crate) fn initialize_at(
+        sync_root: &Path,
+        graph: &Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<Self, CrdtError> {
+        let root = open_store_capability_at(graph, true)?;
+        Self::initialize_at_root(store_root(sync_root), root, device_id, session_id)
+    }
+
+    fn initialize_at_root(
+        root_path: PathBuf,
+        root: Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<Self, CrdtError> {
         ensure_cap_dir(&root, Path::new("genesis"), true)?;
 
         let existing = load_chunks_from(&root)?;
@@ -240,6 +278,25 @@ impl Store {
         session_id: Uuid,
     ) -> Result<(Self, Vec<Chunk>), CrdtError> {
         let (root_path, root) = open_store_capability(sync_root, false)?;
+        Self::open_at_root(root_path, root, device_id, session_id)
+    }
+
+    pub(crate) fn open_at(
+        sync_root: &Path,
+        graph: &Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<(Self, Vec<Chunk>), CrdtError> {
+        let root = open_store_capability_at(graph, false)?;
+        Self::open_at_root(store_root(sync_root), root, device_id, session_id)
+    }
+
+    fn open_at_root(
+        root_path: PathBuf,
+        root: Dir,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<(Self, Vec<Chunk>), CrdtError> {
 
         let chunks = load_chunks_from(&root)?;
         let workspace_id = validate_chunk_set(&chunks)?;
@@ -615,9 +672,13 @@ fn unsafe_store_entry(message: impl Into<String>) -> CrdtError {
 fn open_store_capability(sync_root: &Path, create: bool) -> Result<(PathBuf, Dir), CrdtError> {
     let graph_path = fs::canonicalize(sync_root)?;
     let graph = Dir::open_ambient_dir(&graph_path, ambient_authority())?;
-    ensure_cap_dir(&graph, Path::new(".tine-sync/v1"), create)?;
-    let root = graph.open_dir(".tine-sync/v1")?;
+    let root = open_store_capability_at(&graph, create)?;
     Ok((store_root(&graph_path), root))
+}
+
+fn open_store_capability_at(graph: &Dir, create: bool) -> Result<Dir, CrdtError> {
+    ensure_cap_dir(graph, Path::new(".tine-sync/v1"), create)?;
+    Ok(graph.open_dir(".tine-sync/v1")?)
 }
 
 fn validate_relative(path: &Path) -> Result<(), CrdtError> {

@@ -17,15 +17,18 @@ use crate::doc::{self, DocBlock, Document};
 use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
     managed_component_is_portable, BlobDescription, CanonicalGraphResourceId, ContentDigest,
-    ManagedPath, ManagedTextKind, ProjectionAttemptReservation, ReceiptError,
+    ManagedPath, ManagedTextKind, ProjectionAttemptReservation, ProjectionEndpointBinding,
+    ReceiptError, WorkspaceId,
 };
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::RwLock;
 use unicode_normalization::UnicodeNormalization;
@@ -603,6 +606,349 @@ pub struct ManagedSyncPull {
     pub conflicts_changed: bool,
 }
 
+/// Per-retained-resource admission state for every Tine-managed page or journal
+/// mutation.
+///
+/// Writers take a permit before their existing page/sync locks. A handoff flips
+/// the state while holding this mutex only when no permits remain, so no writer
+/// can enter between the quiescence proof and the exclusive reservation.
+struct ManagedTextWriteGate {
+    state: std::sync::Mutex<ManagedTextWriteState>,
+    #[cfg(test)]
+    admission_race_barrier: std::sync::Mutex<Option<Arc<std::sync::Barrier>>>,
+}
+
+#[derive(Default)]
+struct ManagedTextWriteState {
+    active_writers: usize,
+    handoff_held: bool,
+}
+
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+impl ManagedTextWriteGate {
+    fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(ManagedTextWriteState::default()),
+            #[cfg(test)]
+            admission_race_barrier: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn admit_writer(self: &Arc<Self>) -> io::Result<ManagedTextWritePermit> {
+        #[cfg(test)]
+        self.synchronize_admission_race();
+        let mut state = self.state.lock().unwrap();
+        if state.handoff_held {
+            return Err(handoff_write_blocked_error());
+        }
+        state.active_writers += 1;
+        Ok(ManagedTextWritePermit {
+            gate: Some(Arc::clone(self)),
+            root: None,
+            resource_id: None,
+        })
+    }
+
+    fn reserve_handoff(&self) -> io::Result<()> {
+        #[cfg(test)]
+        self.synchronize_admission_race();
+        let mut state = self.state.lock().unwrap();
+        if state.handoff_held || state.active_writers != 0 {
+            return Err(handoff_write_blocked_error());
+        }
+        state.handoff_held = true;
+        Ok(())
+    }
+
+    fn release_writer(&self) {
+        let mut state = self.state.lock().unwrap();
+        debug_assert!(state.active_writers != 0);
+        state.active_writers = state.active_writers.saturating_sub(1);
+    }
+
+    fn release_handoff(&self) {
+        let mut state = self.state.lock().unwrap();
+        debug_assert!(state.handoff_held);
+        state.handoff_held = false;
+    }
+
+    #[cfg(test)]
+    fn set_admission_race_barrier(&self, barrier: Option<Arc<std::sync::Barrier>>) {
+        *self.admission_race_barrier.lock().unwrap() = barrier;
+    }
+
+    #[cfg(test)]
+    fn synchronize_admission_race(&self) {
+        let barrier = self.admission_race_barrier.lock().unwrap().clone();
+        if let Some(barrier) = barrier {
+            barrier.wait();
+        }
+    }
+}
+
+/// Process-local weak registry of independent writer gates. A live graph or
+/// handoff keeps its gate alive; dead resources are pruned on the next open.
+static MANAGED_TEXT_WRITE_GATE_REGISTRY: std::sync::OnceLock<
+    std::sync::Mutex<
+        std::collections::HashMap<CanonicalGraphResourceId, std::sync::Weak<ManagedTextWriteGate>>,
+    >,
+> = std::sync::OnceLock::new();
+
+struct ManagedTextWriteBinding {
+    resource_id: CanonicalGraphResourceId,
+    gate: Arc<ManagedTextWriteGate>,
+    root: Dir,
+}
+
+fn managed_text_write_binding_for_resource(
+    root: &Path,
+    projection_root: Option<&Dir>,
+) -> io::Result<ManagedTextWriteBinding> {
+    managed_write_identity_acquisition_hook()?;
+    let retained_root = match projection_root {
+        Some(projection_root) => projection_root.try_clone()?,
+        None => {
+            let resolved = fs::canonicalize(root)?;
+            Dir::open_ambient_dir(resolved, ambient_authority())?
+        }
+    };
+    let resource_id = canonical_graph_resource_id(&retained_root)?;
+
+    let registry = MANAGED_TEXT_WRITE_GATE_REGISTRY
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut registry = registry.lock().unwrap();
+    registry.retain(|_, gate| gate.upgrade().is_some());
+    if let Some(gate) = registry.get(&resource_id).and_then(|gate| gate.upgrade()) {
+        return Ok(ManagedTextWriteBinding {
+            resource_id,
+            gate,
+            root: retained_root,
+        });
+    }
+
+    let gate = Arc::new(ManagedTextWriteGate::new());
+    registry.insert(resource_id, Arc::downgrade(&gate));
+    Ok(ManagedTextWriteBinding {
+        resource_id,
+        gate,
+        root: retained_root,
+    })
+}
+
+fn handoff_write_blocked_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "managed text writes are reserved for external reconciliation",
+    )
+}
+
+fn managed_write_identity_mismatch_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "ambient graph root no longer names the retained managed text resource",
+    )
+}
+
+/// An active managed-text writer admission. Its only job is to keep the graph
+/// handoff mint from observing a false quiescent point.
+struct ManagedTextWritePermit {
+    gate: Option<Arc<ManagedTextWriteGate>>,
+    root: Option<Dir>,
+    resource_id: Option<CanonicalGraphResourceId>,
+}
+
+struct ManagedTextTarget {
+    chain: Vec<Dir>,
+    filename: String,
+}
+
+impl ManagedTextTarget {
+    fn parent(&self) -> &Dir {
+        self.chain
+            .last()
+            .expect("managed text target retains its parent chain")
+    }
+}
+
+/// An unforgeable token allocated for one `Graph` instance. The writer gate is
+/// shared by retained resource, but a handoff remains consumable only by the
+/// exact instance that minted it.
+struct HandoffGraphInstanceToken;
+
+impl Drop for ManagedTextWritePermit {
+    fn drop(&mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.release_writer();
+        }
+    }
+}
+
+/// Read-only evidence carried by a sealed external-reconciliation handoff.
+#[allow(dead_code)] // P4 evidence is consumed by the later P7 publisher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HandoffBindingEvidence {
+    workspace_id: WorkspaceId,
+    endpoint: ProjectionEndpointBinding,
+    graph_resource_id: CanonicalGraphResourceId,
+}
+
+#[allow(dead_code)] // P4 evidence is consumed by the later P7 publisher.
+impl HandoffBindingEvidence {
+    pub(crate) const fn workspace_id(self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn endpoint(self) -> ProjectionEndpointBinding {
+        self.endpoint
+    }
+
+    pub(crate) const fn graph_resource_id(self) -> CanonicalGraphResourceId {
+        self.graph_resource_id
+    }
+}
+
+/// Move-only authority proving one exact graph has quiesced all managed-text
+/// writers for an external-reconciliation handoff. It is deliberately opaque
+/// outside this crate; only binding evidence can be observed.
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+pub(crate) struct HandoffSafe {
+    gate: Option<Arc<ManagedTextWriteGate>>,
+    instance_token: Arc<HandoffGraphInstanceToken>,
+    binding: HandoffBindingEvidence,
+}
+
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+impl HandoffSafe {
+    pub(crate) const fn binding(&self) -> HandoffBindingEvidence {
+        self.binding
+    }
+
+    /// Release the reservation without publishing. Consuming `self` makes
+    /// cancellation single-use and leaves no reusable authorization behind.
+    pub(crate) fn cancel(mut self) {
+        self.release();
+    }
+
+    /// Transfer the held reservation to a later consuming publisher. The gate is
+    /// moved, never released and reacquired, so there is no unlocked interval.
+    pub(crate) fn into_publisher_guard(mut self) -> HandoffSafeGuard {
+        let guard = HandoffSafeGuard {
+            gate: self.gate.take(),
+            instance_token: Arc::clone(&self.instance_token),
+            binding: self.binding,
+        };
+        handoff_transfer_hook();
+        guard
+    }
+
+    pub(crate) fn verify_binding(
+        &self,
+        graph: &Graph,
+        workspace_id: WorkspaceId,
+        endpoint: ProjectionEndpointBinding,
+    ) -> io::Result<()> {
+        verify_handoff_binding(
+            self.gate.as_ref(),
+            &self.instance_token,
+            self.binding,
+            graph,
+            workspace_id,
+            endpoint,
+        )
+    }
+
+    fn release(&mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.release_handoff();
+        }
+    }
+}
+
+impl Drop for HandoffSafe {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Crate-private post-consumption handoff ownership for the future publisher.
+/// It keeps the same reservation held until publication or recovery exits.
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+pub(crate) struct HandoffSafeGuard {
+    gate: Option<Arc<ManagedTextWriteGate>>,
+    instance_token: Arc<HandoffGraphInstanceToken>,
+    binding: HandoffBindingEvidence,
+}
+
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+impl HandoffSafeGuard {
+    pub(crate) const fn binding(&self) -> HandoffBindingEvidence {
+        self.binding
+    }
+
+    pub(crate) fn verify_binding(
+        &self,
+        graph: &Graph,
+        workspace_id: WorkspaceId,
+        endpoint: ProjectionEndpointBinding,
+    ) -> io::Result<()> {
+        verify_handoff_binding(
+            self.gate.as_ref(),
+            &self.instance_token,
+            self.binding,
+            graph,
+            workspace_id,
+            endpoint,
+        )
+    }
+}
+
+impl Drop for HandoffSafeGuard {
+    fn drop(&mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.release_handoff();
+        }
+    }
+}
+
+#[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
+fn verify_handoff_binding(
+    gate: Option<&Arc<ManagedTextWriteGate>>,
+    instance_token: &Arc<HandoffGraphInstanceToken>,
+    binding: HandoffBindingEvidence,
+    graph: &Graph,
+    workspace_id: WorkspaceId,
+    endpoint: ProjectionEndpointBinding,
+) -> io::Result<()> {
+    if gate.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "external reconciliation handoff was already consumed or cancelled",
+        ));
+    }
+    if !Arc::ptr_eq(instance_token, &graph.handoff_instance_token) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "external reconciliation handoff belongs to a different Graph instance",
+        ));
+    }
+    if binding.workspace_id != workspace_id || binding.endpoint != endpoint {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "external reconciliation handoff endpoint or workspace binding mismatch",
+        ));
+    }
+    let current_resource_id = graph.canonical_resource_id()?;
+    if current_resource_id != binding.graph_resource_id
+        || endpoint.graph_resource_id() != binding.graph_resource_id
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "external reconciliation handoff graph resource binding mismatch",
+        ));
+    }
+    Ok(())
+}
+
 pub struct Graph {
     pub root: PathBuf,
     /// Retained no-follow identity of the graph root. Sparse projection writes
@@ -725,6 +1071,13 @@ pub struct Graph {
     /// while acquiring a page lock (save uses page-lock → sync-lock, while remote
     /// replay releases sync-lock before projecting pages).
     managed_sync: std::sync::Mutex<Option<CrdtGraph>>,
+    /// Resource-scoped shared admission boundary for all managed page/journal
+    /// writers. Identity acquisition failure is retained as an error so an open
+    /// can never fall back to an unshared gate.
+    managed_write_binding: io::Result<ManagedTextWriteBinding>,
+    /// Per-instance capability identity. This deliberately does not share with
+    /// a reopened graph even when both instances share a managed writer gate.
+    handoff_instance_token: Arc<HandoffGraphInstanceToken>,
     /// Per-UI-lane cancellation epochs for whole-graph text searches. Starting a
     /// newer search makes its superseded prefix stop promptly.
     search_lanes: std::sync::Mutex<
@@ -866,27 +1219,53 @@ struct ReferenceCandidateIndex {
 }
 
 impl ReferenceCandidateIndex {
-    fn page_projection(entry: &PageEntry, doc: &Document) -> ReferencePageProjection {
-        fn add_blocks(signature: &mut ReferenceTokenSignature, blocks: &[DocBlock]) {
-            for block in blocks {
-                signature.insert_text(&block.raw);
-                add_blocks(signature, &block.children);
-            }
-        }
+    fn page_projection(
+        entry: &PageEntry,
+        doc: &Document,
+    ) -> io::Result<ReferencePageProjection> {
         let mut signature = ReferenceTokenSignature::default();
         if let Some(pre) = doc.pre_block.as_deref() {
             signature.insert_text(pre);
         }
-        add_blocks(&mut signature, &doc.roots);
-        ReferencePageProjection {
+        let mut frames: [Option<std::slice::Iter<'_, DocBlock>>; MAX_MANAGED_BLOCK_DEPTH] =
+            std::array::from_fn(|_| None);
+        let mut len = usize::from(!doc.roots.is_empty());
+        if len != 0 {
+            frames[0] = Some(doc.roots.iter());
+        }
+        while len != 0 {
+            let mut frame = frames[len - 1]
+                .take()
+                .expect("active reference signature frame");
+            let Some(block) = frame.next() else {
+                len -= 1;
+                continue;
+            };
+            frames[len - 1] = Some(frame);
+            signature.insert_text(&block.raw);
+            if !block.children.is_empty() {
+                if len == MAX_MANAGED_BLOCK_DEPTH {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "cached document nesting exceeds 128 levels",
+                    ));
+                }
+                frames[len] = Some(block.children.iter());
+                len += 1;
+            }
+        }
+        Ok(ReferencePageProjection {
             explicit: crate::query::document_explicit_reference_names(entry, doc),
             signature,
             name_key: crate::refs::page_key(&entry.name),
             name: entry.name.clone(),
-        }
+        })
     }
 
-    fn build(generation: u64, pages: &[(PageEntry, Arc<Document>)]) -> Self {
+    fn build(
+        generation: u64,
+        pages: &[(PageEntry, Arc<Document>)],
+    ) -> io::Result<Self> {
         let mut index = Self {
             generation,
             complete: true,
@@ -895,9 +1274,9 @@ impl ReferenceCandidateIndex {
             real_pages: std::collections::HashMap::new(),
         };
         for (entry, doc) in pages {
-            index.insert(entry, doc);
+            index.insert(entry, doc)?;
         }
-        index
+        Ok(index)
     }
 
     fn remove(&mut self, path: &Path) {
@@ -925,9 +1304,11 @@ impl ReferenceCandidateIndex {
         }
     }
 
-    fn insert(&mut self, entry: &PageEntry, doc: &Document) {
+    fn insert(&mut self, entry: &PageEntry, doc: &Document) -> io::Result<()> {
+        // Project before mutating the existing posting lists. An over-depth
+        // replacement must leave no partially-updated index behind.
+        let projection = Self::page_projection(entry, doc)?;
         self.remove(&entry.path);
-        let projection = Self::page_projection(entry, doc);
         for target in &projection.explicit {
             self.explicit
                 .entry(target.clone())
@@ -939,6 +1320,7 @@ impl ReferenceCandidateIndex {
             .or_default()
             .insert(entry.path.clone(), projection.name.clone());
         self.pages.insert(entry.path.clone(), projection);
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1029,21 +1411,45 @@ fn page_cache_key(kind: PageKind, name: &str) -> (PageKind, String) {
     (kind, crate::refs::page_key(name))
 }
 
-fn document_block_ref_counts(doc: &Document) -> std::collections::HashMap<String, usize> {
-    fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
-        for block in blocks {
-            // projection().block_refs is already de-duplicated per referrer block,
-            // matching the badge's OG-compatible counting semantics.
-            for id in &block.projection().block_refs {
-                *counts.entry(id.clone()).or_insert(0) += 1;
+fn document_block_ref_counts(
+    doc: &Document,
+) -> io::Result<std::collections::HashMap<String, usize>> {
+    let mut counts = std::collections::HashMap::new();
+    let mut frames: [Option<std::slice::Iter<'_, DocBlock>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    let mut len = usize::from(!doc.roots.is_empty());
+    if len != 0 {
+        frames[0] = Some(doc.roots.iter());
+    }
+    while len != 0 {
+        let mut frame = frames[len - 1]
+            .take()
+            .expect("active document reference frame");
+        let Some(block) = frame.next() else {
+            len -= 1;
+            continue;
+        };
+        frames[len - 1] = Some(frame);
+        // projection().block_refs is already de-duplicated per referrer block,
+        // matching the badge's OG-compatible counting semantics.
+        for id in &block.projection().block_refs {
+            let count = counts.entry(id.clone()).or_insert(0_usize);
+            *count = count
+                .checked_add(1)
+                .ok_or_else(allocation_overflow)?;
+        }
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cached document nesting exceeds 128 levels",
+                ));
             }
-            walk(&block.children, counts);
+            frames[len] = Some(block.children.iter());
+            len += 1;
         }
     }
-
-    let mut counts = std::collections::HashMap::new();
-    walk(&doc.roots, &mut counts);
-    counts
+    Ok(counts)
 }
 
 fn build_page_cache_index(pages: &[(PageEntry, Arc<Document>)]) -> PageCacheIndex {
@@ -1308,7 +1714,21 @@ thread_local! {
     static PROJECTION_EXACT_OPEN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static MANAGED_INVENTORY_READ_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static INITIAL_SHADOW_REVALIDATION_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE: std::cell::RefCell<Option<ManagedTextInventoryLimits>> = const { std::cell::RefCell::new(None) };
+    static MANAGED_TEXT_BUDGET_LAST_PEAK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MANAGED_MIGRATION_PRE_WRITER_PEAK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MANAGED_MIGRATION_WRITER_ADMITTED_PEAK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static BOUNDED_READ_AFTER_METADATA: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static HANDOFF_MINT_AFTER_RESERVATION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static HANDOFF_TRANSFER_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_IDENTITY_ACQUISITION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_AFTER_ADMISSION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_AFTER_IDENTITY_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_BEFORE_MUTATION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_DURING_ROLLBACK: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_WRITE_REPLACEMENT_HANDOFF: std::cell::RefCell<Option<HandoffSafe>> = const { std::cell::RefCell::new(None) };
+    static SYNC_IDENTITY_AFTER_PREPARE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
@@ -1500,6 +1920,123 @@ fn bounded_read_after_metadata_hook() -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+fn handoff_mint_after_reservation_hook() -> io::Result<()> {
+    HANDOFF_MINT_AFTER_RESERVATION.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+#[allow(dead_code)] // P4 minting is wired by the later P7 publisher.
+fn handoff_mint_after_reservation_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn handoff_transfer_hook() {
+    HANDOFF_TRANSFER_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+#[allow(dead_code)] // P4 transfer is wired by the later P7 publisher.
+fn handoff_transfer_hook() {}
+
+#[cfg(test)]
+fn managed_write_identity_acquisition_hook() -> io::Result<()> {
+    MANAGED_WRITE_IDENTITY_ACQUISITION.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_write_identity_acquisition_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn managed_write_after_admission_hook() -> io::Result<()> {
+    MANAGED_WRITE_AFTER_ADMISSION.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_write_after_admission_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn managed_write_after_identity_check_hook() {
+    MANAGED_WRITE_AFTER_IDENTITY_CHECK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn managed_write_after_identity_check_hook() {}
+
+#[cfg(test)]
+fn managed_write_before_mutation_hook() -> io::Result<()> {
+    MANAGED_WRITE_BEFORE_MUTATION.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_write_before_mutation_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn managed_write_during_rollback_hook() -> io::Result<()> {
+    MANAGED_WRITE_DURING_ROLLBACK.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_write_during_rollback_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn sync_identity_after_prepare_hook() -> io::Result<()> {
+    SYNC_IDENTITY_AFTER_PREPARE.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn sync_identity_after_prepare_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn managed_sync_enable_after_snapshot_hook() -> io::Result<()> {
+    MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_sync_enable_after_snapshot_hook() -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(not(test))]
 fn rename_source_remove_failpoint() -> io::Result<()> {
     Ok(())
@@ -1673,6 +2210,8 @@ impl Graph {
     pub fn open(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
         let projection_root = open_projection_root_nofollow(&root).ok();
+        let managed_write_binding =
+            managed_text_write_binding_for_resource(&root, projection_root.as_ref());
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
@@ -1704,6 +2243,8 @@ impl Graph {
             referenced_names_cache: RwLock::new(None),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             managed_sync: std::sync::Mutex::new(None),
+            managed_write_binding,
+            handoff_instance_token: Arc::new(HandoffGraphInstanceToken),
             search_lanes: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -1719,6 +2260,968 @@ impl Graph {
             )
         })?;
         canonical_graph_resource_id(root)
+    }
+
+    /// Seal this exact Graph instance for a future external-reconciliation
+    /// publisher. The workspace and endpoint become immutable evidence on the
+    /// capability; this method never exposes the underlying reservation.
+    #[allow(dead_code)] // P4 minting is wired by the later P7 publisher.
+    pub(crate) fn mint_handoff_safe(
+        &self,
+        workspace_id: WorkspaceId,
+        endpoint: ProjectionEndpointBinding,
+    ) -> io::Result<HandoffSafe> {
+        let graph_resource_id = self.canonical_resource_id()?;
+        let binding = self.managed_write_binding()?;
+        if binding.resource_id != graph_resource_id {
+            return Err(managed_write_identity_mismatch_error());
+        }
+        if endpoint.graph_resource_id() != graph_resource_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "external reconciliation endpoint is not bound to this graph resource",
+            ));
+        }
+        binding.gate.reserve_handoff()?;
+        if let Err(error) = handoff_mint_after_reservation_hook() {
+            binding.gate.release_handoff();
+            return Err(error);
+        }
+        Ok(HandoffSafe {
+            gate: Some(Arc::clone(&binding.gate)),
+            instance_token: Arc::clone(&self.handoff_instance_token),
+            binding: HandoffBindingEvidence {
+                workspace_id,
+                endpoint,
+                graph_resource_id,
+            },
+        })
+    }
+
+    fn admit_managed_text_writer(&self) -> io::Result<ManagedTextWritePermit> {
+        let binding = self.managed_write_binding()?;
+        let mut permit = binding.gate.admit_writer()?;
+        if let Err(error) = managed_write_after_admission_hook() {
+            drop(permit);
+            return Err(error);
+        }
+        permit.root = Some(binding.root.try_clone()?);
+        permit.resource_id = Some(binding.resource_id);
+        managed_write_after_identity_check_hook();
+        Ok(permit)
+    }
+
+    fn admit_retained_managed_text_writer(&self) -> io::Result<ManagedTextWritePermit> {
+        let binding = self.managed_write_binding()?;
+        if self.canonical_resource_id()? != binding.resource_id {
+            return Err(managed_write_identity_mismatch_error());
+        }
+        let mut permit = binding.gate.admit_writer()?;
+        permit.root = Some(binding.root.try_clone()?);
+        permit.resource_id = Some(binding.resource_id);
+        Ok(permit)
+    }
+
+    fn managed_write_binding(&self) -> io::Result<&ManagedTextWriteBinding> {
+        self.managed_write_binding.as_ref().map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("managed text resource identity is unavailable: {error}"),
+            )
+        })
+    }
+
+    fn managed_permit_root<'a>(
+        &self,
+        permit: &'a ManagedTextWritePermit,
+    ) -> io::Result<&'a Dir> {
+        let binding = self.managed_write_binding()?;
+        if permit.resource_id != Some(binding.resource_id) {
+            return Err(managed_write_identity_mismatch_error());
+        }
+        permit.root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "managed text writer permit has no retained root capability",
+            )
+        })
+    }
+
+    fn managed_target(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        create_parent: bool,
+    ) -> io::Result<ManagedTextTarget> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| bad_path())?;
+        let components = relative
+            .components()
+            .map(|component| match component {
+                std::path::Component::Normal(component) => component
+                    .to_str()
+                    .filter(|component| projection_component_is_portable(component))
+                    .map(str::to_owned)
+                    .ok_or_else(bad_path),
+                _ => Err(bad_path()),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let (filename, parents) = components.split_last().ok_or_else(bad_path)?;
+        let mut chain = vec![self.managed_permit_root(permit)?.try_clone()?];
+        for component in parents {
+            let current = chain
+                .last()
+                .expect("managed text capability chain contains root");
+            match projection_real_directory(current, component) {
+                Ok(()) => {}
+                Err(error) if create_parent && error.kind() == io::ErrorKind::NotFound => {
+                    current.create_dir(component)?;
+                    sync_projection_directory_required(current)?;
+                }
+                Err(error) => return Err(error),
+            }
+            chain.push(open_projection_dir_nofollow(current, component)?);
+        }
+        Ok(ManagedTextTarget {
+            chain,
+            filename: filename.clone(),
+        })
+    }
+
+    fn managed_create_dir_all(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<()> {
+        let sentinel = path.join(".tine-capability-directory");
+        let target = self.managed_target(permit, &sentinel, true)?;
+        sync_projection_chain_required(&target.chain)
+    }
+
+    /// Recursively enumerate the configured managed-text trees through the exact
+    /// retained root carried by `permit`. Returned paths are lexical names under
+    /// `self.root`, but every directory decision comes from a no-follow retained
+    /// directory handle, so replacing the ambient graph pathname cannot change
+    /// the selected mutation set.
+    fn managed_text_entries(
+        &self,
+        permit: &ManagedTextWritePermit,
+        include_sync_conflicts: bool,
+    ) -> io::Result<Vec<PageEntry>> {
+        Ok(self
+            .managed_text_entries_with_limits_and_budget(
+                permit,
+                include_sync_conflicts,
+                managed_text_inventory_limits(),
+                None,
+            )?
+            .0)
+    }
+
+    fn managed_text_entries_with_budget(
+        &self,
+        permit: &ManagedTextWritePermit,
+        include_sync_conflicts: bool,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<BudgetedPageEntries> {
+        let (entries, reservation) = self.managed_text_entries_with_limits_and_budget(
+            permit,
+            include_sync_conflicts,
+            managed_text_inventory_limits(),
+            Some(budget),
+        )?;
+        Ok(BudgetedPageEntries {
+            entries,
+            _reservation: reservation
+                .expect("budgeted managed inventory returns its retained charge"),
+        })
+    }
+
+    fn managed_text_entries_with_limits(
+        &self,
+        permit: &ManagedTextWritePermit,
+        include_sync_conflicts: bool,
+        limits: ManagedTextInventoryLimits,
+    ) -> io::Result<Vec<PageEntry>> {
+        Ok(self
+            .managed_text_entries_with_limits_and_budget(
+                permit,
+                include_sync_conflicts,
+                limits,
+                None,
+            )?
+            .0)
+    }
+
+    fn managed_text_entries_with_limits_and_budget(
+        &self,
+        permit: &ManagedTextWritePermit,
+        include_sync_conflicts: bool,
+        limits: ManagedTextInventoryLimits,
+        budget: Option<&RetainedContentBudget>,
+    ) -> io::Result<(Vec<PageEntry>, Option<RetainedContentReservation>)> {
+        struct PendingDirectory {
+            directory: Dir,
+            path: PathBuf,
+            depth: usize,
+        }
+
+        self.managed_permit_root(permit)?;
+        let mut out = Vec::new();
+        let mut out_charge =
+            RetainedHeapCharge::new(budget, "managed inventory retained page entries")?;
+        let mut pending = Vec::new();
+        let mut pending_slots =
+            RetainedHeapCharge::new(budget, "managed inventory pending vector capacity")?;
+        let mut pending_paths =
+            RetainedHeapCharge::new(budget, "managed inventory pending owned paths")?;
+        let mut pending_slot_high_water = 0_usize;
+        let mut all_entries = 0_usize;
+        let mut directory_count = 0_usize;
+        let mut path_bytes = 0_u64;
+        let mut directory_resources = std::collections::BTreeMap::new();
+        let mut directory_resources_charge =
+            RetainedHeapCharge::new(budget, "managed inventory directory identity map")?;
+        let mut file_resources = std::collections::BTreeMap::new();
+        let mut file_resources_charge =
+            RetainedHeapCharge::new(budget, "managed inventory file identity map")?;
+        let roots = self.managed_text_inventory_roots(permit)?;
+        for (relative, depth) in roots {
+            if depth > limits.directory_depth {
+                return Err(managed_text_inventory_limit_error("managed directory depth"));
+            }
+            path_bytes = path_bytes
+                .checked_add(usize_to_u64(relative.len())?)
+                .ok_or_else(|| managed_text_inventory_limit_error("aggregate path bytes"))?;
+            if path_bytes > limits.path_bytes {
+                return Err(managed_text_inventory_limit_error("aggregate path bytes"));
+            }
+            let path = self.root.join(relative);
+            let sentinel = path.join(".tine-capability-inventory");
+            let target = match self.managed_target(permit, &sentinel, false) {
+                Ok(target) => target,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            directory_count = directory_count
+                .checked_add(1)
+                .ok_or_else(|| managed_text_inventory_limit_error("directory count"))?;
+            if directory_count > limits.directories {
+                return Err(managed_text_inventory_limit_error("directory count"));
+            }
+            let directory = target.parent().try_clone()?;
+            let resource = canonical_projection_directory_resource_id(&directory)?;
+            directory_resources_charge.grow(
+                checked_add_bytes(
+                    conservative_btree_entry_bytes::<ContentDigest, String>()?,
+                    owned_string_upper_bound(relative)?,
+                )?,
+                "managed inventory directory identity map",
+            )?;
+            if let Some(first) = directory_resources.insert(resource, relative.to_owned()) {
+                return Err(managed_text_inventory_alias_error(
+                    "directories",
+                    &first,
+                    relative,
+                ));
+            }
+            if pending.len() == limits.pending_directories {
+                return Err(managed_text_inventory_limit_error("pending directories"));
+            }
+            if pending.len() == pending_slot_high_water {
+                pending_slots.grow(
+                    conservative_vec_entry_bytes::<PendingDirectory>()?,
+                    "managed inventory pending vector capacity",
+                )?;
+                pending_slot_high_water = pending_slot_high_water
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        managed_text_inventory_limit_error("pending directories")
+                    })?;
+            }
+            pending_paths.grow(
+                owned_path_upper_bound(&path)?,
+                "managed inventory pending owned paths",
+            )?;
+            pending.push(PendingDirectory {
+                directory,
+                path,
+                depth,
+            });
+        }
+
+        while let Some(PendingDirectory {
+            directory,
+            path,
+            depth,
+        }) = pending.pop()
+        {
+            let pending_path_charge = owned_path_upper_bound(&path)?;
+            for entry in directory.entries()? {
+                all_entries = all_entries
+                    .checked_add(1)
+                    .ok_or_else(|| managed_text_inventory_limit_error("all directory entries"))?;
+                if all_entries > limits.all_entries {
+                    return Err(managed_text_inventory_limit_error("all directory entries"));
+                }
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(name_text) = name.to_str() else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "managed text entry name is not UTF-8",
+                    ));
+                };
+                let mut entry_scratch =
+                    RetainedHeapCharge::new(budget, "managed inventory entry path scratch")?;
+                entry_scratch.grow(
+                    checked_mul_bytes(
+                        checked_add_bytes(
+                            owned_path_upper_bound(&path)?,
+                            owned_string_upper_bound(name_text)?,
+                        )?,
+                        3,
+                    )?,
+                    "managed inventory entry path scratch",
+                )?;
+                let child_path = path.join(&name);
+                let child_relative = self.rel_path(&child_path);
+                path_bytes = path_bytes
+                    .checked_add(usize_to_u64(child_relative.len())?)
+                    .ok_or_else(|| managed_text_inventory_limit_error("aggregate path bytes"))?;
+                if path_bytes > limits.path_bytes {
+                    return Err(managed_text_inventory_limit_error("aggregate path bytes"));
+                }
+                let file_type = entry.file_type()?;
+                if file_type.is_symlink() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("managed text entry is a symlink or reparse point: {child_relative}"),
+                    ));
+                }
+                if file_type.is_file() {
+                    let file = open_projection_file_nofollow(&directory, name_text)?;
+                    let resource = canonical_projection_file_resource_id(&file)?;
+                    file_resources_charge.grow(
+                        checked_add_bytes(
+                            conservative_btree_entry_bytes::<ContentDigest, String>()?,
+                            owned_string_upper_bound(&child_relative)?,
+                        )?,
+                        "managed inventory file identity map",
+                    )?;
+                    if let Some(first) = file_resources.insert(resource, child_relative.clone()) {
+                        return Err(managed_text_inventory_alias_error(
+                            "files",
+                            &first,
+                            &child_relative,
+                        ));
+                    }
+                    if !is_page_file(&child_path) {
+                        continue;
+                    }
+                    let Some(stem) = child_path.file_stem().and_then(|stem| stem.to_str()) else {
+                        continue;
+                    };
+                    if !include_sync_conflicts && is_sync_conflict(stem) {
+                        continue;
+                    }
+                    let page_candidate_charge = checked_add_bytes(
+                        conservative_vec_entry_bytes::<PageEntry>()?,
+                        checked_add_bytes(
+                            owned_string_upper_bound(stem)?,
+                            checked_add_bytes(
+                                owned_string_upper_bound(&child_relative)?,
+                                owned_path_upper_bound(&child_path)?,
+                            )?,
+                        )?,
+                    )?;
+                    out_charge.grow(
+                        page_candidate_charge,
+                        "managed inventory retained page entries",
+                    )?;
+                    if let Some(page) = self.managed_inventory_entry(&child_path)? {
+                        if out.len() == limits.managed_files {
+                            return Err(managed_text_inventory_limit_error("managed file count"));
+                        }
+                        out.push(page);
+                    } else {
+                        out_charge.shrink(
+                            page_candidate_charge,
+                            "managed inventory retained page entries",
+                        )?;
+                    }
+                    continue;
+                }
+                if !file_type.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("managed text entry is not a regular file: {child_relative}"),
+                    ));
+                }
+                if name_text.starts_with('.') {
+                    continue;
+                }
+                let child_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| managed_text_inventory_limit_error("managed directory depth"))?;
+                if child_depth > limits.directory_depth {
+                    return Err(managed_text_inventory_limit_error("managed directory depth"));
+                }
+                directory_count = directory_count
+                    .checked_add(1)
+                    .ok_or_else(|| managed_text_inventory_limit_error("directory count"))?;
+                if directory_count > limits.directories {
+                    return Err(managed_text_inventory_limit_error("directory count"));
+                }
+                projection_real_directory(&directory, name_text)?;
+                let child = open_projection_dir_nofollow(&directory, name_text)?;
+                let resource = canonical_projection_directory_resource_id(&child)?;
+                directory_resources_charge.grow(
+                    checked_add_bytes(
+                        conservative_btree_entry_bytes::<ContentDigest, String>()?,
+                        owned_string_upper_bound(&child_relative)?,
+                    )?,
+                    "managed inventory directory identity map",
+                )?;
+                if let Some(first) = directory_resources.insert(resource, child_relative.clone()) {
+                    return Err(managed_text_inventory_alias_error(
+                        "directories",
+                        &first,
+                        &child_relative,
+                    ));
+                }
+                if pending.len() == limits.pending_directories {
+                    return Err(managed_text_inventory_limit_error("pending directories"));
+                }
+                if pending.len() == pending_slot_high_water {
+                    pending_slots.grow(
+                        conservative_vec_entry_bytes::<PendingDirectory>()?,
+                        "managed inventory pending vector capacity",
+                    )?;
+                    pending_slot_high_water = pending_slot_high_water
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            managed_text_inventory_limit_error("pending directories")
+                        })?;
+                }
+                pending_paths.grow(
+                    owned_path_upper_bound(&child_path)?,
+                    "managed inventory pending owned paths",
+                )?;
+                pending.push(PendingDirectory {
+                    directory: child,
+                    path: child_path,
+                    depth: child_depth,
+                });
+            }
+            pending_paths.shrink(
+                pending_path_charge,
+                "managed inventory pending owned paths",
+            )?;
+        }
+        out.sort_by(|left, right| left.rel_path.cmp(&right.rel_path));
+        Ok((out, out_charge.reservation))
+    }
+
+    /// Return the non-overlapping roots that must be walked for a managed-text
+    /// inventory.  Nested roots are discovered through their outer root, then
+    /// classified by their exact graph-relative path below; equal roots have no
+    /// unambiguous owner and fail before any file is parsed or mutated.
+    fn managed_text_inventory_roots(
+        &self,
+        permit: &ManagedTextWritePermit,
+    ) -> io::Result<Vec<(&str, usize)>> {
+        let page_root = managed_root_components(&self.config.pages_dir).ok_or_else(bad_path)?;
+        let journal_root =
+            managed_root_components(&self.config.journals_dir).ok_or_else(bad_path)?;
+        if page_root == journal_root {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "managed page and journal roots must not be equal",
+            ));
+        }
+
+        let configured = [(&self.config.pages_dir, page_root), (&self.config.journals_dir, journal_root)];
+        let mut resources = std::collections::BTreeMap::new();
+        for (root, _) in configured.iter() {
+            let sentinel = self.root.join(root).join(".tine-capability-inventory");
+            let target = match self.managed_target(permit, &sentinel, false) {
+                Ok(target) => target,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            let resource = canonical_projection_directory_resource_id(target.parent())?;
+            if let Some(first) = resources.insert(resource, (*root).to_owned()) {
+                return Err(managed_text_inventory_alias_error("roots", &first, root));
+            }
+        }
+        Ok(configured
+            .iter()
+            .filter_map(|(root, components)| {
+                let nested = configured.iter().any(|(_, candidate)| {
+                    candidate.len() < components.len() && components.starts_with(candidate)
+                });
+                (!nested).then_some((root.as_str(), components.len()))
+            })
+            .collect())
+    }
+
+    /// Construct a list entry only after assigning the exact path's canonical
+    /// longest-root owner. This is also the only ownership rule used by cache
+    /// and handoff paths through `entry_for_path`.
+    fn managed_inventory_entry(&self, path: &Path) -> io::Result<Option<PageEntry>> {
+        self.managed_entry_for_path(path)
+    }
+
+    fn managed_entry_for_path(&self, path: &Path) -> io::Result<Option<PageEntry>> {
+        if !is_page_file(path) {
+            return Ok(None);
+        }
+        let rel_path = self.rel_path(path);
+        let managed_path = ManagedPath::parse(rel_path.clone()).map_err(|_| bad_path())?;
+        let kind = match self
+            .classify_managed_text_path(&managed_path)
+            .map_err(|_| bad_path())?
+        {
+            ManagedTextKind::Page => PageKind::Page,
+            ManagedTextKind::Journal => PageKind::Journal,
+        };
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            return Ok(None);
+        };
+        let (name, date_key) = match kind {
+            PageKind::Journal => match self.journal_format.parse(stem) {
+                Some(date) => (self.journal_format.title(date), Some(date.ordinal_key())),
+                None => (stem.to_owned(), None),
+            },
+            PageKind::Page => (
+                decode_page_name(stem, self.config.file_name_format),
+                None,
+            ),
+        };
+        Ok(Some(PageEntry {
+            name,
+            kind,
+            date_key,
+            rel_path,
+            path: path.to_path_buf(),
+        }))
+    }
+
+    fn managed_find_entry(
+        &self,
+        permit: &ManagedTextWritePermit,
+        name: &str,
+        kind: PageKind,
+    ) -> io::Result<Option<PageEntry>> {
+        let mut matching = self
+            .managed_text_entries(permit, false)?
+            .into_iter()
+            .filter(|entry| entry.kind == kind && crate::refs::same_page(&entry.name, name));
+        let Some(mut winner) = matching.next() else {
+            return Ok(None);
+        };
+        for entry in matching {
+            if !is_date_stem_entry(&winner) && is_date_stem_entry(&entry) {
+                winner = entry;
+            }
+        }
+        Ok(Some(winner))
+    }
+
+    fn managed_has_twin(
+        &self,
+        permit: &ManagedTextWritePermit,
+        name: &str,
+        kind: PageKind,
+    ) -> io::Result<bool> {
+        let (dir, stem) = match kind {
+            PageKind::Page => (
+                self.pages_path(),
+                Some(encode_page_name(name, self.config.file_name_format)),
+            ),
+            PageKind::Journal => (
+                self.journals_path(),
+                self.journal_format
+                    .parse(name)
+                    .map(|date| self.journal_format.file_stem(date)),
+            ),
+        };
+        let Some(stem) = stem else {
+            return Ok(false);
+        };
+        Ok(self.managed_exists(permit, &dir.join(format!("{stem}.org")))?
+            && self.managed_exists(permit, &dir.join(format!("{stem}.md")))?)
+    }
+
+    fn managed_path_for(
+        &self,
+        permit: &ManagedTextWritePermit,
+        name: &str,
+        kind: PageKind,
+    ) -> io::Result<PathBuf> {
+        let preferred = self.preferred_format();
+        match kind {
+            PageKind::Journal => Ok(self
+                .managed_find_entry(permit, name, kind)?
+                .map(|entry| entry.path)
+                .unwrap_or_else(|| {
+                    let stem = self
+                        .journal_format
+                        .parse(name)
+                        .map(|date| self.journal_format.file_stem(date))
+                        .unwrap_or_else(|| name.to_owned());
+                    self.journals_path()
+                        .join(format!("{stem}.{}", preferred.ext()))
+                })),
+            PageKind::Page => {
+                let encoded = encode_page_name(name, self.config.file_name_format);
+                let primary = self
+                    .pages_path()
+                    .join(format!("{encoded}.{}", preferred.ext()));
+                if self.managed_exists(permit, &primary)? {
+                    return Ok(primary);
+                }
+                let alternate_extension = if preferred == Format::Org {
+                    "md"
+                } else {
+                    "org"
+                };
+                let alternate = self
+                    .pages_path()
+                    .join(format!("{encoded}.{alternate_extension}"));
+                if self.managed_exists(permit, &alternate)? {
+                    return Ok(alternate);
+                }
+                Ok(primary)
+            }
+        }
+    }
+
+    fn managed_is_shadow_journal(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        date: crate::date::JournalDate,
+    ) -> io::Result<bool> {
+        let is_date_stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| crate::date::JournalDate::from_file_stem(stem).is_some());
+        if is_date_stem {
+            return Ok(false);
+        }
+        let canonical = self.journal_format.file_stem(date);
+        let directory = self.journals_path();
+        Ok(self.managed_exists(permit, &directory.join(format!("{canonical}.md")))?
+            || self.managed_exists(permit, &directory.join(format!("{canonical}.org")))?)
+    }
+
+    fn managed_path_is_cacheable(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<bool> {
+        if let Some(entry) = self.entry_for_path(path) {
+            if entry.kind == PageKind::Journal {
+                if let Some(date) = entry.date_key.map(crate::date::JournalDate::from_ordinal) {
+                    return Ok(!self.managed_is_shadow_journal(permit, path, date)?);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    fn managed_read_optional(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<Option<Vec<u8>>> {
+        let target = match self.managed_target(permit, path, false) {
+            Ok(target) => target,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        read_projection_optional(target.parent(), &target.filename)
+    }
+
+    fn managed_read_optional_text(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<Option<String>> {
+        self.managed_read_optional(permit, path)?
+            .map(|bytes| {
+                String::from_utf8(bytes).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "managed text file is not valid UTF-8",
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    fn managed_read_to_string(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<String> {
+        self.managed_read_optional_text(permit, path)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+    }
+
+    fn managed_content_rev_matches(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        expected: &str,
+    ) -> io::Result<bool> {
+        let expected = u64::from_str_radix(expected, 16).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid managed content revision")
+        })?;
+        let target = self.managed_target(permit, path, false)?;
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        let mut file = open_projection_file_nofollow(target.parent(), &target.filename)?;
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut total = 0_u64;
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            total = total
+                .checked_add(read as u64)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "read-byte overflow"))?;
+            if total > MAX_PROJECTION_EVIDENCE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed revision evidence exceeds the reload bound",
+                ));
+            }
+            for byte in &buffer[..read] {
+                hash ^= *byte as u64;
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        Ok(hash == expected)
+    }
+
+    fn managed_file_equals_bytes(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        expected: &[u8],
+    ) -> io::Result<bool> {
+        let target = self.managed_target(permit, path, false)?;
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        let mut file = open_projection_file_nofollow(target.parent(), &target.filename)?;
+        if file.metadata()?.len() != expected.len() as u64 {
+            return Ok(false);
+        }
+        let mut offset = 0usize;
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(offset == expected.len());
+            }
+            let end = offset
+                .checked_add(read)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "read-byte overflow"))?;
+            if expected.get(offset..end) != Some(&buffer[..read]) {
+                return Ok(false);
+            }
+            offset = end;
+        }
+    }
+
+    fn managed_read_to_string_with_budget(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        budget: &RetainedContentBudget,
+        resource: &'static str,
+    ) -> io::Result<BudgetedString> {
+        let target = self.managed_target(permit, path, false)?;
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        let (_file, bytes, mut reservation) = open_and_read_projection_regular_with_budget(
+            target.parent(),
+            &target.filename,
+            MAX_PROJECTION_EVIDENCE_BYTES,
+            budget,
+            resource,
+        )?;
+        let value = String::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "managed text file is not valid UTF-8",
+            )
+        })?;
+        reservation.resize(usize_to_u64(value.capacity())?, resource)?;
+        Ok(BudgetedString { value, reservation })
+    }
+
+    fn managed_read_optional_text_with_budget(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        budget: &RetainedContentBudget,
+        resource: &'static str,
+    ) -> io::Result<Option<BudgetedString>> {
+        let target = match self.managed_target(permit, path, false) {
+            Ok(target) => target,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        let (_file, bytes, mut reservation) =
+            match open_and_read_projection_regular_with_budget(
+                target.parent(),
+                &target.filename,
+                MAX_PROJECTION_EVIDENCE_BYTES,
+                budget,
+                resource,
+            ) {
+                Ok(value) => value,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error),
+            };
+        let value = String::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "managed text file is not valid UTF-8",
+            )
+        })?;
+        reservation.resize(usize_to_u64(value.capacity())?, resource)?;
+        Ok(Some(BudgetedString { value, reservation }))
+    }
+
+    /// The raw read allocation becomes `baseline`; it is deliberately charged
+    /// once, rather than again merely because that same allocation changes role.
+    fn managed_load_page_with_budget(
+        &self,
+        permit: &ManagedTextWritePermit,
+        entry: &PageEntry,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<ManagedLoadedPage> {
+        let content = self.managed_read_to_string_with_budget(
+            permit,
+            &entry.path,
+            budget,
+            "managed page baseline bytes",
+        )?;
+        let mut page_reservation = budget.reserve(
+            managed_page_build_upper_bound(&content)?,
+            "managed parsed page construction bound",
+        )?;
+        let mut doc = parse_doc(&entry.path, &content);
+        assign_runtime_ids_checked(
+            &mut doc.roots,
+            runtime_owner_namespace("file-block-runtime-v1", &entry.rel_path),
+        )?;
+        let mut page = page_dto_checked(entry, &doc)?;
+        page.read_only = read_only_org(&entry.path, &content);
+        page.rev = Some(content_rev(&content));
+        page.path = entry.rel_path.clone();
+        drop(doc);
+        page_reservation.resize(
+            page_dto_retained_bytes(&page)?,
+            "retained managed page allocation",
+        )?;
+        Ok(ManagedLoadedPage {
+            page,
+            baseline: content.value,
+            baseline_reservation: content.reservation,
+            page_reservation,
+        })
+    }
+
+    fn managed_exists(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<bool> {
+        let target = match self.managed_target(permit, path, false) {
+            Ok(target) => target,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        match target.parent().symlink_metadata(&target.filename) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+            Ok(_) => {
+                projection_optional_regular_metadata(target.parent(), &target.filename)?;
+                Ok(true)
+            }
+        }
+    }
+
+    fn managed_atomic_write(
+        &self,
+        permit: &ManagedTextWritePermit,
+        path: &Path,
+        bytes: &[u8],
+        create_new: bool,
+    ) -> io::Result<()> {
+        let target = self.managed_target(permit, path, true)?;
+        projection_optional_regular_metadata(target.parent(), &target.filename)?;
+        let temp = create_projection_temp(target.parent(), &target.filename, bytes)?;
+        managed_write_before_mutation_hook()?;
+        let result = if create_new {
+            rename_projection_noreplace(target.parent(), &temp, &target.filename)
+        } else {
+            target
+                .parent()
+                .rename(&temp, target.parent(), &target.filename)
+        };
+        if let Err(error) = result {
+            let _ = target.parent().remove_file(&temp);
+            return Err(error);
+        }
+        sync_projection_chain_required(&target.chain)
+    }
+
+    fn managed_move_noreplace(
+        &self,
+        permit: &ManagedTextWritePermit,
+        source: &Path,
+        destination: &Path,
+    ) -> io::Result<()> {
+        let source = self.managed_target(permit, source, false)?;
+        projection_optional_regular_metadata(source.parent(), &source.filename)?;
+        let destination = self.managed_target(permit, destination, true)?;
+        match destination
+            .parent()
+            .symlink_metadata(&destination.filename)
+        {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => return Err(io::Error::from(io::ErrorKind::AlreadyExists)),
+            Err(error) => return Err(error),
+        }
+        managed_write_before_mutation_hook()?;
+        rename_managed_noreplace(
+            source.parent(),
+            &source.filename,
+            destination.parent(),
+            &destination.filename,
+        )?;
+        sync_projection_chain_required(&source.chain)?;
+        sync_projection_chain_required(&destination.chain)
+    }
+
+    fn managed_move_to_trash(
+        &self,
+        permit: &ManagedTextWritePermit,
+        source: &Path,
+        destination: &Path,
+        trash: &Path,
+    ) -> io::Result<()> {
+        self.managed_create_dir_all(permit, trash)?;
+        self.managed_move_noreplace(permit, source, destination)
     }
 
     /// Capture exact current page bytes through the same retained graph
@@ -1920,10 +3423,10 @@ impl Graph {
         let graph = Graph::open(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
         let index = build_page_cache_index(&pages);
-        let reference_index = ReferenceCandidateIndex::build(0, &pages);
+        let reference_index = ReferenceCandidateIndex::build(0, &pages).ok();
         *graph.cache.write().unwrap() = Some(Arc::new(pages));
         *graph.cache_index.write().unwrap() = Some(index);
-        *graph.reference_candidate_index.write().unwrap() = Some(reference_index);
+        *graph.reference_candidate_index.write().unwrap() = reference_index;
         *graph.page_list_cache.write().unwrap() = Some((0, entries));
         graph
     }
@@ -2007,17 +3510,32 @@ impl Graph {
     }
 
     pub fn managed_sync_store_state(&self) -> io::Result<ManagedSyncStoreState> {
-        CrdtGraph::store_state(&self.root).map_err(crdt_io_error)
+        let binding = self.managed_write_binding()?;
+        CrdtGraph::store_state_at(&binding.root).map_err(crdt_io_error)
     }
 
     /// Replay an existing managed-sync workspace for this process. A configured
     /// but invalid workspace fails closed: callers must not let the graph accept
     /// projection-only edits while its operation truth is unavailable.
     pub fn start_managed_sync(&self, device_id: Uuid, session_id: Uuid) -> io::Result<bool> {
-        if self.managed_sync_store_state()? != ManagedSyncStoreState::Initialized {
+        let write = self.admit_managed_text_writer()?;
+        self.start_managed_sync_with_permit(&write, device_id, session_id)
+    }
+
+    fn start_managed_sync_with_permit(
+        &self,
+        write: &ManagedTextWritePermit,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> io::Result<bool> {
+        let root = self.managed_permit_root(write)?;
+        if CrdtGraph::store_state_at(root).map_err(crdt_io_error)?
+            != ManagedSyncStoreState::Initialized
+        {
             return Ok(false);
         }
-        let crdt = CrdtGraph::open(&self.root, device_id, session_id).map_err(crdt_io_error)?;
+        let crdt = CrdtGraph::open_at(&self.root, root, device_id, session_id)
+            .map_err(crdt_io_error)?;
         *self.managed_sync.lock().unwrap() = Some(crdt);
         Ok(true)
     }
@@ -2030,9 +3548,11 @@ impl Graph {
         device_id: Uuid,
         session_id: Uuid,
     ) -> io::Result<ManagedSyncEnableResult> {
-        let store_state = self.managed_sync_store_state()?;
+        let write = self.admit_managed_text_writer()?;
+        let root = self.managed_permit_root(&write)?;
+        let store_state = CrdtGraph::store_state_at(root).map_err(crdt_io_error)?;
         if store_state == ManagedSyncStoreState::Initialized {
-            self.start_managed_sync(device_id, session_id)?;
+            self.start_managed_sync_with_permit(&write, device_id, session_id)?;
             let status = self
                 .managed_sync_status()
                 .ok_or_else(|| io::Error::other("managed sync did not start"))?;
@@ -2045,51 +3565,244 @@ impl Graph {
             });
         }
         if store_state == ManagedSyncStoreState::Claimed {
-            CrdtGraph::validate_resume_device(&self.root, device_id).map_err(crdt_io_error)?;
+            CrdtGraph::validate_resume_device_at(root, device_id).map_err(crdt_io_error)?;
         }
 
-        let migration = self.migrate_sync_identities()?;
-        let mut pages = Vec::new();
-        let mut baselines = Vec::new();
-        for entry in self.list_pages() {
-            let page = self.load_page(&entry)?;
+        let mut budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        self.preflight_managed_sync_enable_budget(&write, &budget)?;
+        let migration = self.migrate_sync_identities_with_permit(&write, &mut budget)?;
+        let mut prepared = Vec::new();
+        let mut prepared_charge =
+            RetainedHeapCharge::new(Some(&budget), "managed enable prepared entries")?;
+        let entries = self.managed_text_entries_with_budget(&write, false, &budget)?;
+        for entry in entries.iter() {
+            let ManagedLoadedPage {
+                page,
+                baseline,
+                baseline_reservation,
+                page_reservation,
+            } = self.managed_load_page_with_budget(&write, &entry, &mut budget)?;
             if page.read_only {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!("{} is read-only and cannot join managed sync", page.path),
                 ));
             }
-            let rev = page
-                .rev
-                .clone()
-                .ok_or_else(|| io::Error::other("loaded page has no disk revision"))?;
-            pages.push(crdt_snapshot_for_page(&page, CrdtPageId::new())?);
-            baselines.push((entry.path, rev));
+            let snapshot = crdt_snapshot_for_page(&page, CrdtPageId::new(), &budget)?;
+            drop(page);
+            drop(page_reservation);
+            prepared_charge.grow(
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<PreparedGenesisPage>()?,
+                    owned_path_upper_bound(&entry.path)?,
+                )?,
+                "managed enable prepared entries",
+            )?;
+            prepared.push(PreparedGenesisPage {
+                snapshot,
+                path: entry.path.clone(),
+                baseline: Some(baseline),
+                baseline_reservation: Some(baseline_reservation),
+            });
         }
+        drop(entries);
+        managed_sync_enable_after_snapshot_hook()?;
         let mut projection_contents = Vec::new();
-        for (path, expected) in baselines {
-            let current = fs::read_to_string(&path)?;
-            if content_rev(&current) != expected {
+        let mut projection_contents_charge =
+            RetainedHeapCharge::new(Some(&budget), "managed enable projection vector")?;
+        for page in &mut prepared {
+            let current = self.managed_read_to_string_with_budget(
+                &write,
+                &page.path,
+                &mut budget,
+                "managed genesis projection bytes",
+            )?;
+            if current.as_ref()
+                != page.baseline.as_ref().expect("baseline retained until revalidation")
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     format!(
                         "{} changed while managed sync was being enabled",
-                        path.display()
+                        page.path.display()
                     ),
                 ));
             }
-            projection_contents.push((self.rel_path(&path), current));
+            drop(page.baseline.take());
+            drop(page.baseline_reservation.take());
+            let relative = self.rel_path(&page.path);
+            projection_contents_charge.grow(
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<(
+                        String,
+                        String,
+                        RetainedContentReservation,
+                    )>()?,
+                    owned_string_upper_bound(&relative)?,
+                )?,
+                "managed enable projection vector",
+            )?;
+            projection_contents.push((
+                relative,
+                current.value,
+                current.reservation,
+            ));
         }
 
-        let crdt = CrdtGraph::initialize(&self.root, device_id, session_id, pages)
-            .map_err(crdt_io_error)?;
-        for (path, content) in projection_contents {
+        let mut pages = PreparedCrdtPageBatch::with_capacity(
+            prepared.len(),
+            &budget,
+            "managed enable snapshot batch capacities",
+        )?;
+        for page in prepared {
+            pages.push(page.snapshot);
+        }
+        let crdt = pages
+        .admit_operation(&budget, "managed enable CRDT/store operation")?
+        .initialize_at(&self.root, root, device_id, session_id)?;
+        for (path, content, content_reservation) in projection_contents {
             crdt.record_projection(&path, &content)
                 .map_err(crdt_io_error)?;
+            drop(content_reservation);
         }
         let status = crdt.status().map_err(crdt_io_error)?;
         *self.managed_sync.lock().unwrap() = Some(crdt);
         Ok(ManagedSyncEnableResult { migration, status })
+    }
+
+    /// Prove the combined migrate-then-genesis allocation envelope before the
+    /// migration may write its first identity. Prospective serialized baselines
+    /// and snapshots stay reserved together, matching the later genesis phase;
+    /// no disk, store, projection receipt, or cache mutation occurs here.
+    fn preflight_managed_sync_enable_budget(
+        &self,
+        write: &ManagedTextWritePermit,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<()> {
+        let mut prospective = Vec::new();
+        let entries = self.managed_text_entries_with_budget(write, false, budget)?;
+        let mut prospective_slots =
+            RetainedHeapCharge::new(Some(budget), "managed enable preflight vector capacity")?;
+        let mut migration_prepared_bound = 0_u64;
+        let mut migration_writer_phase_bound = 0_u64;
+        let mut migration_blocks = 0_u64;
+        let mut migration_owned_ids_bound = 0_u64;
+        let mut migration_projection_scan_bound = 0_u64;
+        let mut genesis_metadata_bound = 0_u64;
+        for entry in entries.iter() {
+            let ManagedLoadedPage {
+                mut page,
+                baseline,
+                baseline_reservation,
+                mut page_reservation,
+            } = self.managed_load_page_with_budget(write, &entry, budget)?;
+            if page.read_only {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{} is read-only and cannot join managed sync", page.path),
+                ));
+            }
+            let missing = count_missing_sync_ids(&page.blocks, page.format, budget)?;
+            persist_page_sync_ids_with_budget(&mut page, &mut page_reservation, budget)?;
+            if missing != 0 {
+                migration_prepared_bound = checked_add_bytes(
+                    migration_prepared_bound,
+                    checked_add_bytes(
+                        conservative_vec_entry_bytes::<PreparedMigrationPage>()?,
+                        checked_add_bytes(
+                            usize_to_u64(baseline.capacity())?,
+                            page_dto_retained_bytes(&page)?,
+                        )?,
+                    )?,
+                )?;
+                migration_writer_phase_bound = migration_writer_phase_bound.max(
+                    checked_add_bytes(
+                        usize_to_u64(baseline.capacity())?,
+                        page_write_construction_upper_bound(&page, Some(&baseline))?,
+                    )?,
+                );
+            }
+            migration_blocks = checked_add_bytes(
+                migration_blocks,
+                page_block_count_checked(&page.blocks)?,
+            )?;
+            migration_owned_ids_bound = checked_add_bytes(
+                migration_owned_ids_bound,
+                sync_id_owned_source_upper_bound(&page.blocks, true)?,
+            )?;
+            migration_projection_scan_bound = migration_projection_scan_bound.max(
+                sync_id_projection_scan_upper_bound(
+                    &page.blocks,
+                    SyncIdProjectionInput::Expanded,
+                )?,
+            );
+            genesis_metadata_bound = checked_add_bytes(
+                genesis_metadata_bound,
+                checked_add_bytes(
+                    checked_add_bytes(
+                        conservative_vec_entry_bytes::<PreparedGenesisPage>()?,
+                        owned_path_upper_bound(&entry.path)?,
+                    )?,
+                    checked_add_bytes(
+                        checked_add_bytes(
+                            conservative_vec_entry_bytes::<(
+                                String,
+                                String,
+                                RetainedContentReservation,
+                            )>()?,
+                            owned_string_upper_bound(&entry.rel_path)?,
+                        )?,
+                        checked_add_bytes(
+                            conservative_vec_entry_bytes::<CrdtPageSnapshot>()?,
+                            conservative_vec_entry_bytes::<RetainedContentReservation>()?,
+                        )?,
+                    )?,
+                )?,
+            )?;
+            let (prospective_baseline_bytes, _) =
+                page_serialized_output_upper_bound(&page, Some(&baseline))?;
+            drop(baseline);
+            drop(baseline_reservation);
+            let prospective_baseline = budget.reserve(
+                prospective_baseline_bytes,
+                "prospective managed genesis baseline bound",
+            )?;
+            let snapshot = crdt_snapshot_for_page(&page, CrdtPageId::new(), budget)?;
+            drop(page);
+            drop(page_reservation);
+            prospective_slots.grow(
+                conservative_vec_entry_bytes::<(
+                    RetainedContentReservation,
+                    PreparedCrdtPageSnapshot,
+                )>()?,
+                "managed enable preflight vector capacity",
+            )?;
+            prospective.push((prospective_baseline, snapshot));
+        }
+        let genesis_metadata =
+            budget.reserve(genesis_metadata_bound, "prospective managed genesis metadata")?;
+        let migration_graph_ids_bound = sync_id_hash_set_build_upper_bound(
+            migration_blocks,
+            migration_owned_ids_bound,
+        )?;
+        let migration_execution = budget.reserve(
+            checked_add_bytes(
+                migration_prepared_bound,
+                checked_add_bytes(
+                    checked_add_bytes(
+                        migration_graph_ids_bound,
+                        migration_projection_scan_bound,
+                    )?,
+                    migration_writer_phase_bound,
+                )?,
+            )?,
+            "prospective managed migration retained/writer bound",
+        )?;
+        drop(migration_execution);
+        drop(genesis_metadata);
+        drop(prospective);
+        drop(prospective_slots);
+        Ok(())
     }
 
     pub fn managed_sync_status(&self) -> Option<CrdtStatus> {
@@ -2105,6 +3818,8 @@ impl Graph {
     /// already carry a persisted UUID; accepting an older pre-migration backup
     /// would make a crash choose fresh identities nondeterministically.
     pub fn commit_managed_restore(&self, files: &[(String, String)]) -> io::Result<bool> {
+        let write = self.admit_managed_text_writer()?;
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
         let mut guard = self.managed_sync.lock().unwrap();
         let Some(sync) = guard.as_mut() else {
             return Ok(false);
@@ -2117,8 +3832,14 @@ impl Graph {
             .map(|page| (page.path, page.id))
             .collect();
 
-        let mut snapshots = Vec::with_capacity(files.len());
+        let mut snapshots = PreparedCrdtPageBatch::with_capacity(
+            files.len(),
+            &budget,
+            "managed restore snapshot batch capacities",
+        )?;
         let mut graph_ids = std::collections::HashSet::new();
+        let mut graph_ids_reservation =
+            budget.reserve(0, "managed restore graph sync id set")?;
         let mut seen_paths = std::collections::HashSet::new();
         for (rel, content) in files {
             if !seen_paths.insert(rel.clone()) {
@@ -2127,7 +3848,7 @@ impl Graph {
                     format!("backup contains duplicate graph path {rel}"),
                 ));
             }
-            let path = self.resolve_rel(rel).ok_or_else(|| {
+            let path = self.resolve_managed_rel(&write, rel)?.ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("backup contains invalid graph path {rel}"),
@@ -2139,9 +3860,16 @@ impl Graph {
                     format!("backup path is not a page or journal: {rel}"),
                 )
             })?;
+            let _page_construction = budget.reserve(
+                managed_page_build_upper_bound(content)?,
+                "managed restore page construction bound",
+            )?;
             let mut doc = parse_doc(&path, content);
-            assign_doc_runtime_ids(&mut doc.roots, rel);
-            let mut page = page_dto(&entry, &doc);
+            assign_runtime_ids_checked(
+                &mut doc.roots,
+                runtime_owner_namespace("file-block-runtime-v1", rel),
+            )?;
+            let mut page = page_dto_checked(&entry, &doc)?;
             page.path = rel.clone();
             if page.read_only {
                 return Err(io::Error::new(
@@ -2149,7 +3877,7 @@ impl Graph {
                     format!("backup contains read-only Org content at {rel}"),
                 ));
             }
-            if count_missing_sync_ids(&page.blocks, page.format) != 0 {
+            if count_missing_sync_ids(&page.blocks, page.format, &budget)? != 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
@@ -2157,40 +3885,73 @@ impl Graph {
                     ),
                 ));
             }
-            let page = page_with_persisted_sync_ids(&page)?;
-            validate_graph_sync_ids(&page.blocks, page.format, &mut graph_ids)?;
+            validate_graph_sync_ids(
+                &page.blocks,
+                page.format,
+                &mut graph_ids,
+                &mut graph_ids_reservation,
+                &budget,
+            )?;
             let page_id = current_by_path
                 .get(rel)
                 .copied()
                 .unwrap_or_else(CrdtPageId::new);
-            snapshots.push(crdt_snapshot_for_page(&page, page_id)?);
+            snapshots.push(crdt_snapshot_for_page(&page, page_id, &budget)?);
         }
         let affected_paths: std::collections::BTreeSet<String> = current_pages
             .iter()
             .map(|page| page.path.clone())
             .chain(files.iter().map(|(path, _)| path.clone()))
             .collect();
+        let _precondition_vectors = budget.reserve(
+            checked_mul_bytes(
+                u64::try_from(affected_paths.len()).map_err(|_| allocation_overflow())?,
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<ProjectionPrecondition>()?,
+                    conservative_vec_entry_bytes::<RetainedContentReservation>()?,
+                )?,
+            )?,
+            "managed restore projection precondition vectors",
+        )?;
         let mut projection_preconditions = Vec::with_capacity(affected_paths.len());
+        let mut projection_precondition_reservations =
+            Vec::with_capacity(affected_paths.len());
         for rel in affected_paths {
-            let path = self.resolve_rel(&rel).ok_or_else(|| {
+            let path = self.resolve_managed_rel(&write, &rel)?.ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("managed-sync restore contains invalid path {rel}"),
                 )
             })?;
-            let expected_content = match fs::read_to_string(path) {
-                Ok(content) => Some(content),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error),
+            let expected_content = self.managed_read_optional_text_with_budget(
+                &write,
+                &path,
+                &budget,
+                "managed restore projection precondition content",
+            )?;
+            let expected_content = match expected_content {
+                Some(content) => {
+                    projection_precondition_reservations.push(content.reservation);
+                    Some(content.value)
+                }
+                None => None,
             };
             projection_preconditions.push(ProjectionPrecondition {
                 path: rel,
                 expected_content,
             });
         }
-        sync.replace_pages_with_projection_preconditions(snapshots, projection_preconditions)
-            .map(|report| report.changed)
-            .map_err(crdt_io_error)
+        let pages =
+            snapshots.admit_operation(&budget, "managed restore CRDT/store operation")?;
+        PreparedCrdtReplacement::new(
+            pages,
+            projection_preconditions,
+            projection_precondition_reservations,
+            &current_pages,
+            &budget,
+        )?
+        .replace(sync)
+        .map(|report| report.changed)
     }
 
     /// Import newly delivered immutable chunks, project their affected pages,
@@ -2252,6 +4013,7 @@ impl Graph {
         page_id: CrdtPageId,
         affected_paths: &[String],
     ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
+        let write = self.admit_managed_text_writer()?;
         let snapshot = {
             let guard = self.managed_sync.lock().unwrap();
             guard
@@ -2261,14 +4023,14 @@ impl Graph {
                 .map_err(crdt_io_error)?
         };
         let Some(snapshot) = snapshot else {
-            return self.project_managed_deletion(page_id, affected_paths);
+            return self.project_managed_deletion(&write, page_id, affected_paths);
         };
-        let path = self.resolve_rel(&snapshot.path).ok_or_else(|| {
+        let path = self.resolve_managed_rel(&write, &snapshot.path)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "invalid synced page path")
         })?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
-        let before = fs::read_to_string(&path).ok();
+        let before = self.managed_read_optional_text(&write, &path)?;
         if let Some(content) = before.as_deref() {
             let authorized = {
                 let guard = self.managed_sync.lock().unwrap();
@@ -2279,7 +4041,7 @@ impl Graph {
                     .map_err(crdt_io_error)?
             };
             if !authorized
-                && self.reconcile_managed_external_locked(&path, content, Some(page_id))?
+                && self.reconcile_managed_external_locked(&write, &path, content, Some(page_id))?
             {
                 let mut changes = self
                     .entry_for_path(&path)
@@ -2293,7 +4055,11 @@ impl Graph {
                     .unwrap_or_default();
                 drop(_guard);
                 changes
-                    .extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+                    .extend(self.cleanup_superseded_managed_paths(
+                        &write,
+                        &snapshot.path,
+                        affected_paths,
+                    )?);
                 return Ok(changes);
             }
         }
@@ -2310,14 +4076,18 @@ impl Graph {
                 .ok_or_else(|| io::Error::other("synced page vanished during projection"))?
         };
         let page = page_dto_from_crdt(&snapshot)?;
-        let cache = self.path_is_cacheable(&path);
-        self.write_page(&page, &path, before.as_deref(), true, cache)?;
-        self.record_managed_projection(&path);
-        let after = fs::read_to_string(&path).ok();
+        let cache = self.managed_path_is_cacheable(&write, &path)?;
+        self.write_page(&write, &page, &path, before.as_deref(), true, cache)?;
+        self.record_managed_projection(&write, &path);
+        let after = self.managed_read_optional_text(&write, &path)?;
         let mut changes = Vec::new();
         if before == after {
             drop(_guard);
-            changes.extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+            changes.extend(self.cleanup_superseded_managed_paths(
+                &write,
+                &snapshot.path,
+                affected_paths,
+            )?);
             return Ok(changes);
         }
         if let Some(entry) = self.entry_for_path(&path) {
@@ -2328,12 +4098,17 @@ impl Graph {
             });
         }
         drop(_guard);
-        changes.extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+        changes.extend(self.cleanup_superseded_managed_paths(
+            &write,
+            &snapshot.path,
+            affected_paths,
+        )?);
         Ok(changes)
     }
 
     fn cleanup_superseded_managed_paths(
         &self,
+        write: &ManagedTextWritePermit,
         current_path: &str,
         affected_paths: &[String],
     ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
@@ -2342,12 +4117,12 @@ impl Graph {
             if rel == current_path {
                 continue;
             }
-            let Some(path) = self.resolve_rel(rel) else {
+            let Some(path) = self.resolve_managed_rel(write, rel)? else {
                 continue;
             };
             let lock = self.page_lock(&path);
             let _guard = lock.lock().unwrap();
-            let Ok(content) = fs::read_to_string(&path) else {
+            let Some(content) = self.managed_read_optional_text(write, &path)? else {
                 continue;
             };
             let sync_guard = self.managed_sync.lock().unwrap();
@@ -2388,7 +4163,7 @@ impl Graph {
                 .and_then(|value| value.to_str())
                 .unwrap_or("page");
             let dest = trash.join(format!("{}__{name}", trash_stamp()));
-            move_to_trash(&path, &dest, &trash)?;
+            self.managed_move_to_trash(write, &path, &dest, &trash)?;
             drop(sync_guard);
             self.cache_remove(&entry.name, entry.kind);
             changes.push(ManagedSyncProjectionChange {
@@ -2402,17 +4177,18 @@ impl Graph {
 
     fn project_managed_deletion(
         &self,
+        write: &ManagedTextWritePermit,
         page_id: CrdtPageId,
         affected_paths: &[String],
     ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
         let mut changes = Vec::new();
         for rel in affected_paths {
-            let Some(path) = self.resolve_rel(rel) else {
+            let Some(path) = self.resolve_managed_rel(write, rel)? else {
                 continue;
             };
             let lock = self.page_lock(&path);
             let _guard = lock.lock().unwrap();
-            let Ok(content) = fs::read_to_string(&path) else {
+            let Some(content) = self.managed_read_optional_text(write, &path)? else {
                 continue;
             };
             let sync_guard = self.managed_sync.lock().unwrap();
@@ -2437,7 +4213,7 @@ impl Graph {
                     .map_err(crdt_io_error)?;
             if !removable {
                 drop(sync_guard);
-                if self.reconcile_managed_external_locked(&path, &content, Some(page_id))? {
+                if self.reconcile_managed_external_locked(write, &path, &content, Some(page_id))? {
                     if let Some(entry) = self.entry_for_path(&path) {
                         changes.push(ManagedSyncProjectionChange {
                             entry,
@@ -2463,7 +4239,7 @@ impl Graph {
                 .and_then(|value| value.to_str())
                 .unwrap_or("page");
             let dest = trash.join(format!("{}__{name}", trash_stamp()));
-            move_to_trash(&path, &dest, &trash)?;
+            self.managed_move_to_trash(write, &path, &dest, &trash)?;
             drop(sync_guard);
             self.cache_remove(&entry.name, entry.kind);
             changes.push(ManagedSyncProjectionChange {
@@ -2476,15 +4252,16 @@ impl Graph {
     }
 
     pub fn cleanup_known_projection_conflicts(&self) -> io::Result<bool> {
+        let write = self.admit_managed_text_writer()?;
         let mut changed = false;
-        for conflict in self.list_sync_conflicts() {
+        for conflict in self.managed_sync_conflicts(&write)? {
             let Some(base_path) = conflict.base_path.as_deref() else {
                 continue;
             };
-            let Some(conflict_path) = self.resolve_rel(&conflict.path) else {
+            let Some(conflict_path) = self.resolve_managed_rel(&write, &conflict.path)? else {
                 continue;
             };
-            let content = fs::read_to_string(&conflict_path)?;
+            let content = self.managed_read_to_string(&write, &conflict_path)?;
             let known = {
                 let guard = self.managed_sync.lock().unwrap();
                 let Some(sync) = guard.as_ref() else {
@@ -2494,11 +4271,86 @@ impl Graph {
                     .map_err(crdt_io_error)?
             };
             if known {
-                self.trash_sync_conflict(&conflict.path)?;
+                self.trash_sync_conflict_with_permit(&write, &conflict.path)?;
                 changed = true;
             }
         }
         Ok(changed)
+    }
+
+    fn managed_sync_conflicts(
+        &self,
+        write: &ManagedTextWritePermit,
+    ) -> io::Result<Vec<SyncConflict>> {
+        let mut out = Vec::new();
+        for entry in self.managed_text_entries(write, true)? {
+            let path = entry.path;
+            let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Some(base_stem) = sync_conflict_base(stem) else {
+                continue;
+            };
+            let Some(parent) = path.parent() else {
+                continue;
+            };
+            let base_file = parent.join(format!("{base_stem}.{extension}"));
+            let base_path = self
+                .managed_exists(write, &base_file)?
+                .then(|| self.rel_path(&base_file));
+            let base_name = match entry.kind {
+                PageKind::Journal => self
+                    .journal_format
+                    .parse(base_stem)
+                    .map(|date| self.journal_format.title(date))
+                    .unwrap_or_else(|| base_stem.to_owned()),
+                PageKind::Page => decode_page_name(base_stem, self.config.file_name_format),
+            };
+            let tag = stem[base_stem.len()..]
+                .trim_matches(|character: char| {
+                    character == '.'
+                        || character == ' '
+                        || character == '('
+                        || character == ')'
+                })
+                .to_owned();
+            let preview = self
+                .managed_read_optional_text(write, &path)?
+                .and_then(|content| {
+                    content
+                        .lines()
+                        .map(|line| {
+                            line.trim_start_matches(|character| {
+                                character == '*'
+                                    || character == '-'
+                                    || character == ' '
+                                    || character == '\t'
+                            })
+                            .trim()
+                            .to_owned()
+                        })
+                        .find(|line| !line.is_empty())
+                })
+                .map(|line| line.chars().take(80).collect())
+                .unwrap_or_default();
+            out.push(SyncConflict {
+                path: self.rel_path(&path),
+                base_name,
+                base_path,
+                kind: entry.kind,
+                tag,
+                preview,
+            });
+        }
+        out.sort_by(|left, right| {
+            left.base_name
+                .cmp(&right.base_name)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        Ok(out)
     }
 
     /// Graph-root-relative, forward-slashed path for an absolute file path inside
@@ -2518,19 +4370,42 @@ impl Graph {
     /// Anything else returns `None`, so a path-addressed read/save can never
     /// escape the graph.
     pub fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
+        let abs = self.resolve_rel_lexical(rel)?;
+        if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
+            return None;
+        }
+        Some(abs)
+    }
+
+    fn resolve_managed_rel(
+        &self,
+        permit: &ManagedTextWritePermit,
+        rel: &str,
+    ) -> io::Result<Option<PathBuf>> {
+        self.managed_permit_root(permit)?;
+        Ok(self.resolve_rel_lexical(rel))
+    }
+
+    fn resolve_rel_lexical(&self, rel: &str) -> Option<PathBuf> {
         let rel = rel.trim();
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
             return None;
         }
-        let mut parts = rel.split('/');
-        let dir = parts.next()?;
-        let base = if dir == self.config.journals_dir {
-            self.journals_path()
-        } else if dir == self.config.pages_dir {
-            self.pages_path()
-        } else {
-            return None;
-        };
+        let parts = rel.split('/').collect::<Vec<_>>();
+        let configured_root = [&self.config.journals_dir, &self.config.pages_dir]
+            .into_iter()
+            .filter_map(|configured| {
+                let components = configured.split('/').collect::<Vec<_>>();
+                (!components.is_empty()
+                    && components
+                        .iter()
+                        .all(|component| projection_component_is_portable(component))
+                    && parts.len() > components.len()
+                    && parts.starts_with(&components))
+                .then_some((configured, components.len()))
+            })
+            .max_by_key(|(_, len)| *len)?;
+        let base = self.root.join(configured_root.0);
         // The remaining segments are the file's path UNDER that dir. Nested
         // sub-directories are allowed (#21) but the can't-escape-the-graph
         // invariant is kept lexically: every segment must be a plain name — no
@@ -2539,7 +4414,7 @@ impl Graph {
         // provably stays within `base`; there must be at least one segment (a bare
         // `pages` is a dir, not a file).
         let mut tail = PathBuf::new();
-        for seg in parts {
+        for &seg in &parts[configured_root.1..] {
             if seg.is_empty() || seg == "." || seg == ".." {
                 return None;
             }
@@ -2549,9 +4424,6 @@ impl Graph {
             return None;
         }
         let abs = base.join(tail);
-        if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
-            return None;
-        }
         match abs.extension().and_then(|e| e.to_str()) {
             Some("md") | Some("org") => Some(abs),
             _ => None,
@@ -2668,8 +4540,13 @@ impl Graph {
         Ok(())
     }
 
-    fn cache_projection_page_text(&self, path: &Path, content: &str) -> io::Result<()> {
-        if self.path_is_cacheable(path) {
+    fn cache_projection_page_text(
+        &self,
+        write: &ManagedTextWritePermit,
+        path: &Path,
+        content: &str,
+    ) -> io::Result<()> {
+        if self.managed_path_is_cacheable(write, path)? {
             let rev = content_rev(content);
             {
                 let _cache = self.cache.read().unwrap();
@@ -2838,26 +4715,43 @@ impl Graph {
                 }
             }
         }
-        fn visit(b: &DocBlock, seen: &mut std::collections::HashMap<String, String>) {
-            // Read the memoized projection's original-case page refs instead of a fresh
-            // `block_refs` parse — this runs over the WHOLE graph on every `[[`/`#`/Ctrl-K
-            // keystroke after a save (each bumps cache_gen), so re-parsing every block was
-            // a ~0.5s keystroke stall on a large graph (audit F1).
-            for name in &b.projection().refs_page {
-                add(seen, name.clone());
-            }
-            add_property_refs(seen, &b.raw); // block-level tags::/alias::
-            for c in &b.children {
-                visit(c, seen);
-            }
-        }
         let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (_, doc) in pages.iter() {
             if let Some(pre) = &doc.pre_block {
                 add_property_refs(&mut seen, pre); // page-level tags::/alias::
             }
-            for b in &doc.roots {
-                visit(b, &mut seen);
+            let mut frames: [Option<std::slice::Iter<'_, DocBlock>>; MAX_MANAGED_BLOCK_DEPTH] =
+                std::array::from_fn(|_| None);
+            let mut len = usize::from(!doc.roots.is_empty());
+            if len != 0 {
+                frames[0] = Some(doc.roots.iter());
+            }
+            while len != 0 {
+                let mut frame = frames[len - 1]
+                    .take()
+                    .expect("active cached-reference frame");
+                let Some(block) = frame.next() else {
+                    len -= 1;
+                    continue;
+                };
+                frames[len - 1] = Some(frame);
+                // Read the memoized projection's original-case page refs instead of a
+                // fresh `block_refs` parse. This whole-graph path runs on reference
+                // autocomplete after each cache generation change.
+                for name in &block.projection().refs_page {
+                    add(&mut seen, name.clone());
+                }
+                add_property_refs(&mut seen, &block.raw);
+                if !block.children.is_empty() {
+                    if len == MAX_MANAGED_BLOCK_DEPTH {
+                        // Cache documents normally pass the checked parser/admission
+                        // boundary. Contain any forged or stale over-depth value:
+                        // publish neither a partial result nor a memoized generation.
+                        return Vec::new();
+                    }
+                    frames[len] = Some(block.children.iter());
+                    len += 1;
+                }
             }
         }
         drop(guard);
@@ -2937,7 +4831,10 @@ impl Graph {
         };
         for e in rd.flatten() {
             let p = e.path();
-            if self.journal_filename_migration_target(&p).is_some() {
+            if self
+                .journal_filename_migration_target(&p)
+                .is_some_and(|target| !target.exists())
+            {
                 return true;
             }
         }
@@ -2963,9 +4860,6 @@ impl Graph {
             return None; // already in the graph's filename format
         }
         let target = self.journals_path().join(format!("{want}.{ext}"));
-        if target.exists() {
-            return None; // don't clobber an existing stem file
-        }
         Some(target)
     }
 
@@ -2974,20 +4868,25 @@ impl Graph {
     }
 
     pub fn migrate_journal_filenames_checked(&self) -> io::Result<usize> {
-        let dir = self.journals_path();
-        let rd = match fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
-            Err(error) => return Err(error),
-        };
+        let write = self.admit_managed_text_writer()?;
+        let content_budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        let entries = self.managed_text_entries(&write, false)?;
         let mut n = 0;
-        for e in rd {
-            let e = e?;
-            let p = e.path();
+        for entry in entries
+            .into_iter()
+            .filter(|entry| entry.kind == PageKind::Journal)
+        {
+            let p = entry.path;
             if let Some(target) = self.journal_filename_migration_target(&p) {
+                if self.managed_exists(&write, &target)? {
+                    continue;
+                }
                 let managed = self.managed_sync.lock().unwrap().is_some();
                 if !managed {
-                    if move_file_noreplace(&p, &target).is_ok() {
+                    if self
+                        .managed_move_noreplace(&write, &p, &target)
+                        .is_ok()
+                    {
                         n += 1;
                     }
                     continue;
@@ -2997,15 +4896,21 @@ impl Graph {
                 lock_paths.sort();
                 let locks: Vec<_> = lock_paths.iter().map(|path| self.page_lock(path)).collect();
                 let guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
-                if target.exists()
+                if self.managed_exists(&write, &target)?
                     || self.journal_filename_migration_target(&p).as_ref() != Some(&target)
+                    || !self.managed_exists(&write, &p)?
                 {
                     continue;
                 }
-                let content = fs::read_to_string(&p)?;
+                let content = self.managed_read_to_string_with_budget(
+                    &write,
+                    &p,
+                    &content_budget,
+                    "managed journal migration source content",
+                )?;
                 let source_rel = self.rel_path(&p);
                 let target_rel = self.rel_path(&target);
-                let (page_id, report) = {
+                let (prepared, sync_guard, page_id) = {
                     let mut sync_guard = self.managed_sync.lock().unwrap();
                     let sync = sync_guard
                         .as_mut()
@@ -3020,23 +4925,62 @@ impl Graph {
                                     "managed-sync operation truth has no journal at {source_rel}"
                                 ),
                             )
-                        })?;
+                    })?;
                     let entry = self.entry_for_path(&target).ok_or_else(bad_path)?;
+                    let page_construction = content_budget.reserve(
+                        managed_page_build_upper_bound(&content)?,
+                        "managed journal migration page construction bound",
+                    )?;
                     let mut doc = parse_doc(&target, &content);
-                    assign_doc_runtime_ids(&mut doc.roots, &target_rel);
-                    let mut page = page_dto(&entry, &doc);
+                    assign_runtime_ids_checked(
+                        &mut doc.roots,
+                        runtime_owner_namespace("file-block-runtime-v1", &target_rel),
+                    )?;
+                    let mut page = page_dto_checked(&entry, &doc)?;
                     page.path = target_rel;
                     page.format = Format::from_path(&target);
-                    page = page_with_persisted_sync_ids(&page)?;
+                    let mut page_reservation = content_budget.reserve(
+                        page_dto_retained_bytes(&page)?,
+                        "managed journal migration page",
+                    )?;
+                    persist_page_sync_ids_with_budget(
+                        &mut page,
+                        &mut page_reservation,
+                        &content_budget,
+                    )?;
                     let page_id = existing.id;
-                    let report = sync
-                        .commit_page(crdt_snapshot_for_page(&page, page_id)?)
-                        .map_err(crdt_io_error)?;
-                    (page_id, report)
+                    let cache = self.managed_path_is_cacheable(&write, &target)?;
+                    let publication_reservation = content_budget.reserve(
+                        checked_add_bytes(
+                            crdt_to_page_dto_upper_bound(&page)?,
+                            self.managed_save_writer_upper_bound(
+                                &page,
+                                &target,
+                                None,
+                                cache,
+                            )?,
+                        )?,
+                        "managed journal migration projection publication bound",
+                    )?;
+                    let snapshot =
+                        crdt_snapshot_for_page(&page, page_id, &content_budget)?;
+                    let prepared = PreparedJournalMigrationPublication {
+                        budget: content_budget.clone(),
+                        page: BudgetedPageDto {
+                            page,
+                            _reservation: page_reservation,
+                        },
+                        snapshot,
+                        _page_construction: page_construction,
+                        _publication_reservation: publication_reservation,
+                    };
+                    (prepared, sync_guard, page_id)
                 };
                 drop(guards);
-                self.project_managed_page(page_id, &report.affected_paths)?;
-                if target.exists() && !p.exists() {
+                prepared.commit_and_project(self, sync_guard, page_id)?;
+                if self.managed_exists(&write, &target)?
+                    && !self.managed_exists(&write, &p)?
+                {
                     n += 1;
                 }
             }
@@ -3250,8 +5194,13 @@ impl Graph {
         conflict_rev: &str,
         pre_choice: &str,
     ) -> io::Result<()> {
-        let win = self.resolve_rel(winner_rel).ok_or_else(bad_path)?;
-        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
+        let write = self.admit_managed_text_writer()?;
+        let win = self
+            .resolve_managed_rel(&write, winner_rel)?
+            .ok_or_else(bad_path)?;
+        let conf = self
+            .resolve_managed_rel(&write, conflict_rel)?
+            .ok_or_else(bad_path)?;
         if win == conf {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -3262,8 +5211,8 @@ impl Graph {
         // Lock the winner so a concurrent editor/watcher write can't race the merge.
         let lock = self.page_lock(&win);
         let _guard = lock.lock().unwrap();
-        let win_content = fs::read_to_string(&win)?;
-        let conf_content = fs::read_to_string(&conf)?;
+        let win_content = self.managed_read_to_string(&write, &win)?;
+        let conf_content = self.managed_read_to_string(&write, &conf)?;
         // base_rev guard — the winner must still be what the UI diffed against.
         if content_rev(&win_content) != base_rev {
             return Err(io::Error::new(
@@ -3304,25 +5253,32 @@ impl Graph {
             roots: merged_roots,
         };
         assign_doc_runtime_ids(&mut merged.roots, &win_entry.rel_path);
-        let dto = page_dto(&win_entry, &merged);
-        let win_cacheable = self.path_is_cacheable(&win);
+        let dto = page_dto_checked(&win_entry, &merged)?;
+        let win_cacheable = self.managed_path_is_cacheable(&write, &win)?;
         // Stage-before-commit (L5): move the conflict copy out first, then write the
         // merged winner; roll the move back if the write fails.
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
+        self.managed_create_dir_all(&write, &trash)?;
         let conf_name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{conf_name}", trash_stamp()));
-        move_file_noreplace(&conf, &staged)?;
-        if fs::read_to_string(&staged)? != conf_content {
-            let _ = move_file_noreplace(&staged, &conf);
+        self.managed_move_noreplace(&write, &conf, &staged)?;
+        if self.managed_read_to_string(&write, &staged)? != conf_content {
+            let _ = self.managed_move_noreplace(&write, &staged, &conf);
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "conflict copy changed during merge",
             ));
         }
-        if let Err(e) = self.write_page(&dto, &win, Some(&win_content), true, win_cacheable) {
-            let _ = move_file_noreplace(&staged, &conf); // rollback: restore the conflict copy
+        if let Err(e) = self.write_page(
+            &write,
+            &dto,
+            &win,
+            Some(&win_content),
+            true,
+            win_cacheable,
+        ) {
+            let _ = managed_write_during_rollback_hook();
+            let _ = self.managed_move_noreplace(&write, &staged, &conf);
             return Err(e);
         }
         Ok(())
@@ -3333,21 +5289,31 @@ impl Graph {
     /// that the target actually IS a conflict copy so this can never trash a real
     /// page. Recoverable in `logseq/.tine-trash` (ADR 0007).
     pub fn trash_sync_conflict(&self, conflict_rel: &str) -> io::Result<()> {
-        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
+        let write = self.admit_managed_text_writer()?;
+        self.trash_sync_conflict_with_permit(&write, conflict_rel)
+    }
+
+    fn trash_sync_conflict_with_permit(
+        &self,
+        write: &ManagedTextWritePermit,
+        conflict_rel: &str,
+    ) -> io::Result<()> {
+        let conf = self
+            .resolve_managed_rel(write, conflict_rel)?
+            .ok_or_else(bad_path)?;
         if !path_is_sync_conflict(&conf) {
             return Err(bad_path()); // refuse anything that isn't a conflict copy
         }
-        if !conf.is_file() {
+        if !self.managed_exists(write, &conf)? {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "no such conflict file",
             ));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
         let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        move_to_trash(&conf, &dest, &trash)
+        self.managed_move_to_trash(write, &conf, &dest, &trash)
     }
 
     /// Raw contents of ONE journal file (by exact filename) — lets the UI show a
@@ -3367,6 +5333,7 @@ impl Graph {
     /// the affordance for reconciling a duplicate day. Refuses a path separator so
     /// it can't reach outside `journals/`.
     pub fn trash_journal_file(&self, name: &str) -> io::Result<()> {
+        let write = self.admit_managed_text_writer()?;
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -3374,31 +5341,16 @@ impl Graph {
             ));
         }
         let src = self.journals_path().join(name);
-        if !src.is_file() {
+        if !self.managed_exists(&write, &src)? {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "no such journal file",
             ));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Journal);
-        self.ensure_write_target(&trash)?;
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        move_to_trash(&src, &dest, &trash)?;
+        self.managed_move_to_trash(&write, &src, &dest, &trash)?;
         Ok(())
-    }
-
-    /// Whether a file participates in the `(kind,name)` page cache. False only for a
-    /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
-    /// whose cache slot belongs to the canonical file.
-    fn path_is_cacheable(&self, path: &Path) -> bool {
-        if let Some(entry) = self.entry_for_path(path) {
-            if entry.kind == PageKind::Journal {
-                if let Some(date) = entry.date_key.map(crate::date::JournalDate::from_ordinal) {
-                    return !self.is_shadow_journal(path, date);
-                }
-            }
-        }
-        true
     }
 
     /// Reconcile a duplicate-day pair: append every block of `src_rel` to the end of
@@ -3411,8 +5363,13 @@ impl Graph {
     /// in the pre-block is dropped. The src is trashed ONLY after `dst` is durably
     /// written.
     pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
-        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
-        let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
+        let write = self.admit_managed_text_writer()?;
+        let src = self
+            .resolve_managed_rel(&write, src_rel)?
+            .ok_or_else(bad_path)?;
+        let dst = self
+            .resolve_managed_rel(&write, dst_rel)?
+            .ok_or_else(bad_path)?;
         if src == dst {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -3431,8 +5388,8 @@ impl Graph {
         // current for write_page's recheck).
         let lock = self.page_lock(&dst);
         let _guard = lock.lock().unwrap();
-        let src_content = fs::read_to_string(&src)?;
-        let dst_content = fs::read_to_string(&dst)?;
+        let src_content = self.managed_read_to_string(&write, &src)?;
+        let dst_content = self.managed_read_to_string(&write, &dst)?;
         if Format::from_path(&dst) == Format::Org
             && (!crate::org::org_editable(&dst_content) || !crate::org::org_editable(&src_content))
         {
@@ -3478,8 +5435,8 @@ impl Graph {
         }
         merged.roots.extend(src_doc.roots);
         assign_doc_runtime_ids(&mut merged.roots, &dst_entry.rel_path);
-        let dto = page_dto(&dst_entry, &merged);
-        let dst_cacheable = self.path_is_cacheable(&dst);
+        let dto = page_dto_checked(&dst_entry, &merged)?;
+        let dst_cacheable = self.managed_path_is_cacheable(&write, &dst)?;
         // L5: stage `src` into the trash BEFORE committing the merged `dst`. The old
         // order (write dst, then trash src) duplicated blocks on a retry when
         // trashing failed: dst already held src's blocks while src survived on disk,
@@ -3494,13 +5451,12 @@ impl Graph {
                 _ => TrashEntryKind::Page,
             },
         );
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
+        self.managed_create_dir_all(&write, &trash)?;
         let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{src_name}", trash_stamp()));
-        move_file_noreplace(&src, &staged)?;
-        if fs::read_to_string(&staged)? != src_content {
-            let _ = move_file_noreplace(&staged, &src);
+        self.managed_move_noreplace(&write, &src, &staged)?;
+        if self.managed_read_to_string(&write, &staged)? != src_content {
+            let _ = self.managed_move_noreplace(&write, &staged, &src);
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "source changed during merge",
@@ -3509,8 +5465,16 @@ impl Graph {
         // The page lock excludes other Tine writers, but not Logseq/Syncthing.
         // Recheck the baseline at commit so an external edit arriving after our
         // read is not silently overwritten.
-        if let Err(e) = self.write_page(&dto, &dst, Some(&dst_content), true, dst_cacheable) {
-            let _ = move_file_noreplace(&staged, &src); // rollback: restore the source file
+        if let Err(e) = self.write_page(
+            &write,
+            &dto,
+            &dst,
+            Some(&dst_content),
+            true,
+            dst_cacheable,
+        ) {
+            let _ = managed_write_during_rollback_hook();
+            let _ = self.managed_move_noreplace(&write, &staged, &src);
             return Err(e);
         }
         Ok(())
@@ -3523,7 +5487,10 @@ impl Graph {
     /// empty. Inbound references are NOT rewritten (a stray rarely has any); the
     /// file's own content is unchanged.
     pub fn rename_file_to_page(&self, src_rel: &str, new_name: &str) -> io::Result<()> {
-        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
+        let write = self.admit_managed_text_writer()?;
+        let src = self
+            .resolve_managed_rel(&write, src_rel)?
+            .ok_or_else(bad_path)?;
         let name = new_name.trim();
         if name.is_empty() {
             return Err(io::Error::new(
@@ -3537,14 +5504,16 @@ impl Graph {
         };
         let enc = encode_page_name(name, self.config.file_name_format);
         let dir = self.pages_path();
-        if dir.join(format!("{enc}.md")).exists() || dir.join(format!("{enc}.org")).exists() {
+        if self.managed_exists(&write, &dir.join(format!("{enc}.md")))?
+            || self.managed_exists(&write, &dir.join(format!("{enc}.org")))?
+        {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "a page with that name already exists",
             ));
         }
-        fs::create_dir_all(&dir)?;
-        move_file_noreplace(&src, &dir.join(format!("{enc}.{ext}")))?;
+        self.managed_create_dir_all(&write, &dir)?;
+        self.managed_move_noreplace(&write, &src, &dir.join(format!("{enc}.{ext}")))?;
         // The page SET changed — drop the list memo so the new page (and the stray's
         // disappearance from journals/) show up immediately, and discard the
         // parsed snapshot so its page/index set is rebuilt coherently on next use.
@@ -3606,7 +5575,11 @@ impl Graph {
     /// Returns `true` when a file was created and `false` when an existing page
     /// won. Existing content is never overwritten.
     pub fn create_markdown_page_if_absent(&self, name: &str, content: &str) -> io::Result<bool> {
-        if self.find_entry(name, PageKind::Page).is_some() {
+        let write = self.admit_managed_text_writer()?;
+        if self
+            .managed_find_entry(&write, name, PageKind::Page)?
+            .is_some()
+        {
             return Ok(false);
         }
         let path = self.pages_path().join(format!(
@@ -3615,12 +5588,15 @@ impl Graph {
         ));
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
-        if self.find_entry(name, PageKind::Page).is_some() || path.exists() {
+        if self
+            .managed_find_entry(&write, name, PageKind::Page)?
+            .is_some()
+            || self.managed_exists(&write, &path)?
+        {
             return Ok(false);
         }
-        self.ensure_write_target(&path)?;
-        fs::create_dir_all(self.pages_path())?;
-        match atomic_write_new(&path, content.as_bytes()) {
+        self.managed_create_dir_all(&write, &self.pages_path())?;
+        match self.managed_atomic_write(&write, &path, content.as_bytes(), true) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => return Err(e),
@@ -3630,12 +5606,13 @@ impl Graph {
             "{}.org",
             encode_page_name(name, self.config.file_name_format)
         ));
-        if alt.exists() {
+        if self.managed_exists(&write, &alt)? {
             // An Org twin appeared during publication. Withdraw only the exact
             // guide inode we just created. Stage the currently named inode first
             // and verify it in recovery, so an external replacement that wins at
             // the syscall boundary is restored or retained rather than unlinked.
             let _ = self.withdraw_file_to_conflict_if_exact(
+                &write,
                 &path,
                 content.as_bytes(),
                 "guide-twin-withdrawal",
@@ -3660,34 +5637,6 @@ impl Graph {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
             Err(error) => Err(error),
-        }
-    }
-
-    /// Whether BOTH a `.md` and a `.org` file exist for the same logical page —
-    /// an ambiguous identity, since Tine keys pages by `(kind, name)`. Writes
-    /// (save/rename/delete) are refused on such a page so a save can't serve one
-    /// twin's content with the other's baseline and clobber the wrong file. This
-    /// is an interim guard; the full fix is path/format in page identity (#21).
-    /// `.org` is probed first so a markdown-only graph short-circuits after one
-    /// stat. A journal whose name doesn't parse to a date stem isn't guarded.
-    fn has_twin(&self, name: &str, kind: PageKind) -> bool {
-        let (dir, stem) = match kind {
-            PageKind::Page => (
-                self.pages_path(),
-                Some(encode_page_name(name, self.config.file_name_format)),
-            ),
-            PageKind::Journal => (
-                self.journals_path(),
-                self.journal_format
-                    .parse(name)
-                    .map(|d| self.journal_format.file_stem(d)),
-            ),
-        };
-        match stem {
-            Some(s) => {
-                dir.join(format!("{s}.org")).exists() && dir.join(format!("{s}.md")).exists()
-            }
-            None => false,
         }
     }
 
@@ -4100,25 +6049,28 @@ impl Graph {
     /// `{{embed ((uuid))}}`); multiple refs from one block count once (OG semantics).
     /// O(graph) to build initially or after a reference-bearing edit, then O(1)
     /// reuse across ordinary edits.
-    pub fn block_ref_counts(&self) -> Arc<std::collections::HashMap<String, usize>> {
+    pub fn block_ref_counts(
+        &self,
+    ) -> io::Result<Arc<std::collections::HashMap<String, usize>>> {
         use std::sync::atomic::Ordering;
         loop {
             let gen = self.cache_gen.load(Ordering::Acquire);
             if let Some((idx_gen, map)) = self.block_ref_count_cache.read().unwrap().as_ref() {
                 if *idx_gen == gen {
-                    return Arc::clone(map);
+                    return Ok(Arc::clone(map));
                 }
             }
 
-            let map = self.with_pages(|pages| {
+            let map = self.with_pages(|pages| -> io::Result<_> {
                 let mut counts = std::collections::HashMap::new();
                 for (_entry, doc) in pages {
-                    for (id, count) in document_block_ref_counts(doc) {
-                        *counts.entry(id).or_insert(0) += count;
+                    for (id, count) in document_block_ref_counts(doc)? {
+                        let total = counts.entry(id).or_insert(0_usize);
+                        *total = total.checked_add(count).ok_or_else(allocation_overflow)?;
                     }
                 }
-                counts
-            });
+                Ok(counts)
+            })?;
             // A save can race the scan. Never publish its old snapshot under the
             // new generation; retry against the current cache instead.
             if self.cache_gen.load(Ordering::Acquire) != gen {
@@ -4128,7 +6080,7 @@ impl Graph {
             let mut cache = self.block_ref_count_cache.write().unwrap();
             if self.cache_gen.load(Ordering::Acquire) == gen {
                 *cache = Some((gen, Arc::clone(&arc)));
-                return arc;
+                return Ok(arc);
             }
         }
     }
@@ -4184,7 +6136,9 @@ impl Graph {
         let guard = self.cache.read().unwrap();
         let pages = guard.as_ref()?;
         let i = self.cached_page_index_for_path(pages, &entry.path)?;
-        pages.get(i).map(|(e, d)| page_dto(e, d))
+        pages
+            .get(i)
+            .and_then(|(e, d)| page_dto_checked(e, d).ok())
     }
 
     /// Load a page by entry. Served from the in-memory cache so block uuids are
@@ -4202,7 +6156,7 @@ impl Graph {
         // parse it below.
         let read = fs::read_to_string(&entry.path);
         if let Ok(content) = &read {
-            self.sync_file_content(&entry.path, content, false);
+            self.sync_file_content(None, &entry.path, content, false);
         } else if read
             .as_ref()
             .err()
@@ -4239,7 +6193,7 @@ impl Graph {
         let content = read?;
         let mut doc = parse_doc(&entry.path, &content);
         assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
-        let mut dto = page_dto(entry, &doc);
+        let mut dto = page_dto_checked(entry, &doc)?;
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
         dto.path = self.rel_path(&entry.path);
@@ -4268,7 +6222,7 @@ impl Graph {
         };
         let mut doc = parse_doc(&abs, &content);
         assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
-        let mut dto = page_dto(&entry, &doc);
+        let mut dto = page_dto_checked(&entry, &doc)?;
         dto.read_only = read_only_org(&abs, &content);
         dto.rev = Some(content_rev(&content));
         dto.path = self.rel_path(&abs);
@@ -4362,11 +6316,11 @@ impl Graph {
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
         let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-        let reference_index = ReferenceCandidateIndex::build(generation, &pages);
+        let reference_index = ReferenceCandidateIndex::build(generation, &pages).ok();
         *guard = Some(Arc::new(pages));
         *self.page_index_failures.write().unwrap() = failures;
         *self.cache_index.write().unwrap() = Some(index);
-        *self.reference_candidate_index.write().unwrap() = Some(reference_index);
+        *self.reference_candidate_index.write().unwrap() = reference_index;
         *self.disk_revs.write().unwrap() = revs;
         drop(guard);
     }
@@ -4432,7 +6386,9 @@ impl Graph {
         if cancelled() {
             return false;
         }
-        let _ = self.block_ref_counts();
+        if self.block_ref_counts().is_err() {
+            return false;
+        }
         !cancelled()
     }
 
@@ -4558,13 +6514,19 @@ impl Graph {
                 Some(i) => {
                     let slot = &mut pages[i];
                     alias_touched = new_aliases != crate::query::document_aliases(&slot.1);
-                    block_refs_touched = document_block_ref_counts(&slot.1) != new_block_refs;
+                    block_refs_touched =
+                        match (document_block_ref_counts(&slot.1), &new_block_refs) {
+                            (Ok(previous), Ok(current)) => previous != *current,
+                            _ => true,
+                        };
                     previous_doc = Some(Arc::clone(&slot.1));
                     slot.1 = doc;
                 }
                 None => {
                     is_new_page = true;
-                    block_refs_touched = !new_block_refs.is_empty();
+                    block_refs_touched = new_block_refs
+                        .as_ref()
+                        .map_or(true, |counts| !counts.is_empty());
                     let name_key = page_cache_key(entry.kind, &entry.name);
                     pages.push((entry, doc));
                     if let Some(index) = self.cache_index.write().unwrap().as_mut() {
@@ -4605,12 +6567,15 @@ impl Graph {
             let mut index_guard = self.reference_candidate_index.write().unwrap();
             match index_guard.as_mut() {
                 Some(index) if index.complete && index.generation + 1 == newgen => {
-                    index.insert(&evict_entry, &evict_doc);
-                    index.generation = newgen;
+                    if index.insert(&evict_entry, &evict_doc).is_ok() {
+                        index.generation = newgen;
+                    } else {
+                        *index_guard = None;
+                    }
                 }
                 _ => {
                     if let Some(pages) = guard.as_ref() {
-                        *index_guard = Some(ReferenceCandidateIndex::build(newgen, pages));
+                        *index_guard = ReferenceCandidateIndex::build(newgen, pages).ok();
                     }
                 }
             }
@@ -4841,7 +6806,9 @@ impl Graph {
                 .filter(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
                 .map(|(e, doc)| {
                     alias_touched |= !crate::query::document_aliases(doc).is_empty();
-                    block_refs_touched |= !document_block_ref_counts(doc).is_empty();
+                    block_refs_touched |= document_block_ref_counts(doc)
+                        .as_ref()
+                        .map_or(true, |counts| !counts.is_empty());
                     e.path.clone()
                 })
                 .collect::<Vec<_>>();
@@ -4865,7 +6832,7 @@ impl Graph {
             + 1;
         if let Some(pages) = guard.as_ref() {
             *self.reference_candidate_index.write().unwrap() =
-                Some(ReferenceCandidateIndex::build(newgen, pages));
+                ReferenceCandidateIndex::build(newgen, pages).ok();
         } else {
             *self.reference_candidate_index.write().unwrap() = None;
         }
@@ -4898,7 +6865,9 @@ impl Graph {
             let pages = Arc::make_mut(pages);
             if let Some(i) = self.cached_page_index_for_path(pages, &entry.path) {
                 alias_touched = !crate::query::document_aliases(&pages[i].1).is_empty();
-                block_refs_touched = !document_block_ref_counts(&pages[i].1).is_empty();
+                block_refs_touched = document_block_ref_counts(&pages[i].1)
+                    .as_ref()
+                    .map_or(true, |counts| !counts.is_empty());
                 pages.remove(i);
                 // Drop the rev under the cache lock (same cache → disk_revs order
                 // as cache_upsert) so the two never diverge.
@@ -4915,7 +6884,7 @@ impl Graph {
             + 1;
         if let Some(pages) = guard.as_ref() {
             *self.reference_candidate_index.write().unwrap() =
-                Some(ReferenceCandidateIndex::build(newgen, pages));
+                ReferenceCandidateIndex::build(newgen, pages).ok();
         } else {
             *self.reference_candidate_index.write().unwrap() = None;
         }
@@ -5297,6 +7266,7 @@ impl Graph {
         new: &str,
         expected_path: Option<&str>,
     ) -> io::Result<()> {
+        let write = self.admit_managed_text_writer()?;
         let old = old.trim();
         let new = new.trim();
         if new.is_empty() {
@@ -5305,16 +7275,25 @@ impl Graph {
         if old.is_empty() || crate::refs::same_page(old, new) {
             return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
         }
-        self.validate_page_mutation_target(old, PageKind::Page, expected_path)?;
+        let mut content_budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        let entries = self.managed_text_entries_with_budget(&write, false, &content_budget)?;
+        self.validate_page_mutation_target(
+            &write,
+            &entries,
+            old,
+            PageKind::Page,
+            expected_path,
+        )?;
         // M1: refuse to rename an ambiguous page (both .md and .org on disk) — which
         // twin moves, and which content is authoritative, is undecidable here.
-        if self.has_twin(old, PageKind::Page) || self.has_twin(new, PageKind::Page) {
+        if self.managed_has_twin(&write, old, PageKind::Page)?
+            || self.managed_has_twin(&write, new, PageKind::Page)?
+        {
             return Err(twin_error(old));
         }
         let old_n = crate::refs::normalize(old);
         let ns_prefix = format!("{old_n}/");
         let skip = old.chars().count();
-        let entries = self.list_pages();
 
         // Phase 0a — the rename SET: the page itself plus every file-backed
         // namespace descendant (`old/*`). Each contributes a file move and an
@@ -5322,13 +7301,25 @@ impl Graph {
         // the exact name or the `old/` prefix (never a bare substring), so renaming
         // `work` -> `work1` turns `work/log` into `work1/log`, not `work1/work1log`.
         let mut rename_pairs: Vec<(String, String)> = Vec::new();
+        let mut rename_pairs_charge =
+            RetainedHeapCharge::new(Some(&content_budget), "managed rename pair vector")?;
         let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut moves_charge =
+            RetainedHeapCharge::new(Some(&content_budget), "managed rename move vector")?;
         let mut move_destinations: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
+        let mut move_destinations_charge = RetainedHeapCharge::new(
+            Some(&content_budget),
+            "managed rename destination set",
+        )?;
         let mut move_identities: std::collections::HashSet<String> =
             std::collections::HashSet::new();
+        let mut move_identities_charge = RetainedHeapCharge::new(
+            Some(&content_budget),
+            "managed rename identity set",
+        )?;
         let mut primary_is_file = false;
-        for entry in &entries {
+        for entry in entries.iter() {
             if entry.kind != PageKind::Page {
                 continue; // journals aren't namespaced pages; their refs still get rewritten in 0b
             }
@@ -5337,6 +7328,48 @@ impl Graph {
             if !is_primary && !en.starts_with(&ns_prefix) {
                 continue;
             }
+            let new_name_bound = checked_add_bytes(
+                owned_string_upper_bound(new)?,
+                owned_string_upper_bound(&entry.name)?,
+            )?;
+            let new_path_bound = checked_add_bytes(
+                owned_path_upper_bound(&self.pages_path())?,
+                checked_add_bytes(new_name_bound, 128)?,
+            )?;
+            rename_pairs_charge.grow(
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<(String, String)>()?,
+                    checked_add_bytes(
+                        owned_string_upper_bound(&entry.name)?,
+                        new_name_bound,
+                    )?,
+                )?,
+                "managed rename pair vector",
+            )?;
+            moves_charge.grow(
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<(PathBuf, PathBuf)>()?,
+                    checked_add_bytes(
+                        owned_path_upper_bound(&entry.path)?,
+                        new_path_bound,
+                    )?,
+                )?,
+                "managed rename move vector",
+            )?;
+            move_destinations_charge.grow(
+                checked_add_bytes(
+                    conservative_hash_entry_bytes::<PathBuf, ()>()?,
+                    new_path_bound,
+                )?,
+                "managed rename destination set",
+            )?;
+            move_identities_charge.grow(
+                checked_add_bytes(
+                    conservative_hash_entry_bytes::<String, ()>()?,
+                    new_name_bound,
+                )?,
+                "managed rename identity set",
+            )?;
             let new_name = if is_primary {
                 new.to_string()
             } else {
@@ -5366,13 +7399,15 @@ impl Graph {
                     "target page identity already exists elsewhere in the graph",
                 ));
             }
-            if new_path != entry.path && new_path.exists() {
+            if new_path != entry.path && self.managed_exists(&write, &new_path)? {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "target page exists",
                 ));
             }
-            if other_format_target != entry.path && other_format_target.exists() {
+            if other_format_target != entry.path
+                && self.managed_exists(&write, &other_format_target)?
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "target page exists in the other format",
@@ -5389,7 +7424,8 @@ impl Graph {
                     "multiple pages map to the same rename target",
                 ));
             }
-            if !move_identities.insert(crate::refs::normalize(&new_name)) {
+            let normalized_new_name = crate::refs::normalize(&new_name);
+            if !move_identities.insert(normalized_new_name) {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "multiple pages map to the same logical rename target",
@@ -5404,6 +7440,16 @@ impl Graph {
         // A page can exist only via references (no file of its own); still rewrite
         // refs to it.
         if !primary_is_file {
+            rename_pairs_charge.grow(
+                checked_add_bytes(
+                    conservative_vec_entry_bytes::<(String, String)>()?,
+                    checked_add_bytes(
+                        owned_string_upper_bound(old)?,
+                        owned_string_upper_bound(new)?,
+                    )?,
+                )?,
+                "managed rename pair vector",
+            )?;
             rename_pairs.push((old.to_string(), new.to_string()));
         }
 
@@ -5414,54 +7460,85 @@ impl Graph {
             src: PathBuf,
             dst: PathBuf,
             orig: String,
+            _orig_reservation: RetainedContentReservation,
             new_content: String,
+            _new_reservation: RetainedContentReservation,
             base_rev: String,
             is_move: bool,
         }
+        let _move_map_charge = content_budget.reserve(
+            checked_mul_bytes(
+                usize_to_u64(moves.len())?,
+                conservative_hash_entry_bytes::<PathBuf, PathBuf>()?,
+            )?,
+            "managed rename move map table capacity",
+        )?;
         let move_dst: std::collections::HashMap<PathBuf, PathBuf> = moves.into_iter().collect();
         // The whole rename SET as a normalized(old) -> new map, so each graph file
         // is rewritten ONCE against every descendant in a single pass — not K passes
         // (one per `(old,new)` pair), which made a namespace rename O(graph_text * K)
         // and recomputed code ranges twice per pair per file (perf Codex#2).
+        let mut rename_map_charge =
+            RetainedHeapCharge::new(Some(&content_budget), "managed rename rewrite map")?;
+        for (old_name, new_name) in &rename_pairs {
+            rename_map_charge.grow(
+                checked_add_bytes(
+                    conservative_hash_entry_bytes::<String, String>()?,
+                    checked_add_bytes(
+                        owned_string_upper_bound(old_name)?,
+                        owned_string_upper_bound(new_name)?,
+                    )?,
+                )?,
+                "managed rename rewrite map",
+            )?;
+        }
         let rename_map: std::collections::HashMap<String, String> = rename_pairs
             .iter()
             .map(|(o, n)| (crate::refs::normalize(o), n.clone()))
             .collect();
-        let candidate_names = rename_pairs
-            .iter()
-            .map(|(old, _)| crate::refs::page_key(old))
-            .collect::<Vec<_>>();
-        let candidate_paths = self
-            .reference_candidate_paths_for_entries(&candidate_names, &entries)
-            .map(|mut candidates| {
-                // A moved page must be read and staged even when it has no refs.
-                candidates.extend(move_dst.keys().cloned());
-                candidates
-            });
         let mut edits: Vec<Edit> = Vec::new();
-        for entry in &entries {
-            if candidate_paths
-                .as_ref()
-                .is_some_and(|paths| !paths.contains(&entry.path))
-            {
-                continue;
-            }
-            let Ok(content) = fs::read_to_string(&entry.path) else {
-                continue;
-            };
+        let mut edits_charge =
+            RetainedHeapCharge::new(Some(&content_budget), "managed rename edit vector")?;
+        for entry in entries.iter() {
+            let content = self.managed_read_to_string_with_budget(
+                &write,
+                &entry.path,
+                &mut content_budget,
+                "managed rename baseline bytes",
+            )?;
             let is_org = Format::from_path(&entry.path) == Format::Org;
             // One inline-ref pass + one `tags::` pass per file (each computes code
             // ranges once), regardless of how many descendants are being renamed.
+            let mut inline_reservation = content_budget.reserve(
+                rename_rewrite_upper_bound(&content, &rename_map)?,
+                "managed rename inline rewrite construction bound",
+            )?;
+            let inline = crate::refs::rename_refs_multi(&content, &rename_map, is_org);
+            inline_reservation.resize(
+                usize_to_u64(inline.capacity())?,
+                "managed rename inline rewrite bytes",
+            )?;
+            let mut updated_reservation = content_budget.reserve(
+                rename_rewrite_upper_bound(&inline, &rename_map)?,
+                "managed rename tags rewrite construction bound",
+            )?;
             let updated = crate::refs::rename_tags_property_multi(
-                &crate::refs::rename_refs_multi(&content, &rename_map, is_org),
+                &inline,
                 &rename_map,
                 is_org,
             );
+            updated_reservation.resize(
+                usize_to_u64(updated.capacity())?,
+                "managed rename replacement bytes",
+            )?;
+            drop(inline);
+            drop(inline_reservation);
             // H1: a rename must never rewrite a read-only (non-round-tripping) .org
             // file. Abort the whole rename (all-or-nothing) so the user resolves it
             // in Logseq first. A pure file move with no content change (updated ==
             // content) is still allowed — it preserves bytes exactly.
-            if is_org && updated != content && !crate::org::org_editable(&content) {
+            let changed = updated != *content;
+            if is_org && changed && !crate::org::org_editable(&content) {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!(
@@ -5470,24 +7547,67 @@ impl Graph {
                     ),
                 ));
             }
+            let BudgetedString {
+                value: original,
+                reservation: original_reservation,
+            } = content;
+            let _base_rev_scratch =
+                content_budget.reserve(128, "managed rename revision string construction")?;
+            let base_rev = content_rev(&original);
             match move_dst.get(&entry.path) {
-                Some(dst) => edits.push(Edit {
-                    src: entry.path.clone(),
-                    dst: dst.clone(),
-                    base_rev: content_rev(&content),
-                    orig: content,
-                    new_content: updated,
-                    is_move: true,
-                }),
-                None if updated != content => edits.push(Edit {
-                    src: entry.path.clone(),
-                    dst: entry.path.clone(),
-                    base_rev: content_rev(&content),
-                    orig: content,
-                    new_content: updated,
-                    is_move: false,
-                }),
-                None => {}
+                Some(dst) => {
+                    edits_charge.grow(
+                        checked_add_bytes(
+                            conservative_vec_entry_bytes::<Edit>()?,
+                            checked_add_bytes(
+                                owned_path_upper_bound(&entry.path)?,
+                                checked_add_bytes(
+                                    owned_path_upper_bound(dst)?,
+                                    owned_string_upper_bound(&base_rev)?,
+                                )?,
+                            )?,
+                        )?,
+                        "managed rename edit vector",
+                    )?;
+                    edits.push(Edit {
+                        src: entry.path.clone(),
+                        dst: dst.clone(),
+                        base_rev,
+                        orig: original,
+                        _orig_reservation: original_reservation,
+                        new_content: updated,
+                        _new_reservation: updated_reservation,
+                        is_move: true,
+                    });
+                }
+                None if changed => {
+                    edits_charge.grow(
+                        checked_add_bytes(
+                            conservative_vec_entry_bytes::<Edit>()?,
+                            checked_add_bytes(
+                                checked_mul_bytes(owned_path_upper_bound(&entry.path)?, 2)?,
+                                owned_string_upper_bound(&base_rev)?,
+                            )?,
+                        )?,
+                        "managed rename edit vector",
+                    )?;
+                    edits.push(Edit {
+                        src: entry.path.clone(),
+                        dst: entry.path.clone(),
+                        base_rev,
+                        orig: original,
+                        _orig_reservation: original_reservation,
+                        new_content: updated,
+                        _new_reservation: updated_reservation,
+                        is_move: false,
+                    });
+                }
+                None => {
+                    drop(updated);
+                    drop(updated_reservation);
+                    drop(original);
+                    drop(original_reservation);
+                }
             }
         }
         if edits.is_empty() {
@@ -5496,6 +7616,39 @@ impl Graph {
 
         // Phase 1 — lock every touched path (src + move dst), sorted + deduped
         // (deadlock-free against a single-page save, which only ever holds ONE lock).
+        let mut lock_state_bound = 0_u64;
+        let mut rollback_state_bound = 0_u64;
+        for edit in &edits {
+            for path in [&edit.src, &edit.dst] {
+                lock_state_bound = checked_add_bytes(
+                    lock_state_bound,
+                    checked_add_bytes(
+                        conservative_vec_entry_bytes::<PathBuf>()?,
+                        checked_add_bytes(
+                            owned_path_upper_bound(path)?,
+                            256,
+                        )?,
+                    )?,
+                )?;
+            }
+            rollback_state_bound = checked_add_bytes(
+                rollback_state_bound,
+                conservative_vec_entry_bytes::<(&Edit, Option<PathBuf>)>()?,
+            )?;
+            if edit.is_move && edit.dst != edit.src {
+                rollback_state_bound = checked_add_bytes(
+                    rollback_state_bound,
+                    checked_add_bytes(
+                        checked_mul_bytes(owned_path_upper_bound(&edit.src)?, 3)?,
+                        256,
+                    )?,
+                )?;
+            }
+        }
+        let _lock_state_charge =
+            content_budget.reserve(lock_state_bound, "managed rename lock state")?;
+        let _rollback_state_charge =
+            content_budget.reserve(rollback_state_bound, "managed rename rollback state")?;
         let mut lock_paths: Vec<PathBuf> = Vec::new();
         for e in &edits {
             lock_paths.push(e.src.clone());
@@ -5507,11 +7660,10 @@ impl Graph {
         lock_paths.dedup();
         let locks: Vec<_> = lock_paths.iter().map(|p| self.page_lock(p)).collect();
         let _guards: Vec<_> = locks.iter().map(|l| l.lock().unwrap()).collect();
-
         // Phase 2 — re-verify nothing changed under us since Phase 0; abort (no
         // change) on any mismatch (an external editor / Syncthing pull landed).
         for e in &edits {
-            if e.is_move && e.dst != e.src && e.dst.exists() {
+            if e.is_move && e.dst != e.src && self.managed_exists(&write, &e.dst)? {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "target page exists",
@@ -5521,7 +7673,7 @@ impl Graph {
             // it as empty could let an actually-empty baseline pass verification,
             // after which the transaction would overwrite a file we could no
             // longer inspect.
-            if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
+            if !self.managed_content_rev_matches(&write, &e.src, &e.base_rev)? {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
         }
@@ -5533,8 +7685,25 @@ impl Graph {
         {
             let mut sync_guard = self.managed_sync.lock().unwrap();
             if let Some(sync) = sync_guard.as_mut() {
-                let mut snapshots = Vec::with_capacity(edits.len());
+                let mut snapshots = PreparedCrdtPageBatch::with_capacity(
+                    edits.len(),
+                    &content_budget,
+                    "managed rename snapshot batch capacities",
+                )?;
                 for e in &edits {
+                    let _materialized_scratch = content_budget.reserve(
+                        checked_add_bytes(
+                            checked_mul_bytes(
+                                managed_page_build_upper_bound(&e.orig)?,
+                                2,
+                            )?,
+                            checked_add_bytes(
+                                owned_path_upper_bound(&e.src)?,
+                                owned_path_upper_bound(&e.dst)?,
+                            )?,
+                        )?,
+                        "managed rename materialized snapshot scratch",
+                    )?;
                     let src_rel = self.rel_path(&e.src);
                     let dst_rel = self.rel_path(&e.dst);
                     let existing = sync
@@ -5548,15 +7717,36 @@ impl Graph {
                     };
                     let page_id = existing.map(|page| page.id).unwrap_or_else(CrdtPageId::new);
                     let entry = self.entry_for_path(&e.dst).ok_or_else(bad_path)?;
+                    let mut page_reservation = content_budget.reserve(
+                        managed_page_build_upper_bound(&e.new_content)?,
+                        "managed rename parsed page construction bound",
+                    )?;
                     let mut doc = parse_doc(&e.dst, &e.new_content);
-                    assign_doc_runtime_ids(&mut doc.roots, &dst_rel);
-                    let mut page = page_dto(&entry, &doc);
+                    assign_runtime_ids_checked(
+                        &mut doc.roots,
+                        runtime_owner_namespace("file-block-runtime-v1", &dst_rel),
+                    )?;
+                    let mut page = page_dto_checked(&entry, &doc)?;
                     page.path = dst_rel;
                     page.format = Format::from_path(&e.dst);
-                    page = page_with_persisted_sync_ids(&page)?;
-                    snapshots.push(crdt_snapshot_for_page(&page, page_id)?);
+                    drop(doc);
+                    page_reservation.resize(
+                        page_dto_retained_bytes(&page)?,
+                        "retained managed rename page",
+                    )?;
+                    persist_page_sync_ids_with_budget(
+                        &mut page,
+                        &mut page_reservation,
+                        &content_budget,
+                    )?;
+                    let prepared = crdt_snapshot_for_page(&page, page_id, &content_budget)?;
+                    drop(page);
+                    drop(page_reservation);
+                    snapshots.push(prepared);
                 }
-                sync.commit_pages(snapshots).map_err(crdt_io_error)?;
+                snapshots
+                    .admit_operation(&content_budget, "managed rename CRDT/store operation")?
+                    .commit_pages(sync)?;
             }
         }
 
@@ -5569,34 +7759,34 @@ impl Graph {
                 // Phase 2 can be far in the past for a large graph. Recheck this
                 // exact file immediately before its write so an external editor or
                 // sync pull that landed while earlier edits committed is preserved.
-                if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
+                if !self.managed_content_rev_matches(&write, &e.src, &e.base_rev)? {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
                 }
                 self.note_self_write(&e.dst, content_rev(&e.new_content));
                 if e.is_move && e.dst != e.src {
                     if let Some(parent) = e.dst.parent() {
-                        fs::create_dir_all(parent)?;
+                        self.managed_create_dir_all(&write, parent)?;
                     }
                 }
-                if e.is_move && e.dst != e.src {
-                    atomic_write_new(&e.dst, e.new_content.as_bytes())?;
-                } else {
-                    atomic_write(&e.dst, e.new_content.as_bytes())?;
-                }
+                self.managed_atomic_write(
+                    &write,
+                    &e.dst,
+                    e.new_content.as_bytes(),
+                    e.is_move && e.dst != e.src,
+                )?;
                 written.push((e, None));
                 if e.is_move && e.dst != e.src {
                     rename_source_remove_failpoint()?;
                     let trash = typed_trash_dir(&self.root, TrashEntryKind::Page);
-                    self.ensure_write_target(&trash)?;
-                    fs::create_dir_all(&trash)?;
+                    self.managed_create_dir_all(&write, &trash)?;
                     let src_name = e.src.file_name().and_then(|s| s.to_str()).unwrap_or("page");
                     let staged = trash.join(format!("{}__rename__{src_name}", trash_stamp()));
-                    move_file_noreplace(&e.src, &staged)?;
+                    self.managed_move_noreplace(&write, &e.src, &staged)?;
                     written.last_mut().unwrap().1 = Some(staged.clone());
                     // If a sync replacement won just before the atomic move, the
                     // staged bytes no longer match our baseline. Abort and restore
                     // that exact inode instead of completing from stale content.
-                    if content_rev(&fs::read_to_string(&staged)?) != e.base_rev {
+                    if !self.managed_content_rev_matches(&write, &staged, &e.base_rev)? {
                         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
                     }
                 }
@@ -5607,19 +7797,22 @@ impl Graph {
             // Roll back in reverse, and drop the self-write markers for bytes that
             // won't survive the rollback so they can't later suppress a real
             // external change (M1).
+            let _ = managed_write_during_rollback_hook();
             for (e, staged_source) in written.iter().rev() {
                 if e.is_move && e.dst != e.src {
                     let source_restored = match staged_source {
                         Some(staged) => {
-                            move_file_noreplace(staged, &e.src).is_ok() || e.src.exists()
+                            self.managed_move_noreplace(&write, staged, &e.src).is_ok()
+                                || self.managed_exists(&write, &e.src).unwrap_or(false)
                         }
-                        None => e.src.exists(),
+                        None => self.managed_exists(&write, &e.src).unwrap_or(false),
                     };
                     if source_restored {
                         // Never compare and unlink the live destination. Detach
                         // whichever inode currently owns the name, inspect it in
                         // recovery, and restore/retain any external replacement.
                         let _ = self.withdraw_file_to_conflict_if_exact(
+                            &write,
                             &e.dst,
                             e.new_content.as_bytes(),
                             "rename-rollback-destination",
@@ -5628,9 +7821,13 @@ impl Graph {
                     self.recent_writes.lock().unwrap().remove(&e.dst);
                 } else {
                     let ours = content_rev(&e.new_content);
-                    if fs::read_to_string(&e.dst).is_ok_and(|disk| content_rev(&disk) == ours) {
+                    if self
+                        .managed_content_rev_matches(&write, &e.dst, &ours)
+                        .unwrap_or(false)
+                    {
                         self.note_self_write(&e.dst, content_rev(&e.orig));
-                        let _ = atomic_write(&e.dst, e.orig.as_bytes());
+                        let _ =
+                            self.managed_atomic_write(&write, &e.dst, e.orig.as_bytes(), false);
                     } else {
                         self.recent_writes.lock().unwrap().remove(&e.dst);
                     }
@@ -5641,7 +7838,7 @@ impl Graph {
         }
         self.invalidate_cache();
         for edit in &edits {
-            self.record_managed_projection(&edit.dst);
+            self.record_managed_projection(&write, &edit.dst);
         }
         Ok(())
     }
@@ -5661,13 +7858,16 @@ impl Graph {
         kind: PageKind,
         expected_path: Option<&str>,
     ) -> io::Result<()> {
+        let write = self.admit_managed_text_writer()?;
+        let entries = self.managed_text_entries(&write, false)?;
         // M1: with both a .md and a .org twin, "which file?" is ambiguous — refuse
         // rather than trash an arbitrary one.
-        if self.has_twin(name, kind) {
+        if self.managed_has_twin(&write, name, kind)? {
             return Err(twin_error(name));
         }
-        let matching: Vec<_> = self
-            .list_pages()
+        let matching: Vec<_> = entries
+            .iter()
+            .cloned()
             .into_iter()
             .filter(|entry| entry.kind == kind && crate::refs::same_page(&entry.name, name))
             .collect();
@@ -5677,11 +7877,11 @@ impl Graph {
                 "multiple files share this page identity; delete by name is ambiguous",
             ));
         }
-        self.validate_page_mutation_target(name, kind, expected_path)?;
+        self.validate_page_mutation_target(&write, &entries, name, kind, expected_path)?;
         if let Some(entry) = matching.into_iter().next() {
             let lock = self.page_lock(&entry.path);
             let _guard = lock.lock().unwrap();
-            self.commit_managed_delete(&entry.path)?;
+            self.commit_managed_delete(&write, &entry.path)?;
             let trash = typed_trash_dir(
                 &self.root,
                 match entry.kind {
@@ -5689,14 +7889,13 @@ impl Graph {
                     PageKind::Page => TrashEntryKind::Page,
                 },
             );
-            self.ensure_write_target(&trash)?;
             let fname = entry
                 .path
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("page.md");
             let dest = trash.join(format!("{}__{fname}", trash_stamp()));
-            move_to_trash(&entry.path, &dest, &trash)?;
+            self.managed_move_to_trash(&write, &entry.path, &dest, &trash)?;
         }
         self.cache_remove(name, kind);
         Ok(())
@@ -5707,13 +7906,14 @@ impl Graph {
     /// semantics of rewriting `[[page]]` references remain ambiguous.
     fn validate_page_mutation_target(
         &self,
+        write: &ManagedTextWritePermit,
+        entries: &[PageEntry],
         name: &str,
         kind: PageKind,
         expected_path: Option<&str>,
     ) -> io::Result<()> {
-        let matching: Vec<_> = self
-            .list_pages()
-            .into_iter()
+        let matching: Vec<_> = entries
+            .iter()
             .filter(|entry| entry.kind == kind && crate::refs::same_page(&entry.name, name))
             .collect();
         if matching.len() > 1 {
@@ -5725,7 +7925,7 @@ impl Graph {
         let Some(expected) = expected_path.filter(|path| !path.trim().is_empty()) else {
             return Ok(());
         };
-        let expected_abs = self.resolve_rel(expected).ok_or_else(|| {
+        let expected_abs = self.resolve_managed_rel(write, expected)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "invalid expected page path")
         })?;
         let Some(entry) = matching.first() else {
@@ -6304,29 +8504,43 @@ impl Graph {
             .unwrap_or_default()
     }
 
-    fn existing_hls_page_path(&self, key: &str) -> io::Result<Option<PathBuf>> {
+    fn existing_hls_page_path(
+        &self,
+        write: &ManagedTextWritePermit,
+        key: &str,
+    ) -> io::Result<Option<PathBuf>> {
         let name = crate::pdf::hls_page_name(key);
         let md = self.pages_path().join(format!("{name}.md"));
         let org = self.pages_path().join(format!("{name}.org"));
-        match (md.exists(), org.exists()) {
+        match (
+            self.managed_exists(write, &md)?,
+            self.managed_exists(write, &org)?,
+        ) {
             (true, true) => Err(twin_error(&name)),
             (true, false) => Ok(Some(md)),
             (false, true) => Ok(Some(org)),
             (false, false) => Ok(self
-                .find_entry(&name, PageKind::Page)
+                .managed_find_entry(write, &name, PageKind::Page)?
                 .map(|entry| entry.path)),
         }
     }
 
-    fn hls_page_path(&self, pdf_filename: &str, key: &str) -> io::Result<PathBuf> {
-        if let Some(existing) = self.existing_hls_page_path(key)? {
+    fn hls_page_path(
+        &self,
+        write: &ManagedTextWritePermit,
+        pdf_filename: &str,
+        key: &str,
+    ) -> io::Result<PathBuf> {
+        if let Some(existing) = self.existing_hls_page_path(write, key)? {
             return Ok(existing);
         }
         // A key migration renames the annotation page but must not implicitly
         // convert its syntax because the graph's preference changed meanwhile.
         let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
-        if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
-            if let Some(legacy) = self.existing_hls_page_path(&legacy_key)? {
+        if legacy_key != key
+            && !self.retained_asset_key_in_use_by_pdf(write, &legacy_key)?
+        {
+            if let Some(legacy) = self.existing_hls_page_path(write, &legacy_key)? {
                 let ext = legacy
                     .extension()
                     .and_then(|ext| ext.to_str())
@@ -6366,9 +8580,9 @@ impl Graph {
     /// created. Old Tine-key artifacts remain in place until the established
     /// edit-time migration path can carry their notes forward safely.
     pub fn open_pdf(&self, pdf_filename: &str, label: &str) -> io::Result<crate::pdf::PdfState> {
+        let write = self.admit_managed_text_writer()?;
         let key = crate::pdf::asset_key(pdf_filename);
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
-        self.ensure_write_target(&page_path)?;
+        let page_path = self.hls_page_path(&write, pdf_filename, &key)?;
         let page_lock = self.page_lock(&page_path);
         let _guard = page_lock.lock().unwrap();
 
@@ -6402,9 +8616,11 @@ impl Graph {
         // normal highlight write carries its notes forward under one guarded merge.
         let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
         let legacy_page_exists = legacy_key != key
-            && !self.asset_key_in_use_by_pdf(&legacy_key)
-            && self.existing_hls_page_path(&legacy_key)?.is_some();
-        let page_baseline = read_optional_text(&page_path)?;
+            && !self.retained_asset_key_in_use_by_pdf(&write, &legacy_key)?
+            && self
+                .existing_hls_page_path(&write, &legacy_key)?
+                .is_some();
+        let page_baseline = self.managed_read_optional_text(&write, &page_path)?;
         if page_baseline.is_none() && !legacy_page_exists {
             let format = Format::from_path(&page_path);
             let page_doc = crate::pdf::hls_page_document_for_format(
@@ -6414,7 +8630,8 @@ impl Graph {
                 format,
             );
             let content = serialize_pdf_hls_page(&page_path, &page_doc, None)?;
-            let page_rev = self.commit_editor_write(&page_path, &content, None, true)?;
+            let page_rev =
+                self.commit_editor_write(&write, &page_path, &content, None, true)?;
             let name = crate::pdf::hls_page_name(&key);
             let entry = PageEntry {
                 name,
@@ -6439,8 +8656,9 @@ impl Graph {
         page: i64,
         scale: f64,
     ) -> io::Result<()> {
+        let write = self.admit_managed_text_writer()?;
         let key = crate::pdf::asset_key(pdf_filename);
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
+        let page_path = self.hls_page_path(&write, pdf_filename, &key)?;
         let lock = self.page_lock(&page_path);
         let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
@@ -6496,6 +8714,44 @@ impl Graph {
         })
     }
 
+    /// Read the PDF-name collision input that can select a managed HLS page from
+    /// retained A as well. Internal `assets/` is enumerated through the writer's
+    /// retained graph capability, so a replacement B cannot suppress or trigger
+    /// legacy HLS migration. An explicitly approved external assets root remains
+    /// under its separate authority and is not rebound through the graph permit.
+    fn retained_asset_key_in_use_by_pdf(
+        &self,
+        write: &ManagedTextWritePermit,
+        candidate_key: &str,
+    ) -> io::Result<bool> {
+        if self.assets_root != self.root.join("assets") {
+            return Ok(self.asset_key_in_use_by_pdf(candidate_key));
+        }
+        let sentinel = self.root.join("assets/.tine-capability-inventory");
+        let target = match self.managed_target(write, &sentinel, false) {
+            Ok(target) => target,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        for entry in target.parent().entries()? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let filename = entry.file_name();
+            let Some(filename) = filename.to_str() else {
+                continue;
+            };
+            if !filename.ends_with(".pdf") && !filename.ends_with(".PDF") {
+                continue;
+            }
+            if crate::pdf::asset_key(filename) == candidate_key {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Persist highlights: write `assets/<key>.edn` and the `hls__<key>` page.
     /// `base_ids` are the highlight ids the editor LOADED (its baseline) — used for
     /// a 3-way merge so a highlight the user deleted is honored while one added
@@ -6507,16 +8763,18 @@ impl Graph {
         highlights: &[crate::pdf::Highlight],
         base_ids: &[String],
     ) -> io::Result<()> {
+        let write = self.admit_managed_text_writer()?;
         let key = crate::pdf::asset_key(pdf_filename);
         // Legacy (pre-launch) key. When it differs and only the legacy files
         // exist, we read those as the baseline and migrate them to the new key
         // below — so the key change never strands existing highlights.
         let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
-        let legacy_active = legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key);
+        let legacy_active = legacy_key != key
+            && !self.retained_asset_key_in_use_by_pdf(&write, &legacy_key)?;
         let legacy_edn =
             legacy_active.then(|| self.assets_path().join(format!("{legacy_key}.edn")));
         let legacy_page = if legacy_active {
-            self.existing_hls_page_path(&legacy_key)?
+            self.existing_hls_page_path(&write, &legacy_key)?
         } else {
             None
         };
@@ -6524,8 +8782,7 @@ impl Graph {
         // `page_locks`): hold the page lock across the .edn merge AND the page
         // read→merge→write→cache_upsert, so the two writers can't clobber each
         // other or trip a false self-write conflict.
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
-        self.ensure_write_target(&page_path)?;
+        let page_path = self.hls_page_path(&write, pdf_filename, &key)?;
         let lock = self.page_lock(&page_path);
         let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
@@ -6540,10 +8797,10 @@ impl Graph {
         // Read every artifact that will participate before committing either one.
         // If the notes page (or its legacy source) is unreadable, abort while the
         // sidecar is still untouched rather than leaving a half-updated pair.
-        let page_baseline = read_optional_text(&page_path)?;
+        let page_baseline = self.managed_read_optional_text(&write, &page_path)?;
         let legacy_page_baseline = if page_baseline.is_none() {
             match &legacy_page {
-                Some(path) => read_optional_text(path)?,
+                Some(path) => self.managed_read_optional_text(&write, path)?,
                 None => None,
             }
         } else {
@@ -6688,6 +8945,7 @@ impl Graph {
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
         let page_md = serialize_pdf_hls_page(&page_path, &page_doc, existing_raw.as_deref())?;
         let page_rev = match self.commit_editor_write(
+            &write,
             &page_path,
             &page_md,
             page_baseline.as_deref(),
@@ -6712,13 +8970,15 @@ impl Graph {
         };
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
-        let entry = self.find_entry(&name, PageKind::Page).unwrap_or(PageEntry {
+        let entry = self
+            .managed_find_entry(&write, &name, PageKind::Page)?
+            .unwrap_or(PageEntry {
             name,
             kind: PageKind::Page,
             date_key: None,
             rel_path: self.rel_path(&page_path),
             path: page_path.clone(),
-        });
+            });
         self.cache_upsert(entry, page_doc, page_rev.clone());
         // Drop the self-write marker now the write is published + cached (see
         // write_page / drop_self_write_marker).
@@ -6739,8 +8999,7 @@ impl Graph {
         // legacy update stays at its original path. Unchanged files are moved to
         // recoverable trash rather than hard-deleted.
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
+        self.managed_create_dir_all(&write, &trash)?;
         if let (Some(path), Some(baseline)) = (&legacy_edn, &committed_legacy_edn_baseline) {
             if read_optional_text(path)?.as_ref() == Some(baseline) {
                 let name = path
@@ -6760,15 +9019,19 @@ impl Graph {
             }
         }
         if let (Some(path), Some(baseline)) = (&legacy_page, &legacy_page_baseline) {
-            if read_optional_text(path)?.as_ref() == Some(baseline) {
+            if self.managed_read_optional_text(&write, path)?.as_ref() == Some(baseline) {
                 let name = path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("legacy.md");
                 let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
-                if move_file_noreplace(path, &dest).is_ok() {
-                    if read_optional_text(&dest)?.as_ref() != Some(baseline) {
-                        let _ = move_file_noreplace(&dest, path);
+                if self.managed_move_noreplace(&write, path, &dest).is_ok() {
+                    if self
+                        .managed_read_optional_text(&write, &dest)?
+                        .as_ref()
+                        != Some(baseline)
+                    {
+                        let _ = self.managed_move_noreplace(&write, &dest, path);
                         return Err(io::Error::new(
                             io::ErrorKind::AlreadyExists,
                             "legacy highlight page changed during migration cleanup",
@@ -6784,38 +9047,7 @@ impl Graph {
     /// Map an on-disk `.md` path to its page entry (journal or page), or None if
     /// it isn't in the graph's journals/pages dirs.
     pub fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
-        if !is_page_file(path) {
-            return None;
-        }
-        let stem = path.file_stem().and_then(|s| s.to_str())?;
-        // Accept a file anywhere UNDER journals/ or pages/, not just a direct child
-        // (#21 recursive subdirs). The page name is the basename (the sub-path is
-        // discarded, matching OG); the file's own `path` remains its load/save
-        // identity. `starts_with` is a lexical prefix over path components, so a
-        // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
-        if path.starts_with(self.journals_path()) {
-            let (name, date_key) = match self.journal_format.parse(stem) {
-                Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
-                None => (stem.to_string(), None),
-            };
-            Some(PageEntry {
-                name,
-                kind: PageKind::Journal,
-                date_key,
-                rel_path: self.rel_path(path),
-                path: path.to_path_buf(),
-            })
-        } else if path.starts_with(self.pages_path()) {
-            Some(PageEntry {
-                name: decode_page_name(stem, self.config.file_name_format),
-                kind: PageKind::Page,
-                date_key: None,
-                rel_path: self.rel_path(path),
-                path: path.to_path_buf(),
-            })
-        } else {
-            None
-        }
+        self.managed_entry_for_path(path).ok().flatten()
     }
 
     /// Record that Tine just wrote content with rev `rev` to `path`, so the file
@@ -6852,8 +9084,10 @@ impl Graph {
         target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        let write = self.admit_retained_managed_text_writer()?;
         authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
             self.write_page_projection_with_attempts(
+                &write,
                 relative_path,
                 expected_base,
                 target,
@@ -6865,6 +9099,7 @@ impl Graph {
 
     fn write_page_projection_with_attempts(
         &self,
+        write: &ManagedTextWritePermit,
         relative_path: &str,
         expected_base: Option<&[u8]>,
         target: &[u8],
@@ -6872,7 +9107,7 @@ impl Graph {
         known_attempts: &[ProjectionAttemptReservation],
     ) -> io::Result<ProjectionWriteProof> {
         require_projection_platform()?;
-        if target.len() as u64 > MAX_PROJECTION_EVIDENCE_BYTES {
+        if usize_to_u64(target.len())? > MAX_PROJECTION_EVIDENCE_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "projection target exceeds the evidence reload bound",
@@ -6975,6 +9210,7 @@ impl Graph {
         }
 
         let (rev, proof) = self.commit_write(
+            write,
             &target_path.absolute_path,
             target_text,
             current_text,
@@ -7081,7 +9317,11 @@ impl Graph {
                                 "projection reread is not valid UTF-8",
                             )
                         })?;
-                        self.cache_projection_page_text(&target_path.absolute_path, reread_text)?;
+                        self.cache_projection_page_text(
+                            write,
+                            &target_path.absolute_path,
+                            reread_text,
+                        )?;
                         Ok(ProjectionWriteProof::new(
                             target_path.relative_path.clone(),
                             final_reread,
@@ -7134,6 +9374,7 @@ impl Graph {
                         if reread == target {
                             if let Ok(reread_text) = std::str::from_utf8(&reread) {
                                 let _ = self.cache_projection_page_text(
+                                    write,
                                     &target_path.absolute_path,
                                     reread_text,
                                 );
@@ -7157,6 +9398,7 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        let _write = self.admit_retained_managed_text_writer()?;
         authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
             self.remove_page_projection_with_attempts(
                 relative_path,
@@ -7293,6 +9535,7 @@ impl Graph {
         expected_base: Option<&[u8]>,
         target: &[u8],
     ) -> io::Result<ProjectionWriteProof> {
+        let write = self.admit_retained_managed_text_writer()?;
         self.projection_page_target(relative_path)?;
         let reservation = ProjectionAttemptReservation::for_test(relative_path);
         let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
@@ -7302,6 +9545,7 @@ impl Graph {
             attempts.clone()
         });
         self.write_page_projection_with_attempts(
+            &write,
             relative_path,
             expected_base,
             target,
@@ -7336,6 +9580,7 @@ impl Graph {
         relative_path: &str,
         expected_target: &[u8],
     ) -> io::Result<ProjectionWriteProof> {
+        let write = self.admit_retained_managed_text_writer()?;
         let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
             catalog
                 .borrow()
@@ -7344,9 +9589,31 @@ impl Graph {
                 .unwrap_or_default()
         });
         self.recover_page_projection_with_attempts(
+            &write,
             relative_path,
             None,
             expected_target,
+            &attempts,
+        )
+    }
+
+    #[cfg(test)]
+    fn recover_removed_projection_exact(
+        &self,
+        relative_path: &str,
+        expected_base: &[u8],
+    ) -> io::Result<ProjectionWriteProof> {
+        let _write = self.admit_retained_managed_text_writer()?;
+        let attempts = TEST_PROJECTION_ATTEMPTS.with(|catalog| {
+            catalog
+                .borrow()
+                .get(relative_path)
+                .cloned()
+                .unwrap_or_default()
+        });
+        self.recover_removed_page_projection_with_attempts(
+            relative_path,
+            expected_base,
             &attempts,
         )
     }
@@ -7431,6 +9698,7 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        let _write = self.admit_retained_managed_text_writer()?;
         authority.consume_recovery_evidence(relative_path, |attempts| {
             self.recover_removed_page_projection_with_attempts(
                 relative_path,
@@ -7510,8 +9778,10 @@ impl Graph {
         expected_target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        let write = self.admit_retained_managed_text_writer()?;
         authority.consume_recovery_evidence(relative_path, |attempts| {
             self.recover_page_projection_with_attempts(
+                &write,
                 relative_path,
                 expected_base,
                 expected_target,
@@ -7522,6 +9792,7 @@ impl Graph {
 
     fn recover_page_projection_with_attempts(
         &self,
+        write: &ManagedTextWritePermit,
         relative_path: &str,
         expected_base: Option<&[u8]>,
         expected_target: &[u8],
@@ -7611,7 +9882,7 @@ impl Graph {
                     "projection recovery reread is not valid UTF-8",
                 )
             })?;
-            self.cache_projection_page_text(&target_path.absolute_path, reread_text)?;
+            self.cache_projection_page_text(write, &target_path.absolute_path, reread_text)?;
             Ok(ProjectionWriteProof::new(
                 target_path.relative_path.clone(),
                 reread,
@@ -7670,43 +9941,43 @@ impl Graph {
     /// recovery if another writer has already recreated the name.
     fn withdraw_file_to_conflict_if_exact(
         &self,
+        write: &ManagedTextWritePermit,
         path: &Path,
         expected: &[u8],
         reason: &str,
     ) -> io::Result<bool> {
         withdrawal_race_hook(path)?;
-        if fs::symlink_metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) {
+        if !self.managed_exists(write, path)? {
             return Ok(false);
         }
-        self.ensure_write_target(path)?;
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
+        self.managed_create_dir_all(write, &trash)?;
         let name = path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("file");
         let staged = trash.join(format!("{}__{reason}__{name}", trash_stamp()));
-        match move_file_noreplace(path, &staged) {
+        match self.managed_move_noreplace(write, path, &staged) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
         }
-        let staged_bytes = match fs::read(&staged) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                let _ = move_file_noreplace(&staged, path);
-                return Err(error);
+        let staged_matches = match self.managed_file_equals_bytes(write, &staged, expected) {
+            Ok(matches) => matches,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let _ = self.managed_move_noreplace(write, &staged, path);
+                return Err(io::Error::from(io::ErrorKind::NotFound));
             }
+            Err(error) => return Err(error),
         };
-        if staged_bytes == expected {
+        if staged_matches {
             return Ok(true);
         }
-        match move_file_noreplace(&staged, path) {
+        match self.managed_move_noreplace(write, &staged, path) {
             Ok(()) => Ok(false),
             // A new live winner appeared after staging. Keeping the displaced
             // inode in conflict trash preserves both versions.
-            Err(_) if path.exists() => Ok(false),
+            Err(_) if self.managed_exists(write, path).unwrap_or(false) => Ok(false),
             Err(error) => Err(error),
         }
     }
@@ -7724,6 +9995,7 @@ impl Graph {
     /// the caller's cache_upsert, so it stays the caller's responsibility).
     fn commit_write<T>(
         &self,
+        write: &ManagedTextWritePermit,
         path: &Path,
         content: &str,
         baseline: Option<&str>,
@@ -7736,14 +10008,14 @@ impl Graph {
         let result = (|| {
             if create_parent {
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
+                    self.managed_create_dir_all(write, parent)?;
                 }
             }
             if recheck {
                 // Only NotFound means "no baseline file". Permission errors, invalid
                 // UTF-8, and transient I/O failures must abort; collapsing them to
                 // None would authorize an overwrite of unreadable on-disk data.
-                let now = read_optional_text(path)?;
+                let now = self.managed_read_optional_text(write, path)?;
                 let still_matches = match (now.as_deref(), baseline) {
                     (Some(n), Some(e)) => n == e,
                     (None, None) => true,
@@ -7766,18 +10038,16 @@ impl Graph {
 
     fn commit_editor_write(
         &self,
+        write: &ManagedTextWritePermit,
         path: &Path,
         content: &str,
         baseline: Option<&str>,
         recheck: bool,
     ) -> io::Result<String> {
-        let (rev, ()) = self.commit_write(path, content, baseline, recheck, true, || {
-            if baseline.is_none() {
-                atomic_write_new(path, content.as_bytes())
-            } else {
-                atomic_write(path, content.as_bytes())
-            }
-        })?;
+        let (rev, ()) =
+            self.commit_write(write, path, content, baseline, recheck, true, || {
+                self.managed_atomic_write(write, path, content.as_bytes(), baseline.is_none())
+            })?;
         Ok(rev)
     }
 
@@ -7799,33 +10069,27 @@ impl Graph {
     /// Checked watcher entrypoint. When managed sync is active, an unexplained
     /// file must be durably imported before its bytes enter the live cache.
     pub fn sync_file_checked(&self, path: &Path) -> io::Result<Option<PageEntry>> {
+        let write = self.admit_managed_text_writer()?;
         let lock = self.page_lock(path);
         let _guard = lock.lock().unwrap();
-        // Watch events are untrusted path inputs. Never follow a page symlink
-        // (which could expose an arbitrary file outside the graph), and recheck
-        // canonical containment immediately before the read to close rename /
-        // symlink-swap races between directory scanning and reconciliation.
-        let md = match fs::symlink_metadata(path) {
-            Ok(md) => md,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        if md.file_type().is_symlink() || !md.is_file() || !path_stays_within_root(&self.root, path)
-        {
+        // Watch events are untrusted path inputs. Lexically reject non-managed
+        // names first; the retained capability traversal below then performs the
+        // component-wise no-follow containment and file-shape checks.
+        if self.entry_for_path(path).is_none() {
             return Ok(None);
         }
-        let mut content = match fs::read_to_string(path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
+        let mut content = match self.managed_read_optional_text(&write, path)? {
+            Some(content) => content,
+            None => return Ok(None),
         };
-        let imported_external = self.reconcile_managed_external_locked(path, &content, None)?;
+        let imported_external =
+            self.reconcile_managed_external_locked(&write, path, &content, None)?;
         if imported_external {
-            content = fs::read_to_string(path)?;
+            content = self.managed_read_to_string(&write, path)?;
         }
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
-        let reconciled = self.sync_file_content(path, &content, true);
+        let reconciled = self.sync_file_content(Some(&write), path, &content, true);
         if imported_external {
             Ok(reconciled.or_else(|| self.entry_for_path(path)))
         } else {
@@ -7838,10 +10102,12 @@ impl Graph {
     /// when the input was external (as opposed to a receipt-backed projection).
     fn reconcile_managed_external_locked(
         &self,
+        write: &ManagedTextWritePermit,
         path: &Path,
         content: &str,
         page_id_hint: Option<CrdtPageId>,
     ) -> io::Result<bool> {
+        let content_budget = RetainedContentBudget::new(managed_text_inventory_limits());
         if path_is_sync_conflict(path) {
             return Ok(false);
         }
@@ -7857,9 +10123,16 @@ impl Graph {
             return Ok(false);
         }
         let entry = self.entry_for_path(path).ok_or_else(bad_path)?;
+        let _page_construction = content_budget.reserve(
+            managed_page_build_upper_bound(content)?,
+            "managed external import page construction bound",
+        )?;
         let mut doc = parse_doc(path, content);
-        assign_doc_runtime_ids(&mut doc.roots, &rel);
-        let mut page = page_dto(&entry, &doc);
+        assign_runtime_ids_checked(
+            &mut doc.roots,
+            runtime_owner_namespace("file-block-runtime-v1", &rel),
+        )?;
+        let mut page = page_dto_checked(&entry, &doc)?;
         page.path = rel.clone();
         page.rev = Some(content_rev(content));
         page.format = Format::from_path(path);
@@ -7870,11 +10143,94 @@ impl Graph {
                 "read-only Org projection cannot be imported into managed sync",
             ));
         }
-        page = page_with_persisted_sync_ids(&page)?;
+        let mut page_reservation = content_budget.reserve(
+            page_dto_retained_bytes(&page)?,
+            "managed external import page",
+        )?;
+        persist_page_sync_ids_with_budget(
+            &mut page,
+            &mut page_reservation,
+            &content_budget,
+        )?;
         let current_pages = sync.materialize_pages().map_err(crdt_io_error)?;
         let current_at_path = current_pages.iter().find(|snapshot| snapshot.path == rel);
         let mut incoming_ids = std::collections::HashSet::new();
-        collect_persisted_sync_ids(&page.blocks, page.format, &mut incoming_ids);
+        let incoming_blocks = page_block_count_checked(&page.blocks)?;
+        let incoming_id_payload =
+            sync_id_owned_source_upper_bound(&page.blocks, false)?;
+        let incoming_sets = checked_mul_bytes(
+            sync_id_hash_set_build_upper_bound(
+                incoming_blocks,
+                incoming_id_payload,
+            )?,
+            2,
+        )?;
+        let mut owner_blocks = 0_u64;
+        let mut owner_payload = 0_u64;
+        for snapshot in &current_pages {
+            let snapshot_blocks = u64::try_from(snapshot.blocks.len())
+                .map_err(|_| allocation_overflow())?;
+            owner_blocks = checked_add_bytes(owner_blocks, snapshot_blocks)?;
+            owner_payload = checked_add_bytes(
+                owner_payload,
+                checked_mul_bytes(
+                    snapshot_blocks,
+                    checked_add_bytes(
+                        owned_string_len_upper_bound(
+                            usize_to_u64(std::mem::size_of::<[u8; 36]>())?,
+                        )?,
+                        owned_string_upper_bound(&snapshot.path)?,
+                    )?,
+                )?,
+            )?;
+        }
+        let owner_map = checked_add_bytes(
+            checked_mul_bytes(
+                owner_blocks,
+                conservative_hash_entry_bytes::<
+                    String,
+                    (CrdtPageId, String),
+                >()?,
+            )?,
+            owner_payload,
+        )?;
+        let conflicting_owners = checked_add_bytes(
+            checked_mul_bytes(
+                incoming_blocks,
+                conservative_hash_entry_bytes::<(CrdtPageId, String), ()>()?,
+            )?,
+            owner_payload,
+        )?;
+        let rekey_scratch = checked_add_bytes(
+            owned_string_len_upper_bound(
+                checked_add_bytes(
+                    largest_block_raw_bytes(&page.blocks)?,
+                    usize_to_u64(std::mem::size_of::<[u8; 36]>())?,
+                )?,
+            )?,
+            owned_string_len_upper_bound(
+                usize_to_u64(std::mem::size_of::<[u8; 36]>())?,
+            )?,
+        )?;
+        let incoming_scan = SyncIdProjectionScanReservation::reserve(
+            &content_budget,
+            &page.blocks,
+            SyncIdProjectionInput::Existing,
+            checked_add_bytes(
+                incoming_sets,
+                checked_add_bytes(
+                    owner_map,
+                    checked_add_bytes(conflicting_owners, rekey_scratch)?,
+                )?,
+            )?,
+            "managed external incoming id projection/set bound",
+        )?;
+        collect_persisted_sync_ids(
+            &page.blocks,
+            page.format,
+            &mut incoming_ids,
+            &incoming_scan,
+        )?;
         let mut owners = std::collections::HashMap::new();
         for snapshot in &current_pages {
             if snapshot.path == rel {
@@ -7902,18 +10258,33 @@ impl Graph {
             .then(|| conflicting_owners.iter().next().cloned())
             .flatten()
             .filter(|(_, source_path)| {
-                self.resolve_rel(source_path)
-                    .is_some_and(|source| !source.exists())
+                self.resolve_managed_rel(write, source_path)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|source| !self.managed_exists(write, &source).unwrap_or(false))
             });
         if rename_owner.is_none() && !conflicting_ids.is_empty() {
-            rekey_conflicting_sync_ids(&mut page.blocks, page.format, &conflicting_ids);
+            rekey_conflicting_sync_ids(
+                &mut page.blocks,
+                page.format,
+                &conflicting_ids,
+                &incoming_scan,
+            )?;
         }
         let page_id = page_id_hint
             .or_else(|| current_at_path.map(|snapshot| snapshot.id))
             .or_else(|| rename_owner.map(|(id, _)| id))
             .unwrap_or_else(CrdtPageId::new);
-        sync.commit_page(crdt_snapshot_for_page(&page, page_id)?)
-            .map_err(crdt_io_error)?;
+        let cache = self.managed_path_is_cacheable(write, path)?;
+        let _publication_reservation = content_budget.reserve(
+            checked_add_bytes(
+                crdt_to_page_dto_upper_bound(&page)?,
+                self.managed_save_writer_upper_bound(&page, path, Some(content), cache)?,
+            )?,
+            "managed external import DTO/writer/cache publication bound",
+        )?;
+        crdt_snapshot_for_page(&page, page_id, &content_budget)?
+            .commit_page(sync)?;
         let joined = sync
             .materialize_page(page_id)
             .map_err(crdt_io_error)?
@@ -7921,9 +10292,8 @@ impl Graph {
         let joined = page_dto_from_crdt(&joined)?;
         drop(sync_guard);
 
-        let cache = self.path_is_cacheable(path);
-        self.write_page(&joined, path, Some(content), true, cache)?;
-        self.record_managed_projection(path);
+        self.write_page(write, &joined, path, Some(content), true, cache)?;
+        self.record_managed_projection(write, path);
         Ok(true)
     }
 
@@ -7936,6 +10306,7 @@ impl Graph {
     /// false "changed on disk".
     fn sync_file_content(
         &self,
+        write: Option<&ManagedTextWritePermit>,
         path: &Path,
         content: &str,
         consume_self_write: bool,
@@ -7956,7 +10327,13 @@ impl Graph {
         // (`load_by_path`), so there's nothing to reconcile here.
         if entry.kind == PageKind::Journal {
             if let Some(date) = entry.date_key.map(crate::date::JournalDate::from_ordinal) {
-                if self.is_shadow_journal(path, date) {
+                let shadow = match write {
+                    Some(write) => self
+                        .managed_is_shadow_journal(write, path, date)
+                        .unwrap_or(true),
+                    None => self.is_shadow_journal(path, date),
+                };
+                if shadow {
                     return None;
                 }
             }
@@ -8069,12 +10446,16 @@ impl Graph {
     /// or rename already removed the CRDT page/path, so this is idempotent; an OG
     /// Logseq/provider deletion becomes operation truth before cache eviction.
     pub fn sync_deleted_file(&self, path: &Path) -> io::Result<Option<PageEntry>> {
-        let lock = self.page_lock(path);
-        let guard = lock.lock().unwrap();
-        if path.exists() {
+        let write = self.admit_managed_text_writer()?;
+        if self.entry_for_path(path).is_none() {
             return Ok(None);
         }
-        let promoted = self.commit_managed_delete(path)?;
+        let lock = self.page_lock(path);
+        let guard = lock.lock().unwrap();
+        if self.managed_exists(&write, path)? {
+            return Ok(None);
+        }
+        let promoted = self.commit_managed_delete(&write, path)?;
         let forgotten = self.forget_file(path);
         drop(guard);
         if let Some((page_id, paths)) = promoted {
@@ -8083,16 +10464,19 @@ impl Graph {
         Ok(forgotten)
     }
 
-    /// Count blocks that still need a durable on-disk identity before managed
-    /// sync can be enabled. This is read-only and suitable for a confirmation UI.
+    /// Advisory count of blocks that appear to need a durable on-disk identity.
+    /// This read-only UI preview may observe the ambient pathname; its result is
+    /// never accepted as write authority. Migration inventories, validates, and
+    /// revalidates independently through one retained writer capability.
     pub fn sync_identity_plan(&self) -> io::Result<SyncIdentityPlan> {
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
         let mut plan = SyncIdentityPlan {
             pages: 0,
             blocks: 0,
         };
         for entry in self.list_pages() {
             let page = self.load_page(&entry)?;
-            let missing = count_missing_sync_ids(&page.blocks, page.format);
+            let missing = count_missing_sync_ids(&page.blocks, page.format, &budget)?;
             if missing != 0 {
                 plan.pages += 1;
                 plan.blocks += missing;
@@ -8107,21 +10491,105 @@ impl Graph {
     /// that is safe and resumable because adding an id is semantically inert and
     /// the next run skips every block already migrated.
     pub fn migrate_sync_identities(&self) -> io::Result<SyncIdentityMigration> {
+        let write = self.admit_managed_text_writer()?;
+        let mut budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        self.migrate_sync_identities_with_permit(&write, &mut budget)
+    }
+
+    fn migrate_sync_identities_with_permit(
+        &self,
+        write: &ManagedTextWritePermit,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<SyncIdentityMigration> {
+        #[cfg(test)]
+        {
+            MANAGED_MIGRATION_PRE_WRITER_PEAK.with(|value| value.set(0));
+            MANAGED_MIGRATION_WRITER_ADMITTED_PEAK.with(|value| value.set(0));
+        }
         let mut prepared = Vec::new();
+        let mut prepared_slots =
+            RetainedHeapCharge::new(Some(budget), "managed migration prepared vector capacity")?;
         let mut graph_ids = std::collections::HashSet::new();
-        for entry in self.list_pages() {
-            let page = self.load_page(&entry)?;
-            let missing = count_missing_sync_ids(&page.blocks, page.format);
+        let mut graph_ids_reservation =
+            budget.reserve(0, "managed graph sync id validation set")?;
+        let entries = self.managed_text_entries_with_budget(write, false, budget)?;
+        for entry in entries.iter() {
+            let ManagedLoadedPage {
+                mut page,
+                baseline,
+                baseline_reservation,
+                mut page_reservation,
+            } = self.managed_load_page_with_budget(write, &entry, budget)?;
+            let missing = count_missing_sync_ids(&page.blocks, page.format, budget)?;
             if page.read_only {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!("{} is read-only and cannot join managed sync", page.path),
                 ));
             }
-            let migrated = page_with_persisted_sync_ids(&page)?;
-            validate_graph_sync_ids(&migrated.blocks, migrated.format, &mut graph_ids)?;
+            persist_page_sync_ids_with_budget(&mut page, &mut page_reservation, budget)?;
+            validate_graph_sync_ids(
+                &page.blocks,
+                page.format,
+                &mut graph_ids,
+                &mut graph_ids_reservation,
+                budget,
+            )?;
             if missing != 0 {
-                prepared.push((migrated, missing));
+                prepared_slots.grow(
+                    conservative_vec_entry_bytes::<PreparedMigrationPage>()?,
+                    "managed migration prepared vector capacity",
+                )?;
+                prepared.push(PreparedMigrationPage {
+                    page,
+                    baseline,
+                    _baseline_reservation: baseline_reservation,
+                    _page_reservation: page_reservation,
+                    missing,
+                });
+            }
+        }
+        let managed_sync_active = self.managed_sync.lock().unwrap().is_some();
+        for page in &prepared {
+            let _serialization = budget.reserve(
+                page_write_construction_upper_bound(&page.page, Some(&page.baseline))?,
+                "prepared managed migration serialization bound",
+            )?;
+            let _operation = if managed_sync_active {
+                Some(budget.reserve(
+                    checked_add_bytes(
+                        page_dto_retained_bytes(&page.page)?,
+                        checked_add_bytes(
+                            crdt_snapshot_build_upper_bound(&page.page)?,
+                            crdt_operation_page_build_upper_bound(&page.page)?,
+                        )?,
+                    )?,
+                    "prepared managed migration operation snapshot bound",
+                )?)
+            } else {
+                None
+            };
+        }
+        sync_identity_after_prepare_hook()?;
+
+        for page in &prepared {
+            let path = self
+                .resolve_managed_rel(write, &page.page.path)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
+            let current = self.managed_read_to_string_with_budget(
+                write,
+                &path,
+                budget,
+                "managed migration revalidation bytes",
+            )?;
+            if current.as_ref() != page.baseline {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{} changed while managed-sync identities were being prepared",
+                        page.page.path
+                    ),
+                ));
             }
         }
 
@@ -8129,43 +10597,223 @@ impl Graph {
             pages_changed: 0,
             blocks_changed: 0,
         };
-        for (page, missing) in prepared {
-            self.save_page(&page, page.rev.as_deref())?;
+        for page in prepared {
+            self.save_migrated_page_with_permit(write, &page.page, &page.baseline, budget)?;
             result.pages_changed += 1;
-            result.blocks_changed += missing;
+            result.blocks_changed += page.missing;
         }
         Ok(result)
+    }
+
+    fn save_migrated_page_with_permit(
+        &self,
+        write: &ManagedTextWritePermit,
+        page: &PageDto,
+        baseline: &str,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<()> {
+        let path = self
+            .resolve_managed_rel(write, &page.path)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
+        let cache = self.managed_path_is_cacheable(write, &path)?;
+        let lock = self.page_lock(&path);
+        let _guard = lock.lock().unwrap();
+        let current = self.managed_read_to_string_with_budget(
+            write,
+            &path,
+            budget,
+            "managed migration write revalidation bytes",
+        )?;
+        if current.as_ref() != baseline {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} changed while managed-sync identities were being prepared",
+                    path.display()
+                ),
+            ));
+        }
+        #[cfg(test)]
+        MANAGED_MIGRATION_PRE_WRITER_PEAK.with(|value| value.set(budget.state.peak.get()));
+        if let Some(prepared) =
+            self.prepare_managed_save(page, &path, Some(&current), cache, budget)?
+        {
+            prepared.commit_and_publish(
+                self,
+                write,
+                &path,
+                Some(&current),
+                true,
+                cache,
+            )?;
+        } else {
+            self.write_page(write, page, &path, Some(&current), true, cache)?;
+        }
+        Ok(())
     }
 
     /// Return a save-ready clone whose every block id is represented in the
     /// page's native Logseq syntax. Managed-sync saves use this for new blocks
     /// created after the one-time graph migration.
     pub fn page_with_sync_ids(&self, page: &PageDto) -> io::Result<PageDto> {
-        page_with_persisted_sync_ids(page)
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        page_with_persisted_sync_ids(page, &budget)
     }
 
-    /// If managed sync is active, stamp any newly-created block ids and commit
-    /// the intended page state to the immutable operation stream. The returned
-    /// DTO is the exact projection that must be written afterwards.
-    fn commit_managed_page(&self, page: &PageDto, path: &Path) -> io::Result<Option<PageDto>> {
-        let mut sync_guard = self.managed_sync.lock().unwrap();
-        let Some(sync) = sync_guard.as_mut() else {
+    /// Prepare the complete managed save before operation truth can change.
+    /// The returned owner retains the expanded page, snapshot, scan/snapshot/
+    /// CRDT operation charges, and the source-derived writer/cache charge until
+    /// commit, filesystem publication, marker bookkeeping, and cache publication
+    /// have all returned.
+    fn prepare_managed_save(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+        cache: bool,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<Option<PreparedManagedSaveOperation>> {
+        let sync_guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = sync_guard.as_ref() else {
             return Ok(None);
         };
-        let mut prepared = page_with_persisted_sync_ids(page)?;
-        prepared.path = self.rel_path(path);
+        let mut prepared = page_with_persisted_sync_ids_budgeted(page, budget)?;
+        prepared.replace_path(self.rel_path(path), budget)?;
         let page_id = sync
-            .materialize_page(prepared.path.as_str())
+            .materialize_page(prepared.page.path.as_str())
             .map_err(crdt_io_error)?
             .map(|snapshot| snapshot.id)
             .unwrap_or_else(CrdtPageId::new);
-        let snapshot = crdt_snapshot_for_page(&prepared, page_id)?;
-        sync.commit_page(snapshot).map_err(crdt_io_error)?;
-        Ok(Some(prepared))
+        let snapshot = crdt_snapshot_for_page(&prepared.page, page_id, budget)?;
+        let operation_scan_reservation = budget.reserve(
+            checked_add_bytes(
+                sync_id_expansion_construction_upper_bound(&prepared.page.blocks)?,
+                sync_id_projection_scan_upper_bound(
+                    &prepared.page.blocks,
+                    SyncIdProjectionInput::Existing,
+                )?,
+            )?,
+            "managed save retained expansion/projection scan bound",
+        )?;
+        let writer_reservation = budget.reserve(
+            self.managed_save_writer_upper_bound(&prepared.page, path, existing, cache)?,
+            "managed save writer/serialization/cache publication bound",
+        )?;
+        Ok(Some(PreparedManagedSaveOperation {
+            budget: budget.clone(),
+            page: prepared,
+            snapshot,
+            _operation_scan_reservation: operation_scan_reservation,
+            _writer_reservation: writer_reservation,
+        }))
     }
 
-    fn record_managed_projection(&self, path: &Path) {
-        let Ok(content) = fs::read_to_string(path) else {
+    fn managed_save_writer_upper_bound(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+        cache: bool,
+    ) -> io::Result<u64> {
+        let (serialized, lines) = page_serialized_output_upper_bound(page, existing)?;
+        let mut bytes = page_write_construction_upper_bound(page, existing)?;
+        // The last-moment baseline recheck owns a second file String while the
+        // caller's baseline remains live.
+        if let Some(existing) = existing {
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(existing)?)?;
+        }
+        // content_rev, recent-write marker, disk-rev publication, and their map
+        // keys can coexist with the serialized bytes and cache document.
+        let revision = owned_string_len_upper_bound(64)?;
+        bytes = checked_add_bytes(bytes, checked_mul_bytes(revision, 4)?)?;
+        bytes = checked_add_bytes(
+            bytes,
+            checked_mul_bytes(owned_path_upper_bound(path)?, 4)?,
+        )?;
+        bytes = checked_add_bytes(
+            bytes,
+            checked_mul_bytes(
+                conservative_hash_entry_bytes::<PathBuf, String>()?,
+                2,
+            )?,
+        )?;
+        if page.format == Format::Org {
+            bytes = checked_add_bytes(
+                bytes,
+                managed_page_build_metrics_upper_bound(serialized, lines)?,
+            )?;
+        }
+        if cache {
+            let relative = self.rel_path(path);
+            let entry = PageEntry {
+                name: page.name.clone(),
+                kind: page.kind,
+                date_key: None,
+                rel_path: relative,
+                path: path.to_path_buf(),
+            };
+            // cache_upsert owns the entry, its eviction clone, path/name index
+            // keys, and the Arc<Document> built by the serializer.
+            bytes = checked_add_bytes(
+                bytes,
+                checked_mul_bytes(page_entry_clone_upper_bound(&entry)?, 2)?,
+            )?;
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.name)?)?;
+            bytes = checked_add_bytes(
+                bytes,
+                checked_add_bytes(
+                    conservative_hash_entry_bytes::<PathBuf, usize>()?,
+                    conservative_hash_entry_bytes::<(PageKind, String), usize>()?,
+                )?,
+            )?;
+            let (page_blocks, page_source, page_largest_raw) =
+                dto_page_source_metrics(page)?;
+            bytes = checked_add_bytes(
+                bytes,
+                cache_page_derived_upper_bound(
+                    &entry,
+                    page_blocks,
+                    page_source,
+                    page_largest_raw,
+                )?,
+            )?;
+            let guard = self.cache.read().unwrap();
+            if let Some(pages) = guard.as_ref() {
+                let next_len = pages
+                    .len()
+                    .checked_add(1)
+                    .ok_or_else(allocation_overflow)?;
+                bytes = checked_add_bytes(
+                    bytes,
+                    conservative_vec_capacity_upper_bound::<(PageEntry, Arc<Document>)>(
+                        usize_to_u64(next_len)?,
+                    )?,
+                )?;
+                // Arc::make_mut clones each PageEntry when any reader retains the
+                // cache Arc. Charging every entry is conservative and source-bound
+                // even when this particular save has unique ownership.
+                for (cached, _doc) in pages.iter() {
+                    bytes =
+                        checked_add_bytes(bytes, page_entry_clone_upper_bound(cached)?)?;
+                    let (blocks, source, largest_raw) =
+                        document_source_metrics(_doc)?;
+                    bytes = checked_add_bytes(
+                        bytes,
+                        cache_page_derived_upper_bound(
+                            cached,
+                            blocks,
+                            source,
+                            largest_raw,
+                        )?,
+                    )?;
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn record_managed_projection(&self, write: &ManagedTextWritePermit, path: &Path) {
+        let Ok(content) = self.managed_read_to_string(write, path) else {
             return;
         };
         let rel = self.rel_path(path);
@@ -8182,35 +10830,55 @@ impl Graph {
         }
     }
 
-    fn commit_managed_delete(&self, path: &Path) -> io::Result<Option<(CrdtPageId, Vec<String>)>> {
+    fn commit_managed_delete(
+        &self,
+        write: &ManagedTextWritePermit,
+        path: &Path,
+    ) -> io::Result<Option<(CrdtPageId, Vec<String>)>> {
         let rel = self.rel_path(path);
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
         let mut guard = self.managed_sync.lock().unwrap();
         let Some(sync) = guard.as_mut() else {
             return Ok(None);
         };
-        if let Some(source) = sync.materialize_page(rel.as_str()).map_err(crdt_io_error)? {
+        let source = sync.materialize_page(rel.as_str()).map_err(crdt_io_error)?;
+        if let Some(source) = source.as_ref() {
+            let _candidate_vector = budget.reserve(
+                conservative_vec_capacity_upper_bound::<(
+                    CrdtPageId,
+                    PreparedCrdtPageSnapshot,
+                )>(
+                    u64::try_from(sync.status().map_err(crdt_io_error)?.page_count)
+                        .map_err(|_| allocation_overflow())?,
+                )?,
+                "managed copy promotion candidate vector",
+            )?;
             let mut candidates = Vec::new();
             for destination in sync.materialize_pages().map_err(crdt_io_error)? {
                 if destination.id == source.id
                     || !self
-                        .resolve_rel(&destination.path)
-                        .is_some_and(|candidate| candidate.is_file())
+                        .resolve_managed_rel(write, &destination.path)?
+                        .is_some_and(|candidate| {
+                            self.managed_exists(write, &candidate).unwrap_or(false)
+                        })
                 {
                     continue;
                 }
-                if let Some(promoted) = copy_promotion_snapshot(&source, &destination) {
+                if let Some(promoted) =
+                    copy_promotion_snapshot(source, &destination, &budget)?
+                {
                     candidates.push((destination.id, promoted));
                 }
             }
             if candidates.len() == 1 {
                 let (copy_id, promoted) = candidates.pop().unwrap();
-                let report = sync
-                    .promote_copy(source.id, copy_id, promoted)
-                    .map_err(crdt_io_error)?;
-                return Ok(Some((source.id, report.affected_paths)));
+                let source_id = source.id;
+                let report = promoted.promote_copy(sync, source_id, copy_id)?;
+                return Ok(Some((source_id, report.affected_paths)));
             }
         }
-        match sync.delete_page(rel.as_str()) {
+        let result = PreparedCrdtDelete::new(rel, source.as_ref(), &budget)?.delete(sync);
+        match result {
             Ok(_) | Err(crate::crdt::CrdtError::PageNotFound) => Ok(None),
             Err(error) => Err(crdt_io_error(error)),
         }
@@ -8223,7 +10891,11 @@ impl Graph {
     /// stray there would make name-resolution serve it). A normal page resolves its
     /// path by name and caches as before. Errors on an invalid pinned path (escapes
     /// the graph) or a `.md`+`.org` twin (ambiguous identity, M1).
-    fn save_target(&self, page: &PageDto) -> io::Result<(PathBuf, bool)> {
+    fn save_target(
+        &self,
+        write: &ManagedTextWritePermit,
+        page: &PageDto,
+    ) -> io::Result<(PathBuf, bool)> {
         if !page.path.is_empty() {
             // The page knows its own file (every loaded page carries its path).
             // Write THERE — that's how a duplicate-day stray saves to its own file
@@ -8232,23 +10904,17 @@ impl Graph {
             // title-named journal coexisting with a canonical date-stem file): a
             // shadow's cache slot belongs to the canonical, so it stays out.
             let path = self
-                .resolve_rel(&page.path)
+                .resolve_managed_rel(write, &page.path)?
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
-            let cache = self.path_is_cacheable(&path);
+            let cache = self.managed_path_is_cacheable(write, &path)?;
             return Ok((path, cache));
         }
         // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
         // can't tell which file the editor's content belongs to.
-        if self.has_twin(&page.name, page.kind) {
+        if self.managed_has_twin(write, &page.name, page.kind)? {
             return Err(twin_error(&page.name));
         }
-        let path = self.path_for(&page.name, page.kind);
-        if !path_stays_within_root(&self.root, &path) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "page path escapes graph root",
-            ));
-        }
+        let path = self.managed_path_for(write, &page.name, page.kind)?;
         Ok((path, true))
     }
 
@@ -8262,7 +10928,8 @@ impl Graph {
             eprintln!("attempted to persist an ephemeral bundled Guide page");
             return Ok("guide-ephemeral".into());
         }
-        let (path, cache) = self.save_target(page)?;
+        let write = self.admit_managed_text_writer()?;
+        let (path, cache) = self.save_target(&write, page)?;
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
         // read→conflict-check→write→cache_upsert, so neither can clobber the other
@@ -8272,8 +10939,8 @@ impl Graph {
         // Single read of the current file (the conflict baseline AND the
         // formatting source AND, with the written content, the returned rev) —
         // avoids re-reading the file 2-3× per save, which is felt on NFS.
-        let existing: Option<String> = match fs::read_to_string(&path) {
-            Ok(disk_s) => {
+        let existing: Option<String> = match self.managed_read_optional_text(&write, &path)? {
+            Some(disk_s) => {
                 // The file must still match the exact bytes the editor loaded
                 // (`base_rev`); if it changed underneath us (external edit /
                 // Syncthing pull), refuse to clobber. `base_rev == None` means the
@@ -8284,7 +10951,7 @@ impl Graph {
                 }
                 Some(disk_s)
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            None => {
                 // The file is gone. If the editor had a baseline (page existed at
                 // load), it was deleted externally — DON'T silently resurrect it.
                 if base_rev.is_some() {
@@ -8292,7 +10959,6 @@ impl Graph {
                 }
                 None
             }
-            Err(e) => return Err(e), // hard error (permission, I/O) — don't write blind
         };
         // recheck = true: re-verify the file hasn't changed on disk in the instant
         // before the write, to narrow the inherent race against a NON-cooperating
@@ -8300,18 +10966,28 @@ impl Graph {
         // M2: write to the SAME path we locked + read the baseline from — never
         // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
         // pick a different extension if a twin appears mid-save).
-        let prepared = self.commit_managed_page(page, &path)?;
-        let result = self.write_page(
-            prepared.as_ref().unwrap_or(page),
-            &path,
-            existing.as_deref(),
-            true,
-            cache,
-        );
-        if result.is_ok() && prepared.is_some() {
-            self.record_managed_projection(&path);
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        if let Some(prepared) =
+            self.prepare_managed_save(page, &path, existing.as_deref(), cache, &budget)?
+        {
+            prepared.commit_and_publish(
+                self,
+                &write,
+                &path,
+                existing.as_deref(),
+                true,
+                cache,
+            )
+        } else {
+            self.write_page(
+                &write,
+                page,
+                &path,
+                existing.as_deref(),
+                true,
+                cache,
+            )
         }
-        result
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
@@ -8321,26 +10997,37 @@ impl Graph {
             eprintln!("attempted to force-persist an ephemeral bundled Guide page");
             return Ok("guide-ephemeral".into());
         }
-        let (path, cache) = self.save_target(page)?;
+        let write = self.admit_managed_text_writer()?;
+        let (path, cache) = self.save_target(&write, page)?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
         // "Keep mine" resolves a content conflict, but it must not turn an I/O or
         // decoding failure into permission to overwrite unknown bytes.
-        let existing = read_optional_text(&path)?;
+        let existing = self.managed_read_optional_text(&write, &path)?;
         // recheck = false: "keep mine" overwrites unconditionally. Same locked path
         // is threaded into write_page (M2) so a forced save can't land on a twin.
-        let prepared = self.commit_managed_page(page, &path)?;
-        let result = self.write_page(
-            prepared.as_ref().unwrap_or(page),
-            &path,
-            existing.as_deref(),
-            false,
-            cache,
-        );
-        if result.is_ok() && prepared.is_some() {
-            self.record_managed_projection(&path);
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        if let Some(prepared) =
+            self.prepare_managed_save(page, &path, existing.as_deref(), cache, &budget)?
+        {
+            prepared.commit_and_publish(
+                self,
+                &write,
+                &path,
+                existing.as_deref(),
+                false,
+                cache,
+            )
+        } else {
+            self.write_page(
+                &write,
+                page,
+                &path,
+                existing.as_deref(),
+                false,
+                cache,
+            )
         }
-        result
     }
 
     /// Write a page to `path` (already resolved + locked by the caller), reproducing
@@ -8348,6 +11035,7 @@ impl Graph {
     /// what was written — no extra read).
     fn write_page(
         &self,
+        write: &ManagedTextWritePermit,
         page: &PageDto,
         path: &Path,
         existing: Option<&str>,
@@ -8357,11 +11045,7 @@ impl Graph {
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
         let doc = Document {
             pre_block: page.pre_block.clone(),
-            roots: page
-                .blocks
-                .iter()
-                .map(|b| dto_to_doc(b, dto_is_org))
-                .collect(),
+            roots: dto_blocks_to_doc_checked(&page.blocks, dto_is_org)?,
         };
         let (doc, content) = self.serialize_page_document(doc, path, existing)?;
         // No-op save: identical bytes already on disk (e.g. focus/blur with no real
@@ -8373,7 +11057,7 @@ impl Graph {
         // overwrites unconditionally. On a no-op, just hash the unchanged bytes for
         // the returned/cached rev — no write, no marker.
         let rev = if changed {
-            self.commit_editor_write(&path, &content, existing, recheck)?
+            self.commit_editor_write(write, &path, &content, existing, recheck)?
         } else {
             content_rev(&content)
         };
@@ -8638,14 +11322,35 @@ fn newly_reclassified_page_property_line(existing: &str, proposed: &Document) ->
     }
 
     fn outline_property_lines<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a str>) {
-        for block in blocks {
+        let mut frames: [Option<std::slice::Iter<'a, DocBlock>>; MAX_MANAGED_BLOCK_DEPTH] =
+            std::array::from_fn(|_| None);
+        let mut len = usize::from(!blocks.is_empty());
+        if len != 0 {
+            frames[0] = Some(blocks.iter());
+        }
+        while len != 0 {
+            let mut frame = frames[len - 1]
+                .take()
+                .expect("active property firewall frame");
+            let Some(block) = frame.next() else {
+                len -= 1;
+                continue;
+            };
+            frames[len - 1] = Some(frame);
             out.extend(
                 block
                     .raw
                     .split('\n')
                     .filter(|line| page_header_property(line)),
             );
-            outline_property_lines(&block.children, out);
+            if !block.children.is_empty() {
+                if len == MAX_MANAGED_BLOCK_DEPTH {
+                    debug_assert!(false, "document nesting exceeded managed depth");
+                    continue;
+                }
+                frames[len] = Some(block.children.iter());
+                len += 1;
+            }
         }
     }
 
@@ -9080,28 +11785,75 @@ fn runtime_owner_namespace(domain: &str, owner: &str) -> Uuid {
     deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, &name)
 }
 
-fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
-    for (sibling_index, block) in blocks.iter_mut().enumerate() {
-        // Hierarchical derivation is equivalent to hashing the full sibling-index
-        // path, while doing constant work per node (O(blocks)).
-        let structural = deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
+fn assign_runtime_ids_checked(blocks: &mut [DocBlock], parent: Uuid) -> io::Result<()> {
+    struct Frame<'a> {
+        blocks: std::slice::IterMut<'a, DocBlock>,
+        parent: Uuid,
+        sibling: usize,
+    }
+    let mut frames: [Option<Frame<'_>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    let mut len = usize::from(!blocks.is_empty());
+    if len != 0 {
+        frames[0] = Some(Frame {
+            blocks: blocks.iter_mut(),
+            parent,
+            sibling: 0,
+        });
+    }
+    while len != 0 {
+        let mut frame = frames[len - 1]
+            .take()
+            .expect("active runtime-id frame");
+        let Some(block) = frame.blocks.next() else {
+            len -= 1;
+            continue;
+        };
+        let sibling = frame.sibling;
+        frame.sibling = frame
+            .sibling
+            .checked_add(1)
+            .ok_or_else(allocation_overflow)?;
+        let structural = deterministic_runtime_uuid(
+            frame.parent,
+            &usize_to_u64(sibling)?.to_be_bytes(),
+        );
+        frames[len - 1] = Some(frame);
         if block.uuid.is_empty() {
             block.uuid = structural.to_string();
         }
-        assign_runtime_ids_rec(&mut block.children, structural);
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed page block nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(Frame {
+                blocks: block.children.iter_mut(),
+                parent: structural,
+                sibling: 0,
+            });
+            len += 1;
+        }
     }
+    Ok(())
 }
 
 /// Seed missing runtime keys for a graph-backed document from its normalized,
 /// graph-relative physical owner. Existing live keys survive ordinary saves.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
     let owner = runtime_owner_namespace("file-block-runtime-v1", owner_rel_path);
-    assign_runtime_ids_rec(roots, owner);
+    let _ = assign_runtime_ids_checked(roots, owner);
 }
 
-fn assign_virtual_doc_runtime_ids(roots: &mut [DocBlock], domain: &str, owner: &str) {
+fn assign_virtual_doc_runtime_ids(
+    roots: &mut [DocBlock],
+    domain: &str,
+    owner: &str,
+) -> io::Result<()> {
     let owner = runtime_owner_namespace(domain, owner);
-    assign_runtime_ids_rec(roots, owner);
+    assign_runtime_ids_checked(roots, owner)
 }
 
 fn block_runtime_id(b: &DocBlock) -> String {
@@ -9113,25 +11865,15 @@ fn block_runtime_id(b: &DocBlock) -> String {
 }
 
 /// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
-pub fn block_to_dto(b: &DocBlock) -> BlockDto {
-    BlockDto {
-        id: block_runtime_id(b),
-        raw: b.raw.clone(),
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(block_to_dto).collect(),
-        breadcrumb: Vec::new(),
-        page_property: false,
-        // All header facets off the one lsdoc projection (marker/priority/heading/
-        // properties/scheduled/deadline) — priority is header-position only, matching
-        // the chip, so a loaded block never shows a priority the edit path wouldn't.
-        marker: b.marker().map(str::to_string),
-        priority: b.priority().map(str::to_string),
-        heading_level: b.heading_level(),
-        scheduled: b.scheduled().map(str::to_string),
-        deadline: b.deadline().map(str::to_string),
-        tags: b.tags(),
-        properties: b.properties(),
-    }
+pub fn block_to_dto(b: &DocBlock) -> io::Result<BlockDto> {
+    doc_blocks_to_dto_checked(std::slice::from_ref(b))?
+        .pop()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "block projection produced no result",
+            )
+        })
 }
 
 /// Convert one block to the result-row wire shape. Result membership is about
@@ -9157,41 +11899,151 @@ pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
     }
 }
 
-/// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
-/// block id as the node uuid so the cache and the frontend agree on identity.
-fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
-    DocBlock {
-        raw: b.raw.clone(),
-        children: b.children.iter().map(|c| dto_to_doc(c, is_org)).collect(),
-        uuid: b.id.clone(),
-        is_org,
-        proj: std::sync::OnceLock::new(),
+fn dto_blocks_to_doc_checked(blocks: &[BlockDto], is_org: bool) -> io::Result<Vec<DocBlock>> {
+    struct Frame<'a> {
+        source: &'a [BlockDto],
+        next: usize,
+        output: Vec<DocBlock>,
+    }
+    let mut frames: [Option<Frame<'_>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    frames[0] = Some(Frame {
+        source: blocks,
+        next: 0,
+        output: Vec::with_capacity(blocks.len()),
+    });
+    let mut len = 1_usize;
+    loop {
+        let frame = frames[len - 1]
+            .as_mut()
+            .expect("active DTO conversion frame");
+        if frame.next == frame.source.len() {
+            let completed = frames[len - 1]
+                .take()
+                .expect("completed DTO conversion frame")
+                .output;
+            len -= 1;
+            if len == 0 {
+                return Ok(completed);
+            }
+            frames[len - 1]
+                .as_mut()
+                .expect("parent DTO conversion frame")
+                .output
+                .last_mut()
+                .expect("child frame has parent")
+                .children = completed;
+            continue;
+        }
+        let block = &frame.source[frame.next];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        frame.output.push(DocBlock {
+            raw: block.raw.clone(),
+            children: Vec::new(),
+            uuid: block.id.clone(),
+            is_org,
+            proj: std::sync::OnceLock::new(),
+        });
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed page block nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(Frame {
+                source: &block.children,
+                next: 0,
+                output: Vec::with_capacity(block.children.len()),
+            });
+            len += 1;
+        }
     }
 }
 
-fn persisted_sync_id(raw: &str, format: Format) -> Option<String> {
+fn persisted_sync_id(
+    raw: &str,
+    format: Format,
+    _scan: &SyncIdProjectionScanReservation,
+) -> Option<String> {
     let mut block = DocBlock::new(raw);
     block.is_org = format == Format::Org;
     block.property("id").filter(|id| !id.is_empty())
 }
 
-fn count_missing_sync_ids(blocks: &[BlockDto], format: Format) -> usize {
-    blocks
-        .iter()
-        .map(|block| {
-            usize::from(persisted_sync_id(&block.raw, format).is_none())
-                + count_missing_sync_ids(&block.children, format)
-        })
-        .sum()
+fn count_missing_sync_ids_reserved(
+    blocks: &[BlockDto],
+    format: Format,
+    scan: &SyncIdProjectionScanReservation,
+) -> io::Result<usize> {
+    let mut missing = 0_usize;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        missing = missing
+            .checked_add(usize::from(
+                persisted_sync_id(&block.raw, format, scan).is_none(),
+            ))
+            .ok_or_else(allocation_overflow)?;
+    }
+    Ok(missing)
+}
+
+fn count_missing_sync_ids(
+    blocks: &[BlockDto],
+    format: Format,
+    budget: &RetainedContentBudget,
+) -> io::Result<usize> {
+    let scan = SyncIdProjectionScanReservation::reserve(
+        budget,
+        blocks,
+        SyncIdProjectionInput::Existing,
+        0,
+        "managed missing sync id projection scan",
+    )?;
+    count_missing_sync_ids_reserved(blocks, format, &scan)
 }
 
 fn validate_graph_sync_ids(
     blocks: &[BlockDto],
     format: Format,
     seen: &mut std::collections::HashSet<String>,
+    seen_reservation: &mut RetainedContentReservation,
+    budget: &RetainedContentBudget,
 ) -> io::Result<()> {
-    for block in blocks {
-        let id = persisted_sync_id(&block.raw, format).ok_or_else(|| {
+    let prospective_ids = checked_add_bytes(
+        u64::try_from(seen.len()).map_err(|_| allocation_overflow())?,
+        page_block_count_checked(blocks)?,
+    )?;
+    let scan = SyncIdProjectionScanReservation::reserve(
+        budget,
+        blocks,
+        SyncIdProjectionInput::Existing,
+        sync_id_hash_set_build_upper_bound(
+            prospective_ids,
+            checked_add_bytes(
+                string_hash_set_retained_bytes(seen)?,
+                sync_id_owned_source_upper_bound(blocks, false)?,
+            )?,
+        )?,
+        "managed graph sync id validation projection/set bound",
+    )?;
+    let validation = validate_graph_sync_ids_reserved(blocks, format, seen, &scan);
+    seen_reservation.replace_with_temporary(
+        scan.into_reservation(),
+        string_hash_set_retained_bytes(seen)?,
+    )?;
+    validation
+}
+
+fn validate_graph_sync_ids_reserved(
+    blocks: &[BlockDto],
+    format: Format,
+    seen: &mut std::collections::HashSet<String>,
+    scan: &SyncIdProjectionScanReservation,
+) -> io::Result<()> {
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        let id = persisted_sync_id(&block.raw, format, scan).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "managed-sync block has no persisted id",
@@ -9209,7 +12061,7 @@ fn validate_graph_sync_ids(
                 format!("duplicate persisted block id {id} across graph"),
             ));
         }
-        validate_graph_sync_ids(&block.children, format, seen)?;
+        drop(id);
     }
     Ok(())
 }
@@ -9258,58 +12110,312 @@ fn raw_with_sync_id(raw: &str, id: &str, format: Format) -> String {
     format!("{raw}{separator}id:: {id}")
 }
 
-fn persist_block_sync_ids(
-    block: &mut BlockDto,
-    format: Format,
-    seen: &mut std::collections::HashSet<String>,
+fn try_for_each_block_mut(
+    blocks: &mut [BlockDto],
+    mut visit: impl FnMut(&mut BlockDto) -> io::Result<()>,
 ) -> io::Result<()> {
-    let persisted = persisted_sync_id(&block.raw, format);
-    let id = match persisted {
-        Some(id) => id,
-        None => {
-            let id = Uuid::new_v4().to_string();
-            block.raw = raw_with_sync_id(&block.raw, &id, format);
-            id
-        }
-    };
-    if !seen.insert(id.clone()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("duplicate persisted block id {id}"),
-        ));
+    let mut frames: [Option<std::slice::IterMut<'_, BlockDto>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    let mut len = usize::from(!blocks.is_empty());
+    if len != 0 {
+        frames[0] = Some(blocks.iter_mut());
     }
-    // `BlockDto.id` is a structural runtime locator owned by the page/path. The
-    // persisted id is the cross-device identity and stays exclusively in `raw`.
-    for child in &mut block.children {
-        persist_block_sync_ids(child, format, seen)?;
+    while len != 0 {
+        let mut frame = frames[len - 1]
+            .take()
+            .expect("active mutable block frame");
+        let Some(block) = frame.next() else {
+            len -= 1;
+            continue;
+        };
+        frames[len - 1] = Some(frame);
+        visit(block)?;
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed page block nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(block.children.iter_mut());
+            len += 1;
+        }
     }
     Ok(())
 }
 
-fn page_with_persisted_sync_ids(page: &PageDto) -> io::Result<PageDto> {
-    let mut page = page.clone();
-    let mut seen = std::collections::HashSet::new();
-    for block in &mut page.blocks {
-        persist_block_sync_ids(block, page.format, &mut seen)?;
+fn persist_block_sync_ids(
+    blocks: &mut [BlockDto],
+    format: Format,
+    seen: &mut std::collections::HashSet<String>,
+    scan: &SyncIdProjectionScanReservation,
+) -> io::Result<()> {
+    try_for_each_block_mut(blocks, |block| {
+        let persisted = persisted_sync_id(&block.raw, format, scan);
+        let id = match persisted {
+            Some(id) => id,
+            None => {
+                let id = Uuid::new_v4().to_string();
+                block.raw = raw_with_sync_id(&block.raw, &id, format);
+                id
+            }
+        };
+        if !seen.insert(id.clone()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate persisted block id {id}"),
+            ));
+        }
+        Ok(())
+    })
+}
+
+fn page_with_persisted_sync_ids(
+    page: &PageDto,
+    budget: &RetainedContentBudget,
+) -> io::Result<PageDto> {
+    Ok(page_with_persisted_sync_ids_budgeted(page, budget)?.into_page())
+}
+
+struct BudgetedPageDto {
+    page: PageDto,
+    _reservation: RetainedContentReservation,
+}
+
+impl BudgetedPageDto {
+    fn into_page(self) -> PageDto {
+        self.page
     }
-    Ok(page)
+
+    fn replace_path(
+        &mut self,
+        path: String,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<()> {
+        let replacement = budget.reserve(
+            owned_string_upper_bound(&path)?,
+            "managed prepared page storage path",
+        )?;
+        self.page.path = path;
+        self._reservation.replace_with_temporary(
+            replacement,
+            page_dto_retained_bytes(&self.page)?,
+        )?;
+        Ok(())
+    }
+}
+
+fn clone_block_dtos_checked(blocks: &[BlockDto]) -> io::Result<Vec<BlockDto>> {
+    struct Frame<'a> {
+        source: &'a [BlockDto],
+        next: usize,
+        output: Vec<BlockDto>,
+    }
+    let mut frames: [Option<Frame<'_>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    frames[0] = Some(Frame {
+        source: blocks,
+        next: 0,
+        output: Vec::with_capacity(blocks.len()),
+    });
+    let mut len = 1_usize;
+    loop {
+        let frame = frames[len - 1]
+            .as_mut()
+            .expect("active block clone frame");
+        if frame.next == frame.source.len() {
+            let completed = frames[len - 1]
+                .take()
+                .expect("completed block clone frame")
+                .output;
+            len -= 1;
+            if len == 0 {
+                return Ok(completed);
+            }
+            frames[len - 1]
+                .as_mut()
+                .expect("parent block clone frame")
+                .output
+                .last_mut()
+                .expect("child frame has parent")
+                .children = completed;
+            continue;
+        }
+        let block = &frame.source[frame.next];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        frame.output.push(BlockDto {
+            id: block.id.clone(),
+            raw: block.raw.clone(),
+            collapsed: block.collapsed,
+            children: Vec::new(),
+            breadcrumb: block.breadcrumb.clone(),
+            page_property: block.page_property,
+            marker: block.marker.clone(),
+            priority: block.priority.clone(),
+            heading_level: block.heading_level,
+            scheduled: block.scheduled.clone(),
+            deadline: block.deadline.clone(),
+            tags: block.tags.clone(),
+            properties: block.properties.clone(),
+        });
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed page block nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(Frame {
+                source: &block.children,
+                next: 0,
+                output: Vec::with_capacity(block.children.len()),
+            });
+            len += 1;
+        }
+    }
+}
+
+fn clone_page_dto_checked(page: &PageDto) -> io::Result<PageDto> {
+    Ok(PageDto {
+        name: page.name.clone(),
+        kind: page.kind,
+        title: page.title.clone(),
+        pre_block: page.pre_block.clone(),
+        blocks: clone_block_dtos_checked(&page.blocks)?,
+        rev: page.rev.clone(),
+        format: page.format,
+        read_only: page.read_only,
+        path: page.path.clone(),
+        guide: page.guide,
+    })
+}
+
+fn page_with_persisted_sync_ids_budgeted(
+    page: &PageDto,
+    budget: &RetainedContentBudget,
+) -> io::Result<BudgetedPageDto> {
+    let mut page_reservation = budget.reserve(
+        page_dto_clone_upper_bound(page)?,
+        "managed sync id page clone",
+    )?;
+    let mut page = clone_page_dto_checked(page)?;
+    persist_page_sync_ids_with_budget(&mut page, &mut page_reservation, budget)?;
+    Ok(BudgetedPageDto {
+        page,
+        _reservation: page_reservation,
+    })
+}
+
+fn persist_page_sync_ids_with_budget(
+    page: &mut PageDto,
+    page_reservation: &mut RetainedContentReservation,
+    budget: &RetainedContentBudget,
+) -> io::Result<()> {
+    let simultaneous = sync_id_expansion_simultaneous_upper_bound(&page.blocks)?;
+    let construction = SyncIdProjectionScanReservation::reserve(
+        budget,
+        &page.blocks,
+        SyncIdProjectionInput::Expanded,
+        simultaneous,
+        "managed sync id expansion projection/construction bound",
+    )?;
+    let result = (|| {
+        let _missing =
+            count_missing_sync_ids_reserved(&page.blocks, page.format, &construction)?;
+        let mut seen = std::collections::HashSet::new();
+        persist_block_sync_ids(&mut page.blocks, page.format, &mut seen, &construction)?;
+        Ok(())
+    })();
+    page_reservation.replace_with_temporary(
+        construction.into_reservation(),
+        page_dto_retained_bytes(page)?,
+    )?;
+    result
+}
+
+fn sync_id_expansion_simultaneous_upper_bound(
+    blocks: &[BlockDto],
+) -> io::Result<u64> {
+    let count = page_block_count_checked(blocks)?;
+    let largest_raw = largest_block_raw_bytes(blocks)?;
+    let uuid_bytes = usize_to_u64(std::mem::size_of::<[u8; 36]>())?;
+    let markdown_suffix = checked_add_bytes(usize_to_u64("\nid:: ".len())?, uuid_bytes)?;
+    let org_suffix = checked_add_bytes(
+        usize_to_u64("\n:PROPERTIES:\n:ID: \n:END:".len())?,
+        uuid_bytes,
+    )?;
+    let suffix = markdown_suffix.max(org_suffix);
+    checked_add_bytes(
+        sync_id_hash_set_build_upper_bound(
+            count,
+            sync_id_owned_source_upper_bound(blocks, true)?,
+        )?,
+        checked_add_bytes(
+            checked_mul_bytes(count, suffix)?,
+            checked_add_bytes(
+                checked_add_bytes(largest_raw, suffix)?,
+                managed_block_walk_stack_upper_bound::<
+                    std::slice::IterMut<'_, BlockDto>,
+                >()?,
+            )?,
+        )?,
+    )
+}
+
+fn sync_id_expansion_construction_upper_bound(
+    blocks: &[BlockDto],
+) -> io::Result<u64> {
+    checked_add_bytes(
+        sync_id_projection_scan_upper_bound(
+            blocks,
+            SyncIdProjectionInput::Expanded,
+        )?,
+        sync_id_expansion_simultaneous_upper_bound(blocks)?,
+    )
+}
+
+fn string_hash_set_retained_bytes(
+    values: &std::collections::HashSet<String>,
+) -> io::Result<u64> {
+    let buckets = checked_mul_bytes(
+        u64::try_from(values.capacity()).map_err(|_| allocation_overflow())?,
+        checked_add_bytes(usize_to_u64(std::mem::size_of::<String>())?, 16)?,
+    )?;
+    values.iter().try_fold(buckets, |bytes, value| {
+        checked_add_bytes(
+            bytes,
+            u64::try_from(value.capacity()).map_err(|_| allocation_overflow())?,
+        )
+    })
 }
 
 fn collect_persisted_sync_ids(
     blocks: &[BlockDto],
     format: Format,
     output: &mut std::collections::HashSet<String>,
-) {
-    for block in blocks {
-        if let Some(id) = persisted_sync_id(&block.raw, format) {
+    scan: &SyncIdProjectionScanReservation,
+) -> io::Result<()> {
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        if let Some(id) = persisted_sync_id(&block.raw, format, scan) {
             output.insert(id);
         }
-        collect_persisted_sync_ids(&block.children, format, output);
     }
+    Ok(())
 }
 
-fn replace_persisted_sync_id(raw: &str, old: &str, new: &str, format: Format) -> String {
-    let mut output = String::with_capacity(raw.len() + new.len().saturating_sub(old.len()));
+fn replace_persisted_sync_id(
+    raw: &str,
+    old: &str,
+    new: &str,
+    format: Format,
+) -> io::Result<String> {
+    let growth = new.len().checked_sub(old.len()).unwrap_or(0);
+    let capacity = raw
+        .len()
+        .checked_add(growth)
+        .ok_or_else(allocation_overflow)?;
+    let mut output = String::with_capacity(capacity);
     let mut replaced = false;
     for segment in raw.split_inclusive('\n') {
         let (line, ending) = segment
@@ -9343,23 +12449,28 @@ fn replace_persisted_sync_id(raw: &str, old: &str, new: &str, format: Format) ->
         }
     }
     debug_assert!(replaced, "persisted id selected for replacement must exist");
-    output
+    Ok(output)
 }
 
 fn rekey_conflicting_sync_ids(
     blocks: &mut [BlockDto],
     format: Format,
     conflicts: &std::collections::HashSet<String>,
-) {
-    for block in blocks {
-        if let Some(id) = persisted_sync_id(&block.raw, format) {
+    scan: &SyncIdProjectionScanReservation,
+) -> io::Result<()> {
+    try_for_each_block_mut(blocks, |block| {
+        if let Some(id) = persisted_sync_id(&block.raw, format, scan) {
             if conflicts.contains(&id) {
-                block.raw =
-                    replace_persisted_sync_id(&block.raw, &id, &Uuid::new_v4().to_string(), format);
+                block.raw = replace_persisted_sync_id(
+                    &block.raw,
+                    &id,
+                    &Uuid::new_v4().to_string(),
+                    format,
+                )?;
             }
         }
-        rekey_conflicting_sync_ids(&mut block.children, format, conflicts);
-    }
+        Ok(())
+    })
 }
 
 fn crdt_io_error(error: crate::crdt::CrdtError) -> io::Error {
@@ -9369,11 +12480,40 @@ fn crdt_io_error(error: crate::crdt::CrdtError) -> io::Error {
 fn flatten_crdt_blocks(
     blocks: &[BlockDto],
     format: Format,
-    parent: Option<CrdtBlockId>,
     output: &mut Vec<CrdtBlockSnapshot>,
+    scan: &SyncIdProjectionScanReservation,
 ) -> io::Result<()> {
-    for (order, block) in blocks.iter().enumerate() {
-        let persisted = persisted_sync_id(&block.raw, format).ok_or_else(|| {
+    #[derive(Clone, Copy)]
+    struct Frame<'a> {
+        blocks: &'a [BlockDto],
+        next: usize,
+        parent: Option<CrdtBlockId>,
+    }
+    let empty = Frame {
+        blocks: &[],
+        next: 0,
+        parent: None,
+    };
+    let mut frames = [empty; MAX_MANAGED_BLOCK_DEPTH];
+    let mut len = usize::from(!blocks.is_empty());
+    if len != 0 {
+        frames[0] = Frame {
+            blocks,
+            next: 0,
+            parent: None,
+        };
+    }
+    while len != 0 {
+        let frame = &mut frames[len - 1];
+        if frame.next == frame.blocks.len() {
+            len -= 1;
+            continue;
+        }
+        let order = frame.next;
+        let parent = frame.parent;
+        let block = &frame.blocks[order];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        let persisted = persisted_sync_id(&block.raw, format, scan).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "managed-sync block has no persisted id",
@@ -9393,169 +12533,756 @@ fn flatten_crdt_blocks(
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many siblings"))?,
             raw: block.raw.clone(),
         });
-        flatten_crdt_blocks(&block.children, format, Some(id), output)?;
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed page block nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Frame {
+                blocks: &block.children,
+                next: 0,
+                parent: Some(id),
+            };
+            len += 1;
+        }
     }
     Ok(())
 }
 
-fn crdt_snapshot_for_page(page: &PageDto, id: CrdtPageId) -> io::Result<CrdtPageSnapshot> {
+struct PreparedCrdtPageSnapshot {
+    snapshot: CrdtPageSnapshot,
+    _reservation: RetainedContentReservation,
+}
+
+struct PreparedJournalMigrationPublication {
+    budget: RetainedContentBudget,
+    page: BudgetedPageDto,
+    snapshot: PreparedCrdtPageSnapshot,
+    _page_construction: RetainedContentReservation,
+    _publication_reservation: RetainedContentReservation,
+}
+
+struct PreparedManagedSaveOperation {
+    budget: RetainedContentBudget,
+    page: BudgetedPageDto,
+    snapshot: PreparedCrdtPageSnapshot,
+    _operation_scan_reservation: RetainedContentReservation,
+    _writer_reservation: RetainedContentReservation,
+}
+
+impl PreparedManagedSaveOperation {
+    fn commit_and_publish(
+        self,
+        graph: &Graph,
+        write: &ManagedTextWritePermit,
+        path: &Path,
+        existing: Option<&str>,
+        recheck: bool,
+        cache: bool,
+    ) -> io::Result<String> {
+        let Self {
+            budget: _budget,
+            page,
+            snapshot,
+            _operation_scan_reservation,
+            _writer_reservation,
+        } = self;
+        let sync_guard = graph.managed_sync.lock().unwrap();
+        snapshot.commit_page_with_guard_then(sync_guard, || {
+            let result =
+                graph.write_page(write, &page.page, path, existing, recheck, cache);
+            if result.is_ok() {
+                graph.record_managed_projection(write, path);
+            }
+            result
+        })
+    }
+}
+
+impl std::ops::Deref for PreparedCrdtPageSnapshot {
+    type Target = CrdtPageSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+struct PreparedCrdtPageBatch {
+    pages: Vec<PreparedCrdtPageSnapshot>,
+    _capacity_reservation: RetainedContentReservation,
+    _operation_reservation: Option<RetainedContentReservation>,
+}
+
+impl PreparedCrdtPageBatch {
+    fn with_capacity(
+        capacity: usize,
+        budget: &RetainedContentBudget,
+        resource: &'static str,
+    ) -> io::Result<Self> {
+        let count = usize_to_u64(capacity)?;
+        let capacity_reservation = budget.reserve(
+            checked_add_bytes(
+                conservative_vec_capacity_upper_bound::<PreparedCrdtPageSnapshot>(count)?,
+                checked_add_bytes(
+                    conservative_vec_capacity_upper_bound::<CrdtPageSnapshot>(count)?,
+                    conservative_vec_capacity_upper_bound::<RetainedContentReservation>(count)?,
+                )?,
+            )?,
+            resource,
+        )?;
+        Ok(Self {
+            pages: Vec::with_capacity(capacity),
+            _capacity_reservation: capacity_reservation,
+            _operation_reservation: None,
+        })
+    }
+
+    fn push(&mut self, page: PreparedCrdtPageSnapshot) {
+        assert!(
+            self.pages.len() < self.pages.capacity(),
+            "prepared CRDT batch capacity was admitted before allocation"
+        );
+        self.pages.push(page);
+    }
+
+    fn admit_operation(
+        mut self,
+        budget: &RetainedContentBudget,
+        resource: &'static str,
+    ) -> io::Result<Self> {
+        let count = usize_to_u64(self.pages.len())?;
+        let mut operation_payload = 0_u64;
+        let mut blocks = 0_u64;
+        for page in &self.pages {
+            let snapshot = &page.snapshot;
+            operation_payload =
+                checked_add_bytes(operation_payload, crdt_snapshot_retained_bytes(snapshot)?)?;
+            blocks = checked_add_bytes(blocks, usize_to_u64(snapshot.blocks.len())?)?;
+        }
+        self._operation_reservation = Some(budget.reserve(
+            crdt_operation_components_upper_bound(count, blocks, operation_payload)?,
+            resource,
+        )?);
+        Ok(self)
+    }
+
+    fn into_owned_parts(
+        self,
+    ) -> (
+        Vec<CrdtPageSnapshot>,
+        Vec<RetainedContentReservation>,
+        RetainedContentReservation,
+        RetainedContentReservation,
+    ) {
+        let Self {
+            pages,
+            _capacity_reservation,
+            _operation_reservation,
+        } = self;
+        let operation_reservation =
+            _operation_reservation.expect("CRDT batch operation must be admitted");
+        let mut snapshots = Vec::with_capacity(pages.len());
+        let mut reservations = Vec::with_capacity(pages.len());
+        for page in pages {
+            snapshots.push(page.snapshot);
+            reservations.push(page._reservation);
+        }
+        (
+            snapshots,
+            reservations,
+            _capacity_reservation,
+            operation_reservation,
+        )
+    }
+
+}
+
+struct PreparedCrdtReplacement {
+    pages: PreparedCrdtPageBatch,
+    preconditions: Vec<ProjectionPrecondition>,
+    _precondition_reservations: Vec<RetainedContentReservation>,
+    _reservation: RetainedContentReservation,
+}
+
+impl PreparedCrdtReplacement {
+    fn new(
+        pages: PreparedCrdtPageBatch,
+        preconditions: Vec<ProjectionPrecondition>,
+        precondition_reservations: Vec<RetainedContentReservation>,
+        current_pages: &[CrdtPageSnapshot],
+        budget: &RetainedContentBudget,
+    ) -> io::Result<Self> {
+        let count = usize_to_u64(preconditions.len())?;
+        let mut bound = crdt_operation_build_upper_bound(current_pages)?;
+        bound = checked_add_bytes(
+            bound,
+            conservative_vec_capacity_upper_bound::<ProjectionPrecondition>(count)?,
+        )?;
+        bound = checked_add_bytes(
+            bound,
+            conservative_vec_capacity_upper_bound::<RetainedContentReservation>(count)?,
+        )?;
+        for precondition in &preconditions {
+            bound = checked_add_bytes(bound, owned_string_upper_bound(&precondition.path)?)?;
+            if let Some(content) = &precondition.expected_content {
+                bound = checked_add_bytes(bound, owned_string_upper_bound(content)?)?;
+            }
+        }
+        let reservation =
+            budget.reserve(bound, "managed restore replacement/serializer bound")?;
+        Ok(Self {
+            pages,
+            preconditions,
+            _precondition_reservations: precondition_reservations,
+            _reservation: reservation,
+        })
+    }
+
+}
+
+struct PreparedCrdtDelete {
+    path: String,
+    _reservation: RetainedContentReservation,
+}
+
+impl PreparedCrdtDelete {
+    fn new(
+        path: String,
+        source: Option<&CrdtPageSnapshot>,
+        budget: &RetainedContentBudget,
+    ) -> io::Result<Self> {
+        let bound = match source {
+            Some(source) => crdt_operation_build_upper_bound(std::slice::from_ref(source))?,
+            None => crdt_operation_components_upper_bound(
+                1,
+                0,
+                owned_string_upper_bound(&path)?,
+            )?,
+        };
+        Ok(Self {
+            path,
+            _reservation: budget.reserve(
+                bound,
+                "managed delete CRDT/store construction bound",
+            )?,
+        })
+    }
+
+}
+
+/// The only model-side CRDT mutation boundary. The capability constructor is
+/// private to this child module, whose methods consume complete prepared owners;
+/// parent-module production code can neither mint the proof nor detach it from
+/// the reservation and payload that authorize the mutation.
+mod prepared_crdt_mutation {
+    use super::*;
+
+    pub(crate) struct PreparedCrdtMutationCapability<'a> {
+        _reservation: &'a RetainedContentReservation,
+        _not_send: std::marker::PhantomData<Rc<()>>,
+    }
+
+    impl<'a> PreparedCrdtMutationCapability<'a> {
+        fn new(reservation: &'a RetainedContentReservation) -> Self {
+            Self {
+                _reservation: reservation,
+                _not_send: std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl PreparedJournalMigrationPublication {
+        pub(super) fn commit_and_project(
+            self,
+            graph: &Graph,
+            mut sync_guard: std::sync::MutexGuard<'_, Option<CrdtGraph>>,
+            page_id: CrdtPageId,
+        ) -> io::Result<()> {
+            let Self {
+                budget: _budget,
+                page: _page,
+                snapshot:
+                    PreparedCrdtPageSnapshot {
+                        snapshot,
+                        _reservation,
+                    },
+                _page_construction,
+                _publication_reservation,
+            } = self;
+            let report = {
+                let sync = sync_guard.as_mut().ok_or_else(|| {
+                    io::Error::other("managed sync stopped during journal migration")
+                })?;
+                let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+                sync.commit_page_owned(snapshot, &mut authority)
+                    .map_err(crdt_io_error)?
+            };
+            drop(sync_guard);
+            graph.project_managed_page(page_id, &report.affected_paths)?;
+            Ok(())
+        }
+    }
+
+    impl PreparedCrdtPageSnapshot {
+        pub(super) fn commit_page(
+            self,
+            sync: &mut CrdtGraph,
+        ) -> io::Result<crate::crdt::CommitReport> {
+            let Self {
+                snapshot,
+                _reservation,
+            } = self;
+            #[cfg(test)]
+            MANAGED_MIGRATION_WRITER_ADMITTED_PEAK.with(|value| {
+                value.set(_reservation.state.peak.get())
+            });
+            let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+            sync.commit_page_owned(snapshot, &mut authority)
+                .map_err(crdt_io_error)
+        }
+
+        pub(super) fn commit_page_with_guard_then<R>(
+            self,
+            mut sync_guard: std::sync::MutexGuard<'_, Option<CrdtGraph>>,
+            after_commit: impl FnOnce() -> io::Result<R>,
+        ) -> io::Result<R> {
+            let Self {
+                snapshot,
+                _reservation,
+            } = self;
+            let sync = sync_guard
+                .as_mut()
+                .ok_or_else(|| io::Error::other("managed sync stopped during save"))?;
+            let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+            sync.commit_page_owned(snapshot, &mut authority)
+                .map_err(crdt_io_error)?;
+            drop(sync_guard);
+            after_commit()
+        }
+
+        pub(super) fn promote_copy(
+            self,
+            sync: &mut CrdtGraph,
+            source_page_id: CrdtPageId,
+            copy_page_id: CrdtPageId,
+        ) -> io::Result<crate::crdt::CommitReport> {
+            let Self {
+                snapshot,
+                _reservation,
+            } = self;
+            let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+            sync.promote_copy_owned(source_page_id, copy_page_id, snapshot, &mut authority)
+                .map_err(crdt_io_error)
+        }
+    }
+
+    impl PreparedCrdtPageBatch {
+        pub(super) fn initialize_at(
+            self,
+            sync_root: &Path,
+            graph: &Dir,
+            device_id: Uuid,
+            session_id: Uuid,
+        ) -> io::Result<CrdtGraph> {
+            let (
+                snapshots,
+                _snapshot_reservations,
+                _batch_capacity_reservation,
+                _batch_operation_reservation,
+            ) = self.into_owned_parts();
+            let mut authority =
+                PreparedCrdtMutationCapability::new(&_batch_operation_reservation);
+            CrdtGraph::initialize_at_owned(
+                sync_root,
+                graph,
+                device_id,
+                session_id,
+                snapshots,
+                &mut authority,
+            )
+            .map_err(crdt_io_error)
+        }
+
+        pub(super) fn commit_pages(
+            self,
+            sync: &mut CrdtGraph,
+        ) -> io::Result<crate::crdt::CommitReport> {
+            let (
+                snapshots,
+                _snapshot_reservations,
+                _batch_capacity_reservation,
+                _batch_operation_reservation,
+            ) = self.into_owned_parts();
+            let mut authority =
+                PreparedCrdtMutationCapability::new(&_batch_operation_reservation);
+            sync.commit_pages_owned(snapshots, &mut authority)
+                .map_err(crdt_io_error)
+        }
+    }
+
+    impl PreparedCrdtReplacement {
+        pub(super) fn replace(
+            self,
+            sync: &mut CrdtGraph,
+        ) -> io::Result<crate::crdt::CommitReport> {
+            let Self {
+                pages,
+                preconditions,
+                _precondition_reservations,
+                _reservation,
+            } = self;
+            let (
+                snapshots,
+                _snapshot_reservations,
+                _batch_capacity_reservation,
+                _batch_operation_reservation,
+            ) = pages.into_owned_parts();
+            let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+            sync.replace_pages_with_projection_preconditions_owned(
+                snapshots,
+                preconditions,
+                &mut authority,
+            )
+            .map_err(crdt_io_error)
+        }
+    }
+
+    impl PreparedCrdtDelete {
+        pub(super) fn delete(
+            self,
+            sync: &mut CrdtGraph,
+        ) -> Result<crate::crdt::CommitReport, crate::crdt::CrdtError> {
+            let Self {
+                path,
+                _reservation,
+            } = self;
+            let mut authority = PreparedCrdtMutationCapability::new(&_reservation);
+            sync.delete_page_owned(path, &mut authority)
+        }
+    }
+}
+
+pub(crate) use prepared_crdt_mutation::PreparedCrdtMutationCapability;
+
+fn crdt_snapshot_for_page(
+    page: &PageDto,
+    id: CrdtPageId,
+    budget: &RetainedContentBudget,
+) -> io::Result<PreparedCrdtPageSnapshot> {
     if page.path.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "managed-sync page snapshot has no storage path",
         ));
     }
-    let mut blocks = Vec::new();
-    flatten_crdt_blocks(&page.blocks, page.format, None, &mut blocks)?;
-    Ok(CrdtPageSnapshot {
-        id,
-        path: page.path.clone(),
-        name: page.name.clone(),
-        kind: match page.kind {
-            PageKind::Page => "page",
-            PageKind::Journal => "journal",
-        }
-        .into(),
-        format: page.format.ext().into(),
-        pre_block: page.pre_block.clone(),
-        blocks,
+    let reservation = budget.reserve(
+        checked_add_bytes(
+            crdt_snapshot_build_upper_bound(page)?,
+            crdt_operation_page_build_upper_bound(page)?,
+        )?,
+        "managed CRDT snapshot/operation construction bound",
+    )?;
+    let block_count = usize::try_from(page_block_count_checked(&page.blocks)?)
+        .map_err(|_| allocation_overflow())?;
+    let mut blocks = Vec::with_capacity(block_count);
+    let scan = SyncIdProjectionScanReservation::reserve(
+        budget,
+        &page.blocks,
+        SyncIdProjectionInput::Existing,
+        0,
+        "managed CRDT snapshot sync id projection scan",
+    )?;
+    flatten_crdt_blocks(&page.blocks, page.format, &mut blocks, &scan)?;
+    drop(scan);
+    Ok(PreparedCrdtPageSnapshot {
+        snapshot: CrdtPageSnapshot {
+            id,
+            path: page.path.clone(),
+            name: page.name.clone(),
+            kind: match page.kind {
+                PageKind::Page => "page",
+                PageKind::Journal => "journal",
+            }
+            .into(),
+            format: page.format.ext().into(),
+            pre_block: page.pre_block.clone(),
+            blocks,
+        },
+        _reservation: reservation,
     })
 }
 
 fn copy_promotion_snapshot(
     source: &CrdtPageSnapshot,
     destination: &CrdtPageSnapshot,
-) -> Option<CrdtPageSnapshot> {
+    budget: &RetainedContentBudget,
+) -> io::Result<Option<PreparedCrdtPageSnapshot>> {
     if source.kind != destination.kind
         || source.format != destination.format
         || source.pre_block != destination.pre_block
     {
-        return None;
+        return Ok(None);
     }
     let format = match source.format.as_str() {
         "md" => Format::Md,
         "org" => Format::Org,
-        _ => return None,
+        _ => return Ok(None),
     };
-    let source_blocks: std::collections::HashMap<_, _> = source
-        .blocks
-        .iter()
-        .map(|block| (block.id, block))
-        .collect();
-    let destination_blocks: std::collections::HashMap<_, _> = destination
-        .blocks
-        .iter()
-        .map(|block| (block.id, block))
-        .collect();
+    let source_blocks =
+        u64::try_from(source.blocks.len()).map_err(|_| allocation_overflow())?;
+    let destination_blocks =
+        u64::try_from(destination.blocks.len()).map_err(|_| allocation_overflow())?;
+    let map_entries = checked_add_bytes(source_blocks, destination_blocks)?;
+    let mut construction = checked_add_bytes(
+        crdt_snapshot_source_owned_upper_bound(source)?,
+        crdt_snapshot_source_owned_upper_bound(destination)?,
+    )?;
+    for class in [
+        conservative_hash_entry_bytes::<
+            Option<CrdtBlockId>,
+            Vec<&CrdtBlockSnapshot>,
+        >()?,
+        conservative_hash_entry_bytes::<
+            Option<CrdtBlockId>,
+            Vec<&CrdtBlockSnapshot>,
+        >()?,
+        conservative_hash_entry_bytes::<CrdtBlockId, CrdtBlockId>()?,
+        conservative_vec_entry_bytes::<&CrdtBlockSnapshot>()?,
+        conservative_vec_entry_bytes::<&CrdtBlockSnapshot>()?,
+    ] {
+        construction = checked_add_bytes(
+            construction,
+            checked_mul_bytes(map_entries, class)?,
+        )?;
+    }
+    construction = checked_add_bytes(
+        construction,
+        checked_mul_bytes(
+            checked_add_bytes(source_blocks, destination_blocks)?,
+            owned_string_len_upper_bound(usize_to_u64(
+                std::mem::size_of::<[u8; 36]>(),
+            )?)?,
+        )?,
+    )?;
+    construction = checked_add_bytes(
+        construction,
+        managed_block_walk_stack_upper_bound::<(
+            &[&CrdtBlockSnapshot],
+            &[&CrdtBlockSnapshot],
+            usize,
+        )>()?,
+    )?;
+    let reservation = budget.reserve(
+        checked_add_bytes(
+            construction,
+            crdt_operation_build_upper_bound(std::slice::from_ref(destination))?,
+        )?,
+        "managed copy promotion construction/operation bound",
+    )?;
+    fn ordered_children<'a>(
+        blocks: &'a [CrdtBlockSnapshot],
+    ) -> std::collections::HashMap<Option<CrdtBlockId>, Vec<&'a CrdtBlockSnapshot>> {
+        let mut children = std::collections::HashMap::new();
+        for block in blocks {
+            children
+                .entry(block.parent)
+                .or_insert_with(Vec::new)
+                .push(block);
+        }
+        for siblings in children.values_mut() {
+            siblings.sort_by_key(|block| (block.order, block.id));
+        }
+        children
+    }
+    let source_children = ordered_children(&source.blocks);
+    let destination_children = ordered_children(&destination.blocks);
     let mut id_map = std::collections::HashMap::new();
-
-    fn pair_children(
-        source_parent: Option<CrdtBlockId>,
-        destination_parent: Option<CrdtBlockId>,
-        source: &std::collections::HashMap<CrdtBlockId, &CrdtBlockSnapshot>,
-        destination: &std::collections::HashMap<CrdtBlockId, &CrdtBlockSnapshot>,
-        format: Format,
-        id_map: &mut std::collections::HashMap<CrdtBlockId, CrdtBlockId>,
-    ) -> bool {
-        let mut source_children: Vec<_> = source
-            .values()
-            .copied()
-            .filter(|block| block.parent == source_parent)
-            .collect();
-        let mut destination_children: Vec<_> = destination
-            .values()
-            .copied()
-            .filter(|block| block.parent == destination_parent)
-            .collect();
-        source_children.sort_by_key(|block| (block.order, block.id));
-        destination_children.sort_by_key(|block| (block.order, block.id));
-        if source_children.len() != destination_children.len() {
-            return false;
+    #[derive(Clone, Copy)]
+    struct PairFrame<'a> {
+        source: &'a [&'a CrdtBlockSnapshot],
+        destination: &'a [&'a CrdtBlockSnapshot],
+        next: usize,
+    }
+    let empty = PairFrame {
+        source: &[],
+        destination: &[],
+        next: 0,
+    };
+    let mut frames = [empty; MAX_MANAGED_BLOCK_DEPTH];
+    let source_roots = source_children.get(&None).map(Vec::as_slice).unwrap_or(&[]);
+    let destination_roots = destination_children
+        .get(&None)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if source_roots.len() != destination_roots.len() {
+        return Ok(None);
+    }
+    frames[0] = PairFrame {
+        source: source_roots,
+        destination: destination_roots,
+        next: 0,
+    };
+    let mut len = 1_usize;
+    let marker = Uuid::nil().to_string();
+    let mut matched = true;
+    while len != 0 {
+        let frame = &mut frames[len - 1];
+        if frame.next == frame.source.len() {
+            len -= 1;
+            continue;
         }
-        for (source_block, destination_block) in
-            source_children.into_iter().zip(destination_children)
-        {
-            let marker = Uuid::nil().to_string();
-            let source_raw = replace_persisted_sync_id(
-                &source_block.raw,
-                &source_block.id.to_string(),
-                &marker,
-                format,
-            );
-            let destination_raw = replace_persisted_sync_id(
-                &destination_block.raw,
-                &destination_block.id.to_string(),
-                &marker,
-                format,
-            );
-            if source_block.order != destination_block.order || source_raw != destination_raw {
-                return false;
-            }
-            id_map.insert(destination_block.id, source_block.id);
-            if !pair_children(
-                Some(source_block.id),
-                Some(destination_block.id),
-                source,
-                destination,
-                format,
-                id_map,
-            ) {
-                return false;
-            }
+        let source_block = frame.source[frame.next];
+        let destination_block = frame.destination[frame.next];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        let source_raw = replace_persisted_sync_id(
+            &source_block.raw,
+            &source_block.id.to_string(),
+            &marker,
+            format,
+        )?;
+        let destination_raw = replace_persisted_sync_id(
+            &destination_block.raw,
+            &destination_block.id.to_string(),
+            &marker,
+            format,
+        )?;
+        if source_block.order != destination_block.order || source_raw != destination_raw {
+            matched = false;
+            break;
         }
-        true
+        id_map.insert(destination_block.id, source_block.id);
+        let source_nested = source_children
+            .get(&Some(source_block.id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let destination_nested = destination_children
+            .get(&Some(destination_block.id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if source_nested.len() != destination_nested.len() {
+            matched = false;
+            break;
+        }
+        if !source_nested.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed copy promotion nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = PairFrame {
+                source: source_nested,
+                destination: destination_nested,
+                next: 0,
+            };
+            len += 1;
+        }
     }
 
-    if !pair_children(
-        None,
-        None,
-        &source_blocks,
-        &destination_blocks,
-        format,
-        &mut id_map,
-    ) || id_map.len() != source.blocks.len()
+    if !matched || id_map.len() != source.blocks.len()
         || id_map.len() != destination.blocks.len()
     {
-        return None;
+        return Ok(None);
     }
 
     let mut promoted = destination.clone();
     promoted.id = source.id;
     for block in &mut promoted.blocks {
         let old = block.id;
-        let new = *id_map.get(&old)?;
+        let Some(new) = id_map.get(&old).copied() else {
+            return Ok(None);
+        };
         block.id = new;
         block.parent = block.parent.and_then(|parent| id_map.get(&parent).copied());
         block.raw =
-            replace_persisted_sync_id(&block.raw, &old.to_string(), &new.to_string(), format);
+            replace_persisted_sync_id(&block.raw, &old.to_string(), &new.to_string(), format)?;
     }
-    Some(promoted)
+    Ok(Some(PreparedCrdtPageSnapshot {
+        snapshot: promoted,
+        _reservation: reservation,
+    }))
 }
 
 fn dto_blocks_from_crdt(
-    parent: Option<CrdtBlockId>,
-    blocks: &std::collections::HashMap<CrdtBlockId, &CrdtBlockSnapshot>,
+    blocks: &[CrdtBlockSnapshot],
     is_org: bool,
 ) -> io::Result<Vec<DocBlock>> {
-    let mut children: Vec<&CrdtBlockSnapshot> = blocks
-        .values()
-        .copied()
-        .filter(|block| block.parent == parent)
-        .collect();
-    children.sort_by_key(|block| (block.order, block.id));
-    children
-        .into_iter()
-        .map(|block| {
-            let doc = DocBlock {
-                raw: block.raw.clone(),
-                children: dto_blocks_from_crdt(Some(block.id), blocks, is_org)?,
-                uuid: String::new(),
-                is_org,
-                proj: std::sync::OnceLock::new(),
-            };
-            Ok(doc)
-        })
-        .collect()
+    let mut children: std::collections::HashMap<
+        Option<CrdtBlockId>,
+        Vec<&CrdtBlockSnapshot>,
+    > = std::collections::HashMap::new();
+    for block in blocks {
+        children.entry(block.parent).or_default().push(block);
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by_key(|block| (block.order, block.id));
+    }
+    struct Frame<'a> {
+        source: &'a [&'a CrdtBlockSnapshot],
+        next: usize,
+        output: Vec<DocBlock>,
+    }
+    let roots = children.get(&None).map(Vec::as_slice).unwrap_or(&[]);
+    let mut frames: [Option<Frame<'_>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    frames[0] = Some(Frame {
+        source: roots,
+        next: 0,
+        output: Vec::with_capacity(roots.len()),
+    });
+    let mut len = 1_usize;
+    loop {
+        let frame = frames[len - 1]
+            .as_mut()
+            .expect("active CRDT conversion frame");
+        if frame.next == frame.source.len() {
+            let completed = frames[len - 1]
+                .take()
+                .expect("completed CRDT conversion frame")
+                .output;
+            len -= 1;
+            if len == 0 {
+                return Ok(completed);
+            }
+            frames[len - 1]
+                .as_mut()
+                .expect("parent CRDT conversion frame")
+                .output
+                .last_mut()
+                .expect("child frame has parent")
+                .children = completed;
+            continue;
+        }
+        let block = frame.source[frame.next];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        frame.output.push(DocBlock {
+            raw: block.raw.clone(),
+            children: Vec::new(),
+            uuid: String::new(),
+            is_org,
+            proj: std::sync::OnceLock::new(),
+        });
+        let nested = children
+            .get(&Some(block.id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if !nested.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed CRDT page nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(Frame {
+                source: nested,
+                next: 0,
+                output: Vec::with_capacity(nested.len()),
+            });
+            len += 1;
+        }
+    }
 }
 
 fn page_dto_from_crdt(snapshot: &CrdtPageSnapshot) -> io::Result<PageDto> {
@@ -9579,19 +13306,17 @@ fn page_dto_from_crdt(snapshot: &CrdtPageSnapshot) -> io::Result<PageDto> {
             ))
         }
     };
-    let blocks: std::collections::HashMap<_, _> = snapshot
-        .blocks
-        .iter()
-        .map(|block| (block.id, block))
-        .collect();
-    let mut doc_blocks = dto_blocks_from_crdt(None, &blocks, format == Format::Org)?;
-    assign_doc_runtime_ids(&mut doc_blocks, &snapshot.path);
+    let mut doc_blocks = dto_blocks_from_crdt(&snapshot.blocks, format == Format::Org)?;
+    assign_runtime_ids_checked(
+        &mut doc_blocks,
+        runtime_owner_namespace("file-block-runtime-v1", &snapshot.path),
+    )?;
     Ok(PageDto {
         name: snapshot.name.clone(),
         kind,
         title: snapshot.name.clone(),
         pre_block: snapshot.pre_block.clone(),
-        blocks: doc_blocks.iter().map(block_to_dto).collect(),
+        blocks: doc_blocks_to_dto_checked(&doc_blocks)?,
         rev: None,
         format,
         read_only: false,
@@ -9600,42 +13325,124 @@ fn page_dto_from_crdt(snapshot: &CrdtPageSnapshot) -> io::Result<PageDto> {
     })
 }
 
-/// Build a page DTO from a cached document. `read_only` is left false here (the
-/// on-disk bytes aren't known at this point); `load_page` sets it from the file
-/// it reads.
-fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
-    PageDto {
+fn doc_blocks_to_dto_checked(blocks: &[DocBlock]) -> io::Result<Vec<BlockDto>> {
+    fn output_with_source_capacity(source_len: usize) -> io::Result<Vec<BlockDto>> {
+        let mut output = Vec::new();
+        output
+            .try_reserve_exact(source_len)
+            .map_err(|_| allocation_overflow())?;
+        Ok(output)
+    }
+
+    struct Frame<'a> {
+        source: &'a [DocBlock],
+        next: usize,
+        output: Vec<BlockDto>,
+    }
+    let mut frames: [Option<Frame<'_>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    frames[0] = Some(Frame {
+        source: blocks,
+        next: 0,
+        output: output_with_source_capacity(blocks.len())?,
+    });
+    let mut len = 1_usize;
+    loop {
+        let frame = frames[len - 1]
+            .as_mut()
+            .expect("active document conversion frame");
+        if frame.next == frame.source.len() {
+            let completed = frames[len - 1]
+                .take()
+                .expect("completed document conversion frame")
+                .output;
+            len -= 1;
+            if len == 0 {
+                return Ok(completed);
+            }
+            frames[len - 1]
+                .as_mut()
+                .expect("parent document conversion frame")
+                .output
+                .last_mut()
+                .expect("child frame has parent")
+                .children = completed;
+            continue;
+        }
+        let block = &frame.source[frame.next];
+        frame.next = frame.next.checked_add(1).ok_or_else(allocation_overflow)?;
+        if block.uuid.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "block has no assigned runtime identity",
+            ));
+        }
+        frame.output.push(BlockDto {
+            id: block.uuid.clone(),
+            raw: block.raw.clone(),
+            collapsed: block.collapsed(),
+            children: Vec::new(),
+            breadcrumb: Vec::new(),
+            page_property: false,
+            marker: block.marker().map(str::to_string),
+            priority: block.priority().map(str::to_string),
+            heading_level: block.heading_level(),
+            scheduled: block.scheduled().map(str::to_string),
+            deadline: block.deadline().map(str::to_string),
+            tags: block.tags(),
+            properties: block.properties(),
+        });
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed document nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(Frame {
+                source: &block.children,
+                next: 0,
+                output: output_with_source_capacity(block.children.len())?,
+            });
+            len += 1;
+        }
+    }
+}
+
+fn page_dto_checked(entry: &PageEntry, doc: &Document) -> io::Result<PageDto> {
+    Ok(PageDto {
         name: entry.name.clone(),
         kind: entry.kind,
         title: entry.name.clone(),
         pre_block: doc.pre_block.clone(),
-        blocks: doc.roots.iter().map(block_to_dto).collect(),
+        blocks: doc_blocks_to_dto_checked(&doc.roots)?,
         rev: None,
         format: Format::from_path(&entry.path),
         read_only: false,
         path: String::new(),
         guide: false,
-    }
+    })
 }
 
 /// Build a Markdown page DTO from raw Logseq Markdown without touching disk.
 /// Used by the bundled in-app Guide so it reuses the same document parser and
 /// DTO projection as normal graph pages.
-pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> PageDto {
+pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> io::Result<PageDto> {
     let mut doc = doc::parse(markdown);
-    assign_virtual_doc_runtime_ids(&mut doc.roots, "bundled-markdown-v1", name);
-    PageDto {
+    assign_virtual_doc_runtime_ids(&mut doc.roots, "bundled-markdown-v1", name)?;
+    let blocks = doc_blocks_to_dto_checked(&doc.roots)?;
+    Ok(PageDto {
         name: name.to_string(),
         kind: PageKind::Page,
         title: title.to_string(),
         pre_block: doc.pre_block.clone(),
-        blocks: doc.roots.iter().map(block_to_dto).collect(),
+        blocks,
         rev: None,
         format: Format::Md,
         read_only: false,
         path: String::new(),
         guide: false,
-    }
+    })
 }
 
 /// Whether a page should load read-only: an org file whose on-disk bytes don't
@@ -10396,16 +14203,72 @@ fn open_and_read_projection_regular_with_limit(
         )
     })?;
     let mut bytes = Vec::with_capacity(capacity);
+    let read_limit = limit.checked_add(1).ok_or_else(allocation_overflow)?;
     (&mut file)
-        .take(limit.saturating_add(1))
+        .take(read_limit)
         .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
+    if usize_to_u64(bytes.len())? > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "projection evidence grew beyond the reload bound",
         ));
     }
     Ok((file, bytes))
+}
+
+/// Read a managed body while reserving each retained byte before it enters the
+/// returned vector. The chunked path closes the metadata/read growth gap: a
+/// file that grows after metadata cannot make the preparation allocation exceed
+/// the aggregate budget before it is rejected.
+fn open_and_read_projection_regular_with_budget(
+    dir: &Dir,
+    name: &str,
+    limit: u64,
+    budget: &RetainedContentBudget,
+    resource: &'static str,
+) -> io::Result<(fs::File, Vec<u8>, RetainedContentReservation)> {
+    let mut file = open_projection_file_nofollow(dir, name)?;
+    let len = file.metadata()?.len();
+    if len > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence exceeds the reload bound",
+        ));
+    }
+    let reservation = budget.reserve(len, resource)?;
+    bounded_read_after_metadata_hook()?;
+    let capacity = usize::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence length is not addressable",
+        )
+    })?;
+    // Allocate the metadata-sized buffer once. A shrink leaves this capacity
+    // charged; growth is detected with a stack byte and rejected without asking
+    // Vec to grow outside admission.
+    let mut bytes = vec![0_u8; capacity].into_boxed_slice().into_vec();
+    assert_eq!(
+        bytes.capacity(),
+        capacity,
+        "boxed bounded read must transfer exact retained capacity"
+    );
+    let mut filled = 0usize;
+    while filled < bytes.len() {
+        let read = file.read(&mut bytes[filled..])?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    bytes.truncate(filled);
+    let mut growth_probe = [0_u8; 1];
+    if file.read(&mut growth_probe)? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence grew after its bounded allocation",
+        ));
+    }
+    Ok((file, bytes, reservation))
 }
 
 fn sync_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<Vec<u8>> {
@@ -10425,10 +14288,13 @@ fn sync_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<Vec<u8>
         )
     })?;
     let mut bytes = Vec::with_capacity(capacity);
+    let read_limit = MAX_PROJECTION_EVIDENCE_BYTES
+        .checked_add(1)
+        .ok_or_else(allocation_overflow)?;
     (&mut file)
-        .take(MAX_PROJECTION_EVIDENCE_BYTES.saturating_add(1))
+        .take(read_limit)
         .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_PROJECTION_EVIDENCE_BYTES {
+    if usize_to_u64(bytes.len())? > MAX_PROJECTION_EVIDENCE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "projection evidence grew beyond the reload bound",
@@ -10503,12 +14369,17 @@ fn read_projection_optional_bound_capture(
         ));
     }
     let file_resource_id = canonical_projection_file_resource_id(&opened)?;
-    let peak_capture_buffer_bytes = (bytes.capacity() as u64).saturating_add(buffer.len() as u64);
+    let peak_capture_buffer_bytes = checked_add_bytes(
+        usize_to_u64(bytes.capacity())?,
+        usize_to_u64(buffer.len())?,
+    )?;
+    let validation_bytes =
+        checked_add_bytes(expected.byte_length(), rebound_bytes)?;
     Ok(Some((
         bytes,
         expected,
         file_resource_id,
-        expected.byte_length().saturating_add(rebound_bytes),
+        validation_bytes,
         peak_capture_buffer_bytes,
     )))
 }
@@ -10518,7 +14389,12 @@ const MAX_INITIAL_SHADOW_RAW_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_INITIAL_SHADOW_DIRECTORY_DEPTH: usize = 256;
 const MAX_INITIAL_SHADOW_ALL_ENTRIES: usize = 2_000_000;
 const MAX_INITIAL_SHADOW_DIRECTORIES: usize = 1_000_000;
+const MAX_INITIAL_SHADOW_PENDING_DIRECTORIES: usize = 1_000_000;
 const MAX_INITIAL_SHADOW_PATH_BYTES: u64 = 512 * 1024 * 1024;
+/// Peak content retained while mutable managed-text preparation has both parsed
+/// and raw/projection representations alive. This matches the 512 MiB initial
+/// shadow raw-byte ceiling, while accounting for those simultaneous copies.
+const MAX_MANAGED_TEXT_RETAINED_CONTENT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 struct InitialShadowLimits {
@@ -10527,6 +14403,7 @@ struct InitialShadowLimits {
     directory_depth: usize,
     all_entries: usize,
     directories: usize,
+    pending_directories: usize,
     path_bytes: u64,
 }
 
@@ -10536,8 +14413,1369 @@ const INITIAL_SHADOW_LIMITS: InitialShadowLimits = InitialShadowLimits {
     directory_depth: MAX_INITIAL_SHADOW_DIRECTORY_DEPTH,
     all_entries: MAX_INITIAL_SHADOW_ALL_ENTRIES,
     directories: MAX_INITIAL_SHADOW_DIRECTORIES,
+    pending_directories: MAX_INITIAL_SHADOW_PENDING_DIRECTORIES,
     path_bytes: MAX_INITIAL_SHADOW_PATH_BYTES,
 };
+
+/// Bounds for mutable managed-text inventories. These deliberately reuse the
+/// initial-shadow limits so the later migration cannot be driven beyond the
+/// memory and traversal envelope already accepted for shadow capture.
+#[derive(Clone, Copy)]
+struct ManagedTextInventoryLimits {
+    managed_files: usize,
+    directory_depth: usize,
+    all_entries: usize,
+    directories: usize,
+    pending_directories: usize,
+    path_bytes: u64,
+    retained_content_bytes: u64,
+}
+
+const MANAGED_TEXT_INVENTORY_LIMITS: ManagedTextInventoryLimits = ManagedTextInventoryLimits {
+    managed_files: MAX_INITIAL_SHADOW_MANAGED_FILES,
+    directory_depth: MAX_INITIAL_SHADOW_DIRECTORY_DEPTH,
+    all_entries: MAX_INITIAL_SHADOW_ALL_ENTRIES,
+    directories: MAX_INITIAL_SHADOW_DIRECTORIES,
+    pending_directories: MAX_INITIAL_SHADOW_PENDING_DIRECTORIES,
+    path_bytes: MAX_INITIAL_SHADOW_PATH_BYTES,
+    retained_content_bytes: MAX_MANAGED_TEXT_RETAINED_CONTENT_BYTES,
+};
+
+/// A single preparation budget spans mutable inventory consumers. Every
+/// reservation is atomic and RAII-owned: a failed admission leaves the counter
+/// unchanged, and every success is released exactly once when its token drops.
+///
+/// Tokens charge requested/retained capacities, not logical string lengths.
+/// Construction sites first reserve a source-derived upper bound for their
+/// temporary allocations, then reconcile the token to the capacity-aware size
+/// of the retained value.
+#[derive(Clone)]
+struct RetainedContentBudget {
+    state: Rc<RetainedContentBudgetState>,
+}
+
+#[derive(Debug)]
+struct RetainedContentBudgetState {
+    limit: u64,
+    retained: Cell<u64>,
+    #[cfg(test)]
+    peak: Cell<u64>,
+}
+
+#[derive(Debug)]
+struct RetainedContentReservation {
+    state: Rc<RetainedContentBudgetState>,
+    bytes: u64,
+}
+
+impl RetainedContentBudget {
+    fn new(limits: ManagedTextInventoryLimits) -> Self {
+        #[cfg(test)]
+        MANAGED_TEXT_BUDGET_LAST_PEAK.with(|peak| peak.set(0));
+        Self {
+            state: Rc::new(RetainedContentBudgetState {
+                limit: limits.retained_content_bytes,
+                retained: Cell::new(0),
+                #[cfg(test)]
+                peak: Cell::new(0),
+            }),
+        }
+    }
+
+    fn reserve(
+        &self,
+        bytes: u64,
+        _resource: &'static str,
+    ) -> io::Result<RetainedContentReservation> {
+        let candidate = self
+            .state
+            .retained
+            .get()
+            .checked_add(bytes)
+            .ok_or_else(|| managed_text_inventory_limit_error("aggregate retained content bytes"))?;
+        if candidate > self.state.limit {
+            return Err(managed_text_inventory_limit_error(
+                "aggregate retained content bytes",
+            ));
+        }
+        self.state.retained.set(candidate);
+        #[cfg(test)]
+        self.state.peak.set(self.state.peak.get().max(candidate));
+        Ok(RetainedContentReservation {
+            state: Rc::clone(&self.state),
+            bytes,
+        })
+    }
+
+    #[cfg(test)]
+    fn retained(&self) -> u64 {
+        self.state.retained.get()
+    }
+
+}
+
+#[cfg(test)]
+impl Drop for RetainedContentBudget {
+    fn drop(&mut self) {
+        MANAGED_TEXT_BUDGET_LAST_PEAK.with(|peak| peak.set(self.state.peak.get()));
+    }
+}
+
+impl RetainedContentReservation {
+    fn resize(&mut self, bytes: u64, resource: &'static str) -> io::Result<()> {
+        if bytes > self.bytes {
+            let increase = bytes - self.bytes;
+            let candidate = self
+                .state
+                .retained
+                .get()
+                .checked_add(increase)
+                .ok_or_else(|| {
+                    managed_text_inventory_limit_error("aggregate retained content bytes")
+                })?;
+            if candidate > self.state.limit {
+                return Err(managed_text_inventory_limit_error(
+                    "aggregate retained content bytes",
+                ));
+            }
+            self.state.retained.set(candidate);
+            #[cfg(test)]
+            self.state.peak.set(self.state.peak.get().max(candidate));
+        } else {
+            let decrease = self.bytes - bytes;
+            let retained = self.state.retained.get();
+            assert!(
+                retained >= decrease,
+                "released unreserved managed content for {resource}"
+            );
+            self.state.retained.set(retained - decrease);
+        }
+        self.bytes = bytes;
+        Ok(())
+    }
+
+    /// Replace one already-accounted retained value after a separately reserved
+    /// temporary allocation has been constructed. The aggregate remains at the
+    /// real allocation peak until this call, then old storage is released and
+    /// the temporary reservation is transferred to the replacement.
+    fn replace_with_temporary(
+        &mut self,
+        mut temporary: RetainedContentReservation,
+        replacement_bytes: u64,
+    ) -> io::Result<()> {
+        assert!(
+            Rc::ptr_eq(&self.state, &temporary.state),
+            "managed content reservations belong to different budgets"
+        );
+        let retained = self.state.retained.get();
+        let represented = self
+            .bytes
+            .checked_add(temporary.bytes)
+            .expect("reservation representation overflow");
+        assert!(
+            replacement_bytes <= represented,
+            "replacement exceeded its managed construction reservation"
+        );
+        assert!(
+            retained >= represented,
+            "replacement released unreserved managed content"
+        );
+        let retained = retained
+            .checked_sub(represented)
+            .and_then(|value| value.checked_add(replacement_bytes))
+            .ok_or_else(allocation_overflow)?;
+        self.state.retained.set(retained);
+        self.bytes = replacement_bytes;
+        temporary.bytes = 0;
+        Ok(())
+    }
+}
+
+impl Drop for RetainedContentReservation {
+    fn drop(&mut self) {
+        let retained = self.state.retained.get();
+        assert!(
+            retained >= self.bytes,
+            "double release of managed content reservation"
+        );
+        self.state.retained.set(
+            retained
+                .checked_sub(self.bytes)
+                .expect("reservation release was range-checked"),
+        );
+    }
+}
+
+struct BudgetedString {
+    value: String,
+    reservation: RetainedContentReservation,
+}
+
+struct BudgetedPageEntries {
+    entries: Vec<PageEntry>,
+    _reservation: RetainedContentReservation,
+}
+
+impl std::ops::Deref for BudgetedPageEntries {
+    type Target = [PageEntry];
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+struct RetainedHeapCharge {
+    reservation: Option<RetainedContentReservation>,
+    bytes: u64,
+}
+
+impl RetainedHeapCharge {
+    fn new(
+        budget: Option<&RetainedContentBudget>,
+        resource: &'static str,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            reservation: budget.map(|budget| budget.reserve(0, resource)).transpose()?,
+            bytes: 0,
+        })
+    }
+
+    fn grow(&mut self, bytes: u64, resource: &'static str) -> io::Result<()> {
+        let next = checked_add_bytes(self.bytes, bytes)?;
+        if let Some(reservation) = self.reservation.as_mut() {
+            reservation.resize(next, resource)?;
+        }
+        self.bytes = next;
+        Ok(())
+    }
+
+    fn shrink(&mut self, bytes: u64, resource: &'static str) -> io::Result<()> {
+        let next = self
+            .bytes
+            .checked_sub(bytes)
+            .expect("retained heap charge releases only admitted bytes");
+        if let Some(reservation) = self.reservation.as_mut() {
+            reservation.resize(next, resource)?;
+        }
+        self.bytes = next;
+        Ok(())
+    }
+
+}
+
+impl std::ops::Deref for BudgetedString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl AsRef<str> for BudgetedString {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+fn allocation_overflow() -> io::Error {
+    managed_text_inventory_limit_error("aggregate retained content bytes")
+}
+
+fn checked_add_bytes(left: u64, right: u64) -> io::Result<u64> {
+    left.checked_add(right).ok_or_else(allocation_overflow)
+}
+
+fn checked_mul_bytes(left: u64, right: u64) -> io::Result<u64> {
+    left.checked_mul(right).ok_or_else(allocation_overflow)
+}
+
+fn conservative_vec_entry_bytes<T>() -> io::Result<u64> {
+    checked_add_bytes(
+        checked_mul_bytes(usize_to_u64(std::mem::size_of::<T>())?, 2)?,
+        16,
+    )
+}
+
+fn conservative_vec_capacity_upper_bound<T>(entries: u64) -> io::Result<u64> {
+    checked_mul_bytes(entries, conservative_vec_entry_bytes::<T>()?)
+}
+
+fn conservative_hash_entry_bytes<K, V>() -> io::Result<u64> {
+    checked_add_bytes(
+        checked_mul_bytes(
+            checked_add_bytes(
+                usize_to_u64(std::mem::size_of::<K>())?,
+                usize_to_u64(std::mem::size_of::<V>())?,
+            )?,
+            4,
+        )?,
+        64,
+    )
+}
+
+fn conservative_btree_entry_bytes<K, V>() -> io::Result<u64> {
+    checked_add_bytes(
+        checked_mul_bytes(
+            checked_add_bytes(
+                usize_to_u64(std::mem::size_of::<K>())?,
+                usize_to_u64(std::mem::size_of::<V>())?,
+            )?,
+            2,
+        )?,
+        256,
+    )
+}
+
+fn owned_string_upper_bound(value: &str) -> io::Result<u64> {
+    owned_string_len_upper_bound(
+        u64::try_from(value.len()).map_err(|_| allocation_overflow())?,
+    )
+}
+
+fn owned_string_len_upper_bound(len: u64) -> io::Result<u64> {
+    checked_add_bytes(
+        conservative_vec_capacity_upper_bound::<u8>(len)?,
+        usize_to_u64(std::mem::size_of::<String>())?,
+    )
+}
+
+fn owned_path_upper_bound(value: &Path) -> io::Result<u64> {
+    owned_string_len_upper_bound(
+        u64::try_from(value.as_os_str().len()).map_err(|_| allocation_overflow())?,
+    )
+}
+
+fn page_entry_clone_upper_bound(entry: &PageEntry) -> io::Result<u64> {
+    let mut bytes = usize_to_u64(std::mem::size_of::<PageEntry>())?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.name)?)?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.rel_path)?)?;
+    checked_add_bytes(bytes, owned_path_upper_bound(&entry.path)?)
+}
+
+fn dto_page_source_metrics(page: &PageDto) -> io::Result<(u64, u64, u64)> {
+    let mut blocks = 0_u64;
+    let mut source = page
+        .pre_block
+        .as_ref()
+        .map(|value| usize_to_u64(value.len()))
+        .transpose()?
+        .unwrap_or(0);
+    let mut largest_raw = 0_u64;
+    let mut walk = BlockDtoWalk::new(&page.blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        blocks = checked_add_bytes(blocks, 1)?;
+        let raw = usize_to_u64(block.raw.len())?;
+        source = checked_add_bytes(source, raw)?;
+        largest_raw = largest_raw.max(raw);
+    }
+    Ok((blocks, source, largest_raw))
+}
+
+fn document_source_metrics(doc: &Document) -> io::Result<(u64, u64, u64)> {
+    let mut blocks = 0_u64;
+    let mut source = doc
+        .pre_block
+        .as_ref()
+        .map(|value| usize_to_u64(value.len()))
+        .transpose()?
+        .unwrap_or(0);
+    let mut largest_raw = 0_u64;
+    let mut frames: [Option<std::slice::Iter<'_, DocBlock>>; MAX_MANAGED_BLOCK_DEPTH] =
+        std::array::from_fn(|_| None);
+    let mut len = usize::from(!doc.roots.is_empty());
+    if len != 0 {
+        frames[0] = Some(doc.roots.iter());
+    }
+    while len != 0 {
+        let mut frame = frames[len - 1]
+            .take()
+            .expect("active document metric frame");
+        let Some(block) = frame.next() else {
+            len -= 1;
+            continue;
+        };
+        frames[len - 1] = Some(frame);
+        blocks = checked_add_bytes(blocks, 1)?;
+        let raw = usize_to_u64(block.raw.len())?;
+        source = checked_add_bytes(source, raw)?;
+        largest_raw = largest_raw.max(raw);
+        if !block.children.is_empty() {
+            if len == MAX_MANAGED_BLOCK_DEPTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cached document nesting exceeds 128 levels",
+                ));
+            }
+            frames[len] = Some(block.children.iter());
+            len += 1;
+        }
+    }
+    Ok((blocks, source, largest_raw))
+}
+
+fn cache_page_derived_upper_bound(
+    entry: &PageEntry,
+    blocks: u64,
+    source: u64,
+    largest_raw: u64,
+) -> io::Result<u64> {
+    // Every explicit reference, block reference, alias, or token consumes at
+    // least one source byte. `units` therefore bounds every retained row count,
+    // while `source` bounds the aggregate owned text payload for each class.
+    let units = source.max(blocks);
+    let mut bytes = checked_add_bytes(
+        conservative_hash_entry_bytes::<PathBuf, ReferencePageProjection>()?,
+        owned_path_upper_bound(&entry.path)?,
+    )?;
+    bytes = checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<ReferenceTokenSignature>())?)?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.name)?)?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.name)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<String>(units)?,
+    )?;
+    // Projection explicit names, inverted explicit keys, block-ref keys,
+    // aliases/real-page names, and scoped invalidation maps.
+    for _class in [
+        "projection explicit names",
+        "inverted explicit keys",
+        "block-reference keys",
+        "alias names",
+        "scoped invalidation names",
+    ] {
+        bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(source)?)?;
+    }
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            units,
+            checked_add_bytes(
+                conservative_hash_entry_bytes::<String, std::collections::BTreeSet<PathBuf>>()?,
+                checked_add_bytes(
+                    conservative_btree_entry_bytes::<PathBuf, ()>()?,
+                    owned_path_upper_bound(&entry.path)?,
+                )?,
+            )?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            units,
+            conservative_hash_entry_bytes::<String, usize>()?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_hash_entry_bytes::<
+            String,
+            std::collections::BTreeMap<PathBuf, String>,
+        >()?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_add_bytes(
+            conservative_btree_entry_bytes::<PathBuf, String>()?,
+            checked_add_bytes(
+                owned_path_upper_bound(&entry.path)?,
+                owned_string_upper_bound(&entry.name)?,
+            )?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        managed_block_walk_stack_upper_bound::<
+            Option<std::slice::Iter<'_, DocBlock>>,
+        >()?,
+    )?;
+    // Unicode lowercase/NFC folding owns at most three UTF-8 bytes per source
+    // byte for the currently processed block; it is scratch, not per-row state.
+    checked_add_bytes(
+        bytes,
+        owned_string_len_upper_bound(checked_mul_bytes(largest_raw, 3)?)?,
+    )
+}
+
+fn usize_to_u64(value: usize) -> io::Result<u64> {
+    u64::try_from(value).map_err(|_| allocation_overflow())
+}
+
+fn capacity_bytes<T>(capacity: usize) -> io::Result<u64> {
+    checked_mul_bytes(
+        usize_to_u64(capacity)?,
+        usize_to_u64(std::mem::size_of::<T>())?,
+    )
+}
+
+fn string_retained_bytes(value: &String) -> io::Result<u64> {
+    usize_to_u64(value.capacity())
+}
+
+/// Managed page input is accepted only through depth 128. All operation-time
+/// nested walks use this fixed root-to-leaf frame ceiling, so traversal does
+/// not consume attacker-controlled call stack or an uncharged all-node stack.
+const MAX_MANAGED_BLOCK_DEPTH: usize = 128;
+
+#[derive(Clone, Copy)]
+struct BlockDtoWalkFrame<'a> {
+    blocks: &'a [BlockDto],
+    next: usize,
+    depth: usize,
+}
+
+struct BlockDtoWalk<'a> {
+    frames: [BlockDtoWalkFrame<'a>; MAX_MANAGED_BLOCK_DEPTH],
+    len: usize,
+}
+
+impl<'a> BlockDtoWalk<'a> {
+    fn new(blocks: &'a [BlockDto]) -> Self {
+        let empty = BlockDtoWalkFrame {
+            blocks: &[],
+            next: 0,
+            depth: 0,
+        };
+        let mut frames = [empty; MAX_MANAGED_BLOCK_DEPTH];
+        let len = usize::from(!blocks.is_empty());
+        if len != 0 {
+            frames[0] = BlockDtoWalkFrame {
+                blocks,
+                next: 0,
+                depth: 1,
+            };
+        }
+        Self { frames, len }
+    }
+
+    fn next(&mut self) -> io::Result<Option<(&'a BlockDto, usize)>> {
+        loop {
+            if self.len == 0 {
+                return Ok(None);
+            }
+            let frame = &mut self.frames[self.len - 1];
+            if frame.next == frame.blocks.len() {
+                self.len -= 1;
+                continue;
+            }
+            let block = &frame.blocks[frame.next];
+            frame.next = frame
+                .next
+                .checked_add(1)
+                .ok_or_else(allocation_overflow)?;
+            let depth = frame.depth;
+            if !block.children.is_empty() {
+                if self.len == MAX_MANAGED_BLOCK_DEPTH {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "managed page block nesting exceeds 128 levels",
+                    ));
+                }
+                self.frames[self.len] = BlockDtoWalkFrame {
+                    blocks: &block.children,
+                    next: 0,
+                    depth: depth.checked_add(1).ok_or_else(allocation_overflow)?,
+                };
+                self.len += 1;
+            }
+            return Ok(Some((block, depth)));
+        }
+    }
+}
+
+fn managed_block_walk_stack_upper_bound<T>() -> io::Result<u64> {
+    checked_mul_bytes(
+        usize_to_u64(MAX_MANAGED_BLOCK_DEPTH)?,
+        usize_to_u64(std::mem::size_of::<T>())?,
+    )
+}
+
+fn page_dto_retained_bytes(page: &PageDto) -> io::Result<u64> {
+    let mut bytes = checked_add_bytes(
+        checked_add_bytes(
+            string_retained_bytes(&page.name)?,
+            string_retained_bytes(&page.title)?,
+        )?,
+        string_retained_bytes(&page.path)?,
+    )?;
+    bytes = checked_add_bytes(bytes, capacity_bytes::<BlockDto>(page.blocks.capacity())?)?;
+    for value in [&page.pre_block, &page.rev].into_iter().flatten() {
+        bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+    }
+    let mut walk = BlockDtoWalk::new(&page.blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        for value in [&block.id, &block.raw] {
+            bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+        }
+        bytes = checked_add_bytes(
+            bytes,
+            capacity_bytes::<BlockDto>(block.children.capacity())?,
+        )?;
+        bytes = checked_add_bytes(
+            bytes,
+            capacity_bytes::<String>(block.breadcrumb.capacity())?,
+        )?;
+        bytes = checked_add_bytes(bytes, capacity_bytes::<String>(block.tags.capacity())?)?;
+        bytes = checked_add_bytes(
+            bytes,
+            capacity_bytes::<(String, String)>(block.properties.capacity())?,
+        )?;
+        for value in block.breadcrumb.iter().chain(&block.tags) {
+            bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+        }
+        for (key, value) in &block.properties {
+            bytes = checked_add_bytes(bytes, string_retained_bytes(key)?)?;
+            bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+        }
+        for value in [
+            &block.marker,
+            &block.priority,
+            &block.scheduled,
+            &block.deadline,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+        }
+    }
+    Ok(bytes)
+}
+
+fn block_dtos_clone_upper_bound(blocks: &[BlockDto]) -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        for value in [&block.id, &block.raw] {
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+        }
+        for value in [
+            &block.marker,
+            &block.priority,
+            &block.scheduled,
+            &block.deadline,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+        }
+        for values in [&block.breadcrumb, &block.tags] {
+            bytes = checked_add_bytes(
+                bytes,
+                conservative_vec_capacity_upper_bound::<String>(usize_to_u64(values.len())?)?,
+            )?;
+            for value in values {
+                bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+            }
+        }
+        bytes = checked_add_bytes(
+            bytes,
+            conservative_vec_capacity_upper_bound::<(String, String)>(usize_to_u64(
+                block.properties.len(),
+            )?)?,
+        )?;
+        for (key, value) in &block.properties {
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(key)?)?;
+            bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+        }
+        bytes = checked_add_bytes(
+            bytes,
+            conservative_vec_capacity_upper_bound::<BlockDto>(usize_to_u64(
+                block.children.len(),
+            )?)?,
+        )?;
+    }
+    Ok(bytes)
+}
+
+fn page_dto_clone_upper_bound(page: &PageDto) -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    for value in [&page.name, &page.title, &page.path] {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+    }
+    for value in [&page.pre_block, &page.rev].into_iter().flatten() {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+    }
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<BlockDto>(
+            u64::try_from(page.blocks.len()).map_err(|_| allocation_overflow())?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(bytes, block_dtos_clone_upper_bound(&page.blocks)?)?;
+    Ok(bytes)
+}
+
+fn crdt_snapshot_retained_bytes(snapshot: &CrdtPageSnapshot) -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    for value in [
+        &snapshot.path,
+        &snapshot.name,
+        &snapshot.kind,
+        &snapshot.format,
+    ] {
+        bytes = checked_add_bytes(bytes, string_retained_bytes(value)?)?;
+    }
+    bytes = checked_add_bytes(
+        bytes,
+        capacity_bytes::<CrdtBlockSnapshot>(snapshot.blocks.capacity())?,
+    )?;
+    if let Some(pre_block) = &snapshot.pre_block {
+        bytes = checked_add_bytes(bytes, string_retained_bytes(pre_block)?)?;
+    }
+    for block in &snapshot.blocks {
+        bytes = checked_add_bytes(bytes, string_retained_bytes(&block.raw)?)?;
+    }
+    Ok(bytes)
+}
+
+fn crdt_snapshot_source_owned_upper_bound(snapshot: &CrdtPageSnapshot) -> io::Result<u64> {
+    let mut bytes = owned_string_upper_bound(&snapshot.path)?;
+    for value in [
+        snapshot.name.as_str(),
+        snapshot.kind.as_str(),
+        snapshot.format.as_str(),
+    ] {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(value)?)?;
+    }
+    if let Some(pre_block) = &snapshot.pre_block {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(pre_block)?)?;
+    }
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<CrdtBlockSnapshot>(
+            u64::try_from(snapshot.blocks.len()).map_err(|_| allocation_overflow())?,
+        )?,
+    )?;
+    for block in &snapshot.blocks {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(&block.raw)?)?;
+    }
+    Ok(bytes)
+}
+
+fn page_block_count_checked(blocks: &[BlockDto]) -> io::Result<u64> {
+    let mut count = 0_u64;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while walk.next()?.is_some() {
+        count = checked_add_bytes(count, 1)?;
+    }
+    Ok(count)
+}
+
+fn sync_id_owned_source_upper_bound(blocks: &[BlockDto], generated: bool) -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        let source_len = if generated {
+            block.raw.len().max(std::mem::size_of::<[u8; 36]>())
+        } else {
+            block.raw.len()
+        };
+        bytes = checked_add_bytes(
+            bytes,
+            owned_string_len_upper_bound(
+                u64::try_from(source_len).map_err(|_| allocation_overflow())?,
+            )?,
+        )?;
+    }
+    Ok(bytes)
+}
+
+fn sync_id_root_to_leaf_upper_bound(blocks: &[BlockDto]) -> io::Result<u64> {
+    let mut largest = 0_u64;
+    let mut per_depth = [0_u64; MAX_MANAGED_BLOCK_DEPTH];
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, depth)) = walk.next()? {
+        let slot = depth.checked_sub(1).ok_or_else(allocation_overflow)?;
+        per_depth[slot] = owned_string_upper_bound(&block.raw)?;
+        let mut path = 0_u64;
+        for value in &per_depth[..depth] {
+            path = checked_add_bytes(path, *value)?;
+        }
+        largest = largest.max(path);
+    }
+    Ok(largest)
+}
+
+fn largest_block_raw_bytes(blocks: &[BlockDto]) -> io::Result<u64> {
+    let mut largest = 0_u64;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        largest = largest.max(
+            u64::try_from(block.raw.len()).map_err(|_| allocation_overflow())?,
+        );
+    }
+    Ok(largest)
+}
+
+/// Source-derived upper bound for the parser, runtime-id assignment, lsdoc
+/// projections, DTO construction, and all simultaneously live parser/DTO
+/// buffers. Every term is tied to an owned lsdoc/Tine allocation class. A
+/// source byte is also a conservative upper bound on the number of AST nodes,
+/// reference/property strings, and source ranges that the grammar can emit.
+fn managed_page_build_upper_bound(content: &str) -> io::Result<u64> {
+    let source = u64::try_from(content.len()).map_err(|_| allocation_overflow())?;
+    let lines = if content.is_empty() {
+        0
+    } else {
+        checked_add_bytes(
+            u64::try_from(content.bytes().filter(|byte| *byte == b'\n').count())
+                .map_err(|_| allocation_overflow())?,
+            1,
+        )?
+    };
+    managed_page_build_metrics_upper_bound(source, lines)
+}
+
+fn managed_page_build_metrics_upper_bound(source: u64, lines: u64) -> io::Result<u64> {
+    let source_units = source.max(lines);
+    let mut bytes = 0_u64;
+    // Parser input plus Document/DTO raw and page preamble storage.
+    for _class in ["parser input", "document raw", "dto raw", "page preamble"] {
+        bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(source)?)?;
+    }
+    // lsdoc AST and the Tine document/DTO nodes that can coexist during parse.
+    for slots in [
+        conservative_vec_capacity_upper_bound::<lsdoc::ast::Block>(source_units)?,
+        conservative_vec_capacity_upper_bound::<lsdoc::ast::Inline>(source_units)?,
+        conservative_vec_capacity_upper_bound::<DocBlock>(lines)?,
+        conservative_vec_capacity_upper_bound::<BlockDto>(lines)?,
+        conservative_vec_capacity_upper_bound::<(String, String)>(source_units)?,
+        conservative_vec_capacity_upper_bound::<String>(source_units)?,
+        conservative_vec_capacity_upper_bound::<std::ops::Range<usize>>(source_units)?,
+    ] {
+        bytes = checked_add_bytes(bytes, slots)?;
+    }
+    // Projection-owned text classes. Each class can retain at most the complete
+    // source payload, including Unicode expansion via owned_string_upper_bound.
+    for _class in [
+        "visible",
+        "visible lowercase",
+        "page references",
+        "normalized references",
+        "block references",
+        "marker and priority",
+        "properties",
+        "planning dates",
+        "tags",
+        "reference evidence names",
+    ] {
+        bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(source)?)?;
+    }
+    // Parser line slices and open frames are bounded by physical lines.
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<(usize, usize)>(lines)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<usize>(lines)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        managed_block_walk_stack_upper_bound::<(
+            std::slice::IterMut<'_, DocBlock>,
+            Uuid,
+            usize,
+        )>()?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        managed_block_walk_stack_upper_bound::<(&[DocBlock], usize, Vec<BlockDto>)>()?,
+    )?;
+    Ok(bytes)
+}
+
+#[derive(Clone, Copy)]
+enum SyncIdProjectionInput {
+    Existing,
+    Expanded,
+}
+
+struct SyncIdProjectionScanReservation {
+    reservation: RetainedContentReservation,
+}
+
+impl SyncIdProjectionScanReservation {
+    fn reserve(
+        budget: &RetainedContentBudget,
+        blocks: &[BlockDto],
+        input: SyncIdProjectionInput,
+        simultaneous_bytes: u64,
+        resource: &'static str,
+    ) -> io::Result<Self> {
+        let projection = sync_id_projection_scan_upper_bound(blocks, input)?;
+        let retained_ancestor_ids = sync_id_root_to_leaf_upper_bound(blocks)?;
+        Ok(Self {
+            reservation: budget.reserve(
+                checked_add_bytes(
+                    projection,
+                    checked_add_bytes(
+                        retained_ancestor_ids,
+                        checked_add_bytes(
+                            simultaneous_bytes,
+                            managed_block_walk_stack_upper_bound::<BlockDtoWalkFrame<'_>>()?,
+                        )?,
+                    )?,
+                )?,
+                resource,
+            )?,
+        })
+    }
+
+    fn into_reservation(self) -> RetainedContentReservation {
+        self.reservation
+    }
+}
+
+/// One `persisted_sync_id` call owns a cloned `DocBlock::raw`, lsdoc's complete
+/// parse/projection, and the cloned property result. The appended syntax is
+/// built mechanically from the longest native property spelling.
+fn sync_id_projection_block_upper_bound(
+    raw: &str,
+    input: SyncIdProjectionInput,
+) -> io::Result<u64> {
+    let source = u64::try_from(raw.len()).map_err(|_| allocation_overflow())?;
+    let lines = if raw.is_empty() {
+        0
+    } else {
+        checked_add_bytes(
+            u64::try_from(raw.bytes().filter(|byte| *byte == b'\n').count())
+                .map_err(|_| allocation_overflow())?,
+            1,
+        )?
+    };
+    let (source, lines) = match input {
+        SyncIdProjectionInput::Existing => (source, lines),
+        SyncIdProjectionInput::Expanded => {
+            let uuid_bytes = usize_to_u64(std::mem::size_of::<[u8; 36]>())?;
+            let markdown_bytes =
+                checked_add_bytes(usize_to_u64("\nid:: ".len())?, uuid_bytes)?;
+            let org_bytes = checked_add_bytes(
+                usize_to_u64("\n:PROPERTIES:\n:ID: \n:END:".len())?,
+                uuid_bytes,
+            )?;
+            (
+                checked_add_bytes(source, markdown_bytes.max(org_bytes))?,
+                checked_add_bytes(lines, 3)?,
+            )
+        }
+    };
+    checked_add_bytes(
+        managed_page_build_metrics_upper_bound(source, lines)?,
+        owned_string_len_upper_bound(source)?,
+    )
+}
+
+fn sync_id_projection_scan_upper_bound(
+    blocks: &[BlockDto],
+    input: SyncIdProjectionInput,
+) -> io::Result<u64> {
+    let mut largest = 0_u64;
+    let mut walk = BlockDtoWalk::new(blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        largest = largest.max(sync_id_projection_block_upper_bound(&block.raw, input)?);
+    }
+    Ok(largest)
+}
+
+/// HashSet buckets and String headers are type-derived; owned payload storage is
+/// source-derived because accepted legacy properties may contain arbitrary
+/// nonempty UTF-8 text before the caller applies its UUID policy.
+fn sync_id_hash_set_build_upper_bound(entries: u64, owned_ids: u64) -> io::Result<u64> {
+    checked_add_bytes(
+        checked_mul_bytes(
+            entries,
+            conservative_hash_entry_bytes::<String, ()>()?,
+        )?,
+        owned_ids,
+    )
+}
+
+/// The snapshot clones page/path/name/pre-block and every raw block string into
+/// one flat vector. All terms are computed from the source DTO before the first
+/// snapshot allocation; conservative capacity helpers cover geometric growth
+/// and allocator rounding.
+fn crdt_snapshot_build_upper_bound(page: &PageDto) -> io::Result<u64> {
+    let retained = crdt_snapshot_payload_upper_bound(page)?;
+    let flatten_locals = sync_id_root_to_leaf_upper_bound(&page.blocks)?;
+    let flatten_stack = managed_block_walk_stack_upper_bound::<BlockDtoWalkFrame<'_>>()?;
+    checked_add_bytes(
+        retained,
+        checked_add_bytes(
+            sync_id_projection_scan_upper_bound(
+                &page.blocks,
+                SyncIdProjectionInput::Existing,
+            )?,
+            checked_add_bytes(flatten_locals, flatten_stack)?,
+        )?,
+    )
+}
+
+fn crdt_snapshot_payload_upper_bound(page: &PageDto) -> io::Result<u64> {
+    let blocks = page_block_count_checked(&page.blocks)?;
+    let mut retained = owned_string_upper_bound(&page.path)?;
+    retained = checked_add_bytes(retained, owned_string_upper_bound(&page.name)?)?;
+    retained = checked_add_bytes(
+        retained,
+        owned_string_upper_bound(match page.kind {
+            PageKind::Page => "page",
+            PageKind::Journal => "journal",
+        })?,
+    )?;
+    retained = checked_add_bytes(retained, owned_string_upper_bound(page.format.ext())?)?;
+    if let Some(pre_block) = &page.pre_block {
+        retained = checked_add_bytes(retained, owned_string_upper_bound(pre_block)?)?;
+    }
+    let mut walk = BlockDtoWalk::new(&page.blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        retained = checked_add_bytes(retained, owned_string_upper_bound(&block.raw)?)?;
+    }
+    retained = checked_add_bytes(
+        retained,
+        conservative_vec_capacity_upper_bound::<CrdtBlockSnapshot>(blocks)?,
+    )?;
+    Ok(retained)
+}
+
+fn crdt_operation_build_upper_bound(pages: &[CrdtPageSnapshot]) -> io::Result<u64> {
+    let mut payload = 0_u64;
+    let mut blocks = 0_u64;
+    for page in pages {
+        payload = checked_add_bytes(payload, crdt_snapshot_retained_bytes(page)?)?;
+        blocks = checked_add_bytes(
+            blocks,
+            u64::try_from(page.blocks.len()).map_err(|_| allocation_overflow())?,
+        )?;
+    }
+    crdt_operation_components_upper_bound(
+        u64::try_from(pages.len()).map_err(|_| allocation_overflow())?,
+        blocks,
+        payload,
+    )
+}
+
+fn crdt_operation_page_build_upper_bound(page: &PageDto) -> io::Result<u64> {
+    crdt_operation_components_upper_bound(
+        1,
+        page_block_count_checked(&page.blocks)?,
+        crdt_snapshot_payload_upper_bound(page)?,
+    )
+}
+
+fn crdt_operation_components_upper_bound(
+    pages: u64,
+    blocks: u64,
+    payload: u64,
+) -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    // Simultaneously live owned payloads: Loro tree/text state, exported update,
+    // Store::publish's payload, and the final immutable envelope.
+    for _class in ["loro state", "exported update", "store payload", "envelope"] {
+        bytes = checked_add_bytes(bytes, payload)?;
+    }
+    // Snapshot validation and apply_page container allocations.
+    for class in [
+        conservative_hash_entry_bytes::<CrdtBlockId, &CrdtBlockSnapshot>()?,
+        conservative_hash_entry_bytes::<(Option<CrdtBlockId>, u32), ()>()?,
+        conservative_hash_entry_bytes::<CrdtBlockId, CrdtBlockId>()?,
+        conservative_hash_entry_bytes::<CrdtBlockId, usize>()?,
+        conservative_vec_entry_bytes::<&CrdtBlockSnapshot>()?,
+    ] {
+        bytes = checked_add_bytes(bytes, checked_mul_bytes(blocks, class)?)?;
+    }
+    // Per-page affected-page/path state and page-level validation/apply maps.
+    let affected_page = checked_add_bytes(
+        conservative_vec_entry_bytes::<crate::crdt::AffectedPage>()?,
+        conservative_vec_entry_bytes::<String>()?,
+    )?;
+    bytes = checked_add_bytes(bytes, checked_mul_bytes(pages, affected_page)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            pages,
+            conservative_hash_entry_bytes::<CrdtPageId, String>()?,
+        )?,
+    )?;
+    // Each logical field produces a bounded CRDT operation record. The record
+    // shape is derived from its actual identifiers/order/value headers.
+    let page_record = conservative_vec_entry_bytes::<(
+        CrdtPageId,
+        &'static str,
+        String,
+    )>()?;
+    for field in [
+        "node_type",
+        "page_id",
+        "path",
+        "name",
+        "kind",
+        "format",
+        "pre_block_present",
+        "pre_block",
+    ] {
+        bytes = checked_add_bytes(
+            bytes,
+            checked_mul_bytes(
+                pages,
+                checked_add_bytes(page_record, owned_string_upper_bound(field)?)?,
+            )?,
+        )?;
+    }
+    let block_record = conservative_vec_entry_bytes::<(
+        CrdtBlockId,
+        Option<CrdtBlockId>,
+        u32,
+        &'static str,
+        String,
+    )>()?;
+    for field in ["node_type", "block_id", "raw", "parent/order"] {
+        bytes = checked_add_bytes(
+            bytes,
+            checked_mul_bytes(
+                blocks,
+                checked_add_bytes(block_record, owned_string_upper_bound(field)?)?,
+            )?,
+        )?;
+    }
+    // SHA-256 state/checksum and envelope fixed-width lengths.
+    bytes = checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<Sha256>())?)?;
+    bytes = checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<[u8; 32]>())?)?;
+    bytes = checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<u32>())?)?;
+    checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<u64>())?)
+}
+
+fn page_serialized_output_upper_bound(
+    page: &PageDto,
+    existing: Option<&str>,
+) -> io::Result<(u64, u64)> {
+    let indent = existing
+        .into_iter()
+        .flat_map(str::lines)
+        .map(|line| line.len() - line.trim_start_matches([' ', '\t']).len())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let indent = usize_to_u64(indent)?;
+    let mut bytes = page
+        .pre_block
+        .as_ref()
+        .map(|value| checked_add_bytes(usize_to_u64(value.len())?, 2))
+        .transpose()?
+        .unwrap_or(0);
+    let mut lines = page
+        .pre_block
+        .as_ref()
+        .map(|value| {
+            checked_add_bytes(
+                usize_to_u64(value.bytes().filter(|byte| *byte == b'\n').count())?,
+                1,
+            )
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let mut walk = BlockDtoWalk::new(&page.blocks);
+    while let Some((block, depth)) = walk.next()? {
+        let raw_lines = checked_add_bytes(
+            usize_to_u64(block.raw.bytes().filter(|byte| *byte == b'\n').count())?,
+            1,
+        )?;
+        let raw_bytes = usize_to_u64(block.raw.len())?;
+        let depth = usize_to_u64(depth)?;
+        let structural = match page.format {
+            Format::Md => checked_add_bytes(
+                checked_mul_bytes(raw_lines, checked_mul_bytes(depth, indent)?)?,
+                checked_mul_bytes(raw_lines, 2)?,
+            )?,
+            Format::Org => checked_add_bytes(depth, 2)?,
+        };
+        bytes = checked_add_bytes(bytes, checked_add_bytes(raw_bytes, structural)?)?;
+        lines = checked_add_bytes(lines, raw_lines)?;
+    }
+    // Newline joins/trailing bytes plus worst-case LF -> CRLF preservation.
+    bytes = checked_add_bytes(bytes, checked_mul_bytes(lines, 2)?)?;
+    if let Some(existing) = existing {
+        bytes = bytes.max(usize_to_u64(existing.len())?);
+    }
+    Ok((bytes, lines))
+}
+
+fn page_write_construction_upper_bound(
+    page: &PageDto,
+    existing: Option<&str>,
+) -> io::Result<u64> {
+    let (serialized, lines) = page_serialized_output_upper_bound(page, existing)?;
+    let document_clone = page_document_clone_upper_bound(page)?;
+    let serializer_lines = checked_mul_bytes(
+        lines,
+        checked_mul_bytes(2, usize_to_u64(std::mem::size_of::<String>())?)?,
+    )?;
+    let existing_parse = match existing {
+        Some(value) => checked_mul_bytes(managed_page_build_upper_bound(value)?, 2)?,
+        None => 0,
+    };
+    checked_add_bytes(
+        checked_add_bytes(document_clone, existing_parse)?,
+        checked_add_bytes(
+            checked_mul_bytes(serialized, 2)?,
+            serializer_lines,
+        )?,
+    )
+}
+
+fn page_document_clone_upper_bound(page: &PageDto) -> io::Result<u64> {
+    let mut bytes = managed_block_walk_stack_upper_bound::<(
+        &[BlockDto],
+        usize,
+        Vec<DocBlock>,
+    )>()?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<DocBlock>(usize_to_u64(page.blocks.len())?)?,
+    )?;
+    if let Some(pre_block) = &page.pre_block {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(pre_block)?)?;
+    }
+    let mut walk = BlockDtoWalk::new(&page.blocks);
+    while let Some((block, _depth)) = walk.next()? {
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(&block.raw)?)?;
+        bytes = checked_add_bytes(bytes, owned_string_upper_bound(&block.id)?)?;
+        bytes = checked_add_bytes(
+            bytes,
+            conservative_vec_capacity_upper_bound::<DocBlock>(usize_to_u64(
+                block.children.len(),
+            )?)?,
+        )?;
+    }
+    Ok(bytes)
+}
+
+fn crdt_to_page_dto_upper_bound(page: &PageDto) -> io::Result<u64> {
+    let blocks = page_block_count_checked(&page.blocks)?;
+    let mut bytes = page_document_clone_upper_bound(page)?;
+    bytes = checked_add_bytes(bytes, page_dto_clone_upper_bound(page)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            blocks,
+            conservative_hash_entry_bytes::<
+                Option<CrdtBlockId>,
+                Vec<&CrdtBlockSnapshot>,
+            >()?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            blocks,
+            conservative_vec_entry_bytes::<&CrdtBlockSnapshot>()?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(
+            blocks,
+            owned_string_len_upper_bound(usize_to_u64(
+                std::mem::size_of::<[u8; 36]>(),
+            )?)?,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        managed_block_walk_stack_upper_bound::<(
+            &[&CrdtBlockSnapshot],
+            usize,
+            Vec<DocBlock>,
+        )>()?,
+    )?;
+    checked_add_bytes(
+        bytes,
+        managed_block_walk_stack_upper_bound::<(&[DocBlock], usize, Vec<BlockDto>)>()?,
+    )
+}
+
+fn rename_rewrite_upper_bound(content: &str, renames: &std::collections::HashMap<String, String>) -> io::Result<u64> {
+    let max_name = usize_to_u64(renames.values().map(String::len).max().unwrap_or(0))?;
+    let candidates = checked_add_bytes(
+        usize_to_u64(
+            content
+                .bytes()
+                .filter(|byte| matches!(*byte, b'#' | b'[' | b','))
+                .count(),
+        )?,
+        usize_to_u64(
+            content
+                .lines()
+                .filter(|line| {
+                    line.as_bytes()
+                        .windows(6)
+                        .any(|window| window.eq_ignore_ascii_case(b"tags::"))
+                })
+                .count(),
+        )?,
+    )?;
+    let replacement_growth =
+        checked_mul_bytes(candidates, checked_add_bytes(max_name, 8)?)?;
+    let code_delimiters = usize_to_u64(
+        content
+            .bytes()
+            .filter(|byte| matches!(*byte, b'`' | b'~'))
+            .count(),
+    )?;
+    let code_ranges = checked_mul_bytes(
+        code_delimiters,
+        checked_mul_bytes(4, usize_to_u64(std::mem::size_of::<usize>())?)?,
+    )?;
+    let segment_headers = checked_mul_bytes(
+        candidates,
+        checked_mul_bytes(2, usize_to_u64(std::mem::size_of::<String>())?)?,
+    )?;
+    let content_len = usize_to_u64(content.len())?;
+    let scanner_scratch = checked_mul_bytes(content_len, 3)?;
+    checked_add_bytes(
+        checked_add_bytes(
+            checked_add_bytes(content_len, replacement_growth)?,
+            code_ranges,
+        )?,
+        checked_add_bytes(segment_headers, scanner_scratch)?,
+    )
+}
+
+struct ManagedLoadedPage {
+    page: PageDto,
+    baseline: String,
+    baseline_reservation: RetainedContentReservation,
+    page_reservation: RetainedContentReservation,
+}
+
+struct PreparedMigrationPage {
+    page: PageDto,
+    baseline: String,
+    _baseline_reservation: RetainedContentReservation,
+    _page_reservation: RetainedContentReservation,
+    missing: usize,
+}
+
+struct PreparedGenesisPage {
+    snapshot: PreparedCrdtPageSnapshot,
+    path: PathBuf,
+    baseline: Option<String>,
+    baseline_reservation: Option<RetainedContentReservation>,
+}
+
+#[cfg(not(test))]
+fn managed_text_inventory_limits() -> ManagedTextInventoryLimits {
+    MANAGED_TEXT_INVENTORY_LIMITS
+}
+
+#[cfg(test)]
+fn managed_text_inventory_limits() -> ManagedTextInventoryLimits {
+    MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE.with(|override_limits| {
+        override_limits
+            .borrow()
+            .unwrap_or(MANAGED_TEXT_INVENTORY_LIMITS)
+    })
+}
 
 struct InitialShadowEntry {
     path: ManagedPath,
@@ -10579,7 +15817,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             Err(error) => return Err(error),
         }
         let directory = open_projection_dir_nofollow(root, managed_root)?;
-        directory_count = directory_count.saturating_add(1);
+        directory_count = directory_count
+            .checked_add(1)
+            .ok_or_else(|| initial_shadow_limit_error("directory count"))?;
         if directory_count > limits.directories {
             return Err(initial_shadow_limit_error("directory count"));
         }
@@ -10597,6 +15837,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 "managed root changed during initial shadow capture",
             ));
         }
+        if pending.len() == limits.pending_directories {
+            return Err(initial_shadow_limit_error("pending directories"));
+        }
         pending.push(PendingDirectory {
             directory,
             relative: managed_root.to_owned(),
@@ -10611,7 +15854,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
     }) = pending.pop()
     {
         for entry in directory.entries()? {
-            all_entries = all_entries.saturating_add(1);
+            all_entries = all_entries
+                .checked_add(1)
+                .ok_or_else(|| initial_shadow_limit_error("all directory entries"))?;
             if all_entries > limits.all_entries {
                 return Err(initial_shadow_limit_error("all directory entries"));
             }
@@ -10629,7 +15874,10 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 .and_then(|length| length.checked_add(name.len()))
                 .ok_or_else(|| initial_shadow_limit_error("aggregate path bytes"))?;
             path_bytes = path_bytes
-                .checked_add(relative_len as u64)
+                .checked_add(
+                    usize_to_u64(relative_len)
+                        .map_err(|_| initial_shadow_limit_error("aggregate path bytes"))?,
+                )
                 .ok_or_else(|| initial_shadow_limit_error("aggregate path bytes"))?;
             if path_bytes > limits.path_bytes {
                 return Err(initial_shadow_limit_error("aggregate path bytes"));
@@ -10643,11 +15891,15 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 ));
             }
             if file_type.is_dir() {
-                let child_depth = depth.saturating_add(1);
+                let child_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| initial_shadow_limit_error("managed directory depth"))?;
                 if child_depth > limits.directory_depth {
                     return Err(initial_shadow_limit_error("managed directory depth"));
                 }
-                directory_count = directory_count.saturating_add(1);
+                directory_count = directory_count
+                    .checked_add(1)
+                    .ok_or_else(|| initial_shadow_limit_error("directory count"))?;
                 if directory_count > limits.directories {
                     return Err(initial_shadow_limit_error("directory count"));
                 }
@@ -10668,6 +15920,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                         io::ErrorKind::Interrupted,
                         format!("managed directory changed during capture: {child_relative}"),
                     ));
+                }
+                if pending.len() == limits.pending_directories {
+                    return Err(initial_shadow_limit_error("pending directories"));
                 }
                 pending.push(PendingDirectory {
                     directory: child,
@@ -10717,7 +15972,7 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 ));
             }
             raw_bytes = raw_bytes
-                .checked_add(bytes.len() as u64)
+                .checked_add(usize_to_u64(bytes.len())?)
                 .ok_or_else(|| initial_shadow_limit_error("aggregate raw bytes"))?;
             if raw_bytes > limits.raw_bytes {
                 return Err(initial_shadow_limit_error("aggregate raw bytes"));
@@ -10762,6 +16017,24 @@ fn initial_shadow_limit_error(resource: &'static str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!("initial shadow {resource} bound exceeded"),
+    )
+}
+
+fn managed_text_inventory_limit_error(resource: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("managed text inventory {resource} bound exceeded"),
+    )
+}
+
+fn managed_text_inventory_alias_error(
+    resource: &'static str,
+    first: &str,
+    second: &str,
+) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("managed {resource} alias one resource: {first} and {second}"),
     )
 }
 
@@ -10915,6 +16188,91 @@ fn rename_projection_noreplace(_dir: &Dir, _from: &str, _to: &str) -> io::Result
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "atomic no-clobber projection publication is unsupported on this platform",
+    ))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_managed_noreplace(
+    source_dir: &Dir,
+    source: &str,
+    destination_dir: &Dir,
+    destination: &str,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd};
+
+    let source = CString::new(source)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let destination = CString::new(destination)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            source_dir.as_fd().as_raw_fd(),
+            source.as_ptr(),
+            destination_dir.as_fd().as_raw_fd(),
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
+    (result == 0)
+        .then_some(())
+        .ok_or_else(io::Error::last_os_error)
+}
+
+#[cfg(target_os = "macos")]
+fn rename_managed_noreplace(
+    source_dir: &Dir,
+    source: &str,
+    destination_dir: &Dir,
+    destination: &str,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd};
+
+    let source = CString::new(source)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let destination = CString::new(destination)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
+    let result = unsafe {
+        libc::renameatx_np(
+            source_dir.as_fd().as_raw_fd(),
+            source.as_ptr(),
+            destination_dir.as_fd().as_raw_fd(),
+            destination.as_ptr(),
+            libc::RENAME_EXCL as libc::c_uint,
+        )
+    };
+    (result == 0)
+        .then_some(())
+        .ok_or_else(io::Error::last_os_error)
+}
+
+#[cfg(windows)]
+fn rename_managed_noreplace(
+    source_dir: &Dir,
+    source: &str,
+    destination_dir: &Dir,
+    destination: &str,
+) -> io::Result<()> {
+    source_dir.rename(source, destination_dir, destination)
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    windows
+)))]
+fn rename_managed_noreplace(
+    _source_dir: &Dir,
+    _source: &str,
+    _destination_dir: &Dir,
+    _destination: &str,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic capability-relative no-clobber move is unsupported on this platform",
     ))
 }
 
@@ -11351,6 +16709,84 @@ fn atomic_update_with_hooks(
 mod tests {
     use super::*;
 
+    #[cfg(any(unix, windows))]
+    fn handoff_binding(graph: &Graph, seed: u128) -> (WorkspaceId, ProjectionEndpointBinding) {
+        let workspace_id = WorkspaceId::from_uuid(Uuid::from_u128(seed));
+        let endpoint = ProjectionEndpointBinding::enroll_graph(
+            graph,
+            crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(seed + 1)),
+            crate::oplog::DeviceId::from_uuid(Uuid::from_u128(seed + 2)),
+        )
+        .unwrap();
+        (workspace_id, endpoint)
+    }
+
+    #[cfg(any(unix, windows))]
+    fn managed_write_gate(graph: &Graph) -> &Arc<ManagedTextWriteGate> {
+        &graph.managed_write_binding().unwrap().gate
+    }
+
+    #[cfg(any(unix, windows))]
+    fn hold_replacement_handoff(root: &Path, seed: u128) -> io::Result<()> {
+        let replacement = Graph::open(root);
+        let (workspace_id, endpoint) = handoff_binding(&replacement, seed);
+        let handoff = replacement.mint_handoff_safe(workspace_id, endpoint)?;
+        MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| {
+            *held.borrow_mut() = Some(handoff);
+        });
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    fn release_replacement_handoff() {
+        MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| drop(held.borrow_mut().take()));
+    }
+
+    #[cfg(any(unix, windows))]
+    fn assert_handoff_blocked<T>(result: io::Result<T>) {
+        match result {
+            Ok(_) => panic!("managed text writer entered during external handoff"),
+            Err(error) => assert_eq!(error.kind(), io::ErrorKind::WouldBlock),
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    fn assert_handoff_release_admits_waiting_writer(
+        graph: Arc<Graph>,
+        handoff: HandoffSafe,
+        label: &str,
+        release: impl FnOnce(HandoffSafe),
+    ) {
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let released = Arc::new(std::sync::Barrier::new(2));
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let before_name = format!("{label}-blocked");
+        let after_name = format!("{label}-released");
+        let worker = std::thread::spawn({
+            let entered = Arc::clone(&entered);
+            let released = Arc::clone(&released);
+            move || {
+                entered.wait();
+                attempt_tx
+                    .send(
+                        graph
+                            .create_markdown_page_if_absent(&before_name, "- blocked\n")
+                            .map(|_| ())
+                            .map_err(|error| error.kind()),
+                    )
+                    .unwrap();
+                released.wait();
+                graph.create_markdown_page_if_absent(&after_name, "- admitted\n")
+            }
+        });
+
+        entered.wait();
+        assert_eq!(attempt_rx.recv().unwrap(), Err(io::ErrorKind::WouldBlock));
+        release(handoff);
+        released.wait();
+        assert!(worker.join().unwrap().unwrap());
+    }
+
     #[test]
     fn page_name_encoding_round_trips_both_formats() {
         // Legacy: `/` ↔ `%2F`; a literal `___` is NOT a separator (stays put).
@@ -11425,23 +16861,42 @@ mod tests {
 
     #[test]
     fn sync_identity_projection_persists_every_markdown_block() {
-        let page = markdown_page_dto("Sync", "Sync", "- parent\n\t- child\n");
+        let page = markdown_page_dto("Sync", "Sync", "- parent\n\t- child\n").unwrap();
+        let budget = RetainedContentBudget::new(MANAGED_TEXT_INVENTORY_LIMITS);
         let runtime_ids = [
             page.blocks[0].id.clone(),
             page.blocks[0].children[0].id.clone(),
         ];
-        let migrated = page_with_persisted_sync_ids(&page).unwrap();
-        let parent_id = persisted_sync_id(&migrated.blocks[0].raw, Format::Md).unwrap();
-        let child_id = persisted_sync_id(&migrated.blocks[0].children[0].raw, Format::Md).unwrap();
+        let migrated = page_with_persisted_sync_ids(&page, &budget).unwrap();
+        let scan = SyncIdProjectionScanReservation::reserve(
+            &budget,
+            &migrated.blocks,
+            SyncIdProjectionInput::Existing,
+            0,
+            "test sync id projection",
+        )
+        .unwrap();
+        let parent_id =
+            persisted_sync_id(&migrated.blocks[0].raw, Format::Md, &scan).unwrap();
+        let child_id = persisted_sync_id(
+            &migrated.blocks[0].children[0].raw,
+            Format::Md,
+            &scan,
+        )
+        .unwrap();
         assert!(Uuid::parse_str(&parent_id).is_ok());
         assert!(Uuid::parse_str(&child_id).is_ok());
         assert_ne!(parent_id, runtime_ids[0]);
         assert_ne!(child_id, runtime_ids[1]);
         assert_eq!(migrated.blocks[0].id, runtime_ids[0]);
         assert_eq!(migrated.blocks[0].children[0].id, runtime_ids[1]);
-        assert_eq!(count_missing_sync_ids(&migrated.blocks, Format::Md), 0);
+        drop(scan);
+        assert_eq!(
+            count_missing_sync_ids(&migrated.blocks, Format::Md, &budget).unwrap(),
+            0
+        );
         // Resuming the migration is byte-stable and does not add duplicate ids.
-        let resumed = page_with_persisted_sync_ids(&migrated).unwrap();
+        let resumed = page_with_persisted_sync_ids(&migrated, &budget).unwrap();
         assert_eq!(resumed.blocks[0].raw, migrated.blocks[0].raw);
         assert_eq!(
             resumed.blocks[0].children[0].raw,
@@ -11451,12 +16906,22 @@ mod tests {
 
     #[test]
     fn sync_identity_projection_extends_an_org_drawer() {
-        let mut page = markdown_page_dto("Org", "Org", "- placeholder\n");
+        let mut page = markdown_page_dto("Org", "Org", "- placeholder\n").unwrap();
+        let budget = RetainedContentBudget::new(MANAGED_TEXT_INVENTORY_LIMITS);
         page.format = Format::Org;
         page.blocks[0].raw = "Task\n:PROPERTIES:\n:foo: bar\n:END:".into();
         let runtime_id = page.blocks[0].id.clone();
-        let migrated = page_with_persisted_sync_ids(&page).unwrap();
-        let persisted = persisted_sync_id(&migrated.blocks[0].raw, Format::Org).unwrap();
+        let migrated = page_with_persisted_sync_ids(&page, &budget).unwrap();
+        let scan = SyncIdProjectionScanReservation::reserve(
+            &budget,
+            &migrated.blocks,
+            SyncIdProjectionInput::Existing,
+            0,
+            "test org sync id projection",
+        )
+        .unwrap();
+        let persisted =
+            persisted_sync_id(&migrated.blocks[0].raw, Format::Org, &scan).unwrap();
         assert!(Uuid::parse_str(&persisted).is_ok());
         assert_ne!(persisted, runtime_id);
         assert_eq!(migrated.blocks[0].id, runtime_id);
@@ -11468,8 +16933,10 @@ mod tests {
 
     #[test]
     fn sync_identity_projection_rejects_duplicate_persisted_ids() {
-        let page = markdown_page_dto("Dup", "Dup", "- a\n  id:: same\n- b\n  id:: same\n");
-        let err = page_with_persisted_sync_ids(&page).unwrap_err();
+        let page =
+            markdown_page_dto("Dup", "Dup", "- a\n  id:: same\n- b\n  id:: same\n").unwrap();
+        let budget = RetainedContentBudget::new(MANAGED_TEXT_INVENTORY_LIMITS);
+        let err = page_with_persisted_sync_ids(&page, &budget).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err
             .to_string()
@@ -11478,31 +16945,54 @@ mod tests {
 
     #[test]
     fn sync_identity_graph_validation_requires_unique_uuids() {
+        let budget = RetainedContentBudget::new(MANAGED_TEXT_INVENTORY_LIMITS);
         let mut a = markdown_page_dto(
             "A",
             "A",
             "- a\n  id:: aaaaaaaa-0000-4000-8000-000000000001\n",
-        );
+        )
+        .unwrap();
         let mut b = markdown_page_dto(
             "B",
             "B",
             "- b\n  id:: aaaaaaaa-0000-4000-8000-000000000001\n",
-        );
-        a = page_with_persisted_sync_ids(&a).unwrap();
-        b = page_with_persisted_sync_ids(&b).unwrap();
+        )
+        .unwrap();
+        a = page_with_persisted_sync_ids(&a, &budget).unwrap();
+        b = page_with_persisted_sync_ids(&b, &budget).unwrap();
         let mut seen = std::collections::HashSet::new();
-        validate_graph_sync_ids(&a.blocks, a.format, &mut seen).unwrap();
-        let duplicate = validate_graph_sync_ids(&b.blocks, b.format, &mut seen).unwrap_err();
+        let mut seen_reservation = budget.reserve(0, "test graph id set").unwrap();
+        validate_graph_sync_ids(
+            &a.blocks,
+            a.format,
+            &mut seen,
+            &mut seen_reservation,
+            &budget,
+        )
+        .unwrap();
+        let duplicate = validate_graph_sync_ids(
+            &b.blocks,
+            b.format,
+            &mut seen,
+            &mut seen_reservation,
+            &budget,
+        )
+        .unwrap_err();
         assert!(duplicate
             .to_string()
             .contains("duplicate persisted block id"));
 
-        let invalid = markdown_page_dto("Bad", "Bad", "- bad\n  id:: legacy-id\n");
-        let invalid = page_with_persisted_sync_ids(&invalid).unwrap();
+        let invalid =
+            markdown_page_dto("Bad", "Bad", "- bad\n  id:: legacy-id\n").unwrap();
+        let invalid = page_with_persisted_sync_ids(&invalid, &budget).unwrap();
+        let mut invalid_seen = std::collections::HashSet::new();
+        let mut invalid_reservation = budget.reserve(0, "test invalid graph id set").unwrap();
         let err = validate_graph_sync_ids(
             &invalid.blocks,
             invalid.format,
-            &mut std::collections::HashSet::new(),
+            &mut invalid_seen,
+            &mut invalid_reservation,
+            &budget,
         )
         .unwrap_err();
         assert!(err.to_string().contains("is not a UUID"));
@@ -11870,6 +17360,82 @@ mod tests {
         dir
     }
 
+    fn regular_file_tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        fn collect(
+            root: &Path,
+            current: &Path,
+            out: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        ) {
+            if !current.exists() {
+                return;
+            }
+            for entry in fs::read_dir(current).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    collect(root, &path, out);
+                } else if kind.is_file() {
+                    out.insert(path.strip_prefix(root).unwrap().to_owned(), fs::read(path).unwrap());
+                }
+            }
+        }
+
+        let mut out = std::collections::BTreeMap::new();
+        collect(root, root, &mut out);
+        out
+    }
+
+    fn projection_heavy_managed_block(
+        id: Option<Uuid>,
+        namespace: &str,
+    ) -> String {
+        let mut content = format!(
+            "- Übergröße Καλημέρα résumé [[{namespace}]] #{namespace}/根 "
+        );
+        for index in 0..96 {
+            content.push_str(&format!(
+                "[[{namespace}/页面{index}]] #标签{index} "
+            ));
+        }
+        content.push('\n');
+        for index in 0..64 {
+            content.push_str(&format!(
+                "  eigenschaft-{index}:: Значение [[{namespace}/属性{index}]] #метка{index} naïve\n"
+            ));
+        }
+        if let Some(id) = id {
+            content.push_str(&format!("  id:: {id}\n"));
+        }
+        content
+    }
+
+    fn set_managed_content_budget_limit(limit: u64) {
+        MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE.with(|override_limits| {
+            *override_limits.borrow_mut() = Some(ManagedTextInventoryLimits {
+                retained_content_bytes: limit,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            });
+        });
+    }
+
+    fn clear_managed_content_budget_limit() {
+        MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE.with(|override_limits| {
+            *override_limits.borrow_mut() = None;
+        });
+    }
+
+    fn last_managed_content_budget_peak() -> u64 {
+        MANAGED_TEXT_BUDGET_LAST_PEAK.with(Cell::get)
+    }
+
+    fn managed_migration_writer_boundary() -> (u64, u64) {
+        (
+            MANAGED_MIGRATION_PRE_WRITER_PEAK.with(Cell::get),
+            MANAGED_MIGRATION_WRITER_ADMITTED_PEAK.with(Cell::get),
+        )
+    }
+
     #[test]
     fn publisher_p1_managed_text_classifier_uses_longest_component_root_and_preserves_exact_path() {
         let dir = scratch("managed-text-classifier-longest-root");
@@ -11921,9 +17487,7 @@ mod tests {
             graph.config.pages_dir = malformed_pages_root.to_owned();
             graph.config.journals_dir = "journals".to_owned();
             assert!(graph
-                .classify_managed_text_path(
-                    &ManagedPath::parse("journals/2026/07/24.md").unwrap()
-                )
+                .classify_managed_text_path(&ManagedPath::parse("journals/2026/07/24.md").unwrap())
                 .is_err());
         }
         let _ = fs::remove_dir_all(&dir);
@@ -12675,8 +18239,8 @@ mod tests {
             Some(1)
         );
 
-        let first = g.block_ref_counts();
-        let second = g.block_ref_counts();
+        let first = g.block_ref_counts().unwrap();
+        let second = g.block_ref_counts().unwrap();
         assert!(
             std::sync::Arc::ptr_eq(&first, &second),
             "re-entering block_ref_counts should reuse the warmed Arc"
@@ -12700,11 +18264,11 @@ mod tests {
 
         let g = Graph::open(&dir);
         g.warm_cache();
-        let before = g.block_ref_counts();
+        let before = g.block_ref_counts().unwrap();
         let mut target = g.load_named("Target", PageKind::Page).unwrap().unwrap();
         target.blocks[0].raw = "target edited without changing references".into();
         g.save_page(&target, target.rev.as_deref()).unwrap();
-        let after = g.block_ref_counts();
+        let after = g.block_ref_counts().unwrap();
 
         assert!(
             Arc::ptr_eq(&before, &after),
@@ -15971,8 +21535,23 @@ mod tests {
         )
         .is_err());
 
+        let pending = scratch("initial-shadow-pending-directory-limit");
+        fs::write(pending.join("pages/a.md"), b"").unwrap();
+        let graph = Graph::open(&pending);
+        let limits = InitialShadowLimits {
+            pending_directories: 0,
+            ..INITIAL_SHADOW_LIMITS
+        };
+        assert!(collect_initial_shadow_managed_inventory_with_limits(
+            graph.projection_root.as_ref().unwrap(),
+            true,
+            limits,
+        )
+        .is_err());
+
         let _ = fs::remove_dir_all(&deep);
         let _ = fs::remove_dir_all(&many);
+        let _ = fs::remove_dir_all(&pending);
     }
 
     #[cfg(unix)]
@@ -16203,9 +21782,11 @@ mod tests {
         let reservation = ProjectionAttemptReservation::for_test("pages/Collision.md");
         let reserved = dir.join("pages").join(reservation.recovery_filename());
         fs::write(&reserved, b"- forged\n").unwrap();
+        let write = graph.admit_retained_managed_text_writer().unwrap();
 
         assert!(graph
             .write_page_projection_with_attempts(
+                &write,
                 "pages/Collision.md",
                 Some(b"- base\n"),
                 b"- target\n",
@@ -17197,5 +22778,3546 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_mint_and_writer_admission_race_at_the_gate() {
+        let dir = scratch("handoff-admission-race");
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 90_900);
+        let gate = Arc::clone(managed_write_gate(&graph));
+        gate.set_admission_race_barrier(Some(Arc::new(std::sync::Barrier::new(2))));
+
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let (writer_release_tx, writer_release_rx) = std::sync::mpsc::channel();
+        let (mint_release_tx, mint_release_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            let result_tx = result_tx.clone();
+            move || match graph.admit_managed_text_writer() {
+                Ok(permit) => {
+                    result_tx.send(("writer", Ok(()))).unwrap();
+                    writer_release_rx.recv().unwrap();
+                    drop(permit);
+                }
+                Err(error) => {
+                    result_tx.send(("writer", Err(error.kind()))).unwrap();
+                    writer_release_rx.recv().unwrap();
+                }
+            }
+        });
+        let mint = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            move || match graph.mint_handoff_safe(workspace_id, endpoint) {
+                Ok(handoff) => {
+                    result_tx.send(("handoff", Ok(()))).unwrap();
+                    mint_release_rx.recv().unwrap();
+                    drop(handoff);
+                }
+                Err(error) => {
+                    result_tx.send(("handoff", Err(error.kind()))).unwrap();
+                    mint_release_rx.recv().unwrap();
+                }
+            }
+        });
+
+        let first = result_rx.recv().unwrap();
+        let second = result_rx.recv().unwrap();
+        gate.set_admission_race_barrier(None);
+        let outcomes = [first, second];
+        assert_eq!(
+            outcomes.iter().filter(|(_, result)| result.is_ok()).count(),
+            1,
+            "the barrier placed both operations inside the admission race"
+        );
+        for (_, result) in outcomes {
+            if let Err(kind) = result {
+                assert_eq!(kind, io::ErrorKind::WouldBlock);
+            }
+        }
+
+        writer_release_tx.send(()).unwrap();
+        mint_release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        mint.join().unwrap();
+        assert!(graph
+            .create_markdown_page_if_absent("after admission race", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_blocks_omitted_journal_migration_and_conflict_trash_entrypoints() {
+        let dir = scratch("handoff-omitted-entrypoints");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        let title_named = "Thursday, 25-06-2026.org";
+        fs::write(dir.join("journals").join(title_named), "* migrate me\n").unwrap();
+        let conflict = "Foo.sync-conflict-20260705-141233-A1B2C3D.md";
+        fs::write(dir.join("pages").join(conflict), "- trash me\n").unwrap();
+
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 90_950);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let migration = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            let start = Arc::clone(&start);
+            move || {
+                start.wait();
+                graph.migrate_journal_filenames_checked()
+            }
+        });
+        let trash = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            let start = Arc::clone(&start);
+            move || {
+                start.wait();
+                graph.trash_sync_conflict(&format!("pages/{conflict}"))
+            }
+        });
+
+        start.wait();
+        assert_handoff_blocked(migration.join().unwrap());
+        assert_handoff_blocked(trash.join().unwrap());
+        assert!(dir.join("journals").join(title_named).exists());
+        assert!(dir.join("pages").join(conflict).exists());
+
+        drop(handoff);
+        assert_eq!(graph.migrate_journal_filenames_checked().unwrap(), 1);
+        assert!(graph
+            .trash_sync_conflict(&format!("pages/{conflict}"))
+            .is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_resource_gate_blocks_reopen_but_not_an_independent_graph() {
+        let dir = scratch("handoff-reopen-gate");
+        let other_dir = scratch("handoff-independent-gate");
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_025);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        let reopened = Arc::new(Graph::open(&dir));
+        assert!(Arc::ptr_eq(
+            managed_write_gate(&graph),
+            managed_write_gate(&reopened)
+        ));
+        assert!(handoff
+            .verify_binding(&reopened, workspace_id, endpoint)
+            .is_err());
+        let independent = Arc::new(Graph::open(&other_dir));
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let blocked_writer = std::thread::spawn({
+            let graph = Arc::clone(&reopened);
+            let start = Arc::clone(&start);
+            move || {
+                start.wait();
+                graph.create_markdown_page_if_absent("same resource", "- blocked\n")
+            }
+        });
+        let independent_writer = std::thread::spawn({
+            let graph = Arc::clone(&independent);
+            let start = Arc::clone(&start);
+            move || {
+                start.wait();
+                graph.create_markdown_page_if_absent("other resource", "- admitted\n")
+            }
+        });
+
+        start.wait();
+        assert_handoff_blocked(blocked_writer.join().unwrap());
+        assert!(independent_writer.join().unwrap().unwrap());
+        drop(handoff);
+        assert!(reopened
+            .create_markdown_page_if_absent("same resource released", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&other_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handoff_resource_gate_blocks_a_reopened_symlink_alias() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("handoff-symlink-resource");
+        let alias = dir.with_file_name("tine-handoff-symlink-resource-alias");
+        let _ = fs::remove_file(&alias);
+        symlink(&dir, &alias).unwrap();
+        let graph = Graph::open(&dir);
+        let reopened = Graph::open(&alias);
+        assert!(Arc::ptr_eq(
+            managed_write_gate(&graph),
+            managed_write_gate(&reopened)
+        ));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_035);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        assert_handoff_blocked(reopened.create_markdown_page_if_absent(
+            "symlink alias blocked",
+            "- no\n",
+        ));
+        assert!(!dir.join("pages").join("symlink alias blocked.md").exists());
+        assert!(handoff
+            .verify_binding(&reopened, workspace_id, endpoint)
+            .is_err());
+
+        drop(handoff);
+        assert!(reopened
+            .create_markdown_page_if_absent("symlink alias released", "- yes\n")
+            .unwrap());
+        let _ = fs::remove_file(&alias);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_writer_identity_failure_never_mints_an_independent_gate() {
+        let dir = scratch("handoff-identity-acquisition-failure");
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_040);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        MANAGED_WRITE_IDENTITY_ACQUISITION.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|| {
+                Err(io::Error::other(
+                    "injected transient graph identity acquisition failure",
+                ))
+            }));
+        });
+        let identity_failed = Graph::open(&dir);
+
+        assert!(identity_failed.managed_write_binding().is_err());
+        assert!(identity_failed
+            .create_markdown_page_if_absent("identity bypass", "- no\n")
+            .is_err());
+        assert!(!dir.join("pages").join("identity bypass.md").exists());
+
+        drop(handoff);
+        assert!(identity_failed
+            .create_markdown_page_if_absent("still fail closed", "- no\n")
+            .is_err());
+        assert!(graph
+            .create_markdown_page_if_absent("original binding released", "- yes\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn stale_graph_writes_retained_resource_not_replacement_reserved_by_another_gate() {
+        let dir = scratch("handoff-stale-root");
+        let moved = dir.with_file_name("tine-handoff-stale-root-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let stale = Graph::open(&dir);
+        fs::rename(&dir, &moved).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        let replacement = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&replacement, 91_045);
+        let handoff = replacement
+            .mint_handoff_safe(workspace_id, endpoint)
+            .unwrap();
+
+        assert!(stale
+            .create_markdown_page_if_absent("retained writer", "- retained\n")
+            .unwrap());
+        assert!(!dir.join("pages").join("retained writer.md").exists());
+        assert_eq!(
+            fs::read(moved.join("pages").join("retained writer.md")).unwrap(),
+            b"- retained\n"
+        );
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("replacement blocked", "- no\n"),
+        );
+
+        drop(handoff);
+        assert!(replacement
+            .create_markdown_page_if_absent("replacement released", "- yes\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn root_replacement_after_admission_writes_retained_resource() {
+        let dir = scratch("handoff-admission-root-race");
+        let moved = dir.with_file_name("tine-handoff-admission-root-race-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))
+            }));
+        });
+
+        assert!(graph
+            .create_markdown_page_if_absent("admission retained", "- retained\n")
+            .unwrap());
+        assert!(!dir.join("pages").join("admission retained.md").exists());
+        assert_eq!(
+            fs::read(moved.join("pages").join("admission retained.md")).unwrap(),
+            b"- retained\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn root_replacement_while_writer_waits_for_page_lock_writes_retained_resource() {
+        let dir = scratch("handoff-root-replacement-page-lock");
+        let moved = dir.with_file_name("tine-handoff-root-replacement-page-lock-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let graph = Arc::new(Graph::open(&dir));
+        let target = dir.join("pages").join("page lock retained.md");
+        let lock = graph.page_lock(&target);
+        let guard = lock.lock().unwrap();
+        let (admitted_tx, admitted_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            move || {
+                MANAGED_WRITE_AFTER_IDENTITY_CHECK.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move || admitted_tx.send(()).unwrap()));
+                });
+                graph.create_markdown_page_if_absent("page lock retained", "- retained\n")
+            }
+        });
+
+        admitted_rx.recv().unwrap();
+        fs::rename(&dir, &moved).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        drop(guard);
+
+        assert!(writer.join().unwrap().unwrap());
+        assert!(!target.exists());
+        assert_eq!(
+            fs::read(moved.join("pages").join("page lock retained.md")).unwrap(),
+            b"- retained\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn replacement_after_final_check_cannot_redirect_mutation_into_reserved_root() {
+        let dir = scratch("handoff-capability-final-window");
+        let moved = dir.with_file_name("tine-handoff-capability-final-window-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_BEFORE_MUTATION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages").join("replacement sentinel.md"), "- B\n")?;
+                let replacement = Graph::open(&dir);
+                let (workspace_id, endpoint) = handoff_binding(&replacement, 91_047);
+                let handoff = replacement.mint_handoff_safe(workspace_id, endpoint)?;
+                MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| {
+                    *held.borrow_mut() = Some(handoff);
+                });
+                Ok(())
+            }));
+        });
+
+        assert!(graph
+            .create_markdown_page_if_absent("final window", "- retained A\n")
+            .unwrap());
+        assert_eq!(
+            fs::read(moved.join("pages").join("final window.md")).unwrap(),
+            b"- retained A\n"
+        );
+        assert!(!dir.join("pages").join("final window.md").exists());
+        assert_eq!(
+            fs::read(dir.join("pages").join("replacement sentinel.md")).unwrap(),
+            b"- B\n"
+        );
+        let replacement = Graph::open(&dir);
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("reserved B", "- blocked\n"),
+        );
+        MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| drop(held.borrow_mut().take()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn sync_identity_migration_keeps_nested_multi_page_inventory_and_writes_on_retained_a() {
+        let dir = scratch("handoff-sync-id-migration-retained");
+        let moved = dir.with_file_name("tine-handoff-sync-id-migration-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"archive/pages\"\n :journals-directory \"archive/journals\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("archive/pages/team/deep")).unwrap();
+        fs::create_dir_all(dir.join("archive/journals/2026/07")).unwrap();
+        fs::write(
+            dir.join("archive/pages/team/deep/Alpha.md"),
+            "- alpha A\n",
+        )
+        .unwrap();
+        fs::write(dir.join("archive/pages/Beta.md"), "- beta A\n").unwrap();
+        fs::write(
+            dir.join("archive/journals/2026/07/2026_07_24.md"),
+            "- journal A\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("logseq"))?;
+                fs::write(
+                    dir.join("logseq/config.edn"),
+                    "{:pages-directory \"archive/pages\"\n :journals-directory \"archive/journals\"}\n",
+                )?;
+                fs::create_dir_all(dir.join("archive/pages/team/deep"))?;
+                fs::create_dir_all(dir.join("archive/journals/2026/07"))?;
+                fs::write(
+                    dir.join("archive/pages/team/deep/Alpha.md"),
+                    "- alpha B sentinel\n",
+                )?;
+                fs::write(
+                    dir.join("archive/journals/2026/07/2026_07_24.md"),
+                    "- journal B sentinel\n",
+                )?;
+                hold_replacement_handoff(&dir, 91_047_010)
+            }));
+        });
+
+        let migration = graph.migrate_sync_identities().unwrap();
+        assert_eq!(migration.pages_changed, 3);
+        assert_eq!(migration.blocks_changed, 3);
+        for path in [
+            "archive/pages/team/deep/Alpha.md",
+            "archive/pages/Beta.md",
+            "archive/journals/2026/07/2026_07_24.md",
+        ] {
+            assert!(
+                fs::read_to_string(moved.join(path))
+                    .unwrap()
+                    .contains("id:: "),
+                "{path} was not migrated on retained A"
+            );
+        }
+        assert_eq!(
+            fs::read(dir.join("archive/pages/team/deep/Alpha.md")).unwrap(),
+            b"- alpha B sentinel\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("archive/journals/2026/07/2026_07_24.md")).unwrap(),
+            b"- journal B sentinel\n"
+        );
+        assert!(!dir.join("archive/pages/Beta.md").exists());
+        assert!(!dir.join(".tine-sync").exists());
+        let replacement = Graph::open(&dir);
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("blocked on B", "- blocked\n"),
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_sync_enable_genesis_receipts_restart_and_store_state_stay_on_retained_a() {
+        let dir = scratch("handoff-managed-sync-enable-retained");
+        let moved = dir.with_file_name("tine-handoff-managed-sync-enable-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let page_content = format!(
+            "- retained page A\n  id:: {}\n",
+            Uuid::from_u128(91_047_020)
+        );
+        let journal_content = format!(
+            "- retained journal A\n  id:: {}\n",
+            Uuid::from_u128(91_047_021)
+        );
+        fs::write(dir.join("pages/Retained.md"), &page_content).unwrap();
+        fs::write(dir.join("journals/2026_07_24.md"), &journal_content).unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages/Retained.md"), "- replacement page B\n")?;
+                fs::write(dir.join("pages/B-only.md"), "- B-only sentinel\n")?;
+                hold_replacement_handoff(&dir, 91_047_030)
+            }));
+        });
+
+        let enabled = graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_047_022),
+                Uuid::from_u128(91_047_023),
+            )
+            .unwrap();
+        assert_eq!(enabled.status.page_count, 2);
+        assert!(moved.join(".tine-sync/v1").is_dir());
+        assert!(!dir.join(".tine-sync").exists());
+        {
+            let guard = graph.managed_sync.lock().unwrap();
+            let sync = guard.as_ref().unwrap();
+            assert!(sync
+                .materialize_page("pages/Retained.md")
+                .unwrap()
+                .is_some());
+            assert!(sync.materialize_page("pages/B-only.md").unwrap().is_none());
+            assert!(sync
+                .is_known_projection("pages/Retained.md", &page_content)
+                .unwrap());
+            assert!(sync
+                .is_known_projection("journals/2026_07_24.md", &journal_content)
+                .unwrap());
+            assert!(!sync
+                .is_known_projection("pages/Retained.md", "- replacement page B\n")
+                .unwrap());
+        }
+        assert_eq!(
+            fs::read(dir.join("pages/Retained.md")).unwrap(),
+            b"- replacement page B\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("pages/B-only.md")).unwrap(),
+            b"- B-only sentinel\n"
+        );
+
+        graph.managed_sync.lock().unwrap().take();
+        assert_eq!(
+            graph.managed_sync_store_state().unwrap(),
+            ManagedSyncStoreState::Initialized
+        );
+        assert!(graph
+            .start_managed_sync(
+                Uuid::from_u128(91_047_022),
+                Uuid::from_u128(91_047_024),
+            )
+            .unwrap());
+        assert_eq!(graph.managed_sync_status().unwrap().page_count, 2);
+        let replacement = Graph::open(&dir);
+        assert_eq!(
+            replacement.managed_sync_store_state().unwrap(),
+            ManagedSyncStoreState::Absent
+        );
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("still blocked on B", "- blocked\n"),
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn sync_identity_migration_fails_closed_when_retained_a_baseline_changes() {
+        let dir = scratch("handoff-sync-id-baseline-change");
+        let first = dir.join("pages/A.md");
+        let second = dir.join("pages/B.md");
+        fs::write(&first, "- original A\n").unwrap();
+        fs::write(&second, "- original B\n").unwrap();
+        let graph = Graph::open(&dir);
+        SYNC_IDENTITY_AFTER_PREPARE.with(|hook| {
+            let first = first.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(&first, "- concurrent external A\n")
+            }));
+        });
+
+        let error = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read(&first).unwrap(),
+            b"- concurrent external A\n",
+            "migration must preserve the external replacement"
+        );
+        assert_eq!(
+            fs::read(&second).unwrap(),
+            b"- original B\n",
+            "validation failure on the first baseline must precede every write"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn overlapping_managed_roots_inventory_each_file_once_for_identity_migration() {
+        let dir = scratch("handoff-overlapping-roots-migration");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"managed/text\"\n :journals-directory \"managed/text/daily\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("managed/text/projects/Parent.md");
+        let journal = dir.join("managed/text/daily/2026/07/2026_07_24.md");
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::create_dir_all(journal.parent().unwrap()).unwrap();
+        fs::write(&page, "- parent\n").unwrap();
+        fs::write(&journal, "- journal\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        let write = graph.admit_managed_text_writer().unwrap();
+        let entries = graph.managed_text_entries(&write, false).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == page && entry.kind == PageKind::Page));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == journal && entry.kind == PageKind::Journal));
+        drop(write);
+        let migration = graph.migrate_sync_identities().unwrap();
+        assert_eq!(migration.pages_changed, 2);
+        assert_eq!(migration.blocks_changed, 2);
+        assert!(fs::read_to_string(&page).unwrap().contains("id:: "));
+        assert!(fs::read_to_string(&journal).unwrap().contains("id:: "));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn overlapping_managed_roots_enable_genesis_uses_canonical_kinds_without_migration() {
+        let dir = scratch("handoff-overlapping-roots-enable");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"managed/text\"\n :journals-directory \"managed/text/daily\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("managed/text/projects/Parent.md");
+        let journal = dir.join("managed/text/daily/2026/07/2026_07_24.md");
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::create_dir_all(journal.parent().unwrap()).unwrap();
+        fs::write(
+            &page,
+            format!("- parent\n  id:: {}\n", Uuid::from_u128(91_047_200)),
+        )
+        .unwrap();
+        fs::write(
+            &journal,
+            format!("- journal\n  id:: {}\n", Uuid::from_u128(91_047_201)),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let enabled = graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_047_202),
+                Uuid::from_u128(91_047_203),
+            )
+            .unwrap();
+        assert_eq!(enabled.migration.pages_changed, 0);
+        assert_eq!(enabled.migration.blocks_changed, 0);
+        assert_eq!(enabled.status.page_count, 2);
+        let sync = graph.managed_sync.lock().unwrap();
+        let sync = sync.as_ref().unwrap();
+        assert!(sync
+            .materialize_page("managed/text/projects/Parent.md")
+            .unwrap()
+            .is_some());
+        assert!(sync
+            .materialize_page("managed/text/daily/2026/07/2026_07_24.md")
+            .unwrap()
+            .is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn overlapping_managed_roots_migration_retries_after_baseline_race() {
+        let dir = scratch("handoff-overlapping-roots-retry");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"managed/text\"\n :journals-directory \"managed/text/daily\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("managed/text/projects/Parent.md");
+        let journal = dir.join("managed/text/daily/2026_07_24.md");
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::create_dir_all(journal.parent().unwrap()).unwrap();
+        fs::write(&page, "- parent\n").unwrap();
+        fs::write(&journal, "- journal\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        SYNC_IDENTITY_AFTER_PREPARE.with(|hook| {
+            let journal = journal.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(&journal, "- concurrent journal\n")
+            }));
+        });
+        let error = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&page).unwrap(), "- parent\n");
+        assert_eq!(fs::read_to_string(&journal).unwrap(), "- concurrent journal\n");
+
+        let retry = graph.migrate_sync_identities().unwrap();
+        assert_eq!(retry.pages_changed, 2);
+        assert_eq!(retry.blocks_changed, 2);
+        assert!(fs::read_to_string(&page).unwrap().contains("id:: "));
+        assert!(fs::read_to_string(&journal).unwrap().contains("id:: "));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn equal_managed_roots_fail_before_identity_writes_or_genesis() {
+        let dir = scratch("handoff-equal-managed-roots");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"managed/text\"\n :journals-directory \"managed/text\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("managed/text/Only.md");
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::write(&page, "- untouched\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        let migration = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(migration.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_to_string(&page).unwrap(), "- untouched\n");
+        let enable = graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_047_204),
+                Uuid::from_u128(91_047_205),
+            )
+            .unwrap_err();
+        assert_eq!(enable.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_to_string(&page).unwrap(), "- untouched\n");
+        assert!(!dir.join(".tine-sync").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn reverse_overlapping_managed_roots_share_longest_owner_with_cache_paths() {
+        let dir = scratch("handoff-reverse-overlapping-roots");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"managed/text/daily\"\n :journals-directory \"managed/text\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("managed/text/daily/2026/07/Parent.md");
+        let journal = dir.join("managed/text/archive/2026_07_24.md");
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::create_dir_all(journal.parent().unwrap()).unwrap();
+        fs::write(&page, "- nested page\n").unwrap();
+        fs::write(&journal, "- outer journal\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        assert_eq!(graph.entry_for_path(&page).unwrap().kind, PageKind::Page);
+        assert_eq!(graph.entry_for_path(&journal).unwrap().kind, PageKind::Journal);
+        let write = graph.admit_managed_text_writer().unwrap();
+        let entries = graph.managed_text_entries(&write, false).unwrap();
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == page && entry.kind == PageKind::Page));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.path == journal && entry.kind == PageKind::Journal));
+        drop(write);
+        graph.migrate_sync_identities().unwrap();
+        assert_eq!(graph.entry_for_path(&page).unwrap().kind, PageKind::Page);
+        assert!(graph
+            .list_pages()
+            .iter()
+            .any(|entry| entry.path == page && entry.kind == PageKind::Page));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_inventory_rejects_hardlinked_files_before_migration_or_genesis() {
+        let dir = scratch("handoff-managed-inventory-hardlink");
+        let page = dir.join("pages/A.md");
+        let alias = dir.join("pages/B.md");
+        fs::write(&page, "- untouched\n").unwrap();
+        fs::hard_link(&page, &alias).unwrap();
+        let graph = Graph::open(&dir);
+
+        let migration = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(migration.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&page).unwrap(), "- untouched\n");
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "- untouched\n");
+        let enable = graph
+            .enable_managed_sync(Uuid::from_u128(91_047_206), Uuid::from_u128(91_047_207))
+            .unwrap_err();
+        assert_eq!(enable.kind(), io::ErrorKind::InvalidData);
+        assert!(!dir.join(".tine-sync").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_inventory_limits_fail_closed_before_migration_or_genesis() {
+        let dir = scratch("handoff-managed-inventory-limits");
+        fs::write(dir.join("pages/A.md"), "- untouched\n").unwrap();
+        fs::create_dir_all(dir.join("pages/nested")).unwrap();
+        fs::write(dir.join("pages/nested/B.md"), "- nested\n").unwrap();
+        let graph = Graph::open(&dir);
+        let write = graph.admit_managed_text_writer().unwrap();
+        for limits in [
+            ManagedTextInventoryLimits {
+                managed_files: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+            ManagedTextInventoryLimits {
+                directory_depth: 1,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+            ManagedTextInventoryLimits {
+                all_entries: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+            ManagedTextInventoryLimits {
+                directories: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+            ManagedTextInventoryLimits {
+                pending_directories: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+            ManagedTextInventoryLimits {
+                path_bytes: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            },
+        ] {
+            assert!(graph
+                .managed_text_entries_with_limits(&write, false, limits)
+                .is_err());
+        }
+        drop(write);
+
+        MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE.with(|override_limits| {
+            *override_limits.borrow_mut() = Some(ManagedTextInventoryLimits {
+                managed_files: 0,
+                ..MANAGED_TEXT_INVENTORY_LIMITS
+            });
+        });
+        let migration = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(migration.kind(), io::ErrorKind::InvalidData);
+        let enable = graph
+            .enable_managed_sync(Uuid::from_u128(91_047_208), Uuid::from_u128(91_047_209))
+            .unwrap_err();
+        MANAGED_TEXT_INVENTORY_LIMITS_OVERRIDE.with(|override_limits| {
+            *override_limits.borrow_mut() = None;
+        });
+        assert_eq!(enable.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(dir.join("pages/A.md")).unwrap(), "- untouched\n");
+        assert!(!dir.join(".tine-sync").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn migration_projection_scan_budget_has_exact_pre_mutation_boundary() {
+        let content = projection_heavy_managed_block(None, "Project");
+        assert!(content.len() > 256);
+
+        let probe = scratch("projection-budget-migration-probe");
+        fs::write(probe.join("pages/A.md"), &content).unwrap();
+        Graph::open(&probe).migrate_sync_identities().unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let rejected = scratch("projection-budget-migration-retry");
+        let page = rejected.join("pages/A.md");
+        fs::write(&page, &content).unwrap();
+        let graph = Graph::open(&rejected);
+        let before = regular_file_tree(&rejected);
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph.migrate_sync_identities().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected), before);
+        assert!(graph.cache.read().unwrap().is_none());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        assert!(!rejected.join(".tine-sync").exists());
+
+        set_managed_content_budget_limit(peak);
+        let retry = graph.migrate_sync_identities().unwrap();
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.pages_changed, 1);
+        assert!(fs::read_to_string(&page).unwrap().contains("id:: "));
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn enable_projection_scan_budget_has_exact_pre_store_boundary() {
+        let content = projection_heavy_managed_block(
+            Some(Uuid::from_u128(91_049_000)),
+            "Project",
+        );
+        assert!(content.len() > 256);
+
+        let probe = scratch("projection-budget-enable-probe");
+        fs::write(probe.join("pages/A.md"), &content).unwrap();
+        Graph::open(&probe)
+            .enable_managed_sync(
+                Uuid::from_u128(91_049_001),
+                Uuid::from_u128(91_049_002),
+            )
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let rejected = scratch("projection-budget-enable-retry");
+        let page = rejected.join("pages/A.md");
+        fs::write(&page, &content).unwrap();
+        let graph = Graph::open(&rejected);
+        let before = regular_file_tree(&rejected);
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph
+                .enable_managed_sync(
+                    Uuid::from_u128(91_049_003),
+                    Uuid::from_u128(91_049_004),
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected), before);
+        assert!(graph.cache.read().unwrap().is_none());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        assert!(!rejected.join(".tine-sync").exists());
+
+        set_managed_content_budget_limit(peak);
+        let retry = graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_049_003),
+                Uuid::from_u128(91_049_004),
+            )
+            .unwrap();
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.migration.pages_changed, 0);
+        assert_eq!(retry.status.page_count, 1);
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn active_rename_projection_scan_budget_has_exact_pre_commit_boundary() {
+        fn populate(dir: &Path) {
+            fs::write(
+                dir.join("pages/Project.md"),
+                projection_heavy_managed_block(
+                    Some(Uuid::from_u128(91_049_010)),
+                    "Project",
+                ),
+            )
+            .unwrap();
+        }
+
+        let probe = scratch("projection-budget-rename-probe");
+        populate(&probe);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_049_011),
+                Uuid::from_u128(91_049_012),
+            )
+            .unwrap();
+        probe_graph.rename_page("Project", "Archive").unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let rejected = scratch("projection-budget-rename-retry");
+        populate(&rejected);
+        let graph = Graph::open(&rejected);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_049_013),
+                Uuid::from_u128(91_049_014),
+            )
+            .unwrap();
+        let before = regular_file_tree(&rejected);
+        let snapshot_before = graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Project.md")
+            .unwrap();
+
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph.rename_page("Project", "Archive").unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected), before);
+        assert_eq!(
+            graph
+                .managed_sync
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .materialize_page("pages/Project.md")
+                .unwrap(),
+            snapshot_before
+        );
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+
+        set_managed_content_budget_limit(peak);
+        graph.rename_page("Project", "Archive").unwrap();
+        clear_managed_content_budget_limit();
+        assert!(rejected.join("pages/Archive.md").exists());
+        assert!(graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Archive.md")
+            .unwrap()
+            .is_some());
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_migration_content_budget_bounds_multi_file_preparation_before_writes() {
+        let content = "- retained block\n";
+        let probe = scratch("budget-migration-a");
+        fs::write(probe.join("pages/A.md"), content).unwrap();
+        fs::write(probe.join("pages/B.md"), content).unwrap();
+        Graph::open(&probe).migrate_sync_identities().unwrap();
+        let peak = last_managed_content_budget_peak();
+        assert!(peak > content.len() as u64);
+
+        let accepted = scratch("budget-migration-b");
+        fs::write(accepted.join("pages/A.md"), content).unwrap();
+        fs::write(accepted.join("pages/B.md"), content).unwrap();
+        set_managed_content_budget_limit(peak);
+        let migration = Graph::open(&accepted).migrate_sync_identities().unwrap();
+        assert_eq!(migration.pages_changed, 2);
+        assert!(fs::read_to_string(accepted.join("pages/A.md"))
+            .unwrap()
+            .contains("id:: "));
+        clear_managed_content_budget_limit();
+
+        let rejected = scratch("budget-migration-c");
+        let first = rejected.join("pages/A.md");
+        let second = rejected.join("pages/B.md");
+        fs::write(&first, content).unwrap();
+        fs::write(&second, content).unwrap();
+        set_managed_content_budget_limit(peak - 1);
+        let rejected_graph = Graph::open(&rejected);
+        let error = rejected_graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&first).unwrap(), content.as_bytes());
+        assert_eq!(fs::read(&second).unwrap(), content.as_bytes());
+        assert!(!rejected.join(".tine-sync").exists());
+        assert!(!rejected.join(".tine-sync/v1/genesis").exists());
+        set_managed_content_budget_limit(peak);
+        let retry = rejected_graph.migrate_sync_identities().unwrap();
+        assert_eq!(retry.pages_changed, 2);
+        assert!(fs::read_to_string(&first).unwrap().contains("id:: "));
+        clear_managed_content_budget_limit();
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&accepted);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn active_sync_migration_admits_writer_with_reread_before_crdt_mutation() {
+        fn populate(dir: &Path) -> (String, String) {
+            let initial = format!("- existing\n  id:: {}\n", Uuid::from_u128(91_047_500));
+            let changed = format!("{initial}- needs identity\n");
+            fs::write(dir.join("pages/A.md"), &initial).unwrap();
+            (initial, changed)
+        }
+
+        let probe = scratch("active-migration-writer-bound-a");
+        let (_, probe_changed) = populate(&probe);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(Uuid::from_u128(91_047_501), Uuid::from_u128(91_047_502))
+            .unwrap();
+        fs::write(probe.join("pages/A.md"), &probe_changed).unwrap();
+        probe_graph.migrate_sync_identities().unwrap();
+        let (pre_writer_peak, admitted_writer_peak) = managed_migration_writer_boundary();
+        assert!(
+            admitted_writer_peak > pre_writer_peak,
+            "writer+reread admission must exceed the already-admitted CRDT preparation"
+        );
+
+        let rejected = scratch("active-migration-writer-bound-b");
+        let (initial, changed) = populate(&rejected);
+        let graph = Graph::open(&rejected);
+        graph
+            .enable_managed_sync(Uuid::from_u128(91_047_503), Uuid::from_u128(91_047_504))
+            .unwrap();
+        fs::write(rejected.join("pages/A.md"), &changed).unwrap();
+        graph.warm_cache();
+        let disk_before = fs::read(rejected.join("pages/A.md")).unwrap();
+        let store_before = regular_file_tree(&rejected.join(".tine-sync"));
+        let cache_generation_before = graph.cache_generation();
+        let (snapshot_before, status_before, initial_projection_before, changed_projection_before) = {
+            let sync = graph.managed_sync.lock().unwrap();
+            let sync = sync.as_ref().unwrap();
+            (
+                sync.materialize_page("pages/A.md").unwrap(),
+                sync.status().unwrap(),
+                sync.is_known_projection("pages/A.md", &initial).unwrap(),
+                sync.is_known_projection("pages/A.md", &changed).unwrap(),
+            )
+        };
+
+        set_managed_content_budget_limit(admitted_writer_peak - 1);
+        let error = graph.migrate_sync_identities().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let (failed_pre_writer, failed_admitted_writer) = managed_migration_writer_boundary();
+        assert!(failed_pre_writer <= admitted_writer_peak - 1);
+        assert_eq!(failed_admitted_writer, 0);
+        assert_eq!(fs::read(rejected.join("pages/A.md")).unwrap(), disk_before);
+        assert_eq!(regular_file_tree(&rejected.join(".tine-sync")), store_before);
+        assert_eq!(graph.cache_generation(), cache_generation_before);
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        {
+            let sync = graph.managed_sync.lock().unwrap();
+            let sync = sync.as_ref().unwrap();
+            assert_eq!(sync.materialize_page("pages/A.md").unwrap(), snapshot_before);
+            assert_eq!(sync.status().unwrap(), status_before);
+            assert_eq!(
+                sync.is_known_projection("pages/A.md", &initial).unwrap(),
+                initial_projection_before
+            );
+            assert_eq!(
+                sync.is_known_projection("pages/A.md", &changed).unwrap(),
+                changed_projection_before
+            );
+        }
+
+        set_managed_content_budget_limit(admitted_writer_peak);
+        let retry = graph.migrate_sync_identities().unwrap();
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.pages_changed, 1);
+        assert!(fs::read_to_string(rejected.join("pages/A.md"))
+            .unwrap()
+            .matches("id:: ")
+            .count()
+            >= 2);
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn migration_many_small_files_charges_linear_metadata_before_writes() {
+        fn populate(dir: &Path, count: usize) {
+            for index in 0..count {
+                fs::write(
+                    dir.join("pages").join(format!("Tiny{index:03}.md")),
+                    "- x\n",
+                )
+                .unwrap();
+            }
+        }
+
+        let small = scratch("migration-small-container-probe");
+        populate(&small, 1);
+        Graph::open(&small).migrate_sync_identities().unwrap();
+        let small_peak = last_managed_content_budget_peak();
+
+        let many = scratch("migration-many-container-a");
+        populate(&many, 32);
+        Graph::open(&many).migrate_sync_identities().unwrap();
+        let many_peak = last_managed_content_budget_peak();
+        assert!(many_peak > small_peak);
+
+        let rejected = scratch("migration-many-container-b");
+        populate(&rejected, 32);
+        let before = regular_file_tree(&rejected.join("pages"));
+        let graph = Graph::open(&rejected);
+        set_managed_content_budget_limit(many_peak - 1);
+        assert_eq!(
+            graph.migrate_sync_identities().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected.join("pages")), before);
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        set_managed_content_budget_limit(many_peak);
+        assert_eq!(graph.migrate_sync_identities().unwrap().pages_changed, 32);
+        clear_managed_content_budget_limit();
+
+        let _ = fs::remove_dir_all(&small);
+        let _ = fs::remove_dir_all(&many);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_enable_content_budget_bounds_multi_file_genesis_before_store_creation() {
+        let first_content = format!("- retained block\n  id:: {}\n", Uuid::from_u128(91_047_220));
+        let second_content = format!("- retained block\n  id:: {}\n", Uuid::from_u128(91_047_221));
+        assert_eq!(first_content.len(), second_content.len());
+        let probe = scratch("budget-enable-a");
+        fs::write(probe.join("pages/A.md"), &first_content).unwrap();
+        fs::write(probe.join("pages/B.md"), &second_content).unwrap();
+        Graph::open(&probe)
+            .enable_managed_sync(Uuid::from_u128(91_047_218), Uuid::from_u128(91_047_219))
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+        assert!(peak > first_content.len() as u64);
+
+        let accepted = scratch("budget-enable-b");
+        fs::write(accepted.join("pages/A.md"), &first_content).unwrap();
+        fs::write(accepted.join("pages/B.md"), &second_content).unwrap();
+        set_managed_content_budget_limit(peak);
+        let enabled = Graph::open(&accepted)
+            .enable_managed_sync(Uuid::from_u128(91_047_221), Uuid::from_u128(91_047_222))
+            .unwrap();
+        assert_eq!(enabled.migration.pages_changed, 0);
+        assert_eq!(enabled.status.page_count, 2);
+        clear_managed_content_budget_limit();
+
+        let rejected = scratch("budget-enable-c");
+        let first = rejected.join("pages/A.md");
+        let second = rejected.join("pages/B.md");
+        fs::write(&first, &first_content).unwrap();
+        fs::write(&second, &second_content).unwrap();
+        set_managed_content_budget_limit(peak - 1);
+        let rejected_graph = Graph::open(&rejected);
+        let error = rejected_graph
+            .enable_managed_sync(Uuid::from_u128(91_047_223), Uuid::from_u128(91_047_224))
+            .unwrap_err();
+        clear_managed_content_budget_limit();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&first).unwrap(), first_content.as_bytes());
+        assert_eq!(fs::read(&second).unwrap(), second_content.as_bytes());
+        assert!(!rejected.join(".tine-sync").exists());
+        assert!(!rejected.join(".tine-sync/v1/genesis").exists());
+        assert!(rejected_graph.cache.read().unwrap().is_none());
+        assert!(rejected_graph.recent_writes.lock().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&accepted);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn enable_many_small_files_charges_linear_metadata_before_store_creation() {
+        fn populate(dir: &Path, count: usize) {
+            for index in 0..count {
+                fs::write(
+                    dir.join("pages").join(format!("Tiny{index:03}.md")),
+                    format!("- x\n  id:: {}\n", Uuid::from_u128(91_048_000 + index as u128)),
+                )
+                .unwrap();
+            }
+        }
+
+        let small = scratch("enable-container-probe-small");
+        populate(&small, 1);
+        Graph::open(&small)
+            .enable_managed_sync(Uuid::from_u128(91_048_100), Uuid::from_u128(91_048_101))
+            .unwrap();
+        let small_peak = last_managed_content_budget_peak();
+
+        let many = scratch("enable-container-many-a");
+        populate(&many, 32);
+        Graph::open(&many)
+            .enable_managed_sync(Uuid::from_u128(91_048_102), Uuid::from_u128(91_048_103))
+            .unwrap();
+        let many_peak = last_managed_content_budget_peak();
+        assert!(many_peak > small_peak);
+
+        let rejected = scratch("enable-container-many-b");
+        populate(&rejected, 32);
+        let before = regular_file_tree(&rejected.join("pages"));
+        let graph = Graph::open(&rejected);
+        set_managed_content_budget_limit(many_peak - 1);
+        assert_eq!(
+            graph
+                .enable_managed_sync(
+                    Uuid::from_u128(91_048_104),
+                    Uuid::from_u128(91_048_105),
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected.join("pages")), before);
+        assert!(!rejected.join(".tine-sync").exists());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        set_managed_content_budget_limit(many_peak);
+        let retry = graph
+            .enable_managed_sync(Uuid::from_u128(91_048_104), Uuid::from_u128(91_048_105))
+            .unwrap();
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.status.page_count, 32);
+
+        let _ = fs::remove_dir_all(&small);
+        let _ = fs::remove_dir_all(&many);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_enable_content_budget_rechecks_growth_before_genesis() {
+        let probe = scratch("budget-growth-a");
+        let dir = scratch("budget-growth-b");
+        let first_content = format!("- retained block\n  id:: {}\n", Uuid::from_u128(91_047_225));
+        let second_content = format!("- retained block\n  id:: {}\n", Uuid::from_u128(91_047_226));
+        assert_eq!(first_content.len(), second_content.len());
+        fs::write(probe.join("pages/A.md"), &first_content).unwrap();
+        fs::write(probe.join("pages/B.md"), &second_content).unwrap();
+        Graph::open(&probe)
+            .enable_managed_sync(Uuid::from_u128(91_047_228), Uuid::from_u128(91_047_229))
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+        let first = dir.join("pages/A.md");
+        let second = dir.join("pages/B.md");
+        fs::write(&first, &first_content).unwrap();
+        fs::write(&second, &second_content).unwrap();
+        set_managed_content_budget_limit(peak);
+        MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT.with(|hook| {
+            let first = first.clone();
+            let grown = format!("{first_content}x");
+            *hook.borrow_mut() = Some(Box::new(move || fs::write(first, grown)));
+        });
+
+        let error = Graph::open(&dir)
+            .enable_managed_sync(Uuid::from_u128(91_047_226), Uuid::from_u128(91_047_227))
+            .unwrap_err();
+        clear_managed_content_budget_limit();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&first).unwrap(), format!("{first_content}x"));
+        assert_eq!(fs::read_to_string(&second).unwrap(), second_content);
+        assert!(!dir.join(".tine-sync").exists());
+        assert!(!dir.join(".tine-sync/v1/genesis").exists());
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retained_content_budget_failed_reservation_is_atomic_and_retryable() {
+        let budget = RetainedContentBudget::new(ManagedTextInventoryLimits {
+            retained_content_bytes: 10,
+            ..MANAGED_TEXT_INVENTORY_LIMITS
+        });
+        let first = budget.reserve(6, "first").unwrap();
+        assert_eq!(budget.retained(), 6);
+        assert_eq!(
+            budget.reserve(5, "rejected").unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(budget.retained(), 6, "failed admission poisoned the counter");
+        drop(first);
+        assert_eq!(budget.retained(), 0);
+        let retry = budget.reserve(10, "exact retry").unwrap();
+        assert_eq!(budget.retained(), 10);
+        drop(retry);
+        assert_eq!(budget.retained(), 0);
+    }
+
+    #[test]
+    fn budgeted_reader_retains_metadata_capacity_across_repeated_shrink_races() {
+        let root = scratch("budgeted-reader-shrink-capacity");
+        let path = root.join("pages/shrinking.md");
+        let graph = Graph::open(&root);
+        let budget = RetainedContentBudget::new(ManagedTextInventoryLimits {
+            retained_content_bytes: 64,
+            ..MANAGED_TEXT_INVENTORY_LIMITS
+        });
+        for _ in 0..3 {
+            fs::write(&path, vec![b'x'; 64]).unwrap();
+            BOUNDED_READ_AFTER_METADATA.with(|hook| {
+                let path = path.clone();
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    let file = fs::OpenOptions::new().write(true).open(path)?;
+                    file.set_len(1)
+                }));
+            });
+            let (_, bytes, reservation) = open_and_read_projection_regular_with_budget(
+                graph.projection_root.as_ref().unwrap(),
+                "pages/shrinking.md",
+                64,
+                &budget,
+                "shrink race",
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1);
+            assert_eq!(bytes.capacity(), 64);
+            assert_eq!(budget.retained(), 64);
+            drop(bytes);
+            drop(reservation);
+            assert_eq!(budget.retained(), 0);
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn combined_migrate_then_enable_budget_fails_before_writes_and_retries_at_boundary() {
+        let content = "- parent\n\t- child\n";
+        let probe = scratch("budget-combined-a");
+        fs::write(probe.join("pages/A.md"), content).unwrap();
+        fs::write(probe.join("pages/B.md"), content).unwrap();
+        let probe_result = Graph::open(&probe)
+            .enable_managed_sync(Uuid::from_u128(91_047_300), Uuid::from_u128(91_047_301))
+            .unwrap();
+        assert_eq!(probe_result.migration.pages_changed, 2);
+        let peak = last_managed_content_budget_peak();
+
+        let rejected = scratch("budget-combined-b");
+        let first = rejected.join("pages/A.md");
+        let second = rejected.join("pages/B.md");
+        fs::write(&first, content).unwrap();
+        fs::write(&second, content).unwrap();
+        set_managed_content_budget_limit(peak - 1);
+        let graph = Graph::open(&rejected);
+        let error = graph
+            .enable_managed_sync(Uuid::from_u128(91_047_302), Uuid::from_u128(91_047_303))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&first).unwrap(), content.as_bytes());
+        assert_eq!(fs::read(&second).unwrap(), content.as_bytes());
+        assert!(!rejected.join(".tine-sync").exists());
+        assert!(graph.cache.read().unwrap().is_none());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+
+        set_managed_content_budget_limit(peak);
+        let retry = graph
+            .enable_managed_sync(Uuid::from_u128(91_047_302), Uuid::from_u128(91_047_303))
+            .unwrap();
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.migration.pages_changed, 2);
+        assert_eq!(retry.status.page_count, 2);
+        assert!(rejected.join(".tine-sync/v1/genesis").exists());
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn namespace_rename_budget_has_exact_pass_fail_and_retry_boundary() {
+        fn populate(dir: &Path) {
+            fs::write(dir.join("pages/Project.md"), "- [[Project/Child]]\n").unwrap();
+            fs::write(
+                dir.join("pages/Project%2FChild.md"),
+                "- child\n  tags:: Project\n",
+            )
+            .unwrap();
+            fs::write(
+                dir.join("pages/Refs.md"),
+                "- [[Project]] and #Project/Child\n",
+            )
+            .unwrap();
+        }
+
+        let probe = scratch("budget-rename-a");
+        populate(&probe);
+        Graph::open(&probe)
+            .rename_page("Project", "Archive")
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let accepted = scratch("budget-rename-b");
+        populate(&accepted);
+        set_managed_content_budget_limit(peak);
+        Graph::open(&accepted)
+            .rename_page("Project", "Archive")
+            .unwrap();
+        clear_managed_content_budget_limit();
+        assert!(accepted.join("pages/Archive.md").exists());
+        assert!(fs::read_to_string(accepted.join("pages/Refs.md"))
+            .unwrap()
+            .contains("[[Archive]]"));
+
+        let rejected = scratch("budget-rename-c");
+        populate(&rejected);
+        set_managed_content_budget_limit(peak - 1);
+        let graph = Graph::open(&rejected);
+        let error = graph.rename_page("Project", "Archive").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::read_to_string(rejected.join("pages/Project.md")).unwrap(),
+            "- [[Project/Child]]\n"
+        );
+        assert!(!rejected.join("pages/Archive.md").exists());
+        assert!(graph.cache.read().unwrap().is_none());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+
+        set_managed_content_budget_limit(peak);
+        graph.rename_page("Project", "Archive").unwrap();
+        clear_managed_content_budget_limit();
+        assert!(rejected.join("pages/Archive.md").exists());
+        assert!(fs::read_to_string(rejected.join("pages/Refs.md"))
+            .unwrap()
+            .contains("[[Archive]]"));
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&accepted);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn namespace_rename_many_small_entries_charges_container_state_before_mutation() {
+        fn populate(dir: &Path, count: usize) {
+            fs::write(dir.join("pages/Project.md"), "- root\n").unwrap();
+            for index in 0..count {
+                fs::write(
+                    dir.join("pages")
+                        .join(format!("Project%2FTiny{index:03}.md")),
+                    "- x\n",
+                )
+                .unwrap();
+            }
+        }
+
+        let small = scratch("rename-container-probe-small");
+        populate(&small, 1);
+        Graph::open(&small)
+            .rename_page("Project", "Archive")
+            .unwrap();
+        let small_peak = last_managed_content_budget_peak();
+
+        let many = scratch("rename-container-many-a");
+        populate(&many, 32);
+        Graph::open(&many)
+            .rename_page("Project", "Archive")
+            .unwrap();
+        let many_peak = last_managed_content_budget_peak();
+        assert!(many_peak > small_peak);
+
+        let rejected = scratch("rename-container-many-b");
+        populate(&rejected, 32);
+        let before = regular_file_tree(&rejected.join("pages"));
+        let graph = Graph::open(&rejected);
+        set_managed_content_budget_limit(many_peak - 1);
+        assert_eq!(
+            graph.rename_page("Project", "Archive").unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&rejected.join("pages")), before);
+        assert!(!rejected.join("pages/Archive.md").exists());
+        assert!(graph.recent_writes.lock().unwrap().is_empty());
+        set_managed_content_budget_limit(many_peak);
+        graph.rename_page("Project", "Archive").unwrap();
+        clear_managed_content_budget_limit();
+        assert!(rejected.join("pages/Archive.md").exists());
+        assert!(rejected.join("pages/Archive%2FTiny031.md").exists());
+
+        let _ = fs::remove_dir_all(&small);
+        let _ = fs::remove_dir_all(&many);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_namespace_rename_snapshot_budget_rejects_before_operation_or_projection() {
+        fn populate(dir: &Path) {
+            fs::write(
+                dir.join("pages/Project.md"),
+                format!(
+                    "- [[Project/Child]]\n  id:: {}\n",
+                    Uuid::from_u128(91_047_320)
+                ),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("pages/Project%2FChild.md"),
+                format!(
+                    "- child\n  tags:: Project\n  id:: {}\n",
+                    Uuid::from_u128(91_047_321)
+                ),
+            )
+            .unwrap();
+        }
+
+        let probe = scratch("budget-managed-rename-a");
+        populate(&probe);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(Uuid::from_u128(91_047_322), Uuid::from_u128(91_047_323))
+            .unwrap();
+        probe_graph.rename_page("Project", "Archive").unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let rejected = scratch("budget-managed-rename-b");
+        populate(&rejected);
+        let graph = Graph::open(&rejected);
+        graph
+            .enable_managed_sync(Uuid::from_u128(91_047_324), Uuid::from_u128(91_047_325))
+            .unwrap();
+        let project_path = rejected.join("pages/Project.md");
+        let child_path = rejected.join("pages/Project%2FChild.md");
+        let project_before = fs::read(&project_path).unwrap();
+        let child_before = fs::read(&child_path).unwrap();
+        let snapshot_before = graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Project.md")
+            .unwrap();
+
+        set_managed_content_budget_limit(peak - 1);
+        let error = graph.rename_page("Project", "Archive").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&project_path).unwrap(), project_before);
+        assert_eq!(fs::read(&child_path).unwrap(), child_before);
+        assert!(!rejected.join("pages/Archive.md").exists());
+        let snapshot_after = graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Project.md")
+            .unwrap();
+        assert_eq!(snapshot_after, snapshot_before);
+
+        set_managed_content_budget_limit(peak);
+        graph.rename_page("Project", "Archive").unwrap();
+        clear_managed_content_budget_limit();
+        assert!(rejected.join("pages/Archive.md").exists());
+        assert!(graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Archive.md")
+            .unwrap()
+            .is_some());
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&rejected);
+    }
+
+    fn exact_budget_managed_pages(graph: &Graph) -> Vec<CrdtPageSnapshot> {
+        graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_pages()
+            .unwrap()
+    }
+
+    fn exact_budget_frontier(graph: &Graph) -> loro::VersionVector {
+        graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .test_frontier()
+    }
+
+    fn assert_exact_budget_cache_unchanged(
+        graph: &Graph,
+        before: &Option<Arc<Vec<(PageEntry, Arc<Document>)>>>,
+    ) {
+        let after = graph.cache.read().unwrap();
+        match (&*after, before) {
+            (None, None) => {}
+            (Some(after), Some(before)) => assert!(Arc::ptr_eq(after, before)),
+            _ => panic!("managed cache changed across rejected admission"),
+        }
+    }
+
+    fn populate_exact_active_save(dir: &Path, id: Uuid) {
+        fs::write(
+            dir.join("pages/Exact.md"),
+            format!("- before\n  id:: {id}\n"),
+        )
+        .unwrap();
+    }
+
+    fn exercise_active_save_boundary(forced: bool, label: &str) {
+        let id = Uuid::from_u128(91_050_000);
+        let probe = scratch(&format!("exact-{label}-probe"));
+        populate_exact_active_save(&probe, id);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_001),
+                Uuid::from_u128(91_050_002),
+            )
+            .unwrap();
+        let mut probe_page = probe_graph
+            .load_named("Exact", PageKind::Page)
+            .unwrap()
+            .unwrap();
+        let probe_rev = probe_page.rev.clone().unwrap();
+        probe_page.blocks[0].raw = format!("after\nid:: {id}");
+        if forced {
+            probe_graph.force_save_page(&probe_page).unwrap();
+        } else {
+            probe_graph.save_page(&probe_page, Some(&probe_rev)).unwrap();
+        }
+        let peak = last_managed_content_budget_peak();
+
+        let retry = scratch(&format!("exact-{label}-retry"));
+        populate_exact_active_save(&retry, id);
+        let graph = Graph::open(&retry);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_003),
+                Uuid::from_u128(91_050_004),
+            )
+            .unwrap();
+        let mut page = graph
+            .load_named("Exact", PageKind::Page)
+            .unwrap()
+            .unwrap();
+        let rev = page.rev.clone().unwrap();
+        page.blocks[0].raw = format!("after\nid:: {id}");
+        let files_before = regular_file_tree(&retry);
+        let pages_before = exact_budget_managed_pages(&graph);
+        let frontier_before = exact_budget_frontier(&graph);
+        let cache_before = graph.cache.read().unwrap().clone();
+        let recent_before = graph.recent_writes.lock().unwrap().clone();
+        let disk_revs_before = graph.disk_revs.read().unwrap().clone();
+        let cache_gen_before = graph
+            .cache_gen
+            .load(std::sync::atomic::Ordering::Acquire);
+
+        set_managed_content_budget_limit(peak - 1);
+        let error = if forced {
+            graph.force_save_page(&page).unwrap_err()
+        } else {
+            graph.save_page(&page, Some(&rev)).unwrap_err()
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(regular_file_tree(&retry), files_before);
+        assert_eq!(exact_budget_managed_pages(&graph), pages_before);
+        assert_eq!(exact_budget_frontier(&graph), frontier_before);
+        assert_exact_budget_cache_unchanged(&graph, &cache_before);
+        assert_eq!(*graph.recent_writes.lock().unwrap(), recent_before);
+        assert_eq!(*graph.disk_revs.read().unwrap(), disk_revs_before);
+        assert_eq!(
+            graph
+                .cache_gen
+                .load(std::sync::atomic::Ordering::Acquire),
+            cache_gen_before,
+        );
+
+        set_managed_content_budget_limit(peak);
+        if forced {
+            graph.force_save_page(&page).unwrap();
+        } else {
+            graph.save_page(&page, Some(&rev)).unwrap();
+        }
+        clear_managed_content_budget_limit();
+        assert!(fs::read_to_string(retry.join("pages/Exact.md"))
+            .unwrap()
+            .contains("after"));
+
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&retry);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn normal_active_save_has_exact_pre_commit_budget_boundary() {
+        exercise_active_save_boundary(false, "active-save");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn forced_active_save_has_exact_pre_commit_budget_boundary() {
+        exercise_active_save_boundary(true, "forced-save");
+    }
+
+    #[test]
+    fn production_crdt_mutations_are_confined_to_prepared_owners() {
+        fn braced_item_range(source: &str, marker: &str) -> std::ops::Range<usize> {
+            let start = source.find(marker).expect("prepared mutation module");
+            let open = start + marker.find('{').expect("owner impl opening brace");
+            let mut depth = 0_usize;
+            for (offset, byte) in source.as_bytes()[open..].iter().enumerate() {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return start..open + offset + 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("unterminated prepared mutation module");
+        }
+
+        let source = include_str!("model.rs");
+        let production = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("model production source");
+        assert!(!production.contains("PreparedCrdtPageSnapshot::into_parts"));
+        assert!(!production.contains(".snapshot.into_parts()"));
+        for raw in [
+            "sync.commit_page(",
+            "sync.commit_pages(",
+            "sync.replace_pages_with_projection_preconditions(",
+            "sync.promote_copy(",
+            "sync.delete_page(",
+        ] {
+            assert!(
+                !production.contains(raw),
+                "model production bypasses prepared mutation capability via {raw}",
+            );
+        }
+
+        let owner_module =
+            braced_item_range(production, "mod prepared_crdt_mutation {");
+        for needle in [
+            "PreparedCrdtMutationCapability::new(",
+            "sync.commit_page_owned(",
+            "sync.commit_pages_owned(",
+            "sync.replace_pages_with_projection_preconditions_owned(",
+            "sync.promote_copy_owned(",
+            "sync.delete_page_owned(",
+            "CrdtGraph::initialize_at_owned(",
+        ] {
+            let positions: Vec<_> = production
+                .match_indices(needle)
+                .map(|(position, _)| position)
+                .collect();
+            assert!(!positions.is_empty(), "missing prepared mutation path {needle}");
+            assert!(
+                positions.iter().all(|position| owner_module.contains(position)),
+                "{needle} escaped the private prepared-owner module",
+            );
+        }
+        assert!(
+            !production[..owner_module.start]
+                .contains("PreparedCrdtMutationCapability::new(")
+                && !production[owner_module.end..]
+                    .contains("PreparedCrdtMutationCapability::new("),
+            "typed mutation authority can be constructed outside prepared owners",
+        );
+
+        let graph_source = include_str!("crdt/graph.rs");
+        for method in [
+            "initialize_at_owned",
+            "commit_page_owned",
+            "commit_pages_owned",
+            "replace_pages_with_projection_preconditions_owned",
+            "promote_copy_owned",
+            "delete_page_owned",
+        ] {
+            let start = graph_source.find(method).expect("owned graph mutation method");
+            let signature = &graph_source[start..graph_source[start..]
+                .find('{')
+                .map(|offset| start + offset)
+                .expect("owned graph mutation body")];
+            assert!(
+                signature.contains("PreparedCrdtMutationCapability"),
+                "{method} lost its typed capability parameter",
+            );
+        }
+    }
+
+    #[test]
+    fn cached_reference_and_dto_depth_boundaries_are_iterative_and_contained() {
+        const TARGET_ID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
+
+        fn nested_document(depth: usize, deepest_raw: Option<&str>) -> Document {
+            let mut children = Vec::new();
+            for level in (0..depth).rev() {
+                let raw = if level + 1 == depth {
+                    deepest_raw
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("- [[Depth {level}]]"))
+                } else {
+                    format!("- [[Depth {level}]]")
+                };
+                let mut block = DocBlock::new(&raw);
+                block.uuid = format!("runtime-depth-{level}");
+                block.children = children;
+                children = vec![block];
+            }
+            Document {
+                pre_block: None,
+                roots: children,
+            }
+        }
+
+        fn nested_markdown(depth: usize) -> String {
+            let mut markdown = String::new();
+            for level in 0..depth {
+                markdown.push_str(&"\t".repeat(level));
+                markdown.push_str(&format!("- level {level}\n"));
+            }
+            markdown
+        }
+
+        let dir = scratch("iterative-cache-dto-depth");
+        let entry = PageEntry {
+            name: "Source".to_owned(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: "pages/Source.md".to_owned(),
+            path: dir.join("pages/Source.md"),
+        };
+        let target_entry = PageEntry {
+            name: "Deep target".to_owned(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: "pages/Deep target.md".to_owned(),
+            path: dir.join("pages/Deep target.md"),
+        };
+        let target_doc = nested_document(1, Some("- target"));
+        let deepest_reference =
+            format!("- [[Deep target]] and (({TARGET_ID}))");
+
+        let accepted =
+            nested_document(MAX_MANAGED_BLOCK_DEPTH, Some(&deepest_reference));
+        let accepted_dto = page_dto_checked(&entry, &accepted).unwrap();
+        let mut accepted_walk = BlockDtoWalk::new(&accepted_dto.blocks);
+        let mut accepted_count = 0_usize;
+        while accepted_walk.next().unwrap().is_some() {
+            accepted_count += 1;
+        }
+        assert_eq!(accepted_count, MAX_MANAGED_BLOCK_DEPTH);
+
+        let accepted_block = block_to_dto(&accepted.roots[0]).unwrap();
+        let mut accepted_block_walk =
+            BlockDtoWalk::new(std::slice::from_ref(&accepted_block));
+        let mut accepted_block_count = 0_usize;
+        while accepted_block_walk.next().unwrap().is_some() {
+            accepted_block_count += 1;
+        }
+        assert_eq!(accepted_block_count, MAX_MANAGED_BLOCK_DEPTH);
+
+        let accepted_snapshot = Graph::from_page_snapshot(
+            &dir,
+            vec![
+                (entry.clone(), Arc::new(accepted.clone())),
+                (target_entry.clone(), Arc::new(target_doc.clone())),
+            ],
+        );
+        assert!(
+            accepted_snapshot
+                .reference_candidate_index
+                .read()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|index| index.complete),
+            "depth-128 reference index must be complete",
+        );
+        let target_names = vec![crate::refs::page_key("Deep target")];
+        let accepted_candidates = accepted_snapshot
+            .reference_candidate_pages(&target_names, ReferenceKind::Explicit);
+        assert!(accepted_candidates.indexed);
+        assert_eq!(
+            candidate_paths(&accepted_candidates),
+            vec!["pages/Source.md".to_owned()],
+        );
+        let accepted_counts = accepted_snapshot.block_ref_counts().unwrap();
+        assert_eq!(accepted_counts.get(TARGET_ID).copied(), Some(1));
+        assert!(
+            accepted_snapshot
+                .block_ref_count_cache
+                .read()
+                .unwrap()
+                .is_some(),
+            "complete depth-128 counts should be memoized",
+        );
+
+        let accepted_graph = Graph::open(&dir);
+        *accepted_graph.cache.write().unwrap() =
+            Some(Arc::new(vec![(entry.clone(), Arc::new(accepted))]));
+        assert_eq!(
+            accepted_graph.referenced_page_names().len(),
+            MAX_MANAGED_BLOCK_DEPTH,
+        );
+
+        let rejected = nested_document(
+            MAX_MANAGED_BLOCK_DEPTH + 1,
+            Some(&deepest_reference),
+        );
+        assert_eq!(
+            page_dto_checked(&entry, &rejected).unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+        );
+        assert_eq!(
+            block_to_dto(&rejected.roots[0]).unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+        );
+        assert_eq!(
+            block_to_dto(&DocBlock::new("- missing runtime identity"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData,
+        );
+
+        let rejected_snapshot = Graph::from_page_snapshot(
+            &dir,
+            vec![
+                (entry.clone(), Arc::new(rejected.clone())),
+                (target_entry, Arc::new(target_doc)),
+            ],
+        );
+        assert!(
+            rejected_snapshot
+                .reference_candidate_index
+                .read()
+                .unwrap()
+                .is_none(),
+            "an over-depth build must not publish a partial candidate index",
+        );
+        for _ in 0..2 {
+            let candidates = rejected_snapshot
+                .reference_candidate_pages(&target_names, ReferenceKind::Explicit);
+            assert!(!candidates.indexed);
+            assert_eq!(candidates.pages.len(), candidates.full_page_count);
+            assert!(
+                candidate_paths(&candidates).contains(&"pages/Source.md".to_owned()),
+                "the deepest possible referrer must remain in the fallback set",
+            );
+            assert!(
+                rejected_snapshot
+                    .reference_candidate_index
+                    .read()
+                    .unwrap()
+                    .is_none(),
+                "fallback must not memoize a partial candidate index",
+            );
+
+            assert_eq!(
+                rejected_snapshot.block_ref_counts().unwrap_err().kind(),
+                io::ErrorKind::InvalidData,
+            );
+            assert!(
+                rejected_snapshot
+                    .block_ref_count_cache
+                    .read()
+                    .unwrap()
+                    .is_none(),
+                "over-depth counting must not memoize partial counts",
+            );
+        }
+
+        let rejected_graph = Graph::open(&dir);
+        *rejected_graph.cache.write().unwrap() =
+            Some(Arc::new(vec![(entry, Arc::new(rejected))]));
+        assert!(rejected_graph.referenced_page_names().is_empty());
+        assert!(
+            rejected_graph
+                .referenced_names_cache
+                .read()
+                .unwrap()
+                .is_none(),
+            "over-depth traversal must not memoize a partial cache result",
+        );
+
+        let accepted_markdown =
+            markdown_page_dto("Depth 128", "Depth 128", &nested_markdown(128)).unwrap();
+        let mut accepted_markdown_walk = BlockDtoWalk::new(&accepted_markdown.blocks);
+        let mut accepted_markdown_count = 0_usize;
+        while accepted_markdown_walk.next().unwrap().is_some() {
+            accepted_markdown_count += 1;
+        }
+        assert_eq!(accepted_markdown_count, MAX_MANAGED_BLOCK_DEPTH);
+        assert_eq!(
+            markdown_page_dto("Depth 129", "Depth 129", &nested_markdown(129))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData,
+        );
+        let ordinary = markdown_page_dto("Ordinary", "Ordinary", "- body\n").unwrap();
+        assert_eq!(ordinary.blocks.len(), 1);
+        assert_eq!(ordinary.blocks[0].raw, "body");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn breadth_and_nesting_use_checked_iterative_batch_aggregation() {
+        fn nested_blocks(seed: u128) -> Vec<BlockDto> {
+            let mut children = Vec::new();
+            for depth in (0..32_u128).rev() {
+                children = vec![BlockDto {
+                    id: format!("runtime-{seed}-{depth}"),
+                    raw: format!(
+                        "node {seed}-{depth}\nid:: {}",
+                        Uuid::from_u128(seed + depth),
+                    ),
+                    children,
+                    ..BlockDto::default()
+                }];
+            }
+            children
+        }
+        fn page(name: &str, seed: u128) -> PageDto {
+            let mut blocks = Vec::new();
+            for breadth in 0..24_u128 {
+                blocks.extend(nested_blocks(seed + breadth * 64));
+            }
+            PageDto {
+                name: name.to_owned(),
+                kind: PageKind::Page,
+                title: name.to_owned(),
+                pre_block: None,
+                blocks,
+                rev: None,
+                format: Format::Md,
+                read_only: false,
+                path: format!("pages/{name}.md"),
+                guide: false,
+            }
+        }
+        fn prepare(limit: u64) -> io::Result<()> {
+            set_managed_content_budget_limit(limit);
+            let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+            let first = page("Breadth-A", 91_052_000);
+            let second = page("Breadth-B", 91_054_000);
+            let mut batch = PreparedCrdtPageBatch::with_capacity(
+                2,
+                &budget,
+                "breadth/nested test batch capacities",
+            )?;
+            batch.push(crdt_snapshot_for_page(
+                &first,
+                CrdtPageId::new(),
+                &budget,
+            )?);
+            batch.push(crdt_snapshot_for_page(
+                &second,
+                CrdtPageId::new(),
+                &budget,
+            )?);
+            let _batch =
+                batch.admit_operation(&budget, "breadth/nested test operation aggregation")?;
+            Ok(())
+        }
+
+        prepare(u64::MAX).unwrap();
+        let peak = last_managed_content_budget_peak();
+        assert_eq!(
+            prepare(peak - 1).unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+        );
+        prepare(peak).unwrap();
+        clear_managed_content_budget_limit();
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_restore_has_exact_pre_replace_budget_boundary() {
+        fn populate(dir: &Path, id: Uuid) -> String {
+            let content = format!("- original\n  id:: {id}\n");
+            fs::write(dir.join("pages/Restore.md"), &content).unwrap();
+            content
+        }
+        let id = Uuid::from_u128(91_050_010);
+        let restored = format!("- restored\n  id:: {id}\n");
+        let probe = scratch("exact-restore-probe");
+        populate(&probe, id);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_011),
+                Uuid::from_u128(91_050_012),
+            )
+            .unwrap();
+        probe_graph
+            .commit_managed_restore(&[(
+                "pages/Restore.md".to_owned(),
+                restored.clone(),
+            )])
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let retry = scratch("exact-restore-retry");
+        populate(&retry, id);
+        let graph = Graph::open(&retry);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_013),
+                Uuid::from_u128(91_050_014),
+            )
+            .unwrap();
+        let files_before = regular_file_tree(&retry);
+        let pages_before = exact_budget_managed_pages(&graph);
+        let frontier_before = exact_budget_frontier(&graph);
+        let cache_before = graph.cache.read().unwrap().clone();
+        let recent_before = graph.recent_writes.lock().unwrap().clone();
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph
+                .commit_managed_restore(&[(
+                    "pages/Restore.md".to_owned(),
+                    restored.clone(),
+                )])
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&retry), files_before);
+        assert_eq!(exact_budget_managed_pages(&graph), pages_before);
+        assert_eq!(exact_budget_frontier(&graph), frontier_before);
+        assert_exact_budget_cache_unchanged(&graph, &cache_before);
+        assert_eq!(*graph.recent_writes.lock().unwrap(), recent_before);
+        set_managed_content_budget_limit(peak);
+        graph
+            .commit_managed_restore(&[(
+                "pages/Restore.md".to_owned(),
+                restored,
+            )])
+            .unwrap();
+        clear_managed_content_budget_limit();
+        assert!(exact_budget_managed_pages(&graph)[0].blocks[0]
+            .raw
+            .contains("restored"));
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&retry);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_journal_migration_has_exact_pre_commit_budget_boundary() {
+        fn populate(dir: &Path, id: Uuid) {
+            fs::write(
+                dir.join("journals/Jun 24th, 2026.md"),
+                format!("- journal\n  id:: {id}\n"),
+            )
+            .unwrap();
+        }
+        let id = Uuid::from_u128(91_050_020);
+        let probe = scratch("exact-journal-migration-probe");
+        populate(&probe, id);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_021),
+                Uuid::from_u128(91_050_022),
+            )
+            .unwrap();
+        assert_eq!(probe_graph.migrate_journal_filenames_checked().unwrap(), 1);
+        let peak = last_managed_content_budget_peak();
+
+        let retry = scratch("exact-journal-migration-retry");
+        populate(&retry, id);
+        let graph = Graph::open(&retry);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_023),
+                Uuid::from_u128(91_050_024),
+            )
+            .unwrap();
+        let files_before = regular_file_tree(&retry);
+        let pages_before = exact_budget_managed_pages(&graph);
+        let frontier_before = exact_budget_frontier(&graph);
+        let cache_before = graph.cache.read().unwrap().clone();
+        let recent_before = graph.recent_writes.lock().unwrap().clone();
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph.migrate_journal_filenames_checked().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&retry), files_before);
+        assert_eq!(exact_budget_managed_pages(&graph), pages_before);
+        assert_eq!(exact_budget_frontier(&graph), frontier_before);
+        assert_exact_budget_cache_unchanged(&graph, &cache_before);
+        assert_eq!(*graph.recent_writes.lock().unwrap(), recent_before);
+        set_managed_content_budget_limit(peak);
+        assert_eq!(graph.migrate_journal_filenames_checked().unwrap(), 1);
+        clear_managed_content_budget_limit();
+        assert!(retry.join("journals/2026_06_24.md").exists());
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&retry);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn incoming_conflict_rekey_has_exact_pre_commit_budget_boundary() {
+        fn populate(dir: &Path, id: Uuid) -> String {
+            let content = format!("- copied\n  id:: {id}\n");
+            fs::write(dir.join("pages/Source.md"), &content).unwrap();
+            content
+        }
+        let id = Uuid::from_u128(91_050_030);
+        let probe = scratch("exact-incoming-rekey-probe");
+        let content = populate(&probe, id);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_031),
+                Uuid::from_u128(91_050_032),
+            )
+            .unwrap();
+        fs::write(probe.join("pages/Copy.md"), &content).unwrap();
+        probe_graph
+            .sync_file_checked(&probe.join("pages/Copy.md"))
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let retry = scratch("exact-incoming-rekey-retry");
+        let content = populate(&retry, id);
+        let graph = Graph::open(&retry);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_050_033),
+                Uuid::from_u128(91_050_034),
+            )
+            .unwrap();
+        let copy = retry.join("pages/Copy.md");
+        fs::write(&copy, &content).unwrap();
+        let files_before = regular_file_tree(&retry);
+        let pages_before = exact_budget_managed_pages(&graph);
+        let frontier_before = exact_budget_frontier(&graph);
+        let cache_before = graph.cache.read().unwrap().clone();
+        let recent_before = graph.recent_writes.lock().unwrap().clone();
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph.sync_file_checked(&copy).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&retry), files_before);
+        assert_eq!(exact_budget_managed_pages(&graph), pages_before);
+        assert_eq!(exact_budget_frontier(&graph), frontier_before);
+        assert_exact_budget_cache_unchanged(&graph, &cache_before);
+        assert_eq!(*graph.recent_writes.lock().unwrap(), recent_before);
+        set_managed_content_budget_limit(peak);
+        graph.sync_file_checked(&copy).unwrap();
+        clear_managed_content_budget_limit();
+        let pages = exact_budget_managed_pages(&graph);
+        let source_id = pages
+            .iter()
+            .find(|page| page.path == "pages/Source.md")
+            .unwrap()
+            .blocks[0]
+            .id;
+        let copy_id = pages
+            .iter()
+            .find(|page| page.path == "pages/Copy.md")
+            .unwrap()
+            .blocks[0]
+            .id;
+        assert_ne!(source_id, copy_id);
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&retry);
+    }
+
+    #[test]
+    fn long_unique_legacy_ids_have_exact_source_derived_budget_boundary() {
+        let mut content = String::new();
+        for index in 0..24 {
+            content.push_str(&format!(
+                "- block {index}\n  id:: legacy-{index}-{}\n",
+                "長".repeat(2048),
+            ));
+        }
+        let page = markdown_page_dto("Legacy", "Legacy", &content).unwrap();
+        {
+            let budget = RetainedContentBudget::new(MANAGED_TEXT_INVENTORY_LIMITS);
+            page_with_persisted_sync_ids(&page, &budget).unwrap();
+        }
+        let peak = last_managed_content_budget_peak();
+        let before = page.clone();
+        set_managed_content_budget_limit(peak - 1);
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        assert_eq!(
+            page_with_persisted_sync_ids(&page, &budget)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        drop(budget);
+        assert_eq!(page.name, before.name);
+        assert_eq!(page.path, before.path);
+        assert_eq!(
+            page.blocks.iter().map(|block| &block.raw).collect::<Vec<_>>(),
+            before
+                .blocks
+                .iter()
+                .map(|block| &block.raw)
+                .collect::<Vec<_>>(),
+        );
+        set_managed_content_budget_limit(peak);
+        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+        let retry = page_with_persisted_sync_ids(&page, &budget).unwrap();
+        drop(budget);
+        clear_managed_content_budget_limit();
+        assert_eq!(retry.blocks.len(), 24);
+        assert!(retry.blocks[23].raw.contains("legacy-23-"));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn maximally_deep_nested_page_has_exact_pre_commit_budget_boundary() {
+        const DEPTH: usize = 128;
+        fn populate(dir: &Path) {
+            let mut content = String::new();
+            for depth in 0..DEPTH {
+                content.push_str(&"\t".repeat(depth));
+                content.push_str(&format!("- level {depth}\n"));
+                content.push_str(&"\t".repeat(depth));
+                content.push_str(&format!(
+                    "  id:: {}\n",
+                    Uuid::from_u128(91_051_000 + depth as u128),
+                ));
+            }
+            fs::write(dir.join("pages/Deep.md"), content).unwrap();
+        }
+        fn edited_page(graph: &Graph) -> PageDto {
+            let mut page = graph
+                .load_named("Deep", PageKind::Page)
+                .unwrap()
+                .unwrap();
+            let mut block = &mut page.blocks[0];
+            for _ in 1..DEPTH {
+                block = &mut block.children[0];
+            }
+            block.raw = format!(
+                "deepest changed\nid:: {}",
+                Uuid::from_u128(91_051_000 + DEPTH as u128 - 1),
+            );
+            page
+        }
+        let probe = scratch("exact-deep-probe");
+        populate(&probe);
+        let probe_graph = Graph::open(&probe);
+        probe_graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_051_200),
+                Uuid::from_u128(91_051_201),
+            )
+            .unwrap();
+        let probe_page = edited_page(&probe_graph);
+        let probe_rev = probe_page.rev.clone().unwrap();
+        probe_graph
+            .save_page(&probe_page, Some(&probe_rev))
+            .unwrap();
+        let peak = last_managed_content_budget_peak();
+
+        let retry = scratch("exact-deep-retry");
+        populate(&retry);
+        let graph = Graph::open(&retry);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_051_202),
+                Uuid::from_u128(91_051_203),
+            )
+            .unwrap();
+        let page = edited_page(&graph);
+        let rev = page.rev.clone().unwrap();
+        let files_before = regular_file_tree(&retry);
+        let pages_before = exact_budget_managed_pages(&graph);
+        let frontier_before = exact_budget_frontier(&graph);
+        let cache_before = graph.cache.read().unwrap().clone();
+        let recent_before = graph.recent_writes.lock().unwrap().clone();
+        set_managed_content_budget_limit(peak - 1);
+        assert_eq!(
+            graph.save_page(&page, Some(&rev)).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(regular_file_tree(&retry), files_before);
+        assert_eq!(exact_budget_managed_pages(&graph), pages_before);
+        assert_eq!(exact_budget_frontier(&graph), frontier_before);
+        assert_exact_budget_cache_unchanged(&graph, &cache_before);
+        assert_eq!(*graph.recent_writes.lock().unwrap(), recent_before);
+        set_managed_content_budget_limit(peak);
+        graph.save_page(&page, Some(&rev)).unwrap();
+        clear_managed_content_budget_limit();
+        assert!(fs::read_to_string(retry.join("pages/Deep.md"))
+            .unwrap()
+            .contains("deepest changed"));
+        let _ = fs::remove_dir_all(&probe);
+        let _ = fs::remove_dir_all(&retry);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_inventory_rejects_casefolded_root_aliases_before_mutation() {
+        let dir = scratch("handoff-managed-inventory-root-alias");
+        fs::create_dir_all(dir.join("Pages")).unwrap();
+        let Ok(lowercase) = fs::canonicalize(dir.join("pages")) else {
+            return; // This volume has case-sensitive directory semantics.
+        };
+        if fs::canonicalize(dir.join("Pages")).unwrap() != lowercase {
+            return; // This volume has opted into case-sensitive directory semantics.
+        }
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"Pages\"\n :journals-directory \"pages\"}\n",
+        )
+        .unwrap();
+        let page = dir.join("Pages/Only.md");
+        fs::write(&page, "- untouched\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        assert_eq!(graph.migrate_sync_identities().unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&page).unwrap(), "- untouched\n");
+        assert_eq!(
+            graph
+                .enable_managed_sync(Uuid::from_u128(91_047_210), Uuid::from_u128(91_047_211))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(!dir.join(".tine-sync").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_sync_enable_revalidates_retained_a_before_genesis() {
+        let dir = scratch("handoff-managed-sync-enable-baseline-change");
+        let path = dir.join("pages/Page.md");
+        fs::write(
+            &path,
+            format!(
+                "- original A\n  id:: {}\n",
+                Uuid::from_u128(91_047_040)
+            ),
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT.with(|hook| {
+            let path = path.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(&path, "- concurrent external A\n")
+            }));
+        });
+
+        let error = graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_047_041),
+                Uuid::from_u128(91_047_042),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&path).unwrap(), b"- concurrent external A\n");
+        assert!(!dir.join(".tine-sync").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_restore_preconditions_and_operation_truth_stay_on_retained_a() {
+        let dir = scratch("handoff-managed-restore-retained");
+        let moved = dir.with_file_name("tine-handoff-managed-restore-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::write(dir.join("pages/Page.md"), "- original A\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph
+            .enable_managed_sync(
+                Uuid::from_u128(91_047_050),
+                Uuid::from_u128(91_047_051),
+            )
+            .unwrap();
+        let original = fs::read_to_string(dir.join("pages/Page.md")).unwrap();
+        let restored = original.replacen("original A", "restored A", 1);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages/Page.md"), "- replacement B\n")?;
+                hold_replacement_handoff(&dir, 91_047_052)
+            }));
+        });
+
+        assert!(graph
+            .commit_managed_restore(&[("pages/Page.md".to_owned(), restored.clone())])
+            .unwrap());
+        graph.project_all_managed_sync().unwrap();
+        assert_eq!(
+            fs::read_to_string(moved.join("pages/Page.md")).unwrap(),
+            restored
+        );
+        assert_eq!(
+            fs::read(dir.join("pages/Page.md")).unwrap(),
+            b"- replacement B\n"
+        );
+        assert!(!dir.join(".tine-sync").exists());
+        let replacement = Graph::open(&dir);
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("restore blocked on B", "- blocked\n"),
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn rename_inventory_and_referrer_reads_stay_on_retained_a_after_reserved_b_replacement() {
+        let dir = scratch("handoff-rename-selection-retained");
+        let moved = dir.with_file_name("tine-handoff-rename-selection-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::create_dir_all(dir.join("pages/client/deep")).unwrap();
+        fs::create_dir_all(dir.join("journals/archive/2026")).unwrap();
+        fs::write(dir.join("pages/Old.md"), "- old A\n").unwrap();
+        fs::write(
+            dir.join("pages/client/deep/Ref.md"),
+            "- A-only nested [[Old]]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals/archive/2026/07_24.md"),
+            "- A-only journal [[Old]]\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages/Old.md"), "- old B\n")?;
+                fs::write(dir.join("pages/B-only.md"), "- B sentinel\n")?;
+                hold_replacement_handoff(&dir, 91_047_100)
+            }));
+        });
+
+        graph.rename_page_expected("Old", "New", None).unwrap();
+
+        assert!(!moved.join("pages/Old.md").exists());
+        assert_eq!(fs::read(moved.join("pages/New.md")).unwrap(), b"- old A\n");
+        assert_eq!(
+            fs::read(moved.join("pages/client/deep/Ref.md")).unwrap(),
+            b"- A-only nested [[New]]\n"
+        );
+        assert_eq!(
+            fs::read(moved.join("journals/archive/2026/07_24.md")).unwrap(),
+            b"- A-only journal [[New]]\n"
+        );
+        assert_eq!(fs::read(dir.join("pages/Old.md")).unwrap(), b"- old B\n");
+        assert!(!dir.join("pages/New.md").exists());
+        assert!(!dir.join("pages/client/deep/Ref.md").exists());
+        assert_eq!(
+            fs::read(dir.join("pages/B-only.md")).unwrap(),
+            b"- B sentinel\n"
+        );
+        let replacement = Graph::open(&dir);
+        assert_handoff_blocked(replacement.rename_page("Old", "Blocked"));
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn journal_migration_selection_stays_on_nested_retained_a_after_reserved_b_replacement() {
+        let dir = scratch("handoff-journal-selection-retained");
+        let moved = dir.with_file_name("tine-handoff-journal-selection-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("journals/imported/deep")).unwrap();
+        let title_named = "Thursday, 25-06-2026.org";
+        fs::write(
+            dir.join("journals/imported/deep").join(title_named),
+            "* journal A\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(
+                    dir.join("journals").join(title_named),
+                    "* title-named B\n",
+                )?;
+                fs::write(dir.join("journals/2026_06_25.org"), "* canonical B\n")?;
+                hold_replacement_handoff(&dir, 91_047_200)
+            }));
+        });
+
+        assert_eq!(graph.migrate_journal_filenames_checked().unwrap(), 1);
+
+        assert!(!moved
+            .join("journals/imported/deep")
+            .join(title_named)
+            .exists());
+        assert_eq!(
+            fs::read(moved.join("journals/2026_06_25.org")).unwrap(),
+            b"* journal A\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("journals").join(title_named)).unwrap(),
+            b"* title-named B\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("journals/2026_06_25.org")).unwrap(),
+            b"* canonical B\n"
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn save_force_save_and_delete_selection_stay_on_retained_a_after_reserved_b_replacement() {
+        let dir = scratch("handoff-save-delete-selection-retained");
+        let moved = dir.with_file_name("tine-handoff-save-delete-selection-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::create_dir_all(dir.join("pages/archive/deep")).unwrap();
+        fs::write(dir.join("pages/Target.org"), "* target A\n").unwrap();
+        fs::write(
+            dir.join("pages/archive/deep/Victim.md"),
+            "- victim A\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        let mut page = graph
+            .load_named("Target", PageKind::Page)
+            .unwrap()
+            .unwrap();
+        let base_rev = page.rev.clone().unwrap();
+        page.path.clear();
+        page.blocks[0].raw = "saved A".to_owned();
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages/other/deep"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages/Target.md"), "- target B\n")?;
+                fs::write(dir.join("pages/other/deep/Victim.md"), "- victim B\n")?;
+                hold_replacement_handoff(&dir, 91_047_300)
+            }));
+        });
+
+        graph.save_page(&page, Some(&base_rev)).unwrap();
+        page.blocks[0].raw = "forced A".to_owned();
+        graph.force_save_page(&page).unwrap();
+        graph
+            .delete_page_expected("Victim", PageKind::Page, None)
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(moved.join("pages/Target.org")).unwrap(),
+            "* forced A\n"
+        );
+        assert!(!moved.join("pages/Target.md").exists());
+        assert!(!moved.join("pages/archive/deep/Victim.md").exists());
+        assert_eq!(
+            fs::read(dir.join("pages/Target.md")).unwrap(),
+            b"- target B\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("pages/other/deep/Victim.md")).unwrap(),
+            b"- victim B\n"
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn watcher_rename_and_delete_detection_use_retained_a_under_reserved_b() {
+        let dir = scratch("handoff-watcher-selection-retained");
+        let moved = dir.with_file_name("tine-handoff-watcher-selection-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        fs::write(dir.join("pages/Old.md"), "- old A\n").unwrap();
+        fs::write(dir.join("pages/Delete.md"), "- delete A\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph
+            .enable_managed_sync(Uuid::from_u128(91_047_401), Uuid::from_u128(91_047_402))
+            .unwrap();
+        let old_id = graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Old.md")
+            .unwrap()
+            .unwrap()
+            .id;
+        fs::rename(dir.join("pages/Old.md"), dir.join("pages/New.md")).unwrap();
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages/Old.md"), "- old B\n")?;
+                fs::write(dir.join("pages/Delete.md"), "- delete B\n")?;
+                hold_replacement_handoff(&dir, 91_047_400)
+            }));
+        });
+
+        graph
+            .sync_file_checked(&dir.join("pages/New.md"))
+            .unwrap();
+        let renamed = graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/New.md")
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.id, old_id, "watcher must classify the A move as a rename");
+        assert!(graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Old.md")
+            .unwrap()
+            .is_none());
+
+        fs::remove_file(moved.join("pages/Delete.md")).unwrap();
+        graph
+            .sync_deleted_file(&dir.join("pages/Delete.md"))
+            .unwrap();
+        assert!(graph
+            .managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .materialize_page("pages/Delete.md")
+            .unwrap()
+            .is_none());
+        assert_eq!(fs::read(dir.join("pages/Old.md")).unwrap(), b"- old B\n");
+        assert_eq!(
+            fs::read(dir.join("pages/Delete.md")).unwrap(),
+            b"- delete B\n"
+        );
+        assert!(!dir.join("pages/New.md").exists());
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn hls_selection_migration_and_legacy_cleanup_stay_on_retained_a_under_reserved_b() {
+        let dir = scratch("handoff-hls-selection-retained");
+        let moved = dir.with_file_name("tine-handoff-hls-selection-retained-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let pdf = "My Paper.pdf";
+        let legacy_key = crate::pdf::legacy_asset_key(pdf);
+        let new_key = crate::pdf::asset_key(pdf);
+        let highlight = mkhl(
+            "11111111-1111-1111-1111-111111111111",
+            3,
+            Some("legacy"),
+        );
+        let mut legacy_page =
+            crate::pdf::hls_page_document(pdf, "Paper", std::slice::from_ref(&highlight));
+        legacy_page.roots[0]
+            .children
+            .push(DocBlock::new("A-only private note"));
+        fs::write(
+            dir.join("pages")
+                .join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key))),
+            doc::serialize(&legacy_page),
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            let b_page = format!("{}.md", crate::pdf::hls_page_name(&new_key));
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::create_dir_all(dir.join("assets"))?;
+                fs::write(dir.join("pages").join(&b_page), "- B-only hls page\n")?;
+                fs::write(dir.join("assets/my_paper.pdf"), b"B collision input")?;
+                hold_replacement_handoff(&dir, 91_047_500)
+            }));
+        });
+
+        graph
+            .write_highlights(
+                pdf,
+                "Paper",
+                std::slice::from_ref(&highlight),
+                std::slice::from_ref(&highlight.id),
+            )
+            .unwrap();
+
+        let a_new = moved
+            .join("pages")
+            .join(format!("{}.md", crate::pdf::hls_page_name(&new_key)));
+        assert!(fs::read_to_string(&a_new)
+            .unwrap()
+            .contains("A-only private note"));
+        assert!(!moved
+            .join("pages")
+            .join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key)))
+            .exists());
+        assert_eq!(
+            fs::read(
+                dir.join("pages")
+                    .join(format!("{}.md", crate::pdf::hls_page_name(&new_key)))
+            )
+            .unwrap(),
+            b"- B-only hls page\n"
+        );
+        assert_eq!(
+            fs::read(dir.join("assets/my_paper.pdf")).unwrap(),
+            b"B collision input"
+        );
+
+        release_replacement_handoff();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn root_replacement_during_rename_rollback_restores_retained_a_and_leaves_b_untouched() {
+        let dir = scratch("handoff-capability-rollback-window");
+        let moved = dir.with_file_name("tine-handoff-capability-rollback-window-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let old = dir.join("pages").join("Old.md");
+        let reference = dir.join("pages").join("Reference.md");
+        fs::write(&old, "- old A\n").unwrap();
+        fs::write(&reference, "- [[Old]] on A\n").unwrap();
+        let graph = Graph::open(&dir);
+        FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| flag.set(true));
+        MANAGED_WRITE_DURING_ROLLBACK.with(|hook| {
+            let dir = dir.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&dir, &moved)?;
+                fs::create_dir_all(dir.join("pages"))?;
+                fs::create_dir_all(dir.join("journals"))?;
+                fs::write(dir.join("pages").join("Old.md"), "- old B\n")?;
+                fs::write(dir.join("pages").join("New.md"), "- new B\n")?;
+                fs::write(dir.join("pages").join("Reference.md"), "- [[Old]] on B\n")?;
+                let replacement = Graph::open(&dir);
+                let (workspace_id, endpoint) = handoff_binding(&replacement, 91_048);
+                let handoff = replacement.mint_handoff_safe(workspace_id, endpoint)?;
+                MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| {
+                    *held.borrow_mut() = Some(handoff);
+                });
+                Ok(())
+            }));
+        });
+
+        assert!(graph.rename_page("Old", "New").is_err());
+        assert_eq!(fs::read(moved.join("pages").join("Old.md")).unwrap(), b"- old A\n");
+        assert!(!moved.join("pages").join("New.md").exists());
+        assert_eq!(
+            fs::read(moved.join("pages").join("Reference.md")).unwrap(),
+            b"- [[Old]] on A\n"
+        );
+        assert_eq!(fs::read(dir.join("pages").join("Old.md")).unwrap(), b"- old B\n");
+        assert_eq!(fs::read(dir.join("pages").join("New.md")).unwrap(), b"- new B\n");
+        assert_eq!(
+            fs::read(dir.join("pages").join("Reference.md")).unwrap(),
+            b"- [[Old]] on B\n"
+        );
+        let replacement = Graph::open(&dir);
+        assert_handoff_blocked(
+            replacement.create_markdown_page_if_absent("reserved rollback B", "- blocked\n"),
+        );
+        MANAGED_WRITE_REPLACEMENT_HANDOFF.with(|held| drop(held.borrow_mut().take()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_resource_gate_survives_moved_root_reopen() {
+        let dir = scratch("handoff-moved-reopen-gate");
+        let moved = dir.with_file_name("tine-handoff-moved-reopen-gate");
+        let _ = fs::remove_dir_all(&moved);
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_050);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        fs::rename(&dir, &moved).unwrap();
+        let reopened = Arc::new(Graph::open(&moved));
+        assert!(Arc::ptr_eq(
+            managed_write_gate(&graph),
+            managed_write_gate(&reopened)
+        ));
+        handoff
+            .verify_binding(&graph, workspace_id, endpoint)
+            .unwrap();
+        assert!(handoff
+            .verify_binding(&reopened, workspace_id, endpoint)
+            .is_err());
+
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let writer = std::thread::spawn({
+            let graph = Arc::clone(&reopened);
+            let start = Arc::clone(&start);
+            move || {
+                start.wait();
+                graph.create_markdown_page_if_absent("moved reopen", "- blocked\n")
+            }
+        });
+        start.wait();
+        assert_handoff_blocked(writer.join().unwrap());
+        drop(handoff);
+        assert!(reopened
+            .create_markdown_page_if_absent("moved reopen released", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_blocks_both_projection_recovery_entrypoints_before_the_page_lock() {
+        let dir = scratch("handoff-projection-recovery");
+        let graph = Graph::open(&dir);
+        let path = "pages/recovery.md";
+        let target = b"- retained target\n";
+        graph.write_projection_exact(path, None, target).unwrap();
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_060);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        assert_handoff_blocked(graph.recover_projection_exact(path, target));
+        assert_handoff_blocked(graph.recover_removed_projection_exact(path, target));
+        assert_eq!(fs::read(dir.join(path)).unwrap(), target);
+
+        drop(handoff);
+        graph.recover_projection_exact(path, target).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_blocks_production_authority_consuming_projection_recovery_entrypoints() {
+        let dir = scratch("handoff-production-projection-recovery");
+        let receipts = dir.with_file_name("tine-handoff-production-projection-receipts");
+        let _ = fs::remove_dir_all(&receipts);
+        fs::create_dir_all(&receipts).unwrap();
+        let graph = Graph::open(&dir);
+        let workspace_id = WorkspaceId::from_uuid(Uuid::from_u128(91_061));
+        let store =
+            crate::oplog::projection_store::ProjectionReceiptStore::open(&receipts, workspace_id)
+                .unwrap();
+
+        let present_path = "pages/production-recovery.md";
+        let present_target = b"- retained target\n";
+        fs::write(dir.join(present_path), present_target).unwrap();
+        let present_intent = crate::oplog::ProjectionIntent::new(
+            workspace_id,
+            crate::oplog::PageId::from_uuid(Uuid::from_u128(91_062)),
+            ManagedPath::parse(present_path).unwrap(),
+            crate::oplog::FrontierV2::default(),
+            Vec::new(),
+            crate::oplog::ProjectionPrecondition::Absent,
+            BlobDescription::of(present_target),
+            Vec::new(),
+        )
+        .unwrap();
+        store.publish_intent(&present_intent, None).unwrap();
+        store.reserve_attempt(&present_intent).unwrap();
+        let mut present_authority = store.begin_mutation(&present_intent, None).unwrap();
+        let (_, endpoint) = handoff_binding(&graph, 91_063);
+        let handoff = graph
+            .mint_handoff_safe(workspace_id, endpoint)
+            .unwrap();
+        assert_handoff_blocked(graph.recover_page_projection(
+            present_path,
+            None,
+            present_target,
+            &mut present_authority,
+        ));
+        drop(handoff);
+        graph
+            .recover_page_projection(
+                present_path,
+                None,
+                present_target,
+                &mut present_authority,
+            )
+            .unwrap();
+
+        let removed_path = "pages/production-removed-recovery.md";
+        let removed_base = b"- retained base\n";
+        fs::write(dir.join(removed_path), removed_base).unwrap();
+        let removed_intent = crate::oplog::ProjectionIntent::new(
+            workspace_id,
+            crate::oplog::PageId::from_uuid(Uuid::from_u128(91_064)),
+            ManagedPath::parse(removed_path).unwrap(),
+            crate::oplog::FrontierV2::default(),
+            Vec::new(),
+            crate::oplog::ProjectionPrecondition::Base(BlobDescription::of(removed_base)),
+            BlobDescription::of(&[]),
+            Vec::new(),
+        )
+        .unwrap();
+        store
+            .publish_intent(&removed_intent, Some(removed_base))
+            .unwrap();
+        let removed_reservation = store.reserve_attempt(&removed_intent).unwrap();
+        fs::rename(
+            dir.join(removed_path),
+            dir.join("pages")
+                .join(removed_reservation.recovery_filename()),
+        )
+        .unwrap();
+        let mut removed_authority = store.begin_mutation(&removed_intent, None).unwrap();
+        let handoff = graph
+            .mint_handoff_safe(workspace_id, endpoint)
+            .unwrap();
+        assert_handoff_blocked(graph.recover_removed_page_projection(
+            removed_path,
+            removed_base,
+            &mut removed_authority,
+        ));
+        drop(handoff);
+        graph
+            .recover_removed_page_projection(
+                removed_path,
+                removed_base,
+                &mut removed_authority,
+            )
+            .unwrap();
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&receipts);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_blocks_pdf_view_state_before_its_shared_page_lock() {
+        let dir = scratch("handoff-pdf-view-state");
+        let graph = Graph::open(&dir);
+        graph.open_pdf("paper.pdf", "Paper").unwrap();
+        let sidecar = dir
+            .join("assets")
+            .join(format!("{}.edn", crate::pdf::asset_key("paper.pdf")));
+        let baseline = fs::read(&sidecar).unwrap();
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_070);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        assert_handoff_blocked(graph.write_pdf_view_state("paper.pdf", 8, 1.75));
+        assert_eq!(fs::read(&sidecar).unwrap(), baseline);
+
+        drop(handoff);
+        graph.write_pdf_view_state("paper.pdf", 8, 1.75).unwrap();
+        assert_ne!(fs::read(&sidecar).unwrap(), baseline);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_mint_error_releases_a_writer_waiting_at_the_reservation() {
+        let dir = scratch("handoff-mint-error-race");
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_075);
+        let rendezvous = Arc::new(std::sync::Barrier::new(2));
+        let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            let rendezvous = Arc::clone(&rendezvous);
+            move || {
+                rendezvous.wait();
+                writer_tx.send(
+                    graph.create_markdown_page_if_absent("mint error blocked", "- blocked\n"),
+                )
+            }
+        });
+        HANDOFF_MINT_AFTER_RESERVATION.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                rendezvous.wait();
+                assert_handoff_blocked(writer_rx.recv().unwrap());
+                Err(io::Error::other("injected handoff mint failure"))
+            }));
+        });
+
+        assert!(graph.mint_handoff_safe(workspace_id, endpoint).is_err());
+        writer.join().unwrap().unwrap();
+        assert!(graph
+            .create_markdown_page_if_absent("mint error released", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_cancel_and_drop_release_waiting_writers() {
+        let dir = scratch("handoff-cancel-drop-race");
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_080);
+        assert_handoff_release_admits_waiting_writer(
+            Arc::clone(&graph),
+            graph.mint_handoff_safe(workspace_id, endpoint).unwrap(),
+            "cancel",
+            |handoff| handoff.cancel(),
+        );
+        assert_handoff_release_admits_waiting_writer(
+            Arc::clone(&graph),
+            graph.mint_handoff_safe(workspace_id, endpoint).unwrap(),
+            "drop",
+            drop,
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_transfer_keeps_the_reservation_during_a_writer_race() {
+        let dir = scratch("handoff-transfer-race");
+        let graph = Arc::new(Graph::open(&dir));
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_090);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        let rendezvous = Arc::new(std::sync::Barrier::new(2));
+        let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn({
+            let graph = Arc::clone(&graph);
+            let rendezvous = Arc::clone(&rendezvous);
+            move || {
+                rendezvous.wait();
+                writer_tx.send(
+                    graph.create_markdown_page_if_absent("transfer blocked", "- blocked\n"),
+                )
+            }
+        });
+        HANDOFF_TRANSFER_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                rendezvous.wait();
+                assert_handoff_blocked(writer_rx.recv().unwrap());
+            }));
+        });
+
+        let guard = handoff.into_publisher_guard();
+        guard
+            .verify_binding(&graph, workspace_id, endpoint)
+            .unwrap();
+        writer.join().unwrap().unwrap();
+        drop(guard);
+        assert!(graph
+            .create_markdown_page_if_absent("transfer released", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_seal_closes_the_inventory_to_writer_race() {
+        let dir = scratch("handoff-inventory-race");
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_000);
+
+        // Capturing inventory alone is intentionally not a writer reservation:
+        // this is the pre-handoff race the sealed capability must close.
+        let inventory = graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        assert!(inventory.is_empty());
+        assert!(graph
+            .create_markdown_page_if_absent("before seal", "- visible change\n")
+            .unwrap());
+
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        assert_handoff_blocked(graph.create_markdown_page_if_absent("blocked", "- no\n"));
+        assert_handoff_blocked(graph.save_page(
+            &markdown_page_dto("blocked save", "blocked save", "- no\n").unwrap(),
+            None,
+        ));
+        drop(handoff);
+        assert!(graph
+            .create_markdown_page_if_absent("after release", "- admitted\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_rejects_every_managed_page_and_journal_writer_entrypoint() {
+        let dir = scratch("handoff-writer-entrypoints");
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_100);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        let page = markdown_page_dto("blocked page", "blocked page", "- no\n").unwrap();
+        let mut journal =
+            markdown_page_dto("January 1st, 2026", "journal", "- no\n").unwrap();
+        journal.kind = PageKind::Journal;
+
+        assert_handoff_blocked(graph.create_markdown_page_if_absent("create", "- no\n"));
+        assert_handoff_blocked(graph.save_page(&page, None));
+        assert_handoff_blocked(graph.force_save_page(&page));
+        assert_handoff_blocked(graph.save_page(&journal, None));
+        assert_handoff_blocked(graph.force_save_page(&journal));
+        assert_handoff_blocked(graph.rename_page_expected("old", "new", None));
+        assert_handoff_blocked(graph.delete_page_expected("page", PageKind::Page, None));
+        assert_handoff_blocked(graph.delete_page_expected(
+            "January 1st, 2026",
+            PageKind::Journal,
+            None,
+        ));
+        assert_handoff_blocked(graph.resolve_sync_conflict(
+            "pages/a.md",
+            "pages/b.md",
+            &Default::default(),
+            "",
+            "",
+            "mine",
+        ));
+        assert_handoff_blocked(graph.merge_pages("pages/a.md", "pages/b.md"));
+        assert_handoff_blocked(graph.rename_file_to_page("journals/a.md", "rescued"));
+        assert_handoff_blocked(graph.trash_journal_file("a.md"));
+        assert_handoff_blocked(graph.open_pdf("blocked.pdf", "blocked"));
+        assert_handoff_blocked(graph.write_pdf_view_state("blocked.pdf", 1, 1.0));
+        assert_handoff_blocked(graph.write_highlights("blocked.pdf", "blocked", &[], &[]));
+        assert_handoff_blocked(graph.write_projection_exact(
+            "pages/projection.md",
+            None,
+            b"- no\n",
+        ));
+        assert_handoff_blocked(
+            graph.recover_projection_exact("pages/projection.md", b"- no\n"),
+        );
+        assert_handoff_blocked(
+            graph.recover_removed_projection_exact("pages/projection.md", b"- no\n"),
+        );
+        assert_handoff_blocked(graph.sync_file_checked(&dir.join("pages").join("watch.md")));
+        assert_handoff_blocked(graph.sync_deleted_file(&dir.join("pages").join("deleted.md")));
+
+        drop(handoff);
+        assert!(graph
+            .create_markdown_page_if_absent("writer released", "- yes\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_binding_rejects_reopened_copied_wrong_workspace_endpoint_and_resource() {
+        let dir = scratch("handoff-binding");
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_200);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        handoff
+            .verify_binding(&graph, workspace_id, endpoint)
+            .unwrap();
+        assert_eq!(handoff.binding().workspace_id(), workspace_id);
+        assert_eq!(handoff.binding().endpoint(), endpoint);
+        assert_eq!(
+            handoff.binding().graph_resource_id(),
+            endpoint.graph_resource_id()
+        );
+        assert!(handoff
+            .verify_binding(
+                &graph,
+                WorkspaceId::from_uuid(Uuid::from_u128(91_299)),
+                endpoint,
+            )
+            .is_err());
+        let wrong_endpoint = ProjectionEndpointBinding::enroll_graph(
+            &graph,
+            crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(91_203)),
+            crate::oplog::DeviceId::from_uuid(Uuid::from_u128(91_204)),
+        )
+        .unwrap();
+        assert!(handoff
+            .verify_binding(&graph, workspace_id, wrong_endpoint)
+            .is_err());
+
+        let reopened = Graph::open(&dir);
+        assert!(handoff
+            .verify_binding(&reopened, workspace_id, endpoint)
+            .is_err());
+
+        let copied_root = dir.with_file_name("tine-handoff-binding-copy");
+        let _ = fs::remove_dir_all(&copied_root);
+        fs::create_dir_all(copied_root.join("pages")).unwrap();
+        fs::write(copied_root.join("pages").join("copied.md"), "- copied\n").unwrap();
+        let copied = Graph::open(&copied_root);
+        assert_ne!(
+            copied.canonical_resource_id().unwrap(),
+            endpoint.graph_resource_id()
+        );
+        assert!(handoff
+            .verify_binding(&copied, workspace_id, endpoint)
+            .is_err());
+        assert!(copied
+            .create_markdown_page_if_absent("unrelated graph remains writable", "- yes\n")
+            .unwrap());
+
+        let foreign_endpoint = ProjectionEndpointBinding::enroll_graph(
+            &copied,
+            crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(91_205)),
+            crate::oplog::DeviceId::from_uuid(Uuid::from_u128(91_206)),
+        )
+        .unwrap();
+        assert!(graph
+            .mint_handoff_safe(workspace_id, foreign_endpoint)
+            .is_err());
+        drop(handoff);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&copied_root);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_raii_mint_failure_and_transfer_never_leave_an_unlocked_interval() {
+        let dir = scratch("handoff-raii");
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_300);
+
+        let active_writer = graph.admit_managed_text_writer().unwrap();
+        assert_handoff_blocked(graph.mint_handoff_safe(workspace_id, endpoint));
+        drop(active_writer);
+
+        HANDOFF_MINT_AFTER_RESERVATION.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|| {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "injected handoff mint failure",
+                ))
+            }));
+        });
+        assert!(graph.mint_handoff_safe(workspace_id, endpoint).is_err());
+        assert!(graph
+            .create_markdown_page_if_absent("released after mint error", "- yes\n")
+            .unwrap());
+
+        let cancelled = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        cancelled.cancel();
+        assert!(graph
+            .create_markdown_page_if_absent("released after cancel", "- yes\n")
+            .unwrap());
+
+        let dropped = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        drop(dropped);
+        assert!(graph
+            .create_markdown_page_if_absent("released after drop", "- yes\n")
+            .unwrap());
+
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+        let gate = Arc::clone(managed_write_gate(&graph));
+        HANDOFF_TRANSFER_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                assert_handoff_blocked(gate.admit_writer());
+            }));
+        });
+        let guard = handoff.into_publisher_guard();
+        guard
+            .verify_binding(&graph, workspace_id, endpoint)
+            .unwrap();
+        assert_handoff_blocked(graph.create_markdown_page_if_absent("still held", "- no\n"));
+        drop(guard);
+        assert!(graph
+            .create_markdown_page_if_absent("released after consume", "- yes\n")
+            .unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn handoff_retained_resource_identity_survives_supported_move_but_not_replacement() {
+        let dir = scratch("handoff-resource-move");
+        let moved = dir.with_file_name("tine-handoff-resource-moved");
+        let _ = fs::remove_dir_all(&moved);
+        let graph = Graph::open(&dir);
+        let (workspace_id, endpoint) = handoff_binding(&graph, 91_400);
+        let handoff = graph.mint_handoff_safe(workspace_id, endpoint).unwrap();
+
+        fs::rename(&dir, &moved).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        handoff
+            .verify_binding(&graph, workspace_id, endpoint)
+            .unwrap();
+        let replacement = Graph::open(&dir);
+        assert_ne!(
+            replacement.canonical_resource_id().unwrap(),
+            endpoint.graph_resource_id()
+        );
+        assert!(handoff
+            .verify_binding(&replacement, workspace_id, endpoint)
+            .is_err());
+
+        drop(handoff);
+        graph
+            .write_projection_exact(
+                "pages/retained-capability.md",
+                None,
+                b"- exact resource\n",
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read(moved.join("pages").join("retained-capability.md")).unwrap(),
+            b"- exact resource\n"
+        );
+        assert!(!dir.join("pages").join("retained-capability.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&moved);
     }
 }

@@ -116,18 +116,19 @@ pub fn guide_copy_page_name(title: &str) -> String {
     format!("{GUIDE_COPY_PREFIX}{title}")
 }
 
-pub fn bundled_guide_pages() -> Vec<GuidePage> {
+pub fn bundled_guide_pages() -> io::Result<Vec<GuidePage>> {
     GUIDE_TEMPLATES
         .iter()
         .map(|t| {
-            let mut page = markdown_page_dto(&guide_page_name(t.title), t.title, t.markdown);
+            let mut page =
+                markdown_page_dto(&guide_page_name(t.title), t.title, t.markdown)?;
             page.read_only = true;
             page.guide = true;
-            GuidePage {
+            Ok(GuidePage {
                 title: t.title.to_string(),
                 markdown: t.markdown.to_string(),
                 page,
-            }
+            })
         })
         .collect()
 }
@@ -325,7 +326,7 @@ mod tests {
             graph.resolve_block(TARGET_ID).is_some(),
             "block-ref target missing"
         );
-        let counts = graph.block_ref_counts();
+        let counts = graph.block_ref_counts().unwrap();
         assert_eq!(
             counts.get(TARGET_ID).copied(),
             Some(2),
@@ -359,7 +360,7 @@ mod tests {
 
     #[test]
     fn bundled_guide_pages_are_read_only_virtual_pages() {
-        let pages = bundled_guide_pages();
+        let pages = bundled_guide_pages().unwrap();
         let index = pages
             .iter()
             .find(|p| p.title == "Tine Guide")
@@ -492,7 +493,7 @@ mod tests {
         assert!(copied.skipped_pages.is_empty());
         assert_eq!(copied.copied_assets, vec!["quick-capture.png".to_string()]);
 
-        for guide in bundled_guide_pages() {
+        for guide in bundled_guide_pages().unwrap() {
             let name = guide_copy_page_name(&guide.title);
             let path = graph.path_for(&name, PageKind::Page);
             assert!(path.is_file(), "missing copied guide page {name}");

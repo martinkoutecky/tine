@@ -204,7 +204,7 @@ fn block_ref_counts_and_referrers() {
 
     // Count = distinct referrer blocks: 1 (same page) + 3 (Other) = 4. The double
     // ref on the last Other block counts once.
-    let counts = g.block_ref_counts();
+    let counts = g.block_ref_counts().unwrap();
     assert_eq!(
         counts.get("aaaaaaaa-0000-0000-0000-000000000001").copied(),
         Some(4),
