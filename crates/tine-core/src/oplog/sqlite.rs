@@ -3,9 +3,9 @@
 //! This module deliberately accepts only already-accepted operation events. It
 //! has no mutation-authoring API and is never part of keystroke durability.
 //! Callers place the disposable database in device-local app data. The
-//! workspace lease always lives under Tine's internally derived,
-//! platform-canonical local runtime root; neither path requires access to the
-//! shared graph.
+//! single-writer workspace lease is capability-relative to the exact
+//! authoritative [`ObjectStore`] used for rebuild, so changing app-data
+//! environment variables or the disposable database path cannot split it.
 //! Accepted ancestry is a two-level authenticated index: the durable accepted
 //! frontier commits `BatchId -> (manifest, binding, dot, clock root)` records,
 //! and each clock root addresses a persistent peer-counter treap. Updates copy
@@ -17,14 +17,26 @@
 //! metadata, but never decides ownership by its contents.
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(unix)]
+use std::ffi::CString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
+use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _};
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(windows)]
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+#[cfg(unix)]
+use cap_std::fs::MetadataExt as CapMetadataExt;
+#[cfg(windows)]
+use cap_std::fs::OpenOptions as CapOpenOptions;
 use cap_std::{ambient_authority, fs::Dir as CapDir};
 use fs2::FileExt as _;
 use rusqlite::{
@@ -33,12 +45,13 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::hot_engine::AcceptedFrontierRoot;
 use super::{
-    AcceptedFrontierRoot, BatchCausalDot, BatchId, BatchInspection, CausalPeerId, ContentDigest,
-    DocumentDependencies, DocumentId, FrontierV2, LineageDigest, ObjectKind, ObjectStore,
-    SemanticEffect, SemanticEffectDigest, ShardedHotEngine, ValidatedBatch, WorkspaceId,
-    WorkspaceStatus, MANAGED_ENTITY_SET_VERSION, MANIFEST_ENCODING_VERSION,
-    OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
+    BatchCausalDot, BatchId, BatchInspection, CausalPeerId, ContentDigest, DocumentDependencies,
+    DocumentId, FrontierV2, LineageDigest, ObjectKind, ObjectStore, SemanticEffect,
+    SemanticEffectDigest, ShardedHotEngine, ValidatedBatch, WorkspaceId, WorkspaceStatus,
+    MANAGED_ENTITY_SET_VERSION, MANIFEST_ENCODING_VERSION, OBJECT_ENVELOPE_SCHEMA_VERSION,
+    OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
@@ -217,6 +230,10 @@ const FORENSIC_NAMES: [&str; 4] = ["database", "wal", "shm", "auth"];
 const PROJECTION_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 const PROJECTION_FINGERPRINT_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_PROJECTION_CHECKPOINT_BYTES: u64 = 64 * 1024;
+const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
+const OBJECT_STORE_LEASE_NAMESPACE: &str = ".tine-runtime";
+const SQLITE_WORKSPACE_LEASE_NAMESPACE: &str = "sqlite-workspaces";
+const SQLITE_APPLIER_LEASE_FILE: &str = "sqlite-applier.lock";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectionClaim {
@@ -566,11 +583,11 @@ pub struct ApplicationRuntimeRoot {
 }
 
 impl ApplicationRuntimeRoot {
-    /// Open Tine's one platform-canonical process-lease namespace.
+    /// Open Tine's platform-selected device-local application-data root.
     ///
-    /// Production callers cannot select this path. All databases for one
-    /// workspace therefore contend on the same OS-visible lease, even when
-    /// callers place their disposable SQLite files in different directories.
+    /// This root may guide disposable projection placement, but it is not a
+    /// lease authority. The process lease is rooted in the exact
+    /// [`ObjectStore`] capability supplied through [`RebuildSource`].
     pub fn open() -> Result<Self, ProjectionError> {
         let path = platform_application_runtime_root()?;
         let path = prepare_application_runtime_root(&path)?;
@@ -1138,8 +1155,9 @@ impl TailOverlay {
 
 /// One leased device-local projection handle.
 ///
-/// The projection's canonical device-root/workspace lease lives exactly as
-/// long as this value, independent of the projection database's file name.
+/// The projection's authoritative ObjectStore/workspace lease lives exactly
+/// as long as this value, independent of the app-data root and projection
+/// database's file name.
 /// A clean drop or process termination releases the OS lock; a later process
 /// validates the database before reuse and rebuilds from engine/store evidence
 /// when deletion, stale state, corruption, or an interrupted WAL is observed.
@@ -1165,14 +1183,14 @@ enum ApplyFault {
 impl SqliteFrontier {
     pub fn open_or_rebuild(
         path: &Path,
-        application_runtime_root: &ApplicationRuntimeRoot,
+        _application_runtime_root: &ApplicationRuntimeRoot,
         claim: ProjectionClaim,
         source: RebuildSource<'_>,
     ) -> Result<OpenProjection, ProjectionError> {
         validate_source(claim, &source)?;
         let path = prepare_database_path(path)?;
         let lease = Arc::new(ProcessLease::acquire(
-            application_runtime_root,
+            source.store,
             &path,
             claim.workspace_id,
         )?);
@@ -3318,7 +3336,7 @@ struct MapLink {
     digest: ContentDigest,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ClockNode {
     peer: CausalPeerId,
     counter: u64,
@@ -3437,7 +3455,9 @@ fn causal_clock_lookup(
     peer: CausalPeerId,
     rows_read: &mut usize,
 ) -> Result<Option<u64>, ProjectionError> {
+    let mut depth = 0;
     while let Some(link) = current {
+        ensure_authenticated_map_depth(depth, "causal clock lookup")?;
         let node = load_clock_node(connection, &link)?;
         *rows_read = rows_read.saturating_add(1);
         match peer.cmp(&node.peer) {
@@ -3445,6 +3465,7 @@ fn causal_clock_lookup(
             std::cmp::Ordering::Less => current = node.left,
             std::cmp::Ordering::Greater => current = node.right,
         }
+        depth += 1;
     }
     Ok(None)
 }
@@ -3613,36 +3634,225 @@ fn merge_causal_clock_roots(
     left: Option<MapLink>,
     right: Option<MapLink>,
 ) -> Result<Option<MapLink>, ProjectionError> {
-    match (&left, &right) {
-        (_, None) => return Ok(left),
-        (None, Some(_)) => return Ok(right),
-        (Some(left), Some(right)) if left == right => return Ok(Some(left.clone())),
-        _ => {}
-    }
-    let mut entries = Vec::new();
-    collect_causal_clock_entries(connection, right, &mut entries)?;
-    let mut merged = left;
-    for (peer, counter) in entries {
-        let current = causal_clock_lookup(connection, merged.clone(), peer, &mut 0)?;
-        if current.is_none_or(|current| current < counter) {
-            merged = Some(upsert_causal_clock(connection, merged, peer, counter)?);
-        }
-    }
-    Ok(merged)
+    merge_causal_clock_roots_measured(connection, left, right, &mut ClockUnionStats::default())
 }
 
-fn collect_causal_clock_entries(
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ClockUnionStats {
+    nodes_read: usize,
+    nodes_written: usize,
+    shared_subtrees: usize,
+}
+
+type ClockSplit = (Option<MapLink>, Option<u64>, Option<MapLink>);
+
+fn merge_causal_clock_roots_measured(
+    connection: &Connection,
+    left: Option<MapLink>,
+    right: Option<MapLink>,
+    stats: &mut ClockUnionStats,
+) -> Result<Option<MapLink>, ProjectionError> {
+    union_causal_clock_roots(connection, left, right, stats, 0)
+}
+
+fn union_causal_clock_roots(
+    connection: &Connection,
+    left: Option<MapLink>,
+    right: Option<MapLink>,
+    stats: &mut ClockUnionStats,
+    depth: usize,
+) -> Result<Option<MapLink>, ProjectionError> {
+    ensure_authenticated_map_depth(depth, "causal clock union")?;
+    let (left_link, right_link) = match (left, right) {
+        (None, right) => return Ok(right),
+        (left, None) => return Ok(left),
+        (Some(left), Some(right)) => (left, right),
+    };
+    if left_link == right_link {
+        stats.shared_subtrees = stats.shared_subtrees.saturating_add(1);
+        return Ok(Some(left_link));
+    }
+
+    if left_link.key == right_link.key {
+        let left_node = load_clock_node_measured(connection, &left_link, stats)?;
+        let right_node = load_clock_node_measured(connection, &right_link, stats)?;
+        let merged = ClockNode {
+            peer: left_node.peer,
+            counter: left_node.counter.max(right_node.counter),
+            left: union_causal_clock_roots(
+                connection,
+                left_node.left.clone(),
+                right_node.left.clone(),
+                stats,
+                depth + 1,
+            )?,
+            right: union_causal_clock_roots(
+                connection,
+                left_node.right.clone(),
+                right_node.right.clone(),
+                stats,
+                depth + 1,
+            )?,
+        };
+        return Ok(Some(reuse_or_write_clock_node(
+            connection,
+            [(&left_link, &left_node), (&right_link, &right_node)],
+            &merged,
+            stats,
+        )?));
+    }
+
+    if super::scratch_store::authenticated_map_priority_order(left_link.key, right_link.key).is_lt()
+    {
+        let left_node = load_clock_node_measured(connection, &left_link, stats)?;
+        let (right_less, right_counter, right_greater) = split_causal_clock_root(
+            connection,
+            Some(right_link),
+            left_link.key,
+            stats,
+            depth + 1,
+        )?;
+        let merged = ClockNode {
+            peer: left_node.peer,
+            counter: left_node.counter.max(right_counter.unwrap_or(0)),
+            left: union_causal_clock_roots(
+                connection,
+                left_node.left.clone(),
+                right_less,
+                stats,
+                depth + 1,
+            )?,
+            right: union_causal_clock_roots(
+                connection,
+                left_node.right.clone(),
+                right_greater,
+                stats,
+                depth + 1,
+            )?,
+        };
+        Ok(Some(reuse_or_write_clock_node(
+            connection,
+            [(&left_link, &left_node), (&left_link, &left_node)],
+            &merged,
+            stats,
+        )?))
+    } else {
+        let right_node = load_clock_node_measured(connection, &right_link, stats)?;
+        let (left_less, left_counter, left_greater) = split_causal_clock_root(
+            connection,
+            Some(left_link),
+            right_link.key,
+            stats,
+            depth + 1,
+        )?;
+        let merged = ClockNode {
+            peer: right_node.peer,
+            counter: right_node.counter.max(left_counter.unwrap_or(0)),
+            left: union_causal_clock_roots(
+                connection,
+                left_less,
+                right_node.left.clone(),
+                stats,
+                depth + 1,
+            )?,
+            right: union_causal_clock_roots(
+                connection,
+                left_greater,
+                right_node.right.clone(),
+                stats,
+                depth + 1,
+            )?,
+        };
+        Ok(Some(reuse_or_write_clock_node(
+            connection,
+            [(&right_link, &right_node), (&right_link, &right_node)],
+            &merged,
+            stats,
+        )?))
+    }
+}
+
+fn split_causal_clock_root(
     connection: &Connection,
     root: Option<MapLink>,
-    entries: &mut Vec<(CausalPeerId, u64)>,
-) -> Result<(), ProjectionError> {
-    let Some(root) = root else {
-        return Ok(());
+    key: [u8; 16],
+    stats: &mut ClockUnionStats,
+    depth: usize,
+) -> Result<ClockSplit, ProjectionError> {
+    ensure_authenticated_map_depth(depth, "causal clock split")?;
+    let Some(link) = root else {
+        return Ok((None, None, None));
     };
-    let node = load_clock_node(connection, &root)?;
-    collect_causal_clock_entries(connection, node.left.clone(), entries)?;
-    entries.push((node.peer, node.counter));
-    collect_causal_clock_entries(connection, node.right, entries)
+    let node = load_clock_node_measured(connection, &link, stats)?;
+    match key.cmp(&link.key) {
+        std::cmp::Ordering::Equal => Ok((node.left, Some(node.counter), node.right)),
+        std::cmp::Ordering::Less => {
+            let (less, counter, greater_left) =
+                split_causal_clock_root(connection, node.left.clone(), key, stats, depth + 1)?;
+            let greater = ClockNode {
+                left: greater_left,
+                ..node.clone()
+            };
+            let greater = reuse_or_write_clock_node(
+                connection,
+                [(&link, &node), (&link, &node)],
+                &greater,
+                stats,
+            )?;
+            Ok((less, counter, Some(greater)))
+        }
+        std::cmp::Ordering::Greater => {
+            let (less_right, counter, greater) =
+                split_causal_clock_root(connection, node.right.clone(), key, stats, depth + 1)?;
+            let less = ClockNode {
+                right: less_right,
+                ..node.clone()
+            };
+            let less = reuse_or_write_clock_node(
+                connection,
+                [(&link, &node), (&link, &node)],
+                &less,
+                stats,
+            )?;
+            Ok((Some(less), counter, greater))
+        }
+    }
+}
+
+fn load_clock_node_measured(
+    connection: &Connection,
+    link: &MapLink,
+    stats: &mut ClockUnionStats,
+) -> Result<ClockNode, ProjectionError> {
+    let node = load_clock_node(connection, link)?;
+    stats.nodes_read = stats.nodes_read.saturating_add(1);
+    Ok(node)
+}
+
+fn reuse_or_write_clock_node<const N: usize>(
+    connection: &Connection,
+    candidates: [(&MapLink, &ClockNode); N],
+    node: &ClockNode,
+    stats: &mut ClockUnionStats,
+) -> Result<MapLink, ProjectionError> {
+    if let Some((link, _)) = candidates
+        .into_iter()
+        .find(|(_, candidate)| *candidate == node)
+    {
+        stats.shared_subtrees = stats.shared_subtrees.saturating_add(1);
+        return Ok(link.clone());
+    }
+    stats.nodes_written = stats.nodes_written.saturating_add(1);
+    write_clock_node(connection, node)
+}
+
+fn ensure_authenticated_map_depth(depth: usize, operation: &str) -> Result<(), ProjectionError> {
+    if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+        return Err(ProjectionError::Corrupt(format!(
+            "{operation} exceeds its bounded depth"
+        )));
+    }
+    Ok(())
 }
 
 fn upsert_causal_clock(
@@ -3651,6 +3861,17 @@ fn upsert_causal_clock(
     peer: CausalPeerId,
     counter: u64,
 ) -> Result<MapLink, ProjectionError> {
+    upsert_causal_clock_link(connection, root, peer, counter, 0)
+}
+
+fn upsert_causal_clock_link(
+    connection: &Connection,
+    root: Option<MapLink>,
+    peer: CausalPeerId,
+    counter: u64,
+    depth: usize,
+) -> Result<MapLink, ProjectionError> {
+    ensure_authenticated_map_depth(depth, "causal clock update")?;
     let Some(root) = root else {
         return write_clock_node(
             connection,
@@ -3669,11 +3890,12 @@ fn upsert_causal_clock(
             write_clock_node(connection, &node)
         }
         std::cmp::Ordering::Less => {
-            node.left = Some(upsert_causal_clock(
+            node.left = Some(upsert_causal_clock_link(
                 connection,
                 node.left.take(),
                 peer,
                 counter,
+                depth + 1,
             )?);
             if node.left.as_ref().is_some_and(|left| {
                 super::scratch_store::authenticated_map_priority_order(
@@ -3688,11 +3910,12 @@ fn upsert_causal_clock(
             }
         }
         std::cmp::Ordering::Greater => {
-            node.right = Some(upsert_causal_clock(
+            node.right = Some(upsert_causal_clock_link(
                 connection,
                 node.right.take(),
                 peer,
                 counter,
+                depth + 1,
             )?);
             if node.right.as_ref().is_some_and(|right| {
                 super::scratch_store::authenticated_map_priority_order(
@@ -3975,74 +4198,6 @@ fn prepare_application_runtime_root(path: &Path) -> Result<PathBuf, ProjectionEr
     Ok(canonical)
 }
 
-fn prepare_workspace_runtime_lease_root(
-    application_runtime_root: &Path,
-    path: &Path,
-    workspace_id: WorkspaceId,
-) -> Result<PathBuf, ProjectionError> {
-    fs::create_dir_all(path)?;
-    let canonical = fs::canonicalize(path)?;
-    if canonical.parent() != Some(application_runtime_root) {
-        return Err(ProjectionError::UnsafePath(
-            "workspace lease root escaped the canonical application runtime root".into(),
-        ));
-    }
-    let metadata = fs::symlink_metadata(&canonical)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(ProjectionError::UnsafePath(
-            "runtime lease root is not a real directory".into(),
-        ));
-    }
-    let binding = canonical.join("workspace-id");
-    let expected = format!("{}\n", workspace_id);
-    match fs::symlink_metadata(&binding) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(ProjectionError::UnsafePath(
-                    "runtime lease workspace binding is not a regular file".into(),
-                ));
-            }
-            let found = fs::read_to_string(&binding)?;
-            if found != expected {
-                return Err(ProjectionError::WorkspaceMismatch {
-                    expected: workspace_id,
-                    found: found
-                        .trim()
-                        .parse::<Uuid>()
-                        .map(WorkspaceId::from_uuid)
-                        .map_err(|_| {
-                            ProjectionError::Corrupt(
-                                "runtime lease workspace binding is malformed".into(),
-                            )
-                        })?,
-                });
-            }
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            let mut file = match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&binding)
-            {
-                Ok(file) => file,
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                    return prepare_workspace_runtime_lease_root(
-                        application_runtime_root,
-                        &canonical,
-                        workspace_id,
-                    )
-                }
-                Err(error) => return Err(error.into()),
-            };
-            file.write_all(expected.as_bytes())?;
-            file.sync_all()?;
-            sync_directory(&canonical)?;
-        }
-        Err(error) => return Err(error.into()),
-    }
-    Ok(canonical)
-}
-
 fn candidate_database_path(path: &Path) -> Result<PathBuf, ProjectionError> {
     let parent = path
         .parent()
@@ -4272,25 +4427,48 @@ struct ProcessLease {
 
 impl ProcessLease {
     fn acquire(
-        runtime_root: &ApplicationRuntimeRoot,
+        store: &ObjectStore,
         database_path: &Path,
         workspace_id: WorkspaceId,
     ) -> Result<Self, ProjectionError> {
-        let namespace = runtime_root.path.join("sqlite-workspaces");
-        fs::create_dir_all(&namespace)?;
-        let namespace = fs::canonicalize(&namespace)?;
-        if namespace.parent() != Some(runtime_root.path.as_path()) {
-            return Err(ProjectionError::UnsafePath(
-                "SQLite workspace lease namespace escaped the application runtime root".into(),
-            ));
+        if store.workspace_id() != workspace_id {
+            return Err(ProjectionError::WorkspaceMismatch {
+                expected: workspace_id,
+                found: store.workspace_id(),
+            });
         }
-        let workspace_root = prepare_workspace_runtime_lease_root(
-            &namespace,
-            &namespace.join(workspace_id.to_string()),
-            workspace_id,
+        let store_root = store.sqlite_lease_capability().map_err(|error| {
+            ProjectionError::UnsafePath(format!(
+                "cannot retain ObjectStore lease authority: {error}"
+            ))
+        })?;
+        let lease_namespace = open_or_create_lease_directory(
+            &store_root,
+            OBJECT_STORE_LEASE_NAMESPACE,
+            "ObjectStore lease namespace",
         )?;
-        let workspace_lease_path = workspace_root.join("sqlite-applier.lock");
-        let mut workspace_file = lock_lease_file(&workspace_lease_path)?;
+        let sqlite_namespace = open_or_create_lease_directory(
+            &lease_namespace,
+            SQLITE_WORKSPACE_LEASE_NAMESPACE,
+            "SQLite workspace lease namespace",
+        )?;
+        let workspace_name = workspace_id.to_string();
+        let workspace_root = open_or_create_lease_directory(
+            &sqlite_namespace,
+            &workspace_name,
+            "SQLite workspace lease directory",
+        )?;
+        let workspace_lease_path = store
+            .root_path()
+            .join(OBJECT_STORE_LEASE_NAMESPACE)
+            .join(SQLITE_WORKSPACE_LEASE_NAMESPACE)
+            .join(&workspace_name)
+            .join(SQLITE_APPLIER_LEASE_FILE);
+        let mut workspace_file = lock_capability_lease_file(
+            &workspace_root,
+            SQLITE_APPLIER_LEASE_FILE,
+            &workspace_lease_path,
+        )?;
         workspace_file.set_len(0)?;
         workspace_file.seek(SeekFrom::Start(0))?;
         writeln!(
@@ -4301,46 +4479,187 @@ impl ProcessLease {
             std::env::consts::OS
         )?;
         workspace_file.sync_all()?;
+        super::object_store::sync_dir_required(&workspace_root)
+            .map_err(|error| ProjectionError::Io(error.to_string()))?;
         let file_name = database_path
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| ProjectionError::UnsafePath("database file name is not UTF-8".into()))?;
         let database_lease_path =
             database_path.with_file_name(format!(".{file_name}.database-applier.lock"));
-        let database_file = lock_lease_file(&database_lease_path)?;
+        let database_parent = database_lease_path.parent().ok_or_else(|| {
+            ProjectionError::UnsafePath("database lease path has no parent".into())
+        })?;
+        let database_lease_name = database_lease_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                ProjectionError::UnsafePath("database lease file name is not UTF-8".into())
+            })?;
+        let database_parent = CapDir::open_ambient_dir(database_parent, ambient_authority())
+            .map_err(|error| ProjectionError::Io(error.to_string()))?;
+        let database_file = lock_capability_lease_file(
+            &database_parent,
+            database_lease_name,
+            &database_lease_path,
+        )?;
         Ok(Self {
             files: vec![workspace_file, database_file],
         })
     }
 }
 
-fn lock_lease_file(lease_path: &Path) -> Result<File, ProjectionError> {
-    match fs::symlink_metadata(lease_path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            return Err(ProjectionError::UnsafePath(
-                "SQLite applier lease is not a regular no-follow file".into(),
-            ));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
+fn open_or_create_lease_directory(
+    parent: &CapDir,
+    name: &str,
+    description: &str,
+) -> Result<CapDir, ProjectionError> {
+    let created = match parent.create_dir(name) {
+        Ok(()) => true,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => false,
         Err(error) => return Err(error.into()),
+    };
+    let directory = super::object_store::open_dir_nofollow(parent, name).map_err(|error| {
+        ProjectionError::UnsafePath(format!(
+            "{description} is not a no-follow directory: {error}"
+        ))
+    })?;
+    #[cfg(unix)]
+    if created {
+        // SAFETY: `directory` is the retained descriptor returned by the
+        // no-follow open above; `fchmod` changes that exact opened directory.
+        if unsafe { libc::fchmod(directory.as_fd().as_raw_fd(), 0o700) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lease_path)?;
+    validate_owned_lease_directory(&directory, description)?;
+    if created {
+        super::object_store::sync_dir_required(parent)
+            .map_err(|error| ProjectionError::Io(error.to_string()))?;
+    }
+    Ok(directory)
+}
+
+fn validate_owned_lease_directory(
+    directory: &CapDir,
+    description: &str,
+) -> Result<(), ProjectionError> {
+    let metadata = directory.dir_metadata()?;
+    if !metadata.is_dir() {
+        return Err(ProjectionError::UnsafePath(format!(
+            "{description} is not an opened directory"
+        )));
+    }
+    #[cfg(unix)]
+    // SAFETY: `geteuid` takes no arguments and has no memory-safety preconditions.
+    if CapMetadataExt::uid(&metadata) != unsafe { libc::geteuid() }
+        || CapMetadataExt::mode(&metadata) & 0o022 != 0
+    {
+        return Err(ProjectionError::UnsafePath(format!(
+            "{description} is not exclusively writable by the current user"
+        )));
+    }
+    Ok(())
+}
+
+fn lock_capability_lease_file(
+    directory: &CapDir,
+    name: &str,
+    display_path: &Path,
+) -> Result<File, ProjectionError> {
+    let file = open_capability_lease_file(directory, name).map_err(|error| {
+        ProjectionError::UnsafePath(format!(
+            "cannot open SQLite applier lease {} without following links: {error}",
+            display_path.display()
+        ))
+    })?;
     if let Err(error) = file.try_lock_exclusive() {
         if matches!(
             error.kind(),
             ErrorKind::WouldBlock | ErrorKind::PermissionDenied
         ) {
-            return Err(ProjectionError::LeaseContended(lease_path.to_path_buf()));
+            return Err(ProjectionError::LeaseContended(display_path.to_path_buf()));
         }
         return Err(error.into());
     }
+    validate_opened_lease_file(&file, display_path)?;
     Ok(file)
+}
+
+#[cfg(unix)]
+fn open_capability_lease_file(directory: &CapDir, name: &str) -> std::io::Result<File> {
+    let name = CString::new(name)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid lease file name"))?;
+    // SAFETY: `name` is a live NUL-terminated relative name and `directory`
+    // retains the authoritative ObjectStore or database-parent capability.
+    // O_NOFOLLOW rejects a final-component symlink in the same open that
+    // produces the handle subsequently locked and validated.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        // SAFETY: `openat` returned a newly owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(windows)]
+fn open_capability_lease_file(directory: &CapDir, name: &str) -> std::io::Result<File> {
+    let mut options = CapOpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .follow(FollowSymlinks::No);
+    Ok(directory.open_with(name, &options)?.into_std())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_capability_lease_file(_directory: &CapDir, _name: &str) -> std::io::Result<File> {
+    Err(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "atomic no-follow lease files are unsupported on this target",
+    ))
+}
+
+fn validate_opened_lease_file(file: &File, path: &Path) -> Result<(), ProjectionError> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ProjectionError::UnsafePath(format!(
+            "opened SQLite applier lease {} is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    if metadata.uid() !=
+        // SAFETY: `geteuid` takes no arguments and has no memory-safety preconditions.
+        unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+    {
+        return Err(ProjectionError::UnsafePath(format!(
+            "opened SQLite applier lease {} has unsafe ownership or links",
+            path.display()
+        )));
+    }
+    #[cfg(windows)]
+    if metadata.file_attributes()
+        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+        != 0
+    {
+        return Err(ProjectionError::UnsafePath(format!(
+            "opened SQLite applier lease {} is a reparse point",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 impl Drop for ProcessLease {
@@ -4966,14 +5285,38 @@ mod tests {
             }
         }
 
-        if mode == "canonical-lease-contender" {
+        if mode == "production-lease-holder" || mode == "production-lease-contender" {
+            let runtime = ApplicationRuntimeRoot::open().unwrap();
+            let engine = ids.engine();
+            let database_name = if mode == "production-lease-holder" {
+                "db-a/frontier.sqlite"
+            } else {
+                "db-b/frontier.sqlite"
+            };
+            let result = SqliteFrontier::open_or_rebuild(
+                &root.join(database_name),
+                &runtime,
+                ids.claim(),
+                RebuildSource::new(&engine, &store).unwrap(),
+            );
+            if mode == "production-lease-contender" {
+                assert!(matches!(result, Err(ProjectionError::LeaseContended(_))));
+                return;
+            }
+            let _opened = result.unwrap();
+            fs::write(&ready, b"ready").unwrap();
+            loop {
+                thread::park_timeout(Duration::from_secs(60));
+            }
+        }
+
+        if mode == "injected-runtime-contender" {
             let would_be_runtime =
                 PathBuf::from(std::env::var_os("TINE_SQLITE_HELPER_WOULD_BE_RUNTIME").unwrap());
-            assert_ne!(would_be_runtime, root.join("runtime"));
-            let runtime = ApplicationRuntimeRoot::open_for_test(&root.join("runtime")).unwrap();
+            let runtime = ApplicationRuntimeRoot::open_for_test(&would_be_runtime).unwrap();
             let engine = ids.engine();
             let result = SqliteFrontier::open_or_rebuild(
-                &root.join("db-b/frontier.sqlite"),
+                &root.join("db-b/fail-before.sqlite"),
                 &runtime,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
@@ -4982,18 +5325,28 @@ mod tests {
             return;
         }
 
-        if mode == "injected-would-be-root-acquires" {
-            let would_be_runtime =
-                PathBuf::from(std::env::var_os("TINE_SQLITE_HELPER_WOULD_BE_RUNTIME").unwrap());
-            let runtime = ApplicationRuntimeRoot::open_for_test(&would_be_runtime).unwrap();
+        if mode == "production-lease-racer" {
+            let label = std::env::var("TINE_SQLITE_RACER_LABEL").unwrap();
+            let runtime = ApplicationRuntimeRoot::open().unwrap();
+            fs::write(root.join(format!("race-ready-{label}")), b"ready").unwrap();
+            wait_for_file(&root.join("race-go"));
             let engine = ids.engine();
-            let _opened = SqliteFrontier::open_or_rebuild(
-                &root.join("db-b/fail-before.sqlite"),
+            let result = SqliteFrontier::open_or_rebuild(
+                &root.join(format!("db-{label}/frontier.sqlite")),
                 &runtime,
                 ids.claim(),
                 RebuildSource::new(&engine, &store).unwrap(),
-            )
-            .unwrap();
+            );
+            match result {
+                Ok(_opened) => {
+                    fs::write(root.join(format!("race-acquired-{label}")), b"acquired").unwrap();
+                    wait_for_file(&root.join("race-stop"));
+                }
+                Err(ProjectionError::LeaseContended(_)) => {
+                    fs::write(root.join(format!("race-contended-{label}")), b"contended").unwrap();
+                }
+                Err(error) => panic!("unexpected lease race error: {error}"),
+            }
             return;
         }
 
@@ -5955,6 +6308,109 @@ mod tests {
         assert!(large.ancestry_rows_read <= 96);
     }
 
+    fn repeated_fresh_peer_fork_merge_work(batch_count: usize, seed: u128) -> ClockUnionStats {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(CAUSAL_CLOCK_NODES_DDL).unwrap();
+        let mut root = None;
+        let mut stats = ClockUnionStats::default();
+        for index in 0..batch_count {
+            let left_peer =
+                CausalPeerId::from_device_id(DeviceId::from_uuid(uuid(seed + index as u128 * 2)));
+            let right_peer = CausalPeerId::from_device_id(DeviceId::from_uuid(uuid(
+                seed + index as u128 * 2 + 1,
+            )));
+            let left = Some(upsert_causal_clock(&connection, root.clone(), left_peer, 1).unwrap());
+            let right =
+                Some(upsert_causal_clock(&connection, root.clone(), right_peer, 1).unwrap());
+            root = merge_causal_clock_roots_measured(&connection, left, right, &mut stats).unwrap();
+        }
+        stats
+    }
+
+    #[test]
+    fn repeated_fresh_peer_fork_merge_union_is_near_linear() {
+        let work = [100_usize, 200, 400].map(|batch_count| {
+            repeated_fresh_peer_fork_merge_work(batch_count, 90_000 + batch_count as u128 * 10_000)
+        });
+        eprintln!(
+            "clock_union_fresh_peer_sweep batches=100 reads={} writes={} shared={}; batches=200 reads={} writes={} shared={}; batches=400 reads={} writes={} shared={}",
+            work[0].nodes_read,
+            work[0].nodes_written,
+            work[0].shared_subtrees,
+            work[1].nodes_read,
+            work[1].nodes_written,
+            work[1].shared_subtrees,
+            work[2].nodes_read,
+            work[2].nodes_written,
+            work[2].shared_subtrees,
+        );
+        assert!(
+            work[1].nodes_read <= work[0].nodes_read.saturating_mul(3),
+            "doubling 100 -> 200 grew clock-union reads from {} to {}",
+            work[0].nodes_read,
+            work[1].nodes_read
+        );
+        assert!(
+            work[2].nodes_read <= work[1].nodes_read.saturating_mul(3),
+            "doubling 200 -> 400 grew clock-union reads from {} to {}",
+            work[1].nodes_read,
+            work[2].nodes_read
+        );
+        assert!(
+            work[2].nodes_read <= 400 * 256,
+            "400 repeated fork/merges read {} authenticated clock nodes",
+            work[2].nodes_read
+        );
+        assert!(work.iter().all(|stats| stats.shared_subtrees > 0));
+    }
+
+    #[test]
+    fn causal_clock_union_is_canonical_exact_and_order_independent() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(CAUSAL_CLOCK_NODES_DDL).unwrap();
+        let peers = (0..4_u128)
+            .map(|index| CausalPeerId::from_device_id(DeviceId::from_uuid(uuid(500_000 + index))))
+            .collect::<Vec<_>>();
+        let mut left = None;
+        for (peer, counter) in [(peers[0], 2), (peers[1], 7), (peers[3], 1)] {
+            left = Some(upsert_causal_clock(&connection, left, peer, counter).unwrap());
+        }
+        let mut right = None;
+        for (peer, counter) in [(peers[0], 5), (peers[1], 3), (peers[2], 11)] {
+            right = Some(upsert_causal_clock(&connection, right, peer, counter).unwrap());
+        }
+
+        let left_then_right =
+            merge_causal_clock_roots(&connection, left.clone(), right.clone()).unwrap();
+        let right_then_left =
+            merge_causal_clock_roots(&connection, right.clone(), left.clone()).unwrap();
+        assert_eq!(left_then_right, right_then_left);
+        for (peer, expected) in [(peers[0], 5), (peers[1], 7), (peers[2], 11), (peers[3], 1)] {
+            assert_eq!(
+                causal_clock_lookup(&connection, left_then_right.clone(), peer, &mut 0).unwrap(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            merge_causal_clock_roots(&connection, None, left_then_right.clone()).unwrap(),
+            left_then_right
+        );
+        let mut duplicate_stats = ClockUnionStats::default();
+        assert_eq!(
+            merge_causal_clock_roots_measured(
+                &connection,
+                left_then_right.clone(),
+                left_then_right.clone(),
+                &mut duplicate_stats,
+            )
+            .unwrap(),
+            left_then_right
+        );
+        assert_eq!(duplicate_stats.nodes_read, 0);
+        assert_eq!(duplicate_stats.nodes_written, 0);
+        assert_eq!(duplicate_stats.shared_subtrees, 1);
+    }
+
     #[test]
     #[ignore = "explicit fresh-peer authenticated SQLite scaling sweep"]
     fn sqlite_streaming_rebuild_fresh_peer_scaling_sweep() {
@@ -6545,7 +7001,7 @@ mod tests {
     }
 
     #[test]
-    fn production_shaped_runtime_lease_ignores_distinct_would_be_roots_across_processes() {
+    fn injected_runtime_roots_cannot_split_the_object_store_lease() {
         let seed = 7_400;
         let ids = TestIds::new(seed);
         let dir = TestDir::new("canonical-runtime-lease");
@@ -6557,20 +7013,16 @@ mod tests {
         let would_be_b = dir.path().join("db-b/runtime");
         assert_ne!(would_be_a, would_be_b);
 
-        // Fail-before witness for the rejected API: when test-only injection
-        // deliberately models two caller-selected roots, separate processes
-        // can both acquire the same WorkspaceId. Production cannot construct
-        // either injected root.
         let injected_a = ApplicationRuntimeRoot::open_for_test(&would_be_a).unwrap();
-        let vulnerable_first = SqliteFrontier::open_or_rebuild(
+        let first = SqliteFrontier::open_or_rebuild(
             &dir.path().join("db-a/fail-before.sqlite"),
             &injected_a,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
         )
         .unwrap();
-        let mut fail_before = spawn_test_helper(
-            "injected-would-be-root-acquires",
+        let mut contender = spawn_test_helper(
+            "injected-runtime-contender",
             dir.path(),
             seed,
             &[(
@@ -6578,40 +7030,11 @@ mod tests {
                 would_be_b.to_str().unwrap(),
             )],
         );
-        assert!(fail_before.wait().unwrap().success());
-        drop(vulnerable_first);
-
-        let runtime = ApplicationRuntimeRoot::open_for_test(&dir.path().join("runtime")).unwrap();
-        let first = SqliteFrontier::open_or_rebuild(
-            &dir.path().join("db-a/frontier.sqlite"),
-            &runtime,
-            ids.claim(),
-            RebuildSource::new(&engine, &store).unwrap(),
-        )
-        .unwrap();
-        assert!(matches!(
-            SqliteFrontier::open_or_rebuild(
-                &dir.path().join("db-b/frontier.sqlite"),
-                &runtime,
-                ids.claim(),
-                RebuildSource::new(&engine, &store).unwrap(),
-            ),
-            Err(ProjectionError::LeaseContended(_))
-        ));
-        let mut child = spawn_test_helper(
-            "canonical-lease-contender",
-            dir.path(),
-            seed,
-            &[(
-                "TINE_SQLITE_HELPER_WOULD_BE_RUNTIME",
-                would_be_b.to_str().unwrap(),
-            )],
-        );
-        assert!(child.wait().unwrap().success());
-
+        assert!(contender.wait().unwrap().success());
         drop(first);
+        let runtime = ApplicationRuntimeRoot::open_for_test(&would_be_b).unwrap();
         let recovered = SqliteFrontier::open_or_rebuild(
-            &dir.path().join("db-b/frontier.sqlite"),
+            &dir.path().join("db-b/fail-before.sqlite"),
             &runtime,
             ids.claim(),
             RebuildSource::new(&engine, &store).unwrap(),
@@ -6621,6 +7044,187 @@ mod tests {
             recovered.recovery,
             ProjectionRecovery::RebuiltMissing { applied_batches: 0 }
         ));
+    }
+
+    #[test]
+    fn production_lease_is_shared_across_distinct_xdg_and_home_roots() {
+        let seed = 7_600;
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new("production-resource-lease");
+        fs::create_dir_all(dir.path().join("db-a")).unwrap();
+        fs::create_dir_all(dir.path().join("db-b")).unwrap();
+        let _store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let xdg_a = dir.path().join("profile-a/xdg");
+        let home_a = dir.path().join("profile-a/home");
+        let xdg_b = dir.path().join("profile-b/xdg");
+        let home_b = dir.path().join("profile-b/home");
+        for path in [&xdg_a, &home_a, &xdg_b, &home_b] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let mut holder = spawn_test_helper(
+            "production-lease-holder",
+            dir.path(),
+            seed,
+            &[
+                ("XDG_DATA_HOME", xdg_a.to_str().unwrap()),
+                ("HOME", home_a.to_str().unwrap()),
+            ],
+        );
+        wait_for_file(&dir.path().join("helper-ready"));
+        let mut contender = spawn_test_helper(
+            "production-lease-contender",
+            dir.path(),
+            seed,
+            &[
+                ("XDG_DATA_HOME", xdg_b.to_str().unwrap()),
+                ("HOME", home_b.to_str().unwrap()),
+            ],
+        );
+        let contender_succeeded = contender.wait().unwrap().success();
+        holder.kill().unwrap();
+        assert!(!holder.wait().unwrap().success());
+        assert!(contender_succeeded);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn object_store_lease_rejects_symlinked_namespaces_workspace_and_file() {
+        use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+        fn rejected(case: &str, prepare: impl FnOnce(&Path, WorkspaceId)) {
+            let ids = TestIds::new(7_700 + case.len() as u128 * 100);
+            let dir = TestDir::new(case);
+            let store_path = dir.path().join("objects");
+            let store = ObjectStore::open(&store_path, ids.workspace).unwrap();
+            prepare(&store_path, ids.workspace);
+            let runtime =
+                ApplicationRuntimeRoot::open_for_test(&dir.path().join("runtime")).unwrap();
+            let engine = ids.engine();
+            assert!(matches!(
+                SqliteFrontier::open_or_rebuild(
+                    &dir.path().join("frontier.sqlite"),
+                    &runtime,
+                    ids.claim(),
+                    RebuildSource::new(&engine, &store).unwrap(),
+                ),
+                Err(ProjectionError::UnsafePath(_))
+            ));
+        }
+
+        rejected("lease-object-store-namespace-symlink", |store, _| {
+            fs::create_dir(store.join("redirect")).unwrap();
+            symlink(
+                store.join("redirect"),
+                store.join(OBJECT_STORE_LEASE_NAMESPACE),
+            )
+            .unwrap();
+        });
+        rejected("lease-sqlite-namespace-symlink", |store, _| {
+            fs::create_dir(store.join(OBJECT_STORE_LEASE_NAMESPACE)).unwrap();
+            fs::create_dir(store.join("redirect")).unwrap();
+            symlink(
+                store.join("redirect"),
+                store
+                    .join(OBJECT_STORE_LEASE_NAMESPACE)
+                    .join(SQLITE_WORKSPACE_LEASE_NAMESPACE),
+            )
+            .unwrap();
+        });
+        rejected("lease-workspace-symlink", |store, workspace| {
+            let namespace = store
+                .join(OBJECT_STORE_LEASE_NAMESPACE)
+                .join(SQLITE_WORKSPACE_LEASE_NAMESPACE);
+            fs::create_dir_all(&namespace).unwrap();
+            fs::create_dir(store.join("redirect")).unwrap();
+            symlink(
+                store.join("redirect"),
+                namespace.join(workspace.to_string()),
+            )
+            .unwrap();
+        });
+        rejected("lease-file-symlink", |store, workspace| {
+            let workspace = store
+                .join(OBJECT_STORE_LEASE_NAMESPACE)
+                .join(SQLITE_WORKSPACE_LEASE_NAMESPACE)
+                .join(workspace.to_string());
+            fs::create_dir_all(&workspace).unwrap();
+            fs::write(store.join("redirect"), b"not a lease").unwrap();
+            symlink(
+                store.join("redirect"),
+                workspace.join(SQLITE_APPLIER_LEASE_FILE),
+            )
+            .unwrap();
+        });
+        rejected("lease-group-writable-namespace", |store, _| {
+            let namespace = store.join(OBJECT_STORE_LEASE_NAMESPACE);
+            fs::create_dir(&namespace).unwrap();
+            fs::set_permissions(&namespace, fs::Permissions::from_mode(0o770)).unwrap();
+        });
+    }
+
+    #[test]
+    fn object_store_lease_creation_race_has_one_process_winner() {
+        let seed = 7_900;
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new("object-store-lease-race");
+        fs::create_dir_all(dir.path().join("db-a")).unwrap();
+        fs::create_dir_all(dir.path().join("db-b")).unwrap();
+        let _store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let xdg_a = dir.path().join("profile-a");
+        let xdg_b = dir.path().join("profile-b");
+        fs::create_dir_all(&xdg_a).unwrap();
+        fs::create_dir_all(&xdg_b).unwrap();
+        let mut a = spawn_test_helper(
+            "production-lease-racer",
+            dir.path(),
+            seed,
+            &[
+                ("TINE_SQLITE_RACER_LABEL", "a"),
+                ("XDG_DATA_HOME", xdg_a.to_str().unwrap()),
+            ],
+        );
+        let mut b = spawn_test_helper(
+            "production-lease-racer",
+            dir.path(),
+            seed,
+            &[
+                ("TINE_SQLITE_RACER_LABEL", "b"),
+                ("XDG_DATA_HOME", xdg_b.to_str().unwrap()),
+            ],
+        );
+        wait_for_file(&dir.path().join("race-ready-a"));
+        wait_for_file(&dir.path().join("race-ready-b"));
+        fs::write(dir.path().join("race-go"), b"go").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let results = ["a", "b"]
+                .into_iter()
+                .filter(|label| {
+                    dir.path().join(format!("race-acquired-{label}")).exists()
+                        || dir.path().join(format!("race-contended-{label}")).exists()
+                })
+                .count();
+            if results == 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for lease racers"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let winners = ["a", "b"]
+            .into_iter()
+            .filter(|label| dir.path().join(format!("race-acquired-{label}")).exists())
+            .count();
+        let contenders = ["a", "b"]
+            .into_iter()
+            .filter(|label| dir.path().join(format!("race-contended-{label}")).exists())
+            .count();
+        assert_eq!((winners, contenders), (1, 1));
+        fs::write(dir.path().join("race-stop"), b"stop").unwrap();
+        assert!(a.wait().unwrap().success());
+        assert!(b.wait().unwrap().success());
     }
 
     #[test]

@@ -278,6 +278,10 @@ impl ObjectStore {
         self.workspace_id
     }
 
+    pub(crate) fn sqlite_lease_capability(&self) -> std::io::Result<Dir> {
+        self.capability.try_clone()
+    }
+
     /// Validate and retain one object independently of any manifest delivery.
     pub fn stage_object_bytes(&self, bytes: &[u8]) -> Result<ContentDigest, StoreError> {
         let object = OperationObject::decode(bytes)?;

@@ -438,6 +438,15 @@ pub struct AcceptedBatchEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Device-local evidence for a derived accepted-frontier projection.
+///
+/// This value authenticates local engine and SQLite projection transitions. It
+/// is deliberately not a protocol frontier, interchange format, or portable
+/// export representation: its state is acceptance-order dependent and may
+/// contain run-local scratch-store references. Its Serde encoding exists only
+/// for Tine's validated local evidence/archive paths and carries no wire-format
+/// stability claim.
+#[non_exhaustive]
 pub struct AcceptedFrontierRoot {
     schema_version: u32,
     acceptance_sequence: u64,

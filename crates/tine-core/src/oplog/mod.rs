@@ -28,11 +28,11 @@ pub use batch::{
     OBJECT_ENVELOPE_SCHEMA_VERSION, OPERATION_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use hot_engine::{
-    AcceptedBatch, AcceptedBatchEvidence, AcceptedFrontierRoot, AuthorBatch, BatchDisposition,
-    BlockLocation, EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle,
-    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats,
-    MaterializedBlock, MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine,
-    StageOutcome, WorkspaceStatus,
+    AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, BatchDisposition, BlockLocation,
+    EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
+    ImmutableHomeConflict, ImmutableHomeEvidence, MaterializationStats, MaterializedBlock,
+    MaterializedPage, OperationTransaction, SemanticOperation, ShardedHotEngine, StageOutcome,
+    WorkspaceStatus,
 };
 pub use identity::{
     BatchId, BlockId, CrdtPeerId, DeviceId, DocumentId, ImportId, LogseqUuid, PageId, SessionId,
