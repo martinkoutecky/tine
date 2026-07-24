@@ -1292,6 +1292,17 @@ struct ProjectionParentRetarget {
     outside: PathBuf,
 }
 
+/// Test-only observations of singular guarded projection calls.  The crash
+/// corpus resets these per case so retry ceilings describe real writer and
+/// recovery entry points rather than values inferred from the final file.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectionGraphTestCounters {
+    pub write_calls: usize,
+    pub remove_calls: usize,
+    pub recovery_calls: usize,
+}
+
 #[cfg(test)]
 thread_local! {
     static FAIL_NEXT_RENAME_SOURCE_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1306,9 +1317,47 @@ thread_local! {
     static FAIL_NEXT_PROJECTION_DIRECTORY_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static TEST_PROJECTION_ATTEMPTS: std::cell::RefCell<std::collections::BTreeMap<String, Vec<ProjectionAttemptReservation>>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     static PROJECTION_EXACT_OPEN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROJECTION_GRAPH_CALLS: std::cell::Cell<ProjectionGraphTestCounters> = const { std::cell::Cell::new(ProjectionGraphTestCounters { write_calls: 0, remove_calls: 0, recovery_calls: 0 }) };
     static MANAGED_INVENTORY_READ_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static INITIAL_SHADOW_REVALIDATION_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static BOUNDED_READ_AFTER_METADATA: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn reset_projection_graph_test_counters() {
+    PROJECTION_GRAPH_CALLS.with(|counters| counters.set(ProjectionGraphTestCounters::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn projection_graph_test_counters() -> ProjectionGraphTestCounters {
+    PROJECTION_GRAPH_CALLS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn count_projection_write_call() {
+    PROJECTION_GRAPH_CALLS.with(|counters| {
+        let mut value = counters.get();
+        value.write_calls += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(test)]
+fn count_projection_remove_call() {
+    PROJECTION_GRAPH_CALLS.with(|counters| {
+        let mut value = counters.get();
+        value.remove_calls += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(test)]
+fn count_projection_recovery_call() {
+    PROJECTION_GRAPH_CALLS.with(|counters| {
+        let mut value = counters.get();
+        value.recovery_calls += 1;
+        counters.set(value);
+    });
 }
 
 #[cfg(test)]
@@ -6852,6 +6901,8 @@ impl Graph {
         target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_write_call();
         authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
             self.write_page_projection_with_attempts(
                 relative_path,
@@ -7157,6 +7208,8 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_remove_call();
         authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
             self.remove_page_projection_with_attempts(
                 relative_path,
@@ -7431,6 +7484,8 @@ impl Graph {
         expected_base: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
         authority.consume_recovery_evidence(relative_path, |attempts| {
             self.recover_removed_page_projection_with_attempts(
                 relative_path,
@@ -7510,6 +7565,8 @@ impl Graph {
         expected_target: &[u8],
         authority: &mut ProjectionMutationAuthority,
     ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
         authority.consume_recovery_evidence(relative_path, |attempts| {
             self.recover_page_projection_with_attempts(
                 relative_path,

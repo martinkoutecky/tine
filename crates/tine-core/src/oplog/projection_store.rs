@@ -83,6 +83,27 @@ thread_local! {
         std::cell::RefCell::new(None);
     static COMPLETION_PUBLICATION_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    /// Runs after the immutable completion is durable while its mutation
+    /// authority still retains the durable slot.
+    static COMPLETION_RETAINED_SLOT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static RECEIPT_SCAN_COUNTERS: std::cell::Cell<ProjectionStoreTestCounters> =
+        std::cell::Cell::new(ProjectionStoreTestCounters::ZERO);
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectionStoreTestCounters {
+    pub completion_lookups: usize,
+    pub catalog_directory_entries: usize,
+}
+
+#[cfg(test)]
+impl ProjectionStoreTestCounters {
+    const ZERO: Self = Self {
+        completion_lookups: 0,
+        catalog_directory_entries: 0,
+    };
 }
 
 #[cfg(test)]
@@ -168,6 +189,43 @@ fn completion_publication_act_hook() {
 
 #[cfg(not(test))]
 fn completion_publication_act_hook() {}
+
+#[cfg(test)]
+fn completion_retained_slot_hook() {
+    COMPLETION_RETAINED_SLOT_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(test)]
+fn count_completion_lookup() {
+    RECEIPT_SCAN_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.completion_lookups += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(test)]
+fn count_catalog_directory_entry() {
+    RECEIPT_SCAN_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.catalog_directory_entries += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn reset_projection_store_test_counters() {
+    RECEIPT_SCAN_COUNTERS.with(|counters| counters.set(ProjectionStoreTestCounters::ZERO));
+}
+
+#[cfg(test)]
+pub(crate) fn projection_store_test_counters() -> ProjectionStoreTestCounters {
+    RECEIPT_SCAN_COUNTERS.with(std::cell::Cell::get)
+}
 
 #[derive(Debug)]
 struct BoundNamespace {
@@ -1061,6 +1119,8 @@ impl ProjectionReceiptStore {
                 &bytes,
                 "projection completion",
             )?;
+            #[cfg(test)]
+            completion_retained_slot_hook();
             Ok(completion)
         })
     }
@@ -1069,6 +1129,8 @@ impl ProjectionReceiptStore {
         &self,
         intent: &ProjectionIntent,
     ) -> Result<Option<ProjectionCompletion>, ProjectionStoreError> {
+        #[cfg(test)]
+        count_completion_lookup();
         let intent_id = self.require_published_intent(intent)?;
         let completions = self.namespace(COMPLETIONS_DIR)?;
         let Some(bytes) = read_optional_regular(
@@ -1189,6 +1251,8 @@ impl ProjectionReceiptStore {
         let mut catalog_bytes = 0_u64;
         let mut directory_entries = 0_usize;
         for entry in intents_dir.entries()? {
+            #[cfg(test)]
+            count_catalog_directory_entry();
             charge_catalog_directory_entry(
                 &mut directory_entries,
                 MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES,
@@ -1256,6 +1320,8 @@ impl ProjectionReceiptStore {
         let completions_dir = self.namespace(COMPLETIONS_DIR)?;
         let mut completed = BTreeMap::new();
         for entry in completions_dir.entries()? {
+            #[cfg(test)]
+            count_catalog_directory_entry();
             charge_catalog_directory_entry(
                 &mut directory_entries,
                 MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES,
@@ -4186,5 +4252,12 @@ mod tests {
                     && limit == MAX_PROJECTION_EVIDENCE_BYTES
             ));
         }
+    }
+
+    mod crash_corpus {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/oplog/projection_crash_corpus_tests.rs"
+        ));
     }
 }
