@@ -222,6 +222,19 @@ pub(crate) fn reset_projection_store_test_counters() {
     RECEIPT_SCAN_COUNTERS.with(|counters| counters.set(ProjectionStoreTestCounters::ZERO));
 }
 
+/// Clear all receipt-store one-shot fault hooks without affecting measurements.
+#[cfg(test)]
+pub(crate) fn reset_projection_store_test_hooks() {
+    MUTATION_AUTHORITY_CAPTURED_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    MUTATION_AUTHORITY_ACT_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    MUTATION_AUTHORITY_LEASED_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    MUTATION_AUTHORITY_DROP_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    ATTEMPT_PUBLICATION_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    COMPLETION_PUBLICATION_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    COMPLETION_PUBLICATION_ACT_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+    COMPLETION_RETAINED_SLOT_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+}
+
 #[cfg(test)]
 pub(crate) fn projection_store_test_counters() -> ProjectionStoreTestCounters {
     RECEIPT_SCAN_COUNTERS.with(std::cell::Cell::get)
