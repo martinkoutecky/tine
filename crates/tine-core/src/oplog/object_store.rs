@@ -50,7 +50,7 @@ const ENGINE_HISTORY_ROOTS_DIR: &str = "roots";
 const ENGINE_HISTORY_CLAIM_FILE: &str = "engine-history.claim";
 const ENGINE_HISTORY_HEAD_FILE: &str = "engine-history.head";
 const ENGINE_HISTORY_ROOT_SUFFIX: &str = ".history-root";
-const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 3;
+const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 4;
 const MAX_ENGINE_HISTORY_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENGINE_HISTORY_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const ENGINE_HISTORY_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -135,6 +135,7 @@ pub(crate) struct DurableEngineHistoryStore {
     workspace_id: WorkspaceId,
     endpoint_id: super::ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     control: Dir,
     roots: Dir,
     index: EngineHistoryStore,
@@ -148,6 +149,7 @@ struct DurableEngineHistoryRoot {
     workspace_id: WorkspaceId,
     endpoint_id: super::ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     generation: u64,
     index_root: ContentDigest,
     latest_batch_id: Option<BatchId>,
@@ -602,8 +604,9 @@ impl ObjectStore {
 
     pub(crate) fn open_engine_history(
         &self,
-        endpoint: super::ProjectionEndpointBinding,
+        binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<DurableEngineHistoryStore, StoreError> {
+        let endpoint = binding.endpoint;
         ensure_directory_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
         let histories = open_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
         let endpoint_name = endpoint.endpoint_id.to_string();
@@ -616,6 +619,7 @@ impl ObjectStore {
             self.workspace_id,
             endpoint.endpoint_id,
             endpoint.graph_resource_id,
+            binding.receipt_store_id,
             control.try_clone()?,
             open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
             EngineHistoryStore {
@@ -702,8 +706,9 @@ impl ObjectStore {
 
     pub(crate) fn open_projection_work_index(
         &self,
-        endpoint: super::ProjectionEndpointBinding,
+        binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<super::ProjectionWorkIndex, StoreError> {
+        let endpoint = binding.endpoint;
         ensure_directory_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
         let root = open_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
         let endpoint_name = endpoint.endpoint_id.to_string();
@@ -716,6 +721,7 @@ impl ObjectStore {
             self.workspace_id,
             endpoint.endpoint_id,
             endpoint.graph_resource_id,
+            binding.receipt_store_id,
             endpoint_dir.try_clone()?,
             open_dir_nofollow(&endpoint_dir, "nodes")?,
             open_dir_nofollow(&endpoint_dir, "roots")?,
@@ -1053,7 +1059,7 @@ impl EngineHistoryStore {
                         record: existing_record,
                         ..
                     } if existing_batch == batch_id && existing_record == record => {
-                        return Ok(root)
+                        return Ok(root);
                     }
                     _ => return Err(StoreError::HistoryIndexCollision(batch_id)),
                 }
@@ -1151,6 +1157,7 @@ impl DurableEngineHistoryStore {
         workspace_id: WorkspaceId,
         endpoint_id: super::ProjectionEndpointId,
         graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
         control: Dir,
         roots: Dir,
         index: EngineHistoryStore,
@@ -1159,6 +1166,7 @@ impl DurableEngineHistoryStore {
             workspace_id,
             endpoint_id,
             graph_resource_id,
+            receipt_store_id,
             control,
             roots,
             index,
@@ -1232,6 +1240,7 @@ impl DurableEngineHistoryStore {
             workspace_id: self.workspace_id,
             endpoint_id: self.endpoint_id,
             graph_resource_id: self.graph_resource_id,
+            receipt_store_id: self.receipt_store_id,
             generation: before
                 .generation
                 .checked_add(1)
@@ -1246,45 +1255,102 @@ impl DurableEngineHistoryStore {
     }
 
     fn initialize(&self) -> Result<(), StoreError> {
-        let empty = DurableEngineHistoryRoot {
-            schema_version: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
-            workspace_id: self.workspace_id,
-            endpoint_id: self.endpoint_id,
-            graph_resource_id: self.graph_resource_id,
-            generation: 0,
-            index_root: EngineHistoryStore::empty_root(),
-            latest_batch_id: None,
-            binding: EngineHistoryBinding::empty(),
-        };
-        let empty_digest = self.publish_root(&empty)?;
         let head = read_optional_regular(&self.control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
         let claim = read_optional_regular(&self.control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?;
-        if head.is_none() {
-            if claim.is_some() {
-                return Err(StoreError::MalformedHistoryIndex);
+        match (head, claim) {
+            (None, None) => {
+                let empty = DurableEngineHistoryRoot {
+                    schema_version: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+                    workspace_id: self.workspace_id,
+                    endpoint_id: self.endpoint_id,
+                    graph_resource_id: self.graph_resource_id,
+                    receipt_store_id: self.receipt_store_id,
+                    generation: 0,
+                    index_root: EngineHistoryStore::empty_root(),
+                    latest_batch_id: None,
+                    binding: EngineHistoryBinding::empty(),
+                };
+                let empty_digest = self.publish_root(&empty)?;
+                publish_immutable_exact(
+                    &self.control,
+                    ENGINE_HISTORY_HEAD_FILE,
+                    empty_digest.to_string().as_bytes(),
+                    "engine history head",
+                )?;
+                let expected_claim = postcard::to_allocvec(&(
+                    ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+                    self.workspace_id,
+                    self.endpoint_id,
+                    self.graph_resource_id,
+                    self.receipt_store_id,
+                ))
+                .map_err(|_| StoreError::MalformedHistoryIndex)?;
+                publish_immutable_exact(
+                    &self.control,
+                    ENGINE_HISTORY_CLAIM_FILE,
+                    &expected_claim,
+                    "engine history claim",
+                )?;
             }
-            publish_immutable_exact(
-                &self.control,
-                ENGINE_HISTORY_HEAD_FILE,
-                empty_digest.to_string().as_bytes(),
-                "engine history head",
-            )?;
+            (Some(_), Some(claim)) => self.validate_existing_claim(&claim)?,
+            _ => return Err(StoreError::MalformedHistoryIndex),
         }
-        let expected_claim = postcard::to_allocvec(&(
-            ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
-            self.workspace_id,
-            self.endpoint_id,
-            self.graph_resource_id,
-        ))
-        .map_err(|_| StoreError::MalformedHistoryIndex)?;
-        publish_immutable_exact(
-            &self.control,
-            ENGINE_HISTORY_CLAIM_FILE,
-            &expected_claim,
-            "engine history claim",
-        )?;
         self.load_head_root()?;
         Ok(())
+    }
+
+    fn validate_existing_claim(&self, bytes: &[u8]) -> Result<(), StoreError> {
+        type CurrentClaim = (
+            u32,
+            WorkspaceId,
+            super::ProjectionEndpointId,
+            super::CanonicalGraphResourceId,
+            super::ProjectionReceiptStoreId,
+        );
+        if let Ok(claim) = postcard::from_bytes::<CurrentClaim>(bytes) {
+            if postcard::to_allocvec(&claim).ok().as_deref() != Some(bytes) {
+                return Err(StoreError::MalformedHistoryIndex);
+            }
+            if claim.0 < ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+                return Err(StoreError::UpgradeRequired {
+                    store: "engine history",
+                    found: claim.0,
+                    current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+                });
+            }
+            if claim.0 > ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+                return Err(StoreError::UnsupportedStoreVersion {
+                    store: "engine history",
+                    version: claim.0,
+                });
+            }
+            if claim.1 != self.workspace_id
+                || claim.2 != self.endpoint_id
+                || claim.3 != self.graph_resource_id
+                || claim.4 != self.receipt_store_id
+            {
+                return Err(StoreError::MalformedHistoryIndex);
+            }
+            return Ok(());
+        }
+        type PriorClaim = (
+            u32,
+            WorkspaceId,
+            super::ProjectionEndpointId,
+            super::CanonicalGraphResourceId,
+        );
+        if let Ok(claim) = postcard::from_bytes::<PriorClaim>(bytes) {
+            if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes)
+                && claim.0 == ENGINE_HISTORY_ROOT_SCHEMA_VERSION - 1
+            {
+                return Err(StoreError::UpgradeRequired {
+                    store: "engine history",
+                    found: claim.0,
+                    current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+                });
+            }
+        }
+        Err(StoreError::MalformedHistoryIndex)
     }
 
     fn publish_root(&self, root: &DurableEngineHistoryRoot) -> Result<ContentDigest, StoreError> {
@@ -1334,6 +1400,7 @@ impl DurableEngineHistoryStore {
             || root.workspace_id != self.workspace_id
             || root.endpoint_id != self.endpoint_id
             || root.graph_resource_id != self.graph_resource_id
+            || root.receipt_store_id != self.receipt_store_id
             || root.binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
             || (root.generation == 0) != root.latest_batch_id.is_none()
             || root
@@ -1861,6 +1928,15 @@ pub enum StoreError {
     HistoryIndexCollision(BatchId),
     HistoryIndexPathMismatch(ContentDigest),
     MalformedHistoryIndex,
+    UpgradeRequired {
+        store: &'static str,
+        found: u32,
+        current: u32,
+    },
+    UnsupportedStoreVersion {
+        store: &'static str,
+        version: u32,
+    },
     BlockClaimIndexPathMismatch(ContentDigest),
     MalformedBlockClaimIndex,
     MissingLogseqClaimIndexNode(ContentDigest),
@@ -1921,13 +1997,27 @@ impl fmt::Display for StoreError {
                 "accepted manifest {batch_id} has no CRDT update for document {document_id}"
             ),
             Self::HistoryIndexCollision(batch_id) => {
-                write!(f, "authenticated history index collision for batch {batch_id}")
+                write!(
+                    f,
+                    "authenticated history index collision for batch {batch_id}"
+                )
             }
             Self::HistoryIndexPathMismatch(digest) => {
-                write!(f, "authenticated history index bytes do not match path {digest}")
+                write!(
+                    f,
+                    "authenticated history index bytes do not match path {digest}"
+                )
             }
             Self::MalformedHistoryIndex => {
                 f.write_str("authenticated history index is malformed or non-canonical")
+            }
+            Self::UpgradeRequired {
+                store,
+                found,
+                current,
+            } => write!(f, "{store} version {found} requires upgrade to {current}"),
+            Self::UnsupportedStoreVersion { store, version } => {
+                write!(f, "{store} version {version} is unsupported")
             }
             Self::BlockClaimIndexPathMismatch(digest) => write!(
                 f,
@@ -1937,7 +2027,10 @@ impl fmt::Display for StoreError {
                 f.write_str("authenticated block-claim index is malformed or non-canonical")
             }
             Self::MissingLogseqClaimIndexNode(digest) => {
-                write!(f, "authenticated Logseq claim index node {digest} is missing")
+                write!(
+                    f,
+                    "authenticated Logseq claim index node {digest} is missing"
+                )
             }
             Self::LogseqClaimIndexPathMismatch(digest) => write!(
                 f,
@@ -2706,7 +2799,15 @@ mod history_index_tests {
             ),
         };
         let store = ObjectStore::open(&root.join("archive"), workspace).unwrap();
-        let history = store.open_engine_history(endpoint_binding).unwrap();
+        let history = store
+            .open_engine_history(crate::oplog::hot_engine::ProjectionStorageBinding {
+                endpoint: endpoint_binding,
+                receipt_store_id: crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                    b"test",
+                    b"engine-history",
+                ),
+            })
+            .unwrap();
         history
             .publish(
                 BatchId::from_uuid(Uuid::from_u128(6)),
@@ -2738,6 +2839,82 @@ mod history_index_tests {
             history.current(),
             Err(StoreError::MalformedHistoryIndex)
         ));
+        drop(history);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prior_version_durable_history_requires_upgrade_without_writes() {
+        fn snapshot(path: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+            let mut result = BTreeMap::new();
+            let mut pending = vec![path.to_path_buf()];
+            while let Some(directory) = pending.pop() {
+                for entry in std::fs::read_dir(&directory).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry.file_type().unwrap().is_dir() {
+                        pending.push(entry.path());
+                    } else {
+                        result.insert(
+                            entry.path().strip_prefix(path).unwrap().to_path_buf(),
+                            std::fs::read(entry.path()).unwrap(),
+                        );
+                    }
+                }
+            }
+            result
+        }
+
+        let root = test_root("prior-durable-root");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(50));
+        let endpoint = crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(51));
+        let binding = crate::oplog::hot_engine::ProjectionStorageBinding {
+            endpoint: crate::oplog::ProjectionEndpointBinding {
+                endpoint_id: endpoint,
+                device_id: crate::oplog::DeviceId::from_uuid(Uuid::from_u128(52)),
+                graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"test",
+                    b"prior-durable-root",
+                ),
+            },
+            receipt_store_id: crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                b"test",
+                b"prior-durable-receipts",
+            ),
+        };
+        let archive_path = root.join("archive");
+        let store = ObjectStore::open(&archive_path, workspace).unwrap();
+        let history = store.open_engine_history(binding).unwrap();
+        history
+            .publish(
+                BatchId::from_uuid(Uuid::from_u128(53)),
+                b"preserved accepted history",
+                EngineHistoryBinding::empty(),
+            )
+            .unwrap();
+        let control = archive_path
+            .join(ENGINE_HISTORY_DIR)
+            .join(endpoint.to_string());
+        let prior_claim = postcard::to_allocvec(&(
+            3_u32,
+            workspace,
+            endpoint,
+            binding.endpoint.graph_resource_id,
+        ))
+        .unwrap();
+        std::fs::write(control.join(ENGINE_HISTORY_CLAIM_FILE), prior_claim).unwrap();
+        let before = snapshot(&archive_path);
+
+        let reopened = ObjectStore::open(&archive_path, workspace).unwrap();
+        assert!(matches!(
+            reopened.open_engine_history(binding),
+            Err(StoreError::UpgradeRequired {
+                store: "engine history",
+                found: 3,
+                current: 4
+            })
+        ));
+        assert_eq!(snapshot(&archive_path), before);
         drop(history);
         drop(store);
         std::fs::remove_dir_all(root).unwrap();

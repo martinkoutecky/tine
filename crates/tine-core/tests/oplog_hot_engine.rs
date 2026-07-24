@@ -4202,11 +4202,12 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
     let graph_path = dir.path().join("graph");
     std::fs::create_dir(&graph_path).unwrap();
     let graph = Graph::open(&graph_path);
-    let binding = ProjectionEndpointBinding {
-        endpoint_id: ProjectionEndpointId::from_uuid(uuid(40_160)),
-        device_id: DeviceId::from_uuid(uuid(40_161)),
-        graph_resource_id: graph.canonical_resource_id().unwrap(),
-    };
+    let binding = ProjectionEndpointBinding::enroll_graph(
+        &graph,
+        ProjectionEndpointId::from_uuid(uuid(40_160)),
+        DeviceId::from_uuid(uuid(40_161)),
+    )
+    .unwrap();
     let receipts = ProjectionReceiptStore::open_for_endpoint(
         &dir.path().join("receipts"),
         ids.workspace,

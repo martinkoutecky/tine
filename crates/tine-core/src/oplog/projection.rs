@@ -79,6 +79,10 @@ impl ProjectionPlan {
     pub fn generated_anchors(&self) -> &[PolicyGeneratedAnchor] {
         &self.generated_anchors
     }
+
+    pub(crate) fn into_intent_and_target(self) -> (ProjectionIntent, Vec<u8>) {
+        (self.intent, self.target)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,6 +275,13 @@ fn execute_manifested_projection_work_with_runtime(
     let endpoint = engine
         .projection_endpoint_binding()
         .ok_or(ProjectionError::EndpointBindingMismatch)?;
+    let receipt_store_id = engine
+        .projection_receipt_store_id()
+        .ok_or(ProjectionError::EndpointBindingMismatch)?;
+    if receipts.store_id() != receipt_store_id || work_index.receipt_store_id() != receipt_store_id
+    {
+        return Err(ProjectionError::EndpointBindingMismatch);
+    }
     receipts.require_endpoint(endpoint)?;
     if graph.canonical_resource_id()? != endpoint.graph_resource_id {
         return Err(ProjectionError::EndpointBindingMismatch);
@@ -293,7 +304,7 @@ fn execute_manifested_projection_work_with_runtime(
         BatchInspection::Absent | BatchInspection::Staged { .. } => {
             return Err(ProjectionError::Archive(
                 "projection work batch is not a complete immutable object set".into(),
-            ))
+            ));
         }
     };
     let intent_object = batch
@@ -447,7 +458,9 @@ fn execute_manifested_projection_work_with_runtime(
                         .map(super::BlobDescription::of);
                     work_index
                         .mark_blocked(ProjectionWorkBlockAuthority::guarded_conflict(
-                            work, observed,
+                            work,
+                            receipts.store_id(),
+                            observed,
                         ))
                         .map_err(|error| ProjectionError::Work(error.to_string()))?;
                     return Err(error.into());
@@ -583,6 +596,9 @@ fn require_endpoint_authority(
     let endpoint = engine
         .projection_endpoint_binding()
         .ok_or(ProjectionError::EndpointBindingMismatch)?;
+    if engine.projection_receipt_store_id() != Some(store.store_id()) {
+        return Err(ProjectionError::EndpointBindingMismatch);
+    }
     store.require_endpoint(endpoint)?;
     if graph.canonical_resource_id()? != endpoint.graph_resource_id {
         return Err(ProjectionError::EndpointBindingMismatch);

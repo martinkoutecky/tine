@@ -14,6 +14,7 @@ pub(crate) mod document_state;
 pub(crate) mod evidence_index;
 pub mod hot_engine;
 pub mod identity;
+pub mod import;
 pub(crate) mod loro_store;
 pub mod object_store;
 pub(crate) mod portable_path_index;
@@ -38,17 +39,26 @@ pub use batch::{
 pub use hot_engine::{
     AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, AuthorTransactionDraft, BatchDisposition,
     BlockLocation, CapabilityCapturedProjectionInput, CapabilityCapturedProjectionState,
-    EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim,
-    ImmutableHomeConflict, ImmutableHomeEvidence, LogseqIdentityMutation, LogseqIdentityTrigger,
-    LogseqUuidClaim, LogseqUuidResolution, MaterializationStats, MaterializedBlock,
-    MaterializedPage, OperationTransaction, PortablePathConflict, PortablePathConflictParticipant,
-    ProjectionEndpointBinding, ProjectionPageState, ProjectionRequirement,
-    ProjectionRequirementState, ProjectionWriteAuthorization, SemanticOperation, ShardedHotEngine,
-    StageOutcome, WorkspaceStatus,
+    CurrentPageAtPath, EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle,
+    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, LogseqIdentityMutation,
+    LogseqIdentityTrigger, LogseqUuidClaim, LogseqUuidResolution, MaterializationStats,
+    MaterializedBlock, MaterializedPage, OperationTransaction, PortablePathConflict,
+    PortablePathConflictParticipant, ProjectionEndpointBinding, ProjectionPageState,
+    ProjectionRequirement, ProjectionRequirementState, ProjectionWriteAuthorization,
+    SemanticOperation, ShardedHotEngine, StageOutcome, WorkspaceStatus,
 };
 pub use identity::{
     BatchId, BlockId, CanonicalGraphResourceId, CrdtPeerId, DeviceId, DocumentId, ImportId,
-    LogseqUuid, PageId, ProjectionEndpointId, SessionId, WorkspaceId,
+    LogseqUuid, PageId, ProjectionEndpointId, ProjectionReceiptStoreId, SessionId, WorkspaceId,
+};
+pub use import::{
+    classify_conflict_copy, inventory_affected, inventory_initial_shadow, plan_affected_import,
+    BlockImportMatch, BlockMatchBasis, ConflictClassificationError, ConflictCopyClass, ExactBytes,
+    ImportBlock, ImportBlockReason, ImportInstrumentation, ImportMatches, ImportPlan,
+    ImportPlanStatus, InventoryError, PageImportMatch, PageMatchBasis, RawInventory,
+    RawObservation, RejectedRawId, RejectedRawIdReason, MAX_IMPORT_CATALOG_ENTRIES,
+    MAX_IMPORT_DEPTH, MAX_IMPORT_FILES, MAX_IMPORT_LOCATOR_COMPONENTS, MAX_IMPORT_PARSED_NODES,
+    MAX_IMPORT_RAW_BYTES,
 };
 pub use object_store::{BatchInspection, ObjectStore, ObjectStoreStats, StoreError};
 pub use portable_path_index::{

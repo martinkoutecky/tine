@@ -811,9 +811,50 @@ pub struct AuthorBatch {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectionEndpointBinding {
-    pub endpoint_id: ProjectionEndpointId,
-    pub device_id: DeviceId,
-    pub graph_resource_id: super::CanonicalGraphResourceId,
+    pub(crate) endpoint_id: ProjectionEndpointId,
+    pub(crate) device_id: DeviceId,
+    pub(crate) graph_resource_id: super::CanonicalGraphResourceId,
+}
+
+impl ProjectionEndpointBinding {
+    pub fn enroll_graph(
+        graph: &Graph,
+        endpoint_id: ProjectionEndpointId,
+        device_id: DeviceId,
+    ) -> std::io::Result<Self> {
+        Ok(Self {
+            endpoint_id,
+            device_id,
+            graph_resource_id: graph.canonical_resource_id()?,
+        })
+    }
+
+    pub const fn endpoint_id(self) -> ProjectionEndpointId {
+        self.endpoint_id
+    }
+
+    pub const fn device_id(self) -> DeviceId {
+        self.device_id
+    }
+
+    pub const fn graph_resource_id(self) -> super::CanonicalGraphResourceId {
+        self.graph_resource_id
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CurrentPageAtPath {
+    ExactOwner(PortablePathOccupied),
+    Released(PortablePathReleased),
+    Unowned,
+    PortableCollision(PortablePathOccupied),
+    ReleasedPortableCollision(PortablePathReleased),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionStorageBinding {
+    pub(crate) endpoint: ProjectionEndpointBinding,
+    pub(crate) receipt_store_id: super::ProjectionReceiptStoreId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1600,6 +1641,7 @@ pub struct ShardedHotEngine {
     archive: BTreeMap<BatchId, ValidatedBatch>,
     archive_store: Option<Arc<ObjectStore>>,
     projection_endpoint: Option<ProjectionEndpointBinding>,
+    projection_receipt_store_id: Option<super::ProjectionReceiptStoreId>,
     projection_work_index: Option<Arc<ProjectionWorkIndex>>,
     scratch: Option<Arc<ScratchStore>>,
     scratch_roots: ScratchRoots,
@@ -1684,6 +1726,7 @@ impl ShardedHotEngine {
             archive: BTreeMap::new(),
             archive_store: None,
             projection_endpoint: None,
+            projection_receipt_store_id: None,
             projection_work_index: None,
             scratch: None,
             scratch_roots: ScratchRoots::default(),
@@ -1772,6 +1815,7 @@ impl ShardedHotEngine {
     ) -> Self {
         let workspace_id = store.workspace_id();
         let endpoint = receipts.endpoint_binding();
+        let receipt_store_id = receipts.store_id();
         let enrollment_error = if receipts.workspace_id() != workspace_id {
             Some("projection receipt workspace does not match archive workspace".to_owned())
         } else if endpoint.is_none() {
@@ -1801,7 +1845,10 @@ impl ShardedHotEngine {
             store,
             lineage_digest,
             catalog_document_id,
-            endpoint.expect("validated enrolled endpoint"),
+            ProjectionStorageBinding {
+                endpoint: endpoint.expect("validated enrolled endpoint"),
+                receipt_store_id,
+            },
         )
     }
 
@@ -1809,14 +1856,15 @@ impl ShardedHotEngine {
         store: ObjectStore,
         lineage_digest: LineageDigest,
         catalog_document_id: DocumentId,
-        endpoint: ProjectionEndpointBinding,
+        binding: ProjectionStorageBinding,
     ) -> Self {
+        let endpoint = binding.endpoint;
         let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
         let history = engine
             .archive_store
             .as_ref()
             .expect("archive store was installed")
-            .open_engine_history(endpoint);
+            .open_engine_history(binding);
         match history {
             Ok(history) => match history.current_with_binding() {
                 Ok((generation, root, _, binding)) => {
@@ -1881,10 +1929,11 @@ impl ShardedHotEngine {
                 .archive_store
                 .as_ref()
                 .expect("archive store was installed")
-                .open_projection_work_index(endpoint);
+                .open_projection_work_index(binding);
             match result {
                 Ok(index) => {
                     engine.projection_endpoint = Some(endpoint);
+                    engine.projection_receipt_store_id = Some(binding.receipt_store_id);
                     engine.projection_work_index = Some(Arc::new(index));
                     if engine.fatal_handle.is_none() {
                         if let Err(error) = engine.reconcile_pending_projection_work() {
@@ -1916,6 +1965,12 @@ impl ShardedHotEngine {
             || index.workspace_id() != self.workspace_id
             || index.endpoint_id() != endpoint.endpoint_id
             || index.graph_resource_id() != endpoint.graph_resource_id
+            || index.receipt_store_id()
+                != self.projection_receipt_store_id.ok_or_else(|| {
+                    EngineError::ProjectionWork(
+                        "engine has no enrolled projection receipt store".into(),
+                    )
+                })?
         {
             return Err(EngineError::ProjectionWork(
                 "engine-owned projection runtime binding mismatch".into(),
@@ -1930,6 +1985,12 @@ impl ShardedHotEngine {
 
     pub const fn projection_endpoint_binding(&self) -> Option<ProjectionEndpointBinding> {
         self.projection_endpoint
+    }
+
+    pub(crate) const fn projection_receipt_store_id(
+        &self,
+    ) -> Option<super::ProjectionReceiptStoreId> {
+        self.projection_receipt_store_id
     }
 
     pub const fn workspace_id(&self) -> WorkspaceId {
@@ -2519,6 +2580,34 @@ impl ShardedHotEngine {
 
     pub const fn portable_path_index_root(&self) -> PortablePathIndexRoot {
         self.portable_path_root
+    }
+
+    /// Authenticated point lookup used by import scope capture.
+    ///
+    /// The portable key is only an index key; exact case-preserved path
+    /// equality is rechecked before returning an owner.
+    pub fn current_page_at_path(
+        &self,
+        path: &ManagedPath,
+    ) -> Result<CurrentPageAtPath, EngineError> {
+        self.begin_point_operation();
+        self.ensure_not_blocked()?;
+        let key = path.portable_key().digest();
+        let record = self.portable_path_records_many(&[key])?.remove(&key);
+        Ok(match record {
+            Some(record) => match (record.occupied().cloned(), record.latest_release().cloned()) {
+                (Some(occupied), _) if occupied.exact_path() == path => {
+                    CurrentPageAtPath::ExactOwner(occupied)
+                }
+                (Some(occupied), _) => CurrentPageAtPath::PortableCollision(occupied),
+                (None, Some(released)) if released.prior_exact_path() == path => {
+                    CurrentPageAtPath::Released(released)
+                }
+                (None, Some(released)) => CurrentPageAtPath::ReleasedPortableCollision(released),
+                (None, None) => CurrentPageAtPath::Unowned,
+            },
+            None => CurrentPageAtPath::Unowned,
+        })
     }
 
     pub fn portable_path_conflicts(&self) -> Vec<PortablePathConflict> {
@@ -4524,6 +4613,7 @@ impl ShardedHotEngine {
             || index.workspace_id() != self.workspace_id
             || index.endpoint_id() != endpoint.endpoint_id
             || index.graph_resource_id() != endpoint.graph_resource_id
+            || Some(index.receipt_store_id()) != self.projection_receipt_store_id
             || work.workspace_id() != self.workspace_id
         {
             return Err(EngineError::ProjectionWork(
@@ -4599,6 +4689,81 @@ impl ShardedHotEngine {
         }
         index
             .require_accepted_ready(work, record.manifest_fingerprint)
+            .map_err(|error| EngineError::ProjectionWork(error.to_string()))
+    }
+
+    pub(crate) fn authorize_projected_release(
+        &self,
+        index: &ProjectionWorkIndex,
+        release: &PortablePathReleased,
+    ) -> Result<ProjectionWork, EngineError> {
+        self.begin_point_operation();
+        self.ensure_not_blocked()?;
+        let endpoint = self.projection_endpoint.ok_or_else(|| {
+            EngineError::ProjectionWork("engine has no enrolled projection endpoint".into())
+        })?;
+        let receipt_store_id = self.projection_receipt_store_id.ok_or_else(|| {
+            EngineError::ProjectionWork("engine has no enrolled projection receipt store".into())
+        })?;
+        if index.workspace_id() != self.workspace_id
+            || index.endpoint_id() != endpoint.endpoint_id
+            || index.graph_resource_id() != endpoint.graph_resource_id
+            || index.receipt_store_id() != receipt_store_id
+        {
+            return Err(EngineError::ProjectionWork(
+                "projection release runtime binding mismatch".into(),
+            ));
+        }
+        let history = self.history_store.as_ref().ok_or_else(|| {
+            EngineError::ProjectionWork(
+                "projection release authorization has no durable engine history".into(),
+            )
+        })?;
+        let (generation, history_root) = history
+            .current()
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        index
+            .require_current_history_binding(generation, history_root)
+            .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+        let bytes = history
+            .lookup(history_root, release.release_batch())
+            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .ok_or_else(|| {
+                EngineError::ProjectionWork(
+                    "projection release batch has no authenticated durable status".into(),
+                )
+            })?;
+        let record = decode_history_record(release.release_batch(), &bytes)?;
+        if record.generation == 0
+            || record.generation > generation
+            || !matches!(record.status, ArchiveStatus::Accepted { .. })
+        {
+            return Err(EngineError::ProjectionWork(
+                "projection release batch is not accepted durable state".into(),
+            ));
+        }
+        let key = release.prior_exact_path().portable_key().digest();
+        let current = self.portable_path_records_many(&[key])?.remove(&key);
+        if current
+            .as_ref()
+            .and_then(PortablePathRecord::occupied)
+            .is_some()
+            || current
+                .as_ref()
+                .and_then(PortablePathRecord::latest_release)
+                != Some(release)
+        {
+            return Err(EngineError::ProjectionWork(
+                "projection release is not the authenticated current path fence".into(),
+            ));
+        }
+        index
+            .completed_release(
+                release.release_batch(),
+                record.manifest_fingerprint,
+                release.prior_page_id(),
+                release.prior_exact_path(),
+            )
             .map_err(|error| EngineError::ProjectionWork(error.to_string()))
     }
 

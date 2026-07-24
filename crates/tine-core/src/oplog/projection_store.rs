@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
@@ -17,8 +17,8 @@ use super::{
     BaseBlob, BlobDescription, CapabilityCapturedProjectionInput,
     CapabilityCapturedProjectionState, ManagedPath, ProjectionCompletion,
     ProjectionEndpointBinding, ProjectionIntent, ProjectionIntentId, ProjectionPrecondition,
-    ProjectionWork, ProjectionWorkCompletionAuthority, ProjectionWorkTarget, ReceiptError,
-    WorkspaceId,
+    ProjectionReceiptStoreId, ProjectionWork, ProjectionWorkCompletionAuthority,
+    ProjectionWorkTarget, ReceiptError, WorkspaceId,
 };
 use crate::model::{Graph, ProjectionWriteProof};
 
@@ -28,10 +28,14 @@ const INTENTS_DIR: &str = "intents";
 const COMPLETIONS_DIR: &str = "completions";
 const ATTEMPTS_DIR: &str = "attempts";
 const FORENSICS_DIR: &str = "forensics";
-const STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR3\0";
-const STORE_CLAIM_VERSION: u32 = 3;
-const STORE_CLAIM_LEN: usize = STORE_CLAIM_MAGIC.len() + 4 + 16 + 1 + 16 + 16 + 32;
+const STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR4\0";
+const PRIOR_STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR3\0";
+const STORE_CLAIM_VERSION: u32 = 4;
+const STORE_CLAIM_LEN: usize = STORE_CLAIM_MAGIC.len() + 4 + 32 + 16 + 1 + 16 + 16 + 32;
 pub(crate) const MAX_PROJECTION_EVIDENCE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_PROJECTION_CATALOG_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_PROJECTION_CATALOG_ROWS: usize = 2_000_000;
+const MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES: usize = 4_000_000;
 const LOCAL_ATTEMPT_SCHEMA_VERSION: u32 = 1;
 const LOCAL_FORENSIC_SCHEMA_VERSION: u32 = 1;
 
@@ -181,9 +185,21 @@ impl LocalProjectionEvidenceRecord {
 #[derive(Debug)]
 pub struct ProjectionReceiptStore {
     root_path: PathBuf,
+    store_id: ProjectionReceiptStoreId,
     workspace_id: WorkspaceId,
     endpoint: Option<ProjectionEndpointBinding>,
     capability: Dir,
+}
+
+/// Canonical read-only catalog row used only by the combined import authority.
+///
+/// Fields stay crate-private so a downstream caller cannot manufacture a
+/// durable intent/completion claim. Construction validates the entire intent
+/// and completion namespaces, including exact base bytes and orphan entries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionCatalogEntry {
+    pub(crate) intent: ProjectionIntent,
+    pub(crate) completion: Option<ProjectionCompletion>,
 }
 
 impl ProjectionReceiptStore {
@@ -224,9 +240,11 @@ impl ProjectionReceiptStore {
         let parent_capability = Dir::open_ambient_dir(&canonical_parent, ambient_authority())?;
         ensure_directory_nofollow(&parent_capability, name)?;
         let capability = open_dir_nofollow(&parent_capability, name)?;
+        let store_id = canonical_receipt_store_id(&capability)?;
 
         let store = Self {
             root_path: canonical_parent.join(name),
+            store_id,
             workspace_id,
             endpoint,
             capability,
@@ -237,6 +255,10 @@ impl ProjectionReceiptStore {
 
     pub fn root_path(&self) -> &Path {
         &self.root_path
+    }
+
+    pub const fn store_id(&self) -> ProjectionReceiptStoreId {
+        self.store_id
     }
 
     pub const fn workspace_id(&self) -> WorkspaceId {
@@ -316,10 +338,10 @@ impl ProjectionReceiptStore {
         match (intent.precondition(), base_bytes) {
             (ProjectionPrecondition::Absent, None) => {}
             (ProjectionPrecondition::Absent, Some(_)) => {
-                return Err(ProjectionStoreError::UnexpectedBase)
+                return Err(ProjectionStoreError::UnexpectedBase);
             }
             (ProjectionPrecondition::Base(description), None) => {
-                return Err(ProjectionStoreError::MissingBase(*description))
+                return Err(ProjectionStoreError::MissingBase(*description));
             }
             (ProjectionPrecondition::Base(description), Some(base_bytes)) => {
                 require_evidence_length(
@@ -565,6 +587,7 @@ impl ProjectionReceiptStore {
         completion.validate_against(intent)?;
         Ok(ProjectionWorkCompletionAuthority::from_durable_completion(
             work,
+            self.store_id,
             completion.intent_id(),
             completion.logical_completion_id(),
         ))
@@ -614,9 +637,31 @@ impl ProjectionReceiptStore {
     /// temporary names are ignored; malformed names and non-regular entries fail
     /// closed instead of disappearing from recovery.
     pub fn incomplete_intents(&self) -> Result<Vec<ProjectionIntent>, ProjectionStoreError> {
+        Ok(self
+            .validated_catalog()?
+            .into_iter()
+            .filter_map(|entry| entry.completion.is_none().then_some(entry.intent))
+            .collect())
+    }
+
+    /// Validate and load the complete durable intent/completion catalog.
+    ///
+    /// This is deliberately crate-private: import authority is minted only by
+    /// the projection bridge after it also proves enrolled endpoint, accepted
+    /// engine frontier, and immutable object readiness.
+    pub(crate) fn validated_catalog(
+        &self,
+    ) -> Result<Vec<ProjectionCatalogEntry>, ProjectionStoreError> {
         let intents_dir = self.namespace(INTENTS_DIR)?;
         let mut intents = BTreeMap::new();
+        let mut validated_bases = std::collections::BTreeSet::new();
+        let mut catalog_bytes = 0_u64;
+        let mut directory_entries = 0_usize;
         for entry in intents_dir.entries()? {
+            charge_catalog_directory_entry(
+                &mut directory_entries,
+                MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES,
+            )?;
             let entry = entry?;
             let name = entry.file_name();
             let name = name.to_str().ok_or_else(|| {
@@ -625,6 +670,13 @@ impl ProjectionReceiptStore {
             require_regular_entry(&entry.file_type()?, name)?;
             if is_temp_name(name) {
                 continue;
+            }
+            if intents.len() == MAX_PROJECTION_CATALOG_ROWS {
+                return Err(ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection catalog rows",
+                    declared: intents.len().saturating_add(1) as u64,
+                    limit: MAX_PROJECTION_CATALOG_ROWS as u64,
+                });
             }
             require_canonical_evidence_name(name, ".intent")?;
             let bytes =
@@ -641,13 +693,42 @@ impl ProjectionReceiptStore {
                     "projection intent",
                 ));
             }
-            self.load_base(&intent)?;
+            catalog_bytes = catalog_bytes.checked_add(bytes.len() as u64).ok_or(
+                ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection catalog",
+                    declared: u64::MAX,
+                    limit: MAX_PROJECTION_CATALOG_BYTES,
+                },
+            )?;
+            if let ProjectionPrecondition::Base(description) = intent.precondition() {
+                if validated_bases.insert(*description) {
+                    catalog_bytes = catalog_bytes.checked_add(description.byte_length()).ok_or(
+                        ProjectionStoreError::EvidenceTooLarge {
+                            kind: "projection catalog",
+                            declared: u64::MAX,
+                            limit: MAX_PROJECTION_CATALOG_BYTES,
+                        },
+                    )?;
+                    self.load_base(&intent)?;
+                }
+            }
+            if catalog_bytes > MAX_PROJECTION_CATALOG_BYTES {
+                return Err(ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection catalog",
+                    declared: catalog_bytes,
+                    limit: MAX_PROJECTION_CATALOG_BYTES,
+                });
+            }
             intents.insert(completion_filename(intent.id()?), intent);
         }
 
         let completions_dir = self.namespace(COMPLETIONS_DIR)?;
-        let mut completed = BTreeSet::new();
+        let mut completed = BTreeMap::new();
         for entry in completions_dir.entries()? {
+            charge_catalog_directory_entry(
+                &mut directory_entries,
+                MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES,
+            )?;
             let entry = entry?;
             let name = entry.file_name();
             let name = name.to_str().ok_or_else(|| {
@@ -656,6 +737,13 @@ impl ProjectionReceiptStore {
             require_regular_entry(&entry.file_type()?, name)?;
             if is_temp_name(name) {
                 continue;
+            }
+            if completed.len() == MAX_PROJECTION_CATALOG_ROWS {
+                return Err(ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection completion rows",
+                    declared: completed.len().saturating_add(1) as u64,
+                    limit: MAX_PROJECTION_CATALOG_ROWS as u64,
+                });
             }
             require_canonical_evidence_name(name, ".completion")?;
             let intent = intents
@@ -672,13 +760,28 @@ impl ProjectionReceiptStore {
             if completion.encode()? != bytes {
                 return Err(ProjectionStoreError::NonCanonical("projection completion"));
             }
-            completed.insert(name.to_owned());
+            catalog_bytes = catalog_bytes.checked_add(bytes.len() as u64).ok_or(
+                ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection catalog",
+                    declared: u64::MAX,
+                    limit: MAX_PROJECTION_CATALOG_BYTES,
+                },
+            )?;
+            if catalog_bytes > MAX_PROJECTION_CATALOG_BYTES {
+                return Err(ProjectionStoreError::EvidenceTooLarge {
+                    kind: "projection catalog",
+                    declared: catalog_bytes,
+                    limit: MAX_PROJECTION_CATALOG_BYTES,
+                });
+            }
+            completed.insert(name.to_owned(), completion);
         }
 
         Ok(intents
             .into_iter()
-            .filter_map(|(completion_name, intent)| {
-                (!completed.contains(&completion_name)).then_some(intent)
+            .map(|(completion_name, intent)| ProjectionCatalogEntry {
+                completion: completed.remove(&completion_name),
+                intent,
             })
             .collect())
     }
@@ -699,35 +802,50 @@ impl ProjectionReceiptStore {
     }
 
     fn initialize(&self) -> Result<(), ProjectionStoreError> {
-        let claim = claim_bytes(self.workspace_id, self.endpoint);
-        match read_optional_regular(
-            &self.capability,
-            STORE_CLAIM_FILE,
-            STORE_CLAIM_LEN as u64,
-            Some(STORE_CLAIM_LEN as u64),
-        )? {
-            Some(bytes) => validate_claim(&bytes, self.workspace_id, self.endpoint)?,
-            None => publish_immutable_exact(
-                &self.capability,
-                STORE_CLAIM_FILE,
-                &claim,
-                "projection receipt store claim",
-            )?,
-        }
-        for namespace in [
-            BASES_DIR,
-            INTENTS_DIR,
-            COMPLETIONS_DIR,
-            ATTEMPTS_DIR,
-            FORENSICS_DIR,
-        ] {
-            ensure_directory_nofollow(&self.capability, namespace)?;
+        let claim = claim_bytes(self.store_id, self.workspace_id, self.endpoint);
+        let existing = read_optional_regular(&self.capability, STORE_CLAIM_FILE, 256, None)?;
+        match existing {
+            Some(bytes) => {
+                validate_claim(&bytes, self.store_id, self.workspace_id, self.endpoint)?;
+                for namespace in [
+                    BASES_DIR,
+                    INTENTS_DIR,
+                    COMPLETIONS_DIR,
+                    ATTEMPTS_DIR,
+                    FORENSICS_DIR,
+                ] {
+                    open_dir_nofollow(&self.capability, namespace).map_err(|error| {
+                        ProjectionStoreError::UnsafeEntry(format!(
+                            "claimed receipt store is missing namespace {namespace}: {error}"
+                        ))
+                    })?;
+                }
+            }
+            None => {
+                if self.capability.entries()?.next().transpose()?.is_some() {
+                    return Err(ProjectionStoreError::ClaimlessNonemptyStore);
+                }
+                publish_immutable_exact(
+                    &self.capability,
+                    STORE_CLAIM_FILE,
+                    &claim,
+                    "projection receipt store claim",
+                )?;
+                for namespace in [
+                    BASES_DIR,
+                    INTENTS_DIR,
+                    COMPLETIONS_DIR,
+                    ATTEMPTS_DIR,
+                    FORENSICS_DIR,
+                ] {
+                    ensure_directory_nofollow(&self.capability, namespace)?;
+                }
+            }
         }
         Ok(())
     }
 
     fn namespace(&self, name: &str) -> Result<Dir, ProjectionStoreError> {
-        ensure_directory_nofollow(&self.capability, name)?;
         open_dir_nofollow(&self.capability, name).map_err(Into::into)
     }
 
@@ -853,7 +971,12 @@ pub enum ProjectionStoreError {
     Receipt(ReceiptError),
     UnsafeEntry(String),
     UnknownStoreVersion(u32),
+    UpgradeRequired {
+        found: u32,
+        current: u32,
+    },
     MalformedStoreClaim,
+    ClaimlessNonemptyStore,
     EndpointBindingMismatch,
     GraphResourceMismatch,
     CapturedInputMismatch,
@@ -895,7 +1018,14 @@ impl fmt::Display for ProjectionStoreError {
             Self::UnknownStoreVersion(version) => {
                 write!(f, "unknown projection store version {version}")
             }
+            Self::UpgradeRequired { found, current } => write!(
+                f,
+                "projection receipt store version {found} requires upgrade to {current}"
+            ),
             Self::MalformedStoreClaim => f.write_str("malformed projection store claim"),
+            Self::ClaimlessNonemptyStore => {
+                f.write_str("claimless nonempty projection receipt store cannot be initialized")
+            }
             Self::EndpointBindingMismatch => {
                 f.write_str("projection receipt store endpoint enrollment mismatch")
             }
@@ -999,10 +1129,15 @@ impl From<ReceiptError> for ProjectionStoreError {
     }
 }
 
-fn claim_bytes(workspace_id: WorkspaceId, endpoint: Option<ProjectionEndpointBinding>) -> Vec<u8> {
+fn claim_bytes(
+    store_id: ProjectionReceiptStoreId,
+    workspace_id: WorkspaceId,
+    endpoint: Option<ProjectionEndpointBinding>,
+) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(STORE_CLAIM_LEN);
     bytes.extend_from_slice(STORE_CLAIM_MAGIC);
     bytes.extend_from_slice(&STORE_CLAIM_VERSION.to_be_bytes());
+    bytes.extend_from_slice(store_id.as_bytes());
     bytes.extend_from_slice(workspace_id.as_uuid().as_bytes());
     match endpoint {
         Some(endpoint) => {
@@ -1021,12 +1156,64 @@ fn claim_bytes(workspace_id: WorkspaceId, endpoint: Option<ProjectionEndpointBin
     bytes
 }
 
+fn charge_catalog_directory_entry(
+    count: &mut usize,
+    limit: usize,
+) -> Result<(), ProjectionStoreError> {
+    *count = count.saturating_add(1);
+    if *count > limit {
+        Err(ProjectionStoreError::EvidenceTooLarge {
+            kind: "projection catalog directory entries",
+            declared: *count as u64,
+            limit: limit as u64,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod catalog_limit_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_directory_budget_counts_temp_entries_before_loading() {
+        let mut count = 0;
+        charge_catalog_directory_entry(&mut count, 2).unwrap();
+        charge_catalog_directory_entry(&mut count, 2).unwrap();
+        assert!(matches!(
+            charge_catalog_directory_entry(&mut count, 2),
+            Err(ProjectionStoreError::EvidenceTooLarge {
+                kind: "projection catalog directory entries",
+                declared: 3,
+                limit: 2
+            })
+        ));
+    }
+}
+
 fn validate_claim(
     bytes: &[u8],
+    expected_store_id: ProjectionReceiptStoreId,
     expected_workspace: WorkspaceId,
     expected_endpoint: Option<ProjectionEndpointBinding>,
 ) -> Result<(), ProjectionStoreError> {
-    if bytes.len() != STORE_CLAIM_LEN || &bytes[..STORE_CLAIM_MAGIC.len()] != STORE_CLAIM_MAGIC {
+    if bytes.len() >= PRIOR_STORE_CLAIM_MAGIC.len() + 4
+        && &bytes[..PRIOR_STORE_CLAIM_MAGIC.len()] == PRIOR_STORE_CLAIM_MAGIC
+    {
+        let version = u32::from_be_bytes(
+            bytes[PRIOR_STORE_CLAIM_MAGIC.len()..PRIOR_STORE_CLAIM_MAGIC.len() + 4]
+                .try_into()
+                .expect("prior claim version slice"),
+        );
+        return Err(ProjectionStoreError::UpgradeRequired {
+            found: version,
+            current: STORE_CLAIM_VERSION,
+        });
+    }
+    if bytes.len() < STORE_CLAIM_MAGIC.len() + 4
+        || &bytes[..STORE_CLAIM_MAGIC.len()] != STORE_CLAIM_MAGIC
+    {
         return Err(ProjectionStoreError::MalformedStoreClaim);
     }
     let version = u32::from_be_bytes(
@@ -1034,10 +1221,23 @@ fn validate_claim(
             .try_into()
             .expect("claim version slice"),
     );
-    if version != STORE_CLAIM_VERSION {
+    if version < STORE_CLAIM_VERSION {
+        return Err(ProjectionStoreError::UpgradeRequired {
+            found: version,
+            current: STORE_CLAIM_VERSION,
+        });
+    }
+    if version > STORE_CLAIM_VERSION {
         return Err(ProjectionStoreError::UnknownStoreVersion(version));
     }
-    let workspace_offset = STORE_CLAIM_MAGIC.len() + 4;
+    if bytes.len() != STORE_CLAIM_LEN {
+        return Err(ProjectionStoreError::MalformedStoreClaim);
+    }
+    let store_offset = STORE_CLAIM_MAGIC.len() + 4;
+    if bytes[store_offset..store_offset + 32] != *expected_store_id.as_bytes() {
+        return Err(ProjectionStoreError::EndpointBindingMismatch);
+    }
+    let workspace_offset = store_offset + 32;
     let workspace = WorkspaceId::from_uuid(
         Uuid::from_slice(&bytes[workspace_offset..workspace_offset + 16])
             .map_err(|_| ProjectionStoreError::MalformedStoreClaim)?,
@@ -1048,10 +1248,63 @@ fn validate_claim(
             found: workspace,
         });
     }
-    if bytes != claim_bytes(expected_workspace, expected_endpoint) {
+    if bytes != claim_bytes(expected_store_id, expected_workspace, expected_endpoint) {
         return Err(ProjectionStoreError::EndpointBindingMismatch);
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn canonical_receipt_store_id(dir: &Dir) -> Result<ProjectionReceiptStoreId, ProjectionStoreError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    let mut identity = [0_u8; 16];
+    identity[..8].copy_from_slice(&metadata.dev().to_be_bytes());
+    identity[8..].copy_from_slice(&metadata.ino().to_be_bytes());
+    Ok(ProjectionReceiptStoreId::from_capability_identity(
+        b"unix-dev-inode",
+        &identity,
+    ))
+}
+
+#[cfg(windows)]
+fn canonical_receipt_store_id(dir: &Dir) -> Result<ProjectionReceiptStoreId, ProjectionStoreError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    let file = dir.try_clone()?.into_std_file();
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(ProjectionStoreError::Io(std::io::Error::last_os_error()));
+    }
+    let mut identity = [0_u8; 24];
+    identity[..8].copy_from_slice(&information.VolumeSerialNumber.to_be_bytes());
+    identity[8..].copy_from_slice(&information.FileId.Identifier);
+    Ok(ProjectionReceiptStoreId::from_capability_identity(
+        b"windows-volume-file-id",
+        &identity,
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn canonical_receipt_store_id(
+    _dir: &Dir,
+) -> Result<ProjectionReceiptStoreId, ProjectionStoreError> {
+    Err(ProjectionStoreError::Io(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "projection receipt-store identity is unsupported on this platform",
+    )))
 }
 
 fn base_filename(description: BlobDescription) -> String {

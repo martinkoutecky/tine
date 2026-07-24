@@ -54,11 +54,12 @@ fn logseq(value: u128) -> LogseqUuid {
 }
 
 fn projection_binding(graph: &Graph, seed: u128) -> ProjectionEndpointBinding {
-    ProjectionEndpointBinding {
-        endpoint_id: ProjectionEndpointId::from_uuid(uuid(seed)),
-        device_id: DeviceId::from_uuid(uuid(seed + 1)),
-        graph_resource_id: graph.canonical_resource_id().unwrap(),
-    }
+    ProjectionEndpointBinding::enroll_graph(
+        graph,
+        ProjectionEndpointId::from_uuid(uuid(seed)),
+        DeviceId::from_uuid(uuid(seed + 1)),
+    )
+    .unwrap()
 }
 
 fn block(
@@ -940,8 +941,9 @@ fn corrupt_missing_noncanonical_and_unknown_evidence_fail_closed() {
 
     let claim_dir = TestDir::new("future-claim");
     let mut claim = Vec::new();
-    claim.extend_from_slice(b"TINEPR3\0");
+    claim.extend_from_slice(b"TINEPR4\0");
     claim.extend_from_slice(&99_u32.to_be_bytes());
+    claim.extend_from_slice(&[0_u8; 32]);
     claim.extend_from_slice(workspace(1).as_uuid().as_bytes());
     claim.extend_from_slice(&[0_u8; 1 + 16 + 16 + 32]);
     fs::write(claim_dir.path().join("projection-receipts.claim"), claim).unwrap();
@@ -949,6 +951,107 @@ fn corrupt_missing_noncanonical_and_unknown_evidence_fail_closed() {
         ProjectionReceiptStore::open(claim_dir.path(), workspace(1)),
         Err(ProjectionStoreError::UnknownStoreVersion(99))
     ));
+}
+
+#[test]
+fn claimless_nonempty_and_prior_version_receipt_roots_fail_without_mutation() {
+    let claimless = TestDir::new("claimless-nonempty");
+    fs::write(claimless.path().join("copied.completion"), b"evidence").unwrap();
+    let before = fs::read_dir(claimless.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        ProjectionReceiptStore::open(claimless.path(), workspace(1)),
+        Err(ProjectionStoreError::ClaimlessNonemptyStore)
+    ));
+    let after = fs::read_dir(claimless.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before);
+
+    let prior = TestDir::new("prior-receipt-claim");
+    let mut claim = Vec::new();
+    claim.extend_from_slice(b"TINEPR3\0");
+    claim.extend_from_slice(&3_u32.to_be_bytes());
+    claim.extend_from_slice(workspace(1).as_uuid().as_bytes());
+    claim.extend_from_slice(&[0_u8; 1 + 16 + 16 + 32]);
+    fs::write(prior.path().join("projection-receipts.claim"), &claim).unwrap();
+    assert!(matches!(
+        ProjectionReceiptStore::open(prior.path(), workspace(1)),
+        Err(ProjectionStoreError::UpgradeRequired {
+            found: 3,
+            current: 4
+        })
+    ));
+    assert_eq!(
+        fs::read(prior.path().join("projection-receipts.claim")).unwrap(),
+        claim
+    );
+    assert_eq!(fs::read_dir(prior.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn receipt_resource_identity_survives_move_and_rejects_a_simultaneous_copy() {
+    let parent = TestDir::new("receipt-resource");
+    let original = parent.path().join("original");
+    let moved = parent.path().join("moved");
+    let copied = parent.path().join("copied");
+    let opened = ProjectionReceiptStore::open(&original, workspace(1)).unwrap();
+    let store_id = opened.store_id();
+    drop(opened);
+    fs::rename(&original, &moved).unwrap();
+    let reopened = ProjectionReceiptStore::open(&moved, workspace(1)).unwrap();
+    assert_eq!(reopened.store_id(), store_id);
+    drop(reopened);
+
+    fs::create_dir(&copied).unwrap();
+    for entry in fs::read_dir(&moved).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir(copied.join(entry.file_name())).unwrap();
+        } else {
+            fs::copy(entry.path(), copied.join(entry.file_name())).unwrap();
+        }
+    }
+    assert!(matches!(
+        ProjectionReceiptStore::open(&copied, workspace(1)),
+        Err(ProjectionStoreError::EndpointBindingMismatch)
+    ));
+}
+
+#[test]
+fn engine_bound_to_r1_rejects_r2_before_write_or_recovery() {
+    let engine_dir = TestDir::new("wrong-receipt-write-engine");
+    let graph_dir = TestDir::new("wrong-receipt-write-graph");
+    let r1_dir = TestDir::new("wrong-receipt-write-r1");
+    let r2_dir = TestDir::new("wrong-receipt-write-r2");
+    fs::create_dir_all(graph_dir.path().join("pages")).unwrap();
+    fs::create_dir_all(graph_dir.path().join("journals")).unwrap();
+    let graph = Graph::open(graph_dir.path());
+    let (engine, page_id, r1, binding) = enrolled_engine_and_store(
+        &engine_dir,
+        &r1_dir,
+        &graph,
+        "pages/r1-only.md",
+        "target",
+        59_000,
+    );
+    let r2 =
+        ProjectionReceiptStore::open_for_endpoint(r2_dir.path(), workspace(1), binding).unwrap();
+    assert_ne!(r1.store_id(), r2.store_id());
+    assert!(matches!(
+        write_projection_exact(&graph, &r2, &engine, page_id, None),
+        Err(ProjectionError::EndpointBindingMismatch)
+    ));
+    assert!(!graph_dir.path().join("pages/r1-only.md").exists());
+    assert!(matches!(
+        recover_incomplete_projections(&graph, &r2, &engine),
+        Err(ProjectionError::EndpointBindingMismatch)
+    ));
+    assert!(!graph_dir.path().join("pages/r1-only.md").exists());
 }
 
 #[cfg(unix)]
@@ -1330,7 +1433,7 @@ fn enrolled_engine_rejects_wrong_graph_before_creating_work_namespace() {
     assert!(enrolled.projection_work_index().is_some());
     assert!(archive_path
         .join("projection-work-index-v1")
-        .join(binding.endpoint_id.to_string())
+        .join(binding.endpoint_id().to_string())
         .exists());
 }
 
@@ -1524,7 +1627,7 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(60_107)),
                 crdt_peer_id: CrdtPeerId::from_u64(60_108),
             },
@@ -1924,7 +2027,7 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(70_011)),
                 crdt_peer_id: CrdtPeerId::from_u64(70_012),
             },
@@ -1989,7 +2092,7 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
     let work_dir = dir
         .path()
         .join("archive/projection-work-index-v1")
-        .join(binding.endpoint_id.to_string());
+        .join(binding.endpoint_id().to_string());
     let work_mode = fs::metadata(&work_dir).unwrap().permissions().mode();
     fs::set_permissions(&work_dir, fs::Permissions::from_mode(0o555)).unwrap();
     let second = execute_manifested_projection_work(&graph, &receipts, &mut engine, &work);
@@ -2036,7 +2139,7 @@ fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts()
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(71_011)),
                 crdt_peer_id: CrdtPeerId::from_u64(71_012),
             },
@@ -2082,7 +2185,7 @@ fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts()
     let work_dir = dir
         .path()
         .join("archive/projection-work-index-v1")
-        .join(binding.endpoint_id.to_string());
+        .join(binding.endpoint_id().to_string());
     let work_mode = fs::metadata(&work_dir).unwrap().permissions().mode();
     fs::set_permissions(&work_dir, fs::Permissions::from_mode(0o555)).unwrap();
     let second = execute_manifested_projection_work(&graph, &receipts, &mut engine, &work);
@@ -2125,7 +2228,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         .draft_author_transaction(
             AuthorBatch {
                 batch_id: delete_batch,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(72_011)),
                 crdt_peer_id: CrdtPeerId::from_u64(72_012),
             },
@@ -2160,7 +2263,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
     let work_head = dir
         .path()
         .join("archive/projection-work-index-v1")
-        .join(binding.endpoint_id.to_string())
+        .join(binding.endpoint_id().to_string())
         .join("projection-work.head");
     let rollback_head = fs::read(&work_head).unwrap();
     execute_manifested_projection_work(&graph, &receipts, &mut engine, &delete_work).unwrap();
@@ -2173,7 +2276,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         .draft_author_transaction(
             AuthorBatch {
                 batch_id: create_batch,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(72_024)),
                 crdt_peer_id: CrdtPeerId::from_u64(72_025),
             },
@@ -2263,7 +2366,7 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
             .draft_author_transaction(
                 AuthorBatch {
                     batch_id,
-                    author_device_id: binding.device_id,
+                    author_device_id: binding.device_id(),
                     author_session_id: SessionId::from_uuid(uuid(73_020 + sequence)),
                     crdt_peer_id: CrdtPeerId::from_u64(73_030 + sequence as u64),
                 },
@@ -2304,7 +2407,7 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
             let work_head = dir
                 .path()
                 .join("archive/projection-work-index-v1")
-                .join(binding.endpoint_id.to_string())
+                .join(binding.endpoint_id().to_string())
                 .join("projection-work.head");
             stale_head = fs::read(work_head).unwrap();
             stale_work = Some(work.clone());
@@ -2320,7 +2423,7 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
     let work_head = dir
         .path()
         .join("archive/projection-work-index-v1")
-        .join(binding.endpoint_id.to_string())
+        .join(binding.endpoint_id().to_string())
         .join("projection-work.head");
     fs::write(&work_head, stale_head).unwrap();
     assert!(execute_manifested_projection_work(
@@ -2346,11 +2449,12 @@ fn capability_capture_rejects_forged_cross_scope_and_byte_mismatched_predecessor
             74_000,
         );
     let path = ManagedPath::parse("pages/capture.md").unwrap();
-    let other_binding = ProjectionEndpointBinding {
-        endpoint_id: ProjectionEndpointId::from_uuid(uuid(74_100)),
-        device_id: binding.device_id,
-        graph_resource_id: binding.graph_resource_id,
-    };
+    let other_binding = ProjectionEndpointBinding::enroll_graph(
+        &graph,
+        ProjectionEndpointId::from_uuid(uuid(74_100)),
+        binding.device_id(),
+    )
+    .unwrap();
     assert!(matches!(
         receipts
             .capture_projection_input(&graph, other_binding, path.clone(), Some(&prior_intent),),
@@ -2427,7 +2531,7 @@ fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_ro
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(75_011)),
                 crdt_peer_id: CrdtPeerId::from_u64(75_012),
             },
@@ -2468,6 +2572,30 @@ fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_ro
         .unwrap()
         .unwrap();
 
+    let wrong_receipts = ProjectionReceiptStore::open_for_endpoint(
+        &dir.path().join("wrong-receipts"),
+        workspace(1),
+        binding,
+    )
+    .unwrap();
+    assert_ne!(wrong_receipts.store_id(), receipts.store_id());
+    assert!(matches!(
+        execute_manifested_projection_work(&graph, &wrong_receipts, &mut engine, &work),
+        Err(ProjectionError::EndpointBindingMismatch)
+    ));
+    assert_eq!(
+        engine
+            .projection_work_index()
+            .unwrap()
+            .status(work.work_id())
+            .unwrap(),
+        Some(ProjectionWorkStatus::Ready)
+    );
+    assert_eq!(
+        fs::read(dir.path().join("graph/pages/root-bound.md")).unwrap(),
+        base
+    );
+
     let wrong_root = dir.path().join("wrong-root");
     fs::create_dir_all(wrong_root.join("pages")).unwrap();
     fs::write(wrong_root.join("pages/root-bound.md"), &base).unwrap();
@@ -2496,7 +2624,7 @@ fn manifested_guarded_conflict_is_the_proof_bearing_block_path() {
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(75_111)),
                 crdt_peer_id: CrdtPeerId::from_u64(75_112),
             },
@@ -2578,16 +2706,16 @@ fn graph_resource_identity_survives_move_but_rejects_symlink_and_path_substituti
     let substituted = Graph::open(&original_root);
     assert_ne!(
         substituted.canonical_resource_id().unwrap(),
-        binding.graph_resource_id
+        binding.graph_resource_id()
     );
     assert_eq!(
         graph.canonical_resource_id().unwrap(),
-        binding.graph_resource_id
+        binding.graph_resource_id()
     );
     let reopened = Graph::open(&moved_root);
     assert_eq!(
         reopened.canonical_resource_id().unwrap(),
-        binding.graph_resource_id
+        binding.graph_resource_id()
     );
     ProjectionReceiptStore::open_for_endpoint(receipts.root_path(), workspace(1), binding).unwrap();
 
@@ -2600,7 +2728,7 @@ fn graph_resource_identity_survives_move_but_rejects_symlink_and_path_substituti
         .draft_author_transaction(
             AuthorBatch {
                 batch_id,
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(76_011)),
                 crdt_peer_id: CrdtPeerId::from_u64(76_012),
             },
@@ -2669,8 +2797,8 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
     fs::create_dir_all(graph_root.join("pages")).unwrap();
     let graph = Graph::open(&graph_root);
     let binding = projection_binding(&graph, 800);
-    let source_endpoint = binding.endpoint_id;
-    let source_device = binding.device_id;
+    let source_endpoint = binding.endpoint_id();
+    let source_device = binding.device_id();
     let receipts_root = dir.path().join("manifested-receipts");
     let receipts =
         ProjectionReceiptStore::open_for_endpoint(&receipts_root, workspace_id, binding).unwrap();
@@ -3086,7 +3214,7 @@ fn manifested_rename_has_old_removal_and_new_target_using_old_render_base() {
         .draft_author_transaction(
             AuthorBatch {
                 batch_id: BatchId::from_uuid(uuid(822)),
-                author_device_id: binding.device_id,
+                author_device_id: binding.device_id(),
                 author_session_id: SessionId::from_uuid(uuid(823)),
                 crdt_peer_id: CrdtPeerId::from_u64(824),
             },

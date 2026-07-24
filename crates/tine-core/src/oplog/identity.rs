@@ -246,6 +246,70 @@ impl<'de> Deserialize<'de> for CanonicalGraphResourceId {
     }
 }
 
+/// Stable identity of one projection-receipt directory capability.
+///
+/// Like the graph resource identity, this is derived from the opened directory
+/// resource rather than its ambient pathname. It is also durably recorded in
+/// the receipt-store claim, so another directory cannot copy an endpoint tuple
+/// and become the engine's enrolled receipt authority.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ProjectionReceiptStoreId([u8; 32]);
+
+impl ProjectionReceiptStoreId {
+    pub(crate) fn from_capability_identity(platform: &[u8], identity: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/projection-receipt-store-resource/v1\0");
+        hasher.update((platform.len() as u64).to_be_bytes());
+        hasher.update(platform);
+        hasher.update((identity.len() as u64).to_be_bytes());
+        hasher.update(identity);
+        Self(hasher.finalize().into())
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ProjectionReceiptStoreId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ProjectionReceiptStoreId({self})")
+    }
+}
+
+impl fmt::Display for ProjectionReceiptStoreId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(&self.0, f)
+    }
+}
+
+impl FromStr for ProjectionReceiptStoreId {
+    type Err = DigestParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_digest(value).map(Self)
+    }
+}
+
+impl Serialize for ProjectionReceiptStoreId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProjectionReceiptStoreId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 impl fmt::Debug for ImportId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ImportId({self})")

@@ -15,7 +15,10 @@ use crate::crdt::{
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use crate::oplog::projection_store::MAX_PROJECTION_EVIDENCE_BYTES;
-use crate::oplog::{CanonicalGraphResourceId, ManagedPath, ProjectionAttemptReservation};
+use crate::oplog::{
+    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath,
+    ProjectionAttemptReservation,
+};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use serde::{Deserialize, Serialize};
@@ -729,6 +732,44 @@ pub struct Graph {
     >,
 }
 
+pub(crate) struct ManagedTextObservation {
+    bytes: Vec<u8>,
+    description: BlobDescription,
+    file_resource_id: ContentDigest,
+    physical_bytes_read: u64,
+    peak_capture_buffer_bytes: u64,
+}
+
+impl ManagedTextObservation {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, BlobDescription) {
+        (self.bytes, self.description)
+    }
+
+    pub(crate) const fn description(&self) -> BlobDescription {
+        self.description
+    }
+
+    pub(crate) const fn file_resource_id(&self) -> ContentDigest {
+        self.file_resource_id
+    }
+
+    pub(crate) const fn physical_bytes_read(&self) -> u64 {
+        self.physical_bytes_read
+    }
+
+    pub(crate) const fn peak_capture_buffer_bytes(&self) -> u64 {
+        self.peak_capture_buffer_bytes
+    }
+}
+
 struct PageCacheIndex {
     by_name: std::collections::HashMap<(PageKind, String), usize>,
     by_path: std::collections::HashMap<PathBuf, usize>,
@@ -1265,6 +1306,9 @@ thread_local! {
     static FAIL_NEXT_PROJECTION_DIRECTORY_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static TEST_PROJECTION_ATTEMPTS: std::cell::RefCell<std::collections::BTreeMap<String, Vec<ProjectionAttemptReservation>>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     static PROJECTION_EXACT_OPEN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MANAGED_INVENTORY_READ_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static INITIAL_SHADOW_REVALIDATION_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static BOUNDED_READ_AFTER_METADATA: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
@@ -1414,6 +1458,45 @@ fn projection_directory_sync_hook(_dir: &Path) -> io::Result<()> {
 
 #[cfg(not(test))]
 fn projection_directory_sync_hook(_dir: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn managed_inventory_read_hook() -> io::Result<()> {
+    MANAGED_INVENTORY_READ_RACE.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn managed_inventory_read_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn initial_shadow_revalidation_hook(_root: &Path) -> io::Result<()> {
+    INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn initial_shadow_revalidation_hook(_root: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn bounded_read_after_metadata_hook() -> io::Result<()> {
+    BOUNDED_READ_AFTER_METADATA.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn bounded_read_after_metadata_hook() -> io::Result<()> {
     Ok(())
 }
 
@@ -1649,6 +1732,145 @@ impl Graph {
         self.ensure_projection_parent_binding(&parent, &target)?;
         self.ensure_projection_target_shape(&parent, &target)?;
         read_projection_optional(parent.final_dir(), &target.filename)
+    }
+
+    /// Configured managed roots visible to the sparse importer.
+    ///
+    /// The first sparse receipt schema names only `pages/` and `journals/`.
+    /// Import rejects any other layout instead of reinterpreting its paths.
+    pub(crate) fn raw_managed_text_layout(&self) -> (&str, &str) {
+        (&self.config.pages_dir, &self.config.journals_dir)
+    }
+
+    /// Read one exact managed Markdown/Org observation through the retained
+    /// no-follow graph capability without parsing or warming any graph cache.
+    ///
+    /// Unlike the guarded writer input, this intentionally permits `.md`/`.org`
+    /// twins: both names are independent external evidence for reconciliation.
+    pub(crate) fn read_raw_managed_text(
+        &self,
+        path: &ManagedPath,
+    ) -> io::Result<Option<ManagedTextObservation>> {
+        require_projection_platform()?;
+        self.ensure_projection_root_binding()?;
+        let target = self.projection_page_target(path.as_str())?;
+        let parent = match self.projection_parent(&target, false) {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.ensure_projection_root_binding()?;
+                return match self.projection_parent(&target, false) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                    Ok(_) => Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "managed parent appeared during absence capture",
+                    )),
+                    Err(error) => Err(error),
+                };
+            }
+            Err(error) => return Err(error),
+        };
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        projection_optional_regular_metadata(parent.final_dir(), &target.filename)?;
+        let result = read_projection_optional_bound_capture(parent.final_dir(), &target.filename)?
+            .map(
+                |(
+                    bytes,
+                    description,
+                    file_resource_id,
+                    physical_bytes_read,
+                    peak_capture_buffer_bytes,
+                )| ManagedTextObservation {
+                    bytes,
+                    description,
+                    file_resource_id,
+                    physical_bytes_read,
+                    peak_capture_buffer_bytes,
+                },
+            );
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        self.ensure_projection_root_binding()?;
+        Ok(result)
+    }
+
+    /// Explicit whole-graph capture boundary for initial shadow import.
+    ///
+    /// Names and bytes are captured together through retained directory/file
+    /// handles. A second bounded capability traversal must reproduce the same
+    /// complete path/digest set before the snapshot is returned.
+    pub(crate) fn initial_shadow_raw_managed_text_inventory(
+        &self,
+    ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
+        require_projection_platform()?;
+        if self.config.pages_dir != "pages" || self.config.journals_dir != "journals" {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "initial shadow capture requires the fixed pages/journals managed layout",
+            ));
+        }
+        let root = self.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?;
+        let first = collect_initial_shadow_managed_inventory(root, true)?;
+        initial_shadow_revalidation_hook(&self.root)?;
+        let second = collect_initial_shadow_managed_inventory(root, false)?;
+        let first_digests = first
+            .iter()
+            .map(|entry| {
+                (
+                    entry.path.clone(),
+                    entry.description,
+                    entry.file_resource_id,
+                )
+            })
+            .collect::<Vec<_>>();
+        let second_digests = second
+            .iter()
+            .map(|entry| {
+                (
+                    entry.path.clone(),
+                    entry.description,
+                    entry.file_resource_id,
+                )
+            })
+            .collect::<Vec<_>>();
+        if first_digests != second_digests {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "managed inventory changed during initial shadow capture",
+            ));
+        }
+        self.ensure_projection_root_binding()?;
+        Ok(first
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.path,
+                    entry
+                        .bytes
+                        .expect("first initial-shadow pass retains exact bytes"),
+                )
+            })
+            .collect())
+    }
+
+    fn ensure_projection_root_binding(&self) -> io::Result<()> {
+        let retained = self.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?;
+        let rebound = open_projection_root_nofollow(&self.root)?;
+        if projection_dir_identity(retained)? != projection_dir_identity(&rebound)? {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "graph root changed during managed inventory capture",
+            ));
+        }
+        Ok(())
     }
 
     /// Construct a read-only graph projection from one caller-owned document
@@ -10073,14 +10295,23 @@ fn open_projection_file_nofollow(_dir: &Dir, _name: &str) -> io::Result<fs::File
 }
 
 fn open_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<(fs::File, Vec<u8>)> {
+    open_and_read_projection_regular_with_limit(dir, name, MAX_PROJECTION_EVIDENCE_BYTES)
+}
+
+fn open_and_read_projection_regular_with_limit(
+    dir: &Dir,
+    name: &str,
+    limit: u64,
+) -> io::Result<(fs::File, Vec<u8>)> {
     let mut file = open_projection_file_nofollow(dir, name)?;
     let len = file.metadata()?.len();
-    if len > MAX_PROJECTION_EVIDENCE_BYTES {
+    if len > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "projection evidence exceeds the reload bound",
         ));
     }
+    bounded_read_after_metadata_hook()?;
     let capacity = usize::try_from(len).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -10088,7 +10319,15 @@ fn open_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<(fs::Fi
         )
     })?;
     let mut bytes = Vec::with_capacity(capacity);
-    file.read_to_end(&mut bytes)?;
+    (&mut file)
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence grew beyond the reload bound",
+        ));
+    }
     Ok((file, bytes))
 }
 
@@ -10109,7 +10348,15 @@ fn sync_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<Vec<u8>
         )
     })?;
     let mut bytes = Vec::with_capacity(capacity);
-    file.read_to_end(&mut bytes)?;
+    (&mut file)
+        .take(MAX_PROJECTION_EVIDENCE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_PROJECTION_EVIDENCE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence grew beyond the reload bound",
+        ));
+    }
     Ok(bytes)
 }
 
@@ -10119,6 +10366,326 @@ fn read_projection_optional(dir: &Dir, name: &str) -> io::Result<Option<Vec<u8>>
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+/// Read through one retained handle, then prove that the live no-follow name
+/// still binds that same file and same exact bytes.
+fn read_projection_optional_bound_capture(
+    dir: &Dir,
+    name: &str,
+) -> io::Result<Option<(Vec<u8>, BlobDescription, ContentDigest, u64, u64)>> {
+    let (opened, bytes) = match open_and_read_projection_regular(dir, name) {
+        Ok(result) => result,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            managed_inventory_read_hook()?;
+            return match dir.symlink_metadata(name) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Ok(_) => Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "managed target appeared during absence capture",
+                )),
+                Err(error) => Err(error),
+            };
+        }
+        Err(error) => return Err(error),
+    };
+    managed_inventory_read_hook()?;
+
+    let mut rebound = open_projection_file_nofollow(dir, name)?;
+    if !projection_files_have_same_identity(&opened, &rebound)? {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "managed target was replaced or changed during capture",
+        ));
+    }
+    let expected = BlobDescription::of(&bytes);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut rebound_bytes = 0_u64;
+    loop {
+        let read = rebound.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        rebound_bytes = rebound_bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "read-byte overflow"))?;
+        if rebound_bytes > MAX_PROJECTION_EVIDENCE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "managed target grew beyond the capture bound",
+            ));
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let rebound_description = BlobDescription::from_parts(hasher.finalize().into(), rebound_bytes);
+    if rebound_description != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "managed target changed while its retained binding was validated",
+        ));
+    }
+    let file_resource_id = canonical_projection_file_resource_id(&opened)?;
+    let peak_capture_buffer_bytes = (bytes.capacity() as u64).saturating_add(buffer.len() as u64);
+    Ok(Some((
+        bytes,
+        expected,
+        file_resource_id,
+        expected.byte_length().saturating_add(rebound_bytes),
+        peak_capture_buffer_bytes,
+    )))
+}
+
+const MAX_INITIAL_SHADOW_MANAGED_FILES: usize = 1_000_000;
+const MAX_INITIAL_SHADOW_RAW_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_INITIAL_SHADOW_DIRECTORY_DEPTH: usize = 256;
+const MAX_INITIAL_SHADOW_ALL_ENTRIES: usize = 2_000_000;
+const MAX_INITIAL_SHADOW_DIRECTORIES: usize = 1_000_000;
+const MAX_INITIAL_SHADOW_PATH_BYTES: u64 = 512 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct InitialShadowLimits {
+    managed_files: usize,
+    raw_bytes: u64,
+    directory_depth: usize,
+    all_entries: usize,
+    directories: usize,
+    path_bytes: u64,
+}
+
+const INITIAL_SHADOW_LIMITS: InitialShadowLimits = InitialShadowLimits {
+    managed_files: MAX_INITIAL_SHADOW_MANAGED_FILES,
+    raw_bytes: MAX_INITIAL_SHADOW_RAW_BYTES,
+    directory_depth: MAX_INITIAL_SHADOW_DIRECTORY_DEPTH,
+    all_entries: MAX_INITIAL_SHADOW_ALL_ENTRIES,
+    directories: MAX_INITIAL_SHADOW_DIRECTORIES,
+    path_bytes: MAX_INITIAL_SHADOW_PATH_BYTES,
+};
+
+struct InitialShadowEntry {
+    path: ManagedPath,
+    bytes: Option<Vec<u8>>,
+    description: BlobDescription,
+    file_resource_id: ContentDigest,
+}
+
+fn collect_initial_shadow_managed_inventory(
+    root: &Dir,
+    retain_bytes: bool,
+) -> io::Result<Vec<InitialShadowEntry>> {
+    collect_initial_shadow_managed_inventory_with_limits(root, retain_bytes, INITIAL_SHADOW_LIMITS)
+}
+
+fn collect_initial_shadow_managed_inventory_with_limits(
+    root: &Dir,
+    retain_bytes: bool,
+    limits: InitialShadowLimits,
+) -> io::Result<Vec<InitialShadowEntry>> {
+    struct PendingDirectory {
+        directory: Dir,
+        relative: String,
+        depth: usize,
+    }
+
+    let mut entries = Vec::new();
+    let mut raw_bytes = 0_u64;
+    let mut all_entries = 0_usize;
+    let mut directory_count = 0_usize;
+    let mut path_bytes = 0_u64;
+    let mut directory_resources = std::collections::BTreeMap::new();
+    let mut file_resources = std::collections::BTreeMap::new();
+    let mut pending = Vec::new();
+    for managed_root in ["journals", "pages"] {
+        match projection_real_directory(root, managed_root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+        let directory = open_projection_dir_nofollow(root, managed_root)?;
+        directory_count = directory_count.saturating_add(1);
+        if directory_count > limits.directories {
+            return Err(initial_shadow_limit_error("directory count"));
+        }
+        let resource = canonical_projection_directory_resource_id(&directory)?;
+        if let Some(first) = directory_resources.insert(resource, managed_root.to_owned()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("managed directories alias one resource: {first} and {managed_root}"),
+            ));
+        }
+        let rebound = open_projection_dir_nofollow(root, managed_root)?;
+        if projection_dir_identity(&directory)? != projection_dir_identity(&rebound)? {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "managed root changed during initial shadow capture",
+            ));
+        }
+        pending.push(PendingDirectory {
+            directory,
+            relative: managed_root.to_owned(),
+            depth: 1,
+        });
+    }
+
+    while let Some(PendingDirectory {
+        directory,
+        relative,
+        depth,
+    }) = pending.pop()
+    {
+        for entry in directory.entries()? {
+            all_entries = all_entries.saturating_add(1);
+            if all_entries > limits.all_entries {
+                return Err(initial_shadow_limit_error("all directory entries"));
+            }
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "managed text entry name is not UTF-8",
+                )
+            })?;
+            let relative_len = relative
+                .len()
+                .checked_add(1)
+                .and_then(|length| length.checked_add(name.len()))
+                .ok_or_else(|| initial_shadow_limit_error("aggregate path bytes"))?;
+            path_bytes = path_bytes
+                .checked_add(relative_len as u64)
+                .ok_or_else(|| initial_shadow_limit_error("aggregate path bytes"))?;
+            if path_bytes > limits.path_bytes {
+                return Err(initial_shadow_limit_error("aggregate path bytes"));
+            }
+            let child_relative = format!("{relative}/{name}");
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("managed text entry is a symlink or reparse point: {child_relative}"),
+                ));
+            }
+            if file_type.is_dir() {
+                let child_depth = depth.saturating_add(1);
+                if child_depth > limits.directory_depth {
+                    return Err(initial_shadow_limit_error("managed directory depth"));
+                }
+                directory_count = directory_count.saturating_add(1);
+                if directory_count > limits.directories {
+                    return Err(initial_shadow_limit_error("directory count"));
+                }
+                projection_real_directory(&directory, name)?;
+                let child = open_projection_dir_nofollow(&directory, name)?;
+                let resource = canonical_projection_directory_resource_id(&child)?;
+                if let Some(first) = directory_resources.insert(resource, child_relative.clone()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "managed directories alias one resource: {first} and {child_relative}"
+                        ),
+                    ));
+                }
+                let rebound = open_projection_dir_nofollow(&directory, name)?;
+                if projection_dir_identity(&child)? != projection_dir_identity(&rebound)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        format!("managed directory changed during capture: {child_relative}"),
+                    ));
+                }
+                pending.push(PendingDirectory {
+                    directory: child,
+                    relative: child_relative,
+                    depth: child_depth,
+                });
+                continue;
+            }
+            if !file_type.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("managed text entry is not a regular file: {child_relative}"),
+                ));
+            }
+            let file = open_projection_file_nofollow(&directory, name)?;
+            let file_resource = canonical_projection_file_resource_id(&file)?;
+            if let Some(first) = file_resources.insert(file_resource, child_relative.clone()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("managed files alias one resource: {first} and {child_relative}"),
+                ));
+            }
+            if !matches!(
+                Path::new(name)
+                    .extension()
+                    .and_then(|extension| extension.to_str()),
+                Some("md" | "org")
+            ) {
+                continue;
+            }
+            if entries.len() == limits.managed_files {
+                return Err(initial_shadow_limit_error("managed file count"));
+            }
+            let path = ManagedPath::parse(child_relative)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+            let (bytes, description, captured_resource, _, _) =
+                read_projection_optional_bound_capture(&directory, name)?.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        format!("managed entry disappeared during capture: {path}"),
+                    )
+                })?;
+            if captured_resource != file_resource {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("managed entry changed after enumeration: {path}"),
+                ));
+            }
+            raw_bytes = raw_bytes
+                .checked_add(bytes.len() as u64)
+                .ok_or_else(|| initial_shadow_limit_error("aggregate raw bytes"))?;
+            if raw_bytes > limits.raw_bytes {
+                return Err(initial_shadow_limit_error("aggregate raw bytes"));
+            }
+            entries.push(InitialShadowEntry {
+                path,
+                description,
+                bytes: retain_bytes.then_some(bytes),
+                file_resource_id: captured_resource,
+            });
+        }
+    }
+
+    entries.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+    if entries
+        .windows(2)
+        .any(|window| window[0].path == window[1].path)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "initial shadow capture contains duplicate managed paths",
+        ));
+    }
+    let mut portable = std::collections::BTreeMap::new();
+    for entry in &entries {
+        if let Some(first) =
+            portable.insert(entry.path.portable_key(), entry.path.as_str().to_owned())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "initial shadow managed paths share one portable key: {first} and {}",
+                    entry.path
+                ),
+            ));
+        }
+    }
+    Ok(entries)
+}
+
+fn initial_shadow_limit_error(resource: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("initial shadow {resource} bound exceeded"),
+    )
 }
 
 fn create_projection_temp(dir: &Dir, filename: &str, bytes: &[u8]) -> io::Result<String> {
@@ -10342,6 +10909,39 @@ fn projection_dir_identity(dir: &Dir) -> io::Result<(u64, u64)> {
 }
 
 #[cfg(unix)]
+fn canonical_projection_directory_resource_id(dir: &Dir) -> io::Result<ContentDigest> {
+    let (device, inode) = projection_dir_identity(dir)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-directory-resource/v1\0unix-dev-inode\0");
+    hasher.update(device.to_be_bytes());
+    hasher.update(inode.to_be_bytes());
+    Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+#[cfg(unix)]
+fn projection_files_have_same_identity(left: &fs::File, right: &fs::File) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let left = left.metadata()?;
+    let right = right.metadata()?;
+    Ok((left.dev(), left.ino()) == (right.dev(), right.ino()))
+}
+
+#[cfg(unix)]
+fn canonical_projection_file_resource_id(file: &fs::File) -> io::Result<ContentDigest> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file.metadata()?;
+    let mut identity = [0_u8; 16];
+    identity[..8].copy_from_slice(&metadata.dev().to_be_bytes());
+    identity[8..].copy_from_slice(&metadata.ino().to_be_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-file-resource/v1\0unix-dev-inode\0");
+    hasher.update(identity);
+    Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+#[cfg(unix)]
 fn canonical_graph_resource_id(dir: &Dir) -> io::Result<CanonicalGraphResourceId> {
     let (device, inode) = projection_dir_identity(dir)?;
     let mut identity = [0_u8; 16];
@@ -10380,6 +10980,71 @@ fn projection_dir_identity(dir: &Dir) -> io::Result<(u64, [u8; 16])> {
 }
 
 #[cfg(windows)]
+fn canonical_projection_directory_resource_id(dir: &Dir) -> io::Result<ContentDigest> {
+    let (volume, file_id) = projection_dir_identity(dir)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-directory-resource/v1\0windows-volume-file-id\0");
+    hasher.update(volume.to_be_bytes());
+    hasher.update(file_id);
+    Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+#[cfg(windows)]
+fn projection_files_have_same_identity(left: &fs::File, right: &fs::File) -> io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    fn identity(file: &fs::File) -> io::Result<(u64, [u8; 16])> {
+        let mut information = FILE_ID_INFO::default();
+        let result = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&mut information as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((
+            information.VolumeSerialNumber,
+            information.FileId.Identifier,
+        ))
+    }
+
+    Ok(identity(left)? == identity(right)?)
+}
+
+#[cfg(windows)]
+fn canonical_projection_file_resource_id(file: &fs::File) -> io::Result<ContentDigest> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-file-resource/v1\0windows-volume-file-id\0");
+    hasher.update(information.VolumeSerialNumber.to_be_bytes());
+    hasher.update(information.FileId.Identifier);
+    Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+#[cfg(windows)]
 fn canonical_graph_resource_id(dir: &Dir) -> io::Result<CanonicalGraphResourceId> {
     let (volume, file_id) = projection_dir_identity(dir)?;
     let mut identity = [0_u8; 24];
@@ -10396,6 +11061,30 @@ fn projection_dir_identity(_dir: &Dir) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "projection directory identity is unsupported on this platform",
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn canonical_projection_directory_resource_id(_dir: &Dir) -> io::Result<ContentDigest> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "projection directory identity is unsupported on this platform",
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn projection_files_have_same_identity(_left: &fs::File, _right: &fs::File) -> io::Result<bool> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "projection file identity is unsupported on this platform",
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn canonical_projection_file_resource_id(_file: &fs::File) -> io::Result<ContentDigest> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "projection file identity is unsupported on this platform",
     ))
 }
 
@@ -14988,6 +15677,209 @@ mod tests {
             .is_err());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raw_managed_read_rejects_parent_retarget_and_file_replacement_after_open() {
+        use std::os::unix::fs::symlink;
+
+        let replacement_root = scratch("raw-managed-file-replacement");
+        let replacement_path = replacement_root.join("pages/page.md");
+        fs::write(&replacement_path, b"- original\n").unwrap();
+        let replacement_graph = Graph::open(&replacement_root);
+        let retired = replacement_root.join("pages/page.retired.md");
+        MANAGED_INVENTORY_READ_RACE.with(|hook| {
+            let replacement_path = replacement_path.clone();
+            let retired = retired.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replacement_path, &retired)?;
+                fs::write(&replacement_path, b"- replacement\n")
+            }));
+        });
+        assert!(replacement_graph
+            .read_raw_managed_text(&ManagedPath::parse("pages/page.md").unwrap())
+            .is_err());
+        assert_eq!(fs::read(&replacement_path).unwrap(), b"- replacement\n");
+
+        let retarget_root = scratch("raw-managed-parent-retarget");
+        let outside = scratch("raw-managed-parent-retarget-outside");
+        fs::write(retarget_root.join("pages/page.md"), b"- retained\n").unwrap();
+        fs::write(outside.join("page.md"), b"- outside\n").unwrap();
+        let retarget_graph = Graph::open(&retarget_root);
+        let moved = retarget_root.join("pages-retained");
+        MANAGED_INVENTORY_READ_RACE.with(|hook| {
+            let parent = retarget_root.join("pages");
+            let outside = outside.clone();
+            let moved = moved.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&parent, &moved)?;
+                symlink(&outside, &parent)
+            }));
+        });
+        assert!(retarget_graph
+            .read_raw_managed_text(&ManagedPath::parse("pages/page.md").unwrap())
+            .is_err());
+        assert_eq!(fs::read(outside.join("page.md")).unwrap(), b"- outside\n");
+
+        let _ = fs::remove_dir_all(&replacement_root);
+        let _ = fs::remove_file(retarget_root.join("pages"));
+        let _ = fs::remove_dir_all(&retarget_root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn initial_shadow_capture_rejects_enumeration_replacement_and_set_change() {
+        let root = scratch("initial-shadow-race");
+        fs::create_dir_all(root.join("pages/nested")).unwrap();
+        fs::write(root.join("pages/nested/a.md"), b"- first\n").unwrap();
+        let graph = Graph::open(&root);
+        INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| {
+            let nested = root.join("pages/nested");
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(nested.join("a.md"))?;
+                fs::write(nested.join("a.md"), b"- replaced\n")?;
+                fs::write(nested.join("inserted.md"), b"- inserted\n")
+            }));
+        });
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_shadow_reads_each_enumerated_file_through_its_retained_binding() {
+        let root = scratch("initial-shadow-open-race");
+        fs::write(root.join("pages/a.md"), b"- first\n").unwrap();
+        let graph = Graph::open(&root);
+        let target = root.join("pages/a.md");
+        let retired = root.join("pages/a.retired.md");
+        MANAGED_INVENTORY_READ_RACE.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&target, &retired)?;
+                fs::write(&target, b"- replacement\n")
+            }));
+        });
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_shadow_validation_pass_retains_metadata_not_second_raw_inventory() {
+        let root = scratch("initial-shadow-peak");
+        fs::write(root.join("pages/a.md"), vec![b'a'; 4096]).unwrap();
+        fs::write(root.join("pages/b.md"), vec![b'b'; 8192]).unwrap();
+        let graph = Graph::open(&root);
+        let capability = graph.projection_root.as_ref().unwrap();
+
+        let first = collect_initial_shadow_managed_inventory(capability, true).unwrap();
+        let validation = collect_initial_shadow_managed_inventory(capability, false).unwrap();
+        assert!(first.iter().all(|entry| entry.bytes.is_some()));
+        assert!(validation.iter().all(|entry| entry.bytes.is_none()));
+        assert_eq!(
+            first
+                .iter()
+                .map(|entry| (
+                    entry.path.clone(),
+                    entry.description,
+                    entry.file_resource_id
+                ))
+                .collect::<Vec<_>>(),
+            validation
+                .iter()
+                .map(|entry| (
+                    entry.path.clone(),
+                    entry.description,
+                    entry.file_resource_id
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_shadow_iterative_limits_count_empty_depth_and_nonmanaged_entries() {
+        let deep = scratch("initial-shadow-deep-limit");
+        fs::create_dir_all(deep.join("pages/a/b/c/d")).unwrap();
+        let graph = Graph::open(&deep);
+        let limits = InitialShadowLimits {
+            directory_depth: 3,
+            ..INITIAL_SHADOW_LIMITS
+        };
+        assert!(collect_initial_shadow_managed_inventory_with_limits(
+            graph.projection_root.as_ref().unwrap(),
+            true,
+            limits,
+        )
+        .is_err());
+
+        let many = scratch("initial-shadow-all-entry-limit");
+        for index in 0..4 {
+            fs::write(
+                many.join("pages").join(format!(".projection-{index}.tmp")),
+                b"",
+            )
+            .unwrap();
+        }
+        let graph = Graph::open(&many);
+        let limits = InitialShadowLimits {
+            all_entries: 3,
+            ..INITIAL_SHADOW_LIMITS
+        };
+        assert!(collect_initial_shadow_managed_inventory_with_limits(
+            graph.projection_root.as_ref().unwrap(),
+            true,
+            limits,
+        )
+        .is_err());
+
+        let _ = fs::remove_dir_all(&deep);
+        let _ = fs::remove_dir_all(&many);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn initial_shadow_rejects_file_aliases_and_portable_path_collisions() {
+        let aliases = scratch("initial-shadow-hardlink");
+        fs::write(aliases.join("pages/a.md"), b"- a\n").unwrap();
+        fs::hard_link(aliases.join("pages/a.md"), aliases.join("pages/alias.tmp")).unwrap();
+        let graph = Graph::open(&aliases);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let portable = scratch("initial-shadow-portable");
+        fs::write(portable.join("pages/Foo.md"), b"- upper\n").unwrap();
+        fs::write(portable.join("pages/foo.md"), b"- lower\n").unwrap();
+        let graph = Graph::open(&portable);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let _ = fs::remove_dir_all(&aliases);
+        let _ = fs::remove_dir_all(&portable);
+    }
+
+    #[test]
+    fn bounded_read_stops_file_growth_after_metadata_at_the_ceiling() {
+        let root = scratch("bounded-read-growth");
+        let path = root.join("pages/growing.md");
+        fs::write(&path, b"tiny").unwrap();
+        let graph = Graph::open(&root);
+        BOUNDED_READ_AFTER_METADATA.with(|hook| {
+            let path = path.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let file = fs::OpenOptions::new().write(true).open(path)?;
+                file.set_len(32)
+            }));
+        });
+        assert!(open_and_read_projection_regular_with_limit(
+            graph.projection_root.as_ref().unwrap(),
+            "pages/growing.md",
+            8,
+        )
+        .is_err());
+        assert_eq!(fs::metadata(path).unwrap().len(), 32);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]

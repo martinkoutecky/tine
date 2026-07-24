@@ -35,7 +35,7 @@ use super::{
 };
 
 const WORK_SCHEMA_VERSION: u32 = 3;
-const INDEX_SCHEMA_VERSION: u32 = 4;
+const INDEX_SCHEMA_VERSION: u32 = 5;
 const MAX_WORK_ROW_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PREPARED_BATCH_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_INDEX_NODE_BYTES: u64 = 8 * 1024 * 1024;
@@ -235,6 +235,7 @@ pub(crate) struct ProjectionWorkCompletionAuthority {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     work_id: ProjectionWorkId,
     page_id: PageId,
     path: ManagedPath,
@@ -246,6 +247,7 @@ pub(crate) struct ProjectionWorkCompletionAuthority {
 impl ProjectionWorkCompletionAuthority {
     pub(super) fn from_durable_completion(
         work: &ProjectionWork,
+        receipt_store_id: super::ProjectionReceiptStoreId,
         intent_id: ProjectionIntentId,
         logical_completion_id: LogicalCompletionId,
     ) -> Self {
@@ -253,6 +255,7 @@ impl ProjectionWorkCompletionAuthority {
             workspace_id: work.workspace_id(),
             endpoint_id: work.endpoint_id(),
             graph_resource_id: work.graph_resource_id(),
+            receipt_store_id,
             work_id: work.work_id(),
             page_id: work.page_id(),
             path: work.path().clone(),
@@ -267,6 +270,7 @@ pub(crate) struct ProjectionWorkBlockAuthority {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     work_id: ProjectionWorkId,
     page_id: PageId,
     path: ManagedPath,
@@ -277,12 +281,14 @@ pub(crate) struct ProjectionWorkBlockAuthority {
 impl ProjectionWorkBlockAuthority {
     pub(super) fn guarded_conflict(
         work: &ProjectionWork,
+        receipt_store_id: super::ProjectionReceiptStoreId,
         observed: Option<BlobDescription>,
     ) -> Self {
         Self {
             workspace_id: work.workspace_id(),
             endpoint_id: work.endpoint_id(),
             graph_resource_id: work.graph_resource_id(),
+            receipt_store_id,
             work_id: work.work_id(),
             page_id: work.page_id(),
             path: work.path().clone(),
@@ -388,6 +394,7 @@ pub struct ProjectionWorkIndex {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     control: Dir,
     nodes: Dir,
     roots: Dir,
@@ -410,6 +417,7 @@ impl ProjectionWorkIndex {
         workspace_id: WorkspaceId,
         endpoint_id: ProjectionEndpointId,
         graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
         control: Dir,
         nodes: Dir,
         roots: Dir,
@@ -419,6 +427,7 @@ impl ProjectionWorkIndex {
             workspace_id,
             endpoint_id,
             graph_resource_id,
+            receipt_store_id,
             control,
             nodes,
             roots,
@@ -440,6 +449,10 @@ impl ProjectionWorkIndex {
 
     pub const fn graph_resource_id(&self) -> super::CanonicalGraphResourceId {
         self.graph_resource_id
+    }
+
+    pub const fn receipt_store_id(&self) -> super::ProjectionReceiptStoreId {
+        self.receipt_store_id
     }
 
     pub fn stats(&self) -> ProjectionWorkIndexStats {
@@ -798,6 +811,50 @@ impl ProjectionWorkIndex {
             .map(|state| state.status.into_public()))
     }
 
+    pub(crate) fn completed_release(
+        &self,
+        batch_id: BatchId,
+        manifest_fingerprint: ContentDigest,
+        page_id: PageId,
+        path: &ManagedPath,
+    ) -> Result<ProjectionWork, ProjectionWorkError> {
+        let (_, root) = self.load_head_root()?;
+        let bytes = self
+            .tree_lookup(root.accepted_root, &batch_key(batch_id))?
+            .ok_or(ProjectionWorkError::AcceptedWitnessMissing)?;
+        let witness: AcceptedBatchWitness = decode_canonical(&bytes)?;
+        if witness.schema_version != INDEX_SCHEMA_VERSION
+            || witness.workspace_id != self.workspace_id
+            || witness.endpoint_id != self.endpoint_id
+            || witness.batch_id != batch_id
+            || witness.manifest_fingerprint != manifest_fingerprint
+            || !strictly_sorted(&witness.work_ids)
+        {
+            return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+        }
+        let mut found = None;
+        for work_id in witness.work_ids {
+            let state = self
+                .load_state(&root, work_id)?
+                .ok_or(ProjectionWorkError::MissingWork(work_id))?;
+            self.require_binding(&state.work)?;
+            if state.work.page_id() != page_id
+                || state.work.path() != path
+                || state.work.target() != ProjectionWorkTarget::Absent
+            {
+                continue;
+            }
+            if found.is_some() {
+                return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+            }
+            if !matches!(state.status, StoredWorkStatus::Completed { .. }) {
+                return Err(ProjectionWorkError::ConflictingStatus);
+            }
+            found = Some(state.work);
+        }
+        found.ok_or(ProjectionWorkError::AcceptedWitnessMissing)
+    }
+
     pub fn next(&self) -> Result<Option<ProjectionWork>, ProjectionWorkError> {
         Ok(self.ready_page(None, 1)?.work.into_iter().next())
     }
@@ -979,6 +1036,27 @@ impl ProjectionWorkIndex {
     }
 
     #[allow(clippy::result_large_err)]
+    pub(crate) fn require_completed(
+        &self,
+        authority: &ProjectionWorkCompletionAuthority,
+    ) -> Result<(), ProjectionWorkError> {
+        let (_, root) = self.load_head_root()?;
+        let state = self
+            .load_state(&root, authority.work_id)?
+            .ok_or(ProjectionWorkError::MissingWork(authority.work_id))?;
+        self.require_completion_authority(&state.work, authority)?;
+        if state.status
+            != (StoredWorkStatus::Completed {
+                intent_id: authority.intent_id,
+                logical_completion_id: authority.logical_completion_id,
+            })
+        {
+            return Err(ProjectionWorkError::ConflictingStatus);
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::result_large_err)]
     pub(crate) fn mark_blocked(
         &self,
         authority: ProjectionWorkBlockAuthority,
@@ -1017,6 +1095,7 @@ impl ProjectionWorkIndex {
         if authority.workspace_id != self.workspace_id
             || authority.endpoint_id != self.endpoint_id
             || authority.graph_resource_id != self.graph_resource_id
+            || authority.receipt_store_id != self.receipt_store_id
             || authority.work_id != work.work_id()
             || authority.page_id != work.page_id()
             || authority.path != *work.path()
@@ -1036,6 +1115,7 @@ impl ProjectionWorkIndex {
         if authority.workspace_id != self.workspace_id
             || authority.endpoint_id != self.endpoint_id
             || authority.graph_resource_id != self.graph_resource_id
+            || authority.receipt_store_id != self.receipt_store_id
             || authority.work_id != work.work_id()
             || authority.page_id != work.page_id()
             || authority.path != *work.path()
@@ -1047,36 +1127,77 @@ impl ProjectionWorkIndex {
     }
 
     fn initialize(&self) -> Result<(), ProjectionWorkError> {
-        let empty =
-            ProjectionRoot::empty(self.workspace_id, self.endpoint_id, self.graph_resource_id);
-        let empty_digest = self.publish_root(&empty)?;
         let head = read_optional_regular(&self.control, HEAD_FILE, 64, None)?;
         let claim = read_optional_regular(&self.control, CLAIM_FILE, 256, None)?;
-        if head.is_none() {
-            if claim.is_some() {
-                return Err(ProjectionWorkError::MissingHead);
+        match (head, claim) {
+            (None, None) => {
+                let empty = ProjectionRoot::empty(
+                    self.workspace_id,
+                    self.endpoint_id,
+                    self.graph_resource_id,
+                    self.receipt_store_id,
+                );
+                let empty_digest = self.publish_root(&empty)?;
+                publish_immutable_exact(
+                    &self.control,
+                    HEAD_FILE,
+                    empty_digest.to_string().as_bytes(),
+                    "projection work root head",
+                )?;
+                let expected_claim = encode_canonical(&ProjectionIndexClaim {
+                    schema_version: INDEX_SCHEMA_VERSION,
+                    workspace_id: self.workspace_id,
+                    endpoint_id: self.endpoint_id,
+                    graph_resource_id: self.graph_resource_id,
+                    receipt_store_id: self.receipt_store_id,
+                })?;
+                publish_immutable_exact(
+                    &self.control,
+                    CLAIM_FILE,
+                    &expected_claim,
+                    "projection work index claim",
+                )?;
             }
-            publish_immutable_exact(
-                &self.control,
-                HEAD_FILE,
-                empty_digest.to_string().as_bytes(),
-                "projection work root head",
-            )?;
+            (Some(_), Some(claim)) => self.validate_existing_claim(&claim)?,
+            _ => return Err(ProjectionWorkError::MissingHead),
         }
-        let expected_claim = encode_canonical(&ProjectionIndexClaim {
-            schema_version: INDEX_SCHEMA_VERSION,
-            workspace_id: self.workspace_id,
-            endpoint_id: self.endpoint_id,
-            graph_resource_id: self.graph_resource_id,
-        })?;
-        publish_immutable_exact(
-            &self.control,
-            CLAIM_FILE,
-            &expected_claim,
-            "projection work index claim",
-        )?;
         let (_, root) = self.load_head_root()?;
         self.require_root_binding(&root)
+    }
+
+    fn validate_existing_claim(&self, bytes: &[u8]) -> Result<(), ProjectionWorkError> {
+        if let Ok(claim) = decode_canonical::<ProjectionIndexClaim>(bytes) {
+            if claim.schema_version < INDEX_SCHEMA_VERSION {
+                return Err(ProjectionWorkError::UpgradeRequired {
+                    found: claim.schema_version,
+                    current: INDEX_SCHEMA_VERSION,
+                });
+            }
+            if claim.schema_version > INDEX_SCHEMA_VERSION {
+                return Err(ProjectionWorkError::UnsupportedVersion(
+                    claim.schema_version,
+                ));
+            }
+            if claim.workspace_id != self.workspace_id
+                || claim.endpoint_id != self.endpoint_id
+                || claim.graph_resource_id != self.graph_resource_id
+                || claim.receipt_store_id != self.receipt_store_id
+            {
+                return Err(ProjectionWorkError::BindingMismatch);
+            }
+            return Ok(());
+        }
+        if let Ok(claim) = postcard::from_bytes::<ProjectionIndexClaimV4>(bytes) {
+            if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes)
+                && claim.schema_version == 4
+            {
+                return Err(ProjectionWorkError::UpgradeRequired {
+                    found: claim.schema_version,
+                    current: INDEX_SCHEMA_VERSION,
+                });
+            }
+        }
+        Err(ProjectionWorkError::NonCanonical)
     }
 
     fn transition(
@@ -1193,6 +1314,7 @@ impl ProjectionWorkIndex {
             || root.workspace_id != self.workspace_id
             || root.endpoint_id != self.endpoint_id
             || root.graph_resource_id != self.graph_resource_id
+            || root.receipt_store_id != self.receipt_store_id
             || (root.engine_history_generation == 0)
                 != (root.engine_history_root
                     == super::object_store::EngineHistoryStore::empty_root())
@@ -1654,6 +1776,16 @@ struct ProjectionIndexClaim {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionIndexClaimV4 {
+    schema_version: u32,
+    workspace_id: WorkspaceId,
+    endpoint_id: ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1726,6 +1858,7 @@ struct ProjectionRoot {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     generation: u64,
     engine_history_generation: u64,
     engine_history_root: ContentDigest,
@@ -1741,12 +1874,14 @@ impl ProjectionRoot {
         workspace_id: WorkspaceId,
         endpoint_id: ProjectionEndpointId,
         graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
     ) -> Self {
         Self {
             schema_version: INDEX_SCHEMA_VERSION,
             workspace_id,
             endpoint_id,
             graph_resource_id,
+            receipt_store_id,
             generation: 0,
             engine_history_generation: 0,
             engine_history_root: super::object_store::EngineHistoryStore::empty_root(),
@@ -2017,6 +2152,8 @@ pub enum ProjectionWorkError {
     MissingReadyRow,
     MissingPreparedBatch(BatchId),
     MissingHead,
+    UpgradeRequired { found: u32, current: u32 },
+    UnsupportedVersion(u32),
     MissingRoot(ContentDigest),
     MissingNode(ContentDigest),
     RootDigestMismatch(ContentDigest),
@@ -2052,6 +2189,13 @@ impl fmt::Display for ProjectionWorkError {
                 )
             }
             Self::MissingHead => f.write_str("projection work authenticated root head is missing"),
+            Self::UpgradeRequired { found, current } => write!(
+                f,
+                "projection work index version {found} requires upgrade to {current}"
+            ),
+            Self::UnsupportedVersion(version) => {
+                write!(f, "projection work index version {version} is unsupported")
+            }
             Self::MissingRoot(digest) => write!(f, "projection work root {digest} is missing"),
             Self::MissingNode(digest) => write!(f, "projection work node {digest} is missing"),
             Self::RootDigestMismatch(digest) => {
@@ -2103,6 +2247,7 @@ impl From<std::io::Error> for ProjectionWorkError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -2133,10 +2278,17 @@ mod tests {
                 );
             let store = ObjectStore::open(&path, workspace_id).unwrap();
             let index = store
-                .open_projection_work_index(super::super::ProjectionEndpointBinding {
-                    endpoint_id,
-                    device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(3)),
-                    graph_resource_id,
+                .open_projection_work_index(super::super::hot_engine::ProjectionStorageBinding {
+                    endpoint: super::super::ProjectionEndpointBinding {
+                        endpoint_id,
+                        device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(3)),
+                        graph_resource_id,
+                    },
+                    receipt_store_id:
+                        super::super::ProjectionReceiptStoreId::from_capability_identity(
+                            b"test",
+                            b"projection-work-index",
+                        ),
                 })
                 .unwrap();
             Self {
@@ -2188,6 +2340,7 @@ mod tests {
                 workspace_id: work.workspace_id(),
                 endpoint_id: work.endpoint_id(),
                 graph_resource_id: work.graph_resource_id(),
+                receipt_store_id: self.index.receipt_store_id(),
                 work_id: work.work_id(),
                 page_id: work.page_id(),
                 path: work.path().clone(),
@@ -2456,6 +2609,7 @@ mod tests {
 
         let mut forged_block = ProjectionWorkBlockAuthority::guarded_conflict(
             &first,
+            fixture.index.receipt_store_id(),
             Some(BlobDescription::of(b"external")),
         );
         forged_block.work_id = second.work_id();
@@ -2618,5 +2772,66 @@ mod tests {
             fixture.index.next(),
             Err(ProjectionWorkError::RootDigestMismatch(_))
         ));
+    }
+
+    #[test]
+    fn prior_version_completed_work_requires_upgrade_without_writes() {
+        fn snapshot(path: &std::path::Path) -> BTreeMap<PathBuf, Vec<u8>> {
+            let mut result = BTreeMap::new();
+            let mut pending = vec![path.to_path_buf()];
+            while let Some(directory) = pending.pop() {
+                for entry in fs::read_dir(&directory).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry.file_type().unwrap().is_dir() {
+                        pending.push(entry.path());
+                    } else {
+                        result.insert(
+                            entry.path().strip_prefix(path).unwrap().to_path_buf(),
+                            fs::read(entry.path()).unwrap(),
+                        );
+                    }
+                }
+            }
+            result
+        }
+
+        let fixture = Fixture::new("prior-completed");
+        let work = fixture.work(1, "pages/completed.md");
+        let fingerprint = fixture.prepare(&work);
+        fixture
+            .index
+            .accept_batch(work.batch_id(), fingerprint)
+            .unwrap();
+        fixture
+            .index
+            .mark_completed(fixture.completion_authority(&work))
+            .unwrap();
+        let endpoint = fixture
+            .path
+            .join("projection-work-index-v1")
+            .join(fixture.endpoint_id.to_string());
+        let prior_claim = postcard::to_allocvec(&ProjectionIndexClaimV4 {
+            schema_version: 4,
+            workspace_id: fixture.workspace_id,
+            endpoint_id: fixture.endpoint_id,
+            graph_resource_id: fixture.graph_resource_id,
+        })
+        .unwrap();
+        fs::write(endpoint.join(CLAIM_FILE), prior_claim).unwrap();
+        let before = snapshot(&fixture.path);
+
+        let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+        let error = store
+            .open_projection_work_index(super::super::hot_engine::ProjectionStorageBinding {
+                endpoint: super::super::ProjectionEndpointBinding {
+                    endpoint_id: fixture.endpoint_id,
+                    device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(3)),
+                    graph_resource_id: fixture.graph_resource_id,
+                },
+                receipt_store_id: fixture.index.receipt_store_id(),
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("requires upgrade"));
+        assert_eq!(snapshot(&fixture.path), before);
     }
 }
