@@ -55,11 +55,11 @@ use super::{
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 8;
+pub const SQLITE_SCHEMA_VERSION: u32 = 9;
 pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
-const EXPECTED_TABLES: [&str; 20] = [
+const EXPECTED_TABLES: [&str; 26] = [
     "accepted_batch_nodes",
     "applied_batches",
     "blocks",
@@ -71,6 +71,12 @@ const EXPECTED_TABLES: [&str; 20] = [
     "meta",
     "pages",
     "properties",
+    "reference_alias_bindings",
+    "reference_alias_declarations",
+    "reference_name_bindings",
+    "reference_postings",
+    "reference_source_coverage",
+    "reference_uuid_bindings",
     "refs",
     "search_fts",
     "search_fts_config",
@@ -81,7 +87,7 @@ const EXPECTED_TABLES: [&str; 20] = [
     "tags",
     "tasks",
 ];
-const EXPECTED_INDEXES: [&str; 12] = [
+const EXPECTED_INDEXES: [&str; 22] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
     "blocks_page_order_idx",
@@ -89,6 +95,16 @@ const EXPECTED_INDEXES: [&str; 12] = [
     "pages_name_key_idx",
     "pages_path_idx",
     "properties_lookup_idx",
+    "reference_alias_bindings_normalized_alias_idx",
+    "reference_alias_declarations_source_idx",
+    "reference_name_bindings_raw_name_idx",
+    "reference_name_bindings_resolved_page_idx",
+    "reference_postings_normalized_name_idx",
+    "reference_postings_raw_uuid_idx",
+    "reference_postings_source_idx",
+    "reference_source_coverage_source_idx",
+    "reference_uuid_bindings_raw_uuid_idx",
+    "reference_uuid_bindings_resolved_block_idx",
     "references_source_idx",
     "references_target_idx",
     "tags_lookup_idx",
@@ -5811,7 +5827,7 @@ mod tests {
                 }
                 "user-version" => {
                     connection
-                        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION + 1)
+                        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION - 1)
                         .unwrap();
                 }
                 _ => unreachable!(),

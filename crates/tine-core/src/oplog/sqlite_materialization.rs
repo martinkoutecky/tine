@@ -18,7 +18,8 @@ use uuid::Uuid;
 use super::{
     AcceptedBatchEvent, BatchId, BlockId, BlockOwner, ContentDigest, DocumentId,
     LogseqIdentityOrigin, LogseqUuid, ManagedPath, ManagedTextKind, PageId, PageState,
-    PolicyGeneratedAnchorReason, SemanticEffect,
+    PolicyGeneratedAnchorReason, ReferenceSourceLocatorV1, SemanticEffect,
+    REFERENCE_CATALOG_EXTRACTOR_VERSION, REFERENCE_CATALOG_POLICY_VERSION,
 };
 
 pub const MAX_MATERIALIZATION_QUERY_ROWS: usize = 10_000;
@@ -43,18 +44,182 @@ const MATERIALIZATION_REFERENCE_OVERHEAD_BYTES: usize = 48;
 const MATERIALIZATION_PROPERTY_OVERHEAD_BYTES: usize = 24;
 const MATERIALIZATION_TAG_OVERHEAD_BYTES: usize = 16;
 const MATERIALIZATION_STRING_OVERHEAD_BYTES: usize = 16;
+const REFERENCE_CATALOG_POSTING_OVERHEAD_BYTES: usize = 96;
+const REFERENCE_CATALOG_ALIAS_OVERHEAD_BYTES: usize = 80;
+const REFERENCE_CATALOG_BINDING_OVERHEAD_BYTES: usize = 64;
+const REFERENCE_CATALOG_COVERAGE_OVERHEAD_BYTES: usize = 80;
 const MATERIALIZATION_INPUT_SCHEMA_VERSION: u32 = 2;
+pub(crate) const REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_SCHEMA_VERSION: u32 = 1;
+const REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_DOMAIN: &[u8] =
+    b"tine/sqlite-reference-extractor-dependency-stamp/v1";
 
 pub(crate) const MATERIALIZATION_STAMP_DDL: &str = "CREATE TABLE materialization_stamp (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     acceptance_sequence INTEGER NOT NULL CHECK (acceptance_sequence >= 0),
-    frontier_root_digest BLOB NOT NULL CHECK (length(frontier_root_digest) = 32)
-) STRICT";
+    frontier_root_digest BLOB NOT NULL CHECK (length(frontier_root_digest) = 32),
+    catalog_root BLOB CHECK (
+        catalog_root IS NULL OR length(catalog_root) BETWEEN 1 AND 4096
+    ),
+    catalog_root_digest BLOB CHECK (
+        catalog_root_digest IS NULL OR length(catalog_root_digest) = 32
+    ),
+    coverage_digest BLOB CHECK (
+        coverage_digest IS NULL OR length(coverage_digest) = 32
+    ),
+    extractor_dependency_stamp_digest BLOB CHECK (
+        extractor_dependency_stamp_digest IS NULL
+        OR length(extractor_dependency_stamp_digest) = 32
+    ),
+    CHECK (
+        (catalog_root IS NULL AND catalog_root_digest IS NULL
+         AND coverage_digest IS NULL AND extractor_dependency_stamp_digest IS NULL)
+        OR
+        (catalog_root IS NOT NULL AND catalog_root_digest IS NOT NULL
+         AND coverage_digest IS NOT NULL AND extractor_dependency_stamp_digest IS NOT NULL)
+    )
+) WITHOUT ROWID, STRICT";
 pub(crate) const MATERIALIZATION_BATCHES_DDL: &str = "CREATE TABLE materialization_batches (
     acceptance_sequence INTEGER PRIMARY KEY CHECK (acceptance_sequence > 0),
     batch_id BLOB NOT NULL UNIQUE CHECK (length(batch_id) = 16),
-    input_digest BLOB NOT NULL CHECK (length(input_digest) = 32)
-) STRICT";
+    input_digest BLOB NOT NULL CHECK (length(input_digest) = 32),
+    event_binding_digest BLOB CHECK (
+        event_binding_digest IS NULL OR length(event_binding_digest) = 32
+    ),
+    prior_frontier_root_digest BLOB CHECK (
+        prior_frontier_root_digest IS NULL OR length(prior_frontier_root_digest) = 32
+    ),
+    post_frontier_root_digest BLOB CHECK (
+        post_frontier_root_digest IS NULL OR length(post_frontier_root_digest) = 32
+    ),
+    prior_catalog_root BLOB CHECK (
+        prior_catalog_root IS NULL OR length(prior_catalog_root) BETWEEN 1 AND 4096
+    ),
+    prior_catalog_root_digest BLOB CHECK (
+        prior_catalog_root_digest IS NULL OR length(prior_catalog_root_digest) = 32
+    ),
+    post_catalog_root BLOB CHECK (
+        post_catalog_root IS NULL OR length(post_catalog_root) BETWEEN 1 AND 4096
+    ),
+    post_catalog_root_digest BLOB CHECK (
+        post_catalog_root_digest IS NULL OR length(post_catalog_root_digest) = 32
+    ),
+    catalog_change BLOB CHECK (
+        catalog_change IS NULL OR length(catalog_change) BETWEEN 1 AND 67108864
+    ),
+    catalog_change_digest BLOB CHECK (
+        catalog_change_digest IS NULL OR length(catalog_change_digest) = 32
+    ),
+    canonical_input_digest BLOB CHECK (
+        canonical_input_digest IS NULL OR length(canonical_input_digest) = 32
+    ),
+    CHECK (
+        (event_binding_digest IS NULL AND prior_frontier_root_digest IS NULL
+         AND post_frontier_root_digest IS NULL AND prior_catalog_root IS NULL
+         AND prior_catalog_root_digest IS NULL AND post_catalog_root IS NULL
+         AND post_catalog_root_digest IS NULL AND catalog_change IS NULL
+         AND catalog_change_digest IS NULL AND canonical_input_digest IS NULL)
+        OR
+        (event_binding_digest IS NOT NULL AND prior_frontier_root_digest IS NOT NULL
+         AND post_frontier_root_digest IS NOT NULL AND prior_catalog_root IS NOT NULL
+         AND prior_catalog_root_digest IS NOT NULL AND post_catalog_root IS NOT NULL
+         AND post_catalog_root_digest IS NOT NULL AND catalog_change IS NOT NULL
+         AND catalog_change_digest IS NOT NULL AND canonical_input_digest IS NOT NULL)
+    )
+) WITHOUT ROWID, STRICT";
+// The current v2 materialization applier has no authenticated catalog-change
+// adapter. It records `input_digest` and leaves the all-or-nothing catalog
+// authority group NULL; it must never synthesize zero or sentinel authority.
+pub(crate) const REFERENCE_SOURCE_COVERAGE_DDL: &str = "CREATE TABLE reference_source_coverage (
+    source_page_id BLOB PRIMARY KEY CHECK (length(source_page_id) = 16),
+    source_digest BLOB NOT NULL CHECK (length(source_digest) = 32),
+    extractor_dependency_stamp_digest BLOB NOT NULL CHECK (
+        length(extractor_dependency_stamp_digest) = 32
+    )
+) WITHOUT ROWID, STRICT";
+pub(crate) const REFERENCE_POSTINGS_DDL: &str = "CREATE TABLE reference_postings (
+    source_page_id BLOB NOT NULL CHECK (length(source_page_id) = 16),
+    source_entity_type INTEGER NOT NULL CHECK (source_entity_type IN (0, 1)),
+    source_entity_id BLOB NOT NULL CHECK (length(source_entity_id) = 16),
+    source_locator BLOB NOT NULL CHECK (length(source_locator) BETWEEN 1 AND 4194304),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    reference_kind INTEGER NOT NULL CHECK (reference_kind BETWEEN 0 AND 7),
+    target_type INTEGER NOT NULL CHECK (target_type IN (0, 1)),
+    raw_name TEXT CHECK (
+        raw_name IS NULL OR length(CAST(raw_name AS BLOB)) BETWEEN 1 AND 4194304
+    ),
+    normalized_name TEXT CHECK (
+        normalized_name IS NULL OR length(CAST(normalized_name AS BLOB)) BETWEEN 1 AND 4194304
+    ),
+    raw_uuid_claim BLOB CHECK (
+        raw_uuid_claim IS NULL OR length(raw_uuid_claim) = 16
+    ),
+    resolved_page_id BLOB CHECK (
+        resolved_page_id IS NULL OR length(resolved_page_id) = 16
+    ),
+    resolved_block_id BLOB CHECK (
+        resolved_block_id IS NULL OR length(resolved_block_id) = 16
+    ),
+    CHECK (
+        (reference_kind BETWEEN 0 AND 5 AND target_type = 0)
+        OR
+        (reference_kind IN (6, 7) AND target_type = 1)
+    ),
+    CHECK (
+        (target_type = 0 AND raw_name IS NOT NULL AND normalized_name IS NOT NULL
+         AND raw_uuid_claim IS NULL AND resolved_block_id IS NULL)
+        OR
+        (target_type = 1 AND raw_name IS NULL AND normalized_name IS NULL
+         AND raw_uuid_claim IS NOT NULL AND resolved_page_id IS NULL)
+    ),
+    PRIMARY KEY (
+        source_page_id, source_entity_type, source_entity_id, source_locator, ordinal
+    )
+) WITHOUT ROWID, STRICT";
+pub(crate) const REFERENCE_NAME_BINDINGS_DDL: &str = "CREATE TABLE reference_name_bindings (
+    raw_name TEXT NOT NULL CHECK (length(CAST(raw_name AS BLOB)) BETWEEN 1 AND 4194304),
+    normalized_name TEXT NOT NULL CHECK (
+        length(CAST(normalized_name AS BLOB)) BETWEEN 1 AND 4194304
+    ),
+    candidate_ordinal INTEGER NOT NULL CHECK (candidate_ordinal >= 0),
+    resolved_page_id BLOB CHECK (
+        resolved_page_id IS NULL OR length(resolved_page_id) = 16
+    ),
+    PRIMARY KEY (raw_name, candidate_ordinal)
+) WITHOUT ROWID, STRICT";
+pub(crate) const REFERENCE_UUID_BINDINGS_DDL: &str = "CREATE TABLE reference_uuid_bindings (
+    raw_uuid_claim BLOB NOT NULL CHECK (length(raw_uuid_claim) = 16),
+    candidate_ordinal INTEGER NOT NULL CHECK (candidate_ordinal >= 0),
+    resolved_block_id BLOB CHECK (
+        resolved_block_id IS NULL OR length(resolved_block_id) = 16
+    ),
+    PRIMARY KEY (raw_uuid_claim, candidate_ordinal)
+) WITHOUT ROWID, STRICT";
+pub(crate) const REFERENCE_ALIAS_DECLARATIONS_DDL: &str =
+    "CREATE TABLE reference_alias_declarations (
+    source_page_id BLOB NOT NULL CHECK (length(source_page_id) = 16),
+    source_entity_type INTEGER NOT NULL CHECK (source_entity_type IN (0, 1)),
+    source_entity_id BLOB NOT NULL CHECK (length(source_entity_id) = 16),
+    source_locator BLOB NOT NULL CHECK (length(source_locator) BETWEEN 1 AND 4194304),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    raw_alias TEXT NOT NULL CHECK (length(CAST(raw_alias AS BLOB)) BETWEEN 1 AND 4194304),
+    normalized_alias TEXT NOT NULL CHECK (
+        length(CAST(normalized_alias AS BLOB)) BETWEEN 1 AND 4194304
+    ),
+    PRIMARY KEY (
+        source_page_id, source_entity_type, source_entity_id, source_locator, ordinal
+    )
+) WITHOUT ROWID, STRICT";
+pub(crate) const REFERENCE_ALIAS_BINDINGS_DDL: &str = "CREATE TABLE reference_alias_bindings (
+    normalized_alias TEXT NOT NULL CHECK (
+        length(CAST(normalized_alias AS BLOB)) BETWEEN 1 AND 4194304
+    ),
+    candidate_ordinal INTEGER NOT NULL CHECK (candidate_ordinal >= 0),
+    resolved_page_id BLOB CHECK (
+        resolved_page_id IS NULL OR length(resolved_page_id) = 16
+    ),
+    catalog_root_digest BLOB NOT NULL CHECK (length(catalog_root_digest) = 32),
+    PRIMARY KEY (normalized_alias, candidate_ordinal, catalog_root_digest)
+) WITHOUT ROWID, STRICT";
 pub(crate) const PAGES_DDL: &str = "CREATE TABLE pages (
     page_id BLOB PRIMARY KEY CHECK (length(page_id) = 16),
     home_document_id BLOB NOT NULL CHECK (length(home_document_id) = 16),
@@ -90,6 +255,9 @@ pub(crate) const BLOCKS_DDL: &str = "CREATE TABLE blocks (
         OR (logseq_uuid IS NOT NULL AND logseq_identity_origin IS NOT NULL)
     )
 ) STRICT";
+// Retained temporarily for active v2 reads/writes. The authenticated catalog
+// migration-cleanup slice removes this legacy target-ID representation only
+// after every call site has moved to the v9 raw-evidence tables below.
 pub(crate) const REFERENCES_DDL: &str = "CREATE TABLE refs (
     source_type INTEGER NOT NULL CHECK (source_type IN (0, 1)),
     source_id BLOB NOT NULL CHECK (length(source_id) = 16),
@@ -143,6 +311,36 @@ pub(crate) const REFERENCES_TARGET_INDEX_DDL: &str = "CREATE INDEX references_ta
     ON refs(target_type, target_id, source_page_id, source_type, source_id)";
 pub(crate) const REFERENCES_SOURCE_INDEX_DDL: &str = "CREATE INDEX references_source_idx
     ON refs(source_page_id, source_type, source_id)";
+pub(crate) const REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL: &str =
+    "CREATE INDEX reference_source_coverage_source_idx ON reference_source_coverage(source_page_id)";
+pub(crate) const REFERENCE_POSTINGS_SOURCE_INDEX_DDL: &str =
+    "CREATE INDEX reference_postings_source_idx
+    ON reference_postings(source_page_id, source_entity_type, source_entity_id, ordinal)";
+pub(crate) const REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL: &str =
+    "CREATE INDEX reference_postings_normalized_name_idx
+    ON reference_postings(normalized_name, source_page_id, source_entity_type, source_entity_id, ordinal)
+    WHERE target_type = 0";
+pub(crate) const REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL: &str = "CREATE INDEX reference_postings_raw_uuid_idx
+    ON reference_postings(raw_uuid_claim, source_page_id, source_entity_type, source_entity_id, ordinal)
+    WHERE target_type = 1";
+pub(crate) const REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL: &str =
+    "CREATE INDEX reference_name_bindings_raw_name_idx
+    ON reference_name_bindings(raw_name, candidate_ordinal)";
+pub(crate) const REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL: &str =
+    "CREATE INDEX reference_name_bindings_resolved_page_idx
+    ON reference_name_bindings(resolved_page_id, raw_name, candidate_ordinal)";
+pub(crate) const REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL: &str =
+    "CREATE INDEX reference_uuid_bindings_raw_uuid_idx
+    ON reference_uuid_bindings(raw_uuid_claim, candidate_ordinal)";
+pub(crate) const REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL: &str =
+    "CREATE INDEX reference_uuid_bindings_resolved_block_idx
+    ON reference_uuid_bindings(resolved_block_id, raw_uuid_claim, candidate_ordinal)";
+pub(crate) const REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL: &str =
+    "CREATE INDEX reference_alias_declarations_source_idx
+    ON reference_alias_declarations(source_page_id, source_entity_type, source_entity_id, ordinal)";
+pub(crate) const REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL: &str =
+    "CREATE INDEX reference_alias_bindings_normalized_alias_idx
+    ON reference_alias_bindings(normalized_alias, catalog_root_digest, candidate_ordinal)";
 pub(crate) const PROPERTIES_LOOKUP_INDEX_DDL: &str = "CREATE INDEX properties_lookup_idx
     ON properties(name, value, page_id, owner_type, owner_id)";
 pub(crate) const TAGS_LOOKUP_INDEX_DDL: &str =
@@ -152,14 +350,95 @@ pub(crate) const TASKS_MARKER_INDEX_DDL: &str =
 pub(crate) const TASKS_DEADLINE_INDEX_DDL: &str =
     "CREATE INDEX tasks_deadline_idx ON tasks(deadline, scheduled, page_id, block_id)";
 
-const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 8] = [
+const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
     (
         "materialization_stamp",
-        &["singleton", "acceptance_sequence", "frontier_root_digest"],
+        &[
+            "singleton",
+            "acceptance_sequence",
+            "frontier_root_digest",
+            "catalog_root",
+            "catalog_root_digest",
+            "coverage_digest",
+            "extractor_dependency_stamp_digest",
+        ],
     ),
     (
         "materialization_batches",
-        &["acceptance_sequence", "batch_id", "input_digest"],
+        &[
+            "acceptance_sequence",
+            "batch_id",
+            "input_digest",
+            "event_binding_digest",
+            "prior_frontier_root_digest",
+            "post_frontier_root_digest",
+            "prior_catalog_root",
+            "prior_catalog_root_digest",
+            "post_catalog_root",
+            "post_catalog_root_digest",
+            "catalog_change",
+            "catalog_change_digest",
+            "canonical_input_digest",
+        ],
+    ),
+    (
+        "reference_source_coverage",
+        &[
+            "source_page_id",
+            "source_digest",
+            "extractor_dependency_stamp_digest",
+        ],
+    ),
+    (
+        "reference_postings",
+        &[
+            "source_page_id",
+            "source_entity_type",
+            "source_entity_id",
+            "source_locator",
+            "ordinal",
+            "reference_kind",
+            "target_type",
+            "raw_name",
+            "normalized_name",
+            "raw_uuid_claim",
+            "resolved_page_id",
+            "resolved_block_id",
+        ],
+    ),
+    (
+        "reference_name_bindings",
+        &[
+            "raw_name",
+            "normalized_name",
+            "candidate_ordinal",
+            "resolved_page_id",
+        ],
+    ),
+    (
+        "reference_uuid_bindings",
+        &["raw_uuid_claim", "candidate_ordinal", "resolved_block_id"],
+    ),
+    (
+        "reference_alias_declarations",
+        &[
+            "source_page_id",
+            "source_entity_type",
+            "source_entity_id",
+            "source_locator",
+            "ordinal",
+            "raw_alias",
+            "normalized_alias",
+        ],
+    ),
+    (
+        "reference_alias_bindings",
+        &[
+            "normalized_alias",
+            "candidate_ordinal",
+            "resolved_page_id",
+            "catalog_root_digest",
+        ],
     ),
     (
         "pages",
@@ -230,12 +509,38 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 8] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 18] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 34] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
         "materialization_batches",
         MATERIALIZATION_BATCHES_DDL,
+    ),
+    (
+        "table",
+        "reference_source_coverage",
+        REFERENCE_SOURCE_COVERAGE_DDL,
+    ),
+    ("table", "reference_postings", REFERENCE_POSTINGS_DDL),
+    (
+        "table",
+        "reference_name_bindings",
+        REFERENCE_NAME_BINDINGS_DDL,
+    ),
+    (
+        "table",
+        "reference_uuid_bindings",
+        REFERENCE_UUID_BINDINGS_DDL,
+    ),
+    (
+        "table",
+        "reference_alias_declarations",
+        REFERENCE_ALIAS_DECLARATIONS_DDL,
+    ),
+    (
+        "table",
+        "reference_alias_bindings",
+        REFERENCE_ALIAS_BINDINGS_DDL,
     ),
     ("table", "pages", PAGES_DDL),
     ("table", "blocks", BLOCKS_DDL),
@@ -261,6 +566,56 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 18] = [
         "index",
         "references_source_idx",
         REFERENCES_SOURCE_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_source_coverage_source_idx",
+        REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_postings_source_idx",
+        REFERENCE_POSTINGS_SOURCE_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_postings_normalized_name_idx",
+        REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_postings_raw_uuid_idx",
+        REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_name_bindings_raw_name_idx",
+        REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_name_bindings_resolved_page_idx",
+        REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_uuid_bindings_raw_uuid_idx",
+        REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_uuid_bindings_resolved_block_idx",
+        REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_alias_declarations_source_idx",
+        REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL,
+    ),
+    (
+        "index",
+        "reference_alias_bindings_normalized_alias_idx",
+        REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL,
     ),
     (
         "index",
@@ -316,6 +671,374 @@ impl MaterializedReferenceKind {
                 "unknown reference kind {value}"
             ))),
         }
+    }
+}
+
+/// SQLite's crate-private representation of Packet 1 reference kinds.
+///
+/// It deliberately does not make Packet 1 depend on SQLite. The authenticated
+/// catalog adapter in the following slice is the only boundary that may turn
+/// Packet 1 facts into these values.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReferenceCatalogReferenceKind {
+    PageLink,
+    Tag,
+    PageEmbed,
+    LinkablePropertyValue,
+    AliasDeclaration,
+    PropertyKeyPseudoPage,
+    BlockReference,
+    BlockEmbed,
+}
+
+impl ReferenceCatalogReferenceKind {
+    pub(crate) const fn from_page_kind(kind: super::PageReferenceKindV1) -> Self {
+        match kind {
+            super::PageReferenceKindV1::PageLink => Self::PageLink,
+            super::PageReferenceKindV1::Tag => Self::Tag,
+            super::PageReferenceKindV1::PageEmbed => Self::PageEmbed,
+            super::PageReferenceKindV1::LinkablePropertyValue => Self::LinkablePropertyValue,
+            super::PageReferenceKindV1::AliasDeclaration => Self::AliasDeclaration,
+            super::PageReferenceKindV1::PropertyKeyPseudoPage => Self::PropertyKeyPseudoPage,
+        }
+    }
+
+    pub(crate) const fn from_block_kind(kind: super::BlockReferenceKindV1) -> Self {
+        match kind {
+            super::BlockReferenceKindV1::Reference => Self::BlockReference,
+            super::BlockReferenceKindV1::Embed => Self::BlockEmbed,
+        }
+    }
+
+    pub(crate) const fn sql_value(self) -> i64 {
+        match self {
+            Self::PageLink => 0,
+            Self::Tag => 1,
+            Self::PageEmbed => 2,
+            Self::LinkablePropertyValue => 3,
+            Self::AliasDeclaration => 4,
+            Self::PropertyKeyPseudoPage => 5,
+            Self::BlockReference => 6,
+            Self::BlockEmbed => 7,
+        }
+    }
+
+    const fn accepts_target(self, target: &MaterializedReferenceTarget) -> bool {
+        matches!(
+            (self, target),
+            (
+                Self::PageLink
+                    | Self::Tag
+                    | Self::PageEmbed
+                    | Self::LinkablePropertyValue
+                    | Self::AliasDeclaration
+                    | Self::PropertyKeyPseudoPage,
+                MaterializedReferenceTarget::PageName { .. }
+            ) | (
+                Self::BlockReference | Self::BlockEmbed,
+                MaterializedReferenceTarget::ExternalUuid { .. }
+            )
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum MaterializedReferenceTarget {
+    PageName {
+        raw_name: String,
+        normalized_name: String,
+        resolved_page_id: Option<PageId>,
+    },
+    ExternalUuid {
+        raw_claim: LogseqUuid,
+        resolved_block_id: Option<BlockId>,
+    },
+}
+
+impl MaterializedReferenceTarget {
+    fn validate(
+        &self,
+        input_budget: &mut MaterializationInputBudget,
+    ) -> Result<(), MaterializationError> {
+        match self {
+            Self::PageName {
+                raw_name,
+                normalized_name,
+                ..
+            } => {
+                validate_page_name_pair("reference target", raw_name, normalized_name)?;
+                input_budget.add_field(
+                    "reference raw name bytes",
+                    raw_name,
+                    MAX_MATERIALIZATION_FIELD_BYTES,
+                )?;
+                input_budget.add_field(
+                    "reference normalized name bytes",
+                    normalized_name,
+                    MAX_MATERIALIZATION_FIELD_BYTES,
+                )?;
+            }
+            Self::ExternalUuid { .. } => input_budget.add_bytes(16)?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReferenceExtractorDependencyStamp {
+    schema_version: u32,
+    extractor_version: u32,
+    extractor_digest: ContentDigest,
+    policy_version: u32,
+    policy_digest: ContentDigest,
+}
+
+impl ReferenceExtractorDependencyStamp {
+    pub(crate) fn new(
+        extractor_digest: ContentDigest,
+        policy_digest: ContentDigest,
+    ) -> Result<Self, MaterializationError> {
+        let stamp = Self {
+            schema_version: REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_SCHEMA_VERSION,
+            extractor_version: REFERENCE_CATALOG_EXTRACTOR_VERSION,
+            extractor_digest,
+            policy_version: REFERENCE_CATALOG_POLICY_VERSION,
+            policy_digest,
+        };
+        stamp.validate()?;
+        Ok(stamp)
+    }
+
+    fn validate(&self) -> Result<(), MaterializationError> {
+        if self.schema_version != REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_SCHEMA_VERSION
+            || self.extractor_version != REFERENCE_CATALOG_EXTRACTOR_VERSION
+            || self.policy_version != REFERENCE_CATALOG_POLICY_VERSION
+        {
+            return Err(MaterializationError::InvalidInput(
+                "unknown reference extractor dependency stamp version".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn digest(&self) -> Result<ContentDigest, MaterializationError> {
+        self.validate()?;
+        let encoded = postcard::to_allocvec(self)
+            .map_err(|error| MaterializationError::InvalidInput(error.to_string()))?;
+        let mut preimage = Vec::with_capacity(
+            REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_DOMAIN.len() + 1 + encoded.len(),
+        );
+        preimage.extend_from_slice(REFERENCE_EXTRACTOR_DEPENDENCY_STAMP_DOMAIN);
+        preimage.push(0);
+        preimage.extend_from_slice(&encoded);
+        Ok(ContentDigest::of(&preimage))
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterializedReferencePosting {
+    pub(crate) source_page_id: PageId,
+    pub(crate) source_entity: MaterializedEntityId,
+    pub(crate) source_locator: ReferenceSourceLocatorV1,
+    pub(crate) ordinal: u32,
+    pub(crate) kind: ReferenceCatalogReferenceKind,
+    pub(crate) target: MaterializedReferenceTarget,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterializedAliasDeclaration {
+    pub(crate) source_page_id: PageId,
+    pub(crate) source_entity: MaterializedEntityId,
+    pub(crate) source_locator: ReferenceSourceLocatorV1,
+    pub(crate) ordinal: u32,
+    pub(crate) raw_alias: String,
+    pub(crate) normalized_alias: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceCoverageFacet {
+    pub(crate) source_page_id: PageId,
+    pub(crate) source_digest: ContentDigest,
+    pub(crate) extractor_dependency_stamp: ReferenceExtractorDependencyStamp,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterializedReferenceNameBinding {
+    pub(crate) raw_name: String,
+    pub(crate) normalized_name: String,
+    pub(crate) candidate_ordinal: u32,
+    pub(crate) resolved_page_id: Option<PageId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterializedReferenceUuidBinding {
+    pub(crate) raw_uuid_claim: LogseqUuid,
+    pub(crate) candidate_ordinal: u32,
+    pub(crate) resolved_block_id: Option<BlockId>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterializedReferenceAliasBinding {
+    pub(crate) normalized_alias: String,
+    pub(crate) candidate_ordinal: u32,
+    pub(crate) resolved_page_id: Option<PageId>,
+    pub(crate) catalog_root_digest: ContentDigest,
+}
+
+/// Fully validated local values ready for a future authenticated catalog
+/// adapter. This is intentionally not part of `MaterializationChange` yet:
+/// the accepted catalog-change binding needed for input schema v3 is not
+/// available in this slice.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReferenceCatalogMaterializationInput {
+    postings: Vec<MaterializedReferencePosting>,
+    aliases: Vec<MaterializedAliasDeclaration>,
+    name_bindings: Vec<MaterializedReferenceNameBinding>,
+    uuid_bindings: Vec<MaterializedReferenceUuidBinding>,
+    alias_bindings: Vec<MaterializedReferenceAliasBinding>,
+    coverage: Vec<SourceCoverageFacet>,
+}
+
+impl ReferenceCatalogMaterializationInput {
+    pub(crate) fn new(
+        mut postings: Vec<MaterializedReferencePosting>,
+        mut aliases: Vec<MaterializedAliasDeclaration>,
+        mut name_bindings: Vec<MaterializedReferenceNameBinding>,
+        mut uuid_bindings: Vec<MaterializedReferenceUuidBinding>,
+        mut alias_bindings: Vec<MaterializedReferenceAliasBinding>,
+        mut coverage: Vec<SourceCoverageFacet>,
+    ) -> Result<Self, MaterializationError> {
+        postings.sort_unstable();
+        aliases.sort_unstable();
+        name_bindings.sort_unstable();
+        uuid_bindings.sort_unstable();
+        alias_bindings.sort_unstable();
+        coverage.sort_unstable();
+        let input = Self {
+            postings,
+            aliases,
+            name_bindings,
+            uuid_bindings,
+            alias_bindings,
+            coverage,
+        };
+        input.validate()?;
+        Ok(input)
+    }
+
+    fn validate(&self) -> Result<(), MaterializationError> {
+        if !strictly_sorted_unique_by(&self.postings, |posting| {
+            (
+                posting.source_page_id,
+                posting.source_entity.clone(),
+                posting.source_locator,
+                posting.ordinal,
+            )
+        }) {
+            return Err(MaterializationError::InvalidInput(
+                "reference postings are not canonical".into(),
+            ));
+        }
+        if !strictly_sorted_unique_by(&self.aliases, |alias| {
+            (
+                alias.source_page_id,
+                alias.source_entity.clone(),
+                alias.source_locator,
+                alias.ordinal,
+            )
+        }) {
+            return Err(MaterializationError::InvalidInput(
+                "reference alias declarations are not canonical".into(),
+            ));
+        }
+        if !strictly_sorted_unique_by(&self.name_bindings, |binding| {
+            (binding.raw_name.clone(), binding.candidate_ordinal)
+        }) {
+            return Err(MaterializationError::InvalidInput(
+                "reference name bindings are not canonical".into(),
+            ));
+        }
+        if !strictly_sorted_unique_by(&self.uuid_bindings, |binding| {
+            (binding.raw_uuid_claim, binding.candidate_ordinal)
+        }) {
+            return Err(MaterializationError::InvalidInput(
+                "reference UUID bindings are not canonical".into(),
+            ));
+        }
+        if !strictly_sorted_unique_by(&self.alias_bindings, |binding| {
+            (
+                binding.normalized_alias.clone(),
+                binding.candidate_ordinal,
+                binding.catalog_root_digest,
+            )
+        }) {
+            return Err(MaterializationError::InvalidInput(
+                "reference alias bindings are not canonical".into(),
+            ));
+        }
+        if !strictly_sorted_unique_by(&self.coverage, |facet| facet.source_page_id) {
+            return Err(MaterializationError::InvalidInput(
+                "reference source coverage is not canonical".into(),
+            ));
+        }
+
+        let mut input_budget = MaterializationInputBudget::default();
+        for posting in &self.postings {
+            validate_reference_posting(posting, &mut input_budget)?;
+        }
+        for alias in &self.aliases {
+            validate_alias_declaration(alias, &mut input_budget)?;
+        }
+        for binding in &self.name_bindings {
+            validate_page_name_pair(
+                "reference name binding",
+                &binding.raw_name,
+                &binding.normalized_name,
+            )?;
+            input_budget.add_facet_values(1)?;
+            input_budget.add_bytes(REFERENCE_CATALOG_BINDING_OVERHEAD_BYTES)?;
+            input_budget.add_field(
+                "reference name binding raw bytes",
+                &binding.raw_name,
+                MAX_MATERIALIZATION_FIELD_BYTES,
+            )?;
+            input_budget.add_field(
+                "reference name binding normalized bytes",
+                &binding.normalized_name,
+                MAX_MATERIALIZATION_FIELD_BYTES,
+            )?;
+        }
+        for _binding in &self.uuid_bindings {
+            input_budget.add_facet_values(1)?;
+            input_budget.add_bytes(REFERENCE_CATALOG_BINDING_OVERHEAD_BYTES + 16)?;
+        }
+        for binding in &self.alias_bindings {
+            validate_normalized_page_name("reference alias binding", &binding.normalized_alias)?;
+            input_budget.add_facet_values(1)?;
+            input_budget.add_bytes(REFERENCE_CATALOG_BINDING_OVERHEAD_BYTES)?;
+            input_budget.add_field(
+                "reference alias binding normalized bytes",
+                &binding.normalized_alias,
+                MAX_MATERIALIZATION_FIELD_BYTES,
+            )?;
+        }
+        for facet in &self.coverage {
+            facet.extractor_dependency_stamp.validate()?;
+            let _ = facet.extractor_dependency_stamp.digest()?;
+            input_budget.add_facet_values(1)?;
+            input_budget.add_bytes(REFERENCE_CATALOG_COVERAGE_OVERHEAD_BYTES)?;
+        }
+        Ok(())
     }
 }
 
@@ -857,6 +1580,115 @@ fn resource_limit(resource: &'static str, found: usize, maximum: usize) -> Mater
     }
 }
 
+fn canonical_reference_source_locator_bytes(
+    locator: ReferenceSourceLocatorV1,
+) -> Result<Vec<u8>, MaterializationError> {
+    let bytes = postcard::to_allocvec(&locator)
+        .map_err(|error| MaterializationError::InvalidInput(error.to_string()))?;
+    validate_reference_source_locator_bytes(&bytes)?;
+    Ok(bytes)
+}
+
+fn validate_reference_source_locator_bytes(bytes: &[u8]) -> Result<(), MaterializationError> {
+    if bytes.is_empty() || bytes.len() > MAX_MATERIALIZATION_FIELD_BYTES {
+        return Err(MaterializationError::InvalidInput(
+            "reference source locator bytes are out of bounds".into(),
+        ));
+    }
+    let locator: ReferenceSourceLocatorV1 = postcard::from_bytes(bytes).map_err(|_| {
+        MaterializationError::InvalidInput("reference source locator bytes are malformed".into())
+    })?;
+    let canonical = postcard::to_allocvec(&locator)
+        .map_err(|error| MaterializationError::InvalidInput(error.to_string()))?;
+    if canonical != bytes {
+        return Err(MaterializationError::InvalidInput(
+            "reference source locator bytes are not canonical".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_page_name_pair(
+    description: &str,
+    raw_name: &str,
+    normalized_name: &str,
+) -> Result<(), MaterializationError> {
+    if raw_name.is_empty() || normalized_name.is_empty() {
+        return Err(MaterializationError::InvalidInput(format!(
+            "{description} has an empty raw/normalized name"
+        )));
+    }
+    if raw_name.len() > MAX_MATERIALIZATION_FIELD_BYTES
+        || normalized_name.len() > MAX_MATERIALIZATION_FIELD_BYTES
+    {
+        return Err(MaterializationError::InvalidInput(format!(
+            "{description} name exceeds the materialization field limit"
+        )));
+    }
+    if crate::refs::page_key(raw_name) != normalized_name {
+        return Err(MaterializationError::InvalidInput(format!(
+            "{description} normalized name does not match refs::page_key"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_normalized_page_name(
+    description: &str,
+    normalized_name: &str,
+) -> Result<(), MaterializationError> {
+    if normalized_name.is_empty()
+        || normalized_name.len() > MAX_MATERIALIZATION_FIELD_BYTES
+        || crate::refs::page_key(normalized_name) != normalized_name
+    {
+        return Err(MaterializationError::InvalidInput(format!(
+            "{description} is not a canonical page key"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_reference_posting(
+    posting: &MaterializedReferencePosting,
+    input_budget: &mut MaterializationInputBudget,
+) -> Result<(), MaterializationError> {
+    if !posting.kind.accepts_target(&posting.target) {
+        return Err(MaterializationError::InvalidInput(
+            "reference kind and target type are incompatible".into(),
+        ));
+    }
+    let locator = canonical_reference_source_locator_bytes(posting.source_locator)?;
+    input_budget.add_facet_values(1)?;
+    input_budget.add_bytes(REFERENCE_CATALOG_POSTING_OVERHEAD_BYTES)?;
+    input_budget.add_bytes(locator.len())?;
+    posting.target.validate(input_budget)
+}
+
+fn validate_alias_declaration(
+    alias: &MaterializedAliasDeclaration,
+    input_budget: &mut MaterializationInputBudget,
+) -> Result<(), MaterializationError> {
+    let locator = canonical_reference_source_locator_bytes(alias.source_locator)?;
+    validate_page_name_pair(
+        "reference alias declaration",
+        &alias.raw_alias,
+        &alias.normalized_alias,
+    )?;
+    input_budget.add_facet_values(1)?;
+    input_budget.add_bytes(REFERENCE_CATALOG_ALIAS_OVERHEAD_BYTES)?;
+    input_budget.add_bytes(locator.len())?;
+    input_budget.add_field(
+        "reference alias raw bytes",
+        &alias.raw_alias,
+        MAX_MATERIALIZATION_FIELD_BYTES,
+    )?;
+    input_budget.add_field(
+        "reference alias normalized bytes",
+        &alias.normalized_alias,
+        MAX_MATERIALIZATION_FIELD_BYTES,
+    )
+}
+
 fn block_owner_page(state: &super::BlockState) -> Option<PageId> {
     match state.owner {
         BlockOwner::Page(page_id) => Some(page_id),
@@ -1135,6 +1967,12 @@ pub(crate) fn initialize_schema(
     connection.execute_batch(&format!(
         "{MATERIALIZATION_STAMP_DDL};
          {MATERIALIZATION_BATCHES_DDL};
+         {REFERENCE_SOURCE_COVERAGE_DDL};
+         {REFERENCE_POSTINGS_DDL};
+         {REFERENCE_NAME_BINDINGS_DDL};
+         {REFERENCE_UUID_BINDINGS_DDL};
+         {REFERENCE_ALIAS_DECLARATIONS_DDL};
+         {REFERENCE_ALIAS_BINDINGS_DDL};
          {PAGES_DDL};
          {BLOCKS_DDL};
          {REFERENCES_DDL};
@@ -1148,6 +1986,16 @@ pub(crate) fn initialize_schema(
          {BLOCKS_PAGE_ORDER_INDEX_DDL};
          {REFERENCES_TARGET_INDEX_DDL};
          {REFERENCES_SOURCE_INDEX_DDL};
+         {REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL};
+         {REFERENCE_POSTINGS_SOURCE_INDEX_DDL};
+         {REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL};
+         {REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL};
+         {REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL};
+         {REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL};
+         {REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL};
+         {REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL};
+         {REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL};
+         {REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL};
          {PROPERTIES_LOOKUP_INDEX_DDL};
          {TAGS_LOOKUP_INDEX_DDL};
          {TASKS_MARKER_INDEX_DDL};
@@ -1301,7 +2149,12 @@ pub(crate) fn apply_change(
     )?;
     transaction.execute(
         "UPDATE materialization_stamp
-         SET acceptance_sequence = ?1, frontier_root_digest = ?2
+         SET acceptance_sequence = ?1,
+             frontier_root_digest = ?2,
+             catalog_root = NULL,
+             catalog_root_digest = NULL,
+             coverage_digest = NULL,
+             extractor_dependency_stamp_digest = NULL
          WHERE singleton = 1",
         params![
             i64::try_from(sequence).map_err(|_| {
@@ -1323,13 +2176,24 @@ pub(crate) fn reset(
          DELETE FROM tags;
          DELETE FROM properties;
          DELETE FROM refs;
+         DELETE FROM reference_alias_bindings;
+         DELETE FROM reference_alias_declarations;
+         DELETE FROM reference_uuid_bindings;
+         DELETE FROM reference_name_bindings;
+         DELETE FROM reference_postings;
+         DELETE FROM reference_source_coverage;
          DELETE FROM blocks;
          DELETE FROM pages;
          DELETE FROM materialization_batches;",
     )?;
     transaction.execute(
         "UPDATE materialization_stamp
-         SET acceptance_sequence = 0, frontier_root_digest = ?1
+         SET acceptance_sequence = 0,
+             frontier_root_digest = ?1,
+             catalog_root = NULL,
+             catalog_root_digest = NULL,
+             coverage_digest = NULL,
+             extractor_dependency_stamp_digest = NULL
          WHERE singleton = 1",
         params![empty_frontier_digest.as_bytes().as_slice()],
     )?;
@@ -2460,8 +3324,356 @@ mod tests {
         DocumentId::from_uuid(Uuid::from_u128(value))
     }
 
+    fn block_id(value: u128) -> BlockId {
+        BlockId::from_uuid(Uuid::from_u128(value))
+    }
+
     fn batch_id(value: u128) -> BatchId {
         BatchId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn extractor_stamp() -> ReferenceExtractorDependencyStamp {
+        ReferenceExtractorDependencyStamp::new(
+            ContentDigest::of(b"test extractor"),
+            ContentDigest::of(b"test policy"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sqlite_v9_reference_schema_is_exact_strict_and_checked() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, ContentDigest::of(b"empty frontier")).unwrap();
+        validate_schema(&connection).unwrap();
+
+        for (table, ddl) in [
+            ("materialization_stamp", MATERIALIZATION_STAMP_DDL),
+            ("materialization_batches", MATERIALIZATION_BATCHES_DDL),
+            ("reference_source_coverage", REFERENCE_SOURCE_COVERAGE_DDL),
+            ("reference_postings", REFERENCE_POSTINGS_DDL),
+            ("reference_name_bindings", REFERENCE_NAME_BINDINGS_DDL),
+            ("reference_uuid_bindings", REFERENCE_UUID_BINDINGS_DDL),
+            (
+                "reference_alias_declarations",
+                REFERENCE_ALIAS_DECLARATIONS_DDL,
+            ),
+            ("reference_alias_bindings", REFERENCE_ALIAS_BINDINGS_DDL),
+        ] {
+            let found: String = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(canonical_sql(&found), canonical_sql(ddl));
+            assert!(found.contains("WITHOUT ROWID"));
+            assert!(found.contains("STRICT"));
+        }
+        for index in [
+            "reference_source_coverage_source_idx",
+            "reference_postings_source_idx",
+            "reference_postings_normalized_name_idx",
+            "reference_postings_raw_uuid_idx",
+            "reference_name_bindings_raw_name_idx",
+            "reference_name_bindings_resolved_page_idx",
+            "reference_uuid_bindings_raw_uuid_idx",
+            "reference_uuid_bindings_resolved_block_idx",
+            "reference_alias_declarations_source_idx",
+            "reference_alias_bindings_normalized_alias_idx",
+        ] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "missing required index {index}");
+        }
+        let legacy_refs_retained: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'refs')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            legacy_refs_retained,
+            "v2 refs remain until call sites migrate"
+        );
+
+        assert!(connection
+            .execute_batch(
+                "INSERT INTO reference_source_coverage (
+                     source_page_id, source_digest, extractor_dependency_stamp_digest
+                 ) VALUES (X'00', zeroblob(32), zeroblob(32))"
+            )
+            .is_err());
+        assert!(connection
+            .execute_batch(
+                "INSERT INTO reference_uuid_bindings (
+                     raw_uuid_claim, candidate_ordinal, resolved_block_id
+                 ) VALUES (X'00', 0, NULL)"
+            )
+            .is_err());
+        assert!(connection
+            .execute_batch(
+                "INSERT INTO reference_source_coverage (
+                     source_page_id, source_digest, extractor_dependency_stamp_digest
+                 ) VALUES ('not-a-blob', zeroblob(32), zeroblob(32))"
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn reference_postings_preserve_dangling_raw_evidence_without_target_foreign_keys() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, ContentDigest::of(b"empty frontier")).unwrap();
+        let mut statement = connection
+            .prepare("PRAGMA foreign_key_list(reference_postings)")
+            .unwrap();
+        assert_eq!(statement.query_map([], |_| Ok(())).unwrap().count(), 0);
+
+        connection
+            .execute_batch(
+                "INSERT INTO reference_postings (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, reference_kind, target_type, raw_name, normalized_name,
+                     raw_uuid_claim, resolved_page_id, resolved_block_id
+                 ) VALUES (
+                     zeroblob(16), 0, zeroblob(16), X'00', 0, 5, 0,
+                     'property key', 'property key', NULL, NULL, NULL
+                 )",
+            )
+            .unwrap();
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM reference_postings", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+
+        connection
+            .execute_batch(
+                "INSERT INTO reference_postings (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, reference_kind, target_type, raw_name, normalized_name,
+                     raw_uuid_claim, resolved_page_id, resolved_block_id
+                 ) VALUES (
+                     zeroblob(16), 0, zeroblob(16), X'00', 1, 6, 1,
+                     NULL, NULL, X'00000000000000000000000000000001', NULL, NULL
+                 )",
+            )
+            .unwrap();
+        let uuid_bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT raw_uuid_claim FROM reference_postings WHERE target_type = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            LogseqUuid::from_uuid(Uuid::from_slice(&uuid_bytes).unwrap()),
+            LogseqUuid::from_uuid(Uuid::from_u128(1)),
+        );
+    }
+
+    #[test]
+    fn reference_postings_reject_cross_kind_target_pairs_in_sql() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, ContentDigest::of(b"empty frontier")).unwrap();
+
+        assert!(connection
+            .execute_batch(
+                "INSERT INTO reference_postings (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, reference_kind, target_type, raw_name, normalized_name,
+                     raw_uuid_claim, resolved_page_id, resolved_block_id
+                 ) VALUES (
+                     zeroblob(16), 0, zeroblob(16), X'00', 0, 0, 1,
+                     NULL, NULL, X'00000000000000000000000000000001', NULL, NULL
+                 )",
+            )
+            .is_err());
+        assert!(connection
+            .execute_batch(
+                "INSERT INTO reference_postings (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, reference_kind, target_type, raw_name, normalized_name,
+                     raw_uuid_claim, resolved_page_id, resolved_block_id
+                 ) VALUES (
+                     zeroblob(16), 0, zeroblob(16), X'00', 1, 6, 0,
+                     'page name', 'page name', NULL, NULL, NULL
+                 )",
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn reference_catalog_input_preserves_raw_spellings_uuid_claims_and_structural_locators() {
+        let source_page = page_id(1);
+        let source_block = block_id(2);
+        let locator = ReferenceSourceLocatorV1::Block {
+            block_id: source_block,
+            home_document_id: document_id(3),
+        };
+        let locator_bytes = canonical_reference_source_locator_bytes(locator).unwrap();
+        assert!(ManagedPath::parse("nested/physical/layout/source.md").is_ok());
+        assert!(!locator_bytes
+            .windows(b"nested/physical/layout/source.md".len())
+            .any(|window| window == b"nested/physical/layout/source.md"));
+
+        let raw_name = " /Über/ ".to_owned();
+        let normalized_name = crate::refs::page_key(&raw_name);
+        let raw_alias = " /Alias/ ".to_owned();
+        let normalized_alias = crate::refs::page_key(&raw_alias);
+        let uuid_claim = LogseqUuid::from_uuid(Uuid::from_u128(4));
+        let catalog_root = ContentDigest::of(b"catalog root");
+        let input = ReferenceCatalogMaterializationInput::new(
+            vec![MaterializedReferencePosting {
+                source_page_id: source_page,
+                source_entity: MaterializedEntityId::Block(source_block),
+                source_locator: locator,
+                ordinal: 0,
+                kind: ReferenceCatalogReferenceKind::PropertyKeyPseudoPage,
+                target: MaterializedReferenceTarget::PageName {
+                    raw_name: raw_name.clone(),
+                    normalized_name: normalized_name.clone(),
+                    resolved_page_id: None,
+                },
+            }],
+            vec![MaterializedAliasDeclaration {
+                source_page_id: source_page,
+                source_entity: MaterializedEntityId::Block(source_block),
+                source_locator: locator,
+                ordinal: 1,
+                raw_alias: raw_alias.clone(),
+                normalized_alias: normalized_alias.clone(),
+            }],
+            vec![MaterializedReferenceNameBinding {
+                raw_name: raw_name.clone(),
+                normalized_name,
+                candidate_ordinal: 0,
+                resolved_page_id: None,
+            }],
+            vec![MaterializedReferenceUuidBinding {
+                raw_uuid_claim: uuid_claim,
+                candidate_ordinal: 0,
+                resolved_block_id: None,
+            }],
+            vec![MaterializedReferenceAliasBinding {
+                normalized_alias,
+                candidate_ordinal: 0,
+                resolved_page_id: None,
+                catalog_root_digest: catalog_root,
+            }],
+            vec![SourceCoverageFacet {
+                source_page_id: source_page,
+                source_digest: ContentDigest::of(b"source"),
+                extractor_dependency_stamp: extractor_stamp(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            input.postings[0].target,
+            MaterializedReferenceTarget::PageName {
+                raw_name,
+                normalized_name: crate::refs::page_key(" /Über/ "),
+                resolved_page_id: None,
+            }
+        );
+        assert_eq!(input.aliases[0].raw_alias, raw_alias);
+        assert_eq!(input.uuid_bindings[0].raw_uuid_claim, uuid_claim);
+    }
+
+    #[test]
+    fn reference_catalog_input_rejects_malformed_names_locators_and_aggregate_limits() {
+        assert!(matches!(
+            validate_reference_source_locator_bytes(b"not-a-postcard-locator"),
+            Err(MaterializationError::InvalidInput(_))
+        ));
+        let malformed = MaterializedReferencePosting {
+            source_page_id: page_id(1),
+            source_entity: MaterializedEntityId::Page(page_id(1)),
+            source_locator: ReferenceSourceLocatorV1::Preamble,
+            ordinal: 0,
+            kind: ReferenceCatalogReferenceKind::PageLink,
+            target: MaterializedReferenceTarget::PageName {
+                raw_name: "Correct spelling".into(),
+                normalized_name: "wrong key".into(),
+                resolved_page_id: None,
+            },
+        };
+        assert!(matches!(
+            ReferenceCatalogMaterializationInput::new(
+                vec![malformed],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(MaterializationError::InvalidInput(_))
+        ));
+
+        let mut budget = MaterializationInputBudget::default();
+        assert!(matches!(
+            budget.add_facet_values(MAX_MATERIALIZATION_CHANGE_FACET_VALUES + 1),
+            Err(MaterializationError::ResourceLimit {
+                resource: "materialization change facet values",
+                ..
+            })
+        ));
+        let mut budget = MaterializationInputBudget::default();
+        assert!(matches!(
+            budget.add_bytes(MAX_MATERIALIZATION_CHANGE_BYTES + 1),
+            Err(MaterializationError::ResourceLimit {
+                resource: "materialization change bytes",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn reference_catalog_input_rejects_cross_kind_target_pairs() {
+        for posting in [
+            MaterializedReferencePosting {
+                source_page_id: page_id(1),
+                source_entity: MaterializedEntityId::Page(page_id(1)),
+                source_locator: ReferenceSourceLocatorV1::Preamble,
+                ordinal: 0,
+                kind: ReferenceCatalogReferenceKind::PageLink,
+                target: MaterializedReferenceTarget::ExternalUuid {
+                    raw_claim: LogseqUuid::from_uuid(Uuid::from_u128(1)),
+                    resolved_block_id: None,
+                },
+            },
+            MaterializedReferencePosting {
+                source_page_id: page_id(1),
+                source_entity: MaterializedEntityId::Page(page_id(1)),
+                source_locator: ReferenceSourceLocatorV1::Preamble,
+                ordinal: 1,
+                kind: ReferenceCatalogReferenceKind::BlockReference,
+                target: MaterializedReferenceTarget::PageName {
+                    raw_name: "page name".into(),
+                    normalized_name: "page name".into(),
+                    resolved_page_id: None,
+                },
+            },
+        ] {
+            assert!(matches!(
+                ReferenceCatalogMaterializationInput::new(
+                    vec![posting],
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                Err(MaterializationError::InvalidInput(_))
+            ));
+        }
     }
 
     fn page_input(page: PageId, searchable_text: String) -> MaterializedPageInput {
