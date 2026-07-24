@@ -383,7 +383,8 @@ fn execute_manifested_projection_work_with_runtime(
         return Ok(());
     }
     let attempts = receipts.load_attempt_reservations(&local_attempt_intent)?;
-    let recovery_result = if attempts.is_empty() {
+    let has_attempts = !attempts.is_empty();
+    let recovery_result = if !has_attempts {
         None
     } else {
         let mut authority = receipts.begin_mutation(&local_attempt_intent, None)?;
@@ -423,9 +424,12 @@ fn execute_manifested_projection_work_with_runtime(
     let (proof, authority) = match recovered {
         Some(recovered) => recovered,
         None => {
-            let reservation = receipts.reserve_attempt(&local_attempt_intent)?;
-            let mut authority =
-                receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?;
+            let mut authority = if has_attempts {
+                receipts.begin_mutation(&local_attempt_intent, None)?
+            } else {
+                let reservation = receipts.reserve_attempt(&local_attempt_intent)?;
+                receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?
+            };
             let write_result = match target {
                 Some(target) => graph.write_page_projection(
                     manifested.path().as_str(),
@@ -541,7 +545,6 @@ pub fn recover_incomplete_projections(
         let (proof, authority) = match recovery_attempt {
             Some((Ok(proof), authority)) => (proof, authority),
             None => {
-                let reservation = store.reserve_attempt(&intent)?;
                 let mut recovery_authority = store.begin_mutation(&intent, None)?;
                 match graph.recover_page_projection(
                     intent.path().as_str(),
@@ -556,8 +559,8 @@ pub fn recover_incomplete_projections(
                             io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                         ) =>
                     {
-                        let mut write_authority =
-                            store.begin_mutation(&intent, Some(&reservation))?;
+                        drop(recovery_authority);
+                        let mut write_authority = store.begin_mutation(&intent, None)?;
                         let proof = graph.write_page_projection(
                             intent.path().as_str(),
                             expected_base,
@@ -569,14 +572,14 @@ pub fn recover_incomplete_projections(
                     Err(error) => return Err(error.into()),
                 }
             }
-            Some((Err(recovery_error), _))
+            Some((Err(recovery_error), recovery_authority))
                 if matches!(
                     recovery_error.kind(),
                     io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                 ) =>
             {
-                let reservation = store.reserve_attempt(&intent)?;
-                let mut authority = store.begin_mutation(&intent, Some(&reservation))?;
+                drop(recovery_authority);
+                let mut authority = store.begin_mutation(&intent, None)?;
                 let proof = graph.write_page_projection(
                     intent.path().as_str(),
                     expected_base,

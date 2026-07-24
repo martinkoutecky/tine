@@ -1,10 +1,24 @@
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::ffi::CString;
 use std::fmt;
+use std::fs::File;
 use std::io::{self, ErrorKind};
+#[cfg(unix)]
+use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(windows)]
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
+#[cfg(windows)]
+use cap_std::fs::OpenOptions as CapOpenOptions;
+use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -47,6 +61,7 @@ const MUTATION_AUTHORITY_SCHEMA_VERSION: u32 = 1;
 const INTENT_NAMESPACE_RESERVATION_SUFFIX: &str = ".namespace-reservation";
 const INTENT_NAMESPACE_AUTHORITY_SUFFIX: &str = ".namespace-authority";
 const MUTATION_AUTHORITY_SUFFIX: &str = ".mutation-authority";
+const MUTATION_AUTHORITY_LEASE_SUFFIX: &str = ".mutation-authority.lock";
 const MAX_MUTATION_ATTEMPTS: usize = 1_000_000;
 const MAX_MUTATION_AUTHORITY_BYTES: usize = 64 * 1024 * 1024;
 
@@ -57,6 +72,10 @@ thread_local! {
     static MUTATION_AUTHORITY_CAPTURED_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
     static MUTATION_AUTHORITY_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static MUTATION_AUTHORITY_LEASED_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static MUTATION_AUTHORITY_DROP_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
     static COMPLETION_PUBLICATION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
@@ -87,6 +106,30 @@ fn mutation_authority_act_hook() {
 
 #[cfg(not(test))]
 fn mutation_authority_act_hook() {}
+
+#[cfg(test)]
+fn mutation_authority_leased_hook() {
+    MUTATION_AUTHORITY_LEASED_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn mutation_authority_leased_hook() {}
+
+#[cfg(test)]
+fn mutation_authority_drop_hook() {
+    MUTATION_AUTHORITY_DROP_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn mutation_authority_drop_hook() {}
 
 #[cfg(test)]
 fn completion_publication_hook() {
@@ -349,6 +392,7 @@ pub(crate) struct ProjectionMutationAuthority {
     durable: DurableProjectionMutationAuthority,
     durable_bytes: Vec<u8>,
     durable_name: String,
+    _lease: File,
     root: Dir,
     bases: Dir,
     intents: Dir,
@@ -359,6 +403,7 @@ pub(crate) struct ProjectionMutationAuthority {
     completions: Dir,
     reservations: Vec<ProjectionAttemptReservation>,
     active: Option<ProjectionAttemptReservation>,
+    created_durable_record: bool,
     graph_operation_consumed: bool,
     completion_published: bool,
 }
@@ -632,6 +677,27 @@ impl ProjectionReceiptStore {
         intent: &ProjectionIntent,
     ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
         let intent_id = self.require_published_intent(intent)?;
+        let _lease = self.acquire_mutation_lease(intent_id)?;
+        mutation_authority_leased_hook();
+        self.reserve_attempt_under_lease(intent, intent_id)
+    }
+
+    fn reserve_attempt_under_lease(
+        &self,
+        intent: &ProjectionIntent,
+        intent_id: ProjectionIntentId,
+    ) -> Result<ProjectionAttemptReservation, ProjectionStoreError> {
+        let durable_name = mutation_authority_filename(intent_id);
+        if read_optional_regular(
+            &self.capability,
+            &durable_name,
+            MAX_MUTATION_AUTHORITY_BYTES as u64,
+            None,
+        )?
+        .is_some()
+        {
+            return Err(ProjectionStoreError::MutationAuthorityPending);
+        }
         let reservation = ProjectionAttemptReservation::new(intent, Uuid::new_v4())?;
         let bytes = serde_json::to_vec(&reservation)
             .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
@@ -711,6 +777,25 @@ impl ProjectionReceiptStore {
         active: Option<&ProjectionAttemptReservation>,
     ) -> Result<ProjectionMutationAuthority, ProjectionStoreError> {
         let intent_id = self.require_published_intent(intent)?;
+        let lease = self.acquire_mutation_lease(intent_id)?;
+        mutation_authority_leased_hook();
+        let durable_name = mutation_authority_filename(intent_id);
+        let existing_durable_bytes = read_optional_regular(
+            &self.capability,
+            &durable_name,
+            MAX_MUTATION_AUTHORITY_BYTES as u64,
+            None,
+        )?;
+        // A newly established recovery slot carries one fresh current attempt
+        // in addition to all retained evidence. If proof-only recovery finds
+        // that the target was retired before publication, the same immutable
+        // slot can authorize the guarded writer without appending on retries.
+        let recovery_active = if existing_durable_bytes.is_none() && active.is_none() {
+            Some(self.reserve_attempt_under_lease(intent, intent_id)?)
+        } else {
+            None
+        };
+        let requested_active = active.cloned().or(recovery_active);
         let store_claim = read_optional_regular(
             &self.capability,
             STORE_CLAIM_FILE,
@@ -756,46 +841,93 @@ impl ProjectionReceiptStore {
                 Some(*description)
             }
         };
-        let durable = DurableProjectionMutationAuthority {
-            schema_version: MUTATION_AUTHORITY_SCHEMA_VERSION,
-            authority_id: Uuid::new_v4(),
-            store_id: self.store_id,
-            store_claim_digest: Sha256::digest(&store_claim).into(),
-            workspace_id: self.workspace_id,
-            endpoint_binding: self.endpoint.map(endpoint_binding_bytes),
-            intent_id,
-            intent_digest: Sha256::digest(&intent_bytes).into(),
-            base,
-            namespace_identities: self.namespaces.identities(),
-            attempts_identity: canonical_directory_identity(&attempts)?,
-            forensics_identity: canonical_directory_identity(&forensics)?,
-            active_attempt_id: active.map(ProjectionAttemptReservation::attempt_id),
-            reservation_bytes,
-        };
-        let durable_bytes = serde_json::to_vec(&durable)
-            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
-        if durable_bytes.len() > MAX_MUTATION_AUTHORITY_BYTES {
-            return Err(ProjectionStoreError::MutationAuthorityTooLarge {
-                attempts: reservations.len(),
-                bytes: durable_bytes.len(),
-            });
-        }
-        let durable_name = format!(
-            "{}.{}{}",
-            hex(intent_id.as_bytes()),
-            durable.authority_id.simple(),
-            MUTATION_AUTHORITY_SUFFIX
-        );
-        publish_immutable_exact(
-            &self.capability,
-            &durable_name,
-            &durable_bytes,
-            "projection graph mutation authority",
-        )?;
+        let store_claim_digest = Sha256::digest(&store_claim).into();
+        let endpoint_binding = self.endpoint.map(endpoint_binding_bytes);
+        let intent_digest = Sha256::digest(&intent_bytes).into();
+        let namespace_identities = self.namespaces.identities();
+        let attempts_identity = canonical_directory_identity(&attempts)?;
+        let forensics_identity = canonical_directory_identity(&forensics)?;
+        let (durable, durable_bytes, reservations, authority_active, created_durable_record) =
+            if let Some(durable_bytes) = existing_durable_bytes {
+                let durable = decode_durable_mutation_authority(
+                    &durable_bytes,
+                    intent,
+                    self.store_id,
+                    store_claim_digest,
+                    self.workspace_id,
+                    endpoint_binding.as_deref(),
+                    intent_id,
+                    intent_digest,
+                    base,
+                    namespace_identities,
+                    attempts_identity,
+                    forensics_identity,
+                    &reservations,
+                )?;
+                let reservations = decode_mutation_reservations(&durable, intent)?;
+                let durable_active = durable.active_attempt_id.and_then(|active_attempt_id| {
+                    reservations
+                        .iter()
+                        .find(|reservation| reservation.attempt_id() == active_attempt_id)
+                        .cloned()
+                });
+                if requested_active.is_some() && requested_active != durable_active {
+                    return Err(ProjectionStoreError::MutationAuthorityPending);
+                }
+                (
+                    durable,
+                    durable_bytes,
+                    reservations,
+                    requested_active.or(durable_active),
+                    false,
+                )
+            } else {
+                let authority_active = requested_active;
+                let durable = DurableProjectionMutationAuthority {
+                    schema_version: MUTATION_AUTHORITY_SCHEMA_VERSION,
+                    authority_id: Uuid::new_v4(),
+                    store_id: self.store_id,
+                    store_claim_digest,
+                    workspace_id: self.workspace_id,
+                    endpoint_binding,
+                    intent_id,
+                    intent_digest,
+                    base,
+                    namespace_identities,
+                    attempts_identity,
+                    forensics_identity,
+                    active_attempt_id: authority_active
+                        .as_ref()
+                        .map(ProjectionAttemptReservation::attempt_id),
+                    reservation_bytes,
+                };
+                let durable_bytes = serde_json::to_vec(&durable)
+                    .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+                if durable_bytes.len() > MAX_MUTATION_AUTHORITY_BYTES {
+                    return Err(ProjectionStoreError::MutationAuthorityTooLarge {
+                        attempts: reservations.len(),
+                        bytes: durable_bytes.len(),
+                    });
+                }
+                publish_immutable_exact(
+                    &self.capability,
+                    &durable_name,
+                    &durable_bytes,
+                    "projection graph mutation authority",
+                )?;
+                (
+                    durable,
+                    durable_bytes,
+                    reservations,
+                    authority_active,
+                    true,
+                )
+            };
         let authority = ProjectionMutationAuthority {
             durable,
             durable_bytes,
             durable_name,
+            _lease: lease,
             root: self.capability.try_clone()?,
             bases,
             intents,
@@ -805,7 +937,8 @@ impl ProjectionReceiptStore {
             forensics,
             completions,
             reservations,
-            active: active.cloned(),
+            active: authority_active,
+            created_durable_record,
             graph_operation_consumed: false,
             completion_published: false,
         };
@@ -1448,6 +1581,26 @@ impl ProjectionReceiptStore {
         Ok(())
     }
 
+    fn acquire_mutation_lease(
+        &self,
+        intent_id: ProjectionIntentId,
+    ) -> Result<File, ProjectionStoreError> {
+        let name = mutation_authority_lease_filename(intent_id);
+        let file = open_mutation_authority_lease_file(&self.capability, &name)?;
+        if let Err(error) = file.try_lock_exclusive() {
+            if matches!(
+                error.kind(),
+                ErrorKind::WouldBlock | ErrorKind::PermissionDenied
+            ) {
+                return Err(ProjectionStoreError::MutationAuthorityPending);
+            }
+            return Err(error.into());
+        }
+        validate_mutation_authority_lease_file(&file, &name)?;
+        file.set_len(0)?;
+        Ok(file)
+    }
+
     fn require_published_intent(
         &self,
         intent: &ProjectionIntent,
@@ -1462,6 +1615,89 @@ impl ProjectionReceiptStore {
         }
         Ok(intent_id)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_durable_mutation_authority(
+    durable_bytes: &[u8],
+    intent: &ProjectionIntent,
+    store_id: ProjectionReceiptStoreId,
+    store_claim_digest: [u8; 32],
+    workspace_id: WorkspaceId,
+    endpoint_binding: Option<&[u8]>,
+    intent_id: ProjectionIntentId,
+    intent_digest: [u8; 32],
+    base: Option<BlobDescription>,
+    namespace_identities: [DirectoryIdentity; 5],
+    attempts_identity: DirectoryIdentity,
+    forensics_identity: DirectoryIdentity,
+    live_reservations: &[ProjectionAttemptReservation],
+) -> Result<DurableProjectionMutationAuthority, ProjectionStoreError> {
+    let durable: DurableProjectionMutationAuthority = serde_json::from_slice(durable_bytes)
+        .map_err(|error| ProjectionStoreError::Decode(error.to_string()))?;
+    if serde_json::to_vec(&durable)
+        .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?
+        != durable_bytes
+        || durable.schema_version != MUTATION_AUTHORITY_SCHEMA_VERSION
+        || durable.store_id != store_id
+        || durable.store_claim_digest != store_claim_digest
+        || durable.workspace_id != workspace_id
+        || durable.endpoint_binding.as_deref() != endpoint_binding
+        || durable.intent_id != intent_id
+        || durable.intent_digest != intent_digest
+        || durable.base != base
+        || durable.namespace_identities != namespace_identities
+        || durable.attempts_identity != attempts_identity
+        || durable.forensics_identity != forensics_identity
+    {
+        return Err(ProjectionStoreError::MutationAuthorityMismatch);
+    }
+    let durable_reservations = decode_mutation_reservations(&durable, intent)?;
+    if durable_reservations != live_reservations {
+        return Err(ProjectionStoreError::AttemptBindingMismatch);
+    }
+    Ok(durable)
+}
+
+fn decode_mutation_reservations(
+    durable: &DurableProjectionMutationAuthority,
+    intent: &ProjectionIntent,
+) -> Result<Vec<ProjectionAttemptReservation>, ProjectionStoreError> {
+    if durable.reservation_bytes.len() > MAX_MUTATION_ATTEMPTS {
+        return Err(ProjectionStoreError::MutationAuthorityTooLarge {
+            attempts: durable.reservation_bytes.len(),
+            bytes: 0,
+        });
+    }
+    let mut reservations = Vec::with_capacity(durable.reservation_bytes.len());
+    for bytes in &durable.reservation_bytes {
+        let reservation: ProjectionAttemptReservation = serde_json::from_slice(bytes)
+            .map_err(|error| ProjectionStoreError::Decode(error.to_string()))?;
+        reservation.validate(intent)?;
+        if serde_json::to_vec(&reservation)
+            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?
+            != *bytes
+        {
+            return Err(ProjectionStoreError::AttemptBindingMismatch);
+        }
+        if reservations
+            .last()
+            .is_some_and(|prior: &ProjectionAttemptReservation| {
+                prior.attempt_id() >= reservation.attempt_id()
+            })
+        {
+            return Err(ProjectionStoreError::AttemptBindingMismatch);
+        }
+        reservations.push(reservation);
+    }
+    if durable.active_attempt_id.is_some_and(|active_attempt_id| {
+        !reservations
+            .iter()
+            .any(|reservation| reservation.attempt_id() == active_attempt_id)
+    }) {
+        return Err(ProjectionStoreError::AttemptBindingMismatch);
+    }
+    Ok(reservations)
 }
 
 impl ProjectionMutationAuthority {
@@ -1512,58 +1748,28 @@ impl ProjectionMutationAuthority {
         let result = operation(self)?;
         self.validate_live_names()?;
         self.completion_published = true;
-        self.retire_completed_durable_records()?;
+        self.retire_durable_record()?;
         Ok(result)
     }
 
-    fn retire_completed_durable_records(&self) -> Result<(), ProjectionStoreError> {
-        let prefix = format!("{}.", hex(self.durable.intent_id.as_bytes()));
-        for entry in self.root.entries()? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            let Some(authority_id) = name
-                .strip_prefix(&prefix)
-                .and_then(|name| name.strip_suffix(MUTATION_AUTHORITY_SUFFIX))
-                .and_then(|value| Uuid::parse_str(value).ok())
-            else {
-                continue;
-            };
-            if authority_id.simple().to_string()
-                != name[prefix.len()..name.len() - MUTATION_AUTHORITY_SUFFIX.len()]
-            {
-                continue;
-            }
-            require_regular_entry(&entry.file_type()?, name)?;
-            let Some(bytes) = read_optional_regular(
-                &self.root,
-                name,
-                MAX_MUTATION_AUTHORITY_BYTES as u64,
-                None,
-            )?
-            else {
-                continue;
-            };
-            let Ok(record) =
-                serde_json::from_slice::<DurableProjectionMutationAuthority>(&bytes)
-            else {
-                continue;
-            };
-            if serde_json::to_vec(&record).ok().as_deref() != Some(bytes.as_slice())
-                || record.schema_version != MUTATION_AUTHORITY_SCHEMA_VERSION
-                || record.authority_id != authority_id
-                || record.store_id != self.durable.store_id
-                || record.workspace_id != self.durable.workspace_id
-                || record.endpoint_binding != self.durable.endpoint_binding
-                || record.intent_id != self.durable.intent_id
-                || record.intent_digest != self.durable.intent_digest
-            {
-                continue;
-            }
-            self.root.remove_file(name)?;
+    fn retire_durable_record(&self) -> Result<(), ProjectionStoreError> {
+        self.remove_durable_record_if_exact()
+    }
+
+    fn remove_durable_record_if_exact(&self) -> Result<(), ProjectionStoreError> {
+        let Some(bytes) = read_optional_regular(
+            &self.root,
+            &self.durable_name,
+            MAX_MUTATION_AUTHORITY_BYTES as u64,
+            Some(self.durable_bytes.len() as u64),
+        )?
+        else {
+            return Ok(());
+        };
+        if bytes != self.durable_bytes {
+            return Err(ProjectionStoreError::MutationAuthorityMismatch);
         }
+        self.root.remove_file(&self.durable_name)?;
         sync_dir_required(&self.root)?;
         Ok(())
     }
@@ -1764,9 +1970,11 @@ impl ProjectionMutationAuthority {
 
 impl Drop for ProjectionMutationAuthority {
     fn drop(&mut self) {
-        if !self.graph_operation_consumed || self.completion_published {
-            let _ = self.root.remove_file(&self.durable_name);
-            let _ = sync_dir_required(&self.root);
+        mutation_authority_drop_hook();
+        if self.completion_published
+            || (self.created_durable_record && !self.graph_operation_consumed)
+        {
+            let _ = self.remove_durable_record_if_exact();
         }
     }
 }
@@ -1851,6 +2059,7 @@ pub enum ProjectionStoreError {
     RecoveryTargetMismatch,
     AttemptBindingMismatch,
     MutationAuthorityMismatch,
+    MutationAuthorityPending,
     MutationAuthorityTooLarge {
         attempts: usize,
         bytes: usize,
@@ -1946,6 +2155,9 @@ impl fmt::Display for ProjectionStoreError {
             }
             Self::MutationAuthorityMismatch => {
                 f.write_str("projection mutation authority does not match the durable operation")
+            }
+            Self::MutationAuthorityPending => {
+                f.write_str("projection mutation authority is pending recovery")
             }
             Self::MutationAuthorityTooLarge { attempts, bytes } => write!(
                 f,
@@ -2323,6 +2535,98 @@ fn completion_filename(intent_id: ProjectionIntentId) -> String {
     format!("{}.completion", hex(intent_id.as_bytes()))
 }
 
+fn mutation_authority_filename(intent_id: ProjectionIntentId) -> String {
+    format!(
+        "{}{}",
+        hex(intent_id.as_bytes()),
+        MUTATION_AUTHORITY_SUFFIX
+    )
+}
+
+fn mutation_authority_lease_filename(intent_id: ProjectionIntentId) -> String {
+    format!(
+        "{}{}",
+        hex(intent_id.as_bytes()),
+        MUTATION_AUTHORITY_LEASE_SUFFIX
+    )
+}
+
+#[cfg(unix)]
+fn open_mutation_authority_lease_file(directory: &Dir, name: &str) -> io::Result<File> {
+    let name = CString::new(name)
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "invalid lease file name"))?;
+    // SAFETY: `name` is a live NUL-terminated relative name and `directory`
+    // retains the authoritative receipt-store capability. O_NOFOLLOW rejects
+    // a final-component symlink in the same open that produces the locked
+    // handle.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        // SAFETY: `openat` returned a newly owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(windows)]
+fn open_mutation_authority_lease_file(directory: &Dir, name: &str) -> io::Result<File> {
+    let mut options = CapOpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .follow(FollowSymlinks::No);
+    Ok(directory.open_with(name, &options)?.into_std())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_mutation_authority_lease_file(_directory: &Dir, _name: &str) -> io::Result<File> {
+    Err(io::Error::new(
+        ErrorKind::Unsupported,
+        "atomic no-follow projection mutation leases are unsupported on this target",
+    ))
+}
+
+fn validate_mutation_authority_lease_file(
+    file: &File,
+    name: &str,
+) -> Result<(), ProjectionStoreError> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation lease is not a regular file: {name}"
+        )));
+    }
+    #[cfg(unix)]
+    if metadata.uid() !=
+        // SAFETY: `geteuid` takes no arguments and has no memory-safety preconditions.
+        unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+    {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation lease has unsafe ownership or links: {name}"
+        )));
+    }
+    #[cfg(windows)]
+    if metadata.file_attributes()
+        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+        != 0
+    {
+        return Err(ProjectionStoreError::UnsafeEntry(format!(
+            "projection mutation lease is a reparse point: {name}"
+        )));
+    }
+    Ok(())
+}
+
 fn attempt_filename(attempt_id: Uuid) -> String {
     format!("{}.attempt", attempt_id.simple())
 }
@@ -2465,6 +2769,51 @@ mod tests {
                 }
             }
             snapshot
+        }
+
+        fn authority_path(&self, intent: &ProjectionIntent) -> PathBuf {
+            self.store
+                .root_path()
+                .join(mutation_authority_filename(intent.id().unwrap()))
+        }
+
+        fn reopen_store(&self) -> ProjectionReceiptStore {
+            ProjectionReceiptStore::open(self.store.root_path(), self.store.workspace_id()).unwrap()
+        }
+
+        fn authority_stats(&self) -> (usize, u64) {
+            fs::read_dir(self.store.root_path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(MUTATION_AUTHORITY_SUFFIX)
+                })
+                .fold((0, 0), |(count, bytes), entry| {
+                    (count + 1, bytes + entry.metadata().unwrap().len())
+                })
+        }
+
+        fn attempt_stats(&self, intent: &ProjectionIntent) -> (usize, u64) {
+            fs::read_dir(
+                self.store
+                    .root_path()
+                    .join(ATTEMPTS_DIR)
+                    .join(hex(intent.id().unwrap().as_bytes())),
+            )
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".attempt")
+            })
+            .fold((0, 0), |(count, bytes), entry| {
+                (count + 1, bytes + entry.metadata().unwrap().len())
+            })
         }
     }
 
@@ -2819,6 +3168,371 @@ mod tests {
             .store
             .publish_completion(recovery, &fixture.intent, &proof)
             .unwrap();
+    }
+
+    #[test]
+    fn interrupted_recoveries_reuse_one_exact_authority_slot() {
+        let fixture = Fixture::new("bounded-interrupted-recovery");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut authority,
+            )
+            .unwrap();
+        drop(authority);
+
+        let authority_path = fixture.authority_path(&fixture.intent);
+        let witness = fs::read(&authority_path).unwrap();
+        let stable_stats = fixture.authority_stats();
+        let stable_attempt_stats = fixture.attempt_stats(&fixture.intent);
+        assert_eq!(stable_stats, (1, witness.len() as u64));
+
+        let reopened = ProjectionReceiptStore::open(
+            fixture.store.root_path(),
+            fixture.store.workspace_id(),
+        )
+        .unwrap();
+        let recovery = reopened.begin_mutation(&fixture.intent, None).unwrap();
+        drop(recovery);
+        assert_eq!(
+            fs::read(&authority_path).unwrap(),
+            witness,
+            "dropping a reopened pre-graph recovery must retain the sole witness"
+        );
+
+        for _ in 0..3 {
+            let reopened = ProjectionReceiptStore::open(
+                fixture.store.root_path(),
+                fixture.store.workspace_id(),
+            )
+            .unwrap();
+            let mut recovery = reopened.begin_mutation(&fixture.intent, None).unwrap();
+            fixture
+                .graph
+                .recover_page_projection(
+                    fixture.intent.path().as_str(),
+                    None,
+                    &fixture.target,
+                    &mut recovery,
+                )
+                .unwrap();
+            drop(recovery);
+            assert_eq!(fixture.authority_stats(), stable_stats);
+            assert_eq!(
+                fixture.attempt_stats(&fixture.intent),
+                stable_attempt_stats
+            );
+            assert_eq!(fs::read(&authority_path).unwrap(), witness);
+        }
+    }
+
+    #[test]
+    fn pending_recovery_blocks_new_active_mutation_and_attempt_reservation() {
+        let fixture = Fixture::new("pending-recovery-blocks-active");
+        let active = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let blocked = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&active))
+            .unwrap();
+        fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut authority,
+            )
+            .unwrap();
+        drop(authority);
+
+        let authority_path = fixture.authority_path(&fixture.intent);
+        let witness = fs::read(&authority_path).unwrap();
+        let attempts_path = fixture
+            .store
+            .root_path()
+            .join(ATTEMPTS_DIR)
+            .join(hex(fixture.intent.id().unwrap().as_bytes()));
+        let attempt_count = fs::read_dir(&attempts_path).unwrap().count();
+        let error = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&blocked))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ProjectionStoreError::MutationAuthorityPending
+        ));
+        assert!(matches!(
+            fixture.store.reserve_attempt(&fixture.intent),
+            Err(ProjectionStoreError::MutationAuthorityPending)
+        ));
+        assert_eq!(fs::read_dir(attempts_path).unwrap().count(), attempt_count);
+        assert_eq!(fs::read(authority_path).unwrap(), witness);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn begin_lease_blocks_competing_reservation_until_release() {
+        let fixture = Fixture::new("begin-lease-blocks-reservation");
+        let competing_root = fixture.store.root_path().to_path_buf();
+        let workspace_id = fixture.store.workspace_id();
+        let competing_intent = fixture.intent.clone();
+        MUTATION_AUTHORITY_LEASED_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let competing =
+                    ProjectionReceiptStore::open(&competing_root, workspace_id).unwrap();
+                assert!(matches!(
+                    competing.reserve_attempt(&competing_intent),
+                    Err(ProjectionStoreError::MutationAuthorityPending)
+                ));
+            }));
+        });
+
+        let authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        drop(authority);
+
+        fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        assert_eq!(
+            fs::read(
+                fixture
+                    .store
+                    .root_path()
+                    .join(mutation_authority_lease_filename(
+                        fixture.intent.id().unwrap()
+                    ))
+            )
+            .unwrap(),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn reservation_lease_blocks_competing_begin_until_release() {
+        let fixture = Fixture::new("reservation-lease-blocks-begin");
+        let competing_root = fixture.store.root_path().to_path_buf();
+        let workspace_id = fixture.store.workspace_id();
+        let competing_intent = fixture.intent.clone();
+        MUTATION_AUTHORITY_LEASED_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let competing =
+                    ProjectionReceiptStore::open(&competing_root, workspace_id).unwrap();
+                assert!(matches!(
+                    competing.begin_mutation(&competing_intent, None),
+                    Err(ProjectionStoreError::MutationAuthorityPending)
+                ));
+            }));
+        });
+
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let retry = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        drop(retry);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mutation_lease_rejects_a_final_component_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new("mutation-lease-symlink");
+        let target = fixture.root.join("lease-target");
+        fs::write(&target, b"sentinel").unwrap();
+        symlink(
+            &target,
+            fixture
+                .store
+                .root_path()
+                .join(mutation_authority_lease_filename(
+                    fixture.intent.id().unwrap(),
+                )),
+        )
+        .unwrap();
+
+        assert!(fixture.store.reserve_attempt(&fixture.intent).is_err());
+        assert_eq!(fs::read(target).unwrap(), b"sentinel");
+        assert_eq!(fixture.attempt_stats(&fixture.intent), (0, 0));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn recovery_reopen_contends_across_handles_and_retries_after_release() {
+        let fixture = Fixture::new("recovery-reopen-lease");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let mut creator = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        fixture
+            .graph
+            .write_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut creator,
+            )
+            .unwrap();
+        drop(creator);
+
+        let reopened = fixture.reopen_store();
+        let recovery = reopened.begin_mutation(&fixture.intent, None).unwrap();
+        assert!(matches!(
+            fixture.store.begin_mutation(&fixture.intent, None),
+            Err(ProjectionStoreError::MutationAuthorityPending)
+        ));
+        assert!(matches!(
+            fixture.store.reserve_attempt(&fixture.intent),
+            Err(ProjectionStoreError::MutationAuthorityPending)
+        ));
+
+        drop(recovery);
+        let retry = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        drop(retry);
+        assert!(fixture.authority_path(&fixture.intent).exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn creator_drop_serializes_slot_removal_before_reopen() {
+        let fixture = Fixture::new("creator-drop-lease");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let creator = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        let authority_path = fixture.authority_path(&fixture.intent);
+        assert!(authority_path.exists());
+
+        let competing_root = fixture.store.root_path().to_path_buf();
+        let workspace_id = fixture.store.workspace_id();
+        let competing_intent = fixture.intent.clone();
+        let competing_reservation = reservation.clone();
+        MUTATION_AUTHORITY_DROP_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let competing =
+                    ProjectionReceiptStore::open(&competing_root, workspace_id).unwrap();
+                assert!(matches!(
+                    competing.begin_mutation(
+                        &competing_intent,
+                        Some(&competing_reservation)
+                    ),
+                    Err(ProjectionStoreError::MutationAuthorityPending)
+                ));
+            }));
+        });
+
+        drop(creator);
+        assert!(!authority_path.exists());
+        let reopened = fixture.reopen_store();
+        let second = reopened
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        assert!(authority_path.exists());
+        drop(second);
+        assert!(!authority_path.exists());
+    }
+
+    #[test]
+    fn completion_removes_only_its_matching_authority_slot() {
+        let fixture = Fixture::new("matching-authority-retirement");
+        let second_target = b"- second target\n".to_vec();
+        let second_intent = ProjectionIntent::new(
+            fixture.store.workspace_id(),
+            PageId::from_uuid(Uuid::from_u128(3)),
+            ManagedPath::parse("pages/second-authority.md").unwrap(),
+            FrontierV2::default(),
+            Vec::new(),
+            ProjectionPrecondition::Absent,
+            BlobDescription::of(&second_target),
+            Vec::new(),
+        )
+        .unwrap();
+        fixture.store.publish_intent(&second_intent, None).unwrap();
+
+        for (intent, target) in [
+            (&fixture.intent, fixture.target.as_slice()),
+            (&second_intent, second_target.as_slice()),
+        ] {
+            let reservation = fixture.store.reserve_attempt(intent).unwrap();
+            let mut authority = fixture
+                .store
+                .begin_mutation(intent, Some(&reservation))
+                .unwrap();
+            fixture
+                .graph
+                .write_page_projection(
+                    intent.path().as_str(),
+                    None,
+                    target,
+                    &mut authority,
+                )
+                .unwrap();
+            drop(authority);
+        }
+
+        let first_path = fixture.authority_path(&fixture.intent);
+        let second_path = fixture.authority_path(&second_intent);
+        let second_witness = fs::read(&second_path).unwrap();
+        let mut recovery = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        let proof = fixture
+            .graph
+            .recover_page_projection(
+                fixture.intent.path().as_str(),
+                None,
+                &fixture.target,
+                &mut recovery,
+            )
+            .unwrap();
+        fixture
+            .store
+            .publish_completion(recovery, &fixture.intent, &proof)
+            .unwrap();
+
+        assert!(!first_path.exists());
+        assert_eq!(fs::read(second_path).unwrap(), second_witness);
+        assert_eq!(fixture.authority_stats(), (1, second_witness.len() as u64));
+    }
+
+    #[test]
+    fn pre_graph_drop_frees_only_a_new_authority_slot() {
+        let fixture = Fixture::new("pre-graph-authority-drop");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+        let authority_path = fixture.authority_path(&fixture.intent);
+
+        let authority = fixture
+            .store
+            .begin_mutation(&fixture.intent, Some(&reservation))
+            .unwrap();
+        assert!(authority_path.exists());
+        drop(authority);
+        assert!(!authority_path.exists());
+
+        let recovery = fixture
+            .store
+            .begin_mutation(&fixture.intent, None)
+            .unwrap();
+        assert!(authority_path.exists());
+        drop(recovery);
+        assert!(!authority_path.exists());
     }
 
     #[test]
