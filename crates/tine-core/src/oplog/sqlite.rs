@@ -55,21 +55,45 @@ use super::{
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 5;
+pub const SQLITE_SCHEMA_VERSION: u32 = 7;
 pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
-const EXPECTED_TABLES: [&str; 6] = [
+const EXPECTED_TABLES: [&str; 20] = [
     "accepted_batch_nodes",
     "applied_batches",
+    "blocks",
     "causal_clock_nodes",
     "frontier",
     "frontier_documents",
+    "materialization_batches",
+    "materialization_stamp",
     "meta",
+    "pages",
+    "properties",
+    "refs",
+    "search_fts",
+    "search_fts_config",
+    "search_fts_content",
+    "search_fts_data",
+    "search_fts_docsize",
+    "search_fts_idx",
+    "tags",
+    "tasks",
 ];
-const EXPECTED_INDEXES: [&str; 2] = [
+const EXPECTED_INDEXES: [&str; 12] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
+    "blocks_page_order_idx",
+    "pages_name_idx",
+    "pages_name_key_idx",
+    "pages_path_idx",
+    "properties_lookup_idx",
+    "references_source_idx",
+    "references_target_idx",
+    "tags_lookup_idx",
+    "tasks_deadline_idx",
+    "tasks_marker_idx",
 ];
 const META_DDL: &str = "CREATE TABLE meta (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -1175,6 +1199,8 @@ enum ApplyFault {
     #[cfg(test)]
     ReturnAfterInsert,
     #[cfg(test)]
+    ReturnAfterMaterialization,
+    #[cfg(test)]
     AbortAfterInsert,
     #[cfg(test)]
     AbortAfterCommit,
@@ -1430,6 +1456,105 @@ impl SqliteFrontier {
         self.apply_internal(event, ApplyFault::None)
     }
 
+    pub fn apply_materialized_accepted(
+        &mut self,
+        event: &AcceptedBatchEvent,
+        materialization: &super::MaterializationChange,
+    ) -> Result<ApplyDisposition, ProjectionError> {
+        self.apply_internal_with_materialization(event, ApplyFault::None, Some(materialization))
+    }
+
+    pub fn materialized_read(&self) -> Result<super::SqliteMaterializedRead<'_>, ProjectionError> {
+        let root = read_frontier_root(&self.connection)?;
+        let root_bytes = canonical_frontier_root_bytes(&root)?;
+        super::SqliteMaterializedRead::new(
+            &self.connection,
+            root.acceptance_sequence(),
+            ContentDigest::of(&root_bytes),
+        )
+        .map_err(Into::into)
+    }
+
+    /// Rebuild only the disposable graph-wide rows from a streaming sequence
+    /// of authoritative, oplog-derived materialization inputs.
+    ///
+    /// The accepted frontier/history is not changed. Each input is checked
+    /// against the stored accepted semantic effect at the same sequence and is
+    /// committed with its materialization stamp. Until the final sequence is
+    /// present, [`Self::materialized_read`] fails closed as stale.
+    pub fn rebuild_materialization<I>(&mut self, changes: I) -> Result<usize, ProjectionError>
+    where
+        I: IntoIterator<Item = super::MaterializationChange>,
+    {
+        let empty_root = canonical_frontier_root_bytes(&AcceptedFrontierRoot::empty())?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        super::sqlite_materialization::reset(&transaction, ContentDigest::of(&empty_root))?;
+        transaction.commit()?;
+
+        let expected_count = read_frontier_root(&self.connection)?.acceptance_sequence();
+        let mut changes = changes.into_iter();
+        let mut applied = 0_u64;
+        for sequence in 1..=expected_count {
+            let Some(change) = changes.next() else {
+                return Err(ProjectionError::Materialization(format!(
+                    "materialization rebuild ended before accepted sequence {sequence}"
+                )));
+            };
+            let (batch_id, semantic_effect, prior_digest, post_digest): (
+                Vec<u8>,
+                Vec<u8>,
+                Vec<u8>,
+                Vec<u8>,
+            ) = self.connection.query_row(
+                "SELECT batch_id, semantic_effect, prior_frontier_root_digest,
+                        post_frontier_root_digest
+                 FROM applied_batches WHERE sequence = ?1",
+                params![i64::try_from(sequence).map_err(|_| {
+                    ProjectionError::Corrupt("accepted sequence exceeds SQLite".into())
+                })?],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            let batch_id = BatchId::from_uuid(decode_uuid(&batch_id)?);
+            let input_digest = change.validate_against_stored(batch_id, &semantic_effect)?;
+            let prior_digest = decode_content_digest(&prior_digest)?;
+            let post_digest = decode_content_digest(&post_digest)?;
+            super::sqlite_materialization::ensure_stamp(
+                &self.connection,
+                sequence - 1,
+                prior_digest,
+            )?;
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            super::sqlite_materialization::apply_change(
+                &transaction,
+                &change,
+                sequence,
+                input_digest,
+                post_digest,
+            )?;
+            transaction.commit()?;
+            applied = sequence;
+        }
+        if let Some(extra) = changes.next() {
+            return Err(ProjectionError::Materialization(format!(
+                "materialization rebuild supplied extra batch {}",
+                extra.batch_id()
+            )));
+        }
+        let root = read_frontier_root(&self.connection)?;
+        let root_bytes = canonical_frontier_root_bytes(&root)?;
+        super::sqlite_materialization::ensure_stamp(
+            &self.connection,
+            expected_count,
+            ContentDigest::of(&root_bytes),
+        )?;
+        usize::try_from(applied)
+            .map_err(|_| ProjectionError::Corrupt("materialized sequence exceeds usize".into()))
+    }
+
     pub fn semantic_projection_digest(&self) -> Result<ContentDigest, ProjectionError> {
         let mut statement = self.connection.prepare(
             "SELECT batch_id, manifest_digest, semantic_effect, semantic_effect_digest,
@@ -1490,9 +1615,21 @@ impl SqliteFrontier {
         event: &AcceptedBatchEvent,
         fault: ApplyFault,
     ) -> Result<ApplyDisposition, ProjectionError> {
+        self.apply_internal_with_materialization(event, fault, None)
+    }
+
+    fn apply_internal_with_materialization(
+        &mut self,
+        event: &AcceptedBatchEvent,
+        fault: ApplyFault,
+        materialization: Option<&super::MaterializationChange>,
+    ) -> Result<ApplyDisposition, ProjectionError> {
         #[cfg(not(test))]
         let _ = fault;
         self.validate_event_claim(event)?;
+        let materialization_digest = materialization
+            .map(|change| change.validate_for_event(event))
+            .transpose()?;
         let current_root = read_frontier_root(&self.connection)?;
         if let Some(existing) = load_batch(&self.connection, event.batch_id)? {
             let mut rows_read = 0;
@@ -1513,6 +1650,26 @@ impl SqliteFrontier {
                 if current_root.acceptance_sequence() >= event.acceptance_sequence
                     && current_root.state_digest() != event.prior_frontier_root.state_digest()
                 {
+                    if let Some(input_digest) = materialization_digest {
+                        let post_root = canonical_frontier_root_bytes(&event.post_frontier_root)?;
+                        super::sqlite_materialization::ensure_stamp(
+                            &self.connection,
+                            event.acceptance_sequence,
+                            ContentDigest::of(&post_root),
+                        )?;
+                        match super::sqlite_materialization::recorded_digest(
+                            &self.connection,
+                            event.acceptance_sequence,
+                        )? {
+                            Some(found) if found == input_digest => {}
+                            Some(_) | None => {
+                                return Err(super::MaterializationError::DuplicateCollision(
+                                    event.batch_id,
+                                )
+                                .into());
+                            }
+                        }
+                    }
                     return Ok(ApplyDisposition::Duplicate);
                 }
                 return Err(ProjectionError::FrontierRegression);
@@ -1593,6 +1750,13 @@ impl SqliteFrontier {
         let dependency_frontier = canonical_frontier_bytes(&event.dependency_frontier)?;
         let prior_frontier_root = canonical_frontier_root_bytes(&event.prior_frontier_root)?;
         let post_frontier_root = canonical_frontier_root_bytes(&event.post_frontier_root)?;
+        if materialization.is_some() {
+            super::sqlite_materialization::ensure_stamp(
+                &self.connection,
+                current_root.acceptance_sequence(),
+                ContentDigest::of(&prior_frontier_root),
+            )?;
+        }
         let affected_documents = canonical_affected_documents_bytes(&event.affected_documents)?;
         let causal_dependencies = encode_batch_ids(&event.causal_dependency_heads)?;
         let retained_bytes = i64::try_from(event.retained_bytes).map_err(|_| {
@@ -1662,6 +1826,21 @@ impl SqliteFrontier {
             || event.post_frontier_root.document_map_root_digest() != map_root_digest
         {
             return Err(ProjectionError::FrontierRegression);
+        }
+        if let (Some(materialization), Some(input_digest)) =
+            (materialization, materialization_digest)
+        {
+            super::sqlite_materialization::apply_change(
+                &transaction,
+                materialization,
+                event.acceptance_sequence,
+                input_digest,
+                ContentDigest::of(&post_frontier_root),
+            )?;
+        }
+        #[cfg(test)]
+        if matches!(fault, ApplyFault::ReturnAfterMaterialization) {
+            return Err(ProjectionError::InjectedFailure);
         }
         transaction.execute(
             "UPDATE frontier
@@ -2104,6 +2283,8 @@ fn initialize_schema(
          {BATCH_ID_INDEX_DDL};
          {ACCEPTANCE_SEQUENCE_INDEX_DDL};"
     ))?;
+    let frontier = canonical_frontier_root_bytes(&AcceptedFrontierRoot::empty())?;
+    super::sqlite_materialization::initialize_schema(connection, ContentDigest::of(&frontier))?;
     connection.execute(
         "INSERT INTO meta (
              singleton, workspace_id, lineage_digest, oplog_protocol_version,
@@ -2120,7 +2301,6 @@ fn initialize_schema(
             i64::from(claim.managed_entity_set_version),
         ],
     )?;
-    let frontier = canonical_frontier_root_bytes(&AcceptedFrontierRoot::empty())?;
     connection.execute(
         "INSERT INTO frontier (
              singleton, frontier_root, frontier_root_digest, applied_batch_count
@@ -2261,6 +2441,7 @@ fn validate_schema_and_claim(
         "applied_batches_acceptance_sequence_uq",
         ACCEPTANCE_SEQUENCE_INDEX_DDL,
     )?;
+    super::sqlite_materialization::validate_schema(connection)?;
     let stored: StoredClaim = connection.query_row(
         "SELECT workspace_id, lineage_digest, oplog_protocol_version,
                 operation_schema_version, object_envelope_schema_version,
@@ -4755,6 +4936,7 @@ pub enum ProjectionError {
     },
     FrontierRegression,
     BatchCollision(BatchId),
+    Materialization(String),
     Rebuild(String),
     InjectedFailure,
 }
@@ -4816,6 +4998,7 @@ impl fmt::Display for ProjectionError {
                     "accepted batch {batch_id} collides with its SQLite record"
                 )
             }
+            Self::Materialization(error) => write!(f, "SQLite materialization failed: {error}"),
             Self::Rebuild(error) => write!(f, "SQLite rebuild failed: {error}"),
             Self::InjectedFailure => write!(f, "injected SQLite transaction failure"),
         }
@@ -4842,6 +5025,12 @@ impl From<super::StoreError> for ProjectionError {
     }
 }
 
+impl From<super::sqlite_materialization::MaterializationError> for ProjectionError {
+    fn from(value: super::sqlite_materialization::MaterializationError) -> Self {
+        Self::Materialization(value.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -4853,8 +5042,11 @@ mod tests {
     use crate::oplog::{
         AuthorBatch, BatchCausalDot, BatchDisposition, BatchOrigin, BlockId, BlockLocation,
         CausalPeerId, CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId,
-        ManagedPath, ManagedTextKind, OperationBatch, OperationObject, OperationTransaction, PageId,
-        PreparedBatch, SemanticOperation, SessionId,
+        ManagedPath, ManagedTextKind, MaterializationChange, MaterializedBlockInput,
+        MaterializedEntityId, MaterializedPageInput, MaterializedProperty, MaterializedReference,
+        MaterializedReferenceKind, MaterializedReferrerRow, MaterializedTask, OperationBatch,
+        OperationObject, OperationTransaction, PageId, PreparedBatch, SemanticOperation,
+        SessionId,
     };
 
     struct TestDir(PathBuf);
@@ -4977,6 +5169,73 @@ mod tests {
                 content: content.into(),
             },
         ])
+        .unwrap()
+    }
+
+    fn rich_materialization(
+        event: &AcceptedBatchEvent,
+        ids: TestIds,
+        path: &str,
+        kind: ManagedTextKind,
+        name: &str,
+        content: &str,
+    ) -> MaterializationChange {
+        MaterializationChange::new(
+            event.batch_id(),
+            vec![MaterializedPageInput {
+                page_id: ids.page,
+                home_document_id: ids.document,
+                name: name.into(),
+                name_key: name.to_lowercase(),
+                path: ManagedPath::parse(path).unwrap(),
+                kind,
+                preamble: None,
+                searchable_text: format!("{name} page searchable"),
+                references: vec![MaterializedReference {
+                    target: MaterializedEntityId::Page(ids.page),
+                    kind: MaterializedReferenceKind::PropertyReference,
+                }],
+                properties: vec![MaterializedProperty {
+                    name: "alias".into(),
+                    value: format!("{name} Alias"),
+                }],
+                tags: vec!["page-tag".into()],
+                blocks: vec![MaterializedBlockInput {
+                    block_id: ids.block,
+                    home_document_id: ids.document,
+                    parent: None,
+                    order: "a".into(),
+                    content: content.into(),
+                    searchable_text: format!("{content} needle"),
+                    heading_level: Some(2),
+                    collapsed: true,
+                    logseq_uuid: None,
+                    logseq_identity_origin: None,
+                    references: vec![
+                        MaterializedReference {
+                            target: MaterializedEntityId::Page(ids.page),
+                            kind: MaterializedReferenceKind::Reference,
+                        },
+                        MaterializedReference {
+                            target: MaterializedEntityId::Block(ids.block),
+                            kind: MaterializedReferenceKind::Embed,
+                        },
+                    ],
+                    properties: vec![MaterializedProperty {
+                        name: "owner".into(),
+                        value: "Ada".into(),
+                    }],
+                    tags: vec!["block-tag".into()],
+                    task: Some(MaterializedTask {
+                        marker: "TODO".into(),
+                        priority: Some("A".into()),
+                        scheduled: Some("2026-07-25 Sat".into()),
+                        deadline: Some("2026-07-26 Sun".into()),
+                    }),
+                }],
+            }],
+            Vec::new(),
+        )
         .unwrap()
     }
 
@@ -5540,6 +5799,624 @@ mod tests {
                 rebuilt.recovery
             );
             validate_schema_and_claim(&rebuilt.database.connection, ids.claim()).unwrap();
+        }
+    }
+
+    #[test]
+    fn complete_materialization_is_atomic_bounded_queryable_and_reopenable() {
+        let ids = TestIds::new(1_700);
+        let dir = TestDir::new("complete-materialization");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let path = "knowledge/journals/deep/2026_07_24.org";
+        let transaction = OperationTransaction::new(vec![
+            SemanticOperation::CreatePage {
+                page_id: ids.page,
+                home_document_id: ids.document,
+                path: ManagedPath::parse(path).unwrap(),
+                kind: ManagedTextKind::Journal,
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: ids.block,
+                    home_document_id: ids.document,
+                },
+                page_id: ids.page,
+                parent: None,
+                order: "a".into(),
+                content: "TODO authoritative journal".into(),
+            },
+        ])
+        .unwrap();
+        let prepared = engine
+            .prepare_bootstrap_transaction(author(1_701), &transaction)
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &prepared);
+        let event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, prepared.manifest().batch_id())
+                .unwrap();
+        let complete = rich_materialization(
+            &event,
+            ids,
+            path,
+            ManagedTextKind::Journal,
+            "Deep Journal",
+            "TODO authoritative journal",
+        );
+        let incomplete =
+            MaterializationChange::new(event.batch_id(), Vec::new(), Vec::new()).unwrap();
+        assert!(matches!(
+            database.apply_materialized_accepted(&event, &incomplete),
+            Err(ProjectionError::Materialization(_))
+        ));
+        assert_eq!(database.applied_batch_count().unwrap(), 0);
+
+        assert_eq!(
+            database.apply_internal_with_materialization(
+                &event,
+                ApplyFault::ReturnAfterMaterialization,
+                Some(&complete),
+            ),
+            Err(ProjectionError::InjectedFailure)
+        );
+        assert_eq!(database.applied_batch_count().unwrap(), 0);
+        let materialized_rows: i64 = database
+            .connection
+            .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(materialized_rows, 0);
+
+        assert_eq!(
+            database
+                .apply_materialized_accepted(&event, &complete)
+                .unwrap(),
+            ApplyDisposition::Applied
+        );
+        assert_eq!(
+            database
+                .apply_materialized_accepted(&event, &complete)
+                .unwrap(),
+            ApplyDisposition::Duplicate
+        );
+        let read = database.materialized_read().unwrap();
+        assert_eq!(read.acceptance_sequence(), 1);
+        let page = read.page(ids.page).unwrap().unwrap();
+        assert_eq!(page.kind, ManagedTextKind::Journal);
+        assert_eq!(page.path.as_str(), path);
+        assert_eq!(
+            read.pages_by_name("Deep Journal", 10).unwrap(),
+            vec![page.clone()]
+        );
+        assert_eq!(
+            read.pages_by_name_key("deep journal", 10).unwrap(),
+            vec![page.clone()]
+        );
+        assert_eq!(
+            read.pages_by_path(&ManagedPath::parse(path).unwrap(), 10)
+                .unwrap(),
+            vec![page]
+        );
+        let block = read.block(ids.block).unwrap().unwrap();
+        assert_eq!(block.heading_level, Some(2));
+        assert!(block.collapsed);
+        assert_eq!(read.blocks_on_page(ids.page, 10).unwrap(), vec![block]);
+        let referrers = read
+            .referrers_to(MaterializedEntityId::Page(ids.page), 10)
+            .unwrap();
+        assert_eq!(referrers.len(), 2);
+        assert_eq!(
+            referrers,
+            read.referrers_to(MaterializedEntityId::Page(ids.page), 10)
+                .unwrap()
+        );
+        assert_eq!(
+            read.properties(MaterializedEntityId::Block(ids.block), 10)
+                .unwrap()[0]
+                .value,
+            "Ada"
+        );
+        assert_eq!(read.tags("block-tag", 10).unwrap().len(), 1);
+        assert_eq!(
+            read.tasks(Some("TODO"), 10).unwrap()[0].priority.as_deref(),
+            Some("A")
+        );
+        let search = read.search("needle", 10).unwrap();
+        assert_eq!(search.len(), 1);
+        assert_eq!(search, read.search("needle", 10).unwrap());
+        assert!(read.search("needle", 0).is_err());
+
+        let database_path = database.path().to_path_buf();
+        drop(database);
+        let reopened = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
+        assert_eq!(
+            reopened
+                .database
+                .materialized_read()
+                .unwrap()
+                .page(ids.page)
+                .unwrap()
+                .unwrap()
+                .kind,
+            ManagedTextKind::Journal
+        );
+    }
+
+    #[test]
+    fn replacement_deletion_and_disposable_rebuild_remove_every_stale_row() {
+        let ids = TestIds::new(1_800);
+        let dir = TestDir::new("materialization-replace-delete-rebuild");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let referrer_page = PageId::from_uuid(uuid(1_890));
+        let referrer_document = DocumentId::from_uuid(uuid(1_891));
+        let referrer_block = BlockId::from_uuid(uuid(1_892));
+        let root_prepared = engine
+            .prepare_bootstrap_transaction(
+                author(1_801),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::CreatePage {
+                        page_id: ids.page,
+                        home_document_id: ids.document,
+                        path: ManagedPath::parse("nested/pages/original.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreateBlock {
+                        block: BlockLocation {
+                            block_id: ids.block,
+                            home_document_id: ids.document,
+                        },
+                        page_id: ids.page,
+                        parent: None,
+                        order: "a".into(),
+                        content: "obsolete".into(),
+                    },
+                    SemanticOperation::CreatePage {
+                        page_id: referrer_page,
+                        home_document_id: referrer_document,
+                        path: ManagedPath::parse("nested/pages/referrer.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreateBlock {
+                        block: BlockLocation {
+                            block_id: referrer_block,
+                            home_document_id: referrer_document,
+                        },
+                        page_id: referrer_page,
+                        parent: None,
+                        order: "a".into(),
+                        content: "stable referrer".into(),
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &root_prepared);
+        let root_event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, root_prepared.manifest().batch_id())
+                .unwrap();
+        let target_root_change = rich_materialization(
+            &root_event,
+            ids,
+            "nested/pages/original.md",
+            ManagedTextKind::Page,
+            "Original",
+            "obsolete",
+        );
+        let mut root_replacements = target_root_change.replacements().to_vec();
+        root_replacements.push(MaterializedPageInput {
+            page_id: referrer_page,
+            home_document_id: referrer_document,
+            name: "Referrer".into(),
+            name_key: "referrer".into(),
+            path: ManagedPath::parse("nested/pages/referrer.md").unwrap(),
+            kind: ManagedTextKind::Page,
+            preamble: None,
+            searchable_text: "stable referrer page".into(),
+            references: Vec::new(),
+            properties: Vec::new(),
+            tags: Vec::new(),
+            blocks: vec![MaterializedBlockInput {
+                block_id: referrer_block,
+                home_document_id: referrer_document,
+                parent: None,
+                order: "a".into(),
+                content: "stable referrer".into(),
+                searchable_text: "stable referrer".into(),
+                heading_level: None,
+                collapsed: false,
+                logseq_uuid: None,
+                logseq_identity_origin: None,
+                references: vec![
+                    MaterializedReference {
+                        target: MaterializedEntityId::Page(ids.page),
+                        kind: MaterializedReferenceKind::Reference,
+                    },
+                    MaterializedReference {
+                        target: MaterializedEntityId::Block(ids.block),
+                        kind: MaterializedReferenceKind::Embed,
+                    },
+                ],
+                properties: Vec::new(),
+                tags: Vec::new(),
+                task: None,
+            }],
+        });
+        let root_change =
+            MaterializationChange::new(root_event.batch_id(), root_replacements, Vec::new())
+                .unwrap();
+        database
+            .apply_materialized_accepted(&root_event, &root_change)
+            .unwrap();
+
+        let replacement_transaction = OperationTransaction::new(vec![
+            SemanticOperation::EditPagePath {
+                page_id: ids.page,
+                path: ManagedPath::parse("nested/pages/deeper/renamed.md").unwrap(),
+            },
+            SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: ids.block,
+                    home_document_id: ids.document,
+                },
+                content: "fresh".into(),
+            },
+        ])
+        .unwrap();
+        let replacement_prepared = engine
+            .prepare_bootstrap_transaction(author(1_802), &replacement_transaction)
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &replacement_prepared);
+        let replacement_event = AcceptedBatchEvent::from_accepted(
+            &engine,
+            &store,
+            replacement_prepared.manifest().batch_id(),
+        )
+        .unwrap();
+        let replacement_change = rich_materialization(
+            &replacement_event,
+            ids,
+            "nested/pages/deeper/renamed.md",
+            ManagedTextKind::Page,
+            "Renamed",
+            "fresh",
+        );
+        database
+            .apply_materialized_accepted(&replacement_event, &replacement_change)
+            .unwrap();
+        let read = database.materialized_read().unwrap();
+        assert!(read
+            .pages_by_path(&ManagedPath::parse("nested/pages/original.md").unwrap(), 10)
+            .unwrap()
+            .is_empty());
+        assert!(read.search("obsolete", 10).unwrap().is_empty());
+        let incoming = read
+            .referrers_to(MaterializedEntityId::Page(ids.page), 10)
+            .unwrap();
+        assert!(incoming
+            .iter()
+            .any(|row| row.source == MaterializedEntityId::Block(referrer_block)));
+        let expected_page = read.page(ids.page).unwrap().unwrap();
+        let expected_block = read.block(ids.block).unwrap().unwrap();
+        let expected_properties = read.properties_named("owner", None, 10).unwrap();
+        let expected_tags = read.tags("block-tag", 10).unwrap();
+        let expected_tasks = read.tasks(None, 10).unwrap();
+        let expected_search = read.search("fresh", 10).unwrap();
+
+        let database_path = database.path().to_path_buf();
+        drop(database);
+        super::remove_projection_files(&database_path).unwrap();
+        let mut rebuilt = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+        assert!(matches!(
+            rebuilt.materialized_read(),
+            Err(ProjectionError::Materialization(_))
+        ));
+        let rebuild_started = Instant::now();
+        assert_eq!(
+            rebuilt
+                .rebuild_materialization(vec![root_change.clone(), replacement_change.clone()])
+                .unwrap(),
+            2
+        );
+        let rebuild_elapsed = rebuild_started.elapsed();
+        let database_bytes = fs::metadata(rebuilt.path()).unwrap().len();
+        eprintln!(
+            "materialization rebuild smoke: 2 batches, 2 pages, {database_bytes} database bytes, {rebuild_elapsed:?}"
+        );
+        assert!(database_bytes > 0);
+        let read = rebuilt.materialized_read().unwrap();
+        assert_eq!(read.page(ids.page).unwrap(), Some(expected_page));
+        assert_eq!(read.block(ids.block).unwrap(), Some(expected_block));
+        assert_eq!(
+            read.referrers_to(MaterializedEntityId::Page(ids.page), 10)
+                .unwrap(),
+            incoming
+        );
+        assert_eq!(
+            read.properties_named("owner", None, 10).unwrap(),
+            expected_properties
+        );
+        assert_eq!(read.tags("block-tag", 10).unwrap(), expected_tags);
+        assert_eq!(read.tasks(None, 10).unwrap(), expected_tasks);
+        assert_eq!(read.search("fresh", 10).unwrap(), expected_search);
+
+        let delete_prepared = engine
+            .prepare_bootstrap_transaction(
+                author(1_803),
+                &OperationTransaction::new(vec![SemanticOperation::DeletePage {
+                    page_id: ids.page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &delete_prepared);
+        let delete_event = AcceptedBatchEvent::from_accepted(
+            &engine,
+            &store,
+            delete_prepared.manifest().batch_id(),
+        )
+        .unwrap();
+        let delete_change =
+            MaterializationChange::new(delete_event.batch_id(), Vec::new(), vec![ids.page])
+                .unwrap();
+        rebuilt
+            .apply_materialized_accepted(&delete_event, &delete_change)
+            .unwrap();
+        let read = rebuilt.materialized_read().unwrap();
+        assert_eq!(read.page(ids.page).unwrap(), None);
+        assert_eq!(read.block(ids.block).unwrap(), None);
+        assert!(read.page(referrer_page).unwrap().is_some());
+        assert!(read.block(referrer_block).unwrap().is_some());
+        assert!(read
+            .referrers_to(MaterializedEntityId::Page(ids.page), 10)
+            .unwrap()
+            .is_empty());
+        assert!(read.properties_named("owner", None, 10).unwrap().is_empty());
+        assert!(read.tags("block-tag", 10).unwrap().is_empty());
+        assert!(read.tasks(None, 10).unwrap().is_empty());
+        assert!(read.search("fresh", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cross_page_move_subtree_preserves_inbound_block_referrers_in_both_page_orders() {
+        fn page_replacement(
+            page_id: PageId,
+            home_document_id: DocumentId,
+            path: &str,
+            name: &str,
+            blocks: Vec<MaterializedBlockInput>,
+        ) -> MaterializedPageInput {
+            MaterializedPageInput {
+                page_id,
+                home_document_id,
+                name: name.into(),
+                name_key: name.to_lowercase(),
+                path: ManagedPath::parse(path).unwrap(),
+                kind: ManagedTextKind::Page,
+                preamble: None,
+                searchable_text: format!("{name} searchable"),
+                references: Vec::new(),
+                properties: Vec::new(),
+                tags: Vec::new(),
+                blocks,
+            }
+        }
+
+        fn block_replacement(
+            block_id: BlockId,
+            home_document_id: DocumentId,
+            content: &str,
+            references: Vec<MaterializedReference>,
+        ) -> MaterializedBlockInput {
+            MaterializedBlockInput {
+                block_id,
+                home_document_id,
+                parent: None,
+                order: "a".into(),
+                content: content.into(),
+                searchable_text: content.into(),
+                heading_level: None,
+                collapsed: false,
+                logseq_uuid: None,
+                logseq_identity_origin: None,
+                references,
+                properties: Vec::new(),
+                tags: Vec::new(),
+                task: None,
+            }
+        }
+
+        for (case, source_before_destination) in [(0_u128, true), (1, false)] {
+            let ids = TestIds::new(2_500 + case * 100);
+            let dir = TestDir::new(&format!("cross-page-materialization-move-{case}"));
+            let (mut database, mut engine, store) = open_empty(&dir, ids);
+            let (source_page, destination_page) = if source_before_destination {
+                (PageId::from_uuid(uuid(2_600 + case * 100)), PageId::from_uuid(uuid(2_601 + case * 100)))
+            } else {
+                (PageId::from_uuid(uuid(2_701 + case * 100)), PageId::from_uuid(uuid(2_700 + case * 100)))
+            };
+            let source_document = DocumentId::from_uuid(uuid(2_800 + case * 100));
+            let destination_document = DocumentId::from_uuid(uuid(2_801 + case * 100));
+            let referrer_page = PageId::from_uuid(uuid(2_802 + case * 100));
+            let referrer_document = DocumentId::from_uuid(uuid(2_803 + case * 100));
+            let target_block = BlockId::from_uuid(uuid(2_804 + case * 100));
+            let referrer_block = BlockId::from_uuid(uuid(2_805 + case * 100));
+            let source_path = format!("moves/{case}/source.md");
+            let destination_path = format!("moves/{case}/destination.md");
+            let referrer_path = format!("moves/{case}/referrer.md");
+
+            let root_prepared = engine
+                .prepare_bootstrap_transaction(
+                    author(2_900 + case * 100),
+                    &OperationTransaction::new(vec![
+                        SemanticOperation::CreatePage {
+                            page_id: source_page,
+                            home_document_id: source_document,
+                            path: ManagedPath::parse(&source_path).unwrap(),
+                            kind: ManagedTextKind::Page,
+                        },
+                        SemanticOperation::CreatePage {
+                            page_id: destination_page,
+                            home_document_id: destination_document,
+                            path: ManagedPath::parse(&destination_path).unwrap(),
+                            kind: ManagedTextKind::Page,
+                        },
+                        SemanticOperation::CreatePage {
+                            page_id: referrer_page,
+                            home_document_id: referrer_document,
+                            path: ManagedPath::parse(&referrer_path).unwrap(),
+                            kind: ManagedTextKind::Page,
+                        },
+                        SemanticOperation::CreateBlock {
+                            block: BlockLocation {
+                                block_id: target_block,
+                                home_document_id: source_document,
+                            },
+                            page_id: source_page,
+                            parent: None,
+                            order: "a".into(),
+                            content: "target".into(),
+                        },
+                        SemanticOperation::CreateBlock {
+                            block: BlockLocation {
+                                block_id: referrer_block,
+                                home_document_id: referrer_document,
+                            },
+                            page_id: referrer_page,
+                            parent: None,
+                            order: "a".into(),
+                            content: "referrer".into(),
+                        },
+                    ])
+                    .unwrap(),
+                )
+                .unwrap();
+            publish_and_stage(&mut engine, &store, &root_prepared);
+            let root_event = AcceptedBatchEvent::from_accepted(
+                &engine,
+                &store,
+                root_prepared.manifest().batch_id(),
+            )
+            .unwrap();
+            let root_change = MaterializationChange::new(
+                root_event.batch_id(),
+                vec![
+                    page_replacement(
+                        source_page,
+                        source_document,
+                        &source_path,
+                        "Source",
+                        vec![block_replacement(
+                            target_block,
+                            source_document,
+                            "target",
+                            Vec::new(),
+                        )],
+                    ),
+                    page_replacement(
+                        destination_page,
+                        destination_document,
+                        &destination_path,
+                        "Destination",
+                        Vec::new(),
+                    ),
+                    page_replacement(
+                        referrer_page,
+                        referrer_document,
+                        &referrer_path,
+                        "Referrer",
+                        vec![block_replacement(
+                            referrer_block,
+                            referrer_document,
+                            "referrer",
+                            vec![MaterializedReference {
+                                target: MaterializedEntityId::Block(target_block),
+                                kind: MaterializedReferenceKind::Reference,
+                            }],
+                        )],
+                    ),
+                ],
+                Vec::new(),
+            )
+            .unwrap();
+            database
+                .apply_materialized_accepted(&root_event, &root_change)
+                .unwrap();
+
+            let move_prepared = engine
+                .prepare_bootstrap_transaction(
+                    author(2_901 + case * 100),
+                    &OperationTransaction::new(vec![SemanticOperation::MoveSubtree {
+                        root: BlockLocation {
+                            block_id: target_block,
+                            home_document_id: source_document,
+                        },
+                        from_page_id: source_page,
+                        to_page_id: destination_page,
+                        parent: None,
+                        order: "a".into(),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            publish_and_stage(&mut engine, &store, &move_prepared);
+            let move_event = AcceptedBatchEvent::from_accepted(
+                &engine,
+                &store,
+                move_prepared.manifest().batch_id(),
+            )
+            .unwrap();
+            let move_change = MaterializationChange::new(
+                move_event.batch_id(),
+                vec![
+                    page_replacement(
+                        source_page,
+                        source_document,
+                        &source_path,
+                        "Source",
+                        Vec::new(),
+                    ),
+                    page_replacement(
+                        destination_page,
+                        destination_document,
+                        &destination_path,
+                        "Destination",
+                        vec![block_replacement(
+                            target_block,
+                            source_document,
+                            "target",
+                            Vec::new(),
+                        )],
+                    ),
+                ],
+                Vec::new(),
+            )
+            .unwrap();
+            database
+                .apply_materialized_accepted(&move_event, &move_change)
+                .unwrap();
+
+            let read = database.materialized_read().unwrap();
+            assert_eq!(read.block(target_block).unwrap().unwrap().page_id, destination_page);
+            assert_eq!(
+                read.referrers_to(MaterializedEntityId::Block(target_block), 10)
+                    .unwrap(),
+                vec![MaterializedReferrerRow {
+                    source: MaterializedEntityId::Block(referrer_block),
+                    source_page_id: referrer_page,
+                    kind: MaterializedReferenceKind::Reference,
+                }],
+                "case {case}: inbound referrer must survive moving across replacement pages"
+            );
         }
     }
 
