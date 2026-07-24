@@ -5174,11 +5174,20 @@ mod tests {
     }
 
     fn root_transaction(ids: TestIds, path: &str, content: &str) -> OperationTransaction {
+        root_transaction_named(ids, path, "Root Fixture Page", content)
+    }
+
+    fn root_transaction_named(
+        ids: TestIds,
+        path: &str,
+        name: &str,
+        content: &str,
+    ) -> OperationTransaction {
         OperationTransaction::new(vec![
             SemanticOperation::CreatePage {
                 page_id: ids.page,
                 home_document_id: ids.document,
-                name: crate::oplog::LogicalPageName::parse("Root Fixture Page").unwrap(),
+                name: crate::oplog::LogicalPageName::parse(name).unwrap(),
                 path: ManagedPath::parse(path).unwrap(),
                 kind: ManagedTextKind::Page,
             },
@@ -7376,14 +7385,24 @@ mod tests {
             .engine()
             .prepare_bootstrap_transaction(
                 author(2_490),
-                &root_transaction(base, "pages/root-sequence-left.md", "left"),
+                &root_transaction_named(
+                    base,
+                    "pages/root-sequence-left.md",
+                    "Root Sequence Left",
+                    "left",
+                ),
             )
             .unwrap();
         let right_batch = right
             .engine()
             .prepare_bootstrap_transaction(
                 author(2_491),
-                &root_transaction(right, "pages/root-sequence-right.md", "right"),
+                &root_transaction_named(
+                    right,
+                    "pages/root-sequence-right.md",
+                    "Root Sequence Right",
+                    "right",
+                ),
             )
             .unwrap();
         store.publish_prepared(&left_batch).unwrap();
@@ -7912,14 +7931,14 @@ mod tests {
             .engine()
             .prepare_bootstrap_transaction(
                 author(2_500),
-                &root_transaction(base, "pages/left.md", "left"),
+                &root_transaction_named(base, "pages/left.md", "Concurrent Left", "left"),
             )
             .unwrap();
         let right_batch = right
             .engine()
             .prepare_bootstrap_transaction(
                 author(2_501),
-                &root_transaction(right, "pages/right.md", "right"),
+                &root_transaction_named(right, "pages/right.md", "Concurrent Right", "right"),
             )
             .unwrap();
         store.publish_prepared(&left_batch).unwrap();
