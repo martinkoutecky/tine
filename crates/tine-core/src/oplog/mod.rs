@@ -27,6 +27,7 @@ pub(crate) mod scratch_store;
 pub mod semantic;
 pub mod simulator;
 pub mod sqlite;
+pub mod sqlite_materialization;
 pub(crate) mod uuid_claim_index;
 
 pub use batch::{
@@ -116,4 +117,16 @@ pub use sqlite::{
     RebuildInstrumentation, RebuildSource, SqliteFrontier, TailOverlay, TailOverlayError,
     TailOverlayStatus, TailReservation, SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION,
     TAIL_MAX_BATCHES, TAIL_MAX_BYTES,
+};
+pub use sqlite_materialization::{
+    MaterializationChange, MaterializationError, MaterializedBlockInput, MaterializedBlockRow,
+    MaterializedEntityId, MaterializedPageInput, MaterializedPageRow, MaterializedProperty,
+    MaterializedPropertyRow, MaterializedReference, MaterializedReferenceKind,
+    MaterializedReferrerRow, MaterializedSearchHit, MaterializedTagRow, MaterializedTask,
+    MaterializedTaskRow, SqliteMaterializedRead, MAX_MATERIALIZATION_CHANGE_BLOCKS,
+    MAX_MATERIALIZATION_CHANGE_BYTES, MAX_MATERIALIZATION_CHANGE_FACET_VALUES,
+    MAX_MATERIALIZATION_CHANGE_PAGES, MAX_MATERIALIZATION_FACET_BYTES,
+    MAX_MATERIALIZATION_FACET_VALUES, MAX_MATERIALIZATION_FIELD_BYTES,
+    MAX_MATERIALIZATION_PREAMBLE_BYTES, MAX_MATERIALIZATION_QUERY_BYTES,
+    MAX_MATERIALIZATION_QUERY_ROWS, MAX_MATERIALIZATION_READ_BYTES,
 };
