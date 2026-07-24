@@ -1,19 +1,22 @@
 use std::path::{Path, PathBuf};
 
+use loro::{ExportMode, LoroDoc};
 use serde::{Deserialize, Serialize};
 use tine_core::oplog::{
     AuthorBatch, BatchCausalDot, BatchDisposition, BatchError, BatchId, BatchInspection,
-    BatchOrigin, BlockLocation, BlockOwner, CausalPeerId, ContentDigest, CrdtPeerCounter,
-    CrdtPeerId, DeterministicSimulator, DeviceId, DocumentCausalDigest, DocumentDependencies,
-    DocumentId, EngineError, FailureCapsule, FailureIdentity, FrontierV2, ImmutableHomeClaim,
-    ImmutableHomeConflict, ImmutableHomeEvidence, LineageDigest, LogseqIdentityMutation,
-    LogseqIdentityOrigin, LogseqIdentityTrigger, LogseqUuid, LogseqUuidResolution, ManagedPath,
-    ObjectKind, ObjectStore, OperationBatch, OperationObject, OperationTransaction, PageId,
-    PagePreambleDelta, PagePreambleState, PolicyGeneratedAnchorReason, PreparedBatch,
+    BatchOrigin, BlockDelta, BlockLocation, BlockOwner, CausalPeerId, ContentDigest,
+    CrdtPeerCounter, CrdtPeerId, DeterministicSimulator, DeviceId, DocumentCausalDigest,
+    DocumentDependencies, DocumentId, EngineError, FailureCapsule, FailureIdentity, FrontierV2,
+    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, LineageDigest,
+    LogseqIdentityMutation, LogseqIdentityOrigin, LogseqIdentityTrigger, LogseqUuid,
+    LogseqUuidResolution, ManagedPath, ManagedTextKind, MembershipDelta, ObjectKind, ObjectStore,
+    OperationBatch, OperationObject, OperationTransaction, PageDelta, PageId, PagePreambleDelta,
+    PagePreambleState, PageState, PolicyGeneratedAnchorReason, PreparedBatch,
     ProjectionEndpointBinding, ProjectionEndpointId, ProjectionReceiptStore, Scenario,
     ScenarioAction, ScenarioDevice, SemanticEffect, SemanticEffectDigest, SemanticError,
     SemanticOperation, SessionId, ShardedHotEngine, StoreError, ValidatedBatch, WorkspaceId,
-    WorkspaceStatus, OPERATION_SCHEMA_VERSION,
+    WorkspaceStatus, MANAGED_ENTITY_SET_VERSION, OPERATION_SCHEMA_VERSION,
+    SEMANTIC_EFFECT_SCHEMA_VERSION,
 };
 use tine_core::Graph;
 use uuid::Uuid;
@@ -104,6 +107,15 @@ fn ready(store: &ObjectStore, prepared: &PreparedBatch) -> ValidatedBatch {
     }
 }
 
+fn semantic_effect(prepared: &PreparedBatch) -> SemanticEffect {
+    let semantic = prepared
+        .objects()
+        .iter()
+        .find(|object| object.kind() == ObjectKind::SemanticEffect)
+        .expect("prepared batch has one semantic effect");
+    SemanticEffect::decode(semantic.payload()).unwrap()
+}
+
 fn store(dir: &TestDir, ids: Ids) -> ObjectStore {
     ObjectStore::open(&dir.path().join("store"), ids.workspace).unwrap()
 }
@@ -177,16 +189,19 @@ fn genesis(ids: Ids, engine: &ShardedHotEngine) -> PreparedBatch {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/A.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
                     path: path("pages/B.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
                     path: path("pages/C.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreateBlock {
                     block: BlockLocation {
@@ -222,16 +237,19 @@ fn pages_only_genesis(ids: Ids, engine: &ShardedHotEngine, batch: u128) -> Prepa
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/A.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
                     path: path("pages/B.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
                     path: path("pages/C.md"),
+                    kind: ManagedTextKind::Page,
                 },
             ]),
         )
@@ -301,11 +319,436 @@ fn pre_p1b1_operation_schema_is_rejected_at_the_manifest_fence() {
             found,
         })) if found == OPERATION_SCHEMA_VERSION - 1
     ));
+    manifest["operation_schema_version"] = serde_json::json!(OPERATION_SCHEMA_VERSION);
+    manifest["managed_entity_set_version"] = serde_json::json!(MANAGED_ENTITY_SET_VERSION - 1);
+    let old_entity_set_bytes = serde_json::to_vec(&manifest).unwrap();
+    assert!(matches!(
+        archive.stage_manifest_bytes(&old_entity_set_bytes),
+        Err(StoreError::Batch(BatchError::UnknownVersion {
+            field: "managed_entity_set_version",
+            expected: MANAGED_ENTITY_SET_VERSION,
+            found,
+        })) if found == MANAGED_ENTITY_SET_VERSION - 1
+    ));
     assert!(matches!(
         archive
             .inspect_batch(prepared.manifest().batch_id())
             .unwrap(),
         BatchInspection::Absent
+    ));
+}
+
+#[test]
+fn page_kind_is_durable_across_create_rename_mutation_delete_and_replay() {
+    let ids = Ids::new();
+    let dir = TestDir::new("page-kind-lifecycle");
+    let archive = store(&dir, ids);
+    let mut engine = ids.engine();
+    let create_operation = SemanticOperation::CreatePage {
+        page_id: ids.page_a,
+        home_document_id: ids.home_a,
+        path: path("shared/A.md"),
+        kind: ManagedTextKind::Journal,
+    };
+    let page_operation = SemanticOperation::CreatePage {
+        page_id: ids.page_a,
+        home_document_id: ids.home_a,
+        path: path("shared/A.md"),
+        kind: ManagedTextKind::Page,
+    };
+    assert_ne!(
+        postcard::to_allocvec(&create_operation).unwrap(),
+        postcard::to_allocvec(&page_operation).unwrap()
+    );
+    let page_prepared = ids
+        .engine()
+        .prepare_bootstrap_transaction(author(40_000, 40_000), &tx(vec![page_operation.clone()]))
+        .unwrap();
+
+    let create = engine
+        .prepare_bootstrap_transaction(author(40_000, 40_000), &tx(vec![create_operation]))
+        .unwrap();
+    assert_ne!(
+        semantic_effect(&create).encode().unwrap(),
+        semantic_effect(&page_prepared).encode().unwrap()
+    );
+    assert_ne!(
+        create.manifest().semantic_effect_digest(),
+        page_prepared.manifest().semantic_effect_digest()
+    );
+    assert_ne!(
+        create
+            .objects()
+            .iter()
+            .map(OperationObject::descriptor)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        page_prepared
+            .objects()
+            .iter()
+            .map(OperationObject::descriptor)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    );
+    let created_effect = semantic_effect(&create);
+    assert_eq!(
+        created_effect.pages()[0].after.as_ref().unwrap().kind(),
+        ManagedTextKind::Journal
+    );
+    assert!(matches!(
+        engine.stage_ready(ready(&archive, &create)).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+    let page_archive = ObjectStore::open(&dir.path().join("page-store"), ids.workspace).unwrap();
+    let mut page_engine = ids.engine();
+    assert!(matches!(
+        page_engine
+            .stage_ready(ready(&page_archive, &page_prepared))
+            .disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+    assert_ne!(
+        engine.canonical_snapshot().unwrap(),
+        page_engine.canonical_snapshot().unwrap()
+    );
+
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(
+            author(40_001, 40_001),
+            &tx(vec![SemanticOperation::SetPageKind {
+                page_id: ids.page_a,
+                kind: ManagedTextKind::Journal,
+            }]),
+        ),
+        Err(EngineError::InvalidTransaction(_))
+    ));
+
+    let rename = engine
+        .prepare_bootstrap_transaction(
+            author(40_002, 40_002),
+            &tx(vec![SemanticOperation::EditPagePath {
+                page_id: ids.page_a,
+                path: path("elsewhere/A.md"),
+            }]),
+        )
+        .unwrap();
+    let renamed_effect = semantic_effect(&rename);
+    assert_eq!(
+        renamed_effect.pages()[0].before.as_ref().unwrap().kind(),
+        ManagedTextKind::Journal
+    );
+    assert_eq!(
+        renamed_effect.pages()[0].after.as_ref().unwrap().kind(),
+        ManagedTextKind::Journal
+    );
+    assert!(matches!(
+        engine.stage_ready(ready(&archive, &rename)).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+
+    let change_kind = engine
+        .prepare_bootstrap_transaction(
+            author(40_003, 40_003),
+            &tx(vec![SemanticOperation::SetPageKind {
+                page_id: ids.page_a,
+                kind: ManagedTextKind::Page,
+            }]),
+        )
+        .unwrap();
+    let kind_effect = semantic_effect(&change_kind);
+    assert_eq!(kind_effect.pages().len(), 1);
+    assert_eq!(
+        kind_effect.pages()[0].before.as_ref().unwrap().kind(),
+        ManagedTextKind::Journal
+    );
+    assert_eq!(
+        kind_effect.pages()[0].after.as_ref().unwrap().kind(),
+        ManagedTextKind::Page
+    );
+    assert_eq!(
+        kind_effect.pages()[0].before.as_ref().unwrap().path(),
+        kind_effect.pages()[0].after.as_ref().unwrap().path()
+    );
+    assert!(matches!(
+        engine
+            .stage_ready(ready(&archive, &change_kind))
+            .disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+    assert_eq!(
+        engine.canonical_snapshot().unwrap().pages[0].1.kind(),
+        ManagedTextKind::Page
+    );
+
+    let delete = engine
+        .prepare_bootstrap_transaction(
+            author(40_004, 40_004),
+            &tx(vec![SemanticOperation::DeletePage {
+                page_id: ids.page_a,
+            }]),
+        )
+        .unwrap();
+    let delete_effect = semantic_effect(&delete);
+    assert_eq!(
+        delete_effect.pages()[0].before.as_ref().unwrap().kind(),
+        ManagedTextKind::Page
+    );
+    assert_eq!(
+        delete_effect.pages()[0].after,
+        Some(PageState::Tombstone {
+            home_document_id: ids.home_a,
+            kind: ManagedTextKind::Page,
+        })
+    );
+    assert!(matches!(
+        engine.stage_ready(ready(&archive, &delete)).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(
+            author(40_005, 40_005),
+            &tx(vec![SemanticOperation::SetPageKind {
+                page_id: ids.page_a,
+                kind: ManagedTextKind::Journal,
+            }]),
+        ),
+        Err(EngineError::PageDeleted(page_id)) if page_id == ids.page_a
+    ));
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(
+            author(40_006, 40_006),
+            &tx(vec![SemanticOperation::SetPageKind {
+                page_id: ids.page_b,
+                kind: ManagedTextKind::Journal,
+            }]),
+        ),
+        Err(EngineError::PageNotFound(page_id)) if page_id == ids.page_b
+    ));
+
+    let mut replay = ids.engine();
+    for manifest in archive.committed_manifests().unwrap() {
+        assert!(matches!(
+            replay
+                .stage_from_store(&archive, manifest.batch_id())
+                .unwrap()
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+    }
+    assert!(matches!(
+        replay.prepare_bootstrap_transaction(
+            author(40_007, 40_007),
+            &tx(vec![SemanticOperation::SetPageKind {
+                page_id: ids.page_a,
+                kind: ManagedTextKind::Journal,
+            }]),
+        ),
+        Err(EngineError::PageDeleted(page_id)) if page_id == ids.page_a
+    ));
+}
+
+#[test]
+fn page_kind_mismatch_between_effect_and_catalog_object_is_rejected() {
+    let ids = Ids::new();
+    let dir = TestDir::new("page-kind-effect-object-mismatch");
+    let archive = store(&dir, ids);
+    let author_engine = ids.engine();
+    let prepared = author_engine
+        .prepare_bootstrap_transaction(
+            author(41_000, 41_000),
+            &tx(vec![SemanticOperation::CreatePage {
+                page_id: ids.page_a,
+                home_document_id: ids.home_a,
+                path: path("shared/A.md"),
+                kind: ManagedTextKind::Page,
+            }]),
+        )
+        .unwrap();
+    let declared = semantic_effect(&prepared);
+    let mismatched = SemanticEffect::new_with_page_preambles(
+        declared
+            .pages()
+            .iter()
+            .map(|delta| PageDelta {
+                page_id: delta.page_id,
+                before: delta.before.clone(),
+                after: delta.after.as_ref().map(|state| match state {
+                    PageState::Live {
+                        path,
+                        home_document_id,
+                        ..
+                    } => PageState::Live {
+                        path: path.clone(),
+                        home_document_id: *home_document_id,
+                        kind: ManagedTextKind::Journal,
+                    },
+                    PageState::Tombstone {
+                        home_document_id, ..
+                    } => PageState::Tombstone {
+                        home_document_id: *home_document_id,
+                        kind: ManagedTextKind::Journal,
+                    },
+                }),
+            })
+            .collect(),
+        declared.page_preambles().to_vec(),
+        declared.blocks().to_vec(),
+        declared.memberships().to_vec(),
+    )
+    .unwrap();
+    let objects = prepared
+        .objects()
+        .iter()
+        .map(|object| {
+            if object.kind() == ObjectKind::SemanticEffect {
+                OperationObject::new(
+                    ids.workspace,
+                    object.document_id(),
+                    ObjectKind::SemanticEffect,
+                    mismatched.encode().unwrap(),
+                )
+                .unwrap()
+            } else {
+                object.clone()
+            }
+        })
+        .collect();
+    let tampered = rebuild(
+        prepared.manifest(),
+        objects,
+        prepared.manifest().dependency_frontier().clone(),
+    );
+    let mut receiver = ids.engine();
+
+    assert!(matches!(
+        receiver.stage_ready(ready(&archive, &tampered)).disposition,
+        BatchDisposition::Rejected {
+            error: EngineError::SemanticEffectMismatch,
+        }
+    ));
+}
+
+#[test]
+fn page_kind_changing_deletion_matching_catalog_and_effect_is_rejected() {
+    let ids = Ids::new();
+    let dir = TestDir::new("page-kind-changing-delete");
+    let archive = store(&dir, ids);
+    let mut author_engine = ids.engine();
+    let create = author_engine
+        .prepare_bootstrap_transaction(
+            author(42_000, 42_000),
+            &tx(vec![SemanticOperation::CreatePage {
+                page_id: ids.page_a,
+                home_document_id: ids.home_a,
+                path: path("shared/A.md"),
+                kind: ManagedTextKind::Page,
+            }]),
+        )
+        .unwrap();
+    let create_ready = ready(&archive, &create);
+    assert!(matches!(
+        author_engine.stage_ready(create_ready.clone()).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+    let delete = author_engine
+        .prepare_bootstrap_transaction(
+            author(42_001, 42_001),
+            &tx(vec![SemanticOperation::DeletePage {
+                page_id: ids.page_a,
+            }]),
+        )
+        .unwrap();
+
+    let create_catalog_payload: TestCrdtUpdatePayload = postcard::from_bytes(
+        create
+            .objects()
+            .iter()
+            .find(|object| {
+                object.kind() == ObjectKind::CrdtUpdate && object.document_id() == ids.catalog
+            })
+            .unwrap()
+            .payload(),
+    )
+    .unwrap();
+    let catalog = LoroDoc::new();
+    assert!(catalog
+        .import(&create_catalog_payload.raw_update)
+        .unwrap()
+        .pending
+        .is_none());
+    let catalog_before = catalog.oplog_vv();
+    catalog.set_peer_id(42_001).unwrap();
+    catalog
+        .get_map("pages")
+        .insert(
+            &ids.page_a.to_string(),
+            serde_json::to_string(&PageState::Tombstone {
+                home_document_id: ids.home_a,
+                kind: ManagedTextKind::Journal,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    catalog.commit();
+    let forged_catalog_update = catalog
+        .export(ExportMode::updates(&catalog_before))
+        .unwrap();
+
+    let declared = semantic_effect(&delete);
+    let mut pages = declared.pages().to_vec();
+    let delta = pages
+        .iter_mut()
+        .find(|delta| delta.page_id == ids.page_a)
+        .unwrap();
+    assert_eq!(delta.before.as_ref().unwrap().kind(), ManagedTextKind::Page);
+    delta.after = Some(PageState::Tombstone {
+        home_document_id: ids.home_a,
+        kind: ManagedTextKind::Journal,
+    });
+    let tampered_effect = unchecked_semantic_effect_bytes(&declared, pages);
+
+    let objects = delete
+        .objects()
+        .iter()
+        .map(|object| match object.kind() {
+            ObjectKind::SemanticEffect => OperationObject::new(
+                ids.workspace,
+                object.document_id(),
+                ObjectKind::SemanticEffect,
+                tampered_effect.clone(),
+            )
+            .unwrap(),
+            ObjectKind::CrdtUpdate if object.document_id() == ids.catalog => {
+                let mut payload: TestCrdtUpdatePayload =
+                    postcard::from_bytes(object.payload()).unwrap();
+                payload.raw_update = forged_catalog_update.clone();
+                OperationObject::new(
+                    ids.workspace,
+                    object.document_id(),
+                    ObjectKind::CrdtUpdate,
+                    postcard::to_allocvec(&payload).unwrap(),
+                )
+                .unwrap()
+            }
+            _ => object.clone(),
+        })
+        .collect();
+    let tampered = rebuild(
+        delete.manifest(),
+        objects,
+        delete.manifest().dependency_frontier().clone(),
+    );
+    let mut receiver = ids.engine();
+    assert!(matches!(
+        receiver.stage_ready(create_ready).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+
+    assert!(matches!(
+        receiver.stage_ready(ready(&archive, &tampered)).disposition,
+        BatchDisposition::Rejected {
+            error: EngineError::Semantic(error),
+        } if error == "invalid page lifecycle transition: creation must be None -> Live; edits must be Live -> Live; deletion must be Live -> same-kind Tombstone"
     ));
 }
 
@@ -1500,6 +1943,7 @@ fn author_cannot_alias_a_page_home_to_the_catalog() {
             page_id: ids.page_a,
             home_document_id: ids.catalog,
             path: path("pages/A.md"),
+            kind: ManagedTextKind::Page,
         }]),
     );
 
@@ -1588,6 +2032,28 @@ struct TestCrdtUpdatePayload {
     batch_dependency_heads: Vec<BatchId>,
     causal_state_digest: Option<DocumentCausalDigest>,
     raw_update: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct TestSemanticEffectWire {
+    semantic_effect_schema_version: u32,
+    pages: Vec<PageDelta>,
+    page_preambles: Vec<PagePreambleDelta>,
+    blocks: Vec<BlockDelta>,
+    memberships: Vec<MembershipDelta>,
+}
+
+fn unchecked_semantic_effect_bytes(declared: &SemanticEffect, pages: Vec<PageDelta>) -> Vec<u8> {
+    let wire = TestSemanticEffectWire {
+        semantic_effect_schema_version: SEMANTIC_EFFECT_SCHEMA_VERSION,
+        pages,
+        page_preambles: declared.page_preambles().to_vec(),
+        blocks: declared.blocks().to_vec(),
+        memberships: declared.memberships().to_vec(),
+    };
+    let mut bytes = b"TINESEM1".to_vec();
+    bytes.extend(postcard::to_allocvec(&wire).unwrap());
+    bytes
 }
 
 /// Rebind the private CRDT envelope to a replacement compact frontier while
@@ -1880,6 +2346,7 @@ fn correction11_cold_aged_page_reopens_replays_and_authors_without_history_range
             page_id,
             home_document_id,
             path: path(&format!("pages/Aged {index:03}.md")),
+            kind: ManagedTextKind::Page,
         });
         operations.push(SemanticOperation::CreateBlock {
             block: BlockLocation {
@@ -2226,6 +2693,7 @@ fn sparse_archive_open_cost_is_independent_of_unrelated_batch_count() {
                     page_id: PageId::from_uuid(uuid(60_000 + index as u128)),
                     home_document_id: DocumentId::from_uuid(uuid(70_000 + index as u128)),
                     path: path(&format!("pages/Unrelated {index:08}.md")),
+                    kind: ManagedTextKind::Page,
                 }]),
             )
             .unwrap();
@@ -2355,6 +2823,7 @@ fn conflicting_reuse_of_an_accepted_batch_id_rejects_without_rollback() {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
                 path: path("pages/Conflicting.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -2425,11 +2894,13 @@ fn concurrent_same_block_id_in_distinct_homes_blocks_canonically_in_every_order(
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/A.md"),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
                     path: path("pages/B.md"),
+                    kind: ManagedTextKind::Page,
                 },
             ]),
         )
@@ -4159,6 +4630,7 @@ fn concurrent_portable_alias_creates_quarantine_with_order_independent_evidence(
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
                 path: path("pages/Foo.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -4170,6 +4642,7 @@ fn concurrent_portable_alias_creates_quarantine_with_order_independent_evidence(
                 page_id: ids.page_b,
                 home_document_id: ids.home_b,
                 path: path("pages/foo.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -4223,6 +4696,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
                 page_id: ids.page_c,
                 home_document_id: ids.home_c,
                 path: path("pages/Baseline.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -4238,6 +4712,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
                 path: path("pages/Foo.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -4248,6 +4723,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
                 page_id: ids.page_b,
                 home_document_id: ids.home_b,
                 path: path("pages/foo.md"),
+                kind: ManagedTextKind::Page,
             }]),
         )
         .unwrap();
@@ -5023,6 +5499,7 @@ fn scenario_encoding_scheduler_and_production_engine_simulation_are_deterministi
         page_id: ids.page_a,
         home_document_id: ids.home_a,
         path: path("pages/A.md"),
+        kind: ManagedTextKind::Page,
     }]);
     let scenario = Scenario::new(
         "serializable-foundation",
@@ -5106,11 +5583,13 @@ fn simulator_assert_converged_checks_terminal_history_not_only_evidence() {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
                         path: path("pages/A.md"),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: ids.page_b,
                         home_document_id: ids.home_b,
                         path: path("pages/B.md"),
+                        kind: ManagedTextKind::Page,
                     },
                 ]),
             },
@@ -5210,11 +5689,13 @@ fn simulator_offered_oracle_compares_opposite_pre_latch_histories() {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
                         path: path("pages/A.md"),
+                        kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: ids.page_b,
                         home_document_id: ids.home_b,
                         path: path("pages/B.md"),
+                        kind: ManagedTextKind::Page,
                     },
                 ]),
             },
@@ -5323,6 +5804,7 @@ fn scenario_reducer_removes_irrelevant_authors_and_orphan_deliveries() {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
                     path: path("pages/Irrelevant.md"),
+                    kind: ManagedTextKind::Page,
                 }]),
             },
             ScenarioAction::Deliver {
@@ -5337,6 +5819,7 @@ fn scenario_reducer_removes_irrelevant_authors_and_orphan_deliveries() {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
                     path: path("pages/Failure.md"),
+                    kind: ManagedTextKind::Page,
                 }]),
             },
             ScenarioAction::AssertConverged {

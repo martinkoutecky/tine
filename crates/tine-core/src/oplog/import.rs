@@ -2524,8 +2524,8 @@ mod tests {
     use super::*;
     use crate::oplog::{
         AuthorBatch, BatchId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
-        ObjectStore, OperationTransaction, ProjectionEndpointBinding, ProjectionEndpointId,
-        SemanticOperation, SessionId, write_projection_exact,
+        ManagedTextKind, ObjectStore, OperationTransaction, ProjectionEndpointBinding,
+        ProjectionEndpointId, SemanticOperation, SessionId, write_projection_exact,
     };
 
     struct TestRoot(PathBuf);
@@ -2586,11 +2586,17 @@ mod tests {
                 let seed = 100 + index as u128 * 10;
                 let page_id = PageId::from_uuid(Uuid::from_u128(seed));
                 let home = DocumentId::from_uuid(Uuid::from_u128(seed + 1));
+                let kind = match path.split_once('/') {
+                    Some(("pages", rest)) if !rest.is_empty() => ManagedTextKind::Page,
+                    Some(("journals", rest)) if !rest.is_empty() => ManagedTextKind::Journal,
+                    _ => panic!("snapshot fixture path is outside the guarded default layout"),
+                };
                 page_ids.push(page_id);
                 operations.push(SemanticOperation::CreatePage {
                     page_id,
                     home_document_id: home,
                     path: ManagedPath::parse((*path).to_owned()).unwrap(),
+                    kind,
                 });
                 operations.push(SemanticOperation::CreateBlock {
                     block: BlockLocation {

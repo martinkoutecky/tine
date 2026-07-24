@@ -6,7 +6,7 @@ use tine_core::oplog::{
     inventory_initial_shadow, plan_affected_import, write_projection_exact, AuthorBatch, BatchId,
     BatchOrigin, BlobDescription, BlockId, BlockLocation, BlockMatchBasis, CrdtPeerId,
     CurrentPageAtPath, DeviceId, DocumentId, ImportBlockReason, ImportPlan, ImportPlanStatus,
-    LineageDigest, LogseqIdentityMutation, LogseqUuid, ManagedPath, ObjectStore,
+    LineageDigest, LogseqIdentityMutation, LogseqUuid, ManagedPath, ManagedTextKind, ObjectStore,
     OperationTransaction, PageId, PageMatchBasis, ProjectionEndpointBinding, ProjectionEndpointId,
     ProjectionIntent, ProjectionReceiptStore, RawObservation, RejectedRawIdReason,
     SemanticOperation, SessionId, ShardedHotEngine, WorkspaceId,
@@ -135,6 +135,11 @@ impl AuthorityFixture {
             let seed = 1_000 + page_index as u128 * 1_000;
             let page_id = PageId::from_uuid(uuid(seed));
             let home_document_id = DocumentId::from_uuid(uuid(seed + 1));
+            let kind = match page.path.split_once('/') {
+                Some(("pages", rest)) if !rest.is_empty() => ManagedTextKind::Page,
+                Some(("journals", rest)) if !rest.is_empty() => ManagedTextKind::Journal,
+                _ => panic!("import fixture path is outside the guarded default layout"),
+            };
             let block_ids = (0..page.blocks.len())
                 .map(|index| BlockId::from_uuid(uuid(seed + 10 + index as u128)))
                 .collect::<Vec<_>>();
@@ -142,6 +147,7 @@ impl AuthorityFixture {
                 page_id,
                 home_document_id,
                 path: ManagedPath::parse(page.path.clone()).unwrap(),
+                kind,
             });
             for (index, block) in page.blocks.iter().enumerate() {
                 operations.push(SemanticOperation::CreateBlock {

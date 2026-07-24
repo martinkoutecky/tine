@@ -8,7 +8,7 @@ use tine_core::oplog::{
     AnnotatedIdentity, AuthorBatch, BatchDisposition, BatchId, BatchInspection, BatchOrigin,
     BlobDescription, BlockId, BlockLocation, CrdtPeerCounter, CrdtPeerId, DeviceId,
     DocumentDependencies, DocumentId, EngineError, FrontierV2, LineageDigest, LogseqIdentityOrigin,
-    LogseqUuid, ManagedPath, ManifestProjectionPrecondition, ManifestProjectionTarget,
+    LogseqUuid, ManagedPath, ManagedTextKind, ManifestProjectionPrecondition, ManifestProjectionTarget,
     ManifestedProjectionIntent, MaterializationStats, MaterializedBlock, MaterializedPage,
     ObjectKind, ObjectStore, OperationBatch, OperationObject, OperationTransaction,
     PORTABLE_PATH_KEY_VERSION, PageId, PolicyGeneratedAnchorReason, PreparedBatch,
@@ -212,6 +212,7 @@ fn authorized_engine(
             page_id,
             home_document_id: home,
             path: ManagedPath::parse(relative_path).unwrap(),
+            kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreateBlock {
             block: BlockLocation {
@@ -2683,6 +2684,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
                     page_id: page_b,
                     home_document_id: home_b,
                     path: path.clone(),
+                    kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreateBlock {
                     block: BlockLocation {

@@ -15,7 +15,7 @@ use super::{BatchId, BlockId, CrdtPeerId, DocumentId, ImportId, LogseqUuid, Page
 pub const RECEIPT_SCHEMA_VERSION: u32 = 5;
 pub const PROJECTION_SCHEMA_VERSION: u32 = 4;
 pub const PROJECTION_POLICY_VERSION: u32 = 1;
-pub const MANAGED_ENTITY_SET_VERSION: u32 = 1;
+pub const MANAGED_ENTITY_SET_VERSION: u32 = 2;
 pub const DIFF_SCHEMA_VERSION: u32 = 2;
 pub const PORTABLE_PATH_KEY_VERSION: u32 = 1;
 pub const PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION: (u8, u8, u8) = (17, 0, 0);
@@ -1685,6 +1685,21 @@ mod tests {
         state: ImportInventoryState,
     ) -> ImportInventoryEntry {
         ImportInventoryEntry::with_kind(kind, ManagedPath::parse(path).unwrap(), state)
+    }
+
+    #[test]
+    fn prior_managed_entity_set_version_fails_closed() {
+        assert_eq!(
+            validate_versions(
+                RECEIPT_SCHEMA_VERSION,
+                PROJECTION_SCHEMA_VERSION,
+                PROJECTION_POLICY_VERSION,
+                MANAGED_ENTITY_SET_VERSION - 1,
+            ),
+            Err(ReceiptError::UnknownManagedEntitySetVersion(
+                MANAGED_ENTITY_SET_VERSION - 1
+            ))
+        );
     }
 
     #[test]
