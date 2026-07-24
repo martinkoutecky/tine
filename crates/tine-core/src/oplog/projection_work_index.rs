@@ -16,8 +16,8 @@
 use std::fmt;
 use std::io::{ErrorKind, Write};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
@@ -26,12 +26,13 @@ use uuid::Uuid;
 
 use super::identity::{parse_digest, write_hex};
 use super::object_store::{
-    publish_immutable_exact, read_optional_regular, sync_dir_required, StoreError,
+    StoreError, open_dir_nofollow, publish_immutable_exact, read_optional_regular,
+    sync_dir_required,
 };
 use super::{
     BatchId, BlobDescription, ContentDigest, FrontierV2, LogicalCompletionId, ManagedPath,
-    ManifestObjectRef, PageId, PortablePathIndexRoot, PortablePathKeyDigest, ProjectionEndpointId,
-    ProjectionIntentId, WorkspaceId, PORTABLE_PATH_KEY_VERSION,
+    ManifestObjectRef, PORTABLE_PATH_KEY_VERSION, PageId, PortablePathIndexRoot,
+    PortablePathKeyDigest, ProjectionEndpointId, ProjectionIntentId, WorkspaceId,
 };
 
 const WORK_SCHEMA_VERSION: u32 = 3;
@@ -413,6 +414,59 @@ impl fmt::Debug for ProjectionWorkIndex {
 }
 
 impl ProjectionWorkIndex {
+    pub(crate) fn preflight_existing(
+        control: &Dir,
+        workspace_id: WorkspaceId,
+        endpoint_id: ProjectionEndpointId,
+        graph_resource_id: super::CanonicalGraphResourceId,
+        receipt_store_id: super::ProjectionReceiptStoreId,
+    ) -> Result<(), ProjectionWorkError> {
+        let head = read_optional_regular(control, HEAD_FILE, 64, None)?;
+        let claim = read_optional_regular(control, CLAIM_FILE, 256, None)?;
+        match (head, claim) {
+            (None, None) => Ok(()),
+            (Some(head), Some(claim)) => {
+                validate_projection_index_claim(
+                    &claim,
+                    workspace_id,
+                    endpoint_id,
+                    graph_resource_id,
+                    receipt_store_id,
+                )?;
+                let _nodes = open_dir_nofollow(control, "nodes")?;
+                let roots = open_dir_nofollow(control, "roots")?;
+                let _prepared = open_dir_nofollow(control, "prepared")?;
+                let text =
+                    std::str::from_utf8(&head).map_err(|_| ProjectionWorkError::NonCanonical)?;
+                let digest = parse_digest(text)
+                    .map(ContentDigest::from_bytes)
+                    .map_err(|_| ProjectionWorkError::NonCanonical)?;
+                if digest.to_string().as_bytes() != head {
+                    return Err(ProjectionWorkError::NonCanonical);
+                }
+                let bytes = read_optional_regular(
+                    &roots,
+                    &root_filename(digest),
+                    MAX_INDEX_NODE_BYTES,
+                    None,
+                )?
+                .ok_or(ProjectionWorkError::MissingRoot(digest))?;
+                if ContentDigest::of(&bytes) != digest {
+                    return Err(ProjectionWorkError::RootDigestMismatch(digest));
+                }
+                let root: ProjectionRoot = decode_canonical(&bytes)?;
+                validate_projection_root_binding(
+                    &root,
+                    workspace_id,
+                    endpoint_id,
+                    graph_resource_id,
+                    receipt_store_id,
+                )
+            }
+            _ => Err(ProjectionWorkError::MissingHead),
+        }
+    }
+
     pub(crate) fn new(
         workspace_id: WorkspaceId,
         endpoint_id: ProjectionEndpointId,
@@ -1158,46 +1212,17 @@ impl ProjectionWorkIndex {
                     "projection work index claim",
                 )?;
             }
-            (Some(_), Some(claim)) => self.validate_existing_claim(&claim)?,
+            (Some(_), Some(claim)) => validate_projection_index_claim(
+                &claim,
+                self.workspace_id,
+                self.endpoint_id,
+                self.graph_resource_id,
+                self.receipt_store_id,
+            )?,
             _ => return Err(ProjectionWorkError::MissingHead),
         }
         let (_, root) = self.load_head_root()?;
         self.require_root_binding(&root)
-    }
-
-    fn validate_existing_claim(&self, bytes: &[u8]) -> Result<(), ProjectionWorkError> {
-        if let Ok(claim) = decode_canonical::<ProjectionIndexClaim>(bytes) {
-            if claim.schema_version < INDEX_SCHEMA_VERSION {
-                return Err(ProjectionWorkError::UpgradeRequired {
-                    found: claim.schema_version,
-                    current: INDEX_SCHEMA_VERSION,
-                });
-            }
-            if claim.schema_version > INDEX_SCHEMA_VERSION {
-                return Err(ProjectionWorkError::UnsupportedVersion(
-                    claim.schema_version,
-                ));
-            }
-            if claim.workspace_id != self.workspace_id
-                || claim.endpoint_id != self.endpoint_id
-                || claim.graph_resource_id != self.graph_resource_id
-                || claim.receipt_store_id != self.receipt_store_id
-            {
-                return Err(ProjectionWorkError::BindingMismatch);
-            }
-            return Ok(());
-        }
-        if let Ok(claim) = postcard::from_bytes::<ProjectionIndexClaimV4>(bytes) {
-            if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes)
-                && claim.schema_version == 4
-            {
-                return Err(ProjectionWorkError::UpgradeRequired {
-                    found: claim.schema_version,
-                    current: INDEX_SCHEMA_VERSION,
-                });
-            }
-        }
-        Err(ProjectionWorkError::NonCanonical)
     }
 
     fn transition(
@@ -1310,18 +1335,13 @@ impl ProjectionWorkIndex {
     }
 
     fn require_root_binding(&self, root: &ProjectionRoot) -> Result<(), ProjectionWorkError> {
-        if root.schema_version != INDEX_SCHEMA_VERSION
-            || root.workspace_id != self.workspace_id
-            || root.endpoint_id != self.endpoint_id
-            || root.graph_resource_id != self.graph_resource_id
-            || root.receipt_store_id != self.receipt_store_id
-            || (root.engine_history_generation == 0)
-                != (root.engine_history_root
-                    == super::object_store::EngineHistoryStore::empty_root())
-        {
-            return Err(ProjectionWorkError::BindingMismatch);
-        }
-        Ok(())
+        validate_projection_root_binding(
+            root,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+            self.receipt_store_id,
+        )
     }
 
     fn load_prepared(&self, batch_id: BatchId) -> Result<PreparedBatch, ProjectionWorkError> {
@@ -1786,6 +1806,74 @@ struct ProjectionIndexClaimV4 {
     workspace_id: WorkspaceId,
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
+}
+
+fn validate_projection_index_claim(
+    bytes: &[u8],
+    workspace_id: WorkspaceId,
+    endpoint_id: ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+) -> Result<(), ProjectionWorkError> {
+    if let Ok(claim) = decode_canonical::<ProjectionIndexClaim>(bytes) {
+        if claim.schema_version < INDEX_SCHEMA_VERSION {
+            return Err(ProjectionWorkError::UpgradeRequired {
+                found: claim.schema_version,
+                current: INDEX_SCHEMA_VERSION,
+            });
+        }
+        if claim.schema_version > INDEX_SCHEMA_VERSION {
+            return Err(ProjectionWorkError::UnsupportedVersion(
+                claim.schema_version,
+            ));
+        }
+        if claim.workspace_id != workspace_id
+            || claim.endpoint_id != endpoint_id
+            || claim.graph_resource_id != graph_resource_id
+            || claim.receipt_store_id != receipt_store_id
+        {
+            return Err(ProjectionWorkError::BindingMismatch);
+        }
+        return Ok(());
+    }
+    if let Ok(claim) = postcard::from_bytes::<ProjectionIndexClaimV4>(bytes) {
+        if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes) && claim.schema_version == 4
+        {
+            return Err(ProjectionWorkError::UpgradeRequired {
+                found: claim.schema_version,
+                current: INDEX_SCHEMA_VERSION,
+            });
+        }
+    }
+    Err(ProjectionWorkError::NonCanonical)
+}
+
+fn validate_projection_root_binding(
+    root: &ProjectionRoot,
+    workspace_id: WorkspaceId,
+    endpoint_id: ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+) -> Result<(), ProjectionWorkError> {
+    if root.schema_version < INDEX_SCHEMA_VERSION {
+        return Err(ProjectionWorkError::UpgradeRequired {
+            found: root.schema_version,
+            current: INDEX_SCHEMA_VERSION,
+        });
+    }
+    if root.schema_version > INDEX_SCHEMA_VERSION {
+        return Err(ProjectionWorkError::UnsupportedVersion(root.schema_version));
+    }
+    if root.workspace_id != workspace_id
+        || root.endpoint_id != endpoint_id
+        || root.graph_resource_id != graph_resource_id
+        || root.receipt_store_id != receipt_store_id
+        || (root.engine_history_generation == 0)
+            != (root.engine_history_root == super::object_store::EngineHistoryStore::empty_root())
+    {
+        return Err(ProjectionWorkError::BindingMismatch);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2374,11 +2462,13 @@ mod tests {
             std::slice::from_ref(&work.work_id())
         );
         assert!(pending.next().is_none());
-        assert!(fixture
+        assert!(
+            fixture
             .index
             .pending_for_path(work.path())
             .unwrap()
-            .is_empty());
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2396,21 +2486,25 @@ mod tests {
             .accept_batch(work.batch_id(), fingerprint)
             .unwrap();
 
-        assert!(fixture
+        assert!(
+            fixture
             .index
             .pending_activation_page(None, 8)
             .unwrap()
             .pending()
-            .is_empty());
+                .is_empty()
+        );
         assert_eq!(fixture.index.next().unwrap(), Some(work.clone()));
         fixture
             .index
             .require_accepted_ready(&work, fingerprint)
             .unwrap();
-        assert!(fixture
+        assert!(
+            fixture
             .index
             .require_accepted_ready(&work, ContentDigest::of(b"wrong manifest"))
-            .is_err());
+                .is_err()
+        );
     }
 
     #[test]
@@ -2598,10 +2692,12 @@ mod tests {
             .index
             .accept_batch(foreign_work.batch_id(), fingerprint)
             .unwrap();
-        assert!(foreign
+        assert!(
+            foreign
             .index
             .mark_completed(fixture.completion_authority(&first))
-            .is_err());
+                .is_err()
+        );
         assert_eq!(
             foreign.index.status(foreign_work.work_id()).unwrap(),
             Some(ProjectionWorkStatus::Ready)
@@ -2690,11 +2786,13 @@ mod tests {
             fixture.index.ready_page(Some(&cursor), 2).unwrap().work(),
             &rows[2..]
         );
-        assert!(fixture
+        assert!(
+            fixture
             .index
             .pending_for_path(rows[2].path())
             .unwrap()
-            .is_empty());
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2740,13 +2838,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![rows[2].batch_id()]
         );
-        assert!(fixture
+        assert!(
+            fixture
             .index
             .pending_activation_page(None, 8)
             .unwrap()
             .pending()
             .iter()
-            .all(|pending| pending.batch_id() != rows[2].batch_id()));
+                .all(|pending| pending.batch_id() != rows[2].batch_id())
+        );
     }
 
     #[test]
@@ -2833,5 +2933,157 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("requires upgrade"));
         assert_eq!(snapshot(&fixture.path), before);
+    }
+
+    #[test]
+    fn synthetic_future_work_claim_rejects_before_creating_index_layout() {
+        fn snapshot(path: &std::path::Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+            let mut result = BTreeMap::new();
+            let mut pending = vec![path.to_path_buf()];
+            while let Some(entry_path) = pending.pop() {
+                let relative = entry_path.strip_prefix(path).unwrap().to_path_buf();
+                if entry_path.is_dir() {
+                    result.insert(relative, None);
+                    for entry in fs::read_dir(&entry_path).unwrap() {
+                        pending.push(entry.unwrap().path());
+                    }
+                } else {
+                    result.insert(relative, Some(fs::read(entry_path).unwrap()));
+                }
+            }
+            result
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "tine-projection-work-future-synthetic-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir(&path).unwrap();
+        let workspace_id = WorkspaceId::from_uuid(Uuid::from_u128(101));
+        let endpoint_id = ProjectionEndpointId::from_uuid(Uuid::from_u128(102));
+        let graph_resource_id = super::super::CanonicalGraphResourceId::from_capability_identity(
+            b"test",
+            b"future-work",
+        );
+        let receipt_store_id = super::super::ProjectionReceiptStoreId::from_capability_identity(
+            b"test",
+            b"future-work-receipts",
+        );
+        let binding = super::super::hot_engine::ProjectionStorageBinding {
+            endpoint: super::super::ProjectionEndpointBinding {
+                endpoint_id,
+                device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(103)),
+                graph_resource_id,
+            },
+            receipt_store_id,
+        };
+        let store = ObjectStore::open(&path, workspace_id).unwrap();
+        let control = path
+            .join("projection-work-index-v1")
+            .join(endpoint_id.to_string());
+        fs::create_dir_all(&control).unwrap();
+        fs::write(control.join(HEAD_FILE), b"future-head").unwrap();
+        fs::write(
+            control.join(CLAIM_FILE),
+            encode_canonical(&ProjectionIndexClaim {
+                schema_version: INDEX_SCHEMA_VERSION + 1,
+                workspace_id,
+                endpoint_id,
+                graph_resource_id,
+                receipt_store_id,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let before = snapshot(&path);
+
+        let error = store.open_projection_work_index(binding).unwrap_err();
+        assert!(error.to_string().contains(&format!(
+            "version {} is unsupported",
+            INDEX_SCHEMA_VERSION + 1
+        )));
+        assert_eq!(snapshot(&path), before);
+        assert!(!control.join("nodes").exists());
+        assert!(!control.join("roots").exists());
+        assert!(!control.join("prepared").exists());
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn authenticated_projection_root_version_matrix_rejects_without_writes() {
+        fn snapshot(path: &std::path::Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+            let mut result = BTreeMap::new();
+            let mut pending = vec![path.to_path_buf()];
+            while let Some(entry_path) = pending.pop() {
+                let relative = entry_path.strip_prefix(path).unwrap().to_path_buf();
+                if entry_path.is_dir() {
+                    result.insert(relative, None);
+                    for entry in fs::read_dir(&entry_path).unwrap() {
+                        pending.push(entry.unwrap().path());
+                    }
+                } else {
+                    result.insert(relative, Some(fs::read(entry_path).unwrap()));
+                }
+            }
+            result
+        }
+
+        let fixture = Fixture::new("projection-root-version-matrix");
+        let receipt_store_id = fixture.index.receipt_store_id();
+        let binding = super::super::hot_engine::ProjectionStorageBinding {
+            endpoint: super::super::ProjectionEndpointBinding {
+                endpoint_id: fixture.endpoint_id,
+                device_id: super::super::DeviceId::from_uuid(Uuid::from_u128(104)),
+                graph_resource_id: fixture.graph_resource_id,
+            },
+            receipt_store_id,
+        };
+        let control = fixture
+            .path
+            .join("projection-work-index-v1")
+            .join(fixture.endpoint_id.to_string());
+        let roots = control.join("roots");
+
+        for version in [INDEX_SCHEMA_VERSION - 1, INDEX_SCHEMA_VERSION + 1] {
+            let mut authenticated_root = ProjectionRoot::empty(
+                fixture.workspace_id,
+                fixture.endpoint_id,
+                fixture.graph_resource_id,
+                receipt_store_id,
+            );
+            authenticated_root.schema_version = version;
+            let bytes = encode_canonical(&authenticated_root).unwrap();
+            let digest = ContentDigest::of(&bytes);
+            fs::write(roots.join(root_filename(digest)), &bytes).unwrap();
+            fs::write(control.join(HEAD_FILE), digest.to_string()).unwrap();
+            let before = snapshot(&fixture.path);
+
+            let store = ObjectStore::open(&fixture.path, fixture.workspace_id).unwrap();
+            let error = store.open_projection_work_index(binding).unwrap_err();
+            if version < INDEX_SCHEMA_VERSION {
+                assert!(matches!(
+                    error,
+                    StoreError::Scratch(message)
+                        if message
+                            == format!(
+                                "projection work index version {version} requires upgrade to {INDEX_SCHEMA_VERSION}"
+                            )
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    StoreError::Scratch(message)
+                        if message == format!("projection work index version {version} is unsupported")
+                ));
+            }
+            assert_eq!(snapshot(&fixture.path), before);
+            assert!(
+                !fixture
+                    .path
+                    .join(super::super::scratch_store::SCRATCH_DIR)
+                    .exists()
+            );
+        }
     }
 }

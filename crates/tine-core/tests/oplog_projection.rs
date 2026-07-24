@@ -3,22 +3,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use tine_core::Graph;
 use tine_core::oplog::{
-    derive_receiver_local_projection, execute_manifested_projection_work, plan_projection,
-    recover_incomplete_projections, write_projection_exact, AnnotatedIdentity, AuthorBatch,
-    BatchDisposition, BatchId, BatchInspection, BatchOrigin, BlobDescription, BlockId,
-    BlockLocation, CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentDependencies, DocumentId,
-    EngineError, FrontierV2, LineageDigest, LogseqIdentityOrigin, LogseqUuid, ManagedPath,
-    ManifestProjectionPrecondition, ManifestProjectionTarget, ManifestedProjectionIntent,
-    MaterializationStats, MaterializedBlock, MaterializedPage, ObjectKind, ObjectStore,
-    OperationBatch, OperationObject, OperationTransaction, PageId, PolicyGeneratedAnchorReason,
-    PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionEndpointBinding,
+    AnnotatedIdentity, AuthorBatch, BatchDisposition, BatchId, BatchInspection, BatchOrigin,
+    BlobDescription, BlockId, BlockLocation, CrdtPeerCounter, CrdtPeerId, DeviceId,
+    DocumentDependencies, DocumentId, EngineError, FrontierV2, LineageDigest, LogseqIdentityOrigin,
+    LogseqUuid, ManagedPath, ManifestProjectionPrecondition, ManifestProjectionTarget,
+    ManifestedProjectionIntent, MaterializationStats, MaterializedBlock, MaterializedPage,
+    ObjectKind, ObjectStore, OperationBatch, OperationObject, OperationTransaction,
+    PORTABLE_PATH_KEY_VERSION, PageId, PolicyGeneratedAnchorReason, PreparedBatch,
+    ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionEndpointBinding,
     ProjectionEndpointId, ProjectionError, ProjectionIntent, ProjectionPageState,
     ProjectionPrecondition, ProjectionReceiptStore, ProjectionStoreError, ProjectionWorkStatus,
     ProjectionWorkTarget, SemanticOperation, SessionId, ShardedHotEngine, StoreError,
-    StructuralSpan, WorkspaceId, PORTABLE_PATH_KEY_VERSION,
+    StructuralSpan, WorkspaceId, derive_receiver_local_projection,
+    execute_manifested_projection_work, plan_projection, recover_incomplete_projections,
+    write_projection_exact,
 };
-use tine_core::Graph;
 use uuid::Uuid;
 
 struct TestDir(PathBuf);
@@ -60,6 +61,54 @@ fn projection_binding(graph: &Graph, seed: u128) -> ProjectionEndpointBinding {
         DeviceId::from_uuid(uuid(seed + 1)),
     )
     .unwrap()
+}
+
+fn copy_directory_tree(source: &Path, destination: &Path) {
+    fs::create_dir(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum TreeSnapshotEntry {
+    Directory { readonly: bool },
+    File { readonly: bool, bytes: Vec<u8> },
+}
+
+fn snapshot_complete_tree(root: &Path) -> BTreeMap<PathBuf, TreeSnapshotEntry> {
+    let mut snapshot = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        let relative = path.strip_prefix(root).unwrap().to_path_buf();
+        if metadata.is_dir() {
+            snapshot.insert(
+                relative,
+                TreeSnapshotEntry::Directory {
+                    readonly: metadata.permissions().readonly(),
+                },
+            );
+            for entry in fs::read_dir(&path).unwrap() {
+                pending.push(entry.unwrap().path());
+            }
+        } else {
+            snapshot.insert(
+                relative,
+                TreeSnapshotEntry::File {
+                    readonly: metadata.permissions().readonly(),
+                    bytes: fs::read(path).unwrap(),
+                },
+            );
+        }
+    }
+    snapshot
 }
 
 fn block(
@@ -685,16 +734,18 @@ fn receipt_store_orders_base_before_intent_and_enumerates_incomplete() {
         ProjectionPrecondition::Base(description) => description,
         ProjectionPrecondition::Absent => panic!("expected base"),
     };
-    assert!(dir
-        .path()
+    assert!(
+        dir.path()
         .join("bases")
         .join(format!("{}.base", hex(base.sha256())))
-        .is_file());
-    assert!(dir
-        .path()
+            .is_file()
+    );
+    assert!(
+        dir.path()
         .join("intents")
         .join(format!("{}.intent", hex(intent_id.as_bytes())))
-        .is_file());
+            .is_file()
+    );
     let completion_path = dir
         .path()
         .join("completions")
@@ -741,14 +792,18 @@ fn receipt_store_requires_exact_base_presence_and_descriptor_match() {
         store.publish_intent(based.intent(), Some(b"- wrong base\n")),
         Err(ProjectionStoreError::BaseEvidenceMismatch(found)) if found == description
     ));
-    assert!(fs::read_dir(dir.path().join("bases"))
+    assert!(
+        fs::read_dir(dir.path().join("bases"))
         .unwrap()
         .next()
-        .is_none());
-    assert!(fs::read_dir(dir.path().join("intents"))
+            .is_none()
+    );
+    assert!(
+        fs::read_dir(dir.path().join("intents"))
         .unwrap()
         .next()
-        .is_none());
+            .is_none()
+    );
 
     store
         .publish_intent(based.intent(), Some(b"- exact base\n"))
@@ -786,14 +841,18 @@ fn declared_oversized_target_is_rejected_before_any_evidence_publication() {
             limit: LIMIT,
         }) if declared == LIMIT + 1
     ));
-    assert!(fs::read_dir(dir.path().join("bases"))
+    assert!(
+        fs::read_dir(dir.path().join("bases"))
         .unwrap()
         .next()
-        .is_none());
-    assert!(fs::read_dir(dir.path().join("intents"))
+            .is_none()
+    );
+    assert!(
+        fs::read_dir(dir.path().join("intents"))
         .unwrap()
         .next()
-        .is_none());
+            .is_none()
+    );
 }
 
 #[test]
@@ -843,27 +902,31 @@ fn base_survives_when_intent_namespace_fails_before_publication() {
     let store = ProjectionReceiptStore::open(dir.path(), workspace(1)).unwrap();
     fs::remove_dir(dir.path().join("intents")).unwrap();
     symlink(dir.path().join("bases"), dir.path().join("intents")).unwrap();
-    assert!(store
+    assert!(
+        store
         .publish_intent(projection.intent(), Some(b"- base\n"))
-        .is_err());
+            .is_err()
+    );
 
     let base = match projection.intent().precondition() {
         ProjectionPrecondition::Base(description) => description,
         ProjectionPrecondition::Absent => panic!("expected base"),
     };
-    assert!(dir
-        .path()
+    assert!(
+        dir.path()
         .join("bases")
         .join(format!("{}.base", hex(base.sha256())))
-        .is_file());
-    assert!(!dir
-        .path()
+            .is_file()
+    );
+    assert!(
+        !dir.path()
         .join("bases")
         .join(format!(
             "{}.intent",
             hex(projection.intent().id().unwrap().as_bytes())
         ))
-        .exists());
+            .exists()
+    );
 }
 
 #[test]
@@ -941,7 +1004,7 @@ fn corrupt_missing_noncanonical_and_unknown_evidence_fail_closed() {
 
     let claim_dir = TestDir::new("future-claim");
     let mut claim = Vec::new();
-    claim.extend_from_slice(b"TINEPR4\0");
+    claim.extend_from_slice(b"TINEPR5\0");
     claim.extend_from_slice(&99_u32.to_be_bytes());
     claim.extend_from_slice(&[0_u8; 32]);
     claim.extend_from_slice(workspace(1).as_uuid().as_bytes());
@@ -973,16 +1036,16 @@ fn claimless_nonempty_and_prior_version_receipt_roots_fail_without_mutation() {
 
     let prior = TestDir::new("prior-receipt-claim");
     let mut claim = Vec::new();
-    claim.extend_from_slice(b"TINEPR3\0");
-    claim.extend_from_slice(&3_u32.to_be_bytes());
+    claim.extend_from_slice(b"TINEPR4\0");
+    claim.extend_from_slice(&4_u32.to_be_bytes());
     claim.extend_from_slice(workspace(1).as_uuid().as_bytes());
     claim.extend_from_slice(&[0_u8; 1 + 16 + 16 + 32]);
     fs::write(prior.path().join("projection-receipts.claim"), &claim).unwrap();
     assert!(matches!(
         ProjectionReceiptStore::open(prior.path(), workspace(1)),
         Err(ProjectionStoreError::UpgradeRequired {
-            found: 3,
-            current: 4
+            found: 4,
+            current: 5
         })
     ));
     assert_eq!(
@@ -992,7 +1055,6 @@ fn claimless_nonempty_and_prior_version_receipt_roots_fail_without_mutation() {
     assert_eq!(fs::read_dir(prior.path()).unwrap().count(), 1);
 }
 
-#[cfg(unix)]
 #[test]
 fn receipt_resource_identity_survives_move_and_rejects_a_simultaneous_copy() {
     let parent = TestDir::new("receipt-resource");
@@ -1001,25 +1063,150 @@ fn receipt_resource_identity_survives_move_and_rejects_a_simultaneous_copy() {
     let copied = parent.path().join("copied");
     let opened = ProjectionReceiptStore::open(&original, workspace(1)).unwrap();
     let store_id = opened.store_id();
+    let projection = plan(
+        &page(
+            "pages/moved-receipts.md",
+            vec![block(1, None, "a", "moved", None)],
+        ),
+        None,
+    );
+    opened.publish_intent(projection.intent(), None).unwrap();
     drop(opened);
     fs::rename(&original, &moved).unwrap();
     let reopened = ProjectionReceiptStore::open(&moved, workspace(1)).unwrap();
     assert_eq!(reopened.store_id(), store_id);
+    assert!(
+        reopened
+            .load_attempt_reservations(projection.intent())
+            .unwrap()
+            .is_empty()
+    );
     drop(reopened);
 
-    fs::create_dir(&copied).unwrap();
-    for entry in fs::read_dir(&moved).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_type().unwrap().is_dir() {
-            fs::create_dir(copied.join(entry.file_name())).unwrap();
-        } else {
-            fs::copy(entry.path(), copied.join(entry.file_name())).unwrap();
-        }
-    }
+    copy_directory_tree(&moved, &copied);
     assert!(matches!(
         ProjectionReceiptStore::open(&copied, workspace(1)),
         Err(ProjectionStoreError::EndpointBindingMismatch)
     ));
+}
+
+#[test]
+fn every_top_level_receipt_namespace_fails_closed_after_deletion_or_copy_replacement() {
+    let base = b"- before\n";
+    for namespace in ["bases", "intents", "completions", "attempts", "forensics"] {
+        let root = TestDir::new(&format!("top-level-authority-{namespace}"));
+        let store = ProjectionReceiptStore::open(root.path(), workspace(1)).unwrap();
+        let projection = plan(
+            &page(
+                "pages/authority.md",
+                vec![block(1, None, "a", "after", None)],
+            ),
+            Some(base),
+        );
+        let intent = projection.intent();
+        let intent_id = store.publish_intent(intent, Some(base)).unwrap();
+        let live = root.path().join(namespace);
+        let retained = root.path().join(format!("{namespace}-retained"));
+        fs::rename(&live, &retained).unwrap();
+
+        let missing = match namespace {
+            "bases" => store.load_base(intent).map(|_| ()),
+            "intents" => store.load_intent(intent_id).map(|_| ()),
+            "completions" => store.load_completion(intent).map(|_| ()),
+            "attempts" => store.load_attempt_reservations(intent).map(|_| ()),
+            "forensics" => store.local_forensic_evidence(intent).map(|_| ()),
+            _ => unreachable!(),
+        };
+        assert!(
+            matches!(missing, Err(ProjectionStoreError::NamespaceSubstitution(_))),
+            "{namespace}: {missing:?}"
+        );
+
+        copy_directory_tree(&retained, &live);
+        let replaced = match namespace {
+            "bases" => store.load_base(intent).map(|_| ()),
+            "intents" => store.load_intent(intent_id).map(|_| ()),
+            "completions" => store.load_completion(intent).map(|_| ()),
+            "attempts" => store.load_attempt_reservations(intent).map(|_| ()),
+            "forensics" => store.local_forensic_evidence(intent).map(|_| ()),
+            _ => unreachable!(),
+        };
+        assert!(
+            matches!(
+                replaced,
+                Err(ProjectionStoreError::NamespaceSubstitution(_))
+            ),
+            "{namespace}: {replaced:?}"
+        );
+    }
+}
+
+#[test]
+fn established_per_intent_namespaces_cannot_be_deleted_replaced_or_recreated_after_reopen() {
+    for namespace in ["attempts", "forensics"] {
+        let root = TestDir::new(&format!("per-intent-authority-{namespace}"));
+        let store = ProjectionReceiptStore::open(root.path(), workspace(1)).unwrap();
+        let projection = plan(
+            &page(
+                "pages/per-intent.md",
+                vec![block(1, None, "a", "after", None)],
+            ),
+            None,
+        );
+        let intent = projection.intent();
+        let intent_id = store.publish_intent(intent, None).unwrap();
+        let name = intent_id.to_string();
+        let live = root.path().join(namespace).join(&name);
+        let retained = root.path().join(namespace).join(format!("{name}-retained"));
+        fs::rename(&live, &retained).unwrap();
+
+        let missing = if namespace == "attempts" {
+            store.load_attempt_reservations(intent).map(|_| ())
+        } else {
+            store.local_forensic_evidence(intent).map(|_| ())
+        };
+        assert!(matches!(
+            missing,
+            Err(ProjectionStoreError::NamespaceSubstitution(_))
+        ));
+
+        copy_directory_tree(&retained, &live);
+        let replacement = if namespace == "attempts" {
+            store.load_attempt_reservations(intent).map(|_| ())
+        } else {
+            store.local_forensic_evidence(intent).map(|_| ())
+        };
+        assert!(matches!(
+            replacement,
+            Err(ProjectionStoreError::NamespaceSubstitution(_))
+        ));
+        drop(store);
+
+        fs::remove_dir_all(&live).unwrap();
+        fs::remove_file(
+            root.path()
+                .join(namespace)
+                .join(format!("{name}.namespace-authority")),
+        )
+        .unwrap();
+        fs::remove_file(
+            root.path()
+                .join(namespace)
+                .join(format!("{name}.namespace-reservation")),
+        )
+        .unwrap();
+        let reopened = ProjectionReceiptStore::open(root.path(), workspace(1)).unwrap();
+        let deleted = if namespace == "attempts" {
+            reopened.load_attempt_reservations(intent).map(|_| ())
+        } else {
+            reopened.local_forensic_evidence(intent).map(|_| ())
+        };
+        assert!(matches!(
+            deleted,
+            Err(ProjectionStoreError::NamespaceSubstitution(_))
+        ));
+        assert!(!live.exists());
+    }
 }
 
 #[test]
@@ -1052,6 +1239,67 @@ fn engine_bound_to_r1_rejects_r2_before_write_or_recovery() {
         Err(ProjectionError::EndpointBindingMismatch)
     ));
     assert!(!graph_dir.path().join("pages/r1-only.md").exists());
+}
+
+#[test]
+fn r2_captured_author_input_cannot_finalize_an_r1_enrolled_transaction() {
+    let (dir, graph, r1, _writer, engine, binding, _page_id, prior_intent, _base) =
+        manifested_fixture(
+            "author-capture-receipt-authority",
+            "pages/author-capture.md",
+            "before",
+            59_100,
+        );
+    let r2_root = dir.path().join("r2-receipts");
+    let r2 = ProjectionReceiptStore::open_for_endpoint(&r2_root, workspace(1), binding).unwrap();
+    assert_ne!(r1.store_id(), r2.store_id());
+    let intent_id = prior_intent.id().unwrap();
+    let intent_name = format!("{intent_id}.intent");
+    let completion_name = format!("{intent_id}.completion");
+    fs::copy(
+        r1.root_path().join("intents").join(&intent_name),
+        r2_root.join("intents").join(&intent_name),
+    )
+    .unwrap();
+    fs::copy(
+        r1.root_path().join("completions").join(&completion_name),
+        r2_root.join("completions").join(&completion_name),
+    )
+    .unwrap();
+    fs::remove_file(r1.root_path().join("completions").join(&completion_name)).unwrap();
+
+    let draft = engine
+        .draft_author_transaction(
+            AuthorBatch {
+                batch_id: BatchId::from_uuid(uuid(59_110)),
+                author_device_id: binding.device_id(),
+                author_session_id: SessionId::from_uuid(uuid(59_111)),
+                crdt_peer_id: CrdtPeerId::from_u64(59_112),
+            },
+            BatchOrigin::LocalMutation,
+            &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: BlockId::from_uuid(uuid(703)),
+                    home_document_id: DocumentId::from_uuid(uuid(702)),
+                },
+                content: "after".into(),
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+    let captured = r2
+        .capture_projection_input(
+            &graph,
+            binding,
+            ManagedPath::parse("pages/author-capture.md").unwrap(),
+            Some(&prior_intent),
+        )
+        .unwrap();
+    assert!(matches!(
+        engine.finalize_author_transaction(draft, binding, vec![captured]),
+        Err(EngineError::ProjectionManifest(message))
+            if message.contains("enrolled receipt store")
+    ));
 }
 
 #[cfg(unix)]
@@ -1105,10 +1353,12 @@ fn graph_bridge_refuses_absent_and_base_conflicts_without_completion() {
     fs::write(graph_dir.path().join("pages/conflict.md"), b"- external\n").unwrap();
     let absent_plan = plan(&state, None);
     assert!(write_projection_exact(&graph, &store, &engine, page_id, None,).is_err());
-    assert!(store
+    assert!(
+        store
         .load_completion(absent_plan.intent())
         .unwrap()
-        .is_none());
+            .is_none()
+    );
 
     let expected = b"- stale base\n";
     let base_plan = plan(&state, Some(expected));
@@ -1141,10 +1391,12 @@ fn graph_bridge_publishes_completion_only_after_exact_reread() {
         fs::read(graph_dir.path().join("pages/success.md")).unwrap(),
         written.plan.target()
     );
-    assert!(store
+    assert!(
+        store
         .load_completion(written.plan.intent())
         .unwrap()
-        .is_some());
+            .is_some()
+    );
 }
 
 #[test]
@@ -1175,12 +1427,16 @@ fn normal_replacement_catalogs_local_evidence_outside_stable_completion() {
         .expect("replacement completion must catalog the retained inode");
     assert_eq!(evidence.len(), 1);
     assert_eq!(displacement.observed(), BlobDescription::of(base));
-    assert!(displacement
+    assert!(
+        displacement
         .recovery_relative_path()
-        .starts_with("pages/.replacement.md."));
-    assert!(displacement
+            .starts_with("pages/.replacement.md.")
+    );
+    assert!(
+        displacement
         .recovery_filename()
-        .ends_with(".projection.recovery"));
+            .ends_with(".projection.recovery")
+    );
     assert_eq!(
         fs::read(graph_dir.path().join(displacement.recovery_relative_path())).unwrap(),
         base
@@ -1235,12 +1491,16 @@ fn crash_recovery_probes_only_reserved_names_and_catalogs_multiple_attempts() {
         .local_forensic_evidence(recovered[0].plan.intent())
         .unwrap();
     assert_eq!(evidence.len(), 2);
-    assert!(evidence
+    assert!(
+        evidence
         .iter()
-        .any(|record| record.recovery_filename() == first.recovery_filename()));
-    assert!(evidence
+            .any(|record| record.recovery_filename() == first.recovery_filename())
+    );
+    assert!(
+        evidence
         .iter()
-        .any(|record| record.recovery_filename() == second.recovery_filename()));
+            .any(|record| record.recovery_filename() == second.recovery_filename())
+    );
 }
 
 #[test]
@@ -1381,14 +1641,16 @@ fn receipts_allow_custom_nested_roots_but_graph_authorizes_only_configured_roots
         Some((&graph, &store)),
     );
     assert!(ManagedPath::parse("pages/safe.md").is_ok());
-    assert!(write_projection_exact(
+    assert!(
+        write_projection_exact(
         &graph,
         &store,
         &unconfigured_engine,
         unconfigured_page,
         None,
     )
-    .is_err());
+        .is_err()
+    );
     assert!(!graph_dir.path().join("pages/safe.md").exists());
 }
 
@@ -1431,10 +1693,122 @@ fn enrolled_engine_rejects_wrong_graph_before_creating_work_namespace() {
         &receipts,
     );
     assert!(enrolled.projection_work_index().is_some());
-    assert!(archive_path
+    assert!(
+        archive_path
         .join("projection-work-index-v1")
         .join(binding.endpoint_id().to_string())
-        .exists());
+            .exists()
+    );
+}
+
+#[test]
+fn public_enrolled_open_rejects_synthetic_prior_and_future_history_and_work_without_mutation() {
+    #[derive(Clone, Copy)]
+    enum SchemaCase {
+        PriorHistory,
+        FutureHistory,
+        PriorWork,
+        FutureWork,
+    }
+
+    for case in [
+        SchemaCase::PriorHistory,
+        SchemaCase::FutureHistory,
+        SchemaCase::PriorWork,
+        SchemaCase::FutureWork,
+    ] {
+        let label = match case {
+            SchemaCase::PriorHistory => "prior-history",
+            SchemaCase::FutureHistory => "future-history",
+            SchemaCase::PriorWork => "prior-work",
+            SchemaCase::FutureWork => "future-work",
+        };
+        let dir = TestDir::new(&format!("public-schema-preflight-{label}"));
+        let graph_root = dir.path().join("graph");
+        fs::create_dir(&graph_root).unwrap();
+        let graph = Graph::open(&graph_root);
+        let binding = projection_binding(&graph, 60_080);
+        let receipts = ProjectionReceiptStore::open_for_endpoint(
+            &dir.path().join("receipts"),
+            workspace(1),
+            binding,
+        )
+        .unwrap();
+        let archive_path = dir.path().join("archive");
+        drop(ObjectStore::open(&archive_path, workspace(1)).unwrap());
+        let endpoint_name = binding.endpoint_id().to_string();
+
+        match case {
+            SchemaCase::PriorHistory | SchemaCase::FutureHistory => {
+                let control = archive_path.join("engine-history").join(&endpoint_name);
+                fs::create_dir_all(&control).unwrap();
+                fs::write(control.join("engine-history.head"), b"synthetic-head").unwrap();
+                let claim = match case {
+                    SchemaCase::PriorHistory => postcard::to_allocvec(&(
+                        3_u32,
+                        workspace(1),
+                        binding.endpoint_id(),
+                        binding.graph_resource_id(),
+                    ))
+                    .unwrap(),
+                    SchemaCase::FutureHistory => postcard::to_allocvec(&(
+                        5_u32,
+                        workspace(1),
+                        binding.endpoint_id(),
+                        binding.graph_resource_id(),
+                        receipts.store_id(),
+                    ))
+                    .unwrap(),
+                    _ => unreachable!(),
+                };
+                fs::write(control.join("engine-history.claim"), claim).unwrap();
+            }
+            SchemaCase::PriorWork | SchemaCase::FutureWork => {
+                let control = archive_path
+                    .join("projection-work-index-v1")
+                    .join(&endpoint_name);
+                fs::create_dir_all(&control).unwrap();
+                fs::write(control.join("projection-work.head"), b"synthetic-head").unwrap();
+                let claim = match case {
+                    SchemaCase::PriorWork => postcard::to_allocvec(&(
+                        4_u32,
+                        workspace(1),
+                        binding.endpoint_id(),
+                        binding.graph_resource_id(),
+                    ))
+                    .unwrap(),
+                    SchemaCase::FutureWork => postcard::to_allocvec(&(
+                        6_u32,
+                        workspace(1),
+                        binding.endpoint_id(),
+                        binding.graph_resource_id(),
+                        receipts.store_id(),
+                    ))
+                    .unwrap(),
+                    _ => unreachable!(),
+                };
+                fs::write(control.join("projection-work.claim"), claim).unwrap();
+            }
+        }
+
+        let before = snapshot_complete_tree(&archive_path);
+        let engine = ShardedHotEngine::with_enrolled_projection(
+            ObjectStore::open(&archive_path, workspace(1)).unwrap(),
+            LineageDigest::of(b"projection-test-lineage"),
+            DocumentId::from_uuid(uuid(700)),
+            &graph,
+            &receipts,
+        );
+        assert!(
+            engine.projection_work_index().is_none(),
+            "schema case {label} was accepted"
+        );
+        assert_eq!(
+            snapshot_complete_tree(&archive_path),
+            before,
+            "schema case {label} mutated storage"
+        );
+    }
 }
 
 #[test]
@@ -1464,10 +1838,12 @@ fn incomplete_absent_intent_recovery_resumes_through_reserved_writer() {
         plan.target()
     );
     assert!(store.incomplete_intents().unwrap().is_empty());
-    assert!(store
+    assert!(
+        store
         .load_completion(recovered[0].plan.intent())
         .unwrap()
-        .is_some());
+            .is_some()
+    );
 }
 
 #[test]
@@ -1569,11 +1945,13 @@ fn crash_after_retire_resumes_from_exact_reserved_evidence() {
     assert_eq!(recovered.len(), 1);
     assert_eq!(fs::read(&live).unwrap(), plan.target());
     assert_eq!(fs::read(&retired).unwrap(), base);
-    assert!(store
+    assert!(
+        store
         .local_forensic_evidence(plan.intent())
         .unwrap()
         .iter()
-        .any(|record| record.attempt_id() == retired_attempt.attempt_id()));
+            .any(|record| record.attempt_id() == retired_attempt.attempt_id())
+    );
 }
 
 #[test]
@@ -1646,14 +2024,16 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/crafted-target.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     let original_intent_object = finalized
@@ -1760,12 +2140,14 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         .collect::<Vec<_>>();
     let accepted_before = engine.status().accepted_batch_ids().unwrap();
     assert!(!accepted_before.contains(&batch_id));
-    assert!(engine
+    assert!(
+        engine
         .projection_work_index()
         .unwrap()
         .pending_for_path(&path)
         .unwrap()
-        .is_empty());
+            .is_empty()
+    );
     assert!(matches!(
         writer.inspect_batch(batch_id).unwrap(),
         BatchInspection::Absent
@@ -1804,8 +2186,10 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         retained_intent.target().bytes().unwrap(),
         crafted_target.as_slice()
     );
-    assert!(text(retained_intent.target().bytes().unwrap())
-        .contains(&format!("id:: {synthetic_dense_id}")));
+    assert!(
+        text(retained_intent.target().bytes().unwrap())
+            .contains(&format!("id:: {synthetic_dense_id}"))
+    );
 
     let outcome = engine.stage_archive_batch(batch_id).unwrap();
     assert!(matches!(
@@ -1824,23 +2208,29 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         engine.status().accepted_batch_ids().unwrap(),
         accepted_before
     );
-    assert!(engine
+    assert!(
+        engine
         .status()
         .offered_batch_ids()
         .unwrap()
-        .contains(&batch_id));
-    assert!(engine
+            .contains(&batch_id)
+    );
+    assert!(
+        engine
         .projection_work_index()
         .unwrap()
         .pending_for_path(&path)
         .unwrap()
-        .is_empty());
-    assert!(engine
+            .is_empty()
+    );
+    assert!(
+        engine
         .projection_work_index()
         .unwrap()
         .next()
         .unwrap()
-        .is_none());
+            .is_none()
+    );
 
     let mut receipt_intents_after = fs::read_dir(receipts.root_path().join("intents"))
         .unwrap()
@@ -1969,7 +2359,7 @@ fn recovery_rejects_interleaved_external_edit_without_completion() {
 
 #[cfg(unix)]
 #[test]
-fn completion_publication_failure_leaves_recoverable_exact_target() {
+fn completion_namespace_replacement_blocks_recovery_of_exact_target() {
     use std::os::unix::fs::symlink;
 
     let engine_dir = TestDir::new("completion-failure-engine");
@@ -2001,13 +2391,18 @@ fn completion_publication_failure_leaves_recoverable_exact_target() {
 
     fs::remove_file(receipts_dir.path().join("completions")).unwrap();
     fs::create_dir(receipts_dir.path().join("completions")).unwrap();
-    let recovered = recover_incomplete_projections(&graph, &store, &engine).unwrap();
-    assert_eq!(recovered.len(), 1);
-    let evidence = store
-        .local_forensic_evidence(recovered[0].plan.intent())
-        .unwrap();
-    assert_eq!(evidence.len(), 1);
-    assert_eq!(evidence[0].observed(), BlobDescription::of(base));
+    assert!(matches!(
+        recover_incomplete_projections(&graph, &store, &engine),
+        Err(ProjectionError::Store(error))
+            if matches!(
+                error.as_ref(),
+                ProjectionStoreError::NamespaceSubstitution(_)
+            )
+    ));
+    assert_eq!(
+        fs::read(graph_dir.path().join("pages/completion-failure.md")).unwrap(),
+        target
+    );
 }
 
 #[cfg(unix)]
@@ -2046,14 +2441,16 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/cuts.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
@@ -2098,10 +2495,12 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
     let second = execute_manifested_projection_work(&graph, &receipts, &mut engine, &work);
     fs::set_permissions(&work_dir, fs::Permissions::from_mode(work_mode)).unwrap();
     assert!(second.is_err());
-    assert!(receipts
+    assert!(
+        receipts
         .load_completion(expected.intent())
         .unwrap()
-        .is_some());
+            .is_some()
+    );
     assert_eq!(
         engine
             .projection_work_index()
@@ -2151,14 +2550,16 @@ fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts()
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/delete-cuts.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
@@ -2241,9 +2642,11 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         .finalize_author_transaction(
             delete,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(&graph, binding, path.clone(), Some(&prior_intent))
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&delete).unwrap();
@@ -2305,9 +2708,11 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         .finalize_author_transaction(
             create,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(&graph, binding, path.clone(), None)
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&create).unwrap();
@@ -2385,9 +2790,16 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
             .finalize_author_transaction(
                 draft,
                 binding,
-                vec![receipts
-                    .capture_projection_input(&graph, binding, path.clone(), Some(&prior_intent))
-                    .unwrap()],
+                vec![
+                    receipts
+                        .capture_projection_input(
+                            &graph,
+                            binding,
+                            path.clone(),
+                            Some(&prior_intent),
+                        )
+                        .unwrap(),
+                ],
             )
             .unwrap();
         writer.publish_prepared(&prepared).unwrap();
@@ -2426,13 +2838,10 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
         .join(binding.endpoint_id().to_string())
         .join("projection-work.head");
     fs::write(&work_head, stale_head).unwrap();
-    assert!(execute_manifested_projection_work(
-        &graph,
-        &receipts,
-        &mut engine,
-        &stale_work.unwrap(),
-    )
-    .is_err());
+    assert!(
+        execute_manifested_projection_work(&graph, &receipts, &mut engine, &stale_work.unwrap(),)
+            .is_err()
+    );
     assert_eq!(
         fs::read(dir.path().join("graph/pages/stale-present.md")).unwrap(),
         newest
@@ -2512,9 +2921,11 @@ fn capability_capture_rejects_forged_cross_scope_and_byte_mismatched_predecessor
     let mut forged: Value = serde_json::from_slice(&fs::read(&completion_path).unwrap()).unwrap();
     forged["logical_completion_id"] = Value::String("00".repeat(32));
     fs::write(&completion_path, serde_json::to_vec(&forged).unwrap()).unwrap();
-    assert!(receipts
+    assert!(
+        receipts
         .capture_projection_input(&graph, binding, path, Some(&prior_intent))
-        .is_err());
+            .is_err()
+    );
 }
 
 #[test]
@@ -2550,14 +2961,16 @@ fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_ro
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/root-bound.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
@@ -2643,14 +3056,16 @@ fn manifested_guarded_conflict_is_the_proof_bearing_block_path() {
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/blocked.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
@@ -2747,14 +3162,16 @@ fn graph_resource_identity_survives_move_but_rejects_symlink_and_path_substituti
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/moved.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
@@ -2851,14 +3268,16 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
             .finalize_author_transaction(
                 draft,
                 binding,
-                vec![receipts
+                vec![
+                    receipts
                     .capture_projection_input(
                         &graph,
                         binding,
                         ManagedPath::parse("pages/manifested.md").unwrap(),
                         Some(&prior_intent),
                     )
-                    .unwrap()],
+                        .unwrap(),
+                ],
             )
             .unwrap();
         let writer = ObjectStore::open(&archive_path, workspace_id).unwrap();
@@ -2916,14 +3335,16 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
         .finalize_author_transaction(
             draft,
             binding,
-            vec![receipts
+            vec![
+                receipts
                 .capture_projection_input(
                     &graph,
                     binding,
                     ManagedPath::parse("pages/manifested.md").unwrap(),
                     Some(&prior_intent),
                 )
-                .unwrap()],
+                    .unwrap(),
+            ],
         )
         .unwrap();
     assert_eq!(prepared.manifest().origin(), BatchOrigin::LocalMutation);
@@ -3046,12 +3467,14 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
     // Model a crash after durable engine acceptance but before the singular
     // pending -> accepted/Ready projection-work root publication.
     fs::write(&work_head, pending_head.to_string()).unwrap();
-    assert!(engine
+    assert!(
+        engine
         .projection_work_index()
         .unwrap()
         .next()
         .unwrap()
-        .is_none());
+            .is_none()
+    );
     assert_eq!(
         engine
             .projection_work_index()
@@ -3095,13 +3518,15 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
     assert_eq!(recovery_work.store.history_record_reads, 1);
     assert!(recovery_work.store.history_index_reads <= 33);
     assert_eq!(fs::read(&work_head).unwrap(), accepted_head);
-    assert!(recovery_engine
+    assert!(
+        recovery_engine
         .projection_work_index()
         .unwrap()
         .pending_activation_page(None, 8)
         .unwrap()
         .pending()
-        .is_empty());
+            .is_empty()
+    );
     let work = recovery_engine
         .projection_work_index()
         .unwrap()

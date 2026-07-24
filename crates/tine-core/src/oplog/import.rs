@@ -11,13 +11,13 @@ use sha2::{Digest, Sha256};
 
 use super::hot_engine::AcceptedFrontierRoot;
 use super::{
-    plan_projection, AnnotatedIdentity, BlobDescription, BlockId, ContentDigest, CurrentPageAtPath,
-    ImportId, ImportInventoryEntry, ImportInventoryState, LogicalCompletionId, LogseqUuid,
-    ManagedPath, PageId, ProjectionCompletion, ProjectionIntent, ProjectionReceiptStore,
-    ShardedHotEngine, StructuralLocator, WorkspaceId, DIFF_SCHEMA_VERSION,
+    AnnotatedIdentity, BlobDescription, BlockId, ContentDigest, CurrentPageAtPath,
+    DIFF_SCHEMA_VERSION, ImportId, ImportInventoryEntry, ImportInventoryState, LogicalCompletionId,
+    LogseqUuid, ManagedPath, PageId, ProjectionCompletion, ProjectionIntent,
+    ProjectionReceiptStore, ShardedHotEngine, StructuralLocator, WorkspaceId, plan_projection,
 };
 use crate::doc::Document;
-use crate::model::{path_is_sync_conflict, Graph};
+use crate::model::{Graph, path_is_sync_conflict};
 
 #[cfg(test)]
 thread_local! {
@@ -531,6 +531,7 @@ pub struct ImportInstrumentation {
     pub max_depth: usize,
     pub locator_components_materialized: usize,
     pub structural_class_nodes: usize,
+    pub structural_class_allocations: usize,
     pub structural_key_components: usize,
     pub structural_key_comparisons: usize,
     pub exact_bucket_inserts: usize,
@@ -563,6 +564,7 @@ impl ImportInstrumentation {
             .saturating_add(self.parsed_nodes)
             .saturating_add(self.locator_components_materialized)
             .saturating_add(self.structural_class_nodes)
+            .saturating_add(self.structural_class_allocations)
             .saturating_add(self.structural_key_components)
             .saturating_add(self.structural_key_comparisons)
             .saturating_add(self.exact_bucket_inserts)
@@ -1943,7 +1945,17 @@ struct StructuralClassEntry {
     class: usize,
 }
 
-type StructuralInterner = HashMap<ContentDigest, Vec<StructuralClassEntry>>;
+#[derive(Default)]
+struct StructuralInterner {
+    buckets: HashMap<ContentDigest, Vec<StructuralClassEntry>>,
+    next_class: usize,
+}
+
+impl StructuralInterner {
+    fn new() -> Self {
+        Self::default()
+    }
+}
 
 /// Assign exact structural classes through a digest index whose candidates are
 /// always collision-checked against raw bytes and child classes. Hash-table
@@ -1955,7 +1967,6 @@ fn structural_classes(
     instrumentation: &mut ImportInstrumentation,
 ) -> Result<Vec<usize>, ImportBlock> {
     let mut classes = vec![0; tree.nodes.len()];
-    let mut next_class = interner.values().map(Vec::len).sum::<usize>();
     for index in (0..tree.nodes.len()).rev() {
         let child_classes = tree.nodes[index]
             .children
@@ -1989,7 +2000,7 @@ fn structural_classes(
             .saturating_add(node.raw.len() as u64)
             .saturating_add((child_classes.len() as u64).saturating_mul(8));
         let digest = ContentDigest::from_bytes(hasher.finalize().into());
-        let bucket = interner.entry(digest).or_default();
+        let bucket = interner.buckets.entry(digest).or_default();
         let mut class = None;
         for candidate in bucket.iter() {
             instrumentation.structural_key_comparisons = instrumentation
@@ -2010,16 +2021,22 @@ fn structural_classes(
                 break;
             }
         }
-        let class = class.unwrap_or_else(|| {
-            let class = next_class;
-            next_class = next_class.saturating_add(1);
+        let class = match class {
+            Some(class) => class,
+            None => {
+                let class = interner.next_class;
+                interner.next_class = interner.next_class.saturating_add(1);
+                instrumentation.structural_class_allocations = instrumentation
+                    .structural_class_allocations
+                    .saturating_add(1);
             bucket.push(StructuralClassEntry {
                 raw: node.raw.clone(),
                 child_classes,
                 class,
             });
             class
-        });
+            }
+        };
         classes[index] = class;
     }
     Ok(classes)
@@ -2506,9 +2523,9 @@ mod tests {
 
     use super::*;
     use crate::oplog::{
-        write_projection_exact, AuthorBatch, BatchId, BlockLocation, CrdtPeerId, DeviceId,
-        DocumentId, LineageDigest, ObjectStore, OperationTransaction, ProjectionEndpointBinding,
-        ProjectionEndpointId, SemanticOperation, SessionId,
+        AuthorBatch, BatchId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
+        ObjectStore, OperationTransaction, ProjectionEndpointBinding, ProjectionEndpointId,
+        SemanticOperation, SessionId, write_projection_exact,
     };
 
     struct TestRoot(PathBuf);
@@ -2831,6 +2848,44 @@ mod tests {
         assert_eq!(
             instrumentation.locator_components_materialized - before,
             MAX_IMPORT_DEPTH * 2
+        );
+    }
+
+    #[test]
+    fn structural_class_allocation_work_is_linear_across_many_pages() {
+        fn measured(page_count: usize) -> ImportInstrumentation {
+            let mut interner = StructuralInterner::new();
+            let mut instrumentation = ImportInstrumentation::default();
+            for index in 0..page_count {
+                let tree = ParsedTree {
+                    path: ManagedPath::parse(&format!("pages/p{index:08}.md")).unwrap(),
+                    roots: vec![0],
+                    nodes: vec![ParsedNode {
+                        parent: None,
+                        sibling_position: 0,
+                        depth: 1,
+                        children: Vec::new(),
+                        raw: format!("unique-{index:08}"),
+                        raw_ids: Vec::new(),
+                    }],
+                };
+                structural_classes(&tree, &mut interner, &mut instrumentation).unwrap();
+                instrumentation.structural_class_nodes = instrumentation
+                    .structural_class_nodes
+                    .saturating_add(tree.nodes.len());
+            }
+            instrumentation
+        }
+
+        let small = measured(1_024);
+        let large = measured(8_192);
+        assert_eq!(small.structural_class_allocations, 1_024);
+        assert_eq!(large.structural_class_allocations, 8_192);
+        assert_eq!(small.structural_key_comparisons, 0);
+        assert_eq!(large.structural_key_comparisons, 0);
+        assert!(
+            large.recorded_work_units() <= small.recorded_work_units().saturating_mul(8),
+            "structural work did not scale linearly: small={small:?}, large={large:?}"
         );
     }
 }

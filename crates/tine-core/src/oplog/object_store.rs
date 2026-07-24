@@ -36,9 +36,8 @@ use uuid::Uuid;
 
 use super::identity::parse_digest;
 use super::{
-    BatchError, BatchId, ContentDigest, LineageDigest, ObjectDescriptor, OperationBatch,
-    OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId, MAX_MANIFEST_BYTES,
-    MAX_OBJECT_BYTES,
+    BatchError, BatchId, ContentDigest, LineageDigest, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
+    ObjectDescriptor, OperationBatch, OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId,
 };
 
 const OBJECTS_DIR: &str = "objects";
@@ -606,6 +605,7 @@ impl ObjectStore {
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<DurableEngineHistoryStore, StoreError> {
+        self.preflight_engine_history(binding)?;
         let endpoint = binding.endpoint;
         ensure_directory_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
         let histories = open_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
@@ -708,6 +708,7 @@ impl ObjectStore {
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<super::ProjectionWorkIndex, StoreError> {
+        self.preflight_projection_work_index(binding)?;
         let endpoint = binding.endpoint;
         ensure_directory_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
         let root = open_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
@@ -726,6 +727,100 @@ impl ObjectStore {
             open_dir_nofollow(&endpoint_dir, "nodes")?,
             open_dir_nofollow(&endpoint_dir, "roots")?,
             open_dir_nofollow(&endpoint_dir, "prepared")?,
+        )
+        .map_err(|error| StoreError::Scratch(error.to_string()))
+    }
+
+    pub(crate) fn preflight_enrolled_projection(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<(), StoreError> {
+        self.preflight_engine_history(binding)?;
+        self.preflight_projection_work_index(binding)
+    }
+
+    fn preflight_engine_history(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<(), StoreError> {
+        let Some(histories) = open_existing_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?
+        else {
+            return Ok(());
+        };
+        let endpoint_name = binding.endpoint.endpoint_id.to_string();
+        let Some(control) = open_existing_dir_nofollow(&histories, &endpoint_name)? else {
+            return Ok(());
+        };
+        let head = read_optional_regular(&control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
+        let claim = read_optional_regular(&control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?;
+        match (head, claim) {
+            (None, None) => Ok(()),
+            (Some(head), Some(claim)) => {
+                validate_engine_history_claim(
+                    &claim,
+                    self.workspace_id,
+                    binding.endpoint.endpoint_id,
+                    binding.endpoint.graph_resource_id,
+                    binding.receipt_store_id,
+                )?;
+                let _nodes = open_existing_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?
+                    .ok_or(StoreError::MalformedHistoryIndex)?;
+                let roots = open_existing_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?
+                    .ok_or(StoreError::MalformedHistoryIndex)?;
+                let text =
+                    std::str::from_utf8(&head).map_err(|_| StoreError::MalformedHistoryIndex)?;
+                let digest = parse_digest(text)
+                    .map(ContentDigest::from_bytes)
+                    .map_err(|_| StoreError::MalformedHistoryIndex)?;
+                if digest.to_string().as_bytes() != head {
+                    return Err(StoreError::MalformedHistoryIndex);
+                }
+                let bytes = read_optional_regular(
+                    &roots,
+                    &engine_history_root_filename(digest),
+                    MAX_ENGINE_HISTORY_INDEX_BYTES,
+                    None,
+                )?
+                .ok_or(StoreError::MalformedHistoryIndex)?;
+                if ContentDigest::of(&bytes) != digest {
+                    return Err(StoreError::HistoryIndexPathMismatch(digest));
+                }
+                let root: DurableEngineHistoryRoot =
+                    postcard::from_bytes(&bytes).map_err(|_| StoreError::MalformedHistoryIndex)?;
+                if postcard::to_allocvec(&root).map_err(|_| StoreError::MalformedHistoryIndex)?
+                    != bytes
+                {
+                    return Err(StoreError::MalformedHistoryIndex);
+                }
+                validate_engine_history_root(
+                    &root,
+                    self.workspace_id,
+                    binding.endpoint.endpoint_id,
+                    binding.endpoint.graph_resource_id,
+                    binding.receipt_store_id,
+                )
+            }
+            _ => Err(StoreError::MalformedHistoryIndex),
+        }
+    }
+
+    fn preflight_projection_work_index(
+        &self,
+        binding: super::hot_engine::ProjectionStorageBinding,
+    ) -> Result<(), StoreError> {
+        let Some(root) = open_existing_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)? else {
+            return Ok(());
+        };
+        let endpoint_name = binding.endpoint.endpoint_id.to_string();
+        let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
+            return Ok(());
+        };
+        super::ProjectionWorkIndex::preflight_existing(
+            &control,
+            self.workspace_id,
+            binding.endpoint.endpoint_id,
+            binding.endpoint.graph_resource_id,
+            binding.receipt_store_id,
         )
         .map_err(|error| StoreError::Scratch(error.to_string()))
     }
@@ -1292,65 +1387,17 @@ impl DurableEngineHistoryStore {
                     "engine history claim",
                 )?;
             }
-            (Some(_), Some(claim)) => self.validate_existing_claim(&claim)?,
+            (Some(_), Some(claim)) => validate_engine_history_claim(
+                &claim,
+                self.workspace_id,
+                self.endpoint_id,
+                self.graph_resource_id,
+                self.receipt_store_id,
+            )?,
             _ => return Err(StoreError::MalformedHistoryIndex),
         }
         self.load_head_root()?;
         Ok(())
-    }
-
-    fn validate_existing_claim(&self, bytes: &[u8]) -> Result<(), StoreError> {
-        type CurrentClaim = (
-            u32,
-            WorkspaceId,
-            super::ProjectionEndpointId,
-            super::CanonicalGraphResourceId,
-            super::ProjectionReceiptStoreId,
-        );
-        if let Ok(claim) = postcard::from_bytes::<CurrentClaim>(bytes) {
-            if postcard::to_allocvec(&claim).ok().as_deref() != Some(bytes) {
-                return Err(StoreError::MalformedHistoryIndex);
-            }
-            if claim.0 < ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
-                return Err(StoreError::UpgradeRequired {
-                    store: "engine history",
-                    found: claim.0,
-                    current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
-                });
-            }
-            if claim.0 > ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
-                return Err(StoreError::UnsupportedStoreVersion {
-                    store: "engine history",
-                    version: claim.0,
-                });
-            }
-            if claim.1 != self.workspace_id
-                || claim.2 != self.endpoint_id
-                || claim.3 != self.graph_resource_id
-                || claim.4 != self.receipt_store_id
-            {
-                return Err(StoreError::MalformedHistoryIndex);
-            }
-            return Ok(());
-        }
-        type PriorClaim = (
-            u32,
-            WorkspaceId,
-            super::ProjectionEndpointId,
-            super::CanonicalGraphResourceId,
-        );
-        if let Ok(claim) = postcard::from_bytes::<PriorClaim>(bytes) {
-            if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes)
-                && claim.0 == ENGINE_HISTORY_ROOT_SCHEMA_VERSION - 1
-            {
-                return Err(StoreError::UpgradeRequired {
-                    store: "engine history",
-                    found: claim.0,
-                    current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
-                });
-            }
-        }
-        Err(StoreError::MalformedHistoryIndex)
     }
 
     fn publish_root(&self, root: &DurableEngineHistoryRoot) -> Result<ContentDigest, StoreError> {
@@ -1396,32 +1443,13 @@ impl DurableEngineHistoryStore {
     }
 
     fn require_root_binding(&self, root: &DurableEngineHistoryRoot) -> Result<(), StoreError> {
-        if root.schema_version != ENGINE_HISTORY_ROOT_SCHEMA_VERSION
-            || root.workspace_id != self.workspace_id
-            || root.endpoint_id != self.endpoint_id
-            || root.graph_resource_id != self.graph_resource_id
-            || root.receipt_store_id != self.receipt_store_id
-            || root.binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
-            || (root.generation == 0) != root.latest_batch_id.is_none()
-            || root
-                .binding
-                .portable_path_conflicts
-                .windows(2)
-                .any(|pair| pair[0].key_digest() >= pair[1].key_digest())
-            || root.binding.portable_path_conflicts.iter().any(|conflict| {
-                conflict.key_version() != super::PORTABLE_PATH_KEY_VERSION
-                    || conflict.participants().len() < 2
-                    || conflict
-                        .participants()
-                        .windows(2)
-                        .any(|pair| pair[0] >= pair[1])
-            })
-            || (!root.binding.portable_path_conflicts.is_empty()
-                && root.binding.terminal_evidence.is_none())
-        {
-            return Err(StoreError::MalformedHistoryIndex);
-        }
-        Ok(())
+        validate_engine_history_root(
+            root,
+            self.workspace_id,
+            self.endpoint_id,
+            self.graph_resource_id,
+            self.receipt_store_id,
+        )
     }
 
     fn replace_head(
@@ -1459,6 +1487,53 @@ impl DurableEngineHistoryStore {
         }
         Ok(())
     }
+}
+
+fn validate_engine_history_root(
+    root: &DurableEngineHistoryRoot,
+    workspace_id: WorkspaceId,
+    endpoint_id: super::ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+) -> Result<(), StoreError> {
+    if root.schema_version < ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+        return Err(StoreError::UpgradeRequired {
+            store: "engine history",
+            found: root.schema_version,
+            current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+        });
+    }
+    if root.schema_version > ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+        return Err(StoreError::UnsupportedStoreVersion {
+            store: "engine history",
+            version: root.schema_version,
+        });
+    }
+    if root.workspace_id != workspace_id
+        || root.endpoint_id != endpoint_id
+        || root.graph_resource_id != graph_resource_id
+        || root.receipt_store_id != receipt_store_id
+        || root.binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
+        || (root.generation == 0) != root.latest_batch_id.is_none()
+        || root
+            .binding
+            .portable_path_conflicts
+            .windows(2)
+            .any(|pair| pair[0].key_digest() >= pair[1].key_digest())
+        || root.binding.portable_path_conflicts.iter().any(|conflict| {
+            conflict.key_version() != super::PORTABLE_PATH_KEY_VERSION
+                || conflict.participants().len() < 2
+                || conflict
+                    .participants()
+                    .windows(2)
+                    .any(|pair| pair[0] >= pair[1])
+        })
+        || (!root.binding.portable_path_conflicts.is_empty()
+            && root.binding.terminal_evidence.is_none())
+    {
+        return Err(StoreError::MalformedHistoryIndex);
+    }
+    Ok(())
 }
 
 impl BlockClaimIndexStore {
@@ -2088,6 +2163,77 @@ impl From<BatchError> for StoreError {
     }
 }
 
+fn validate_engine_history_claim(
+    bytes: &[u8],
+    workspace_id: WorkspaceId,
+    endpoint_id: super::ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+) -> Result<(), StoreError> {
+    type CurrentClaim = (
+        u32,
+        WorkspaceId,
+        super::ProjectionEndpointId,
+        super::CanonicalGraphResourceId,
+        super::ProjectionReceiptStoreId,
+    );
+    if let Ok(claim) = postcard::from_bytes::<CurrentClaim>(bytes) {
+        if postcard::to_allocvec(&claim).ok().as_deref() != Some(bytes) {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        if claim.0 < ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+            return Err(StoreError::UpgradeRequired {
+                store: "engine history",
+                found: claim.0,
+                current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            });
+        }
+        if claim.0 > ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+            return Err(StoreError::UnsupportedStoreVersion {
+                store: "engine history",
+                version: claim.0,
+            });
+        }
+        if claim.1 != workspace_id
+            || claim.2 != endpoint_id
+            || claim.3 != graph_resource_id
+            || claim.4 != receipt_store_id
+        {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        return Ok(());
+    }
+    type PriorClaim = (
+        u32,
+        WorkspaceId,
+        super::ProjectionEndpointId,
+        super::CanonicalGraphResourceId,
+    );
+    if let Ok(claim) = postcard::from_bytes::<PriorClaim>(bytes) {
+        if postcard::to_allocvec(&claim).ok().as_deref() == Some(bytes)
+            && claim.0 == ENGINE_HISTORY_ROOT_SCHEMA_VERSION - 1
+        {
+            return Err(StoreError::UpgradeRequired {
+                store: "engine history",
+                found: claim.0,
+                current: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            });
+        }
+    }
+    Err(StoreError::MalformedHistoryIndex)
+}
+
+fn open_existing_dir_nofollow(root: &Dir, name: &str) -> Result<Option<Dir>, StoreError> {
+    match root.symlink_metadata(name) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Err(
+            StoreError::UnsafeEntry(format!("{name} is not a real no-follow directory")),
+        ),
+        Ok(_) => open_dir_nofollow(root, name).map(Some),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(crate) fn ensure_directory_nofollow(root: &Dir, name: &str) -> Result<(), StoreError> {
     match root.symlink_metadata(name) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
@@ -2688,6 +2834,23 @@ mod history_index_tests {
         root
     }
 
+    fn snapshot_tree(path: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        let mut result = BTreeMap::new();
+        let mut pending = vec![path.to_path_buf()];
+        while let Some(entry_path) = pending.pop() {
+            let relative = entry_path.strip_prefix(path).unwrap().to_path_buf();
+            if entry_path.is_dir() {
+                result.insert(relative, None);
+                for entry in std::fs::read_dir(&entry_path).unwrap() {
+                    pending.push(entry.unwrap().path());
+                }
+            } else {
+                result.insert(relative, Some(std::fs::read(entry_path).unwrap()));
+            }
+        }
+        result
+    }
+
     #[test]
     fn authenticated_history_point_lookup_tamper_and_collision_fail_closed() {
         let root = test_root("integrity");
@@ -2916,6 +3079,137 @@ mod history_index_tests {
         ));
         assert_eq!(snapshot(&archive_path), before);
         drop(history);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn synthetic_future_durable_history_rejects_before_creating_layout() {
+        let root = test_root("future-durable-root");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(60));
+        let endpoint = crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(61));
+        let binding = crate::oplog::hot_engine::ProjectionStorageBinding {
+            endpoint: crate::oplog::ProjectionEndpointBinding {
+                endpoint_id: endpoint,
+                device_id: crate::oplog::DeviceId::from_uuid(Uuid::from_u128(62)),
+                graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"test",
+                    b"future-durable-root",
+                ),
+            },
+            receipt_store_id: crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                b"test",
+                b"future-durable-receipts",
+            ),
+        };
+        let archive_path = root.join("archive");
+        let store = ObjectStore::open(&archive_path, workspace).unwrap();
+        let control = archive_path
+            .join(ENGINE_HISTORY_DIR)
+            .join(endpoint.to_string());
+        std::fs::create_dir_all(&control).unwrap();
+        std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), b"future-head").unwrap();
+        let future_claim = postcard::to_allocvec(&(
+            ENGINE_HISTORY_ROOT_SCHEMA_VERSION + 1,
+            workspace,
+            endpoint,
+            binding.endpoint.graph_resource_id,
+            binding.receipt_store_id,
+        ))
+        .unwrap();
+        std::fs::write(control.join(ENGINE_HISTORY_CLAIM_FILE), future_claim).unwrap();
+        let before = snapshot_tree(&archive_path);
+
+        assert!(matches!(
+            store.open_engine_history(binding),
+            Err(StoreError::UnsupportedStoreVersion {
+                store: "engine history",
+                version
+            }) if version == ENGINE_HISTORY_ROOT_SCHEMA_VERSION + 1
+        ));
+        assert_eq!(snapshot_tree(&archive_path), before);
+        assert!(!control.join(ENGINE_HISTORY_NODES_DIR).exists());
+        assert!(!control.join(ENGINE_HISTORY_ROOTS_DIR).exists());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn authenticated_durable_root_version_matrix_rejects_without_writes() {
+        let root = test_root("durable-root-version-matrix");
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(70));
+        let endpoint = crate::oplog::ProjectionEndpointId::from_uuid(Uuid::from_u128(71));
+        let binding = crate::oplog::hot_engine::ProjectionStorageBinding {
+            endpoint: crate::oplog::ProjectionEndpointBinding {
+                endpoint_id: endpoint,
+                device_id: crate::oplog::DeviceId::from_uuid(Uuid::from_u128(72)),
+                graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"test",
+                    b"durable-root-version-matrix",
+                ),
+            },
+            receipt_store_id: crate::oplog::ProjectionReceiptStoreId::from_capability_identity(
+                b"test",
+                b"durable-root-version-matrix-receipts",
+            ),
+        };
+        let archive_path = root.join("archive");
+        let store = ObjectStore::open(&archive_path, workspace).unwrap();
+        drop(store.open_engine_history(binding).unwrap());
+        let control = archive_path
+            .join(ENGINE_HISTORY_DIR)
+            .join(endpoint.to_string());
+        let roots = control.join(ENGINE_HISTORY_ROOTS_DIR);
+
+        for version in [
+            ENGINE_HISTORY_ROOT_SCHEMA_VERSION - 1,
+            ENGINE_HISTORY_ROOT_SCHEMA_VERSION + 1,
+        ] {
+            let authenticated_root = DurableEngineHistoryRoot {
+                schema_version: version,
+                workspace_id: workspace,
+                endpoint_id: endpoint,
+                graph_resource_id: binding.endpoint.graph_resource_id,
+                receipt_store_id: binding.receipt_store_id,
+                generation: 0,
+                index_root: EngineHistoryStore::empty_root(),
+                latest_batch_id: None,
+                binding: EngineHistoryBinding::empty(),
+            };
+            let bytes = postcard::to_allocvec(&authenticated_root).unwrap();
+            let digest = ContentDigest::of(&bytes);
+            std::fs::write(roots.join(engine_history_root_filename(digest)), &bytes).unwrap();
+            std::fs::write(control.join(ENGINE_HISTORY_HEAD_FILE), digest.to_string()).unwrap();
+            let before = snapshot_tree(&archive_path);
+
+            let error = store.preflight_enrolled_projection(binding).unwrap_err();
+            if version < ENGINE_HISTORY_ROOT_SCHEMA_VERSION {
+                assert!(matches!(
+                    error,
+                    StoreError::UpgradeRequired {
+                        store: "engine history",
+                        found,
+                        current,
+                    } if found == version && current == ENGINE_HISTORY_ROOT_SCHEMA_VERSION
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    StoreError::UnsupportedStoreVersion {
+                        store: "engine history",
+                        version: found,
+                    } if found == version
+                ));
+            }
+            assert_eq!(snapshot_tree(&archive_path), before);
+            assert!(
+                !archive_path
+                    .join(super::super::scratch_store::SCRATCH_DIR)
+                    .exists()
+            );
+            assert!(!archive_path.join(PROJECTION_WORK_DIR).exists());
+        }
+
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }

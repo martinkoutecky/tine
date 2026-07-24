@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Entry};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -908,6 +908,7 @@ pub enum CapabilityCapturedProjectionState {
 pub struct CapabilityCapturedProjectionInput {
     path: ManagedPath,
     endpoint: ProjectionEndpointBinding,
+    receipt_store_id: super::ProjectionReceiptStoreId,
     state: CapabilityCapturedProjectionState,
 }
 
@@ -915,11 +916,13 @@ impl CapabilityCapturedProjectionInput {
     pub(crate) fn from_graph_capability(
         path: ManagedPath,
         endpoint: ProjectionEndpointBinding,
+        receipt_store_id: super::ProjectionReceiptStoreId,
         state: CapabilityCapturedProjectionState,
     ) -> Self {
         Self {
             path,
             endpoint,
+            receipt_store_id,
             state,
         }
     }
@@ -1837,9 +1840,12 @@ impl ShardedHotEngine {
             }
         };
         if let Some(error) = enrollment_error {
-            let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
-            engine.history_failure = Some(EngineError::Archive(error));
-            return engine;
+            return Self::failed_archive_open(
+                store,
+                lineage_digest,
+                catalog_document_id,
+                EngineError::Archive(error),
+            );
         }
         Self::with_archive_store_for_endpoint(
             store,
@@ -1859,6 +1865,14 @@ impl ShardedHotEngine {
         binding: ProjectionStorageBinding,
     ) -> Self {
         let endpoint = binding.endpoint;
+        if let Err(error) = store.preflight_enrolled_projection(binding) {
+            return Self::failed_archive_open(
+                store,
+                lineage_digest,
+                catalog_document_id,
+                EngineError::Archive(error.to_string()),
+            );
+        }
         let mut engine = Self::with_archive_store(store, lineage_digest, catalog_document_id);
         let history = engine
             .archive_store
@@ -1946,6 +1960,19 @@ impl ShardedHotEngine {
                 }
             }
         }
+        engine
+    }
+
+    fn failed_archive_open(
+        store: ObjectStore,
+        lineage_digest: LineageDigest,
+        catalog_document_id: DocumentId,
+        error: EngineError,
+    ) -> Self {
+        let workspace_id = store.workspace_id();
+        let mut engine = Self::new(workspace_id, lineage_digest, catalog_document_id);
+        engine.archive_store = Some(Arc::new(store));
+        engine.history_failure = Some(error);
         engine
     }
 
@@ -3337,6 +3364,19 @@ impl ShardedHotEngine {
                 "captured projection input is not bound to the source graph capability".into(),
             ));
         }
+        let enrolled_receipt_store_id = self.projection_receipt_store_id.ok_or_else(|| {
+            EngineError::ProjectionManifest(
+                "authoring engine has no enrolled projection receipt store".into(),
+            )
+        })?;
+        if captured_inputs
+            .iter()
+            .any(|input| input.receipt_store_id != enrolled_receipt_store_id)
+        {
+            return Err(EngineError::ProjectionManifest(
+                "captured projection input is not bound to the enrolled receipt store".into(),
+            ));
+        }
         if draft.generation != self.history_generation
             || draft.root_token != self.author_generation_root()?
         {
@@ -4029,7 +4069,7 @@ impl ShardedHotEngine {
                     return Err(EngineError::AmbiguousLogseqUuid {
                         logseq_uuid,
                         claim_count,
-                    })
+                    });
                 }
                 LogseqUuidResolution::Unclaimed | LogseqUuidResolution::Unique(_) => {}
             }
@@ -4411,7 +4451,7 @@ impl ShardedHotEngine {
                     return Err(EngineError::AmbiguousLogseqUuid {
                         logseq_uuid: uuid,
                         claim_count,
-                    })
+                    });
                 }
                 LogseqUuidResolution::Unclaimed | LogseqUuidResolution::Unique(_) => {}
             }
@@ -4678,12 +4718,12 @@ impl ShardedHotEngine {
             {
                 return Err(EngineError::ProjectionWork(
                     "projection work path is not currently owned by its page".into(),
-                ))
+                ));
             }
             ProjectionWorkTarget::Absent if currently_owned.is_some() => {
                 return Err(EngineError::ProjectionWork(
                     "projection deletion path is currently owned".into(),
-                ))
+                ));
             }
             ProjectionWorkTarget::Absent | ProjectionWorkTarget::Present(_) => {}
         }
@@ -5783,7 +5823,7 @@ impl ShardedHotEngine {
                     return Err(EngineError::RejectedDependency(*dependency));
                 }
                 Some(ArchiveStatus::Staged) | Some(ArchiveStatus::Quarantined) | None => {
-                    return Ok(false)
+                    return Ok(false);
                 }
             }
         }
@@ -6462,7 +6502,7 @@ impl ShardedHotEngine {
             None => {
                 return Err(EngineError::Archive(
                     "exact document checkpoint unexpectedly unavailable".into(),
-                ))
+                ));
             }
         };
         #[cfg(test)]
@@ -12001,7 +12041,10 @@ impl fmt::Display for EngineError {
                 write!(f, "CRDT update for {document_id} has missing dependencies")
             }
             Self::CrdtUpdateBaseMismatch(document_id) => {
-                write!(f, "CRDT update for {document_id} was not exported from its declared base")
+                write!(
+                    f,
+                    "CRDT update for {document_id} was not exported from its declared base"
+                )
             }
             Self::CrdtPayloadIdentityMismatch {
                 expected_batch_id,
@@ -12143,13 +12186,15 @@ mod validation_tests {
         frontier: FrontierV2,
         effect_bytes: Vec<u8>,
     ) -> ValidatedBatch {
-        let mut objects = vec![OperationObject::new(
+        let mut objects = vec![
+            OperationObject::new(
             engine.workspace_id,
             engine.catalog_document_id,
             ObjectKind::SemanticEffect,
             effect_bytes.clone(),
         )
-        .unwrap()];
+            .unwrap(),
+        ];
         let batch_dependency_heads: Vec<_> = frontier
             .documents()
             .iter()
@@ -12419,12 +12464,14 @@ mod validation_tests {
             BatchDisposition::Rejected { .. }
         ));
         assert!(fixture.engine.visible_documents.is_empty());
-        assert!(fixture
+        assert!(
+            fixture
             .engine
             .canonical_snapshot()
             .unwrap()
             .pages
-            .is_empty());
+                .is_empty()
+        );
     }
 
     fn catalog_snapshot(entries: Vec<(PageId, PageState)>) -> SemanticDocumentSnapshot {
@@ -12749,12 +12796,14 @@ mod validation_tests {
         let disjoint_declared =
             derive_effect_from_snapshots(&before, &disjoint_duplicate_after).unwrap();
         assert_eq!(disjoint_declared.memberships().len(), 2);
-        assert!(compare_declared_effect_against_snapshots_with_catalog(
+        assert!(
+            compare_declared_effect_against_snapshots_with_catalog(
             &disjoint_declared,
             &before,
             &disjoint_duplicate_after
         )
-        .is_ok());
+            .is_ok()
+        );
 
         let duplicate_key_after = BTreeMap::from([
             (
@@ -12953,10 +13002,12 @@ mod validation_tests {
             0
         );
         let snapshot = engine.canonical_snapshot().unwrap();
-        assert!(!snapshot
+        assert!(
+            !snapshot
             .pages
             .iter()
-            .any(|(candidate, _)| *candidate == page_a));
+                .any(|(candidate, _)| *candidate == page_a)
+        );
         assert_eq!(
             snapshot
                 .pages
@@ -14305,14 +14356,18 @@ mod validation_tests {
             } if found == same_batch_id
         ));
         assert_eq!(engine.fatal_evidence(), None);
-        assert!(engine
+        assert!(
+            engine
             .recover_block_state(home_a, same_batch_id)
             .unwrap()
-            .is_none());
-        assert!(engine
+                .is_none()
+        );
+        assert!(
+            engine
             .recover_block_state(home_b, same_batch_id)
             .unwrap()
-            .is_none());
+                .is_none()
+        );
         let accepted_after_rollback = engine
             .prepare_bootstrap_transaction(
                 test_author(605, 605),
@@ -14438,15 +14493,19 @@ mod validation_tests {
             relocation_engine.materialize_page(page_a).unwrap().blocks[0].content,
             "immutable home A"
         );
-        assert!(relocation_engine
+        assert!(
+            relocation_engine
             .materialize_page(page_b)
             .unwrap()
             .blocks
-            .is_empty());
-        assert!(relocation_engine
+                .is_empty()
+        );
+        assert!(
+            relocation_engine
             .recover_block_state(home_b, block_id)
             .unwrap()
-            .is_none());
+                .is_none()
+        );
     }
 
     #[test]
@@ -14544,7 +14603,8 @@ mod validation_tests {
                 .unwrap(),
             )
             .unwrap();
-        assert!(authored_descendant
+        assert!(
+            authored_descendant
             .manifest()
             .dependency_frontier()
             .documents()
@@ -14553,13 +14613,16 @@ mod validation_tests {
                 entry.document_id() == home_b
                     && entry.direct_dependency_heads()
                         == [BatchId::from_uuid(Uuid::from_u128(7_012))]
-            }));
-        assert!(!authored_descendant
+                })
+        );
+        assert!(
+            !authored_descendant
             .manifest()
             .dependency_frontier()
             .documents()
             .iter()
-            .any(|entry| entry.document_id() == home_a));
+                .any(|entry| entry.document_id() == home_a)
+        );
 
         let before_c = engine.clone_visible_document(home_c, 713).unwrap();
         let after_c = clone_doc(&before_c, 713).unwrap();
@@ -15031,14 +15094,16 @@ mod validation_tests {
             engine.scratch_roots.causal_peer_root,
             prior_roots.causal_peer_root
         );
-        assert!(engine
+        assert!(
+            engine
             .batch_statuses()
             .unwrap()
             .iter()
             .any(|(batch_id, status)| {
                 *batch_id == rejected.manifest().batch_id()
                     && matches!(status, BatchDisposition::Rejected { .. })
-            }));
+                })
+        );
         drop(engine);
         drop(writer);
         std::fs::remove_dir_all(root).unwrap();

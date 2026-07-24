@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::object_store::{
-    ensure_directory_nofollow, is_temp_name, open_dir_nofollow, publish_immutable_exact,
-    read_optional_regular, require_regular_entry, StoreError,
+    StoreError, ensure_directory_nofollow, is_temp_name, open_dir_nofollow,
+    publish_immutable_exact, read_optional_regular, require_regular_entry,
 };
 use super::{
     BaseBlob, BlobDescription, CapabilityCapturedProjectionInput,
@@ -28,16 +28,82 @@ const INTENTS_DIR: &str = "intents";
 const COMPLETIONS_DIR: &str = "completions";
 const ATTEMPTS_DIR: &str = "attempts";
 const FORENSICS_DIR: &str = "forensics";
-const STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR4\0";
-const PRIOR_STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR3\0";
-const STORE_CLAIM_VERSION: u32 = 4;
-const STORE_CLAIM_LEN: usize = STORE_CLAIM_MAGIC.len() + 4 + 32 + 16 + 1 + 16 + 16 + 32;
+const STORE_INIT_FILE: &str = "projection-receipts.init";
+const STORE_CLAIM_MAGIC: &[u8; 8] = b"TINEPR5\0";
+const PRIOR_STORE_CLAIM_MAGICS: [&[u8; 8]; 2] = [b"TINEPR4\0", b"TINEPR3\0"];
+const STORE_INIT_MAGIC: &[u8; 8] = b"TINEPI5\0";
+const STORE_CLAIM_VERSION: u32 = 5;
+const STORE_CLAIM_BASE_LEN: usize = STORE_CLAIM_MAGIC.len() + 4 + 32 + 16 + 1 + 16 + 16 + 32;
+const STORE_CLAIM_LEN: usize = STORE_CLAIM_BASE_LEN + 5 * 32;
+const STORE_INIT_LEN: usize = STORE_CLAIM_BASE_LEN;
 pub(crate) const MAX_PROJECTION_EVIDENCE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const MAX_PROJECTION_CATALOG_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PROJECTION_CATALOG_ROWS: usize = 2_000_000;
 const MAX_PROJECTION_CATALOG_DIRECTORY_ENTRIES: usize = 4_000_000;
 const LOCAL_ATTEMPT_SCHEMA_VERSION: u32 = 1;
 const LOCAL_FORENSIC_SCHEMA_VERSION: u32 = 1;
+const INTENT_NAMESPACE_SCHEMA_VERSION: u32 = 1;
+const INTENT_NAMESPACE_RESERVATION_SUFFIX: &str = ".namespace-reservation";
+const INTENT_NAMESPACE_AUTHORITY_SUFFIX: &str = ".namespace-authority";
+
+type DirectoryIdentity = [u8; 32];
+
+#[derive(Debug)]
+struct BoundNamespace {
+    capability: Dir,
+    identity: DirectoryIdentity,
+}
+
+#[derive(Debug)]
+struct ReceiptNamespaces {
+    bases: BoundNamespace,
+    intents: BoundNamespace,
+    completions: BoundNamespace,
+    attempts: BoundNamespace,
+    forensics: BoundNamespace,
+}
+
+impl ReceiptNamespaces {
+    fn get(&self, name: &str) -> Option<&BoundNamespace> {
+        match name {
+            BASES_DIR => Some(&self.bases),
+            INTENTS_DIR => Some(&self.intents),
+            COMPLETIONS_DIR => Some(&self.completions),
+            ATTEMPTS_DIR => Some(&self.attempts),
+            FORENSICS_DIR => Some(&self.forensics),
+            _ => None,
+        }
+    }
+
+    fn identities(&self) -> [DirectoryIdentity; 5] {
+        [
+            self.bases.identity,
+            self.intents.identity,
+            self.completions.identity,
+            self.attempts.identity,
+            self.forensics.identity,
+        ]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IntentNamespaceReservation {
+    schema_version: u32,
+    store_id: ProjectionReceiptStoreId,
+    namespace: String,
+    intent_id: ProjectionIntentId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IntentNamespaceAuthority {
+    schema_version: u32,
+    store_id: ProjectionReceiptStoreId,
+    namespace: String,
+    intent_id: ProjectionIntentId,
+    directory_identity: DirectoryIdentity,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +255,7 @@ pub struct ProjectionReceiptStore {
     workspace_id: WorkspaceId,
     endpoint: Option<ProjectionEndpointBinding>,
     capability: Dir,
+    namespaces: ReceiptNamespaces,
 }
 
 /// Canonical read-only catalog row used only by the combined import authority.
@@ -241,16 +308,16 @@ impl ProjectionReceiptStore {
         ensure_directory_nofollow(&parent_capability, name)?;
         let capability = open_dir_nofollow(&parent_capability, name)?;
         let store_id = canonical_receipt_store_id(&capability)?;
+        let namespaces = Self::initialize(&capability, store_id, workspace_id, endpoint)?;
 
-        let store = Self {
+        Ok(Self {
             root_path: canonical_parent.join(name),
             store_id,
             workspace_id,
             endpoint,
             capability,
-        };
-        store.initialize()?;
-        Ok(store)
+            namespaces,
+        })
     }
 
     pub fn root_path(&self) -> &Path {
@@ -311,7 +378,10 @@ impl ProjectionReceiptStore {
             }
         };
         Ok(CapabilityCapturedProjectionInput::from_graph_capability(
-            path, endpoint, state,
+            path,
+            endpoint,
+            self.store_id,
+            state,
         ))
     }
 
@@ -363,12 +433,21 @@ impl ProjectionReceiptStore {
         }
 
         let intents = self.namespace(INTENTS_DIR)?;
-        publish_immutable_exact(
-            &intents,
-            &intent_filename(intent_id),
-            &bytes,
-            "projection intent",
-        )?;
+        let intent_name = intent_filename(intent_id);
+        let already_published =
+            read_optional_regular(&intents, &intent_name, MAX_PROJECTION_EVIDENCE_BYTES, None)?
+                .is_some();
+        // The intent is the commit marker for its local recovery namespaces.
+        // Once it is visible, both per-intent directory identities must
+        // already be durably bound and can never be recreated by name.
+        if already_published {
+            self.required_intent_namespace(ATTEMPTS_DIR, intent_id)?;
+            self.required_intent_namespace(FORENSICS_DIR, intent_id)?;
+        } else {
+            self.intent_namespace(ATTEMPTS_DIR, intent_id)?;
+            self.intent_namespace(FORENSICS_DIR, intent_id)?;
+        }
+        publish_immutable_exact(&intents, &intent_name, &bytes, "projection intent")?;
         Ok(intent_id)
     }
 
@@ -440,7 +519,7 @@ impl ProjectionReceiptStore {
         let reservation = ProjectionAttemptReservation::new(intent, Uuid::new_v4())?;
         let bytes = serde_json::to_vec(&reservation)
             .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
-        let attempts = self.intent_namespace(ATTEMPTS_DIR, intent_id)?;
+        let attempts = self.required_intent_namespace(ATTEMPTS_DIR, intent_id)?;
         publish_immutable_exact(
             &attempts,
             &attempt_filename(reservation.attempt_id),
@@ -457,7 +536,7 @@ impl ProjectionReceiptStore {
         intent: &ProjectionIntent,
     ) -> Result<Vec<ProjectionAttemptReservation>, ProjectionStoreError> {
         let intent_id = self.require_published_intent(intent)?;
-        let attempts = self.intent_namespace(ATTEMPTS_DIR, intent_id)?;
+        let attempts = self.required_intent_namespace(ATTEMPTS_DIR, intent_id)?;
         let mut reservations = Vec::new();
         for entry in attempts.entries()? {
             let entry = entry?;
@@ -598,7 +677,7 @@ impl ProjectionReceiptStore {
         intent: &ProjectionIntent,
     ) -> Result<Vec<LocalProjectionEvidenceRecord>, ProjectionStoreError> {
         let intent_id = self.require_published_intent(intent)?;
-        let forensics = self.intent_namespace(FORENSICS_DIR, intent_id)?;
+        let forensics = self.required_intent_namespace(FORENSICS_DIR, intent_id)?;
         let mut records = Vec::new();
         for entry in forensics.entries()? {
             let entry = entry?;
@@ -801,36 +880,44 @@ impl ProjectionReceiptStore {
         self.publish_completion(intent, proof)
     }
 
-    fn initialize(&self) -> Result<(), ProjectionStoreError> {
-        let claim = claim_bytes(self.store_id, self.workspace_id, self.endpoint);
-        let existing = read_optional_regular(&self.capability, STORE_CLAIM_FILE, 256, None)?;
-        match existing {
+    fn initialize(
+        capability: &Dir,
+        store_id: ProjectionReceiptStoreId,
+        workspace_id: WorkspaceId,
+        endpoint: Option<ProjectionEndpointBinding>,
+    ) -> Result<ReceiptNamespaces, ProjectionStoreError> {
+        let existing = read_optional_regular(capability, STORE_CLAIM_FILE, 512, None)?;
+        if let Some(bytes) = existing {
+            let expected = validate_claim(&bytes, store_id, workspace_id, endpoint)?;
+            let namespaces = open_receipt_namespaces(capability)?;
+            if namespaces.identities() != expected {
+                return Err(ProjectionStoreError::NamespaceSubstitution(
+                    "top-level receipt namespace".into(),
+                ));
+            }
+            return Ok(namespaces);
+        }
+
+        let expected_init = init_claim_bytes(store_id, workspace_id, endpoint);
+        match read_optional_regular(capability, STORE_INIT_FILE, 256, None)? {
             Some(bytes) => {
-                validate_claim(&bytes, self.store_id, self.workspace_id, self.endpoint)?;
-                for namespace in [
-                    BASES_DIR,
-                    INTENTS_DIR,
-                    COMPLETIONS_DIR,
-                    ATTEMPTS_DIR,
-                    FORENSICS_DIR,
-                ] {
-                    open_dir_nofollow(&self.capability, namespace).map_err(|error| {
-                        ProjectionStoreError::UnsafeEntry(format!(
-                            "claimed receipt store is missing namespace {namespace}: {error}"
-                        ))
-                    })?;
+                if bytes != expected_init {
+                    return Err(ProjectionStoreError::MalformedStoreClaim);
                 }
             }
             None => {
-                if self.capability.entries()?.next().transpose()?.is_some() {
+                if capability.entries()?.next().transpose()?.is_some() {
                     return Err(ProjectionStoreError::ClaimlessNonemptyStore);
                 }
                 publish_immutable_exact(
-                    &self.capability,
-                    STORE_CLAIM_FILE,
-                    &claim,
-                    "projection receipt store claim",
+                    capability,
+                    STORE_INIT_FILE,
+                    &expected_init,
+                    "projection receipt store initialization claim",
                 )?;
+            }
+        }
+
                 for namespace in [
                     BASES_DIR,
                     INTENTS_DIR,
@@ -838,15 +925,31 @@ impl ProjectionReceiptStore {
                     ATTEMPTS_DIR,
                     FORENSICS_DIR,
                 ] {
-                    ensure_directory_nofollow(&self.capability, namespace)?;
-                }
+            ensure_directory_nofollow(capability, namespace)?;
             }
-        }
-        Ok(())
+        require_incomplete_store_is_empty(capability)?;
+        let namespaces = open_receipt_namespaces(capability)?;
+        let claim = claim_bytes(store_id, workspace_id, endpoint, &namespaces.identities());
+        publish_immutable_exact(
+            capability,
+            STORE_CLAIM_FILE,
+            &claim,
+            "projection receipt store claim",
+        )?;
+        Ok(namespaces)
     }
 
     fn namespace(&self, name: &str) -> Result<Dir, ProjectionStoreError> {
-        open_dir_nofollow(&self.capability, name).map_err(Into::into)
+        let retained = self.namespaces.get(name).ok_or_else(|| {
+            ProjectionStoreError::UnsafeEntry(format!("unknown receipt namespace {name}"))
+        })?;
+        let live = open_dir_nofollow(&self.capability, name).map_err(|error| {
+            ProjectionStoreError::NamespaceSubstitution(format!("{name}: {error}"))
+        })?;
+        if canonical_directory_identity(&live)? != retained.identity {
+            return Err(ProjectionStoreError::NamespaceSubstitution(name.into()));
+        }
+        retained.capability.try_clone().map_err(Into::into)
     }
 
     fn intent_namespace(
@@ -854,10 +957,148 @@ impl ProjectionReceiptStore {
         namespace: &str,
         intent_id: ProjectionIntentId,
     ) -> Result<Dir, ProjectionStoreError> {
+        self.open_intent_namespace(namespace, intent_id, true)?
+            .ok_or_else(|| {
+                ProjectionStoreError::NamespaceSubstitution(format!(
+                    "{namespace}/{}",
+                    hex(intent_id.as_bytes())
+                ))
+            })
+    }
+
+    fn existing_intent_namespace(
+        &self,
+        namespace: &str,
+        intent_id: ProjectionIntentId,
+    ) -> Result<Option<Dir>, ProjectionStoreError> {
+        self.open_intent_namespace(namespace, intent_id, false)
+    }
+
+    fn required_intent_namespace(
+        &self,
+        namespace: &str,
+        intent_id: ProjectionIntentId,
+    ) -> Result<Dir, ProjectionStoreError> {
+        self.existing_intent_namespace(namespace, intent_id)?
+            .ok_or_else(|| {
+                ProjectionStoreError::NamespaceSubstitution(format!(
+                    "missing established {namespace}/{}",
+                    hex(intent_id.as_bytes())
+                ))
+            })
+    }
+
+    fn open_intent_namespace(
+        &self,
+        namespace: &str,
+        intent_id: ProjectionIntentId,
+        create: bool,
+    ) -> Result<Option<Dir>, ProjectionStoreError> {
         let parent = self.namespace(namespace)?;
         let name = hex(intent_id.as_bytes());
+        let reservation_name = format!("{name}{INTENT_NAMESPACE_RESERVATION_SUFFIX}");
+        let authority_name = format!("{name}{INTENT_NAMESPACE_AUTHORITY_SUFFIX}");
+        let expected_reservation = IntentNamespaceReservation {
+            schema_version: INTENT_NAMESPACE_SCHEMA_VERSION,
+            store_id: self.store_id,
+            namespace: namespace.to_owned(),
+            intent_id,
+        };
+        let reservation_bytes = serde_json::to_vec(&expected_reservation)
+            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+
+        if let Some(bytes) = read_optional_regular(&parent, &authority_name, 1024, None)? {
+            let authority: IntentNamespaceAuthority = serde_json::from_slice(&bytes)
+                .map_err(|error| ProjectionStoreError::Decode(error.to_string()))?;
+            if serde_json::to_vec(&authority)
+                .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?
+                != bytes
+                || authority.schema_version != INTENT_NAMESPACE_SCHEMA_VERSION
+                || authority.store_id != self.store_id
+                || authority.namespace != namespace
+                || authority.intent_id != intent_id
+            {
+                return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                    "{namespace}/{name}"
+                )));
+            }
+            let directory = open_dir_nofollow(&parent, &name).map_err(|error| {
+                ProjectionStoreError::NamespaceSubstitution(format!("{namespace}/{name}: {error}"))
+            })?;
+            if canonical_directory_identity(&directory)? != authority.directory_identity {
+                return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                    "{namespace}/{name}"
+                )));
+            }
+            return Ok(Some(directory));
+        }
+
+        match read_optional_regular(&parent, &reservation_name, 1024, None)? {
+            Some(bytes) => {
+                if bytes != reservation_bytes {
+                    return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                        "{namespace}/{name}"
+                    )));
+                }
+                if !create {
+                    return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                        "incomplete established {namespace}/{name}"
+                    )));
+                }
+            }
+            None => {
+                match parent.symlink_metadata(&name) {
+                    Ok(_) => {
+                        return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                            "unbound {namespace}/{name}"
+                        )));
+                    }
+                    Err(error) if error.kind() == ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                if !create {
+                    return Ok(None);
+                }
+                publish_immutable_exact(
+                    &parent,
+                    &reservation_name,
+                    &reservation_bytes,
+                    "per-intent namespace reservation",
+                )?;
+            }
+        }
+
         ensure_directory_nofollow(&parent, &name)?;
-        open_dir_nofollow(&parent, &name).map_err(Into::into)
+        let directory = open_dir_nofollow(&parent, &name)?;
+        if directory.entries()?.next().transpose()?.is_some() {
+            return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                "unbound nonempty {namespace}/{name}"
+            )));
+        }
+        let authority = IntentNamespaceAuthority {
+            schema_version: INTENT_NAMESPACE_SCHEMA_VERSION,
+            store_id: self.store_id,
+            namespace: namespace.to_owned(),
+            intent_id,
+            directory_identity: canonical_directory_identity(&directory)?,
+        };
+        let authority_bytes = serde_json::to_vec(&authority)
+            .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
+        publish_immutable_exact(
+            &parent,
+            &authority_name,
+            &authority_bytes,
+            "per-intent namespace authority",
+        )?;
+        let live = open_dir_nofollow(&parent, &name).map_err(|error| {
+            ProjectionStoreError::NamespaceSubstitution(format!("{namespace}/{name}: {error}"))
+        })?;
+        if canonical_directory_identity(&live)? != authority.directory_identity {
+            return Err(ProjectionStoreError::NamespaceSubstitution(format!(
+                "{namespace}/{name}"
+            )));
+        }
+        Ok(Some(directory))
     }
 
     fn publish_forensic_record(
@@ -869,7 +1110,7 @@ impl ProjectionReceiptStore {
         let bytes = serde_json::to_vec(record)
             .map_err(|error| ProjectionStoreError::Encode(error.to_string()))?;
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let forensics = self.intent_namespace(FORENSICS_DIR, record.intent_id)?;
+        let forensics = self.required_intent_namespace(FORENSICS_DIR, record.intent_id)?;
         publish_immutable_exact(
             &forensics,
             &format!("{}.evidence", hex(&digest)),
@@ -977,6 +1218,7 @@ pub enum ProjectionStoreError {
     },
     MalformedStoreClaim,
     ClaimlessNonemptyStore,
+    NamespaceSubstitution(String),
     EndpointBindingMismatch,
     GraphResourceMismatch,
     CapturedInputMismatch,
@@ -1025,6 +1267,12 @@ impl fmt::Display for ProjectionStoreError {
             Self::MalformedStoreClaim => f.write_str("malformed projection store claim"),
             Self::ClaimlessNonemptyStore => {
                 f.write_str("claimless nonempty projection receipt store cannot be initialized")
+            }
+            Self::NamespaceSubstitution(namespace) => {
+                write!(
+                    f,
+                    "projection receipt namespace no longer denotes retained resource: {namespace}"
+                )
             }
             Self::EndpointBindingMismatch => {
                 f.write_str("projection receipt store endpoint enrollment mismatch")
@@ -1133,9 +1381,35 @@ fn claim_bytes(
     store_id: ProjectionReceiptStoreId,
     workspace_id: WorkspaceId,
     endpoint: Option<ProjectionEndpointBinding>,
+    namespace_identities: &[DirectoryIdentity; 5],
 ) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(STORE_CLAIM_LEN);
-    bytes.extend_from_slice(STORE_CLAIM_MAGIC);
+    let mut bytes = enrollment_claim_bytes(STORE_CLAIM_MAGIC, store_id, workspace_id, endpoint);
+    bytes.reserve(5 * 32);
+    for identity in namespace_identities {
+        bytes.extend_from_slice(identity);
+    }
+    debug_assert_eq!(bytes.len(), STORE_CLAIM_LEN);
+    bytes
+}
+
+fn init_claim_bytes(
+    store_id: ProjectionReceiptStoreId,
+    workspace_id: WorkspaceId,
+    endpoint: Option<ProjectionEndpointBinding>,
+) -> Vec<u8> {
+    let bytes = enrollment_claim_bytes(STORE_INIT_MAGIC, store_id, workspace_id, endpoint);
+    debug_assert_eq!(bytes.len(), STORE_INIT_LEN);
+    bytes
+}
+
+fn enrollment_claim_bytes(
+    magic: &[u8; 8],
+    store_id: ProjectionReceiptStoreId,
+    workspace_id: WorkspaceId,
+    endpoint: Option<ProjectionEndpointBinding>,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(STORE_CLAIM_BASE_LEN);
+    bytes.extend_from_slice(magic);
     bytes.extend_from_slice(&STORE_CLAIM_VERSION.to_be_bytes());
     bytes.extend_from_slice(store_id.as_bytes());
     bytes.extend_from_slice(workspace_id.as_uuid().as_bytes());
@@ -1197,12 +1471,11 @@ fn validate_claim(
     expected_store_id: ProjectionReceiptStoreId,
     expected_workspace: WorkspaceId,
     expected_endpoint: Option<ProjectionEndpointBinding>,
-) -> Result<(), ProjectionStoreError> {
-    if bytes.len() >= PRIOR_STORE_CLAIM_MAGIC.len() + 4
-        && &bytes[..PRIOR_STORE_CLAIM_MAGIC.len()] == PRIOR_STORE_CLAIM_MAGIC
-    {
+) -> Result<[DirectoryIdentity; 5], ProjectionStoreError> {
+    for magic in PRIOR_STORE_CLAIM_MAGICS {
+        if bytes.len() >= magic.len() + 4 && &bytes[..magic.len()] == magic {
         let version = u32::from_be_bytes(
-            bytes[PRIOR_STORE_CLAIM_MAGIC.len()..PRIOR_STORE_CLAIM_MAGIC.len() + 4]
+                bytes[magic.len()..magic.len() + 4]
                 .try_into()
                 .expect("prior claim version slice"),
         );
@@ -1210,6 +1483,7 @@ fn validate_claim(
             found: version,
             current: STORE_CLAIM_VERSION,
         });
+    }
     }
     if bytes.len() < STORE_CLAIM_MAGIC.len() + 4
         || &bytes[..STORE_CLAIM_MAGIC.len()] != STORE_CLAIM_MAGIC
@@ -1248,8 +1522,73 @@ fn validate_claim(
             found: workspace,
         });
     }
-    if bytes != claim_bytes(expected_store_id, expected_workspace, expected_endpoint) {
+    let mut identities = [[0_u8; 32]; 5];
+    for (index, identity) in identities.iter_mut().enumerate() {
+        let offset = STORE_CLAIM_BASE_LEN + index * 32;
+        identity.copy_from_slice(&bytes[offset..offset + 32]);
+    }
+    if bytes
+        != claim_bytes(
+            expected_store_id,
+            expected_workspace,
+            expected_endpoint,
+            &identities,
+        )
+    {
         return Err(ProjectionStoreError::EndpointBindingMismatch);
+    }
+    Ok(identities)
+}
+
+fn open_receipt_namespaces(capability: &Dir) -> Result<ReceiptNamespaces, ProjectionStoreError> {
+    Ok(ReceiptNamespaces {
+        bases: open_bound_namespace(capability, BASES_DIR)?,
+        intents: open_bound_namespace(capability, INTENTS_DIR)?,
+        completions: open_bound_namespace(capability, COMPLETIONS_DIR)?,
+        attempts: open_bound_namespace(capability, ATTEMPTS_DIR)?,
+        forensics: open_bound_namespace(capability, FORENSICS_DIR)?,
+    })
+}
+
+fn open_bound_namespace(
+    capability: &Dir,
+    name: &str,
+) -> Result<BoundNamespace, ProjectionStoreError> {
+    let directory = open_dir_nofollow(capability, name)
+        .map_err(|error| ProjectionStoreError::NamespaceSubstitution(format!("{name}: {error}")))?;
+    Ok(BoundNamespace {
+        identity: canonical_directory_identity(&directory)?,
+        capability: directory,
+    })
+}
+
+fn require_incomplete_store_is_empty(capability: &Dir) -> Result<(), ProjectionStoreError> {
+    for entry in capability.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_str().ok_or_else(|| {
+            ProjectionStoreError::UnsafeEntry("non-UTF-8 entry in incomplete receipt store".into())
+        })?;
+        if name == STORE_INIT_FILE {
+            require_regular_entry(&entry.file_type()?, name)?;
+            continue;
+        }
+        if ![
+            BASES_DIR,
+            INTENTS_DIR,
+            COMPLETIONS_DIR,
+            ATTEMPTS_DIR,
+            FORENSICS_DIR,
+        ]
+        .contains(&name)
+            || !entry.file_type()?.is_dir()
+        {
+            return Err(ProjectionStoreError::ClaimlessNonemptyStore);
+        }
+        let directory = open_dir_nofollow(capability, name)?;
+        if directory.entries()?.next().transpose()?.is_some() {
+            return Err(ProjectionStoreError::ClaimlessNonemptyStore);
+        }
     }
     Ok(())
 }
@@ -1272,7 +1611,7 @@ fn canonical_receipt_store_id(dir: &Dir) -> Result<ProjectionReceiptStoreId, Pro
 fn canonical_receipt_store_id(dir: &Dir) -> Result<ProjectionReceiptStoreId, ProjectionStoreError> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
     };
 
     let file = dir.try_clone()?.into_std_file();
@@ -1304,6 +1643,53 @@ fn canonical_receipt_store_id(
     Err(ProjectionStoreError::Io(std::io::Error::new(
         ErrorKind::Unsupported,
         "projection receipt-store identity is unsupported on this platform",
+    )))
+}
+
+#[cfg(unix)]
+fn canonical_directory_identity(dir: &Dir) -> Result<DirectoryIdentity, ProjectionStoreError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = dir.try_clone()?.into_std_file().metadata()?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-directory-identity/unix-v1\0");
+    hasher.update(metadata.dev().to_be_bytes());
+    hasher.update(metadata.ino().to_be_bytes());
+    Ok(hasher.finalize().into())
+}
+
+#[cfg(windows)]
+fn canonical_directory_identity(dir: &Dir) -> Result<DirectoryIdentity, ProjectionStoreError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let file = dir.try_clone()?.into_std_file();
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(ProjectionStoreError::Io(std::io::Error::last_os_error()));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/projection-directory-identity/windows-v1\0");
+    hasher.update(information.VolumeSerialNumber.to_be_bytes());
+    hasher.update(information.FileId.Identifier);
+    Ok(hasher.finalize().into())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn canonical_directory_identity(_dir: &Dir) -> Result<DirectoryIdentity, ProjectionStoreError> {
+    Err(ProjectionStoreError::Io(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "projection directory identity is unsupported on this platform",
     )))
 }
 
@@ -1391,12 +1777,14 @@ mod tests {
             "projection intent",
             "projection completion",
         ] {
-            assert!(require_evidence_length(
+            assert!(
+                require_evidence_length(
                 kind,
                 MAX_PROJECTION_EVIDENCE_BYTES,
                 MAX_PROJECTION_EVIDENCE_BYTES
             )
-            .is_ok());
+                .is_ok()
+            );
             assert!(matches!(
                 require_evidence_length(
                     kind,
