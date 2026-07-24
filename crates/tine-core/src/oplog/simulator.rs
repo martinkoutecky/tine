@@ -21,7 +21,7 @@ use super::{
     StageOutcome, WorkspaceId, WorkspaceStatus,
 };
 
-pub const SCENARIO_SCHEMA_VERSION: u32 = 2;
+pub const SCENARIO_SCHEMA_VERSION: u32 = 3;
 pub const MAX_SCENARIO_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_SCENARIO_ACTIONS: usize = 16_384;
 pub const MAX_SCENARIO_DEVICES: usize = 8;
@@ -2142,15 +2142,17 @@ fn shrink_operation_content(operation: &SemanticOperation) -> Option<SemanticOpe
             content.truncate(content.len() / 2);
             Some(operation)
         }
-        SemanticOperation::RenamePageAndRewriteReferrers { referrers, .. }
-            if !referrers.is_empty() =>
+        SemanticOperation::RenamePagesAndRewriteReferrers { block_rewrites, .. }
+            if !block_rewrites.is_empty() =>
         {
             let mut operation = operation.clone();
-            let SemanticOperation::RenamePageAndRewriteReferrers { referrers, .. } = &mut operation
+            let SemanticOperation::RenamePagesAndRewriteReferrers {
+                block_rewrites, ..
+            } = &mut operation
             else {
                 unreachable!("cloned rename changed kind")
             };
-            referrers.pop();
+            block_rewrites.pop();
             Some(operation)
         }
         _ => None,

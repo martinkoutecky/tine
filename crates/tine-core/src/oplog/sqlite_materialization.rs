@@ -43,7 +43,7 @@ const MATERIALIZATION_REFERENCE_OVERHEAD_BYTES: usize = 48;
 const MATERIALIZATION_PROPERTY_OVERHEAD_BYTES: usize = 24;
 const MATERIALIZATION_TAG_OVERHEAD_BYTES: usize = 16;
 const MATERIALIZATION_STRING_OVERHEAD_BYTES: usize = 16;
-const MATERIALIZATION_INPUT_SCHEMA_VERSION: u32 = 1;
+const MATERIALIZATION_INPUT_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) const MATERIALIZATION_STAMP_DDL: &str = "CREATE TABLE materialization_stamp (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -540,6 +540,7 @@ impl MaterializationChange {
             affected.insert(delta.page_id);
             match delta.after.as_ref() {
                 Some(PageState::Live {
+                    name,
                     path,
                     home_document_id,
                     kind,
@@ -550,12 +551,15 @@ impl MaterializationChange {
                             delta.page_id
                         ))
                     })?;
-                    if &page.path != path
+                    let expected_name_key = name.canonical_key();
+                    if page.name.as_str() != name.as_str()
+                        || page.name_key.as_str() != expected_name_key.as_str()
+                        || &page.path != path
                         || page.home_document_id != *home_document_id
                         || page.kind != *kind
                     {
                         return Err(MaterializationError::Contradiction(format!(
-                            "page {} replacement differs from accepted path/kind/home",
+                            "page {} replacement differs from accepted name/key/path/kind/home",
                             delta.page_id
                         )));
                     }
@@ -709,6 +713,64 @@ impl MaterializationChange {
             return Err(MaterializationError::Contradiction(format!(
                 "supplied deletions {deletions:?} differ from accepted deletions {required_deletions:?}"
             )));
+        }
+        Ok(())
+    }
+
+    /// Preserves page identity metadata when the accepted effect did not
+    /// authoritatively replace it. The existing row is only a previously
+    /// validated value to preserve; it does not become semantic authority.
+    fn validate_preserved_page_metadata(
+        &self,
+        transaction: &Transaction<'_>,
+        effect: &SemanticEffect,
+    ) -> Result<(), MaterializationError> {
+        let pages_with_live_delta = effect
+            .pages()
+            .iter()
+            .filter(|delta| matches!(delta.after.as_ref(), Some(PageState::Live { .. })))
+            .map(|delta| delta.page_id)
+            .collect::<BTreeSet<_>>();
+
+        for page in &self.replacements {
+            if pages_with_live_delta.contains(&page.page_id) {
+                continue;
+            }
+            let metadata_matches: Option<bool> = transaction
+                .query_row(
+                    "SELECT home_document_id = ?2
+                              AND name = ?3
+                              AND name_key = ?4
+                              AND path = ?5
+                              AND text_kind = ?6
+                       FROM pages
+                       WHERE page_id = ?1",
+                    params![
+                        page.page_id.as_uuid().as_bytes().as_slice(),
+                        page.home_document_id.as_uuid().as_bytes().as_slice(),
+                        &page.name,
+                        &page.name_key,
+                        page.path.as_str(),
+                        text_kind_to_sql(page.kind),
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match metadata_matches {
+                Some(true) => {}
+                Some(false) => {
+                    return Err(MaterializationError::Contradiction(format!(
+                        "page {} replacement changes metadata without an accepted live page delta",
+                        page.page_id
+                    )));
+                }
+                None => {
+                    return Err(MaterializationError::Incomplete(format!(
+                        "page {} replacement lacks prior validated metadata",
+                        page.page_id
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -1199,11 +1261,15 @@ pub(crate) fn recorded_digest(
 pub(crate) fn apply_change(
     transaction: &Transaction<'_>,
     change: &MaterializationChange,
+    semantic_effect: &[u8],
     sequence: u64,
     input_digest: ContentDigest,
     post_frontier_digest: ContentDigest,
 ) -> Result<(), MaterializationError> {
-    change.validate_shape()?;
+    let effect = SemanticEffect::decode(semantic_effect)
+        .map_err(|error| MaterializationError::InvalidInput(error.to_string()))?;
+    change.validate_against_effect(&effect)?;
+    change.validate_preserved_page_metadata(transaction, &effect)?;
     // A block can move between two replacement pages. Keep its inbound refs
     // through every cleanup pass, then remove every old owner before inserting
     // any new owner so page-ID sort order cannot collide on the block primary key.
@@ -2408,6 +2474,29 @@ mod tests {
         }
     }
 
+    fn semantic_effect_for_replacements(pages: &[MaterializedPageInput]) -> Vec<u8> {
+        SemanticEffect::new(
+            pages
+                .iter()
+                .map(|page| super::super::PageDelta {
+                    page_id: page.page_id,
+                    before: None,
+                    after: Some(PageState::Live {
+                        name: super::super::LogicalPageName::parse(&page.name).unwrap(),
+                        path: page.path.clone(),
+                        home_document_id: page.home_document_id,
+                        kind: page.kind,
+                    }),
+                })
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap()
+        .encode()
+        .unwrap()
+    }
+
     fn resource_limit(error: Result<MaterializationChange, MaterializationError>, resource: &str) {
         assert!(matches!(
             error,
@@ -2494,6 +2583,122 @@ mod tests {
     }
 
     #[test]
+    fn materialization_input_schema_refuses_prior_and_future_before_sqlite_write() {
+        assert_eq!(MATERIALIZATION_INPUT_SCHEMA_VERSION, 2);
+        let current = MaterializationChange::new(
+            batch_id(500_000),
+            vec![page_input(page_id(500_001), "current".into())],
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(current.schema_version, MATERIALIZATION_INPUT_SCHEMA_VERSION);
+
+        for schema_version in [
+            MATERIALIZATION_INPUT_SCHEMA_VERSION - 1,
+            MATERIALIZATION_INPUT_SCHEMA_VERSION + 1,
+        ] {
+            let mut rejected = current.clone();
+            rejected.schema_version = schema_version;
+            let encoded = postcard::to_allocvec(&rejected).unwrap();
+            let rejected: MaterializationChange = postcard::from_bytes(&encoded).unwrap();
+            assert!(matches!(
+                rejected.digest(),
+                Err(MaterializationError::InvalidInput(message))
+                    if message == format!("unknown materialization input schema {schema_version}")
+            ));
+
+            let mut connection = Connection::open_in_memory().unwrap();
+            let empty_frontier = ContentDigest::of(b"empty");
+            initialize_schema(&connection, empty_frontier).unwrap();
+            let transaction = connection.transaction().unwrap();
+            assert!(matches!(
+                apply_change(
+                    &transaction,
+                    &rejected,
+                    b"",
+                    1,
+                    ContentDigest::of(b"input"),
+                    ContentDigest::of(b"next"),
+                ),
+                Err(MaterializationError::InvalidInput(message))
+                    if message == format!("unknown materialization input schema {schema_version}")
+            ));
+            transaction.commit().unwrap();
+            let page_count: i64 = connection
+                .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
+                .unwrap();
+            let batch_count: i64 = connection
+                .query_row("SELECT COUNT(*) FROM materialization_batches", [], |row| row.get(0))
+                .unwrap();
+            let stamp_sequence: i64 = connection
+                .query_row(
+                    "SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!((page_count, batch_count, stamp_sequence), (0, 0, 0));
+        }
+    }
+
+    #[test]
+    fn non_page_effect_replacement_without_prior_metadata_fails_closed() {
+        let page_id = page_id(600_000);
+        let mut page = page_input(page_id, "preamble searchable".into());
+        page.preamble = Some("updated preamble".into());
+        let change = MaterializationChange::new(batch_id(600_001), vec![page], Vec::new()).unwrap();
+        let semantic_effect = SemanticEffect::new_with_page_preambles(
+            Vec::new(),
+            vec![super::super::PagePreambleDelta {
+                page_id,
+                home_document_id: document_id(10_000),
+                before: Some(super::super::PagePreambleState {
+                    page_id,
+                    home_document_id: document_id(10_000),
+                    preamble: None,
+                }),
+                after: Some(super::super::PagePreambleState {
+                    page_id,
+                    home_document_id: document_id(10_000),
+                    preamble: Some("updated preamble".into()),
+                }),
+            }],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap()
+        .encode()
+        .unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, ContentDigest::of(b"empty")).unwrap();
+        let transaction = connection.transaction().unwrap();
+        assert!(matches!(
+            apply_change(
+                &transaction,
+                &change,
+                &semantic_effect,
+                1,
+                change.digest().unwrap(),
+                ContentDigest::of(b"next"),
+            ),
+            Err(MaterializationError::Incomplete(message))
+                if message.contains("lacks prior validated metadata")
+        ));
+        transaction.commit().unwrap();
+        let state: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM pages),
+                     (SELECT COUNT(*) FROM materialization_batches),
+                     (SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, (0, 0, 0));
+    }
+
+    #[test]
     fn materialized_reads_reject_oversized_queries_and_aggregate_output() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_schema(&connection, ContentDigest::of(b"empty")).unwrap();
@@ -2520,10 +2725,12 @@ mod tests {
             .unwrap();
             let digest = change.digest().unwrap();
             final_frontier = ContentDigest::of(&[group as u8 + 1]);
+            let semantic_effect = semantic_effect_for_replacements(change.replacements());
             let transaction = connection.transaction().unwrap();
             apply_change(
                 &transaction,
                 &change,
+                &semantic_effect,
                 group as u64 + 1,
                 digest,
                 final_frontier,

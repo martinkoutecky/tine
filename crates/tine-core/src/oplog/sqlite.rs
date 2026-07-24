@@ -55,7 +55,7 @@ use super::{
 };
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 7;
+pub const SQLITE_SCHEMA_VERSION: u32 = 8;
 pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
@@ -1531,6 +1531,7 @@ impl SqliteFrontier {
             super::sqlite_materialization::apply_change(
                 &transaction,
                 &change,
+                &semantic_effect,
                 sequence,
                 input_digest,
                 post_digest,
@@ -1855,6 +1856,7 @@ impl SqliteFrontier {
             super::sqlite_materialization::apply_change(
                 &transaction,
                 materialization,
+                event.semantic_effect(),
                 event.acceptance_sequence,
                 input_digest,
                 ContentDigest::of(&post_frontier_root),
@@ -5177,6 +5179,7 @@ mod tests {
             SemanticOperation::CreatePage {
                 page_id: ids.page,
                 home_document_id: ids.document,
+                name: crate::oplog::LogicalPageName::parse("Root Fixture Page").unwrap(),
                 path: ManagedPath::parse(path).unwrap(),
                 kind: ManagedTextKind::Page,
             },
@@ -5834,6 +5837,7 @@ mod tests {
             SemanticOperation::CreatePage {
                 page_id: ids.page,
                 home_document_id: ids.document,
+                name: crate::oplog::LogicalPageName::parse("2026-07-24").unwrap(),
                 path: ManagedPath::parse(path).unwrap(),
                 kind: ManagedTextKind::Journal,
             },
@@ -5861,7 +5865,7 @@ mod tests {
             ids,
             path,
             ManagedTextKind::Journal,
-            "Deep Journal",
+            "2026-07-24",
             "TODO authoritative journal",
         );
         let incomplete =
@@ -5903,13 +5907,15 @@ mod tests {
         assert_eq!(read.acceptance_sequence(), 1);
         let page = read.page(ids.page).unwrap().unwrap();
         assert_eq!(page.kind, ManagedTextKind::Journal);
+        assert_eq!(page.name, "2026-07-24");
+        assert_eq!(page.name_key, "2026-07-24");
         assert_eq!(page.path.as_str(), path);
         assert_eq!(
-            read.pages_by_name("Deep Journal", 10).unwrap(),
+            read.pages_by_name("2026-07-24", 10).unwrap(),
             vec![page.clone()]
         );
         assert_eq!(
-            read.pages_by_name_key("deep journal", 10).unwrap(),
+            read.pages_by_name_key("2026-07-24", 10).unwrap(),
             vec![page.clone()]
         );
         assert_eq!(
@@ -5969,6 +5975,455 @@ mod tests {
     }
 
     #[test]
+    fn materialization_rejects_name_and_key_contradictions_before_writing() {
+        let ids = TestIds::new(1_750);
+        let dir = TestDir::new("materialization-page-name-authority");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let path = "nested/unrelated/filename.md";
+        let transaction = OperationTransaction::new(vec![
+            SemanticOperation::CreatePage {
+                page_id: ids.page,
+                home_document_id: ids.document,
+                name: crate::oplog::LogicalPageName::parse("CAFÉ").unwrap(),
+                path: ManagedPath::parse(path).unwrap(),
+                kind: ManagedTextKind::Page,
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: ids.block,
+                    home_document_id: ids.document,
+                },
+                page_id: ids.page,
+                parent: None,
+                order: "a".into(),
+                content: "authoritative page name".into(),
+            },
+        ])
+        .unwrap();
+        let prepared = engine
+            .prepare_bootstrap_transaction(author(1_751), &transaction)
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &prepared);
+        let event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, prepared.manifest().batch_id())
+                .unwrap();
+        let valid = rich_materialization(
+            &event,
+            ids,
+            path,
+            ManagedTextKind::Page,
+            "CAFÉ",
+            "authoritative page name",
+        );
+
+        for (name, name_key) in [
+            ("Deep Journal", "café"),
+            ("CAFÉ", "CAFÉ"),
+            ("CAFÉ", "cafe\u{301}"),
+        ] {
+            let mut replacements = valid.replacements().to_vec();
+            replacements[0].name = name.into();
+            replacements[0].name_key = name_key.into();
+            let contradiction =
+                MaterializationChange::new(event.batch_id(), replacements, Vec::new()).unwrap();
+            assert!(matches!(
+                database.apply_materialized_accepted(&event, &contradiction),
+                Err(ProjectionError::Materialization(_))
+            ));
+            assert_eq!(database.applied_batch_count().unwrap(), 0);
+            let rows: i64 = database
+                .connection
+                .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(rows, 0);
+            let materialized_batches: i64 = database
+                .connection
+                .query_row("SELECT COUNT(*) FROM materialization_batches", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(materialized_batches, 0);
+            let materialization_sequence: i64 = database
+                .connection
+                .query_row(
+                    "SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(materialization_sequence, 0);
+        }
+
+        database.apply_materialized_accepted(&event, &valid).unwrap();
+        let page = database.materialized_read().unwrap().page(ids.page).unwrap().unwrap();
+        assert_eq!(page.name, "CAFÉ");
+        assert_eq!(page.name_key, "café");
+        assert_eq!(page.path.as_str(), path);
+    }
+
+    #[test]
+    fn non_page_effect_materialization_preserves_prior_page_metadata_transactionally() {
+        for (index, case) in ["block", "membership", "preamble"].into_iter().enumerate() {
+            let ids = TestIds::new(1_760 + index as u128 * 100);
+            let dir = TestDir::new(&format!("materialization-prior-page-metadata-{case}"));
+            let (mut database, mut engine, store) = open_empty(&dir, ids);
+            let path = "pages/root-fixture.md";
+            let root_prepared = engine
+                .prepare_bootstrap_transaction(author(1_761 + index as u128 * 100), &root_transaction(ids, path, "initial"))
+                .unwrap();
+            publish_and_stage(&mut engine, &store, &root_prepared);
+            let root_event = AcceptedBatchEvent::from_accepted(
+                &engine,
+                &store,
+                root_prepared.manifest().batch_id(),
+            )
+            .unwrap();
+            let root_change = rich_materialization(
+                &root_event,
+                ids,
+                path,
+                ManagedTextKind::Page,
+                "Root Fixture Page",
+                "initial",
+            );
+            database
+                .apply_materialized_accepted(&root_event, &root_change)
+                .unwrap();
+            let prior_page = database
+                .materialized_read()
+                .unwrap()
+                .page(ids.page)
+                .unwrap()
+                .unwrap();
+
+            let update = match case {
+                "block" => OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: ids.block,
+                        home_document_id: ids.document,
+                    },
+                    content: "updated".into(),
+                }])
+                .unwrap(),
+                "membership" => OperationTransaction::new(vec![SemanticOperation::ReorderBlock {
+                    block_id: ids.block,
+                    page_id: ids.page,
+                    parent: None,
+                    order: "b".into(),
+                }])
+                .unwrap(),
+                "preamble" => OperationTransaction::new(vec![SemanticOperation::SetPagePreamble {
+                    page_id: ids.page,
+                    preamble: Some("updated preamble".into()),
+                }])
+                .unwrap(),
+                _ => unreachable!("fixed test cases"),
+            };
+            let update_prepared = engine
+                .prepare_bootstrap_transaction(author(1_762 + index as u128 * 100), &update)
+                .unwrap();
+            publish_and_stage(&mut engine, &store, &update_prepared);
+            let update_event = AcceptedBatchEvent::from_accepted(
+                &engine,
+                &store,
+                update_prepared.manifest().batch_id(),
+            )
+            .unwrap();
+            let effect = crate::oplog::SemanticEffect::decode(update_event.semantic_effect()).unwrap();
+            assert!(effect.pages().is_empty(), "{case} effect must not replace page metadata");
+            match case {
+                "block" => assert!(!effect.blocks().is_empty()),
+                "membership" => assert!(!effect.memberships().is_empty()),
+                "preamble" => assert!(!effect.page_preambles().is_empty()),
+                _ => unreachable!("fixed test cases"),
+            }
+
+            let mut exact_prior_metadata = rich_materialization(
+                &update_event,
+                ids,
+                path,
+                ManagedTextKind::Page,
+                "Root Fixture Page",
+                if case == "block" { "updated" } else { "initial" },
+            );
+            let mut exact_replacements = exact_prior_metadata.replacements().to_vec();
+            if case == "membership" {
+                exact_replacements[0].blocks[0].order = "b".into();
+            }
+            if case == "preamble" {
+                exact_replacements[0].preamble = Some("updated preamble".into());
+            }
+            exact_prior_metadata =
+                MaterializationChange::new(update_event.batch_id(), exact_replacements, Vec::new())
+                    .unwrap();
+
+            let corruptions: [(&str, fn(&mut MaterializedPageInput)); 5] = [
+                ("name", |page| page.name = "Contradictory Name".into()),
+                ("name key", |page| page.name_key = "contradictory-name".into()),
+                (
+                    "path",
+                    |page| page.path = ManagedPath::parse("pages/contradictory.md").unwrap(),
+                ),
+                (
+                    "home document",
+                    |page| page.home_document_id = DocumentId::from_uuid(uuid(9_999)),
+                ),
+                ("kind", |page| page.kind = ManagedTextKind::Journal),
+            ];
+            for (field, corrupt) in corruptions {
+                let mut replacements = exact_prior_metadata.replacements().to_vec();
+                corrupt(&mut replacements[0]);
+                let contradiction =
+                    MaterializationChange::new(update_event.batch_id(), replacements, Vec::new())
+                        .unwrap();
+                assert!(matches!(
+                    database.apply_materialized_accepted(&update_event, &contradiction),
+                    Err(ProjectionError::Materialization(_))
+                ), "{case} {field} contradiction must fail");
+                assert_eq!(database.applied_batch_count().unwrap(), 1, "{case} {field}");
+                let read = database.materialized_read().unwrap();
+                assert_eq!(read.page(ids.page).unwrap(), Some(prior_page.clone()), "{case} {field}");
+                let stamp: i64 = database
+                    .connection
+                    .query_row(
+                        "SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1",
+                        [],
+                        |row| row.get(0),
+                )
+                    .unwrap();
+                assert_eq!(stamp, 1, "{case} {field}");
+            }
+
+            assert_eq!(
+                database
+                    .apply_materialized_accepted(&update_event, &exact_prior_metadata)
+                    .unwrap(),
+                ApplyDisposition::Applied,
+                "{case} exact prior metadata must be accepted"
+            );
+            let database_path = database.path().to_path_buf();
+            drop(database);
+            let reopened = open_test_projection(
+                &database_path,
+                ids.claim(),
+                RebuildSource::new(&engine, &store).unwrap(),
+            )
+            .unwrap();
+            let page = reopened
+                .database
+                .materialized_read()
+                .unwrap()
+                .page(ids.page)
+                .unwrap()
+                .unwrap();
+            assert_eq!(page.name, prior_page.name, "{case}");
+            assert_eq!(page.name_key, prior_page.name_key, "{case}");
+            assert_eq!(page.path, prior_page.path, "{case}");
+            assert_eq!(page.home_document_id, prior_page.home_document_id, "{case}");
+            assert_eq!(page.kind, prior_page.kind, "{case}");
+        }
+    }
+
+    #[test]
+    fn rebuild_materialization_rejects_non_page_metadata_contradictions() {
+        let ids = TestIds::new(2_000);
+        let dir = TestDir::new("materialization-rebuild-prior-page-metadata");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let path = "pages/root-fixture.md";
+        let root_prepared = engine
+            .prepare_bootstrap_transaction(author(2_001), &root_transaction(ids, path, "initial"))
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &root_prepared);
+        let root_event = AcceptedBatchEvent::from_accepted(
+            &engine,
+            &store,
+            root_prepared.manifest().batch_id(),
+        )
+        .unwrap();
+        let root_change = rich_materialization(
+            &root_event,
+            ids,
+            path,
+            ManagedTextKind::Page,
+            "Root Fixture Page",
+            "initial",
+        );
+        database
+            .apply_materialized_accepted(&root_event, &root_change)
+            .unwrap();
+
+        let update_prepared = engine
+            .prepare_bootstrap_transaction(
+                author(2_002),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: ids.block,
+                        home_document_id: ids.document,
+                    },
+                    content: "updated".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &update_prepared);
+        let update_event = AcceptedBatchEvent::from_accepted(
+            &engine,
+            &store,
+            update_prepared.manifest().batch_id(),
+        )
+        .unwrap();
+        let valid = rich_materialization(
+            &update_event,
+            ids,
+            path,
+            ManagedTextKind::Page,
+            "Root Fixture Page",
+            "updated",
+        );
+        let mut contradictory_replacements = valid.replacements().to_vec();
+        contradictory_replacements[0].path = ManagedPath::parse("pages/contradictory.md").unwrap();
+        let contradictory = MaterializationChange::new(
+            update_event.batch_id(),
+            contradictory_replacements,
+            Vec::new(),
+        )
+        .unwrap();
+
+        database.apply_accepted(&update_event).unwrap();
+        assert!(matches!(
+            database.rebuild_materialization(vec![root_change.clone(), contradictory]),
+            Err(ProjectionError::Materialization(_))
+        ));
+        let persisted: (String, String, String, i64) = database
+            .connection
+            .query_row(
+                "SELECT name, name_key, path, text_kind FROM pages WHERE page_id = ?1",
+                params![ids.page.as_uuid().as_bytes().as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            persisted,
+            (
+                "Root Fixture Page".into(),
+                "root fixture page".into(),
+                path.into(),
+                0,
+            )
+        );
+        assert!(matches!(
+            database.materialized_read(),
+            Err(ProjectionError::Materialization(_))
+        ));
+
+        assert_eq!(
+            database.rebuild_materialization(vec![root_change, valid]).unwrap(),
+            2
+        );
+        let page = database
+            .materialized_read()
+            .unwrap()
+            .page(ids.page)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.path.as_str(), path);
+        assert_eq!(page.name, "Root Fixture Page");
+        assert_eq!(page.name_key, "root fixture page");
+    }
+
+    #[test]
+    fn schema_7_reopen_rebuilds_without_serving_stale_contradictory_page_rows() {
+        let ids = TestIds::new(1_775);
+        let dir = TestDir::new("schema-7-materialization-name-rebuild");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let path = "nested/unrelated/filename.md";
+        let transaction = OperationTransaction::new(vec![
+            SemanticOperation::CreatePage {
+                page_id: ids.page,
+                home_document_id: ids.document,
+                name: crate::oplog::LogicalPageName::parse("CAFÉ").unwrap(),
+                path: ManagedPath::parse(path).unwrap(),
+                kind: ManagedTextKind::Page,
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: ids.block,
+                    home_document_id: ids.document,
+                },
+                page_id: ids.page,
+                parent: None,
+                order: "a".into(),
+                content: "authoritative page name".into(),
+            },
+        ])
+        .unwrap();
+        let prepared = engine
+            .prepare_bootstrap_transaction(author(1_776), &transaction)
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &prepared);
+        let event =
+            AcceptedBatchEvent::from_accepted(&engine, &store, prepared.manifest().batch_id())
+                .unwrap();
+        let current = rich_materialization(
+            &event,
+            ids,
+            path,
+            ManagedTextKind::Page,
+            "CAFÉ",
+            "authoritative page name",
+        );
+        database
+            .apply_materialized_accepted(&event, &current)
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "UPDATE pages SET name = 'stale contradictory', name_key = 'stale contradictory'",
+                [],
+            )
+            .unwrap();
+        database
+            .connection
+            .pragma_update(None, "user_version", 7)
+            .unwrap();
+        let database_path = database.path().to_path_buf();
+        drop(database);
+
+        let mut reopened = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        let ProjectionRecovery::RebuiltPreservingEvidence { reason, .. } = &reopened.recovery
+        else {
+            panic!("schema-7 database was reopened without a disposable rebuild");
+        };
+        assert!(reason.contains("user_version 7 != 8"), "unexpected rebuild reason: {reason}");
+        let stale_rows: i64 = reopened
+            .database
+            .connection
+            .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stale_rows, 0);
+        assert!(matches!(
+            reopened.database.materialized_read(),
+            Err(ProjectionError::Materialization(_))
+        ));
+
+        assert_eq!(reopened.database.rebuild_materialization(vec![current]).unwrap(), 1);
+        let page = reopened
+            .database
+            .materialized_read()
+            .unwrap()
+            .page(ids.page)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.name, "CAFÉ");
+        assert_eq!(page.name_key, "café");
+    }
+
+    #[test]
     fn replacement_deletion_and_disposable_rebuild_remove_every_stale_row() {
         let ids = TestIds::new(1_800);
         let dir = TestDir::new("materialization-replace-delete-rebuild");
@@ -5983,6 +6438,7 @@ mod tests {
                     SemanticOperation::CreatePage {
                         page_id: ids.page,
                         home_document_id: ids.document,
+                        name: crate::oplog::LogicalPageName::parse("original").unwrap(),
                         path: ManagedPath::parse("nested/pages/original.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -5999,6 +6455,7 @@ mod tests {
                     SemanticOperation::CreatePage {
                         page_id: referrer_page,
                         home_document_id: referrer_document,
+                        name: crate::oplog::LogicalPageName::parse("referrer").unwrap(),
                         path: ManagedPath::parse("nested/pages/referrer.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -6025,14 +6482,14 @@ mod tests {
             ids,
             "nested/pages/original.md",
             ManagedTextKind::Page,
-            "Original",
+            "original",
             "obsolete",
         );
         let mut root_replacements = target_root_change.replacements().to_vec();
         root_replacements.push(MaterializedPageInput {
             page_id: referrer_page,
             home_document_id: referrer_document,
-            name: "Referrer".into(),
+            name: "referrer".into(),
             name_key: "referrer".into(),
             path: ManagedPath::parse("nested/pages/referrer.md").unwrap(),
             kind: ManagedTextKind::Page,
@@ -6103,7 +6560,7 @@ mod tests {
             ids,
             "nested/pages/deeper/renamed.md",
             ManagedTextKind::Page,
-            "Renamed",
+            "original",
             "fresh",
         );
         database
@@ -6283,18 +6740,21 @@ mod tests {
                         SemanticOperation::CreatePage {
                             page_id: source_page,
                             home_document_id: source_document,
+                            name: crate::oplog::LogicalPageName::parse("Move Source").unwrap(),
                             path: ManagedPath::parse(&source_path).unwrap(),
                             kind: ManagedTextKind::Page,
                         },
                         SemanticOperation::CreatePage {
                             page_id: destination_page,
                             home_document_id: destination_document,
+                            name: crate::oplog::LogicalPageName::parse("Move Destination").unwrap(),
                             path: ManagedPath::parse(&destination_path).unwrap(),
                             kind: ManagedTextKind::Page,
                         },
                         SemanticOperation::CreatePage {
                             page_id: referrer_page,
                             home_document_id: referrer_document,
+                            name: crate::oplog::LogicalPageName::parse("Move Referrer").unwrap(),
                             path: ManagedPath::parse(&referrer_path).unwrap(),
                             kind: ManagedTextKind::Page,
                         },
@@ -6336,7 +6796,7 @@ mod tests {
                         source_page,
                         source_document,
                         &source_path,
-                        "Source",
+                        "Move Source",
                         vec![block_replacement(
                             target_block,
                             source_document,
@@ -6348,14 +6808,14 @@ mod tests {
                         destination_page,
                         destination_document,
                         &destination_path,
-                        "Destination",
+                        "Move Destination",
                         Vec::new(),
                     ),
                     page_replacement(
                         referrer_page,
                         referrer_document,
                         &referrer_path,
-                        "Referrer",
+                        "Move Referrer",
                         vec![block_replacement(
                             referrer_block,
                             referrer_document,
@@ -6404,14 +6864,14 @@ mod tests {
                         source_page,
                         source_document,
                         &source_path,
-                        "Source",
+                        "Move Source",
                         Vec::new(),
                     ),
                     page_replacement(
                         destination_page,
                         destination_document,
                         &destination_path,
-                        "Destination",
+                        "Move Destination",
                         vec![block_replacement(
                             target_block,
                             source_document,
@@ -6664,6 +7124,7 @@ mod tests {
             operations.push(SemanticOperation::CreatePage {
                 page_id,
                 home_document_id: document_id,
+                name: crate::oplog::LogicalPageName::parse(format!("Wide {index}")).unwrap(),
                 path: ManagedPath::parse(format!("pages/wide-{index}.md")).unwrap(),
                 kind: ManagedTextKind::Page,
             });
@@ -6768,6 +7229,8 @@ mod tests {
             operations.push(SemanticOperation::CreatePage {
                 page_id,
                 home_document_id: document_id,
+                name: crate::oplog::LogicalPageName::parse(format!("Authenticated {index}"))
+                    .unwrap(),
                 path: ManagedPath::parse(format!("pages/auth-{index}.md")).unwrap(),
                 kind: ManagedTextKind::Page,
             });
@@ -7754,6 +8217,7 @@ mod tests {
         let mut operations = vec![SemanticOperation::CreatePage {
             page_id: ids.page,
             home_document_id: ids.document,
+            name: crate::oplog::LogicalPageName::parse("oversized").unwrap(),
             path: ManagedPath::parse("pages/oversized.md").unwrap(),
             kind: ManagedTextKind::Page,
         }];
@@ -8154,6 +8618,7 @@ mod tests {
             SemanticOperation::CreatePage {
                 page_id: ids.page,
                 home_document_id: ids.document,
+                name: crate::oplog::LogicalPageName::parse("SQLite").unwrap(),
                 path: ManagedPath::parse("pages/SQLite.md").unwrap(),
                 kind: ManagedTextKind::Page,
             },
@@ -8263,6 +8728,7 @@ mod tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: ids.page,
                     home_document_id: ids.document,
+                    name: crate::oplog::LogicalPageName::parse("SQLite").unwrap(),
                     path: ManagedPath::parse("shared/SQLite.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])

@@ -2595,6 +2595,10 @@ mod tests {
                 operations.push(SemanticOperation::CreatePage {
                     page_id,
                     home_document_id: home,
+                    name: crate::oplog::LogicalPageName::parse(format!(
+                        "Snapshot Page {index}"
+                    ))
+                    .unwrap(),
                     path: ManagedPath::parse((*path).to_owned()).unwrap(),
                     kind,
                 });

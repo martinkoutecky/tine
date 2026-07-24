@@ -146,6 +146,10 @@ impl AuthorityFixture {
             operations.push(SemanticOperation::CreatePage {
                 page_id,
                 home_document_id,
+                name: tine_core::oplog::LogicalPageName::parse(format!(
+                    "Imported Page {page_index}"
+                ))
+                .unwrap(),
                 path: ManagedPath::parse(page.path.clone()).unwrap(),
                 kind,
             });

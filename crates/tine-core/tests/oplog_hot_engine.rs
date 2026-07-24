@@ -188,18 +188,21 @@ fn genesis(ids: Ids, engine: &ShardedHotEngine) -> PreparedBatch {
                 SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                     path: path("pages/A.md"),
                     kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
+                    name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
                     path: path("pages/B.md"),
                     kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
+                    name: tine_core::oplog::LogicalPageName::parse("C").unwrap(),
                     path: path("pages/C.md"),
                     kind: ManagedTextKind::Page,
                 },
@@ -236,18 +239,21 @@ fn pages_only_genesis(ids: Ids, engine: &ShardedHotEngine, batch: u128) -> Prepa
                 SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                     path: path("pages/A.md"),
                     kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
+                    name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
                     path: path("pages/B.md"),
                     kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
+                    name: tine_core::oplog::LogicalPageName::parse("C").unwrap(),
                     path: path("pages/C.md"),
                     kind: ManagedTextKind::Page,
                 },
@@ -347,12 +353,14 @@ fn page_kind_is_durable_across_create_rename_mutation_delete_and_replay() {
     let create_operation = SemanticOperation::CreatePage {
         page_id: ids.page_a,
         home_document_id: ids.home_a,
+        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
         path: path("shared/A.md"),
         kind: ManagedTextKind::Journal,
     };
     let page_operation = SemanticOperation::CreatePage {
         page_id: ids.page_a,
         home_document_id: ids.home_a,
+        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
         path: path("shared/A.md"),
         kind: ManagedTextKind::Page,
     };
@@ -441,6 +449,10 @@ fn page_kind_is_durable_across_create_rename_mutation_delete_and_replay() {
         renamed_effect.pages()[0].after.as_ref().unwrap().kind(),
         ManagedTextKind::Journal
     );
+    assert_eq!(
+        renamed_effect.pages()[0].before.as_ref().unwrap().name(),
+        renamed_effect.pages()[0].after.as_ref().unwrap().name()
+    );
     assert!(matches!(
         engine.stage_ready(ready(&archive, &rename)).disposition,
         BatchDisposition::Accepted { .. }
@@ -469,6 +481,10 @@ fn page_kind_is_durable_across_create_rename_mutation_delete_and_replay() {
         kind_effect.pages()[0].before.as_ref().unwrap().path(),
         kind_effect.pages()[0].after.as_ref().unwrap().path()
     );
+    assert_eq!(
+        kind_effect.pages()[0].before.as_ref().unwrap().name(),
+        kind_effect.pages()[0].after.as_ref().unwrap().name()
+    );
     assert!(matches!(
         engine
             .stage_ready(ready(&archive, &change_kind))
@@ -494,8 +510,13 @@ fn page_kind_is_durable_across_create_rename_mutation_delete_and_replay() {
         ManagedTextKind::Page
     );
     assert_eq!(
+        delete_effect.pages()[0].before.as_ref().unwrap().name(),
+        delete_effect.pages()[0].after.as_ref().unwrap().name()
+    );
+    assert_eq!(
         delete_effect.pages()[0].after,
         Some(PageState::Tombstone {
+            name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
             home_document_id: ids.home_a,
             kind: ManagedTextKind::Page,
         })
@@ -559,6 +580,7 @@ fn page_kind_mismatch_between_effect_and_catalog_object_is_rejected() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
+                name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                 path: path("shared/A.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -578,6 +600,7 @@ fn page_kind_mismatch_between_effect_and_catalog_object_is_rejected() {
                         home_document_id,
                         ..
                     } => PageState::Live {
+                        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                         path: path.clone(),
                         home_document_id: *home_document_id,
                         kind: ManagedTextKind::Journal,
@@ -585,6 +608,7 @@ fn page_kind_mismatch_between_effect_and_catalog_object_is_rejected() {
                     PageState::Tombstone {
                         home_document_id, ..
                     } => PageState::Tombstone {
+                        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                         home_document_id: *home_document_id,
                         kind: ManagedTextKind::Journal,
                     },
@@ -640,6 +664,7 @@ fn page_kind_changing_deletion_matching_catalog_and_effect_is_rejected() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
+                name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                 path: path("shared/A.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -683,6 +708,7 @@ fn page_kind_changing_deletion_matching_catalog_and_effect_is_rejected() {
         .insert(
             &ids.page_a.to_string(),
             serde_json::to_string(&PageState::Tombstone {
+                name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                 home_document_id: ids.home_a,
                 kind: ManagedTextKind::Journal,
             })
@@ -702,6 +728,7 @@ fn page_kind_changing_deletion_matching_catalog_and_effect_is_rejected() {
         .unwrap();
     assert_eq!(delta.before.as_ref().unwrap().kind(), ManagedTextKind::Page);
     delta.after = Some(PageState::Tombstone {
+        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
         home_document_id: ids.home_a,
         kind: ManagedTextKind::Journal,
     });
@@ -1942,6 +1969,7 @@ fn author_cannot_alias_a_page_home_to_the_catalog() {
         &tx(vec![SemanticOperation::CreatePage {
             page_id: ids.page_a,
             home_document_id: ids.catalog,
+            name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
             path: path("pages/A.md"),
             kind: ManagedTextKind::Page,
         }]),
@@ -2345,6 +2373,7 @@ fn correction11_cold_aged_page_reopens_replays_and_authors_without_history_range
         operations.push(SemanticOperation::CreatePage {
             page_id,
             home_document_id,
+            name: tine_core::oplog::LogicalPageName::parse(format!("Aged {index:03}")).unwrap(),
             path: path(&format!("pages/Aged {index:03}.md")),
             kind: ManagedTextKind::Page,
         });
@@ -2692,6 +2721,10 @@ fn sparse_archive_open_cost_is_independent_of_unrelated_batch_count() {
                 &tx(vec![SemanticOperation::CreatePage {
                     page_id: PageId::from_uuid(uuid(60_000 + index as u128)),
                     home_document_id: DocumentId::from_uuid(uuid(70_000 + index as u128)),
+                    name: tine_core::oplog::LogicalPageName::parse(format!(
+                        "Unrelated {index:08}"
+                    ))
+                    .unwrap(),
                     path: path(&format!("pages/Unrelated {index:08}.md")),
                     kind: ManagedTextKind::Page,
                 }]),
@@ -2822,6 +2855,7 @@ fn conflicting_reuse_of_an_accepted_batch_id_rejects_without_rollback() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
+                name: tine_core::oplog::LogicalPageName::parse("Conflicting").unwrap(),
                 path: path("pages/Conflicting.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -2893,12 +2927,14 @@ fn concurrent_same_block_id_in_distinct_homes_blocks_canonically_in_every_order(
                 SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                     path: path("pages/A.md"),
                     kind: ManagedTextKind::Page,
                 },
                 SemanticOperation::CreatePage {
                     page_id: ids.page_b,
                     home_document_id: ids.home_b,
+                    name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
                     path: path("pages/B.md"),
                     kind: ManagedTextKind::Page,
                 },
@@ -3916,16 +3952,22 @@ fn subtree_reorder_and_rename_referrer_transaction_preserve_atomic_semantics() {
     let created = engine
         .prepare_bootstrap_transaction(
             author(104, 104),
-            &tx(vec![SemanticOperation::CreateBlock {
-                block: BlockLocation {
-                    block_id: child,
-                    home_document_id: ids.home_a,
+            &tx(vec![
+                SemanticOperation::SetPagePreamble {
+                    page_id: ids.page_a,
+                    preamble: Some("title:: [[A]]".into()),
                 },
-                page_id: ids.page_a,
-                parent: Some(ids.block_a),
-                order: "child".into(),
-                content: "ref [[A]]".into(),
-            }]),
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: child,
+                        home_document_id: ids.home_a,
+                    },
+                    page_id: ids.page_a,
+                    parent: Some(ids.block_a),
+                    order: "child".into(),
+                    content: "ref [[A]]".into(),
+                },
+            ]),
         )
         .unwrap();
     engine.stage_ready(ready(&archive, &created));
@@ -3956,16 +3998,23 @@ fn subtree_reorder_and_rename_referrer_transaction_preserve_atomic_semantics() {
     let renamed = engine
         .prepare_bootstrap_transaction(
             author(106, 106),
-            &tx(vec![SemanticOperation::RenamePageAndRewriteReferrers {
-                page_id: ids.page_a,
-                path: path("pages/A Renamed.md"),
-                referrers: vec![(
-                    BlockLocation {
+            &tx(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![tine_core::oplog::PageRename {
+                    page_id: ids.page_a,
+                    new_name: tine_core::oplog::LogicalPageName::parse("A Renamed").unwrap(),
+                    new_path: path("pages/A Renamed.md"),
+                }],
+                block_rewrites: vec![tine_core::oplog::BlockContentRewrite {
+                    block: BlockLocation {
                         block_id: child,
                         home_document_id: ids.home_a,
                     },
-                    "ref [[A Renamed]]".into(),
-                )],
+                    new_content: "ref [[A Renamed]]".into(),
+                }],
+                page_preamble_rewrites: vec![tine_core::oplog::PagePreambleRewrite {
+                    page_id: ids.page_a,
+                    new_preamble: Some("title:: [[A Renamed]]".into()),
+                }],
             }]),
         )
         .unwrap();
@@ -3983,10 +4032,362 @@ fn subtree_reorder_and_rename_referrer_transaction_preserve_atomic_semantics() {
     assert_eq!(child.parent, Some(ids.block_a));
     assert_eq!(child.order, "child-reordered");
     assert_eq!(child.content, "ref [[A Renamed]]");
+    let page_a = engine.materialize_page(ids.page_a).unwrap();
+    assert_eq!(page_a.path, path("pages/A Renamed.md"));
+    assert_eq!(page_a.preamble.as_deref(), Some("title:: [[A Renamed]]"));
+    let snapshot = engine.canonical_snapshot().unwrap();
     assert_eq!(
-        engine.materialize_page(ids.page_a).unwrap().path,
-        path("pages/A Renamed.md")
+        snapshot
+            .pages
+            .iter()
+            .find(|(page_id, _)| *page_id == ids.page_a)
+            .unwrap()
+            .1
+            .name()
+            .as_str(),
+        "A Renamed"
     );
+}
+
+#[test]
+fn namespace_rename_updates_sorted_pages_preambles_and_blocks_atomically() {
+    let ids = Ids::new();
+    let child_block = tine_core::oplog::BlockId::from_uuid(uuid(32));
+    let dir = TestDir::new("namespace-rename");
+    let archive = store(&dir, ids);
+    let mut engine = ids.engine();
+    let create = engine
+        .prepare_bootstrap_transaction(
+            author(43_000, 43_000),
+            &tx(vec![
+                SemanticOperation::CreatePage {
+                    page_id: ids.page_a,
+                    home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("Area").unwrap(),
+                    path: path("pages/area.md"),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::CreatePage {
+                    page_id: ids.page_b,
+                    home_document_id: ids.home_b,
+                    name: tine_core::oplog::LogicalPageName::parse("Area/Child").unwrap(),
+                    path: path("pages/area___child.md"),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::SetPagePreamble {
+                    page_id: ids.page_a,
+                    preamble: Some("alias:: [[Area/Child]]".into()),
+                },
+                SemanticOperation::SetPagePreamble {
+                    page_id: ids.page_b,
+                    preamble: Some("parent:: [[Area]]".into()),
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: ids.block_a,
+                        home_document_id: ids.home_a,
+                    },
+                    page_id: ids.page_a,
+                    parent: None,
+                    order: "a".into(),
+                    content: "see [[Area/Child]]".into(),
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: child_block,
+                        home_document_id: ids.home_b,
+                    },
+                    page_id: ids.page_b,
+                    parent: None,
+                    order: "a".into(),
+                    content: "back to [[Area]]".into(),
+                },
+            ]),
+        )
+        .unwrap();
+    assert!(matches!(
+        engine.stage_ready(ready(&archive, &create)).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+
+    let rename = engine
+        .prepare_bootstrap_transaction(
+            author(43_001, 43_001),
+            &tx(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![
+                    tine_core::oplog::PageRename {
+                        page_id: ids.page_a,
+                        new_name: tine_core::oplog::LogicalPageName::parse("Domain").unwrap(),
+                        new_path: path("pages/domain.md"),
+                    },
+                    tine_core::oplog::PageRename {
+                        page_id: ids.page_b,
+                        new_name: tine_core::oplog::LogicalPageName::parse("Domain/Child").unwrap(),
+                        new_path: path("pages/domain___child.md"),
+                    },
+                ],
+                block_rewrites: vec![
+                    tine_core::oplog::BlockContentRewrite {
+                        block: BlockLocation {
+                            block_id: ids.block_a,
+                            home_document_id: ids.home_a,
+                        },
+                        new_content: "see [[Domain/Child]]".into(),
+                    },
+                    tine_core::oplog::BlockContentRewrite {
+                        block: BlockLocation {
+                            block_id: child_block,
+                            home_document_id: ids.home_b,
+                        },
+                        new_content: "back to [[Domain]]".into(),
+                    },
+                ],
+                page_preamble_rewrites: vec![
+                    tine_core::oplog::PagePreambleRewrite {
+                        page_id: ids.page_a,
+                        new_preamble: Some("alias:: [[Domain/Child]]".into()),
+                    },
+                    tine_core::oplog::PagePreambleRewrite {
+                        page_id: ids.page_b,
+                        new_preamble: Some("parent:: [[Domain]]".into()),
+                    },
+                ],
+            }]),
+        )
+        .unwrap();
+    let effect = semantic_effect(&rename);
+    assert_eq!(effect.pages().len(), 2);
+    assert_eq!(effect.page_preambles().len(), 2);
+    assert_eq!(effect.blocks().len(), 2);
+    assert!(matches!(
+        engine.stage_ready(ready(&archive, &rename)).disposition,
+        BatchDisposition::Accepted { .. }
+    ));
+
+    let snapshot = engine.canonical_snapshot().unwrap();
+    assert_eq!(
+        snapshot
+            .pages
+            .iter()
+            .map(|(_, state)| (
+                state.name().as_str(),
+                state.path().unwrap().as_str(),
+                state.kind()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("Domain", "pages/domain.md", ManagedTextKind::Page),
+            (
+                "Domain/Child",
+                "pages/domain___child.md",
+                ManagedTextKind::Page
+            ),
+        ]
+    );
+    let root = engine.materialize_page(ids.page_a).unwrap();
+    let child = engine.materialize_page(ids.page_b).unwrap();
+    assert_eq!(root.preamble.as_deref(), Some("alias:: [[Domain/Child]]"));
+    assert_eq!(child.preamble.as_deref(), Some("parent:: [[Domain]]"));
+    assert_eq!(root.blocks[0].content, "see [[Domain/Child]]");
+    assert_eq!(child.blocks[0].content, "back to [[Domain]]");
+}
+
+#[test]
+fn rename_shape_state_and_wire_validation_fail_before_mutation() {
+    let ids = Ids::new();
+    let page_a = tine_core::oplog::PageRename {
+        page_id: ids.page_a,
+        new_name: tine_core::oplog::LogicalPageName::parse("Renamed A").unwrap(),
+        new_path: path("pages/Renamed A.md"),
+    };
+    let page_b = tine_core::oplog::PageRename {
+        page_id: ids.page_b,
+        new_name: tine_core::oplog::LogicalPageName::parse("Renamed B").unwrap(),
+        new_path: path("pages/Renamed B.md"),
+    };
+    let operation = SemanticOperation::RenamePagesAndRewriteReferrers {
+        page_changes: vec![page_a.clone()],
+        block_rewrites: Vec::new(),
+        page_preamble_rewrites: Vec::new(),
+    };
+    let transaction = tx(vec![operation.clone()]);
+    assert_eq!(
+        postcard::from_bytes::<OperationTransaction>(
+            &postcard::to_allocvec(&transaction).unwrap()
+        )
+        .unwrap(),
+        transaction
+    );
+
+    for invalid_pages in [
+        Vec::new(),
+        vec![page_a.clone(), page_a.clone()],
+        vec![page_b.clone(), page_a.clone()],
+    ] {
+        assert!(OperationTransaction::new(vec![
+            SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: invalid_pages,
+                block_rewrites: Vec::new(),
+                page_preamble_rewrites: Vec::new(),
+            }
+        ])
+        .is_err());
+    }
+    let block = BlockLocation {
+        block_id: ids.block_a,
+        home_document_id: ids.home_a,
+    };
+    assert!(OperationTransaction::new(vec![
+        SemanticOperation::RenamePagesAndRewriteReferrers {
+            page_changes: vec![page_a.clone()],
+            block_rewrites: vec![
+                tine_core::oplog::BlockContentRewrite {
+                    block,
+                    new_content: "one".into(),
+                },
+                tine_core::oplog::BlockContentRewrite {
+                    block,
+                    new_content: "two".into(),
+                },
+            ],
+            page_preamble_rewrites: Vec::new(),
+        }
+    ])
+    .is_err());
+    assert!(OperationTransaction::new(vec![
+        SemanticOperation::RenamePagesAndRewriteReferrers {
+            page_changes: vec![page_a.clone()],
+            block_rewrites: Vec::new(),
+            page_preamble_rewrites: vec![
+                tine_core::oplog::PagePreambleRewrite {
+                    page_id: ids.page_a,
+                    new_preamble: Some("one".into()),
+                },
+                tine_core::oplog::PagePreambleRewrite {
+                    page_id: ids.page_a,
+                    new_preamble: Some("two".into()),
+                },
+            ],
+        }
+    ])
+    .is_err());
+    assert!(OperationTransaction::new(vec![
+        SemanticOperation::RenamePagesAndRewriteReferrers {
+            page_changes: vec![page_a.clone()],
+            block_rewrites: vec![tine_core::oplog::BlockContentRewrite {
+                block,
+                new_content: "x".repeat(4 * 1024 * 1024 + 1),
+            }],
+            page_preamble_rewrites: Vec::new(),
+        }
+    ])
+    .is_err());
+
+    let mut malformed_name = serde_json::to_value(&operation).unwrap();
+    malformed_name["rename_pages_and_rewrite_referrers"]["page_changes"][0]["new_name"] =
+        serde_json::json!("\n");
+    assert!(serde_json::from_value::<SemanticOperation>(malformed_name).is_err());
+    let mut unknown_variant_field = serde_json::to_value(&operation).unwrap();
+    unknown_variant_field["rename_pages_and_rewrite_referrers"]["future_field"] =
+        serde_json::json!(true);
+    assert!(serde_json::from_value::<SemanticOperation>(unknown_variant_field).is_err());
+    let mut forbidden_home = serde_json::to_value(&operation).unwrap();
+    forbidden_home["rename_pages_and_rewrite_referrers"]["page_changes"][0]
+        ["home_document_id"] = serde_json::json!(ids.home_a);
+    assert!(serde_json::from_value::<SemanticOperation>(forbidden_home).is_err());
+    let mut forbidden_kind = serde_json::to_value(&operation).unwrap();
+    forbidden_kind["rename_pages_and_rewrite_referrers"]["page_changes"][0]["kind"] =
+        serde_json::json!("journal");
+    assert!(serde_json::from_value::<SemanticOperation>(forbidden_kind).is_err());
+
+    let dir = TestDir::new("rename-validation");
+    let archive = store(&dir, ids);
+    let (mut engine, _) = seed_engine(ids, &archive);
+    let before = engine.canonical_snapshot().unwrap();
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(
+            author(43_010, 43_010),
+            &tx(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![tine_core::oplog::PageRename {
+                    page_id: PageId::from_uuid(uuid(999)),
+                    new_name: tine_core::oplog::LogicalPageName::parse("Missing").unwrap(),
+                    new_path: path("pages/Missing.md"),
+                }],
+                block_rewrites: Vec::new(),
+                page_preamble_rewrites: Vec::new(),
+            }]),
+        ),
+        Err(EngineError::PageNotFound(_))
+    ));
+    assert_eq!(engine.canonical_snapshot().unwrap(), before);
+
+    let delete = engine
+        .prepare_bootstrap_transaction(
+            author(43_011, 43_011),
+            &tx(vec![SemanticOperation::DeletePage {
+                page_id: ids.page_a,
+            }]),
+        )
+        .unwrap();
+    engine.stage_ready(ready(&archive, &delete));
+    let after_delete = engine.canonical_snapshot().unwrap();
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(
+            author(43_012, 43_012),
+            &tx(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![page_a],
+                block_rewrites: Vec::new(),
+                page_preamble_rewrites: Vec::new(),
+            }]),
+        ),
+        Err(EngineError::PageDeleted(page_id)) if page_id == ids.page_a
+    ));
+    assert_eq!(engine.canonical_snapshot().unwrap(), after_delete);
+}
+
+#[test]
+fn external_page_state_reconciliation_is_origin_gated() {
+    let ids = Ids::new();
+    let dir = TestDir::new("external-page-state-origin");
+    let archive = store(&dir, ids);
+    let (engine, _) = seed_engine(ids, &archive);
+    let operation = SemanticOperation::ReconcileExternalPageState {
+        page_id: ids.page_a,
+        name: tine_core::oplog::LogicalPageName::parse("External Exact").unwrap(),
+        path: path("nested/storage/external.md"),
+        kind: ManagedTextKind::Journal,
+    };
+    let transaction = tx(vec![operation]);
+
+    assert!(matches!(
+        engine.prepare_bootstrap_transaction(author(43_020, 43_020), &transaction),
+        Err(EngineError::InvalidTransaction(_))
+    ));
+    assert!(matches!(
+        engine.draft_author_transaction(
+            author(43_021, 43_021),
+            BatchOrigin::LocalMutation,
+            &transaction,
+        ),
+        Err(EngineError::InvalidTransaction(_))
+    ));
+    assert!(matches!(
+        engine.draft_author_transaction(
+            author(43_022, 43_022),
+            BatchOrigin::ExternalReconciliation {
+                import_id: tine_core::oplog::ImportId::derive(
+                    ids.workspace,
+                    &[],
+                    &[],
+                    tine_core::oplog::DIFF_SCHEMA_VERSION,
+                )
+                .unwrap(),
+            },
+            &transaction,
+        ),
+        Err(EngineError::Batch(reason))
+            if reason.contains("requires exactly one external-import observation")
+    ));
 }
 
 #[test]
@@ -4629,6 +5030,7 @@ fn concurrent_portable_alias_creates_quarantine_with_order_independent_evidence(
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
+                name: tine_core::oplog::LogicalPageName::parse("Foo").unwrap(),
                 path: path("pages/Foo.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -4641,6 +5043,7 @@ fn concurrent_portable_alias_creates_quarantine_with_order_independent_evidence(
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_b,
                 home_document_id: ids.home_b,
+                name: tine_core::oplog::LogicalPageName::parse("foo").unwrap(),
                 path: path("pages/foo.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -4695,6 +5098,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_c,
                 home_document_id: ids.home_c,
+                name: tine_core::oplog::LogicalPageName::parse("Baseline").unwrap(),
                 path: path("pages/Baseline.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -4711,6 +5115,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_a,
                 home_document_id: ids.home_a,
+                name: tine_core::oplog::LogicalPageName::parse("Foo").unwrap(),
                 path: path("pages/Foo.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -4722,6 +5127,7 @@ fn durable_terminal_portable_latch_blocks_projection_state_after_restart() {
             &tx(vec![SemanticOperation::CreatePage {
                 page_id: ids.page_b,
                 home_document_id: ids.home_b,
+                name: tine_core::oplog::LogicalPageName::parse("foo").unwrap(),
                 path: path("pages/foo.md"),
                 kind: ManagedTextKind::Page,
             }]),
@@ -5498,6 +5904,7 @@ fn scenario_encoding_scheduler_and_production_engine_simulation_are_deterministi
     let create = tx(vec![SemanticOperation::CreatePage {
         page_id: ids.page_a,
         home_document_id: ids.home_a,
+        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
         path: path("pages/A.md"),
         kind: ManagedTextKind::Page,
     }]);
@@ -5582,12 +5989,14 @@ fn simulator_assert_converged_checks_terminal_history_not_only_evidence() {
                     SemanticOperation::CreatePage {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
+                        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                         path: path("pages/A.md"),
                         kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: ids.page_b,
                         home_document_id: ids.home_b,
+                        name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
                         path: path("pages/B.md"),
                         kind: ManagedTextKind::Page,
                     },
@@ -5688,12 +6097,14 @@ fn simulator_offered_oracle_compares_opposite_pre_latch_histories() {
                     SemanticOperation::CreatePage {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
+                        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                         path: path("pages/A.md"),
                         kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: ids.page_b,
                         home_document_id: ids.home_b,
+                        name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
                         path: path("pages/B.md"),
                         kind: ManagedTextKind::Page,
                     },
@@ -5803,6 +6214,7 @@ fn scenario_reducer_removes_irrelevant_authors_and_orphan_deliveries() {
                 transaction: tx(vec![SemanticOperation::CreatePage {
                     page_id: ids.page_c,
                     home_document_id: ids.home_c,
+                    name: tine_core::oplog::LogicalPageName::parse("Irrelevant").unwrap(),
                     path: path("pages/Irrelevant.md"),
                     kind: ManagedTextKind::Page,
                 }]),
@@ -5818,6 +6230,7 @@ fn scenario_reducer_removes_irrelevant_authors_and_orphan_deliveries() {
                 transaction: tx(vec![SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("Failure").unwrap(),
                     path: path("pages/Failure.md"),
                     kind: ManagedTextKind::Page,
                 }]),

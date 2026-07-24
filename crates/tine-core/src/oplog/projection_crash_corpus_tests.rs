@@ -313,6 +313,10 @@ fn assert_live_fixture_semantics(manifest: &CorpusManifest) {
         operations.push(SemanticOperation::CreatePage {
             page_id,
             home_document_id,
+            name: crate::oplog::LogicalPageName::parse(format!(
+                "Crash Corpus Page {index}"
+            ))
+            .unwrap(),
             path: path.clone(),
             kind: page.kind.managed_kind(),
         });
@@ -916,6 +920,7 @@ fn corpus_authorized_engine(
         SemanticOperation::CreatePage {
             page_id,
             home_document_id: home,
+            name: crate::oplog::LogicalPageName::parse("Crash Corpus Projection").unwrap(),
             path: ManagedPath::parse(relative_path).unwrap(),
             kind: ManagedTextKind::Page,
         },
@@ -1324,6 +1329,7 @@ fn build_forensic_accepted_engine(
         SemanticOperation::CreatePage {
             page_id: ids.page,
             home_document_id: ids.document,
+            name: crate::oplog::LogicalPageName::parse("rebuild").unwrap(),
             path: ManagedPath::parse("pages/salvage/rebuild.md").unwrap(),
             kind: ManagedTextKind::Page,
         },

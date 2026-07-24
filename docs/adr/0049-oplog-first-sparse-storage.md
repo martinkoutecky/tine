@@ -81,8 +81,11 @@ controls, and case-insensitive device stems before the first dot, including
 
 The production logical documents are:
 
-1. A small catalog shard containing the sole live page state and `PageId -> path`
-   register, plus versioned catalog/reference metadata that truly has graph scope.
+1. A small catalog shard containing explicit catalog-page-state schema v2 and the
+   sole authoritative `PageId -> {exact logical name, exact path, immutable home
+   shard, semantic kind}` register. Tombstones retain the exact logical name, home
+   shard, and kind. Versioned catalog/reference metadata is added here only when it
+   truly has graph scope.
 2. One stable home page shard minted with each page. Blocks created during import or
    normal editing are assigned a home shard once. That shard co-locates the block's
    mergeable content/attributes and its sole live owner register
@@ -105,6 +108,39 @@ selects either a page or `Tombstone`; delete/edit retains the merged text as
 recoverable evidence but a tombstoned winner is not materialized. Page rename and
 delete use the analogous catalog page-state register. Every cross-document action is
 one `OperationBatch`; no receiver exposes only part of it.
+
+### Logical page-name and textual-reference authority
+
+`LogicalPageName` retains the exact validated UTF-8 spelling supplied by the
+authoring boundary; a filename, directory, `ManagedPath`, SQLite row, or caller-
+computed key is never page-name authority. Create/bootstrap operations carry the
+name explicitly. Path-only edits and kind edits preserve it, and deletion copies it
+to the tombstone. External reconciliation may explicitly replace exact name, path,
+and kind only in an `ExternalReconciliation` batch; local authorship and bootstrap
+cannot use that bypass.
+
+Page-name key v1 is exactly
+`NFC(strip_one_trailing_slash(strip_one_leading_slash(UnicodeLowercase(trim(name)))))`.
+It uses Rust 1.96.0 Unicode lowercase, not default case folding, and
+`unicode-normalization` 0.1.25/Unicode 17.0.0 NFC, never NFKC. Only one slash at
+each boundary is removed. NUL, CR, LF, an empty canonical key, and either raw or
+canonical values above 4 MiB are rejected before mutation.
+
+Local ordinary and namespace rename use one atomic
+`RenamePagesAndRewriteReferrers` operation. Its page changes are canonical sorted
+unique `{PageId, exact new LogicalPageName, explicit new ManagedPath}` records; its
+block-content and page-preamble rewrites are separately named, canonical sorted,
+unique records. The operation preserves home shard and kind and applies all page,
+preamble, and block changes in one transaction. Namespace membership follows
+authoritative name components at `/` boundaries, never directory layout.
+
+Page references remain canonical textual name targets: each occurrence ultimately
+retains exact spelling and its computed page-name key rather than requiring a live
+`PageId`. This is necessary for phantom pages, aliases, case/NFC variants, deletion
+and later name reuse, and OG-compatible textual semantics. The authenticated
+page-name ownership and reverse-reference indexes that prove rename completeness
+are later pre-activation packets; until those proofs exist, activation remains
+impossible. SQLite remains disposable and gains no authority from this correction.
 
 ### Frontier, batch, and object set
 
@@ -133,17 +169,48 @@ construction. `CrdtPeerId` remains an opaque engine-neutral interchange identity
 populated from the current Loro peer identity without making Loro's type part of
 this API. Application IDs remain separate from CRDT peer/operation IDs.
 
-This is an incompatible disconnected candidate-format correction.
-`manifest_encoding_version` is 4 and `operation_schema_version` is 5.
-`receipt_schema_version` is 5 and the device-local projection receipt schema is 4.
-The internal CRDT update payload is 6, compact batch status is 3, block-claim records
-are 2, Logseq claim records are 1, portable-path key/index records are 1, and engine
-scratch is 3. Canonical manifested projection intents are schema 2 and annotated
-bases remain schema 1; the authenticated device-local projection-work index/work
-row is schema 2. Endpoint-scoped durable engine-history records are schema 4 and
-their accepted head/root envelope is schema 2. The causal, document-state, and scratch-page
-formats retain their explicitly versioned experimental schemas. None of these bytes
-are activated for graph startup, v1 reinterpretation, or production writes.
+This is an incompatible disconnected candidate-format correction. Current source
+versions are:
+
+| Persistent format | Version |
+| --- | ---: |
+| Oplog protocol namespace | 2 |
+| Manifest encoding | 4 |
+| Operation schema | 7 |
+| Object envelope | 2 |
+| Managed entity set | 2 |
+| Semantic effect | 5 |
+| Catalog page state | 2 |
+| Page-name key | 1 |
+| CRDT update payload | 7 |
+| Receipt / projection receipt | 5 / 4 |
+| Projection policy | 1 |
+| Portable-path key / record | 1 / 2 |
+| Compact batch status / accepted evidence / accepted-frontier root | 3 / 4 / 3 |
+| Block-claim record / index | 2 / 1 |
+| Logseq claim record | 1 |
+| Engine-history record / durable root / index | 7 / 5 / 1 |
+| Engine scratch / scratch page | 8 / 1 |
+| Manifested projection intent / annotated base | 2 / 1 |
+| Projection work row / index | 3 / 5 |
+| Projection-store claim | 5 |
+| Materialization input | 2 |
+| SQLite schema | 8 |
+| External-import observation | 1 |
+| Reconciliation diff and `ImportId` | 2 |
+| Simulator scenario / failure capsule | 3 / 2 |
+| Loro store / export / node | 1 / 1 / 1 |
+| Causal index / document state / external document state | 1 / 1 / 1 |
+| Projection checkpoint | 1 |
+
+Materialization input and SQLite advance to versions 2 and 8 so page-name
+materialization becomes oplog-authoritative without reinterpreting earlier inputs
+or reusable databases. External-import observation and reconciliation diff/`ImportId`
+bytes deliberately retain versions 1 and 2. Generic checkpoint and Loro-node schemas
+likewise remain unchanged. New page-name ownership, reference-semantics, and
+reverse-index formats start at v1 when their owning packets land. None of these bytes
+are activated for graph startup, old experimental-v2 reinterpretation, or production
+writes; unsupported old bytes require upgrade and fail closed.
 
 Each semantic `OperationBatch` has exactly one manifest. The manifest contains all
 compatibility versions, workspace and lineage/genesis hash, batch/author/device/

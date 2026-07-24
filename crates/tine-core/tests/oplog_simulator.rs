@@ -131,7 +131,8 @@ fn create_page_batch(
     peer: u64,
     page: PageId,
     home: DocumentId,
-    name: &str,
+    logical_name: &str,
+    page_path: &str,
 ) -> WireBatch {
     wire_batch(
         ids,
@@ -140,7 +141,8 @@ fn create_page_batch(
         tx(vec![SemanticOperation::CreatePage {
             page_id: page,
             home_document_id: home,
-            path: path(name),
+            name: tine_core::oplog::LogicalPageName::parse(logical_name).unwrap(),
+            path: path(page_path),
             kind: ManagedTextKind::Page,
         }]),
     )
@@ -188,7 +190,7 @@ fn deliver_all(
 #[test]
 fn raw_ingress_order_tamper_restart_and_external_oracles_are_store_backed() {
     let ids = Ids::new();
-    let batch = create_page_batch(ids, 100, 100, ids.page_a, ids.home_a, "pages/A.md");
+    let batch = create_page_batch(ids, 100, 100, ids.page_a, ids.home_a, "A", "pages/A.md");
     let mut actions = vec![
         event(
             1,
@@ -314,7 +316,7 @@ fn raw_ingress_order_tamper_restart_and_external_oracles_are_store_backed() {
 #[test]
 fn independent_replicas_converge_after_object_first_duplicate_reordered_delivery() {
     let ids = Ids::new();
-    let batch = create_page_batch(ids, 110, 110, ids.page_a, ids.home_a, "pages/A.md");
+    let batch = create_page_batch(ids, 110, 110, ids.page_a, ids.home_a, "A", "pages/A.md");
     let mut actions = Vec::new();
     let mut next = 1;
     deliver_all(&mut actions, &mut next, "alpha", &batch);
@@ -389,8 +391,8 @@ fn independent_replicas_converge_after_object_first_duplicate_reordered_delivery
 #[test]
 fn transfer_provider_copy_drop_and_wrong_object_substitution_leave_no_effect_before_recovery() {
     let ids = Ids::new();
-    let first = create_page_batch(ids, 120, 120, ids.page_a, ids.home_a, "pages/A.md");
-    let second = create_page_batch(ids, 121, 121, ids.page_b, ids.home_b, "pages/B.md");
+    let first = create_page_batch(ids, 120, 120, ids.page_a, ids.home_a, "A", "pages/A.md");
+    let second = create_page_batch(ids, 121, 121, ids.page_b, ids.home_b, "B", "pages/B.md");
     let object_len = first.objects[0].bytes_b64.0.len();
     let mut actions = vec![
         event(
@@ -510,7 +512,7 @@ fn transfer_provider_copy_drop_and_wrong_object_substitution_leave_no_effect_bef
 #[test]
 fn reducer_preserves_the_first_exact_invariant_signature() {
     let ids = Ids::new();
-    let batch = create_page_batch(ids, 130, 130, ids.page_a, ids.home_a, "pages/A.md");
+    let batch = create_page_batch(ids, 130, 130, ids.page_a, ids.home_a, "A", "pages/A.md");
     let mut actions = Vec::new();
     let mut next = 1;
     deliver_all(&mut actions, &mut next, "alpha", &batch);
@@ -574,7 +576,7 @@ fn reducer_preserves_the_first_exact_invariant_signature() {
 #[test]
 fn delayed_parent_and_lineage_refusal_replay_from_the_receiver_store() {
     let ids = Ids::new();
-    let root = create_page_batch(ids, 135, 135, ids.page_a, ids.home_a, "pages/A.md");
+    let root = create_page_batch(ids, 135, 135, ids.page_a, ids.home_a, "A", "pages/A.md");
     let foreign = wire_batch_with_lineage(
         ids,
         LineageDigest::of(b"foreign independent genesis"),
@@ -583,6 +585,7 @@ fn delayed_parent_and_lineage_refusal_replay_from_the_receiver_store() {
         tx(vec![SemanticOperation::CreatePage {
             page_id: ids.page_b,
             home_document_id: ids.home_b,
+            name: tine_core::oplog::LogicalPageName::parse("Foreign").unwrap(),
             path: path("pages/Foreign.md"),
             kind: ManagedTextKind::Page,
         }]),
@@ -661,6 +664,7 @@ fn delayed_parent_and_lineage_refusal_replay_from_the_receiver_store() {
                 transaction: tx(vec![SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                     path: path("pages/A.md"),
                     kind: ManagedTextKind::Page,
                 }]),
@@ -714,6 +718,7 @@ fn same_page_concurrent_text_converges_after_raw_whole_batch_exchange() {
                     SemanticOperation::CreatePage {
                         page_id: ids.page_a,
                         home_document_id: ids.home_a,
+                        name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                         path: path("pages/A.md"),
                         kind: ManagedTextKind::Page,
                     },
@@ -804,18 +809,21 @@ fn same_page_concurrent_text_and_moved_away_move_delete_converge_in_both_orders(
         SemanticOperation::CreatePage {
             page_id: ids.page_a,
             home_document_id: ids.home_a,
+            name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
             path: path("pages/A.md"),
             kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreatePage {
             page_id: ids.page_b,
             home_document_id: ids.home_b,
+            name: tine_core::oplog::LogicalPageName::parse("B").unwrap(),
             path: path("pages/B.md"),
             kind: ManagedTextKind::Page,
         },
         SemanticOperation::CreatePage {
             page_id: ids.page_c,
             home_document_id: ids.home_c,
+            name: tine_core::oplog::LogicalPageName::parse("C").unwrap(),
             path: path("pages/C.md"),
             kind: ManagedTextKind::Page,
         },
@@ -960,7 +968,7 @@ fn same_page_concurrent_text_and_moved_away_move_delete_converge_in_both_orders(
 #[test]
 fn corpus_keeps_same_page_cross_page_and_moved_away_family_seeds_visible() {
     let ids = Ids::new();
-    let root = create_page_batch(ids, 140, 140, ids.page_a, ids.home_a, "pages/A.md");
+    let root = create_page_batch(ids, 140, 140, ids.page_a, ids.home_a, "A", "pages/A.md");
     let devices = vec![device("alpha", 1), device("beta", 2), device("gamma", 3)];
     let legacy = Scenario::new(
         "moved-away-move-delete-both-orders-owner-and-tombstone-winners",
@@ -977,6 +985,7 @@ fn corpus_keeps_same_page_cross_page_and_moved_away_family_seeds_visible() {
                 transaction: tx(vec![SemanticOperation::CreatePage {
                     page_id: ids.page_a,
                     home_document_id: ids.home_a,
+                    name: tine_core::oplog::LogicalPageName::parse("A").unwrap(),
                     path: path("pages/A.md"),
                     kind: ManagedTextKind::Page,
                 }]),
@@ -1000,7 +1009,7 @@ fn corpus_keeps_same_page_cross_page_and_moved_away_family_seeds_visible() {
 }
 
 #[test]
-fn fixture_seed_corpus_is_canonical_v2_json() {
+fn fixture_seed_corpus_is_canonical_v3_json() {
     let fixtures = [
         include_str!("fixtures/oplog-simulator/object-before-manifest.scenario.json"),
         include_str!("fixtures/oplog-simulator/manifest-before-objects-and-missing.scenario.json"),

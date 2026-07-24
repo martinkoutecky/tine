@@ -27,13 +27,13 @@ use super::{
     AnnotatedProjectionBase, BatchCausalDot, BatchId, BatchInspection, BatchOrigin, BlockDelta,
     BlockId, BlockOwner, BlockState, CausalPeerId, ContentDigest, CrdtPeerCounter, CrdtPeerId,
     DeviceId, DocumentCausalDigest, DocumentDependencies, DocumentId, FrontierV2, LineageDigest,
-    LogseqUuid, ManagedPath, ManagedTextKind, ManifestObjectRef, ManifestProjectionPrecondition,
-    ManifestProjectionTarget, ManifestedProjectionIntent, MembershipClaim, MembershipDelta,
-    ObjectKind, ObjectStore, OperationBatch, OperationObject, PageDelta, PageId, PageState,
-    PortablePathKeyDigest, PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant,
-    ProjectionCompletion, ProjectionEndpointId, ProjectionIntent, ProjectionReceiptStore,
-    ProjectionWork, ProjectionWorkIndex, ProjectionWorkTarget, SemanticEffect,
-    SemanticEffectDigest, SemanticError, SessionId, ValidatedBatch, WorkspaceId,
+    LogicalPageName, LogseqUuid, ManagedPath, ManagedTextKind, ManifestObjectRef,
+    ManifestProjectionPrecondition, ManifestProjectionTarget, ManifestedProjectionIntent,
+    MembershipClaim, MembershipDelta, ObjectKind, ObjectStore, OperationBatch, OperationObject,
+    PageDelta, PageId, PageState, PortablePathKeyDigest, PreparedBatch, ProjectionClaimEvidence,
+    ProjectionClaimParticipant, ProjectionCompletion, ProjectionEndpointId, ProjectionIntent,
+    ProjectionReceiptStore, ProjectionWork, ProjectionWorkIndex, ProjectionWorkTarget,
+    SemanticEffect, SemanticEffectDigest, SemanticError, SessionId, ValidatedBatch, WorkspaceId,
 };
 use crate::Graph;
 
@@ -51,8 +51,8 @@ const TOMBSTONE: &str = "tombstone";
 const MAX_TRANSACTION_OPERATIONS: usize = 100_000;
 const MAX_DOCUMENT_ENTRIES: usize = 1_000_000;
 const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
-const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 6;
-const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 6;
+const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 7;
+const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 7;
 const BLOCK_CLAIM_RECORD_SCHEMA_VERSION: u32 = 2;
 const LOGSEQ_CLAIM_RECORD_SCHEMA_VERSION: u32 = 1;
 const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 4;
@@ -491,11 +491,34 @@ impl Default for FatalEvidenceHandle {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
+pub struct PageRename {
+    pub page_id: PageId,
+    pub new_name: LogicalPageName,
+    pub new_path: ManagedPath,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockContentRewrite {
+    pub block: BlockLocation,
+    pub new_content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PagePreambleRewrite {
+    pub page_id: PageId,
+    pub new_preamble: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum SemanticOperation {
     CreatePage {
         page_id: PageId,
         home_document_id: DocumentId,
+        name: LogicalPageName,
         path: ManagedPath,
         kind: ManagedTextKind,
     },
@@ -546,15 +569,21 @@ pub enum SemanticOperation {
     DeletePage {
         page_id: PageId,
     },
-    RenamePageAndRewriteReferrers {
+    RenamePagesAndRewriteReferrers {
+        page_changes: Vec<PageRename>,
+        block_rewrites: Vec<BlockContentRewrite>,
+        page_preamble_rewrites: Vec<PagePreambleRewrite>,
+    },
+    ReconcileExternalPageState {
         page_id: PageId,
+        name: LogicalPageName,
         path: ManagedPath,
-        referrers: Vec<(BlockLocation, String)>,
+        kind: ManagedTextKind,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum LogseqIdentityTrigger {
     BlockReference { referrer: BlockLocation },
     BlockEmbed { referrer: BlockLocation },
@@ -574,7 +603,7 @@ impl LogseqIdentityTrigger {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum LogseqIdentityMutation {
     AssignExternal {
         logseq_uuid: LogseqUuid,
@@ -603,8 +632,106 @@ impl OperationTransaction {
                 operations.len()
             )));
         }
+        for operation in &operations {
+            validate_operation_shape(operation)?;
+        }
         Ok(Self { operations })
     }
+}
+
+fn validate_operation_shape(operation: &SemanticOperation) -> Result<(), EngineError> {
+    let SemanticOperation::RenamePagesAndRewriteReferrers {
+        page_changes,
+        block_rewrites,
+        page_preamble_rewrites,
+    } = operation
+    else {
+        return Ok(());
+    };
+    if page_changes.is_empty() {
+        return Err(EngineError::InvalidTransaction(
+            "rename requires at least one page change".into(),
+        ));
+    }
+    let entries = page_changes
+        .len()
+        .checked_add(block_rewrites.len())
+        .and_then(|value| value.checked_add(page_preamble_rewrites.len()))
+        .ok_or_else(|| EngineError::InvalidTransaction("rename entry count overflow".into()))?;
+    if entries > super::semantic::MAX_SEMANTIC_DELTA_ENTRIES {
+        return Err(EngineError::InvalidTransaction(format!(
+            "rename entry count {entries} exceeds the semantic bound"
+        )));
+    }
+    if !page_changes
+        .windows(2)
+        .all(|pair| pair[0].page_id < pair[1].page_id)
+    {
+        return Err(EngineError::InvalidTransaction(
+            "rename page changes must be sorted and unique by page ID".into(),
+        ));
+    }
+    if !block_rewrites.windows(2).all(|pair| {
+        (pair[0].block.home_document_id, pair[0].block.block_id)
+            < (pair[1].block.home_document_id, pair[1].block.block_id)
+    }) {
+        return Err(EngineError::InvalidTransaction(
+            "rename block rewrites must be sorted and unique by home and block ID".into(),
+        ));
+    }
+    if !page_preamble_rewrites
+        .windows(2)
+        .all(|pair| pair[0].page_id < pair[1].page_id)
+    {
+        return Err(EngineError::InvalidTransaction(
+            "rename page-preamble rewrites must be sorted and unique by page ID".into(),
+        ));
+    }
+    let mut bytes = 0_usize;
+    for change in page_changes {
+        bytes = bytes
+            .checked_add(change.new_name.as_str().len())
+            .and_then(|value| value.checked_add(change.new_path.as_str().len()))
+            .ok_or_else(|| EngineError::InvalidTransaction("rename byte count overflow".into()))?;
+    }
+    for rewrite in block_rewrites {
+        if rewrite.new_content.len() > super::semantic::MAX_BLOCK_CONTENT_BYTES {
+            return Err(EngineError::InvalidTransaction(
+                "rename block rewrite exceeds the semantic bound".into(),
+            ));
+        }
+        bytes = bytes.checked_add(rewrite.new_content.len()).ok_or_else(|| {
+            EngineError::InvalidTransaction("rename byte count overflow".into())
+        })?;
+    }
+    for rewrite in page_preamble_rewrites {
+        if rewrite
+            .new_preamble
+            .as_ref()
+            .is_some_and(|value| value.len() > super::semantic::MAX_PAGE_PREAMBLE_BYTES)
+        {
+            return Err(EngineError::InvalidTransaction(
+                "rename page-preamble rewrite exceeds the semantic bound".into(),
+            ));
+        }
+        bytes = bytes
+            .checked_add(rewrite.new_preamble.as_ref().map_or(0, String::len))
+            .ok_or_else(|| EngineError::InvalidTransaction("rename byte count overflow".into()))?;
+    }
+    if bytes > super::semantic::MAX_SEMANTIC_EFFECT_BYTES {
+        return Err(EngineError::InvalidTransaction(format!(
+            "rename payload size {bytes} exceeds the semantic bound"
+        )));
+    }
+    let encoded_bytes = postcard::to_allocvec(operation)
+        .map_err(|error| EngineError::InvalidTransaction(error.to_string()))?
+        .len();
+    if encoded_bytes > super::semantic::MAX_SEMANTIC_EFFECT_BYTES {
+        return Err(EngineError::InvalidTransaction(format!(
+            "encoded rename size {encoded_bytes} exceeds the semantic bound"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_logseq_identity_mutation_shape(
@@ -1474,6 +1601,7 @@ pub struct MaterializationStats {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaterializedPage {
     pub page_id: PageId,
+    pub name: LogicalPageName,
     pub path: ManagedPath,
     pub preamble: Option<String>,
     pub blocks: Vec<MaterializedBlock>,
@@ -3701,6 +3829,19 @@ impl ShardedHotEngine {
                 "CRDT peer identity zero is reserved".into(),
             ));
         }
+        for operation in &transaction.operations {
+            validate_operation_shape(operation)?;
+            if matches!(
+                operation,
+                SemanticOperation::ReconcileExternalPageState { .. }
+            ) && !matches!(origin, BatchOrigin::ExternalReconciliation { .. })
+            {
+                return Err(EngineError::InvalidTransaction(
+                    "external page-state reconciliation requires ExternalReconciliation origin"
+                        .into(),
+                ));
+            }
+        }
         validate_logseq_identity_mutation_shape(transaction)?;
 
         let mut created_block_ids = BTreeSet::new();
@@ -3730,6 +3871,7 @@ impl ShardedHotEngine {
                 &mut before_vectors,
                 &mut before_snapshots,
                 author.crdt_peer_id,
+                origin,
                 operation,
             )?;
         }
@@ -5234,6 +5376,7 @@ impl ShardedHotEngine {
         let page_state = validate_catalog_page(self.catalog_document_id, catalog, page_id)?
             .ok_or(EngineError::PageNotFound(page_id))?;
         let PageState::Live {
+            name,
             path,
             home_document_id: page_document_id,
             ..
@@ -5291,6 +5434,7 @@ impl ShardedHotEngine {
         });
         Ok(MaterializedPage {
             page_id,
+            name,
             path,
             preamble,
             blocks,
@@ -5334,6 +5478,7 @@ impl ShardedHotEngine {
         let page_state = validate_catalog_page(self.catalog_document_id, catalog, page_id)?
             .ok_or(EngineError::PageNotFound(page_id))?;
         let PageState::Live {
+            name,
             path,
             home_document_id: page_document_id,
             ..
@@ -5486,6 +5631,7 @@ impl ShardedHotEngine {
         let reads_after = self.archive_read_stats();
         let page = MaterializedPage {
             page_id,
+            name,
             path,
             preamble,
             blocks,
@@ -8688,12 +8834,14 @@ impl ShardedHotEngine {
         before_vectors: &mut BTreeMap<DocumentId, VersionVector>,
         before_snapshots: &mut BTreeMap<DocumentId, SemanticDocumentSnapshot>,
         peer_id: CrdtPeerId,
+        origin: BatchOrigin,
         operation: &SemanticOperation,
     ) -> Result<(), EngineError> {
         match operation {
             SemanticOperation::CreatePage {
                 page_id,
                 home_document_id,
+                name,
                 path,
                 kind,
             } => {
@@ -8716,6 +8864,7 @@ impl ShardedHotEngine {
                     catalog,
                     *page_id,
                     &PageState::Live {
+                        name: name.clone(),
                         path: path.clone(),
                         home_document_id: *home_document_id,
                         kind: *kind,
@@ -8752,6 +8901,7 @@ impl ShardedHotEngine {
                     catalog,
                     *page_id,
                     &PageState::Live {
+                        name: state.name().clone(),
                         path: path.clone(),
                         home_document_id: state.home_document_id(),
                         kind: state.kind(),
@@ -8776,6 +8926,7 @@ impl ShardedHotEngine {
                     catalog,
                     *page_id,
                     &PageState::Live {
+                        name: state.name().clone(),
                         path: state.path().expect("required live page has a path").clone(),
                         home_document_id: state.home_document_id(),
                         kind: *kind,
@@ -8832,6 +8983,7 @@ impl ShardedHotEngine {
                     catalog,
                     *page_id,
                     &PageState::Tombstone {
+                        name: state.name().clone(),
                         home_document_id: state.home_document_id(),
                         kind: state.kind(),
                     },
@@ -9097,33 +9249,165 @@ impl ShardedHotEngine {
                         .map_err(loro_error)?;
                 }
             }
-            SemanticOperation::RenamePageAndRewriteReferrers {
-                page_id,
-                path,
-                referrers,
+            SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes,
+                block_rewrites,
+                page_preamble_rewrites,
             } => {
-                self.apply_author_operation(
-                    working,
-                    before_vectors,
-                    before_snapshots,
-                    peer_id,
-                    &SemanticOperation::EditPagePath {
-                        page_id: *page_id,
-                        path: path.clone(),
-                    },
-                )?;
-                for (block, content) in referrers {
+                validate_operation_shape(operation)?;
+                let mut prior_pages = BTreeMap::new();
+                {
+                    let catalog = self.ensure_working_document(
+                        working,
+                        before_vectors,
+                        before_snapshots,
+                        self.catalog_document_id,
+                        peer_id,
+                    )?;
+                    for change in page_changes {
+                        let state = require_live_page(catalog, change.page_id)?;
+                        if state.name() == &change.new_name
+                            && state.path() == Some(&change.new_path)
+                        {
+                            return Err(EngineError::InvalidTransaction(format!(
+                                "rename page change for {} is unchanged",
+                                change.page_id
+                            )));
+                        }
+                        prior_pages.insert(change.page_id, state);
+                    }
+                    for rewrite in page_preamble_rewrites {
+                        require_live_page(catalog, rewrite.page_id)?;
+                    }
+                }
+                for rewrite in page_preamble_rewrites {
+                    let page_document_id =
+                        self.page_home_from_working(working, rewrite.page_id)?;
+                    let shard = self.ensure_working_document(
+                        working,
+                        before_vectors,
+                        before_snapshots,
+                        page_document_id,
+                        peer_id,
+                    )?;
+                    read_page_preamble(page_document_id, shard)?;
+                }
+                for rewrite in block_rewrites {
+                    let owner = {
+                        let shard = self.ensure_working_document(
+                            working,
+                            before_vectors,
+                            before_snapshots,
+                            rewrite.block.home_document_id,
+                            peer_id,
+                        )?;
+                        let state = read_block_state(
+                            rewrite.block.home_document_id,
+                            shard,
+                            rewrite.block.block_id,
+                        )?
+                        .ok_or(EngineError::BlockNotFound(rewrite.block.block_id))?;
+                        state.owner
+                    };
+                    let BlockOwner::Page(owner_page_id) = owner else {
+                        return Err(EngineError::InvalidTransaction(format!(
+                            "rename rewrite targets tombstoned block {}",
+                            rewrite.block.block_id
+                        )));
+                    };
+                    let catalog = working
+                        .get(&self.catalog_document_id)
+                        .expect("rename validation loaded catalog")
+                        .document();
+                    require_live_page(catalog, owner_page_id)?;
+                }
+
+                {
+                    let catalog = working
+                        .get(&self.catalog_document_id)
+                        .expect("rename validation loaded catalog")
+                        .document();
+                    for change in page_changes {
+                        let prior = prior_pages
+                            .get(&change.page_id)
+                            .expect("validated rename page state exists");
+                        insert_page_state(
+                            catalog,
+                            change.page_id,
+                            &PageState::Live {
+                                name: change.new_name.clone(),
+                                path: change.new_path.clone(),
+                                home_document_id: prior.home_document_id(),
+                                kind: prior.kind(),
+                            },
+                        )?;
+                    }
+                }
+                for rewrite in page_preamble_rewrites {
                     self.apply_author_operation(
                         working,
                         before_vectors,
                         before_snapshots,
                         peer_id,
-                        &SemanticOperation::EditBlockContent {
-                            block: *block,
-                            content: content.clone(),
+                        origin,
+                        &SemanticOperation::SetPagePreamble {
+                            page_id: rewrite.page_id,
+                            preamble: rewrite.new_preamble.clone(),
                         },
                     )?;
                 }
+                for rewrite in block_rewrites {
+                    self.apply_author_operation(
+                        working,
+                        before_vectors,
+                        before_snapshots,
+                        peer_id,
+                        origin,
+                        &SemanticOperation::EditBlockContent {
+                            block: rewrite.block,
+                            content: rewrite.new_content.clone(),
+                        },
+                    )?;
+                }
+            }
+            SemanticOperation::ReconcileExternalPageState {
+                page_id,
+                name,
+                path,
+                kind,
+            } => {
+                if !matches!(origin, BatchOrigin::ExternalReconciliation { .. }) {
+                    return Err(EngineError::InvalidTransaction(
+                        "external page-state reconciliation requires ExternalReconciliation origin"
+                            .into(),
+                    ));
+                }
+                let catalog = self.ensure_working_document(
+                    working,
+                    before_vectors,
+                    before_snapshots,
+                    self.catalog_document_id,
+                    peer_id,
+                )?;
+                let state = require_live_page(catalog, *page_id)?;
+                if state.name() == name
+                    && state.path() == Some(path)
+                    && state.kind() == *kind
+                {
+                    return Err(EngineError::InvalidTransaction(format!(
+                        "external page-state reconciliation for {page_id} is unchanged"
+                    )));
+                }
+                insert_page_state(
+                    catalog,
+                    *page_id,
+                    &PageState::Live {
+                        name: name.clone(),
+                        path: path.clone(),
+                        home_document_id: state.home_document_id(),
+                        kind: *kind,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -9136,11 +9420,19 @@ impl ShardedHotEngine {
     ) -> Result<(), EngineError> {
         let mut content_blocks = BTreeSet::new();
         for operation in &transaction.operations {
-            if let SemanticOperation::RenamePageAndRewriteReferrers { referrers, .. } = operation {
+            if let SemanticOperation::RenamePagesAndRewriteReferrers {
+                block_rewrites, ..
+            } = operation
+            {
                 content_blocks.extend(
-                    referrers
+                    block_rewrites
                         .iter()
-                        .map(|(block, _)| (block.home_document_id, block.block_id)),
+                        .map(|rewrite| {
+                            (
+                                rewrite.block.home_document_id,
+                                rewrite.block.block_id,
+                            )
+                        }),
                 );
             } else if let Some(block) = operation_content_block(operation) {
                 content_blocks.insert((block.home_document_id, block.block_id));
@@ -12373,6 +12665,7 @@ mod validation_tests {
 
     fn live_page(home_document_id: DocumentId, path: &str) -> PageState {
         PageState::Live {
+            name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
             path: ManagedPath::parse(path).unwrap(),
             home_document_id,
             kind: ManagedTextKind::Page,
@@ -12393,6 +12686,89 @@ mod validation_tests {
             logseq_identity_origin: None,
             content: content.into(),
         }
+    }
+
+    #[test]
+    fn external_reconciliation_changes_exact_page_state_only_for_external_origin() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(68_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(68_001));
+        let page_id = PageId::from_uuid(Uuid::from_u128(68_002));
+        let home_document_id = DocumentId::from_uuid(Uuid::from_u128(68_003));
+        let mut engine =
+            ShardedHotEngine::new(workspace, LineageDigest::of(b"external-page-state"), catalog);
+        let create = engine
+            .prepare_bootstrap_transaction(
+                test_author(68_004, 68_004),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id,
+                    home_document_id,
+                    name: LogicalPageName::parse("Original Exact").unwrap(),
+                    path: ManagedPath::parse("pages/original.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.stage_ready(ValidatedBatch::new(create)).disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+        let operation = OperationTransaction::new(vec![
+            SemanticOperation::ReconcileExternalPageState {
+                page_id,
+                name: LogicalPageName::parse("Journal Display Title").unwrap(),
+                path: ManagedPath::parse("deep/journals/2026_07_24.org").unwrap(),
+                kind: ManagedTextKind::Journal,
+            },
+        ])
+        .unwrap();
+
+        let mut working = BTreeMap::new();
+        let mut before_vectors = BTreeMap::new();
+        let mut before_snapshots = BTreeMap::new();
+        assert!(matches!(
+            engine.apply_author_operation(
+                &mut working,
+                &mut before_vectors,
+                &mut before_snapshots,
+                CrdtPeerId::from_u64(68_005),
+                BatchOrigin::LocalMutation,
+                &operation.operations[0],
+            ),
+            Err(EngineError::InvalidTransaction(_))
+        ));
+        assert!(working.is_empty());
+        engine
+            .apply_author_operation(
+                &mut working,
+                &mut before_vectors,
+                &mut before_snapshots,
+                CrdtPeerId::from_u64(68_006),
+                BatchOrigin::ExternalReconciliation {
+                    import_id: super::super::ImportId::derive(
+                        workspace,
+                        &[],
+                        &[],
+                        super::super::DIFF_SCHEMA_VERSION,
+                    )
+                    .unwrap(),
+                },
+                &operation.operations[0],
+            )
+            .unwrap();
+        let after = read_page_state(
+            working.get(&catalog).unwrap().document(),
+            page_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(after.name().as_str(), "Journal Display Title");
+        assert_eq!(
+            after.path().unwrap().as_str(),
+            "deep/journals/2026_07_24.org"
+        );
+        assert_eq!(after.kind(), ManagedTextKind::Journal);
+        assert_eq!(after.home_document_id(), home_document_id);
     }
 
     #[test]
@@ -12603,6 +12979,7 @@ mod validation_tests {
                 vec![(
                     page_id,
                     PageState::Tombstone {
+                        name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                         home_document_id: home_id,
                         kind: ManagedTextKind::Page,
                     },
@@ -13034,6 +13411,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page_a,
                     home_document_id: home_a,
+                    name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                     path: ManagedPath::parse("pages/A.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13047,6 +13425,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page_b,
                     home_document_id: home_b,
+                    name: crate::oplog::LogicalPageName::parse("B").unwrap(),
                     path: ManagedPath::parse("pages/B.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13107,6 +13486,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page,
                     home_document_id: home,
+                    name: crate::oplog::LogicalPageName::parse("Must Not Appear").unwrap(),
                     path: ManagedPath::parse("pages/Must Not Appear.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13120,6 +13500,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: PageId::from_uuid(Uuid::from_u128(116)),
                     home_document_id: DocumentId::from_uuid(Uuid::from_u128(117)),
+                    name: crate::oplog::LogicalPageName::parse("Foreign").unwrap(),
                     path: ManagedPath::parse("pages/Foreign.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13164,12 +13545,14 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id: page_a,
                         home_document_id: home_a,
+                        name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                         path: ManagedPath::parse("pages/A.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_b,
                         home_document_id: home_b,
+                        name: crate::oplog::LogicalPageName::parse("B").unwrap(),
                         path: ManagedPath::parse("pages/B.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -13259,6 +13642,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page,
                     home_document_id: home,
+                    name: crate::oplog::LogicalPageName::parse("Safe").unwrap(),
                     path: ManagedPath::parse("pages/Safe.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13271,6 +13655,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: PageId::from_uuid(Uuid::from_u128(146)),
                     home_document_id: DocumentId::from_uuid(Uuid::from_u128(147)),
+                    name: crate::oplog::LogicalPageName::parse("Never").unwrap(),
                     path: ManagedPath::parse("pages/Never.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13354,6 +13739,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page_a,
                     home_document_id: home_a,
+                    name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                     path: ManagedPath::parse("pages/A.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13366,6 +13752,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page_b,
                     home_document_id: home_b,
+                    name: crate::oplog::LogicalPageName::parse("B").unwrap(),
                     path: ManagedPath::parse("pages/B.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -13617,6 +14004,7 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id: old_page,
                         home_document_id: old_home,
+                        name: crate::oplog::LogicalPageName::parse("Existing").unwrap(),
                         path: ManagedPath::parse("pages/Existing.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -13803,6 +14191,7 @@ mod validation_tests {
             &catalog,
             page_id,
             &PageState::Live {
+                name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                 path: ManagedPath::parse("pages/A.md").unwrap(),
                 home_document_id: home_id,
                 kind: ManagedTextKind::Page,
@@ -13847,6 +14236,7 @@ mod validation_tests {
             &catalog_only,
             page_id,
             &PageState::Live {
+                name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                 path: ManagedPath::parse("pages/Catalog Only.md").unwrap(),
                 home_document_id: home_id,
                 kind: ManagedTextKind::Page,
@@ -13899,6 +14289,7 @@ mod validation_tests {
             &catalog,
             page_id,
             &PageState::Live {
+                name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                 path: ManagedPath::parse("pages/Missing Home.md").unwrap(),
                 home_document_id: home_id,
                 kind: ManagedTextKind::Page,
@@ -13943,6 +14334,7 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id,
                         home_document_id: home_id,
+                        name: crate::oplog::LogicalPageName::parse("Coherent").unwrap(),
                         path: ManagedPath::parse("pages/Coherent.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -13988,6 +14380,7 @@ mod validation_tests {
             &catalog,
             page_id,
             &PageState::Live {
+                name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                 path: ManagedPath::parse("pages/Aliased.md").unwrap(),
                 home_document_id: catalog_id,
                 kind: ManagedTextKind::Page,
@@ -14022,6 +14415,7 @@ mod validation_tests {
                 page_id,
                 before: None,
                 after: Some(PageState::Live {
+                    name: crate::oplog::LogicalPageName::parse("Fixture Page").unwrap(),
                     path: ManagedPath::parse("pages/Aliased.md").unwrap(),
                     home_document_id: catalog_id,
                     kind: ManagedTextKind::Page,
@@ -14069,6 +14463,7 @@ mod validation_tests {
                 &OperationTransaction::new(vec![SemanticOperation::CreatePage {
                     page_id: page_a,
                     home_document_id: home_id,
+                    name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                     path: ManagedPath::parse("pages/A.md").unwrap(),
                     kind: ManagedTextKind::Page,
                 }])
@@ -14135,6 +14530,7 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id,
                         home_document_id: home_id,
+                        name: crate::oplog::LogicalPageName::parse("Merge").unwrap(),
                         path: ManagedPath::parse("pages/Merge.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -14310,12 +14706,14 @@ mod validation_tests {
                         SemanticOperation::CreatePage {
                             page_id: page_a,
                             home_document_id: home_a,
+                            name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                             path: ManagedPath::parse("pages/A.md").unwrap(),
                             kind: ManagedTextKind::Page,
                         },
                         SemanticOperation::CreatePage {
                             page_id: page_b,
                             home_document_id: home_b,
+                            name: crate::oplog::LogicalPageName::parse("B").unwrap(),
                             path: ManagedPath::parse("pages/B.md").unwrap(),
                             kind: ManagedTextKind::Page,
                         },
@@ -14603,18 +15001,21 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id: page_a,
                         home_document_id: home_a,
+                        name: crate::oplog::LogicalPageName::parse("A").unwrap(),
                         path: ManagedPath::parse("pages/A.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_b,
                         home_document_id: home_b,
+                        name: crate::oplog::LogicalPageName::parse("B").unwrap(),
                         path: ManagedPath::parse("pages/B.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
                     SemanticOperation::CreatePage {
                         page_id: page_c,
                         home_document_id: home_c,
+                        name: crate::oplog::LogicalPageName::parse("C").unwrap(),
                         path: ManagedPath::parse("pages/C.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -14775,6 +15176,7 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id: page,
                         home_document_id: home,
+                        name: crate::oplog::LogicalPageName::parse("History").unwrap(),
                         path: ManagedPath::parse("pages/History.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -15063,6 +15465,7 @@ mod validation_tests {
                     SemanticOperation::CreatePage {
                         page_id: page_a,
                         home_document_id: home_a,
+                        name: crate::oplog::LogicalPageName::parse("Baseline").unwrap(),
                         path: ManagedPath::parse("pages/Baseline.md").unwrap(),
                         kind: ManagedTextKind::Page,
                     },
@@ -15103,6 +15506,7 @@ mod validation_tests {
             operations.push(SemanticOperation::CreatePage {
                 page_id,
                 home_document_id,
+                name: LogicalPageName::parse(format!("Rejected {offset}")).unwrap(),
                 path: ManagedPath::parse(format!("pages/Rejected {offset}.md")).unwrap(),
                 kind: ManagedTextKind::Page,
             });
@@ -15264,6 +15668,7 @@ mod replay_benchmark {
                 operations.push(SemanticOperation::CreatePage {
                     page_id,
                     home_document_id: home,
+                    name: LogicalPageName::parse(format!("Replay {page_index:08}")).unwrap(),
                     path: ManagedPath::parse(format!("pages/Replay {page_index:08}.md")).unwrap(),
                     kind: ManagedTextKind::Page,
                 });

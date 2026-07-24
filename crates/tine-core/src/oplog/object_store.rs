@@ -49,7 +49,7 @@ const ENGINE_HISTORY_ROOTS_DIR: &str = "roots";
 const ENGINE_HISTORY_CLAIM_FILE: &str = "engine-history.claim";
 const ENGINE_HISTORY_HEAD_FILE: &str = "engine-history.head";
 const ENGINE_HISTORY_ROOT_SUFFIX: &str = ".history-root";
-const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 4;
+const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 5;
 const MAX_ENGINE_HISTORY_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENGINE_HISTORY_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const ENGINE_HISTORY_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -3924,8 +3924,9 @@ mod history_index_tests {
         let control = archive_path
             .join(ENGINE_HISTORY_DIR)
             .join(endpoint.to_string());
+        let prior_version = ENGINE_HISTORY_ROOT_SCHEMA_VERSION - 1;
         let prior_claim = postcard::to_allocvec(&(
-            3_u32,
+            prior_version,
             workspace,
             endpoint,
             binding.endpoint.graph_resource_id,
@@ -3939,9 +3940,9 @@ mod history_index_tests {
             reopened.open_engine_history(binding),
             Err(StoreError::UpgradeRequired {
                 store: "engine history",
-                found: 3,
-                current: 4
-            })
+                found,
+                current
+            }) if found == prior_version && current == ENGINE_HISTORY_ROOT_SCHEMA_VERSION
         ));
         assert_eq!(snapshot(&archive_path), before);
         drop(history);

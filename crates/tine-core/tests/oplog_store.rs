@@ -640,7 +640,7 @@ fn unknown_versions_fields_digest_forms_and_canonical_order_fail_closed() {
     let current: Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(current["manifest_encoding_version"], json!(4));
     assert_eq!(current["protocol_version"], json!(2));
-    assert_eq!(current["operation_schema_version"], json!(6));
+    assert_eq!(current["operation_schema_version"], json!(7));
     assert_eq!(current["object_envelope_schema_version"], json!(2));
     assert_eq!(current["managed_entity_set_version"], json!(2));
 

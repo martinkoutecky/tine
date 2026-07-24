@@ -11,7 +11,7 @@ use super::{
 };
 
 pub const OPLOG_PROTOCOL_VERSION: u32 = 2;
-pub const OPERATION_SCHEMA_VERSION: u32 = 6;
+pub const OPERATION_SCHEMA_VERSION: u32 = 7;
 pub const OBJECT_ENVELOPE_SCHEMA_VERSION: u32 = 2;
 pub const MANIFEST_ENCODING_VERSION: u32 = 4;
 pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;

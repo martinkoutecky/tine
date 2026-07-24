@@ -40,11 +40,12 @@ pub use batch::{
 };
 pub use hot_engine::{
     AcceptedBatch, AcceptedBatchEvidence, AuthorBatch, AuthorTransactionDraft, BatchDisposition,
-    BlockLocation, CapabilityCapturedProjectionInput, CapabilityCapturedProjectionState,
-    CurrentPageAtPath, EngineError, EngineInstrumentation, EngineStatus, FatalEvidenceHandle,
-    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, LogseqIdentityMutation,
-    LogseqIdentityTrigger, LogseqUuidClaim, LogseqUuidResolution, MaterializationStats,
-    MaterializedBlock, MaterializedPage, OperationTransaction, PortablePathConflict,
+    BlockContentRewrite, BlockLocation, CapabilityCapturedProjectionInput,
+    CapabilityCapturedProjectionState, CurrentPageAtPath, EngineError, EngineInstrumentation,
+    EngineStatus, FatalEvidenceHandle, ImmutableHomeClaim, ImmutableHomeConflict,
+    ImmutableHomeEvidence, LogseqIdentityMutation, LogseqIdentityTrigger, LogseqUuidClaim,
+    LogseqUuidResolution, MaterializationStats, MaterializedBlock, MaterializedPage,
+    OperationTransaction, PagePreambleRewrite, PageRename, PortablePathConflict,
     PortablePathConflictParticipant, ProjectionEndpointBinding, ProjectionPageState,
     ProjectionRequirement, ProjectionRequirementState, ProjectionWriteAuthorization,
     SemanticOperation, ShardedHotEngine, StageOutcome, WorkspaceStatus,
@@ -102,10 +103,11 @@ pub use receipt::{
 };
 pub(crate) use receipt::managed_component_is_portable;
 pub use semantic::{
-    BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogseqIdentityOrigin, MembershipClaim,
-    MembershipDelta, PageDelta, PagePreambleDelta, PagePreambleState, PageState,
-    PolicyGeneratedAnchorReason, SemanticEffect, SemanticError, VisibleMembership,
-    SEMANTIC_EFFECT_SCHEMA_VERSION,
+    BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogicalPageName, LogicalPageNameError,
+    LogseqIdentityOrigin, MembershipClaim, MembershipDelta, PageDelta, PagePreambleDelta,
+    PagePreambleState, PageState, PolicyGeneratedAnchorReason, SemanticEffect, SemanticError,
+    VisibleMembership, CATALOG_PAGE_STATE_SCHEMA_VERSION, MAX_LOGICAL_PAGE_NAME_BYTES,
+    PAGE_NAME_KEY_VERSION, SEMANTIC_EFFECT_SCHEMA_VERSION,
 };
 pub use simulator::{
     DeterministicSimulator, FailureCapsule, FailureIdentity, MinimizedScenario, Scenario,

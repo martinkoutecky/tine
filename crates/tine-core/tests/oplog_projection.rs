@@ -180,6 +180,7 @@ fn page(path: &str, blocks: Vec<MaterializedBlock>) -> ProjectionPageState {
     ProjectionPageState {
         page: MaterializedPage {
             page_id: tine_core::oplog::PageId::from_uuid(uuid(500)),
+            name: tine_core::oplog::LogicalPageName::parse("Projection Page").unwrap(),
             path: ManagedPath::parse(path).unwrap(),
             preamble: None,
             blocks,
@@ -211,6 +212,7 @@ fn authorized_engine(
         SemanticOperation::CreatePage {
             page_id,
             home_document_id: home,
+            name: tine_core::oplog::LogicalPageName::parse("Projection Fixture").unwrap(),
             path: ManagedPath::parse(relative_path).unwrap(),
             kind: ManagedTextKind::Page,
         },
@@ -2683,6 +2685,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
                 SemanticOperation::CreatePage {
                     page_id: page_b,
                     home_document_id: home_b,
+                    name: tine_core::oplog::LogicalPageName::parse("Projection Alias").unwrap(),
                     path: path.clone(),
                     kind: ManagedTextKind::Page,
                 },

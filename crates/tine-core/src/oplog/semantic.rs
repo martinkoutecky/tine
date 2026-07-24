@@ -1,31 +1,281 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use super::{BlockId, DocumentId, LogseqUuid, ManagedPath, ManagedTextKind, PageId};
 
-pub const SEMANTIC_EFFECT_SCHEMA_VERSION: u32 = 4;
+pub const SEMANTIC_EFFECT_SCHEMA_VERSION: u32 = 5;
+pub const CATALOG_PAGE_STATE_SCHEMA_VERSION: u32 = 2;
 pub const MAX_SEMANTIC_EFFECT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SEMANTIC_DELTA_ENTRIES: usize = 100_000;
 pub const MAX_BLOCK_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PAGE_PREAMBLE_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_LOGICAL_PAGE_NAME_BYTES: usize = 4 * 1024 * 1024;
+pub const PAGE_NAME_KEY_VERSION: u32 = 1;
 const SEMANTIC_MAGIC: &[u8; 8] = b"TINESEM1";
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct LogicalPageName(String);
+
+impl LogicalPageName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, LogicalPageNameError> {
+        let value = value.into();
+        validate_logical_page_name(&value)?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn canonical_key(&self) -> String {
+        canonical_page_name_key(&self.0)
+    }
+}
+
+impl AsRef<str> for LogicalPageName {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for LogicalPageName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for LogicalPageName {
+    type Err = LogicalPageNameError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+impl TryFrom<String> for LogicalPageName {
+    type Error = LogicalPageNameError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for LogicalPageName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LogicalPageNameError {
+    ForbiddenControl,
+    EmptyCanonicalKey,
+    RawTooLarge(usize),
+    CanonicalTooLarge(usize),
+}
+
+impl fmt::Display for LogicalPageNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ForbiddenControl => {
+                formatter.write_str("logical page name contains NUL, CR, or LF")
+            }
+            Self::EmptyCanonicalKey => {
+                formatter.write_str("logical page name has an empty canonical key")
+            }
+            Self::RawTooLarge(bytes) => {
+                write!(formatter, "logical page name is too large: {bytes} raw bytes")
+            }
+            Self::CanonicalTooLarge(bytes) => write!(
+                formatter,
+                "logical page name canonical key is too large: {bytes} bytes"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LogicalPageNameError {}
+
+fn validate_logical_page_name(value: &str) -> Result<(), LogicalPageNameError> {
+    if value.len() > MAX_LOGICAL_PAGE_NAME_BYTES {
+        return Err(LogicalPageNameError::RawTooLarge(value.len()));
+    }
+    if value
+        .chars()
+        .any(|character| matches!(character, '\0' | '\r' | '\n'))
+    {
+        return Err(LogicalPageNameError::ForbiddenControl);
+    }
+    let canonical = canonical_page_name_key(value);
+    if canonical.is_empty() {
+        return Err(LogicalPageNameError::EmptyCanonicalKey);
+    }
+    if canonical.len() > MAX_LOGICAL_PAGE_NAME_BYTES {
+        return Err(LogicalPageNameError::CanonicalTooLarge(canonical.len()));
+    }
+    Ok(())
+}
+
+fn canonical_page_name_key(value: &str) -> String {
+    let lowered: String = value
+        .trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect();
+    let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
+    without_leading
+        .strip_suffix('/')
+        .unwrap_or(without_leading)
+        .nfc()
+        .collect()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PageState {
     Live {
+        name: LogicalPageName,
         path: ManagedPath,
         home_document_id: DocumentId,
         kind: ManagedTextKind,
     },
     Tombstone {
+        name: LogicalPageName,
         home_document_id: DocumentId,
         kind: ManagedTextKind,
     },
 }
 
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct PageStateWireRef<'a> {
+    catalog_page_state_schema_version: u32,
+    state: PageStateDataRef<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PageStateDataRef<'a> {
+    Live {
+        name: &'a LogicalPageName,
+        path: &'a ManagedPath,
+        home_document_id: DocumentId,
+        kind: ManagedTextKind,
+    },
+    Tombstone {
+        name: &'a LogicalPageName,
+        home_document_id: DocumentId,
+        kind: ManagedTextKind,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PageStateWire {
+    catalog_page_state_schema_version: u32,
+    state: PageStateData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum PageStateData {
+    Live {
+        name: LogicalPageName,
+        path: ManagedPath,
+        home_document_id: DocumentId,
+        kind: ManagedTextKind,
+    },
+    Tombstone {
+        name: LogicalPageName,
+        home_document_id: DocumentId,
+        kind: ManagedTextKind,
+    },
+}
+
+impl Serialize for PageState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let state = match self {
+            Self::Live {
+                name,
+                path,
+                home_document_id,
+                kind,
+            } => PageStateDataRef::Live {
+                name,
+                path,
+                home_document_id: *home_document_id,
+                kind: *kind,
+            },
+            Self::Tombstone {
+                name,
+                home_document_id,
+                kind,
+            } => PageStateDataRef::Tombstone {
+                name,
+                home_document_id: *home_document_id,
+                kind: *kind,
+            },
+        };
+        PageStateWireRef {
+            catalog_page_state_schema_version: CATALOG_PAGE_STATE_SCHEMA_VERSION,
+            state,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PageState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = PageStateWire::deserialize(deserializer)?;
+        if wire.catalog_page_state_schema_version != CATALOG_PAGE_STATE_SCHEMA_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "unknown catalog page-state schema {}; expected {}",
+                wire.catalog_page_state_schema_version, CATALOG_PAGE_STATE_SCHEMA_VERSION
+            )));
+        }
+        Ok(match wire.state {
+            PageStateData::Live {
+                name,
+                path,
+                home_document_id,
+                kind,
+            } => Self::Live {
+                name,
+                path,
+                home_document_id,
+                kind,
+            },
+            PageStateData::Tombstone {
+                name,
+                home_document_id,
+                kind,
+            } => Self::Tombstone {
+                name,
+                home_document_id,
+                kind,
+            },
+        })
+    }
+}
+
 impl PageState {
+    pub const fn name(&self) -> &LogicalPageName {
+        match self {
+            Self::Live { name, .. } | Self::Tombstone { name, .. } => name,
+        }
+    }
+
     pub const fn home_document_id(&self) -> DocumentId {
         match self {
             Self::Live {
@@ -68,7 +318,7 @@ pub enum PolicyGeneratedAnchorReason {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum LogseqIdentityOrigin {
     ExternalImported,
     PolicyGenerated { reason: PolicyGeneratedAnchorReason },
@@ -170,12 +420,16 @@ impl PageDelta {
             | (Some(PageState::Live { .. }), Some(PageState::Live { .. })) => Ok(()),
             (
                 Some(PageState::Live {
-                    kind: before_kind, ..
+                    name: before_name,
+                    kind: before_kind,
+                    ..
                 }),
                 Some(PageState::Tombstone {
-                    kind: after_kind, ..
+                    name: after_name,
+                    kind: after_kind,
+                    ..
                 }),
-            ) if before_kind == after_kind => Ok(()),
+            ) if before_name == after_name && before_kind == after_kind => Ok(()),
             _ => Err(SemanticError::InvalidPageLifecycle),
         }
     }
@@ -515,6 +769,7 @@ mod tests {
 
     fn live_at(path: &str, home_document_id: DocumentId, kind: ManagedTextKind) -> PageState {
         PageState::Live {
+            name: LogicalPageName::parse("Shared Name").unwrap(),
             path: ManagedPath::parse(path).unwrap(),
             home_document_id,
             kind,
@@ -523,6 +778,7 @@ mod tests {
 
     fn tombstone(home_document_id: DocumentId, kind: ManagedTextKind) -> PageState {
         PageState::Tombstone {
+            name: LogicalPageName::parse("Shared Name").unwrap(),
             home_document_id,
             kind,
         }
@@ -545,6 +801,119 @@ mod tests {
 
     fn effect(kind: ManagedTextKind) -> SemanticEffect {
         page_effect(None, Some(live(kind))).unwrap()
+    }
+
+    #[test]
+    fn logical_page_name_key_v1_golden_vectors_preserve_exact_spelling() {
+        let vectors = [
+            ("  /Foo/  ", "foo"),
+            ("  //Foo//  ", "/foo/"),
+            ("İ", "i\u{307}"),
+            ("Cafe\u{301}", "café"),
+            ("CAFÉ", "café"),
+            ("Ａ", "ａ"),
+            ("ﬀ", "ﬀ"),
+        ];
+
+        for (exact, expected_key) in vectors {
+            let name = LogicalPageName::parse(exact).unwrap();
+            assert_eq!(name.as_str(), exact);
+            assert_eq!(name.canonical_key(), expected_key);
+            assert_eq!(serde_json::to_string(&name).unwrap(), serde_json::to_string(exact).unwrap());
+        }
+        assert_eq!(PAGE_NAME_KEY_VERSION, 1);
+    }
+
+    #[test]
+    fn logical_page_name_rejects_controls_empty_and_raw_or_canonical_overbounds() {
+        for invalid in ["", " \t ", "/", " / ", "\0name", "name\r", "name\n"] {
+            assert!(
+                LogicalPageName::parse(invalid).is_err(),
+                "{invalid:?} must fail"
+            );
+            assert!(
+                serde_json::from_value::<LogicalPageName>(serde_json::json!(invalid)).is_err(),
+                "{invalid:?} serde must fail closed"
+            );
+        }
+
+        let raw_overbound = "x".repeat(MAX_LOGICAL_PAGE_NAME_BYTES + 1);
+        assert_eq!(
+            LogicalPageName::parse(raw_overbound).unwrap_err(),
+            LogicalPageNameError::RawTooLarge(MAX_LOGICAL_PAGE_NAME_BYTES + 1)
+        );
+        let lowercase_expands = "İ".repeat(MAX_LOGICAL_PAGE_NAME_BYTES / "İ".len());
+        assert_eq!(lowercase_expands.len(), MAX_LOGICAL_PAGE_NAME_BYTES);
+        assert!(matches!(
+            LogicalPageName::parse(lowercase_expands),
+            Err(LogicalPageNameError::CanonicalTooLarge(bytes))
+                if bytes > MAX_LOGICAL_PAGE_NAME_BYTES
+        ));
+    }
+
+    #[test]
+    fn catalog_page_state_v2_round_trips_and_prior_schema_fails_closed() {
+        let state = live(ManagedTextKind::Page);
+        let mut json = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            json["catalog_page_state_schema_version"],
+            serde_json::json!(CATALOG_PAGE_STATE_SCHEMA_VERSION)
+        );
+        assert_eq!(serde_json::from_value::<PageState>(json.clone()).unwrap(), state);
+
+        json["catalog_page_state_schema_version"] =
+            serde_json::json!(CATALOG_PAGE_STATE_SCHEMA_VERSION - 1);
+        assert!(serde_json::from_value::<PageState>(json).is_err());
+    }
+
+    #[test]
+    fn catalog_page_state_v2_rejects_unknown_nested_live_and_tombstone_fields() {
+        for state in [
+            live(ManagedTextKind::Page),
+            tombstone(document_id(2), ManagedTextKind::Page),
+        ] {
+            let encoded = postcard::to_allocvec(&state).unwrap();
+            assert_eq!(postcard::from_bytes::<PageState>(&encoded).unwrap(), state);
+
+            let mut json = serde_json::to_value(&state).unwrap();
+            let variant = if matches!(state, PageState::Live { .. }) {
+                "live"
+            } else {
+                "tombstone"
+            };
+            json["state"][variant]["future_field"] = serde_json::json!(true);
+            assert!(serde_json::from_value::<PageState>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn semantic_effect_rejects_unknown_nested_logseq_identity_origin_fields() {
+        let block = BlockId::from_uuid(Uuid::from_u128(3));
+        let effect = SemanticEffect::new(
+            Vec::new(),
+            vec![BlockDelta {
+                block_id: block,
+                home_document_id: document_id(2),
+                before: None,
+                after: Some(BlockState {
+                    block_id: block,
+                    home_document_id: document_id(2),
+                    owner: BlockOwner::Page(page_id(1)),
+                    logseq_uuid: Some(LogseqUuid::from_uuid(Uuid::from_u128(4))),
+                    logseq_identity_origin: Some(LogseqIdentityOrigin::PolicyGenerated {
+                        reason: PolicyGeneratedAnchorReason::BlockReference,
+                    }),
+                    content: "linked block".into(),
+                }),
+            }],
+            Vec::new(),
+        )
+        .unwrap();
+
+        let mut json = serde_json::to_value(&effect).unwrap();
+        json["blocks"][0]["after"]["logseq_identity_origin"]["policy_generated"]
+            ["future_field"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<SemanticEffect>(json).is_err());
     }
 
     #[test]
@@ -624,6 +993,16 @@ mod tests {
                 SemanticError::InvalidPageLifecycle,
             ),
             (
+                "name-changing deletion",
+                Some(live(ManagedTextKind::Page)),
+                Some(PageState::Tombstone {
+                    name: LogicalPageName::parse("Different Name").unwrap(),
+                    home_document_id: home,
+                    kind: ManagedTextKind::Page,
+                }),
+                SemanticError::InvalidPageLifecycle,
+            ),
+            (
                 "home change",
                 Some(live(ManagedTextKind::Page)),
                 Some(live_at(
@@ -684,12 +1063,34 @@ mod tests {
     }
 
     #[test]
+    fn exact_page_name_is_canonical_state_effect_and_digest_identity() {
+        let first = effect(ManagedTextKind::Page);
+        let mut second_state = live(ManagedTextKind::Page);
+        let PageState::Live { name, .. } = &mut second_state else {
+            unreachable!("fixture is live")
+        };
+        *name = LogicalPageName::parse("Different Exact Spelling").unwrap();
+        let second = page_effect(None, Some(second_state)).unwrap();
+        let first_bytes = first.encode().unwrap();
+        let second_bytes = second.encode().unwrap();
+
+        assert_ne!(first, second);
+        assert_ne!(first_bytes, second_bytes);
+        assert_ne!(
+            super::super::SemanticEffectDigest::of(&first_bytes),
+            super::super::SemanticEffectDigest::of(&second_bytes)
+        );
+        assert_eq!(SemanticEffect::decode(&second_bytes).unwrap(), second);
+    }
+
+    #[test]
     fn tombstone_kind_round_trips_without_path_or_layout_inference() {
         let effect = SemanticEffect::new(
             vec![PageDelta {
                 page_id: page_id(1),
                 before: Some(live(ManagedTextKind::Journal)),
                 after: Some(PageState::Tombstone {
+                    name: LogicalPageName::parse("Shared Name").unwrap(),
                     home_document_id: document_id(2),
                     kind: ManagedTextKind::Journal,
                 }),
