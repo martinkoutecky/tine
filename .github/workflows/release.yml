@@ -50,7 +50,7 @@ jobs:
           CI_EVIDENCE_SHA: ${{ github.sha }}
           CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
         run: node scripts/check-ci-evidence.mjs
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -153,7 +153,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: ${{ matrix.rust-targets }}
 
@@ -368,7 +368,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
