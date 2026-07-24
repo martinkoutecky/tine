@@ -18,6 +18,9 @@ pub mod identity;
 pub mod import;
 pub(crate) mod loro_store;
 pub mod object_store;
+// P2N2 I1-I3 deliberately expose a foundation seam without activating it.
+#[allow(dead_code)]
+pub(crate) mod page_name_index;
 pub(crate) mod portable_path_index;
 pub mod projection;
 pub mod projection_manifest;
@@ -64,6 +67,14 @@ pub use import::{
     MAX_IMPORT_RAW_BYTES,
 };
 pub use object_store::{BatchInspection, ObjectStore, ObjectStoreStats, StoreError};
+pub use page_name_index::{
+    ExactLogicalPageNameBlobV1, ExactLogicalPageNameDigest, ExactLogicalPageNameRefV1,
+    PageNameOwnershipOccupiedV1, PageNameOwnershipRecordV1, PageNameOwnershipReleasedV1,
+    PageNameOwnershipRootV1, EXACT_LOGICAL_PAGE_NAME_BLOB_SCHEMA_VERSION,
+    EXACT_LOGICAL_PAGE_NAME_REF_SCHEMA_VERSION, MAX_PAGE_NAME_POINT_BATCH,
+    PAGE_NAME_CATALOG_FRONTIER_SCHEMA_VERSION, PAGE_NAME_OWNERSHIP_RECORD_SCHEMA_VERSION,
+    PAGE_NAME_OWNERSHIP_ROOT_SCHEMA_VERSION, PAGE_NAME_OWNERSHIP_STORE_SCHEMA_VERSION,
+};
 pub use portable_path_index::{
     PortablePathIndexRoot, PortablePathOccupied, PortablePathRecord, PortablePathReleased,
 };
@@ -104,10 +115,10 @@ pub use receipt::{
 };
 pub use semantic::{
     BlockDelta, BlockOwner, BlockState, CanonicalSnapshot, LogicalPageName, LogicalPageNameError,
-    LogseqIdentityOrigin, MembershipClaim, MembershipDelta, PageDelta, PagePreambleDelta,
-    PagePreambleState, PageState, PolicyGeneratedAnchorReason, SemanticEffect, SemanticError,
-    VisibleMembership, CATALOG_PAGE_STATE_SCHEMA_VERSION, MAX_LOGICAL_PAGE_NAME_BYTES,
-    PAGE_NAME_KEY_VERSION, SEMANTIC_EFFECT_SCHEMA_VERSION,
+    LogseqIdentityOrigin, MembershipClaim, MembershipDelta, PageDelta, PageNameKeyDigest,
+    PagePreambleDelta, PagePreambleState, PageState, PolicyGeneratedAnchorReason, SemanticEffect,
+    SemanticError, VisibleMembership, CATALOG_PAGE_STATE_SCHEMA_VERSION,
+    MAX_LOGICAL_PAGE_NAME_BYTES, PAGE_NAME_KEY_VERSION, SEMANTIC_EFFECT_SCHEMA_VERSION,
 };
 pub use simulator::{
     DeterministicSimulator, FailureCapsule, FailureIdentity, MinimizedScenario, Scenario,

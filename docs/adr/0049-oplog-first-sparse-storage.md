@@ -182,6 +182,9 @@ versions are:
 | Semantic effect | 5 |
 | Catalog page state | 2 |
 | Page-name key | 1 |
+| Exact logical page-name blob / reference | 1 / 1 |
+| Page-name ownership record / root / store | 1 / 1 / 1 |
+| Page-name catalog-frontier binding | 1 |
 | CRDT update payload | 7 |
 | Receipt / projection receipt | 5 / 4 |
 | Projection policy | 1 |
@@ -190,7 +193,7 @@ versions are:
 | Block-claim record / index | 2 / 1 |
 | Logseq claim record | 1 |
 | Engine-history record / durable root / index | 7 / 5 / 1 |
-| Engine scratch / scratch page | 8 / 1 |
+| Engine scratch / scratch page | 9 / 1 |
 | Manifested projection intent / annotated base | 2 / 1 |
 | Projection work row / index | 3 / 5 |
 | Projection-store claim | 5 |
@@ -207,10 +210,19 @@ Materialization input and SQLite advance to versions 2 and 8 so page-name
 materialization becomes oplog-authoritative without reinterpreting earlier inputs
 or reusable databases. External-import observation and reconciliation diff/`ImportId`
 bytes deliberately retain versions 1 and 2. Generic checkpoint and Loro-node schemas
-likewise remain unchanged. New page-name ownership, reference-semantics, and
-reverse-index formats start at v1 when their owning packets land. None of these bytes
-are activated for graph startup, old experimental-v2 reinterpretation, or production
-writes; unsupported old bytes require upgrade and fail closed.
+likewise remain unchanged. Page-name ownership's exact-name blob/reference,
+ownership record/root/store, and exact catalog-frontier binding start at v1 in its
+foundation packet; reference-semantics and reverse-index formats start at v1 when
+their owning packets land. Engine scratch advances to version 9 for the new
+page-name catalog-frontier point kind. None of these bytes are activated for graph
+startup, old experimental-v2 reinterpretation, or production writes; unsupported old
+bytes require upgrade and fail closed. In particular, the I1-I3 foundation has no
+production constructor for an authenticated exact-catalog page-name checkpoint and
+no crate-visible publisher for catalog-frontier evidence. Reconstruction and binding
+publication remain module-private until a later packet supplies authenticated
+exact-catalog decoding/validation that can mint the opaque checkpoint value; callers
+cannot promote supplied IDs, digests, entries, or scratch bytes into authenticated
+frontier evidence.
 
 Each semantic `OperationBatch` has exactly one manifest. The manifest contains all
 compatibility versions, workspace and lineage/genesis hash, batch/author/device/

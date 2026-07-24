@@ -60,6 +60,8 @@ const BLOCK_CLAIM_INDEX_DIR: &str = "block-claim-index";
 const BLOCK_CLAIM_INDEX_FILE: &str = "pages.index";
 const LOGSEQ_CLAIM_INDEX_DIR: &str = "logseq-uuid-claim-index-v1";
 const PORTABLE_PATH_INDEX_DIR: &str = "portable-path-index-v1";
+#[allow(dead_code)] // opened by the intentionally unwired P2N2 foundation
+const PAGE_NAME_OWNERSHIP_INDEX_DIR: &str = "page-name-ownership-index-v1";
 const PROJECTION_WORK_DIR: &str = "projection-work-index-v1";
 const BLOCK_CLAIM_INDEX_SCHEMA_VERSION: u32 = 1;
 const BLOCK_CLAIM_RADIX_DEPTH: u8 = 32;
@@ -922,6 +924,15 @@ impl ObjectStore {
                 PORTABLE_PATH_INDEX_DIR,
             )?),
         ))
+    }
+
+    #[allow(dead_code)] // activated only by later P2N2 acceptance wiring
+    pub(crate) fn open_page_name_ownership_index(
+        &self,
+    ) -> Result<super::page_name_index::PageNameOwnershipStore, StoreError> {
+        ensure_directory_nofollow(&self.capability, PAGE_NAME_OWNERSHIP_INDEX_DIR)?;
+        let index = open_dir_nofollow(&self.capability, PAGE_NAME_OWNERSHIP_INDEX_DIR)?;
+        super::page_name_index::PageNameOwnershipStore::open(index)
     }
 
     #[cfg(test)]
@@ -2581,6 +2592,16 @@ pub enum StoreError {
     MissingLogseqClaimIndexNode(ContentDigest),
     LogseqClaimIndexPathMismatch(ContentDigest),
     MalformedLogseqClaimIndex,
+    MissingExactLogicalPageNameBlob(ContentDigest),
+    ExactLogicalPageNameBlobPathMismatch(ContentDigest),
+    MalformedPageNameIndex,
+    PageNamePointBatchTooLarge {
+        actual: usize,
+        limit: usize,
+    },
+    NonCanonicalPageNamePointKeys,
+    MissingPageNameCatalogFrontier,
+    MisboundPageNameCatalogFrontier,
     Scratch(String),
     LineageClaimCollision(LineageDigest),
     ImmutableCollision(&'static str),
@@ -2677,6 +2698,31 @@ impl fmt::Display for StoreError {
             ),
             Self::MalformedLogseqClaimIndex => {
                 f.write_str("authenticated Logseq claim index is malformed or non-canonical")
+            }
+            Self::MissingExactLogicalPageNameBlob(digest) => {
+                write!(f, "exact logical page-name blob {digest} is missing")
+            }
+            Self::ExactLogicalPageNameBlobPathMismatch(digest) => {
+                write!(
+                    f,
+                    "exact logical page-name blob bytes do not match path {digest}"
+                )
+            }
+            Self::MalformedPageNameIndex => {
+                f.write_str("authenticated page-name ownership index is malformed or non-canonical")
+            }
+            Self::PageNamePointBatchTooLarge { actual, limit } => write!(
+                f,
+                "page-name point batch has {actual} entries, exceeding {limit}"
+            ),
+            Self::NonCanonicalPageNamePointKeys => {
+                f.write_str("page-name point keys are not strictly sorted and unique")
+            }
+            Self::MissingPageNameCatalogFrontier => {
+                f.write_str("exact page-name catalog-frontier binding is missing")
+            }
+            Self::MisboundPageNameCatalogFrontier => {
+                f.write_str("exact page-name catalog-frontier binding is misbound")
             }
             Self::Scratch(error) => write!(f, "engine scratch failed: {error}"),
             Self::LineageClaimCollision(lineage) => {

@@ -25,7 +25,7 @@ const MARKER_FILE: &str = "marker";
 const LEASE_FILE: &str = "lease";
 const PAGES_FILE: &str = "pages.index";
 const BLOBS_FILE: &str = "blobs.data";
-const SCRATCH_SCHEMA_VERSION: u32 = 8;
+const SCRATCH_SCHEMA_VERSION: u32 = 9;
 const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
 const SCRATCH_LSM_LEVELS: usize = 32;
 const ACCEPTED_SEQUENCE_SCHEMA_VERSION: u32 = 1;
@@ -168,6 +168,7 @@ pub(crate) enum ScratchPageKind {
     AcceptedSequenceNode = 17,
     AcceptedDocumentMap = 18,
     AcceptedBatchMap = 19,
+    PageNameCatalogFrontier = 20,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
