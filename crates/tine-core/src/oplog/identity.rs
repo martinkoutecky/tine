@@ -105,8 +105,8 @@ impl CrdtPeerId {
     }
 
     /// Derive one deterministic candidate for the synthetic external-import
-    /// author. Collision probing and selection are deliberately left to the
-    /// importer that owns the target CRDT document.
+    /// author. Zero rejection, collision probing, and selection are deliberately
+    /// left to the importer that owns the target CRDT document.
     pub(crate) fn external_import_candidate(
         workspace_id: WorkspaceId,
         import_id: ImportId,

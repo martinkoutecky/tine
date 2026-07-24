@@ -286,7 +286,6 @@ fn is_managed_path(value: &str) -> bool {
         || value != value.trim()
         || value.starts_with('/')
         || value.contains('\\')
-        || value.chars().any(is_forbidden_win32_path_character)
     {
         return false;
     }
@@ -294,7 +293,7 @@ fn is_managed_path(value: &str) -> bool {
     if segments.len() < 2
         || segments
             .iter()
-            .any(|part| !is_portable_managed_component(part))
+            .any(|part| !managed_component_is_portable(part))
     {
         return false;
     }
@@ -308,11 +307,12 @@ fn is_managed_path(value: &str) -> bool {
     )
 }
 
-fn is_portable_managed_component(component: &str) -> bool {
+pub(crate) fn managed_component_is_portable(component: &str) -> bool {
     if component.is_empty()
         || matches!(component, "." | "..")
         || component.ends_with(' ')
         || component.ends_with('.')
+        || component.chars().any(is_forbidden_win32_path_character)
     {
         return false;
     }
