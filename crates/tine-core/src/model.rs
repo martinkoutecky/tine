@@ -16,8 +16,8 @@ use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
-    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath,
-    ProjectionAttemptReservation,
+    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath, ManagedTextKind,
+    ProjectionAttemptReservation, ReceiptError,
 };
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
@@ -1740,6 +1740,39 @@ impl Graph {
     /// Import rejects any other layout instead of reinterpreting its paths.
     pub(crate) fn raw_managed_text_layout(&self) -> (&str, &str) {
         (&self.config.pages_dir, &self.config.journals_dir)
+    }
+
+    /// Classify one exact managed path against this graph's configured text
+    /// roots. The longest component-boundary match wins; equal roots are
+    /// ambiguous and therefore rejected instead of guessed.
+    pub(crate) fn classify_managed_text_path(
+        &self,
+        path: &ManagedPath,
+    ) -> Result<ManagedTextKind, ReceiptError> {
+        let path_components = path.as_str().split('/').collect::<Vec<_>>();
+        let page_root = managed_root_components(&self.config.pages_dir);
+        let journal_root = managed_root_components(&self.config.journals_dir);
+        let Some(page_root) = page_root else {
+            return Err(ReceiptError::UnsafeManagedPath(path.as_str().to_owned()));
+        };
+        let Some(journal_root) = journal_root else {
+            return Err(ReceiptError::UnsafeManagedPath(path.as_str().to_owned()));
+        };
+        if page_root == journal_root {
+            return Err(ReceiptError::UnsafeManagedPath(path.as_str().to_owned()));
+        }
+
+        let page_matches =
+            path_components.len() > page_root.len() && path_components.starts_with(&page_root);
+        let journal_matches = path_components.len() > journal_root.len()
+            && path_components.starts_with(&journal_root);
+        match (page_matches, journal_matches) {
+            (true, false) => Ok(ManagedTextKind::Page),
+            (false, true) => Ok(ManagedTextKind::Journal),
+            (true, true) if page_root.len() > journal_root.len() => Ok(ManagedTextKind::Page),
+            (true, true) if journal_root.len() > page_root.len() => Ok(ManagedTextKind::Journal),
+            _ => Err(ReceiptError::UnsafeManagedPath(path.as_str().to_owned())),
+        }
     }
 
     /// Read one exact managed Markdown/Org observation through the retained
@@ -10120,6 +10153,17 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     res
 }
 
+fn managed_root_components(root: &str) -> Option<Vec<&str>> {
+    if root.is_empty() || root.starts_with('/') || root.contains('\\') || root.contains('\0') {
+        return None;
+    }
+    let components = root.split('/').collect::<Vec<_>>();
+    components
+        .iter()
+        .all(|component| projection_component_is_portable(component))
+        .then_some(components)
+}
+
 fn projection_component_is_portable(component: &str) -> bool {
     if component.is_empty()
         || matches!(component, "." | "..")
@@ -11862,6 +11906,55 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         dir
+    }
+
+    #[test]
+    fn publisher_p1_managed_text_classifier_uses_longest_component_root_and_preserves_exact_path() {
+        let dir = scratch("managed-text-classifier-longest-root");
+        let mut graph = Graph::open(&dir);
+        graph.config.pages_dir = "managed/text".to_owned();
+        graph.config.journals_dir = "managed/text/daily".to_owned();
+
+        let nested = ManagedPath::parse("managed/text/daily/2026/07/naïve.md").unwrap();
+        assert_eq!(
+            graph.classify_managed_text_path(&nested),
+            Ok(ManagedTextKind::Journal)
+        );
+        assert_eq!(nested.as_str(), "managed/text/daily/2026/07/naïve.md");
+        assert_eq!(
+            graph.classify_managed_text_path(
+                &ManagedPath::parse("managed/text/projects/2026/roadmap.md").unwrap()
+            ),
+            Ok(ManagedTextKind::Page)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publisher_p1_managed_text_classifier_rejects_boundary_misses_outside_paths_and_equal_roots()
+    {
+        let dir = scratch("managed-text-classifier-rejections");
+        let mut graph = Graph::open(&dir);
+        graph.config.pages_dir = "pages".to_owned();
+        graph.config.journals_dir = "pages-journal".to_owned();
+        for path in ["pages-old/file.md", "outside/file.md"] {
+            assert!(
+                graph
+                    .classify_managed_text_path(&ManagedPath::parse(path).unwrap())
+                    .is_err(),
+                "accepted {path}"
+            );
+        }
+        assert_eq!(
+            graph.classify_managed_text_path(&ManagedPath::parse("pages-journal/a.md").unwrap()),
+            Ok(ManagedTextKind::Journal)
+        );
+
+        graph.config.journals_dir = "pages".to_owned();
+        assert!(graph
+            .classify_managed_text_path(&ManagedPath::parse("pages/a.md").unwrap())
+            .is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn candidate_paths(candidates: &ReferenceCandidatePages) -> Vec<String> {

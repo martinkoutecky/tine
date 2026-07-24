@@ -16,7 +16,7 @@ pub const RECEIPT_SCHEMA_VERSION: u32 = 5;
 pub const PROJECTION_SCHEMA_VERSION: u32 = 4;
 pub const PROJECTION_POLICY_VERSION: u32 = 1;
 pub const MANAGED_ENTITY_SET_VERSION: u32 = 1;
-pub const DIFF_SCHEMA_VERSION: u32 = 1;
+pub const DIFF_SCHEMA_VERSION: u32 = 2;
 pub const PORTABLE_PATH_KEY_VERSION: u32 = 1;
 pub const PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION: (u8, u8, u8) = (17, 0, 0);
 pub const PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION: (u64, u64, u64) = (16, 0, 0);
@@ -1466,20 +1466,54 @@ pub enum ImportInventoryState {
     Absent,
 }
 
+/// Durable classification of a managed text path at the graph capability
+/// boundary. It is part of the reconciliation identity, not inferred from a
+/// basename or a normalized path spelling.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedTextKind {
+    Page,
+    Journal,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImportInventoryEntry {
+    kind: ManagedTextKind,
     path: ManagedPath,
     state: ImportInventoryState,
 }
 
 impl ImportInventoryEntry {
+    /// Construct an entry using the legacy fixed-layout path classification.
+    ///
+    /// New callers that have a graph capability must use
+    /// [`Self::with_kind`] with [`ManagedTextKind`] returned by its configured
+    /// root classifier. This compatibility constructor preserves the existing
+    /// unactivated raw-inventory boundary until that caller is updated.
     pub fn new(path: ManagedPath, state: ImportInventoryState) -> Self {
-        Self { path, state }
+        let kind = if path.as_str().starts_with("journals/") {
+            ManagedTextKind::Journal
+        } else {
+            ManagedTextKind::Page
+        };
+        Self { kind, path, state }
+    }
+
+    pub fn with_kind(
+        kind: ManagedTextKind,
+        path: ManagedPath,
+        state: ImportInventoryState,
+    ) -> Self {
+        Self { kind, path, state }
     }
 
     pub fn path(&self) -> &ManagedPath {
         &self.path
+    }
+
+    pub const fn kind(&self) -> ManagedTextKind {
+        self.kind
     }
 }
 
@@ -1540,7 +1574,7 @@ impl ImportId {
         }
 
         let mut hasher = Sha256::new();
-        hasher.update(b"tine/import/reconciliation-id/v1\0");
+        hasher.update(b"tine/import/reconciliation-id/v2\0");
         hasher.update(workspace_id.as_uuid().as_bytes());
         hasher.update(diff_schema_version.to_be_bytes());
         hasher.update((logical_completion_ids.len() as u64).to_be_bytes());
@@ -1552,6 +1586,10 @@ impl ImportId {
             let path = entry.path.as_str().as_bytes();
             hasher.update((path.len() as u64).to_be_bytes());
             hasher.update(path);
+            hasher.update([match entry.kind {
+                ManagedTextKind::Page => 0,
+                ManagedTextKind::Journal => 1,
+            }]);
             match entry.state {
                 ImportInventoryState::Absent => hasher.update([0]),
                 ImportInventoryState::Present(description) => {
@@ -1630,4 +1668,84 @@ fn is_strictly_sorted<T: Ord>(values: &[T]) -> bool {
 
 fn is_strictly_sorted_by_key<T, K: Ord>(values: &[T], key: impl Fn(&T) -> K) -> bool {
     values.windows(2).all(|pair| key(&pair[0]) < key(&pair[1]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid(Uuid::from_u128(0x1020_3040_5060_7080_90a0_b0c0_d0e0_f001))
+    }
+
+    fn entry(
+        kind: ManagedTextKind,
+        path: &str,
+        state: ImportInventoryState,
+    ) -> ImportInventoryEntry {
+        ImportInventoryEntry::with_kind(kind, ManagedPath::parse(path).unwrap(), state)
+    }
+
+    #[test]
+    fn publisher_p1_import_id_v2_golden_vector_binds_text_kind_before_observation_state() {
+        let inventory = vec![
+            entry(
+                ManagedTextKind::Journal,
+                "journals/2026/07/24.md",
+                ImportInventoryState::Absent,
+            ),
+            entry(
+                ManagedTextKind::Page,
+                "pages/nested/café.md",
+                ImportInventoryState::Present(BlobDescription::of(b"contents")),
+            ),
+        ];
+        let id = ImportId::derive(workspace(), &[], &inventory, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(
+            id,
+            ImportId::derive(workspace(), &[], &inventory, DIFF_SCHEMA_VERSION).unwrap()
+        );
+        assert_eq!(
+            id.to_string(),
+            "40db2d59719cc970dfc3f9009e0d0045c591da4f42782b7935584db9eed3a3dc"
+        );
+    }
+
+    #[test]
+    fn publisher_p1_import_inventory_kind_is_canonical_identity_input_and_sort_key() {
+        let page = entry(
+            ManagedTextKind::Page,
+            "pages/same.md",
+            ImportInventoryState::Absent,
+        );
+        let journal = entry(
+            ManagedTextKind::Journal,
+            "pages/same.md",
+            ImportInventoryState::Absent,
+        );
+        let page_id =
+            ImportId::derive(workspace(), &[], &[page.clone()], DIFF_SCHEMA_VERSION).unwrap();
+        let journal_id =
+            ImportId::derive(workspace(), &[], &[journal.clone()], DIFF_SCHEMA_VERSION).unwrap();
+        assert_ne!(page_id, journal_id);
+
+        assert_eq!(
+            ImportId::derive(
+                workspace(),
+                &[],
+                &[page.clone(), journal.clone()],
+                DIFF_SCHEMA_VERSION,
+            ),
+            Err(ReceiptError::NonCanonicalInventory)
+        );
+        assert_eq!(
+            ImportId::derive(workspace(), &[], &[journal, page], DIFF_SCHEMA_VERSION,),
+            Err(ReceiptError::NonCanonicalInventory)
+        );
+        assert_eq!(
+            ImportId::derive(workspace(), &[], &[], DIFF_SCHEMA_VERSION - 1),
+            Err(ReceiptError::UnknownDiffSchema(DIFF_SCHEMA_VERSION - 1))
+        );
+    }
 }
