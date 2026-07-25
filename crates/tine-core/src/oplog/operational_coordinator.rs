@@ -809,6 +809,7 @@ pub(crate) mod simulator_harness {
     use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
     use std::path::{Path, PathBuf};
 
+    use rusqlite::{params, Connection};
     use uuid::Uuid;
 
     use super::{
@@ -1027,6 +1028,10 @@ pub(crate) mod simulator_harness {
                     });
                     Ok(())
                 }
+                CoordinatorAction::InterfereReceiptAt { point, path } => {
+                    self.interfere_receipt_at(*point, path)
+                }
+                CoordinatorAction::RestoreInterferedReceipt => self.restore_interfered_receipts(),
                 CoordinatorAction::Execute { paths, fault } => self.execute(paths, *fault),
                 CoordinatorAction::Retry { fault } => self.retry(*fault),
                 CoordinatorAction::Crash => self.crash(),
@@ -1056,6 +1061,57 @@ pub(crate) mod simulator_harness {
                         ))
                     }
                 }
+                CoordinatorAction::AssertDurableCheckpoint { name } => {
+                    let expected = self
+                        .checkpoints
+                        .get(name)
+                        .ok_or_else(|| format!("unknown coordinator checkpoint {name}"))?;
+                    let observed = self.observation()?;
+                    if same_durable_evidence(expected, &observed) {
+                        Ok(())
+                    } else {
+                        self.expected_failure = Some(CoordinatorExpectedState::Exact(
+                            CoordinatorFailureWitness::from(expected),
+                        ));
+                        Err(format!(
+                            "coordinator durable checkpoint {name} changed: expected {expected:?}, observed {observed:?}"
+                        ))
+                    }
+                }
+                CoordinatorAction::AssertAcceptedArchiveCheckpoint { name } => {
+                    let expected = self
+                        .checkpoints
+                        .get(name)
+                        .ok_or_else(|| format!("unknown coordinator checkpoint {name}"))?;
+                    let observed = self.observation()?;
+                    if same_accepted_archive_evidence(expected, &observed) {
+                        Ok(())
+                    } else {
+                        self.expected_failure = Some(CoordinatorExpectedState::Exact(
+                            CoordinatorFailureWitness::from(expected),
+                        ));
+                        Err(format!(
+                            "coordinator accepted archive checkpoint {name} changed: expected {expected:?}, observed {observed:?}"
+                        ))
+                    }
+                }
+                CoordinatorAction::AssertMaterializationCheckpoint { name } => {
+                    let expected = self
+                        .checkpoints
+                        .get(name)
+                        .ok_or_else(|| format!("unknown coordinator checkpoint {name}"))?;
+                    let observed = self.observation()?;
+                    if same_materialization_evidence(expected, &observed) {
+                        Ok(())
+                    } else {
+                        self.expected_failure = Some(CoordinatorExpectedState::Exact(
+                            CoordinatorFailureWitness::from(expected),
+                        ));
+                        Err(format!(
+                            "coordinator materialization checkpoint {name} changed: expected {expected:?}, observed {observed:?}"
+                        ))
+                    }
+                }
                 CoordinatorAction::Assert { oracle } => self.assert_oracle(oracle),
             }
         }
@@ -1069,6 +1125,7 @@ pub(crate) mod simulator_harness {
                 observed.managed_files = snapshot_tree(&self.graph_root, true)?;
                 observed.archive_files = snapshot_archive(&self.archive_root)?;
                 observed.receipt_files = snapshot_tree(&self.receipt_root, false)?;
+                observed.sqlite_files = snapshot_sqlite(&self.database_path)?;
                 observed.handoff = CoordinatorHandoffState::EnrollmentPendingUnprotected;
                 return Ok(observed);
             };
@@ -1130,6 +1187,7 @@ pub(crate) mod simulator_harness {
                 sqlite_sequence,
                 sqlite_frontier_digest,
                 sqlite_row_digest,
+                sqlite_files: snapshot_sqlite(&self.database_path)?,
                 managed_files: snapshot_tree(&self.graph_root, true)?,
                 archive_files: snapshot_archive(&self.archive_root)?,
                 receipt_files: snapshot_tree(receipts.root_path(), false)?,
@@ -1173,6 +1231,61 @@ pub(crate) mod simulator_harness {
                 fs::create_dir_all(parent).map_err(io)?;
             }
             fs::rename(self.graph_root.join(from_path), destination).map_err(io)
+        }
+
+        fn restore_interfered_receipts(&self) -> Result<(), String> {
+            let completions = self.receipt_root.join("completions");
+            let mut entries = fs::read_dir(&completions)
+                .map_err(io)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(io)?;
+            entries.sort_by_key(|entry| entry.file_name());
+            let mut restored = 0_usize;
+            for entry in entries {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return Err("receipt interference path is not UTF-8".into());
+                };
+                let Some(original) = name.strip_suffix(".held") else {
+                    continue;
+                };
+                fs::rename(&path, path.with_file_name(original)).map_err(io)?;
+                restored = restored.saturating_add(1);
+            }
+            if restored == 1 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected one interfered completion receipt, restored {restored}"
+                ))
+            }
+        }
+
+        fn interfere_receipt_at(&self, fault: CoordinatorFault, path: &str) -> Result<(), String> {
+            let point = fault_point(fault)
+                .ok_or("receipt interference requires an outer coordinator boundary")?;
+            let managed_path = ManagedPath::parse(path).map_err(display)?;
+            let engine = self.engine.as_ref().ok_or("coordinator engine is closed")?;
+            let index = engine.projection_work_index().map_err(display)?;
+            let completions = index
+                .completed_receipts_for_path(&managed_path)
+                .map_err(display)?;
+            let [completion_id] = completions.as_slice() else {
+                return Err(format!(
+                    "receipt interference for {path} requires exactly one completion, found {}",
+                    completions.len()
+                ));
+            };
+            let completion = self.receipt_root.join("completions").join(format!(
+                "{}.completion",
+                hex(completion_id.intent_id().as_bytes())
+            ));
+            act_once_at(point, move || {
+                let held = completion.with_extension("completion.held");
+                fs::rename(completion, held)
+                    .expect("completion receipt must move at interference boundary");
+            });
+            Ok(())
         }
 
         fn execute(
@@ -1511,7 +1624,55 @@ pub(crate) mod simulator_harness {
                     file.write_all(&byte).map_err(io)?;
                     file.sync_all().map_err(io)
                 }
+                CoordinatorSqliteMutation::StaleFrontier => self.stale_sqlite_frontier(),
             }
+        }
+
+        /// Replace the persisted frontier with the preceding authenticated
+        /// root while leaving the newer materialized rows in place.  This is
+        /// a storage fault injection only; recovery always uses the production
+        /// authenticated `open_or_rebuild` path below.
+        fn stale_sqlite_frontier(&mut self) -> Result<(), String> {
+            self.close_sqlite();
+            let engine = self.engine.as_ref().ok_or("coordinator engine is closed")?;
+            let archive = self
+                .archive
+                .as_ref()
+                .ok_or("coordinator archive is closed")?;
+            let accepted = engine
+                .accepted_frontier_root()
+                .map_err(display)?
+                .acceptance_sequence();
+            let stale_sequence = accepted
+                .checked_sub(1)
+                .filter(|sequence| *sequence > 0)
+                .ok_or("SQLite stale-frontier fault requires two accepted batches")?;
+            let source = RebuildSource::new(engine, archive).map_err(display)?;
+            let stale = source
+                .accepted_event_at(stale_sequence)
+                .map_err(display)?
+                .post_frontier_root()
+                .clone();
+            let root_bytes = postcard::to_allocvec(&stale).map_err(display)?;
+            let digest = ContentDigest::of(&root_bytes);
+            let connection = Connection::open(&self.database_path).map_err(display)?;
+            connection
+                .execute(
+                    "UPDATE frontier
+                     SET frontier_root = ?1,
+                         frontier_root_digest = ?2,
+                         applied_batch_count = ?3
+                     WHERE singleton = 1",
+                    params![
+                        root_bytes,
+                        digest.as_bytes().as_slice(),
+                        i64::try_from(stale_sequence).map_err(display)?,
+                    ],
+                )
+                .map_err(display)?;
+            connection
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;")
+                .map_err(display)
         }
 
         fn close_sqlite(&mut self) {
@@ -1601,9 +1762,13 @@ pub(crate) mod simulator_harness {
                     .as_ref()
                     .is_none_or(|value| Some(value) == observed.last_outcome.as_ref());
             let files_match = oracle
-                .managed_files
+                .sqlite_files
                 .as_ref()
-                .is_none_or(|expected| expected == &observed.managed_files)
+                .is_none_or(|expected| expected == &observed.sqlite_files)
+                && oracle
+                    .managed_files
+                    .as_ref()
+                    .is_none_or(|expected| expected == &observed.managed_files)
                 && oracle
                     .archive_files
                     .as_ref()
@@ -1612,6 +1777,10 @@ pub(crate) mod simulator_harness {
                     .receipt_files
                     .as_ref()
                     .is_none_or(|expected| expected == &observed.receipt_files)
+                && oracle
+                    .sqlite_file_digests
+                    .as_ref()
+                    .is_none_or(|expected| expected == &file_digests(&observed.sqlite_files))
                 && oracle
                     .archive_file_digests
                     .as_ref()
@@ -1638,6 +1807,7 @@ pub(crate) mod simulator_harness {
             let observed = self.observation()?;
             if observed.read_gate == CoordinatorReadGate::Open
                 && (observed.sqlite_row_digest.is_none()
+                    || observed.sqlite_files.is_empty()
                     || observed.sqlite_sequence != Some(observed.accepted_sequence)
                     || observed.sqlite_frontier_digest.as_deref()
                         != Some(observed.accepted_frontier_digest.as_str()))
@@ -1784,6 +1954,68 @@ pub(crate) mod simulator_harness {
         }
         files.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(files)
+    }
+
+    fn snapshot_sqlite(database_path: &Path) -> Result<Vec<ExternalFileFixture>, String> {
+        let parent = database_path
+            .parent()
+            .ok_or("SQLite database has no parent directory")?;
+        snapshot_tree(parent, false)
+    }
+
+    fn same_durable_evidence(
+        expected: &CoordinatorObservation,
+        observed: &CoordinatorObservation,
+    ) -> bool {
+        expected.accepted_sequence == observed.accepted_sequence
+            && expected.accepted_frontier_digest == observed.accepted_frontier_digest
+            && expected.accepted_batches == observed.accepted_batches
+            && expected.sqlite_sequence == observed.sqlite_sequence
+            && expected.sqlite_frontier_digest == observed.sqlite_frontier_digest
+            && expected.sqlite_row_digest == observed.sqlite_row_digest
+            && expected.sqlite_files == observed.sqlite_files
+            && expected.managed_files == observed.managed_files
+            && expected.archive_files == observed.archive_files
+            && expected.receipt_files == observed.receipt_files
+            && expected.pending_projection_work == observed.pending_projection_work
+            && expected.tail_unapplied_batches == observed.tail_unapplied_batches
+            && expected.tail_retained_bytes == observed.tail_retained_bytes
+            && expected.handoff == observed.handoff
+            && expected.read_gate == observed.read_gate
+    }
+
+    fn same_accepted_archive_evidence(
+        expected: &CoordinatorObservation,
+        observed: &CoordinatorObservation,
+    ) -> bool {
+        expected.accepted_sequence == observed.accepted_sequence
+            && expected.accepted_frontier_digest == observed.accepted_frontier_digest
+            && expected.accepted_batches == observed.accepted_batches
+            && expected.archive_files == observed.archive_files
+    }
+
+    fn same_materialization_evidence(
+        expected: &CoordinatorObservation,
+        observed: &CoordinatorObservation,
+    ) -> bool {
+        expected.accepted_sequence == observed.accepted_sequence
+            && expected.accepted_frontier_digest == observed.accepted_frontier_digest
+            && expected.accepted_batches == observed.accepted_batches
+            && expected.sqlite_sequence == observed.sqlite_sequence
+            && expected.sqlite_frontier_digest == observed.sqlite_frontier_digest
+            && expected.sqlite_row_digest == observed.sqlite_row_digest
+            // A clean rebuild is allowed to choose a different SQLite page
+            // layout, but it must recreate a visible database file alongside
+            // the exact type-tagged row digest and frontier.
+            && !observed.sqlite_files.is_empty()
+            && expected.managed_files == observed.managed_files
+            && expected.archive_files == observed.archive_files
+            && expected.receipt_files == observed.receipt_files
+            && expected.pending_projection_work == observed.pending_projection_work
+            && expected.tail_unapplied_batches == observed.tail_unapplied_batches
+            && expected.tail_retained_bytes == observed.tail_retained_bytes
+            && expected.handoff == observed.handoff
+            && expected.read_gate == observed.read_gate
     }
 
     fn snapshot_tree(root: &Path, skip_config: bool) -> Result<Vec<ExternalFileFixture>, String> {

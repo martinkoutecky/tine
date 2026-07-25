@@ -77,9 +77,60 @@ const PROVIDER_JOURNAL_SCHEMA_VERSION: u32 = 1;
 const PROVIDER_AUTHORITY_SCHEMA_VERSION: u32 = 1;
 const PROVIDER_DEVICE_AUTHORITY_NAME: &str = "provider-transaction.authority";
 const MAX_PROVIDER_AUTHORITY_BYTES: usize = 1024;
-pub const FAILURE_CAPSULE_SCHEMA_VERSION: u32 = 5;
+/// Version 6 makes the frozen candidate identity required. A failure capsule
+/// is a replay receipt for one exact candidate, never an environment-derived
+/// best effort label.
+pub const FAILURE_CAPSULE_SCHEMA_VERSION: u32 = 6;
 pub const MAX_FAILURE_CAPSULE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MINIMIZATION_REPLAYS: usize = 10_000;
+
+/// A typed identifier for the exact frozen candidate a failure capsule
+/// exercises. Candidate identities are full, lowercase Git object IDs or
+/// SHA-256 frozen-patch digests; a missing, placeholder, abbreviated, or
+/// mixed-case value is rejected before a capsule can be serialized.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FrozenCandidateId(String);
+
+impl FrozenCandidateId {
+    pub fn parse(value: impl AsRef<str>) -> Result<Self, ScenarioError> {
+        let value = value.as_ref();
+        if !valid_frozen_candidate_id(value) {
+            return Err(ScenarioError::InvalidFrozenCandidateId);
+        }
+        Ok(Self(value.into()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for FrozenCandidateId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for FrozenCandidateId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(|error| serde::de::Error::custom(error.to_string()))
+    }
+}
+
+fn valid_frozen_candidate_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value.bytes().any(|byte| byte != b'0')
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -362,8 +413,17 @@ pub enum CoordinatorFault {
 #[serde(rename_all = "snake_case")]
 pub enum CoordinatorSqliteMutation {
     Delete,
-    Truncate { len: usize },
-    Corrupt { offset: usize, mask: u8 },
+    Truncate {
+        len: usize,
+    },
+    Corrupt {
+        offset: usize,
+        mask: u8,
+    },
+    /// Replace the on-disk frontier with a valid earlier accepted root while
+    /// leaving the newer row image in place. Reopen must reject it as stale
+    /// and rebuild only from the authoritative oplog.
+    StaleFrontier,
     Reopen,
 }
 
@@ -436,6 +496,10 @@ pub struct CoordinatorObservation {
     pub sqlite_frontier_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sqlite_row_digest: Option<String>,
+    /// Exact image of the disposable SQLite materialization and durable
+    /// sidecars. The type-exact row digest is the semantic oracle; this byte
+    /// image lets no-effect scenarios prove no local rewrite occurred.
+    pub sqlite_files: Vec<ExternalFileFixture>,
     pub managed_files: Vec<ExternalFileFixture>,
     pub archive_files: Vec<ExternalFileFixture>,
     pub receipt_files: Vec<ExternalFileFixture>,
@@ -464,10 +528,12 @@ pub struct CoordinatorFailureWitness {
     pub sqlite_sequence: Option<u64>,
     pub sqlite_frontier_digest: Option<String>,
     pub sqlite_row_digest: Option<String>,
+    pub sqlite_files: Vec<ExternalFileFixture>,
     pub managed_files: Vec<ExternalFileFixture>,
     pub archive_files: Vec<ExternalFileFixture>,
     pub receipt_files: Vec<ExternalFileFixture>,
     pub managed_file_digests: BTreeMap<String, String>,
+    pub sqlite_file_digests: BTreeMap<String, String>,
     pub archive_file_digests: BTreeMap<String, String>,
     pub receipt_file_digests: BTreeMap<String, String>,
     pub pending_projection_work: usize,
@@ -494,10 +560,12 @@ impl From<&CoordinatorObservation> for CoordinatorFailureWitness {
             sqlite_sequence: observation.sqlite_sequence,
             sqlite_frontier_digest: observation.sqlite_frontier_digest.clone(),
             sqlite_row_digest: observation.sqlite_row_digest.clone(),
+            sqlite_files: observation.sqlite_files.clone(),
             managed_files: observation.managed_files.clone(),
             archive_files: observation.archive_files.clone(),
             receipt_files: observation.receipt_files.clone(),
             managed_file_digests: digest_files(&observation.managed_files),
+            sqlite_file_digests: digest_files(&observation.sqlite_files),
             archive_file_digests: digest_files(&observation.archive_files),
             receipt_file_digests: digest_files(&observation.receipt_files),
             pending_projection_work: observation.pending_projection_work,
@@ -530,6 +598,8 @@ pub struct CoordinatorOracle {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sqlite_row_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_files: Option<Vec<ExternalFileFixture>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontiers_match: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_projection_work: Option<usize>,
@@ -558,6 +628,8 @@ pub struct CoordinatorOracle {
     pub archive_file_digests: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_file_digests: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_file_digests: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -594,6 +666,14 @@ pub enum CoordinatorAction {
         path: String,
         bytes_b64: WireBytes,
     },
+    /// Rename one completed projection receipt at an exact coordinator
+    /// boundary. This models durable receipt authority changing after capture
+    /// without inventing an alternate receipt implementation.
+    InterfereReceiptAt {
+        point: CoordinatorFault,
+        path: String,
+    },
+    RestoreInterferedReceipt,
     Execute {
         paths: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -612,6 +692,23 @@ pub enum CoordinatorAction {
         name: String,
     },
     AssertCheckpoint {
+        name: String,
+    },
+    /// Compare every durable/derived evidence surface while deliberately
+    /// excluding the diagnostic last-outcome and boundary labels. This proves
+    /// a blocked/no-op control journey did not rewrite any state it observed.
+    AssertDurableCheckpoint {
+        name: String,
+    },
+    /// Compare the authoritative accepted history and exact immutable archive
+    /// image across a derived-state recovery.
+    AssertAcceptedArchiveCheckpoint {
+        name: String,
+    },
+    /// Compare the accepted frontier and normalized SQLite row image after a
+    /// forced rebuild, where a byte-identical SQLite page layout is not part
+    /// of the recovery contract.
+    AssertMaterializationCheckpoint {
         name: String,
     },
     Assert {
@@ -976,7 +1073,10 @@ impl Scenario {
     /// Deterministic ddmin-style reduction.  A candidate is retained only if
     /// its first failure has the exact original identity, never merely a broad
     /// "diverged" classification.
-    pub fn minimize_failure(&self) -> Result<MinimizedScenario, ScenarioError> {
+    pub fn minimize_failure(
+        &self,
+        frozen_candidate: FrozenCandidateId,
+    ) -> Result<MinimizedScenario, ScenarioError> {
         self.validate()?;
         let original_replay = replay_failure_details(self)?.ok_or(ScenarioError::NotFailing)?;
         let original_identity = original_replay
@@ -1101,7 +1201,7 @@ impl Scenario {
             family: self.family.clone(),
             original_seed: self.seed,
             failure: original_identity,
-            tested_commit: option_env!("TINE_GIT_COMMIT").unwrap_or("unknown").into(),
+            frozen_candidate,
             scenario_hash: scenario_hash(self)?,
             minimized_scenario_hash: scenario_hash(&minimized)?,
             minimized_scenario: minimized.clone(),
@@ -1314,6 +1414,7 @@ pub struct CoordinatorOracleIdentity {
     pub sqlite_sequence: Option<u64>,
     pub sqlite_frontier_digest: Option<String>,
     pub sqlite_row_digest: Option<String>,
+    pub sqlite_file_digests: Option<BTreeMap<String, String>>,
     pub frontiers_match: Option<bool>,
     pub pending_projection_work: Option<usize>,
     pub tail_unapplied_batches: Option<usize>,
@@ -1345,6 +1446,11 @@ impl From<&CoordinatorOracle> for CoordinatorOracleIdentity {
             sqlite_sequence: oracle.sqlite_sequence,
             sqlite_frontier_digest: oracle.sqlite_frontier_digest.clone(),
             sqlite_row_digest: oracle.sqlite_row_digest.clone(),
+            sqlite_file_digests: oracle
+                .sqlite_files
+                .as_deref()
+                .map(oracle_file_digests)
+                .or_else(|| oracle.sqlite_file_digests.clone()),
             frontiers_match: oracle.frontiers_match,
             pending_projection_work: oracle.pending_projection_work,
             tail_unapplied_batches: oracle.tail_unapplied_batches,
@@ -1395,7 +1501,10 @@ pub struct FailureCapsule {
     pub family: String,
     pub original_seed: u64,
     pub failure: FailureIdentity,
-    pub tested_commit: String,
+    /// Required v6 identity of the frozen candidate used to create this
+    /// capsule. This is intentionally typed instead of accepting an optional
+    /// build-time environment label.
+    pub frozen_candidate: FrozenCandidateId,
     pub scenario_hash: String,
     pub minimized_scenario_hash: String,
     pub minimized_scenario: Scenario,
@@ -1452,6 +1561,17 @@ impl FailureCapsule {
         if bytes.len() > MAX_FAILURE_CAPSULE_BYTES {
             return Err(ScenarioError::TooLarge(bytes.len()));
         }
+        #[derive(Deserialize)]
+        struct CapsuleVersion {
+            schema_version: u32,
+        }
+        let version: CapsuleVersion = serde_json::from_slice(bytes)
+            .map_err(|error| ScenarioError::Decode(error.to_string()))?;
+        if version.schema_version != FAILURE_CAPSULE_SCHEMA_VERSION {
+            return Err(ScenarioError::UnknownFailureCapsuleVersion(
+                version.schema_version,
+            ));
+        }
         let capsule: Self = serde_json::from_slice(bytes)
             .map_err(|error| ScenarioError::Decode(error.to_string()))?;
         capsule.validate()?;
@@ -1461,8 +1581,14 @@ impl FailureCapsule {
         Ok(capsule)
     }
 
-    pub fn replay(&self) -> Result<FailureIdentity, ScenarioError> {
+    pub fn replay(
+        &self,
+        frozen_candidate: &FrozenCandidateId,
+    ) -> Result<FailureIdentity, ScenarioError> {
         self.validate()?;
+        if &self.frozen_candidate != frozen_candidate {
+            return Err(ScenarioError::FrozenCandidateMismatch);
+        }
         let replay =
             replay_failure_details(&self.minimized_scenario)?.ok_or(ScenarioError::NotFailing)?;
         let identity = replay
@@ -1476,7 +1602,12 @@ impl FailureCapsule {
     }
 
     fn validate(&self) -> Result<(), ScenarioError> {
-        if self.schema_version != FAILURE_CAPSULE_SCHEMA_VERSION
+        if self.schema_version != FAILURE_CAPSULE_SCHEMA_VERSION {
+            return Err(ScenarioError::UnknownFailureCapsuleVersion(
+                self.schema_version,
+            ));
+        }
+        if !valid_frozen_candidate_id(self.frozen_candidate.as_str())
             || !valid_name(&self.family, 256)
             || self.minimized_action_count > self.original_action_count
             || self.minimization_replays > self.minimization_budget
@@ -1486,7 +1617,7 @@ impl FailureCapsule {
             || scenario_hash(&self.minimized_scenario)? != self.minimized_scenario_hash
             || self.observed_coordinator.values().any(|witness| {
                 witness.read_gate == CoordinatorReadGate::Open
-                    && witness.sqlite_row_digest.is_none()
+                    && (witness.sqlite_row_digest.is_none() || witness.sqlite_files.is_empty())
             })
         {
             return Err(ScenarioError::InvalidFailureCapsule);
@@ -4872,7 +5003,11 @@ impl DeterministicSimulator {
         result.map_err(|error| {
             if matches!(
                 action,
-                CoordinatorAction::Assert { .. } | CoordinatorAction::AssertCheckpoint { .. }
+                CoordinatorAction::Assert { .. }
+                    | CoordinatorAction::AssertCheckpoint { .. }
+                    | CoordinatorAction::AssertDurableCheckpoint { .. }
+                    | CoordinatorAction::AssertAcceptedArchiveCheckpoint { .. }
+                    | CoordinatorAction::AssertMaterializationCheckpoint { .. }
             ) {
                 let semantic = match action {
                     CoordinatorAction::Assert { oracle } => {
@@ -4880,7 +5015,10 @@ impl DeterministicSimulator {
                             expected: CoordinatorOracleIdentity::from(oracle),
                         }
                     }
-                    CoordinatorAction::AssertCheckpoint { .. } => {
+                    CoordinatorAction::AssertCheckpoint { .. }
+                    | CoordinatorAction::AssertDurableCheckpoint { .. }
+                    | CoordinatorAction::AssertAcceptedArchiveCheckpoint { .. }
+                    | CoordinatorAction::AssertMaterializationCheckpoint { .. } => {
                         InvariantFailureKind::CoordinatorCheckpoint
                     }
                     _ => unreachable!("only assertion actions reach this branch"),
@@ -5825,6 +5963,11 @@ fn validate_coordinator_action(action: &CoordinatorAction) -> Result<(), Scenari
                 return Err(ScenarioError::InvalidCoordinatorAction);
             }
         }
+        CoordinatorAction::InterfereReceiptAt { path, .. } => {
+            if !valid_path(path) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
         CoordinatorAction::Execute { paths, .. } => {
             if paths.is_empty()
                 || paths.len() > MAX_SCENARIO_ACTIONS
@@ -5833,25 +5976,37 @@ fn validate_coordinator_action(action: &CoordinatorAction) -> Result<(), Scenari
                 return Err(ScenarioError::InvalidCoordinatorAction);
             }
         }
-        CoordinatorAction::Checkpoint { name } | CoordinatorAction::AssertCheckpoint { name } => {
+        CoordinatorAction::Checkpoint { name }
+        | CoordinatorAction::AssertCheckpoint { name }
+        | CoordinatorAction::AssertDurableCheckpoint { name }
+        | CoordinatorAction::AssertAcceptedArchiveCheckpoint { name }
+        | CoordinatorAction::AssertMaterializationCheckpoint { name } => {
             if !valid_name(name, 128) {
                 return Err(ScenarioError::InvalidCoordinatorAction);
             }
         }
         CoordinatorAction::Assert { oracle } => {
-            if oracle.managed_files.as_ref().is_some_and(|files| {
-                files.len() > MAX_SCENARIO_WIRE_ITEMS
-                    || files.iter().any(|file| {
-                        !valid_path(&file.path) || file.bytes_b64.0.len() > MAX_TRANSFER_BYTES
-                    })
-            }) {
+            let invalid_files = |files: &Option<Vec<ExternalFileFixture>>| {
+                files.as_ref().is_some_and(|files| {
+                    files.len() > MAX_SCENARIO_WIRE_ITEMS
+                        || files.iter().any(|file| {
+                            !valid_path(&file.path) || file.bytes_b64.0.len() > MAX_TRANSFER_BYTES
+                        })
+                })
+            };
+            if invalid_files(&oracle.sqlite_files)
+                || invalid_files(&oracle.managed_files)
+                || invalid_files(&oracle.archive_files)
+                || invalid_files(&oracle.receipt_files)
+            {
                 return Err(ScenarioError::InvalidCoordinatorAction);
             }
         }
         CoordinatorAction::Retry { .. }
         | CoordinatorAction::Crash
         | CoordinatorAction::Reopen
-        | CoordinatorAction::Sqlite { .. } => {}
+        | CoordinatorAction::Sqlite { .. }
+        | CoordinatorAction::RestoreInterferedReceipt => {}
     }
     Ok(())
 }
@@ -13175,6 +13330,9 @@ pub enum ScenarioError {
     },
     NotFailing,
     UnstableFailure,
+    InvalidFrozenCandidateId,
+    FrozenCandidateMismatch,
+    UnknownFailureCapsuleVersion(u32),
     InvalidFailureCapsule,
 }
 
@@ -13293,6 +13451,16 @@ impl fmt::Display for ScenarioError {
             Self::UnstableFailure => {
                 f.write_str("scenario failure has no stable minimization identity")
             }
+            Self::InvalidFrozenCandidateId => {
+                f.write_str("frozen candidate identity must be a nonzero lowercase 40- or 64-character immutable digest")
+            }
+            Self::FrozenCandidateMismatch => {
+                f.write_str("failure capsule was replayed against a different frozen candidate")
+            }
+            Self::UnknownFailureCapsuleVersion(found) => write!(
+                f,
+                "unknown failure capsule schema {found}; expected {FAILURE_CAPSULE_SCHEMA_VERSION}"
+            ),
             Self::InvalidFailureCapsule => f.write_str("failure capsule is invalid"),
         }
     }

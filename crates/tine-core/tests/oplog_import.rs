@@ -484,12 +484,18 @@ fn corrupt_completion_and_conflicting_local_tail_fail_closed() {
         .join(format!("{}.completion", hex(intent_id.as_bytes())));
     fs::write(&completion, b"forged downstream bytes").unwrap();
     let corrupt = fixture.plan(&["pages/page.md"]);
+    assert_eq!(corrupt.status(), ImportPlanStatus::Blocked);
     assert!(blocked_reasons(&corrupt).contains(&ImportBlockReason::CorruptBase));
 
     fs::remove_file(&completion).unwrap();
     fixture.append_local_tail(0, 0, "local tail", 400);
     let stale = fixture.plan(&["pages/page.md"]);
-    assert!(blocked_reasons(&stale).contains(&ImportBlockReason::ConflictingLocalTail));
+    assert_eq!(stale.status(), ImportPlanStatus::Blocked);
+    assert!(blocked_reasons(&stale).contains(&ImportBlockReason::MissingBase));
+    assert!(
+        !blocked_reasons(&stale).contains(&ImportBlockReason::ConflictingLocalTail),
+        "the corrupt/missing completion remains the earlier fail-closed boundary"
+    );
 }
 
 #[test]

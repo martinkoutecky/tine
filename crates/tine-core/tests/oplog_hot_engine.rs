@@ -7,8 +7,8 @@ use tine_core::oplog::{
     BatchOrigin, BlockDelta, BlockLocation, BlockOwner, CausalPeerId, ContentDigest,
     CrdtPeerCounter, CrdtPeerId, DeterministicSimulator, DeviceId, DocumentCausalDigest,
     DocumentDependencies, DocumentId, EngineError, FailureCapsule, FailureIdentity, FrontierV2,
-    ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence, LineageDigest,
-    LogseqIdentityMutation, LogseqIdentityOrigin, LogseqIdentityTrigger, LogseqUuid,
+    FrozenCandidateId, ImmutableHomeClaim, ImmutableHomeConflict, ImmutableHomeEvidence,
+    LineageDigest, LogseqIdentityMutation, LogseqIdentityOrigin, LogseqIdentityTrigger, LogseqUuid,
     LogseqUuidResolution, ManagedPath, ManagedTextKind, MembershipDelta, ObjectKind, ObjectStore,
     OperationBatch, OperationObject, OperationTransaction, PageDelta, PageId, PagePreambleDelta,
     PagePreambleState, PageState, PolicyGeneratedAnchorReason, PreparedBatch,
@@ -6361,7 +6361,11 @@ fn scenario_reducer_removes_irrelevant_authors_and_orphan_deliveries() {
     )
     .unwrap();
 
-    let minimized = scenario.minimize_failure().unwrap();
+    let minimized = scenario
+        .minimize_failure(
+            FrozenCandidateId::parse("be54af627a5a9dc70481478f38817c9955b28faa").unwrap(),
+        )
+        .unwrap();
     assert_eq!(minimized.scenario.seed, scenario.seed);
     assert_eq!(minimized.scenario.actions.len(), 2);
     assert_eq!(minimized.capsule.original_seed, scenario.seed);

@@ -136,8 +136,9 @@ pub use simulator::{
     CoordinatorFailureWitness, CoordinatorFault, CoordinatorHandoffState, CoordinatorObservation,
     CoordinatorOracle, CoordinatorOracleIdentity, CoordinatorReadGate, CoordinatorRunOutcome,
     CoordinatorSqliteMutation, DeterministicSimulator, FailureCapsule, FailureIdentity,
-    InvariantFailureKind, MinimizedScenario, Scenario, ScenarioAction, ScenarioDevice,
-    ScenarioError, SimulatorDeviceState, FAILURE_CAPSULE_SCHEMA_VERSION, SCENARIO_SCHEMA_VERSION,
+    FrozenCandidateId, InvariantFailureKind, MinimizedScenario, Scenario, ScenarioAction,
+    ScenarioDevice, ScenarioError, SimulatorDeviceState, FAILURE_CAPSULE_SCHEMA_VERSION,
+    SCENARIO_SCHEMA_VERSION,
 };
 pub use sqlite::{
     AcceptedBatchEvent, ApplicationRuntimeRoot, ApplyDisposition, ForensicEvidence,
