@@ -3,7 +3,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::scratch_store::{ScratchLsmRoot, ScratchPageKind, ScratchRoots, ScratchStore};
+use super::scratch_store::{
+    ScratchAuthenticatedPointRoot, ScratchPageKind, ScratchRoots, ScratchStore,
+};
 use super::{BatchCausalDot, BatchId, CausalPeerId, OperationBatch};
 
 const CAUSAL_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -43,7 +45,7 @@ pub(crate) fn next_dot(
     roots: &ScratchRoots,
     peer: CausalPeerId,
 ) -> Result<(BatchCausalDot, Option<BatchId>), CausalIndexError> {
-    let (counter, prior_batch) = match store.lookup(
+    let (counter, prior_batch) = match store.authenticated_point_lookup(
         &roots.causal_peer_root,
         ScratchPageKind::CausalPeer,
         peer_key(peer).as_slice(),
@@ -66,28 +68,12 @@ pub(crate) fn next_dot(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn insert_batch(
     store: &ScratchStore,
     roots: &ScratchRoots,
     manifest: &OperationBatch,
 ) -> Result<ScratchRoots, CausalIndexError> {
-    let batch_id = manifest.batch_id();
-    let dot = manifest.causal_dot();
-    if lookup_batch(store, &roots.causal_root, batch_id)?.is_some() {
-        return Err(CausalIndexError::BatchReuse(batch_id));
-    }
-    let dot_key = dot_key(dot);
-    if let Some(bytes) =
-        store.lookup(&roots.causal_dot_root, ScratchPageKind::CausalDot, &dot_key)?
-    {
-        let existing = decode_batch_id(&bytes)?;
-        return Err(CausalIndexError::DotReuse {
-            dot,
-            existing,
-            offered: batch_id,
-        });
-    }
-
     let mut clock = BTreeMap::<CausalPeerId, u64>::new();
     for parent in manifest.causal_dependency_heads() {
         let record = lookup_batch(store, &roots.causal_root, *parent)?
@@ -99,9 +85,58 @@ pub(crate) fn insert_batch(
                 .or_insert(counter);
         }
     }
+    insert_batch_accumulated(
+        store,
+        roots,
+        manifest,
+        &clock.into_iter().collect::<Vec<_>>(),
+    )
+}
+
+/// Insert one causal record from the authenticated sparse parent-clock union
+/// accumulated during charged dependency registration.
+///
+/// This interface performs no direct-parent traversal or parent point read.
+/// It validates the accumulated canonical clock, exact next causal dot, dot
+/// uniqueness, and batch uniqueness before publishing the same three causal
+/// roots as `insert_batch`.
+pub(crate) fn insert_batch_accumulated(
+    store: &ScratchStore,
+    roots: &ScratchRoots,
+    manifest: &OperationBatch,
+    accumulated_clock: &[(CausalPeerId, u64)],
+) -> Result<ScratchRoots, CausalIndexError> {
+    if accumulated_clock.iter().any(|(_, counter)| *counter == 0)
+        || accumulated_clock
+            .windows(2)
+            .any(|pair| pair[0].0 >= pair[1].0)
+    {
+        return Err(CausalIndexError::MalformedRecord);
+    }
+    let batch_id = manifest.batch_id();
+    let dot = manifest.causal_dot();
+    if lookup_batch(store, &roots.causal_root, batch_id)?.is_some() {
+        return Err(CausalIndexError::BatchReuse(batch_id));
+    }
+    let dot_key = dot_key(dot);
+    if let Some(bytes) = store.authenticated_point_lookup(
+        &roots.causal_dot_root,
+        ScratchPageKind::CausalDot,
+        &dot_key,
+    )? {
+        let existing = decode_batch_id(&bytes)?;
+        return Err(CausalIndexError::DotReuse {
+            dot,
+            existing,
+            offered: batch_id,
+        });
+    }
+
+    let mut clock = accumulated_clock.to_vec();
     let expected = clock
-        .get(&dot.peer_id())
-        .copied()
+        .binary_search_by_key(&dot.peer_id(), |(peer, _)| *peer)
+        .ok()
+        .map(|index| clock[index].1)
         .unwrap_or(0)
         .checked_add(1)
         .ok_or(CausalIndexError::CounterOverflow)?;
@@ -111,27 +146,30 @@ pub(crate) fn insert_batch(
             expected_counter: expected,
         });
     }
-    clock.insert(dot.peer_id(), dot.counter());
+    match clock.binary_search_by_key(&dot.peer_id(), |(peer, _)| *peer) {
+        Ok(index) => clock[index].1 = dot.counter(),
+        Err(index) => clock.insert(index, (dot.peer_id(), dot.counter())),
+    }
     let record = CausalBatchRecord {
         schema_version: CAUSAL_INDEX_SCHEMA_VERSION,
         batch_id,
         dot,
-        clock: clock.into_iter().collect(),
+        clock,
     };
     validate_record(&record)?;
 
     let mut next = roots.clone();
-    next.causal_root = store.insert_many(
+    next.causal_root = store.authenticated_point_apply(
         &roots.causal_root,
         ScratchPageKind::CausalBatch,
         &BTreeMap::from([(batch_key(batch_id), Some(encode_canonical(&record)?))]),
     )?;
-    next.causal_dot_root = store.insert_many(
+    next.causal_dot_root = store.authenticated_point_apply(
         &roots.causal_dot_root,
         ScratchPageKind::CausalDot,
         &BTreeMap::from([(dot_key, Some(encode_canonical(&batch_id)?))]),
     )?;
-    next.causal_peer_root = store.insert_many(
+    next.causal_peer_root = store.authenticated_point_apply(
         &roots.causal_peer_root,
         ScratchPageKind::CausalPeer,
         &BTreeMap::from([(
@@ -139,7 +177,31 @@ pub(crate) fn insert_batch(
             Some(encode_canonical(&(dot.peer_id(), dot.counter(), batch_id))?),
         )]),
     )?;
+    next.causal_clock_len_root = store.authenticated_point_apply(
+        &next.causal_clock_len_root,
+        ScratchPageKind::CausalClockLength,
+        &BTreeMap::from([(
+            batch_key(batch_id),
+            Some(encode_canonical(&(record.clock.len() as u64))?),
+        )]),
+    )?;
     Ok(next)
+}
+
+/// Fixed-size work-bound lookup for one accepted parent's sparse clock.
+pub(crate) fn batch_clock_len(
+    store: &ScratchStore,
+    roots: &ScratchRoots,
+    batch_id: BatchId,
+) -> Result<Option<u64>, CausalIndexError> {
+    store
+        .authenticated_point_lookup(
+            &roots.causal_clock_len_root,
+            ScratchPageKind::CausalClockLength,
+            &batch_key(batch_id),
+        )?
+        .map(|bytes| decode_canonical::<u64>(&bytes))
+        .transpose()
 }
 
 pub(crate) fn batch_record(
@@ -152,11 +214,11 @@ pub(crate) fn batch_record(
 
 fn lookup_batch(
     store: &ScratchStore,
-    root: &ScratchLsmRoot,
+    root: &ScratchAuthenticatedPointRoot,
     batch_id: BatchId,
 ) -> Result<Option<CausalBatchRecord>, CausalIndexError> {
     store
-        .lookup(
+        .authenticated_point_lookup(
             root,
             ScratchPageKind::CausalBatch,
             batch_key(batch_id).as_slice(),
@@ -230,6 +292,7 @@ fn decode_canonical<T: for<'de> Deserialize<'de> + Serialize>(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CausalIndexError {
     Scratch(String),
+    #[cfg(test)]
     MissingParent(BatchId),
     BatchReuse(BatchId),
     DotReuse {
@@ -250,6 +313,7 @@ impl fmt::Display for CausalIndexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Scratch(error) => write!(f, "causal scratch index failed: {error}"),
+            #[cfg(test)]
             Self::MissingParent(batch) => write!(f, "missing causal parent {batch}"),
             Self::BatchReuse(batch) => write!(f, "causal record already exists for {batch}"),
             Self::DotReuse {
@@ -379,7 +443,12 @@ mod tests {
             BatchCausalDot::new(peer_a, 2).unwrap(),
             vec![first.batch_id()],
         );
-        roots = insert_batch(&store, &roots, &second).unwrap();
+        let first_clock = batch_record(&store, &roots, first.batch_id())
+            .unwrap()
+            .unwrap()
+            .clock()
+            .to_vec();
+        roots = insert_batch_accumulated(&store, &roots, &second, &first_clock).unwrap();
         let joined = manifest(
             workspace,
             104,

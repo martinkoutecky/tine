@@ -50,7 +50,7 @@ const ENGINE_HISTORY_ROOTS_DIR: &str = "roots";
 const ENGINE_HISTORY_CLAIM_FILE: &str = "engine-history.claim";
 const ENGINE_HISTORY_HEAD_FILE: &str = "engine-history.head";
 const ENGINE_HISTORY_ROOT_SUFFIX: &str = ".history-root";
-const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 6;
+const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 7;
 const MAX_ENGINE_HISTORY_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENGINE_HISTORY_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const ENGINE_HISTORY_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -87,11 +87,36 @@ thread_local! {
         std::cell::RefCell::new(None);
     static ENGINE_HISTORY_FAIL_BEFORE_HEAD_SWAP: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    static PUBLISH_FAIL_AFTER_OBJECTS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
 pub(crate) fn fail_next_engine_history_head_swap() {
     ENGINE_HISTORY_FAIL_BEFORE_HEAD_SWAP.with(|fail| fail.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_publish_after_objects() {
+    PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| fail.set(true));
+}
+
+#[cfg(test)]
+fn publish_after_objects_hook() -> Result<(), StoreError> {
+    PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| {
+        if fail.replace(false) {
+            Err(StoreError::Io(std::io::Error::other(
+                "deterministic failure after object publication",
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn publish_after_objects_hook() -> Result<(), StoreError> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -168,21 +193,21 @@ struct AbsentControlName {
 
 #[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ControlDirectoryIdentity {
+pub(crate) struct ControlDirectoryIdentity {
     device: u64,
     inode: u64,
 }
 
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ControlDirectoryIdentity {
+pub(crate) struct ControlDirectoryIdentity {
     volume: u64,
     file_id: [u8; 16],
 }
 
 #[cfg(not(any(unix, windows)))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ControlDirectoryIdentity;
+pub(crate) struct ControlDirectoryIdentity;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AcceptedReadStats {
@@ -203,6 +228,10 @@ pub struct ObjectStoreStats {
     pub block_claim_index_reads: usize,
     pub block_claim_index_writes: usize,
     pub block_claim_index_syncs: usize,
+    pub inspected_manifest_operations: usize,
+    pub inspected_manifest_bytes: usize,
+    pub inspected_object_operations: usize,
+    pub inspected_object_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -218,6 +247,10 @@ struct StoreCounters {
     block_claim_index_reads: AtomicUsize,
     block_claim_index_writes: AtomicUsize,
     block_claim_index_syncs: AtomicUsize,
+    inspected_manifest_operations: AtomicUsize,
+    inspected_manifest_bytes: AtomicUsize,
+    inspected_object_operations: AtomicUsize,
+    inspected_object_bytes: AtomicUsize,
 }
 
 #[derive(Debug)]
@@ -578,6 +611,7 @@ impl ObjectStore {
         for object in batch.objects() {
             self.stage_object_bytes(&object.encode()?)?;
         }
+        publish_after_objects_hook()?;
         self.stage_manifest_bytes(&batch.manifest().encode()?)?;
         Ok(())
     }
@@ -592,6 +626,12 @@ impl ObjectStore {
                 None => return Ok(BatchInspection::Absent),
                 Some(bytes) => bytes,
             };
+        self.counters
+            .inspected_manifest_operations
+            .fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .inspected_manifest_bytes
+            .fetch_add(manifest_bytes.len(), Ordering::Relaxed);
         let manifest = OperationBatch::decode(&manifest_bytes)?;
         if manifest.batch_id() != batch_id {
             return Err(StoreError::ManifestPathMismatch {
@@ -610,6 +650,9 @@ impl ObjectStore {
         let mut missing = Vec::new();
         let mut objects = Vec::with_capacity(manifest.required_objects().len());
         for descriptor in manifest.required_objects() {
+            self.counters
+                .inspected_object_operations
+                .fetch_add(1, Ordering::Relaxed);
             let filename = object_filename(descriptor.content_digest());
             let Some(bytes) = read_optional_regular(
                 &objects_dir,
@@ -621,6 +664,9 @@ impl ObjectStore {
                 missing.push(descriptor.clone());
                 continue;
             };
+            self.counters
+                .inspected_object_bytes
+                .fetch_add(bytes.len(), Ordering::Relaxed);
             let content_digest = ContentDigest::of(&bytes);
             if content_digest != descriptor.content_digest() {
                 return Err(StoreError::ObjectPathMismatch(descriptor.content_digest()));
@@ -946,6 +992,17 @@ impl ObjectStore {
             file: Mutex::new(file),
             counters: Arc::clone(&self.counters),
         })
+    }
+
+    /// Stable identity of the retained no-follow archive root capability.
+    ///
+    /// This is derived from the opened directory resource, never from an
+    /// ambient path string, so two `ObjectStore` values opened over the same
+    /// archive compare equal while a substituted directory does not.
+    pub(crate) fn canonical_archive_identity(
+        &self,
+    ) -> Result<ControlDirectoryIdentity, StoreError> {
+        control_directory_identity(&self.capability)
     }
 
     pub(crate) fn start_engine_scratch(
@@ -1589,6 +1646,12 @@ impl StoreCounters {
             block_claim_index_reads: self.block_claim_index_reads.load(Ordering::Relaxed),
             block_claim_index_writes: self.block_claim_index_writes.load(Ordering::Relaxed),
             block_claim_index_syncs: self.block_claim_index_syncs.load(Ordering::Relaxed),
+            inspected_manifest_operations: self
+                .inspected_manifest_operations
+                .load(Ordering::Relaxed),
+            inspected_manifest_bytes: self.inspected_manifest_bytes.load(Ordering::Relaxed),
+            inspected_object_operations: self.inspected_object_operations.load(Ordering::Relaxed),
+            inspected_object_bytes: self.inspected_object_bytes.load(Ordering::Relaxed),
         }
     }
 }
@@ -3057,7 +3120,9 @@ fn open_existing_dir_nofollow(root: &Dir, name: &str) -> Result<Option<Dir>, Sto
 }
 
 #[cfg(unix)]
-fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+pub(crate) fn control_directory_identity(
+    dir: &Dir,
+) -> Result<ControlDirectoryIdentity, StoreError> {
     use std::os::unix::fs::MetadataExt;
 
     let metadata = dir.try_clone()?.into_std_file().metadata()?;
@@ -3068,7 +3133,9 @@ fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, Sto
 }
 
 #[cfg(windows)]
-fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+pub(crate) fn control_directory_identity(
+    dir: &Dir,
+) -> Result<ControlDirectoryIdentity, StoreError> {
     use windows_sys::Win32::Storage::FileSystem::{
         FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
     };
@@ -3093,7 +3160,9 @@ fn control_directory_identity(dir: &Dir) -> Result<ControlDirectoryIdentity, Sto
 }
 
 #[cfg(not(any(unix, windows)))]
-fn control_directory_identity(_dir: &Dir) -> Result<ControlDirectoryIdentity, StoreError> {
+pub(crate) fn control_directory_identity(
+    _dir: &Dir,
+) -> Result<ControlDirectoryIdentity, StoreError> {
     Err(StoreError::Io(std::io::Error::new(
         ErrorKind::Unsupported,
         "directory identity is unavailable on this platform",

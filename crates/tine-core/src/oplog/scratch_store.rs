@@ -25,14 +25,23 @@ const MARKER_FILE: &str = "marker";
 const LEASE_FILE: &str = "lease";
 const PAGES_FILE: &str = "pages.index";
 const BLOBS_FILE: &str = "blobs.data";
-const SCRATCH_SCHEMA_VERSION: u32 = 9;
+const SCRATCH_SCHEMA_VERSION: u32 = 11;
 const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
 const SCRATCH_LSM_LEVELS: usize = 32;
 const ACCEPTED_SEQUENCE_SCHEMA_VERSION: u32 = 1;
 const ACCEPTED_SEQUENCE_LEAF_CAPACITY: usize = 1;
 const ACCEPTED_SEQUENCE_NODE_FANOUT: usize = 32;
 const AUTHENTICATED_MAP_SCHEMA_VERSION: u32 = 1;
+const AUTHENTICATED_POINT_MAP_SCHEMA_VERSION: u32 = 1;
+const CAUSAL_ACCUMULATOR_SCHEMA_VERSION: u32 = 1;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
+pub(crate) const AUTHENTICATED_POINT_MAX_DEPTH: usize = 256;
+pub(crate) const AUTHENTICATED_POINT_MAX_KEY_BYTES: usize = 64;
+pub(crate) const AUTHENTICATED_POINT_MAX_VALUE_BYTES: usize = MAX_PAGE_BYTES - 4096;
+pub(crate) const AUTHENTICATED_POINT_MAX_MUTATIONS: usize = 65;
+pub(crate) const AUTHENTICATED_POINT_MAX_PAGE_BYTES: usize = MAX_PAGE_BYTES;
+pub(crate) const AUTHENTICATED_POINT_MAX_IO_PER_MUTATION: usize =
+    8 * (AUTHENTICATED_POINT_MAX_DEPTH + 1);
 const CURRENT_FILTER_WORDS: usize = 16_384;
 const MAX_COVERED_BLOB_DEDUP_ROOTS: usize = 256;
 const MAX_MARKER_BYTES: u64 = 4 * 1024;
@@ -222,6 +231,12 @@ pub(crate) enum ScratchPageKind {
     AcceptedDocumentMap = 18,
     AcceptedBatchMap = 19,
     PageNameCatalogFrontier = 20,
+    DependencyFanout = 21,
+    DependencyWaitProgress = 22,
+    DependencyIdentity = 23,
+    DependencyUnresolved = 24,
+    CausalClockLength = 25,
+    CausalAccumulator = 26,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -354,6 +369,73 @@ pub(crate) struct ScratchAuthenticatedMapRoot {
     root: Option<ScratchPageRef>,
 }
 
+/// Root of the point-keyed authenticated map used only by bounded operational
+/// staging, dependency fanout, and their causal control records.
+///
+/// A physical key is a domain-separated digest of `(page kind, logical key)`.
+/// Every node also retains the complete logical key. A digest match with
+/// different logical bytes is therefore rejected as a collision and can never
+/// alias two records. Treap traversal is capped at
+/// `AUTHENTICATED_POINT_MAX_DEPTH`, keys and values have fixed byte ceilings,
+/// and one batched mutation call has a fixed item ceiling. Consequently one
+/// point operation has a physical page-I/O and byte bound independent of the
+/// current map cardinality.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScratchAuthenticatedPointRoot {
+    schema_version: u32,
+    count: u64,
+    root_key_digest: Option<ContentDigest>,
+    root_digest: ContentDigest,
+    root: Option<ScratchPageRef>,
+}
+
+impl Default for ScratchAuthenticatedPointRoot {
+    fn default() -> Self {
+        Self {
+            schema_version: AUTHENTICATED_POINT_MAP_SCHEMA_VERSION,
+            count: 0,
+            root_key_digest: None,
+            root_digest: authenticated_point_empty_digest(),
+            root: None,
+        }
+    }
+}
+
+impl ScratchAuthenticatedPointRoot {
+    pub(crate) const fn count(&self) -> u64 {
+        self.count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScratchCausalAccumulatorRoot {
+    schema_version: u32,
+    count: u64,
+    root_key: Option<[u8; 16]>,
+    root_digest: ContentDigest,
+    root: Option<ScratchPageRef>,
+}
+
+impl ScratchCausalAccumulatorRoot {
+    pub(crate) const fn count(&self) -> u64 {
+        self.count
+    }
+}
+
+impl Default for ScratchCausalAccumulatorRoot {
+    fn default() -> Self {
+        Self {
+            schema_version: CAUSAL_ACCUMULATOR_SCHEMA_VERSION,
+            count: 0,
+            root_key: None,
+            root_digest: causal_accumulator_empty_digest(),
+            root: None,
+        }
+    }
+}
+
 impl Default for ScratchAuthenticatedMapRoot {
     fn default() -> Self {
         Self {
@@ -399,6 +481,37 @@ struct AuthenticatedMapNode {
     right: Option<AuthenticatedMapChild>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedPointChild {
+    key_digest: ContentDigest,
+    digest: ContentDigest,
+    page_ref: ScratchPageRef,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedPointNode {
+    schema_version: u32,
+    key_digest: ContentDigest,
+    logical_key: Vec<u8>,
+    priority: ContentDigest,
+    value: Vec<u8>,
+    left: Option<AuthenticatedPointChild>,
+    right: Option<AuthenticatedPointChild>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CausalAccumulatorNode {
+    schema_version: u32,
+    key: [u8; 16],
+    priority: ContentDigest,
+    counter: u64,
+    left: Option<AuthenticatedMapChild>,
+    right: Option<AuthenticatedMapChild>,
+}
+
 impl Default for ScratchLsmRoot {
     fn default() -> Self {
         Self {
@@ -411,13 +524,41 @@ impl Default for ScratchLsmRoot {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScratchRoots {
-    pub batch_status_root: ScratchLsmRoot,
-    pub wait_root: ScratchLsmRoot,
-    pub ready_queue_root: ScratchLsmRoot,
+    pub batch_status_root: ScratchAuthenticatedPointRoot,
+    /// Canonical direct-dependency identities keyed by `(child, ordinal)`.
+    /// Registration appends exactly one authenticated point per charged
+    /// ordinal; the compact staged record never owns the whole sequence.
+    pub dependency_root: ScratchAuthenticatedPointRoot,
+    /// Live unresolved membership keyed by the same `(child, ordinal)` point.
+    /// Fanout deletes exactly the point named by its durable wait edge.
+    pub unresolved_dependency_root: ScratchAuthenticatedPointRoot,
+    pub wait_root: ScratchAuthenticatedPointRoot,
+    /// Per-parent `(registered, drained)` wait-edge ordinals. Wait edges are
+    /// keyed by `parent || ordinal`, so the next undrained edge of a final
+    /// parent is one point lookup rather than a successor scan over tombstones.
+    pub wait_progress_root: ScratchAuthenticatedPointRoot,
+    /// Durable dependent-fanout discovery index. `begin_finish` appends one
+    /// slot per final parent that still owns live wait edges; a reconstructed
+    /// engine rediscovers the exact remaining fanout from `fanout_head`.
+    pub fanout_root: ScratchAuthenticatedPointRoot,
+    pub fanout_head: u64,
+    pub fanout_tail: u64,
+    /// Weighted work already derived for the exact current fanout edge. The
+    /// remaining credit survives bounded calls and same-process reconstruction.
+    pub fanout_work_remaining: Option<u64>,
+    /// Number of staged records whose direct-dependency registration is still
+    /// point-paged in progress. Registration is durable, so this is the exact
+    /// remaining registration continuation after engine reconstruction.
+    pub registering_len: u64,
+    pub ready_queue_root: ScratchAuthenticatedPointRoot,
     pub ready_queue_len: u64,
-    pub causal_root: ScratchLsmRoot,
-    pub causal_dot_root: ScratchLsmRoot,
-    pub causal_peer_root: ScratchLsmRoot,
+    pub causal_root: ScratchAuthenticatedPointRoot,
+    pub causal_dot_root: ScratchAuthenticatedPointRoot,
+    pub causal_peer_root: ScratchAuthenticatedPointRoot,
+    /// Fixed-size causal-clock cardinality records keyed by accepted batch.
+    /// Bounded staging uses this point index to derive a parent's merge weight
+    /// before reading or traversing that parent's sparse clock.
+    pub causal_clock_len_root: ScratchAuthenticatedPointRoot,
     pub document_current_root: ScratchLsmRoot,
     pub document_state_root: ScratchLsmRoot,
     pub document_after_batch_root: ScratchLsmRoot,
@@ -679,6 +820,399 @@ impl ScratchStore {
             }
         }
         Ok(None)
+    }
+
+    pub(crate) fn authenticated_point_lookup(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+        logical_key: &[u8],
+    ) -> Result<Option<Vec<u8>>, ScratchError> {
+        validate_authenticated_point_root(root)?;
+        validate_authenticated_point_key(logical_key)?;
+        self.counters.point_reads.fetch_add(1, Ordering::Relaxed);
+        let key_digest = authenticated_point_key_digest(kind, logical_key);
+        let mut current = root.root.as_ref().map(|page_ref| AuthenticatedPointChild {
+            key_digest: root
+                .root_key_digest
+                .expect("validated nonempty point root key"),
+            digest: root.root_digest,
+            page_ref: page_ref.clone(),
+        });
+        for _ in 0..=AUTHENTICATED_POINT_MAX_DEPTH {
+            let Some(child) = current else {
+                return Ok(None);
+            };
+            let node = self.read_authenticated_point_node(kind, &child)?;
+            match key_digest.cmp(&node.key_digest) {
+                std::cmp::Ordering::Equal => {
+                    if node.logical_key != logical_key {
+                        return Err(ScratchError::KeyDigestCollision);
+                    }
+                    return Ok(Some(node.value));
+                }
+                std::cmp::Ordering::Less => current = node.left,
+                std::cmp::Ordering::Greater => current = node.right,
+            }
+        }
+        Err(ScratchError::IndexCapacity)
+    }
+
+    /// Apply a fixed-size collection of independent point mutations.
+    ///
+    /// Unlike the binary LSM, this never carries or rewrites a prior segment.
+    /// Each item performs one bounded authenticated-tree operation. The
+    /// collection ceiling covers the largest ready-heap path (one slot per bit
+    /// of a `u64`, plus its terminal slot).
+    pub(crate) fn authenticated_point_apply(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+        records: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    ) -> Result<ScratchAuthenticatedPointRoot, ScratchError> {
+        if records.len() > AUTHENTICATED_POINT_MAX_MUTATIONS {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let mut next = root.clone();
+        for (key, value) in records {
+            next = match value {
+                Some(value) => self.authenticated_point_upsert(&next, kind, key, value)?,
+                None => self.authenticated_point_remove(&next, kind, key)?,
+            };
+        }
+        Ok(next)
+    }
+
+    pub(crate) fn authenticated_point_upsert(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+        logical_key: &[u8],
+        value: &[u8],
+    ) -> Result<ScratchAuthenticatedPointRoot, ScratchError> {
+        validate_authenticated_point_root(root)?;
+        validate_authenticated_point_key(logical_key)?;
+        if value.len() > AUTHENTICATED_POINT_MAX_VALUE_BYTES {
+            return Err(ScratchError::MalformedPage);
+        }
+        let key_digest = authenticated_point_key_digest(kind, logical_key);
+        let (child, inserted) = self.authenticated_point_upsert_child(
+            kind,
+            root.root.as_ref().map(|page_ref| AuthenticatedPointChild {
+                key_digest: root
+                    .root_key_digest
+                    .expect("validated nonempty point root key"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key_digest,
+            logical_key,
+            value,
+            0,
+        )?;
+        let next = ScratchAuthenticatedPointRoot {
+            schema_version: AUTHENTICATED_POINT_MAP_SCHEMA_VERSION,
+            count: if inserted {
+                root.count
+                    .checked_add(1)
+                    .ok_or(ScratchError::IndexCapacity)?
+            } else {
+                root.count
+            },
+            root_key_digest: Some(child.key_digest),
+            root_digest: child.digest,
+            root: Some(child.page_ref),
+        };
+        validate_authenticated_point_root(&next)?;
+        Ok(next)
+    }
+
+    fn authenticated_point_upsert_child(
+        &self,
+        kind: ScratchPageKind,
+        current: Option<AuthenticatedPointChild>,
+        key_digest: ContentDigest,
+        logical_key: &[u8],
+        value: &[u8],
+        depth: usize,
+    ) -> Result<(AuthenticatedPointChild, bool), ScratchError> {
+        if depth > AUTHENTICATED_POINT_MAX_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            let node = AuthenticatedPointNode {
+                schema_version: AUTHENTICATED_POINT_MAP_SCHEMA_VERSION,
+                key_digest,
+                logical_key: logical_key.to_vec(),
+                priority: authenticated_point_priority(key_digest),
+                value: value.to_vec(),
+                left: None,
+                right: None,
+            };
+            return Ok((self.write_authenticated_point_node(kind, &node)?, true));
+        };
+        let mut node = self.read_authenticated_point_node(kind, &current)?;
+        let inserted;
+        match key_digest.cmp(&node.key_digest) {
+            std::cmp::Ordering::Equal => {
+                if node.logical_key != logical_key {
+                    return Err(ScratchError::KeyDigestCollision);
+                }
+                node.value = value.to_vec();
+                inserted = false;
+            }
+            std::cmp::Ordering::Less => {
+                let (left, was_inserted) = self.authenticated_point_upsert_child(
+                    kind,
+                    node.left.take(),
+                    key_digest,
+                    logical_key,
+                    value,
+                    depth + 1,
+                )?;
+                node.left = Some(left);
+                inserted = was_inserted;
+                if node.left.as_ref().is_some_and(|left| {
+                    authenticated_point_priority_order(left.key_digest, node.key_digest).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_point_right(kind, node)?, inserted));
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, was_inserted) = self.authenticated_point_upsert_child(
+                    kind,
+                    node.right.take(),
+                    key_digest,
+                    logical_key,
+                    value,
+                    depth + 1,
+                )?;
+                node.right = Some(right);
+                inserted = was_inserted;
+                if node.right.as_ref().is_some_and(|right| {
+                    authenticated_point_priority_order(right.key_digest, node.key_digest).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_point_left(kind, node)?, inserted));
+                }
+            }
+        }
+        Ok((self.write_authenticated_point_node(kind, &node)?, inserted))
+    }
+
+    fn rotate_authenticated_point_right(
+        &self,
+        kind: ScratchPageKind,
+        mut node: AuthenticatedPointNode,
+    ) -> Result<AuthenticatedPointChild, ScratchError> {
+        let left = node.left.take().ok_or(ScratchError::MalformedPage)?;
+        let mut left_node = self.read_authenticated_point_node(kind, &left)?;
+        node.left = left_node.right.take();
+        left_node.right = Some(self.write_authenticated_point_node(kind, &node)?);
+        self.write_authenticated_point_node(kind, &left_node)
+    }
+
+    fn rotate_authenticated_point_left(
+        &self,
+        kind: ScratchPageKind,
+        mut node: AuthenticatedPointNode,
+    ) -> Result<AuthenticatedPointChild, ScratchError> {
+        let right = node.right.take().ok_or(ScratchError::MalformedPage)?;
+        let mut right_node = self.read_authenticated_point_node(kind, &right)?;
+        node.right = right_node.left.take();
+        right_node.left = Some(self.write_authenticated_point_node(kind, &node)?);
+        self.write_authenticated_point_node(kind, &right_node)
+    }
+
+    fn authenticated_point_remove(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+        logical_key: &[u8],
+    ) -> Result<ScratchAuthenticatedPointRoot, ScratchError> {
+        validate_authenticated_point_root(root)?;
+        validate_authenticated_point_key(logical_key)?;
+        let key_digest = authenticated_point_key_digest(kind, logical_key);
+        let (child, removed) = self.authenticated_point_remove_child(
+            kind,
+            root.root.as_ref().map(|page_ref| AuthenticatedPointChild {
+                key_digest: root
+                    .root_key_digest
+                    .expect("validated nonempty point root key"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key_digest,
+            logical_key,
+            0,
+        )?;
+        if !removed {
+            return Ok(root.clone());
+        }
+        let count = root
+            .count
+            .checked_sub(1)
+            .ok_or(ScratchError::MalformedPage)?;
+        let next = match child {
+            Some(child) => ScratchAuthenticatedPointRoot {
+                schema_version: AUTHENTICATED_POINT_MAP_SCHEMA_VERSION,
+                count,
+                root_key_digest: Some(child.key_digest),
+                root_digest: child.digest,
+                root: Some(child.page_ref),
+            },
+            None if count == 0 => ScratchAuthenticatedPointRoot::default(),
+            None => return Err(ScratchError::MalformedPage),
+        };
+        validate_authenticated_point_root(&next)?;
+        Ok(next)
+    }
+
+    fn authenticated_point_remove_child(
+        &self,
+        kind: ScratchPageKind,
+        current: Option<AuthenticatedPointChild>,
+        key_digest: ContentDigest,
+        logical_key: &[u8],
+        depth: usize,
+    ) -> Result<(Option<AuthenticatedPointChild>, bool), ScratchError> {
+        if depth > AUTHENTICATED_POINT_MAX_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            return Ok((None, false));
+        };
+        let mut node = self.read_authenticated_point_node(kind, &current)?;
+        match key_digest.cmp(&node.key_digest) {
+            std::cmp::Ordering::Equal => {
+                if node.logical_key != logical_key {
+                    return Err(ScratchError::KeyDigestCollision);
+                }
+                Ok((
+                    self.merge_authenticated_point_children(
+                        kind,
+                        node.left,
+                        node.right,
+                        depth + 1,
+                    )?,
+                    true,
+                ))
+            }
+            std::cmp::Ordering::Less => {
+                let (left, removed) = self.authenticated_point_remove_child(
+                    kind,
+                    node.left.take(),
+                    key_digest,
+                    logical_key,
+                    depth + 1,
+                )?;
+                if !removed {
+                    return Ok((Some(current), false));
+                }
+                node.left = left;
+                Ok((
+                    Some(self.write_authenticated_point_node(kind, &node)?),
+                    true,
+                ))
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, removed) = self.authenticated_point_remove_child(
+                    kind,
+                    node.right.take(),
+                    key_digest,
+                    logical_key,
+                    depth + 1,
+                )?;
+                if !removed {
+                    return Ok((Some(current), false));
+                }
+                node.right = right;
+                Ok((
+                    Some(self.write_authenticated_point_node(kind, &node)?),
+                    true,
+                ))
+            }
+        }
+    }
+
+    fn merge_authenticated_point_children(
+        &self,
+        kind: ScratchPageKind,
+        left: Option<AuthenticatedPointChild>,
+        right: Option<AuthenticatedPointChild>,
+        depth: usize,
+    ) -> Result<Option<AuthenticatedPointChild>, ScratchError> {
+        if depth > AUTHENTICATED_POINT_MAX_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let (left, right) = match (left, right) {
+            (Some(left), Some(right)) => (left, right),
+            (left, right) => return Ok(left.or(right)),
+        };
+        if authenticated_point_priority_order(left.key_digest, right.key_digest).is_lt() {
+            let mut node = self.read_authenticated_point_node(kind, &left)?;
+            node.right = self.merge_authenticated_point_children(
+                kind,
+                node.right.take(),
+                Some(right),
+                depth + 1,
+            )?;
+            Ok(Some(self.write_authenticated_point_node(kind, &node)?))
+        } else {
+            let mut node = self.read_authenticated_point_node(kind, &right)?;
+            node.left = self.merge_authenticated_point_children(
+                kind,
+                Some(left),
+                node.left.take(),
+                depth + 1,
+            )?;
+            Ok(Some(self.write_authenticated_point_node(kind, &node)?))
+        }
+    }
+
+    pub(crate) fn authenticated_point_materialize(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ScratchError> {
+        validate_authenticated_point_root(root)?;
+        self.counters.range_reads.fetch_add(1, Ordering::Relaxed);
+        let mut entries = Vec::with_capacity(root.count as usize);
+        let mut stack = Vec::<AuthenticatedPointChild>::new();
+        let mut current = root.root.as_ref().map(|page_ref| AuthenticatedPointChild {
+            key_digest: root
+                .root_key_digest
+                .expect("validated nonempty point root key"),
+            digest: root.root_digest,
+            page_ref: page_ref.clone(),
+        });
+        while current.is_some() || !stack.is_empty() {
+            while let Some(child) = current.take() {
+                let node = self.read_authenticated_point_node(kind, &child)?;
+                current = node.left.clone();
+                stack.push(child);
+            }
+            let child = stack.pop().expect("nonempty point traversal stack");
+            let node = self.read_authenticated_point_node(kind, &child)?;
+            entries.push((node.logical_key, node.value));
+            current = node.right;
+        }
+        if entries.len() != root.count as usize {
+            return Err(ScratchError::MalformedPage);
+        }
+        Ok(entries)
+    }
+
+    pub(crate) fn authenticated_point_scan_prefix(
+        &self,
+        root: &ScratchAuthenticatedPointRoot,
+        kind: ScratchPageKind,
+        prefix: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ScratchError> {
+        Ok(self
+            .authenticated_point_materialize(root, kind)?
+            .into_iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .collect())
     }
 
     pub(crate) fn append_accepted_sequence(
@@ -964,6 +1498,158 @@ impl ScratchStore {
         node.right = right_node.left.take();
         right_node.left = Some(self.write_authenticated_map_node(kind, &node)?);
         self.write_authenticated_map_node(kind, &right_node)
+    }
+
+    pub(crate) fn causal_accumulator_upsert_max(
+        &self,
+        root: &ScratchCausalAccumulatorRoot,
+        key: [u8; 16],
+        counter: u64,
+    ) -> Result<ScratchCausalAccumulatorRoot, ScratchError> {
+        validate_causal_accumulator_root(root)?;
+        if counter == 0 {
+            return Err(ScratchError::MalformedPage);
+        }
+        let (child, inserted) = self.causal_accumulator_upsert_child(
+            root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+                key: root.root_key.expect("validated nonempty accumulator root"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key,
+            counter,
+            0,
+        )?;
+        let next = ScratchCausalAccumulatorRoot {
+            schema_version: CAUSAL_ACCUMULATOR_SCHEMA_VERSION,
+            count: if inserted {
+                root.count
+                    .checked_add(1)
+                    .ok_or(ScratchError::IndexCapacity)?
+            } else {
+                root.count
+            },
+            root_key: Some(child.key),
+            root_digest: child.digest,
+            root: Some(child.page_ref),
+        };
+        validate_causal_accumulator_root(&next)?;
+        Ok(next)
+    }
+
+    fn causal_accumulator_upsert_child(
+        &self,
+        current: Option<AuthenticatedMapChild>,
+        key: [u8; 16],
+        counter: u64,
+        depth: usize,
+    ) -> Result<(AuthenticatedMapChild, bool), ScratchError> {
+        if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            let node = CausalAccumulatorNode {
+                schema_version: CAUSAL_ACCUMULATOR_SCHEMA_VERSION,
+                key,
+                priority: authenticated_map_priority(key),
+                counter,
+                left: None,
+                right: None,
+            };
+            return Ok((self.write_causal_accumulator_node(&node)?, true));
+        };
+        let mut node = self.read_causal_accumulator_node(&current)?;
+        let inserted;
+        match key.cmp(&node.key) {
+            std::cmp::Ordering::Equal => {
+                node.counter = node.counter.max(counter);
+                inserted = false;
+            }
+            std::cmp::Ordering::Less => {
+                let (left, was_inserted) = self.causal_accumulator_upsert_child(
+                    node.left.take(),
+                    key,
+                    counter,
+                    depth + 1,
+                )?;
+                node.left = Some(left);
+                inserted = was_inserted;
+                if node.left.as_ref().is_some_and(|left| {
+                    authenticated_map_priority_order(left.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_causal_accumulator_right(node)?, inserted));
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, was_inserted) = self.causal_accumulator_upsert_child(
+                    node.right.take(),
+                    key,
+                    counter,
+                    depth + 1,
+                )?;
+                node.right = Some(right);
+                inserted = was_inserted;
+                if node.right.as_ref().is_some_and(|right| {
+                    authenticated_map_priority_order(right.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_causal_accumulator_left(node)?, inserted));
+                }
+            }
+        }
+        Ok((self.write_causal_accumulator_node(&node)?, inserted))
+    }
+
+    fn rotate_causal_accumulator_right(
+        &self,
+        mut node: CausalAccumulatorNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let left = node.left.take().ok_or(ScratchError::MalformedPage)?;
+        let mut left_node = self.read_causal_accumulator_node(&left)?;
+        node.left = left_node.right.take();
+        left_node.right = Some(self.write_causal_accumulator_node(&node)?);
+        self.write_causal_accumulator_node(&left_node)
+    }
+
+    fn rotate_causal_accumulator_left(
+        &self,
+        mut node: CausalAccumulatorNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let right = node.right.take().ok_or(ScratchError::MalformedPage)?;
+        let mut right_node = self.read_causal_accumulator_node(&right)?;
+        node.right = right_node.left.take();
+        right_node.left = Some(self.write_causal_accumulator_node(&node)?);
+        self.write_causal_accumulator_node(&right_node)
+    }
+
+    pub(crate) fn causal_accumulator_entries(
+        &self,
+        root: &ScratchCausalAccumulatorRoot,
+    ) -> Result<Vec<([u8; 16], u64)>, ScratchError> {
+        validate_causal_accumulator_root(root)?;
+        let mut entries = Vec::with_capacity(root.count as usize);
+        let mut stack = Vec::<AuthenticatedMapChild>::new();
+        let mut current = root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+            key: root.root_key.expect("validated nonempty accumulator root"),
+            digest: root.root_digest,
+            page_ref: page_ref.clone(),
+        });
+        while current.is_some() || !stack.is_empty() {
+            while let Some(child) = current.take() {
+                let node = self.read_causal_accumulator_node(&child)?;
+                current = node.left.clone();
+                stack.push(child);
+            }
+            let child = stack.pop().expect("nonempty traversal stack");
+            let node = self.read_causal_accumulator_node(&child)?;
+            entries.push((node.key, node.counter));
+            current = node.right;
+        }
+        if entries.len() != root.count as usize
+            || entries.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+        {
+            return Err(ScratchError::MalformedPage);
+        }
+        Ok(entries)
     }
 
     pub(crate) fn scan_prefix(
@@ -1390,6 +2076,86 @@ impl ScratchStore {
         Ok(node)
     }
 
+    fn write_authenticated_point_node(
+        &self,
+        kind: ScratchPageKind,
+        node: &AuthenticatedPointNode,
+    ) -> Result<AuthenticatedPointChild, ScratchError> {
+        validate_authenticated_point_node(kind, node)?;
+        let digest = authenticated_point_node_digest(node);
+        let key = node.key_digest.as_bytes().to_vec();
+        let page_ref = self.append_page(kind, key.clone(), key, node)?;
+        Ok(AuthenticatedPointChild {
+            key_digest: node.key_digest,
+            digest,
+            page_ref,
+        })
+    }
+
+    fn read_authenticated_point_node(
+        &self,
+        kind: ScratchPageKind,
+        child: &AuthenticatedPointChild,
+    ) -> Result<AuthenticatedPointNode, ScratchError> {
+        let node: AuthenticatedPointNode = self.read_page(&child.page_ref, kind)?;
+        validate_authenticated_point_node(kind, &node)?;
+        if node.key_digest != child.key_digest
+            || child.page_ref.key_min != child.key_digest.as_bytes()
+            || child.page_ref.key_max != child.key_digest.as_bytes()
+            || authenticated_point_node_digest(&node) != child.digest
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(node)
+    }
+
+    fn write_causal_accumulator_node(
+        &self,
+        node: &CausalAccumulatorNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        validate_causal_accumulator_node(node)?;
+        let digest = causal_accumulator_node_digest(
+            node.key,
+            node.counter,
+            node.left.as_ref().map(|child| (child.key, child.digest)),
+            node.right.as_ref().map(|child| (child.key, child.digest)),
+        );
+        let key = node.key.to_vec();
+        let page_ref =
+            self.append_page(ScratchPageKind::CausalAccumulator, key.clone(), key, node)?;
+        Ok(AuthenticatedMapChild {
+            key: node.key,
+            digest,
+            page_ref,
+        })
+    }
+
+    fn read_causal_accumulator_node(
+        &self,
+        child: &AuthenticatedMapChild,
+    ) -> Result<CausalAccumulatorNode, ScratchError> {
+        let node: CausalAccumulatorNode =
+            self.read_page(&child.page_ref, ScratchPageKind::CausalAccumulator)?;
+        validate_causal_accumulator_node(&node)?;
+        if node.key != child.key
+            || child.page_ref.key_min != child.key
+            || child.page_ref.key_max != child.key
+            || causal_accumulator_node_digest(
+                node.key,
+                node.counter,
+                node.left
+                    .as_ref()
+                    .map(|candidate| (candidate.key, candidate.digest)),
+                node.right
+                    .as_ref()
+                    .map(|candidate| (candidate.key, candidate.digest)),
+            ) != child.digest
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(node)
+    }
+
     fn reclaim_stale_runs(&self) -> Result<(), ScratchError> {
         for entry in self.namespace.entries()? {
             let entry = entry?;
@@ -1583,6 +2349,80 @@ pub(crate) fn authenticated_map_empty_digest() -> ContentDigest {
     ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty")
 }
 
+fn authenticated_point_empty_digest() -> ContentDigest {
+    ContentDigest::of(b"tine/oplog/authenticated-point-map/v1/empty")
+}
+
+fn authenticated_point_key_digest(kind: ScratchPageKind, logical_key: &[u8]) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-point-map/v1/key\0".to_vec();
+    bytes.push(kind as u8);
+    bytes.extend_from_slice(&(logical_key.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(logical_key);
+    ContentDigest::of(&bytes)
+}
+
+fn authenticated_point_priority(key_digest: ContentDigest) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-point-map/v1/priority\0".to_vec();
+    bytes.extend_from_slice(key_digest.as_bytes());
+    ContentDigest::of(&bytes)
+}
+
+fn authenticated_point_priority_order(
+    left: ContentDigest,
+    right: ContentDigest,
+) -> std::cmp::Ordering {
+    authenticated_point_priority(left)
+        .as_bytes()
+        .cmp(authenticated_point_priority(right).as_bytes())
+        .then_with(|| left.as_bytes().cmp(right.as_bytes()))
+}
+
+fn authenticated_point_node_digest(node: &AuthenticatedPointNode) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-point-map/v1/node\0".to_vec();
+    bytes.extend_from_slice(node.key_digest.as_bytes());
+    bytes.extend_from_slice(&(node.logical_key.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(&node.logical_key);
+    bytes.extend_from_slice(&(node.value.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(ContentDigest::of(&node.value).as_bytes());
+    for child in [&node.left, &node.right] {
+        match child {
+            Some(child) => {
+                bytes.push(1);
+                bytes.extend_from_slice(child.key_digest.as_bytes());
+                bytes.extend_from_slice(child.digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+    }
+    ContentDigest::of(&bytes)
+}
+
+fn causal_accumulator_empty_digest() -> ContentDigest {
+    ContentDigest::of(b"tine/oplog/causal-accumulator/v1/empty")
+}
+
+fn causal_accumulator_node_digest(
+    key: [u8; 16],
+    counter: u64,
+    left: Option<([u8; 16], ContentDigest)>,
+    right: Option<([u8; 16], ContentDigest)>,
+) -> ContentDigest {
+    let mut bytes = b"tine/oplog/causal-accumulator/v1/node\0".to_vec();
+    bytes.extend_from_slice(&key);
+    bytes.extend_from_slice(&counter.to_be_bytes());
+    for child in [left, right] {
+        match child {
+            Some((child_key, digest)) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&child_key);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+    }
+    ContentDigest::of(&bytes)
+}
+
 pub(crate) fn authenticated_map_priority(key: [u8; 16]) -> ContentDigest {
     let mut bytes = b"tine/oplog/authenticated-map/v1/priority\0".to_vec();
     bytes.extend_from_slice(&key);
@@ -1714,8 +2554,84 @@ fn validate_authenticated_map_root(root: &ScratchAuthenticatedMapRoot) -> Result
     Ok(())
 }
 
+fn validate_authenticated_point_key(logical_key: &[u8]) -> Result<(), ScratchError> {
+    if logical_key.is_empty() || logical_key.len() > AUTHENTICATED_POINT_MAX_KEY_BYTES {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_authenticated_point_root(
+    root: &ScratchAuthenticatedPointRoot,
+) -> Result<(), ScratchError> {
+    if root.schema_version != AUTHENTICATED_POINT_MAP_SCHEMA_VERSION
+        || (root.count == 0)
+            != (root.root.is_none()
+                && root.root_key_digest.is_none()
+                && root.root_digest == authenticated_point_empty_digest())
+        || (root.count > 0 && (root.root.is_none() || root.root_key_digest.is_none()))
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_authenticated_point_node(
+    kind: ScratchPageKind,
+    node: &AuthenticatedPointNode,
+) -> Result<(), ScratchError> {
+    validate_authenticated_point_key(&node.logical_key)?;
+    if node.schema_version != AUTHENTICATED_POINT_MAP_SCHEMA_VERSION
+        || node.value.len() > AUTHENTICATED_POINT_MAX_VALUE_BYTES
+        || node.key_digest != authenticated_point_key_digest(kind, &node.logical_key)
+        || node.priority != authenticated_point_priority(node.key_digest)
+        || node.left.as_ref().is_some_and(|left| {
+            left.key_digest >= node.key_digest
+                || !authenticated_point_priority_order(node.key_digest, left.key_digest).is_lt()
+        })
+        || node.right.as_ref().is_some_and(|right| {
+            right.key_digest <= node.key_digest
+                || !authenticated_point_priority_order(node.key_digest, right.key_digest).is_lt()
+        })
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_causal_accumulator_root(
+    root: &ScratchCausalAccumulatorRoot,
+) -> Result<(), ScratchError> {
+    if root.schema_version != CAUSAL_ACCUMULATOR_SCHEMA_VERSION
+        || (root.count == 0)
+            != (root.root.is_none()
+                && root.root_key.is_none()
+                && root.root_digest == causal_accumulator_empty_digest())
+        || (root.count > 0 && (root.root.is_none() || root.root_key.is_none()))
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
 fn validate_authenticated_map_node(node: &AuthenticatedMapNode) -> Result<(), ScratchError> {
     if node.schema_version != AUTHENTICATED_MAP_SCHEMA_VERSION
+        || node.priority != authenticated_map_priority(node.key)
+        || node.left.as_ref().is_some_and(|left| {
+            left.key >= node.key || !authenticated_map_priority_order(node.key, left.key).is_lt()
+        })
+        || node.right.as_ref().is_some_and(|right| {
+            right.key <= node.key || !authenticated_map_priority_order(node.key, right.key).is_lt()
+        })
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_causal_accumulator_node(node: &CausalAccumulatorNode) -> Result<(), ScratchError> {
+    if node.schema_version != CAUSAL_ACCUMULATOR_SCHEMA_VERSION
+        || node.counter == 0
         || node.priority != authenticated_map_priority(node.key)
         || node.left.as_ref().is_some_and(|left| {
             left.key >= node.key || !authenticated_map_priority_order(node.key, left.key).is_lt()
@@ -2033,6 +2949,7 @@ pub(crate) enum ScratchError {
     PageDigestMismatch(ContentDigest),
     BlobDigestMismatch(ContentDigest),
     PageBindingMismatch,
+    KeyDigestCollision,
     IndexCapacity,
     Poisoned,
 }
@@ -2053,7 +2970,10 @@ impl fmt::Display for ScratchError {
                 write!(f, "scratch blob digest mismatch for {digest}")
             }
             Self::PageBindingMismatch => write!(f, "scratch page reference is misbound"),
-            Self::IndexCapacity => write!(f, "scratch LSM exceeded its fixed level capacity"),
+            Self::KeyDigestCollision => {
+                write!(f, "authenticated scratch point-key digest collision")
+            }
+            Self::IndexCapacity => write!(f, "scratch index exceeded its fixed capacity"),
             Self::Poisoned => write!(f, "scratch file lock was poisoned"),
         }
     }
@@ -2133,6 +3053,155 @@ mod tests {
             vec![(b"a".to_vec(), b"new".to_vec())]
         );
         assert_eq!(store.stats().scratch_syncs, 0);
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn authenticated_point_updates_have_a_cardinality_independent_physical_bound() {
+        let path =
+            std::env::temp_dir().join(format!("tine-scratch-point-bound-{}", Uuid::new_v4()));
+        let archive = archive(&path);
+        let store = ScratchStore::open(&archive, workspace(2)).unwrap();
+        let mut root = ScratchAuthenticatedPointRoot::default();
+        let max_io = AUTHENTICATED_POINT_MAX_IO_PER_MUTATION;
+        let max_bytes = max_io.saturating_mul(AUTHENTICATED_POINT_MAX_PAGE_BYTES);
+
+        for index in 0_u64..1_024 {
+            let key = index.to_be_bytes();
+            let value = (index ^ 0xa5a5_a5a5_a5a5_a5a5).to_be_bytes();
+            let before = store.stats();
+            root = store
+                .authenticated_point_upsert(&root, ScratchPageKind::DependencyFanout, &key, &value)
+                .unwrap();
+            let after = store.stats();
+            let io = after
+                .page_reads
+                .saturating_sub(before.page_reads)
+                .saturating_add(after.page_writes.saturating_sub(before.page_writes));
+            let bytes = after
+                .page_bytes_read
+                .saturating_sub(before.page_bytes_read)
+                .saturating_add(
+                    after
+                        .page_bytes_written
+                        .saturating_sub(before.page_bytes_written),
+                );
+            assert!(
+                io <= max_io,
+                "point update {index} used {io} page operations, bound {max_io}"
+            );
+            assert!(
+                bytes <= max_bytes,
+                "point update {index} used {bytes} bytes, bound {max_bytes}"
+            );
+            assert_eq!(
+                store
+                    .authenticated_point_lookup(&root, ScratchPageKind::DependencyFanout, &key,)
+                    .unwrap(),
+                Some(value.to_vec())
+            );
+        }
+        assert_eq!(root.count(), 1_024);
+        assert_eq!(
+            store
+                .authenticated_point_materialize(&root, ScratchPageKind::DependencyFanout,)
+                .unwrap()
+                .len(),
+            1_024
+        );
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn authenticated_point_digest_collision_cannot_alias_logical_keys() {
+        let path =
+            std::env::temp_dir().join(format!("tine-scratch-point-collision-{}", Uuid::new_v4()));
+        let archive = archive(&path);
+        let store = ScratchStore::open(&archive, workspace(4)).unwrap();
+        let root = store
+            .authenticated_point_upsert(
+                &ScratchAuthenticatedPointRoot::default(),
+                ScratchPageKind::DependencyIdentity,
+                b"complete-logical-key-a",
+                b"value-a",
+            )
+            .unwrap();
+        let current = AuthenticatedPointChild {
+            key_digest: root.root_key_digest.unwrap(),
+            digest: root.root_digest,
+            page_ref: root.root.unwrap(),
+        };
+        assert!(matches!(
+            store.authenticated_point_upsert_child(
+                ScratchPageKind::DependencyIdentity,
+                Some(current),
+                authenticated_point_key_digest(
+                    ScratchPageKind::DependencyIdentity,
+                    b"complete-logical-key-a",
+                ),
+                b"complete-logical-key-b",
+                b"value-b",
+                0,
+            ),
+            Err(ScratchError::KeyDigestCollision)
+        ));
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn remaining_binary_lsm_carry_has_an_explicit_fixed_page_and_byte_bound() {
+        let path = std::env::temp_dir().join(format!("tine-scratch-lsm-carry-{}", Uuid::new_v4()));
+        let archive = archive(&path);
+        let store = ScratchStore::open(&archive, workspace(3)).unwrap();
+        let mut root = ScratchLsmRoot::default();
+        for index in 0_u64..31 {
+            root = store
+                .insert_many(
+                    &root,
+                    ScratchPageKind::DocumentExact,
+                    &BTreeMap::from([(
+                        index.to_be_bytes().to_vec(),
+                        Some(index.to_be_bytes().to_vec()),
+                    )]),
+                )
+                .unwrap();
+        }
+        let before = store.stats();
+        root = store
+            .insert_many(
+                &root,
+                ScratchPageKind::DocumentExact,
+                &BTreeMap::from([(
+                    31_u64.to_be_bytes().to_vec(),
+                    Some(31_u64.to_be_bytes().to_vec()),
+                )]),
+            )
+            .unwrap();
+        let after = store.stats();
+        let reads = after.page_reads - before.page_reads;
+        let writes = after.page_writes - before.page_writes;
+        let bytes = after
+            .page_bytes_read
+            .saturating_sub(before.page_bytes_read)
+            .saturating_add(
+                after
+                    .page_bytes_written
+                    .saturating_sub(before.page_bytes_written),
+            );
+        assert_eq!(reads, 5, "the 32nd insert crosses five occupied levels");
+        assert_eq!(writes, 1);
+        assert!(reads + writes <= SCRATCH_LSM_LEVELS + 1);
+        assert!(bytes <= (SCRATCH_LSM_LEVELS + 1).saturating_mul(MAX_PAGE_BYTES));
+        assert_eq!(
+            store
+                .materialize(&root, ScratchPageKind::DocumentExact)
+                .unwrap()
+                .len(),
+            32
+        );
         drop(store);
         fs::remove_dir_all(path).unwrap();
     }

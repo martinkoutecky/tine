@@ -212,6 +212,17 @@ impl ExternalImportObservationMaterial {
         self,
         prospective_portable_path_root: PortablePathIndexRoot,
     ) -> Result<OperationObject, ExternalImportObservationMaterialError> {
+        self.into_operation_object_and_material(prospective_portable_path_root)
+            .map(|(object, _)| object)
+    }
+
+    pub(crate) fn into_operation_object_and_material(
+        self,
+        prospective_portable_path_root: PortablePathIndexRoot,
+    ) -> Result<
+        (OperationObject, ExternalImportObservationMaterial),
+        ExternalImportObservationMaterialError,
+    > {
         let observation = ExternalImportObservation::new(
             self.workspace_id,
             self.import_id,
@@ -219,13 +230,19 @@ impl ExternalImportObservationMaterial {
             self.entries,
         )?;
         let payload = observation.encode()?;
-        OperationObject::new(
+        let object = OperationObject::new(
             self.workspace_id,
             observation.descriptor_document_id(),
             ObjectKind::ExternalImportObservation,
             payload,
         )
-        .map_err(ExternalImportObservationMaterialError::Object)
+        .map_err(ExternalImportObservationMaterialError::Object)?;
+        let material = ExternalImportObservationMaterial {
+            workspace_id: observation.workspace_id,
+            import_id: observation.import_id,
+            entries: observation.entries,
+        };
+        Ok((object, material))
     }
 }
 

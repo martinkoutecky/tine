@@ -731,6 +731,19 @@ impl PreparedBatch {
     pub fn objects(&self) -> &[OperationObject] {
         &self.objects
     }
+
+    /// Exact bytes retained by the durable batch: the canonical manifest plus
+    /// every canonical object envelope. Tail capacity must be reserved from
+    /// this value before the manifest can make a local mutation authoritative.
+    pub fn retained_bytes(&self) -> Result<usize, BatchError> {
+        self.objects
+            .iter()
+            .try_fold(self.manifest.encode()?.len(), |total, object| {
+                total
+                    .checked_add(object.encoded_len()?)
+                    .ok_or(BatchError::LengthOverflow)
+            })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

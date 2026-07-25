@@ -622,6 +622,8 @@ struct ManagedTextWriteGate {
 struct ManagedTextWriteState {
     active_writers: usize,
     handoff_held: bool,
+    #[cfg(test)]
+    handoff_releases: usize,
 }
 
 #[allow(dead_code)] // P4 authority is consumed by the later P7 publisher.
@@ -640,6 +642,22 @@ impl ManagedTextWriteGate {
         let mut state = self.state.lock().unwrap();
         if state.handoff_held {
             return Err(handoff_write_blocked_error());
+        }
+        state.active_writers += 1;
+        Ok(ManagedTextWritePermit {
+            gate: Some(Arc::clone(self)),
+            root: None,
+            resource_id: None,
+        })
+    }
+
+    fn admit_handoff_writer(self: &Arc<Self>) -> io::Result<ManagedTextWritePermit> {
+        let mut state = self.state.lock().unwrap();
+        if !state.handoff_held {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "external reconciliation handoff is not held",
+            ));
         }
         state.active_writers += 1;
         Ok(ManagedTextWritePermit {
@@ -670,6 +688,10 @@ impl ManagedTextWriteGate {
         let mut state = self.state.lock().unwrap();
         debug_assert!(state.handoff_held);
         state.handoff_held = false;
+        #[cfg(test)]
+        {
+            state.handoff_releases += 1;
+        }
     }
 
     #[cfg(test)]
@@ -900,6 +922,135 @@ impl HandoffSafeGuard {
             endpoint,
         )
     }
+
+    /// Cross the publication boundary before manifest-last publication begins.
+    ///
+    /// The returned latch deliberately has no releasing `Drop`. Once
+    /// publication may have happened, losing process-local continuation state
+    /// must leave the managed-text gate closed. A known pre-publication abort
+    /// and a successful completed drain are the only consuming release paths.
+    pub(crate) fn into_published_latch(mut self) -> PublishedHandoffLatch {
+        PublishedHandoffLatch {
+            gate: self.gate.take(),
+            instance_token: Arc::clone(&self.instance_token),
+            binding: self.binding,
+        }
+    }
+
+    fn admit_projection_writer(&self, graph: &Graph) -> io::Result<ManagedTextWritePermit> {
+        self.verify_binding(graph, self.binding.workspace_id, self.binding.endpoint)?;
+        let binding = graph.managed_write_binding()?;
+        let held = self.gate.as_ref().ok_or_else(handoff_write_blocked_error)?;
+        if !Arc::ptr_eq(held, &binding.gate) {
+            return Err(managed_write_identity_mismatch_error());
+        }
+        let mut permit = held.admit_handoff_writer()?;
+        permit.root = Some(binding.root.try_clone()?);
+        permit.resource_id = Some(binding.resource_id);
+        Ok(permit)
+    }
+
+    pub(crate) fn write_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_write_call();
+        let write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.write_page_projection_with_attempts(
+                &write,
+                relative_path,
+                expected_base,
+                target,
+                reservation,
+                known_attempts,
+            )
+        })
+    }
+
+    pub(crate) fn remove_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_remove_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.remove_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                reservation,
+                known_attempts,
+            )
+        })
+    }
+
+    pub(crate) fn recover_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        expected_target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let write = self.admit_projection_writer(graph)?;
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            graph.recover_page_projection_with_attempts(
+                &write,
+                relative_path,
+                expected_base,
+                expected_target,
+                attempts,
+            )
+        })
+    }
+
+    pub(crate) fn recover_removed_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            graph.recover_removed_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                attempts,
+            )
+        })
+    }
+
+    pub(crate) fn confirm_removed_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.confirm_removed_page_projection_with_attempts(
+                relative_path,
+                reservation,
+                known_attempts,
+            )
+        })
+    }
 }
 
 impl Drop for HandoffSafeGuard {
@@ -907,6 +1058,173 @@ impl Drop for HandoffSafeGuard {
         if let Some(gate) = self.gate.take() {
             gate.release_handoff();
         }
+    }
+}
+
+/// Runtime latch for a reconciliation whose manifest may exist.
+///
+/// Unlike [`HandoffSafeGuard`], dropping this value does not release the gate.
+/// The gate itself retains the closed state, so dropping or replacing a retry
+/// continuation cannot accidentally admit an ordinary managed-text writer.
+/// Deliberate operator recovery/cancellation, if added later, must be a
+/// separate authenticated consuming API.
+#[allow(dead_code)] // activated only by the later persisted-enrollment packet
+pub(crate) struct PublishedHandoffLatch {
+    gate: Option<Arc<ManagedTextWriteGate>>,
+    instance_token: Arc<HandoffGraphInstanceToken>,
+    binding: HandoffBindingEvidence,
+}
+
+#[allow(dead_code)] // activated only by the later persisted-enrollment packet
+impl PublishedHandoffLatch {
+    pub(crate) fn verify_binding(
+        &self,
+        graph: &Graph,
+        workspace_id: WorkspaceId,
+        endpoint: ProjectionEndpointBinding,
+    ) -> io::Result<()> {
+        verify_handoff_binding(
+            self.gate.as_ref(),
+            &self.instance_token,
+            self.binding,
+            graph,
+            workspace_id,
+            endpoint,
+        )
+    }
+
+    /// Release after a known pre-publication abort.
+    ///
+    /// Callers must authenticate that the manifest is absent before using this
+    /// transition.
+    pub(crate) fn cancel_prepublication(mut self) {
+        self.release();
+    }
+
+    /// The sole successful release transition after publication.
+    pub(crate) fn complete(mut self) {
+        self.release();
+    }
+
+    fn release(&mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.release_handoff();
+        }
+    }
+
+    fn admit_projection_writer(&self, graph: &Graph) -> io::Result<ManagedTextWritePermit> {
+        self.verify_binding(graph, self.binding.workspace_id, self.binding.endpoint)?;
+        let binding = graph.managed_write_binding()?;
+        let held = self.gate.as_ref().ok_or_else(handoff_write_blocked_error)?;
+        if !Arc::ptr_eq(held, &binding.gate) {
+            return Err(managed_write_identity_mismatch_error());
+        }
+        let mut permit = held.admit_handoff_writer()?;
+        permit.root = Some(binding.root.try_clone()?);
+        permit.resource_id = Some(binding.resource_id);
+        Ok(permit)
+    }
+
+    pub(crate) fn write_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_write_call();
+        let write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.write_page_projection_with_attempts(
+                &write,
+                relative_path,
+                expected_base,
+                target,
+                reservation,
+                known_attempts,
+            )
+        })
+    }
+
+    pub(crate) fn remove_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_remove_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.remove_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                reservation,
+                known_attempts,
+            )
+        })
+    }
+
+    pub(crate) fn recover_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: Option<&[u8]>,
+        expected_target: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let write = self.admit_projection_writer(graph)?;
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            graph.recover_page_projection_with_attempts(
+                &write,
+                relative_path,
+                expected_base,
+                expected_target,
+                attempts,
+            )
+        })
+    }
+
+    pub(crate) fn recover_removed_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        expected_base: &[u8],
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_recovery_evidence(relative_path, |attempts| {
+            graph.recover_removed_page_projection_with_attempts(
+                relative_path,
+                expected_base,
+                attempts,
+            )
+        })
+    }
+
+    pub(crate) fn confirm_removed_page_projection(
+        &self,
+        graph: &Graph,
+        relative_path: &str,
+        authority: &mut ProjectionMutationAuthority,
+    ) -> io::Result<ProjectionWriteProof> {
+        #[cfg(test)]
+        count_projection_recovery_call();
+        let _write = self.admit_projection_writer(graph)?;
+        authority.consume_write_evidence(relative_path, |reservation, known_attempts| {
+            graph.confirm_removed_page_projection_with_attempts(
+                relative_path,
+                reservation,
+                known_attempts,
+            )
+        })
     }
 }
 
@@ -2445,6 +2763,23 @@ impl Graph {
         permit.resource_id = Some(binding.resource_id);
         managed_write_after_identity_check_hook();
         Ok(permit)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn probe_managed_text_writer(&self) -> io::Result<()> {
+        drop(self.admit_managed_text_writer()?);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handoff_release_count(&self) -> usize {
+        self.managed_write_binding()
+            .expect("test graph has managed writer binding")
+            .gate
+            .state
+            .lock()
+            .unwrap()
+            .handoff_releases
     }
 
     fn admit_retained_managed_text_writer(&self) -> io::Result<ManagedTextWritePermit> {
@@ -9584,6 +9919,54 @@ impl Graph {
         })();
         self.drop_self_write_marker(&target.absolute_path, &rev);
         result
+    }
+
+    fn confirm_removed_page_projection_with_attempts(
+        &self,
+        relative_path: &str,
+        reservation: &ProjectionAttemptReservation,
+        known_attempts: &[ProjectionAttemptReservation],
+    ) -> io::Result<ProjectionWriteProof> {
+        require_projection_platform()?;
+        let target = self.projection_page_target(relative_path)?;
+        validate_projection_attempt(&target, reservation)?;
+        for attempt in known_attempts {
+            validate_projection_attempt(&target, attempt)?;
+        }
+        if !known_attempts
+            .iter()
+            .any(|attempt| attempt.attempt_id() == reservation.attempt_id())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "active projection confirmation attempt was not durably catalogued",
+            ));
+        }
+        let lock = self.page_lock(&target.absolute_path);
+        let _guard = lock.lock().unwrap();
+        let parent = self.projection_parent(&target, false)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        if read_projection_optional(parent.final_dir(), &target.filename)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection confirmation target is present",
+            ));
+        }
+        sync_projection_chain_required(&parent.chain)?;
+        projection_post_publish_hook(&target.absolute_path)?;
+        self.ensure_projection_parent_binding(&parent, &target)?;
+        self.ensure_projection_target_shape(&parent, &target)?;
+        if read_projection_optional(parent.final_dir(), &target.filename)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "projection confirmation target reappeared",
+            ));
+        }
+        Ok(ProjectionWriteProof::new(
+            target.relative_path,
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 
     #[cfg(test)]

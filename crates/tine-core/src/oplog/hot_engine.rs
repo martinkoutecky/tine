@@ -44,16 +44,17 @@ use super::semantic::{
 };
 use super::uuid_claim_index::{LogseqClaimIndexRoot, LogseqClaimIndexStore};
 use super::{
-    AnnotatedProjectionBase, BatchCausalDot, BatchId, BatchInspection, BatchOrigin, BlockDelta,
-    BlockId, BlockOwner, BlockState, CausalPeerId, ContentDigest, CrdtPeerCounter, CrdtPeerId,
-    DeviceId, DocumentCausalDigest, DocumentDependencies, DocumentId, FrontierV2, LineageDigest,
-    LogicalPageName, LogseqUuid, ManagedPath, ManagedTextKind, ManifestObjectRef,
-    ManifestProjectionPrecondition, ManifestProjectionTarget, ManifestedProjectionIntent,
-    MembershipClaim, MembershipDelta, ObjectKind, ObjectStore, OperationBatch, OperationObject,
-    PageDelta, PageId, PageState, PortablePathKeyDigest, PreparedBatch, ProjectionClaimEvidence,
-    ProjectionClaimParticipant, ProjectionCompletion, ProjectionEndpointId, ProjectionIntent,
-    ProjectionReceiptStore, ProjectionWork, ProjectionWorkIndex, ProjectionWorkTarget,
-    SemanticEffect, SemanticEffectDigest, SemanticError, SessionId, ValidatedBatch, WorkspaceId,
+    AnnotatedIdentity, AnnotatedProjectionBase, BatchCausalDot, BatchId, BatchInspection,
+    BatchOrigin, BlockDelta, BlockId, BlockOwner, BlockState, CausalPeerId, ContentDigest,
+    CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentCausalDigest, DocumentDependencies, DocumentId,
+    FrontierV2, LineageDigest, LogicalPageName, LogseqUuid, ManagedPath, ManagedTextKind,
+    ManifestObjectRef, ManifestProjectionPrecondition, ManifestProjectionTarget,
+    ManifestedProjectionIntent, MembershipClaim, MembershipDelta, ObjectKind, ObjectStore,
+    OperationBatch, OperationObject, PageDelta, PageId, PageState, PortablePathKeyDigest,
+    PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionCompletion,
+    ProjectionEndpointId, ProjectionIntent, ProjectionReceiptStore, ProjectionWork,
+    ProjectionWorkIndex, ProjectionWorkTarget, SemanticEffect, SemanticEffectDigest, SemanticError,
+    SessionId, ValidatedBatch, WorkspaceId,
 };
 use crate::Graph;
 
@@ -72,7 +73,7 @@ pub(crate) const MAX_TRANSACTION_OPERATIONS: usize = 100_000;
 const MAX_DOCUMENT_ENTRIES: usize = 1_000_000;
 const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
 const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 7;
-const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 10;
+const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 11;
 const BLOCK_CLAIM_RECORD_SCHEMA_VERSION: u32 = 2;
 const LOGSEQ_CLAIM_RECORD_SCHEMA_VERSION: u32 = 1;
 const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 6;
@@ -104,6 +105,7 @@ struct PreparedTransactionParts {
     semantic_effect: SemanticEffect,
     prospective_documents: BTreeMap<DocumentId, LoroDoc>,
     portable_path_root: PortablePathIndexRoot,
+    external_observation: Option<ExternalImportObservationMaterial>,
 }
 
 /// Opaque object-store proof paired with one authenticated scratch checkpoint.
@@ -1258,6 +1260,13 @@ impl ProjectionRequirement {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct CapabilityCapturedPriorProjection {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) intent: ProjectionIntent,
+    pub(crate) completion: ProjectionCompletion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CapabilityCapturedProjectionState {
     Absent,
     Present {
@@ -1268,11 +1277,25 @@ pub enum CapabilityCapturedProjectionState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum CapabilityCapturedProjectionMaterial {
+    Absent {
+        prior: Option<CapabilityCapturedPriorProjection>,
+    },
+    Present {
+        bytes: Vec<u8>,
+        annotations: Vec<AnnotatedIdentity>,
+        prior: Option<CapabilityCapturedPriorProjection>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapabilityCapturedProjectionInput {
     path: ManagedPath,
     endpoint: ProjectionEndpointBinding,
     receipt_store_id: super::ProjectionReceiptStoreId,
     state: CapabilityCapturedProjectionState,
+    material: CapabilityCapturedProjectionMaterial,
+    draft_completed_path: Option<Vec<super::ProjectionCompletedReceipt>>,
 }
 
 impl CapabilityCapturedProjectionInput {
@@ -1282,11 +1305,66 @@ impl CapabilityCapturedProjectionInput {
         receipt_store_id: super::ProjectionReceiptStoreId,
         state: CapabilityCapturedProjectionState,
     ) -> Self {
+        let material = match &state {
+            CapabilityCapturedProjectionState::Absent => {
+                CapabilityCapturedProjectionMaterial::Absent { prior: None }
+            }
+            CapabilityCapturedProjectionState::Present {
+                bytes,
+                prior_intent,
+                prior_completion,
+            } => CapabilityCapturedProjectionMaterial::Present {
+                bytes: bytes.clone(),
+                annotations: prior_intent.annotations().to_vec(),
+                prior: Some(CapabilityCapturedPriorProjection {
+                    bytes: bytes.clone(),
+                    intent: prior_intent.clone(),
+                    completion: prior_completion.clone(),
+                }),
+            },
+        };
         Self {
             path,
             endpoint,
             receipt_store_id,
             state,
+            material,
+            draft_completed_path: None,
+        }
+    }
+
+    fn from_draft_capability(
+        path: ManagedPath,
+        endpoint: ProjectionEndpointBinding,
+        receipt_store_id: super::ProjectionReceiptStoreId,
+        material: CapabilityCapturedProjectionMaterial,
+    ) -> Self {
+        // Draft-only external capture can represent a newly present path or an
+        // absent path with prior completion authority. That richer material is
+        // deliberately private; the original public state enum remains source
+        // compatible and is not used as the draft's authority.
+        let state = match &material {
+            CapabilityCapturedProjectionMaterial::Present {
+                bytes,
+                prior: Some(prior),
+                ..
+            } => CapabilityCapturedProjectionState::Present {
+                bytes: bytes.clone(),
+                prior_intent: prior.intent.clone(),
+                prior_completion: prior.completion.clone(),
+            },
+            CapabilityCapturedProjectionMaterial::Absent { .. }
+            | CapabilityCapturedProjectionMaterial::Present { prior: None, .. } => {
+                CapabilityCapturedProjectionState::Absent
+            }
+        };
+        Self {
+            path,
+            endpoint,
+            receipt_store_id,
+            state,
+            material,
+            draft_completed_path: None,
         }
     }
 
@@ -1315,11 +1393,156 @@ pub struct AuthorTransactionDraft {
     prospective_documents: BTreeMap<DocumentId, LoroDoc>,
     requirements: Vec<ProjectionRequirement>,
     pages: BTreeMap<PageId, DraftProjectionPage>,
+    external_observation: Option<ExternalImportObservationMaterial>,
 }
 
 impl AuthorTransactionDraft {
     pub fn requirements(&self) -> &[ProjectionRequirement] {
         &self.requirements
+    }
+
+    /// Freshly capture the exact graph bytes and authenticated completed-path
+    /// authority owned by this draft. The caller never reconstructs which
+    /// rename bases or prior receipts are required.
+    pub(crate) fn capture_projection_inputs(
+        &self,
+        engine: &ShardedHotEngine,
+        graph: &Graph,
+        receipts: &ProjectionReceiptStore,
+        endpoint: ProjectionEndpointBinding,
+    ) -> Result<Vec<CapabilityCapturedProjectionInput>, EngineError> {
+        if self.generation != engine.history_generation
+            || self.root_token != engine.author_generation_root()?
+        {
+            return Err(EngineError::AuthorDraftStale);
+        }
+        let (_, work_index) = engine.enrolled_projection_runtime()?;
+        if receipts.workspace_id() != engine.workspace_id
+            || receipts.endpoint_binding() != Some(endpoint)
+            || receipts.store_id() != work_index.receipt_store_id()
+        {
+            return Err(EngineError::ProjectionManifest(
+                "draft capture is not bound to the enrolled projection runtime".into(),
+            ));
+        }
+        let external_observation = self.external_observation.as_ref().ok_or_else(|| {
+            EngineError::ProjectionManifest(
+                "external reconciliation draft has no sealed observation".into(),
+            )
+        })?;
+        for entry in external_observation.entries() {
+            let current = graph
+                .read_projection_input(entry.path())
+                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+            if current.as_deref() != entry.state().bytes() {
+                return Err(EngineError::ProjectionManifest(format!(
+                    "draft observation for {} is stale",
+                    entry.path()
+                )));
+            }
+        }
+        let paths = self
+            .requirements
+            .iter()
+            .flat_map(|requirement| {
+                std::iter::once(requirement.path.clone())
+                    .chain(requirement.render_base_path.iter().cloned())
+            })
+            .collect::<BTreeSet<_>>();
+        let mut captured = Vec::with_capacity(paths.len());
+        for path in paths {
+            let observed = external_observation
+                .entries()
+                .iter()
+                .find(|entry| entry.path() == &path)
+                .ok_or_else(|| {
+                    EngineError::ProjectionManifest(format!(
+                        "draft path {path} has no exact fresh external observation"
+                    ))
+                })?;
+            let completed = work_index
+                .completed_receipts_for_path(&path)
+                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+            let prior_requirement = self.requirements.iter().find(|requirement| {
+                self.pages[&requirement.page_id]
+                    .before
+                    .as_ref()
+                    .is_some_and(|before| before.page.path == path)
+            });
+            let prior = if let Some(requirement) = prior_requirement {
+                let authority = match completed.as_slice() {
+                    [authority]
+                        if matches!(authority.target(), ProjectionWorkTarget::Present(_)) =>
+                    {
+                        authority
+                    }
+                    _ => {
+                        return Err(EngineError::ProjectionManifest(format!(
+                            "draft path {path} has no unique completed present authority"
+                        )));
+                    }
+                };
+                let (intent, completion) = receipts
+                    .load_completed_receipt(authority)
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let before = self.pages[&requirement.page_id]
+                    .before
+                    .as_ref()
+                    .ok_or_else(|| {
+                        EngineError::ProjectionManifest(format!(
+                            "draft path {path} has completion authority without semantic pre-state"
+                        ))
+                    })?;
+                let base = receipts
+                    .load_base(&intent)
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let replay = super::projection::plan_projection(
+                    engine.workspace_id,
+                    before,
+                    base.as_ref().map(super::BaseBlob::bytes),
+                )
+                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                if replay.intent() != &intent {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "draft path {path} completion cannot reproduce its exact rendered bytes"
+                    )));
+                }
+                Some(CapabilityCapturedPriorProjection {
+                    bytes: replay.target().to_vec(),
+                    intent,
+                    completion,
+                })
+            } else {
+                if !completed.is_empty() {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "draft path {path} has completion authority unrelated to its semantic predecessor"
+                    )));
+                }
+                None
+            };
+            let state = match observed.state() {
+                super::external_import::ExternalImportObservationState::Absent => {
+                    CapabilityCapturedProjectionMaterial::Absent { prior }
+                }
+                super::external_import::ExternalImportObservationState::Present {
+                    bytes,
+                    annotations,
+                } => CapabilityCapturedProjectionMaterial::Present {
+                    bytes: bytes.clone(),
+                    annotations: annotations.clone(),
+                    prior,
+                },
+            };
+            let mut input = CapabilityCapturedProjectionInput::from_draft_capability(
+                path,
+                endpoint,
+                receipts.store_id(),
+                state,
+            );
+            input.draft_completed_path = Some(completed);
+            captured.push(input);
+        }
+        Ok(captured)
     }
 }
 
@@ -1701,7 +1924,8 @@ impl StatusHistorySource {
                                     )
                                 })?)?
                             }
-                            super::dependency_queue::CompactBatchStatus::Waiting
+                            super::dependency_queue::CompactBatchStatus::Registering
+                            | super::dependency_queue::CompactBatchStatus::Waiting
                             | super::dependency_queue::CompactBatchStatus::Ready
                             | super::dependency_queue::CompactBatchStatus::Processing => {
                                 ArchiveStatus::Staged
@@ -1747,7 +1971,8 @@ impl StatusHistorySource {
                                 EngineError::Archive("final scratch status has no result".into())
                             })?)?
                         }
-                        super::dependency_queue::CompactBatchStatus::Waiting
+                        super::dependency_queue::CompactBatchStatus::Registering
+                        | super::dependency_queue::CompactBatchStatus::Waiting
                         | super::dependency_queue::CompactBatchStatus::Ready
                         | super::dependency_queue::CompactBatchStatus::Processing => {
                             ArchiveStatus::Staged
@@ -1802,6 +2027,56 @@ impl StageOutcome {
 
     pub const fn status(&self) -> &EngineStatus {
         &self.status
+    }
+}
+
+pub(crate) struct BoundedStageOutcome {
+    outcome: StageOutcome,
+    work: usize,
+    has_more: bool,
+}
+
+impl BoundedStageOutcome {
+    pub(crate) const fn outcome(&self) -> &StageOutcome {
+        &self.outcome
+    }
+
+    pub(crate) const fn work(&self) -> usize {
+        self.work
+    }
+
+    pub(crate) const fn has_more(&self) -> bool {
+        self.has_more
+    }
+}
+
+struct StageWorkBudget {
+    remaining: usize,
+    used: usize,
+}
+
+impl StageWorkBudget {
+    fn new(limit: usize) -> Self {
+        Self {
+            remaining: limit,
+            used: 0,
+        }
+    }
+
+    fn consume_one(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        self.used += 1;
+        true
+    }
+
+    fn consume_up_to(&mut self, requested: usize) -> usize {
+        let consumed = self.remaining.min(requested);
+        self.remaining -= consumed;
+        self.used += consumed;
+        consumed
     }
 }
 
@@ -1953,6 +2228,11 @@ struct HistoryWorkStats {
     recovery_history_record_reads: usize,
     projection_reconciliation_history_record_reads: usize,
     ancestry_traversals: usize,
+    dependency_head_visits: usize,
+    causal_accumulator_parent_points: usize,
+    causal_accumulator_materialized_points: usize,
+    staged_record_max_bytes: usize,
+    weighted_work_prepaid: usize,
     block_claim_validation_nanos: usize,
     block_claim_lookup_nanos: usize,
     block_claim_encode_nanos: usize,
@@ -2106,6 +2386,11 @@ pub struct EngineInstrumentation {
     pub recovery_history_record_reads: usize,
     pub projection_reconciliation_history_record_reads: usize,
     pub ancestry_traversals: usize,
+    pub dependency_head_visits: usize,
+    pub causal_accumulator_parent_points: usize,
+    pub causal_accumulator_materialized_points: usize,
+    pub staged_record_max_bytes: usize,
+    pub weighted_work_prepaid: usize,
     pub scratch_page_reads: usize,
     pub scratch_page_bytes_read: usize,
     pub scratch_max_page_bytes_read: usize,
@@ -2213,6 +2498,10 @@ pub struct ShardedHotEngine {
     lineage_digest: LineageDigest,
     catalog_document_id: DocumentId,
     archive: BTreeMap<BatchId, ValidatedBatch>,
+    /// Authenticated offered batches retained only across bounded slices.
+    /// Same-process reconstruction deliberately clears this cache and
+    /// reauthenticates once before resuming from the durable queue cursor.
+    bounded_staging_cache: BTreeMap<BatchId, ValidatedBatch>,
     archive_store: Option<Arc<ObjectStore>>,
     projection_endpoint: Option<ProjectionEndpointBinding>,
     projection_receipt_store_id: Option<super::ProjectionReceiptStoreId>,
@@ -2329,6 +2618,7 @@ impl ShardedHotEngine {
             lineage_digest,
             catalog_document_id,
             archive: BTreeMap::new(),
+            bounded_staging_cache: BTreeMap::new(),
             archive_store: None,
             projection_endpoint: None,
             projection_receipt_store_id: None,
@@ -2809,6 +3099,74 @@ impl ShardedHotEngine {
         Ok(outcomes)
     }
 
+    /// Rebuild every run-local derived structure from the retained
+    /// authenticated durable roots, without replaying immutable history.
+    ///
+    /// This is the same-process engine-reconstruction seam. Nothing derived is
+    /// carried across: hot archive caches, statuses, visible CRDT documents,
+    /// point caches, and every ephemeral index candidate are discarded. Only
+    /// the retained capabilities and their authenticated roots survive — in
+    /// particular the scratch roots, which are the sole continuation authority
+    /// for point-paged dependency registration and dependent fanout.
+    ///
+    /// The runtime authority is carried so a retained same-process `Graph`
+    /// handoff, tail overlay, and SQLite frontier keep their exact enrollment
+    /// and resource bindings. This deliberately does not claim process-restart
+    /// writer exclusion: the managed-text latch is still process-local, and
+    /// persisted enrollment owns reconstructing it before writer admission.
+    #[allow(dead_code)] // activated only by the later persisted-enrollment packet
+    pub(crate) fn reconstruct_run_local_state(&mut self) -> Result<(), EngineError> {
+        if self.scratch.is_none() {
+            return Err(EngineError::Archive(
+                "engine reconstruction requires an authenticated run-local scratch".into(),
+            ));
+        }
+        if self.authenticated_history_replay {
+            return Err(EngineError::Archive(
+                "engine reconstruction cannot interrupt an authenticated history replay".into(),
+            ));
+        }
+        let mut rebuilt = Self::new(
+            self.workspace_id,
+            self.lineage_digest,
+            self.catalog_document_id,
+        );
+        rebuilt.runtime_authority = self.runtime_authority.clone();
+        // The reference catalog root and its attached durable store are
+        // authenticated authority, not a run-local derivative, so they move
+        // across reconstruction unchanged.
+        std::mem::swap(&mut rebuilt.reference_catalog, &mut self.reference_catalog);
+        rebuilt.archive_store = self.archive_store.take();
+        rebuilt.projection_endpoint = self.projection_endpoint;
+        rebuilt.projection_receipt_store_id = self.projection_receipt_store_id;
+        rebuilt.projection_work_index = self.projection_work_index.take();
+        rebuilt.scratch = self.scratch.take();
+        rebuilt.scratch_roots = std::mem::take(&mut self.scratch_roots);
+        rebuilt.history_store = self.history_store.take();
+        rebuilt.history_generation = self.history_generation;
+        rebuilt.history_root = self.history_root;
+        rebuilt.history_failure = self.history_failure.clone();
+        rebuilt.durable_authority_mode = self.durable_authority_mode;
+        rebuilt.block_claim_index = self.block_claim_index.take();
+        rebuilt.block_claim_root = self.block_claim_root.clone();
+        rebuilt.logseq_claim_index = self.logseq_claim_index.take();
+        rebuilt.logseq_claim_root = self.logseq_claim_root;
+        rebuilt.portable_path_index = self.portable_path_index.take();
+        rebuilt.portable_path_root = self.portable_path_root;
+        rebuilt.portable_path_conflicts = std::mem::take(&mut self.portable_path_conflicts);
+        rebuilt.page_name_index = self.page_name_index.take();
+        rebuilt.page_name_root = self.page_name_root.clone();
+        rebuilt.page_name_conflicts = std::mem::take(&mut self.page_name_conflicts);
+        rebuilt.accepted_frontier_root = self.accepted_frontier_root.clone();
+        rebuilt.next_acceptance_sequence = self.next_acceptance_sequence;
+        rebuilt.fatal_evidence = self.fatal_evidence.clone();
+        // Telemetry is observational rather than continuation authority; keep
+        // cumulative work accounting across the reconstructed journey.
+        rebuilt.history_work.set(self.history_work.get());
+        *self = rebuilt;
+        Ok(())
+    }
+
     /// Reset only reconstructible run-local state before replaying an
     /// operational enrolled archive. The enrolled history, projection, index,
     /// archive, and scratch capabilities remain attached; replay recomputes
@@ -3106,6 +3464,11 @@ impl ShardedHotEngine {
             projection_reconciliation_history_record_reads: work
                 .projection_reconciliation_history_record_reads,
             ancestry_traversals: work.ancestry_traversals,
+            dependency_head_visits: work.dependency_head_visits,
+            causal_accumulator_parent_points: work.causal_accumulator_parent_points,
+            causal_accumulator_materialized_points: work.causal_accumulator_materialized_points,
+            staged_record_max_bytes: work.staged_record_max_bytes,
+            weighted_work_prepaid: work.weighted_work_prepaid,
             scratch_page_reads: scratch.page_reads,
             scratch_page_bytes_read: scratch.page_bytes_read,
             scratch_max_page_bytes_read: scratch.max_page_bytes_read,
@@ -3463,6 +3826,7 @@ impl ShardedHotEngine {
     fn prepare_acceptance_evidence(
         &self,
         batch_id: BatchId,
+        precomputed_event_binding_digest: Option<ContentDigest>,
         updates: &BTreeMap<DocumentId, CrdtUpdatePayload>,
         replacements: &BTreeMap<DocumentId, EngineDocument>,
         replacement_heads: &BTreeMap<DocumentId, BTreeSet<BatchId>>,
@@ -3568,13 +3932,16 @@ impl ShardedHotEngine {
             .copied()
             .ok_or(EngineError::MissingDependency(batch_id))?;
         let manifest = self.archive[&batch_id].manifest();
-        let event_binding_digest = AcceptedBatchEvidence::binding_digest_for(
-            batch_id,
-            manifest_fingerprint,
-            manifest.semantic_effect_digest(),
-            manifest.dependency_frontier(),
-            manifest.causal_dependency_heads(),
-        )?;
+        let event_binding_digest = match precomputed_event_binding_digest {
+            Some(digest) => digest,
+            None => AcceptedBatchEvidence::binding_digest_for(
+                batch_id,
+                manifest_fingerprint,
+                manifest.semantic_effect_digest(),
+                manifest.dependency_frontier(),
+                manifest.causal_dependency_heads(),
+            )?,
+        };
         let causal_clock = if let Some(store) = &self.scratch {
             super::causal_index::batch_record(store, &roots, batch_id)
                 .map_err(|error| EngineError::Archive(error.to_string()))?
@@ -4182,8 +4549,47 @@ impl ShardedHotEngine {
 
     pub fn stage_archive_batch(&mut self, batch_id: BatchId) -> Result<StageOutcome, EngineError> {
         self.begin_point_operation();
-        self.ensure_not_blocked()?;
-        self.stage_archive_batch_internal(batch_id, None)
+        if let Err(error) = self.ensure_not_blocked() {
+            // A duplicate final rejection/quarantine is the public continuation
+            // token for fanout that was durably left by a prior bounded call.
+            // Draining that already-authorized recursive work must remain
+            // possible after quarantine latched the workspace; no new offered
+            // batch is admitted through this exception.
+            if !self.is_resumable_final_fanout(batch_id) {
+                return Err(error);
+            }
+        }
+        self.stage_archive_batch_internal(batch_id, None, None)
+    }
+
+    pub(crate) fn stage_archive_batch_bounded(
+        &mut self,
+        batch_id: BatchId,
+        max_work: usize,
+    ) -> Result<BoundedStageOutcome, EngineError> {
+        self.begin_point_operation();
+        if let Err(error) = self.ensure_not_blocked() {
+            if !self.is_resumable_final_fanout(batch_id) {
+                return Err(error);
+            }
+        }
+        let mut budget = StageWorkBudget::new(max_work);
+        if max_work == 0 {
+            return Err(EngineError::Archive(
+                "bounded staging requires a nonzero work slice".into(),
+            ));
+        }
+        let outcome = self.stage_archive_batch_internal(batch_id, None, Some(&mut budget))?;
+        Ok(BoundedStageOutcome {
+            outcome,
+            work: budget.used,
+            // Every term is read from the authenticated durable scratch roots,
+            // never from run-local state, so a reconstructed engine reports the
+            // same continuation as the engine that produced it.
+            has_more: super::dependency_queue::pending_fanout(&self.scratch_roots) != 0
+                || super::dependency_queue::pending_registration(&self.scratch_roots) != 0
+                || self.scratch_roots.ready_queue_len != 0,
+        })
     }
 
     pub(crate) fn stage_archive_batch_for_recovery(
@@ -4207,15 +4613,28 @@ impl ShardedHotEngine {
                 Vec::new(),
             ));
         };
-        self.stage_archive_batch_internal(batch_id, Some(history_record))
+        self.stage_archive_batch_internal(batch_id, Some(history_record), None)
     }
 
     fn stage_archive_batch_internal(
         &mut self,
         batch_id: BatchId,
         recovery_history_record: Option<ColdHistoryRecord>,
+        budget: Option<&mut StageWorkBudget>,
     ) -> Result<StageOutcome, EngineError> {
         self.ensure_history_store()?;
+        let bounded = budget.is_some();
+        if recovery_history_record.is_none() && bounded {
+            if let Some(batch) = self.bounded_staging_cache.get(&batch_id).cloned() {
+                let outcome = self.stage_ready_internal(batch, true, None, budget);
+                self.resolve_pending_author(batch_id, &outcome.disposition);
+                self.prune_persisted_archive_cache();
+                if !self.has_durable_stage_work() {
+                    self.bounded_staging_cache.remove(&batch_id);
+                }
+                return Ok(outcome);
+            }
+        }
         let inspection = self
             .archive_store
             .as_ref()
@@ -4262,13 +4681,25 @@ impl ShardedHotEngine {
             )),
             BatchInspection::Ready(batch) => {
                 let batch_id = batch.manifest().batch_id();
+                if bounded {
+                    self.bounded_staging_cache.insert(batch_id, batch.clone());
+                }
                 let outcome =
-                    self.stage_ready_internal(batch, true, recovery_history_record);
+                    self.stage_ready_internal(batch, true, recovery_history_record, budget);
                 self.resolve_pending_author(batch_id, &outcome.disposition);
                 self.prune_persisted_archive_cache();
+                if bounded && !self.has_durable_stage_work() {
+                    self.bounded_staging_cache.remove(&batch_id);
+                }
                 Ok(outcome)
             }
         }
+    }
+
+    fn has_durable_stage_work(&self) -> bool {
+        super::dependency_queue::pending_fanout(&self.scratch_roots) != 0
+            || super::dependency_queue::pending_registration(&self.scratch_roots) != 0
+            || self.scratch_roots.ready_queue_len != 0
     }
 
     fn ensure_history_store(&mut self) -> Result<(), EngineError> {
@@ -4287,7 +4718,7 @@ impl ShardedHotEngine {
         if let Err(error) = self.ensure_not_blocked() {
             return self.outcome(batch_id, BatchDisposition::Rejected { error }, Vec::new());
         }
-        let outcome = self.stage_ready_internal(batch, false, None);
+        let outcome = self.stage_ready_internal(batch, false, None, None);
         self.resolve_pending_author(batch_id, &outcome.disposition);
         outcome
     }
@@ -4322,9 +4753,11 @@ impl ShardedHotEngine {
         batch: ValidatedBatch,
         persisted: bool,
         recovery_history_record: Option<ColdHistoryRecord>,
+        budget: Option<&mut StageWorkBudget>,
     ) -> StageOutcome {
         self.begin_point_operation();
         let batch_id = batch.manifest().batch_id();
+        let resumable_final_fanout = persisted && self.is_resumable_final_fanout(batch_id);
         if let Some(error) = &self.history_failure {
             return self.outcome(
                 batch_id,
@@ -4334,11 +4767,13 @@ impl ShardedHotEngine {
                 Vec::new(),
             );
         }
-        if let Err(catalog_error) = self.reference_catalog.ensure_ready() {
-            let error = self
-                .workspace_blocked_error()
-                .unwrap_or_else(|| EngineError::ReferenceCatalog(catalog_error.to_string()));
-            return self.outcome(batch_id, BatchDisposition::Rejected { error }, Vec::new());
+        if !resumable_final_fanout {
+            if let Err(catalog_error) = self.reference_catalog.ensure_ready() {
+                let error = self
+                    .workspace_blocked_error()
+                    .unwrap_or_else(|| EngineError::ReferenceCatalog(catalog_error.to_string()));
+                return self.outcome(batch_id, BatchDisposition::Rejected { error }, Vec::new());
+            }
         }
         if self.authenticated_history_replay && recovery_history_record.is_none() {
             return self.outcome(
@@ -4363,7 +4798,7 @@ impl ShardedHotEngine {
             );
         }
         if persisted && self.scratch.is_some() {
-            return self.stage_ready_scratch(batch, recovery_history_record);
+            return self.stage_ready_scratch(batch, recovery_history_record, budget);
         }
         if let Err(error) = self.check_batch_namespace(&batch) {
             return self.outcome(batch_id, BatchDisposition::Rejected { error }, Vec::new());
@@ -4474,10 +4909,142 @@ impl ShardedHotEngine {
         self.outcome(batch_id, disposition, accepted)
     }
 
+    fn is_resumable_final_fanout(&self, batch_id: BatchId) -> bool {
+        if super::dependency_queue::pending_fanout(&self.scratch_roots) == 0
+            && self.scratch_roots.ready_queue_len == 0
+        {
+            return false;
+        }
+        self.scratch.as_ref().is_some_and(|store| {
+            super::dependency_queue::lookup(store, &self.scratch_roots, batch_id)
+                .ok()
+                .flatten()
+                .filter(|record| {
+                    record.status() == super::dependency_queue::CompactBatchStatus::Final
+                })
+                .and_then(|record| {
+                    record
+                        .final_status()
+                        .and_then(|bytes| decode_archive_status(bytes).ok())
+                })
+                .is_some_and(|status| {
+                    matches!(
+                        status,
+                        ArchiveStatus::Rejected(_) | ArchiveStatus::Quarantined
+                    )
+                })
+        })
+    }
+
+    /// Drain the shared durable dependent-fanout index one authenticated step
+    /// per bounded budget unit, or to `Idle` for the public unbounded path.
+    ///
+    /// Discovery reads only `self.scratch_roots`, so a reconstructed engine
+    /// resumes at the exact same durable position. Both a resolved edge and a
+    /// retired parent are one unit of real durable progress, so charging every
+    /// step keeps the slice bounded without ever stalling.
+    fn drain_durable_fanout(
+        &mut self,
+        store: &ScratchStore,
+        mut budget: Option<&mut StageWorkBudget>,
+    ) -> Result<(), EngineError> {
+        loop {
+            let parent =
+                match super::dependency_queue::current_fanout_parent(store, &self.scratch_roots)
+                    .map_err(|error| EngineError::Archive(error.to_string()))?
+                {
+                    Some(parent) => parent,
+                    None => break,
+                };
+            let parent_record = super::dependency_queue::lookup(store, &self.scratch_roots, parent)
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .ok_or_else(|| {
+                    EngineError::Archive(format!("fanout parent {parent} has no staged record"))
+                })?;
+            let required = match parent_record.final_dependency_status() {
+                Some(super::dependency_queue::FinalDependencyStatus::Rejected) => 1,
+                Some(super::dependency_queue::FinalDependencyStatus::Satisfied) => {
+                    super::causal_index::batch_clock_len(store, &self.scratch_roots, parent)
+                        .map_err(|error| EngineError::Archive(error.to_string()))?
+                        .ok_or_else(|| {
+                            EngineError::Archive(format!(
+                                "satisfied fanout parent {parent} has no clock length"
+                            ))
+                        })?
+                        .saturating_add(1)
+                }
+                None => {
+                    return Err(EngineError::Archive(format!(
+                        "fanout parent {parent} has no final dependency status"
+                    )));
+                }
+            };
+            let remaining = self.scratch_roots.fanout_work_remaining.unwrap_or(required);
+            if remaining > required {
+                return Err(EngineError::Archive(
+                    "fanout work prepayment is misbound".into(),
+                ));
+            }
+            let available = budget
+                .as_ref()
+                .map_or(usize::MAX, |budget| budget.remaining);
+            let consumed_u64 = remaining.min(available as u64);
+            let consumed = usize::try_from(consumed_u64).unwrap_or(available);
+            self.scratch_roots.fanout_work_remaining = Some(remaining - consumed_u64);
+            if let Some(budget) = budget.as_deref_mut() {
+                let charged = budget.consume_up_to(consumed);
+                debug_assert_eq!(charged, consumed);
+                self.record_weighted_work(charged);
+            }
+            if self.scratch_roots.fanout_work_remaining != Some(0) {
+                break;
+            }
+            let roots_before = self.scratch_roots.clone();
+            let (roots, step) =
+                super::dependency_queue::advance_fanout(store, &roots_before, |parent| {
+                    super::causal_index::batch_record(store, &roots_before, parent)
+                        .map_err(|error| {
+                            super::dependency_queue::DependencyQueueError::Scratch(
+                                error.to_string(),
+                            )
+                        })?
+                        .map(|record| record.clock().to_vec())
+                        .ok_or(super::dependency_queue::DependencyQueueError::MissingRecord(parent))
+                })
+                .map_err(|error| EngineError::Archive(error.to_string()))?;
+            if step == super::dependency_queue::FanoutStep::Idle {
+                break;
+            }
+            self.scratch_roots = roots;
+            self.scratch_roots.fanout_work_remaining = None;
+            if matches!(
+                parent_record.final_dependency_status(),
+                Some(super::dependency_queue::FinalDependencyStatus::Satisfied)
+            ) && matches!(step, super::dependency_queue::FanoutStep::Resolved { .. })
+            {
+                let mut work = self.history_work.get();
+                work.causal_accumulator_parent_points = work
+                    .causal_accumulator_parent_points
+                    .saturating_add(required.saturating_sub(1) as usize);
+                self.history_work.set(work);
+            }
+            self.record_queue_work(super::dependency_queue::QueueWork {
+                wait_edge_visits: usize::from(matches!(
+                    step,
+                    super::dependency_queue::FanoutStep::Resolved { .. }
+                )),
+                ready_queue_residency: usize::try_from(self.scratch_roots.ready_queue_len)
+                    .unwrap_or(usize::MAX),
+            });
+        }
+        Ok(())
+    }
+
     fn stage_ready_scratch(
         &mut self,
         batch: ValidatedBatch,
         recovery_history_record: Option<ColdHistoryRecord>,
+        mut budget: Option<&mut StageWorkBudget>,
     ) -> StageOutcome {
         let offered_batch_id = batch.manifest().batch_id();
         self.precommit_history_publication_failure = None;
@@ -4527,11 +5094,25 @@ impl ShardedHotEngine {
                             );
                         }
                     }
-                    return self.outcome(
-                        offered_batch_id,
-                        disposition_from_final_status(existing.status, true),
-                        Vec::new(),
-                    );
+                    let resumable_scratch_final = self.scratch.as_ref().is_some_and(|store| {
+                        super::dependency_queue::lookup(
+                            store,
+                            &self.scratch_roots,
+                            offered_batch_id,
+                        )
+                        .ok()
+                        .flatten()
+                        .is_some_and(|record| {
+                            record.status() == super::dependency_queue::CompactBatchStatus::Final
+                        })
+                    });
+                    if !resumable_scratch_final {
+                        return self.outcome(
+                            offered_batch_id,
+                            disposition_from_final_status(existing.status, true),
+                            Vec::new(),
+                        );
+                    }
                 }
             }
             Ok(None) if self.authenticated_history_replay => {
@@ -4556,23 +5137,55 @@ impl ShardedHotEngine {
             }
         }
         let store = Arc::clone(self.scratch.as_ref().expect("scratch branch"));
-        let direct_dependencies = batch.manifest().causal_dependency_heads().to_vec();
-        let staged = super::dependency_queue::stage(
+        let event_binding_digest = match AcceptedBatchEvidence::binding_digest_for(
+            offered_batch_id,
+            fingerprint,
+            batch.manifest().semantic_effect_digest(),
+            batch.manifest().dependency_frontier(),
+            batch.manifest().causal_dependency_heads(),
+        ) {
+            Ok(digest) => digest,
+            Err(error) => {
+                return self.outcome(
+                    offered_batch_id,
+                    BatchDisposition::Rejected { error },
+                    Vec::new(),
+                );
+            }
+        };
+        let dependency_set_commitment =
+            rejected_dependency_set_commitment(batch.manifest().causal_dependency_heads());
+        let finalization_work = bounded_finalization_work(&batch);
+        let was_staged =
+            match super::dependency_queue::lookup(&store, &self.scratch_roots, offered_batch_id) {
+                Ok(record) => record.is_some(),
+                Err(error) => {
+                    let error = EngineError::Archive(error.to_string());
+                    self.history_failure = Some(error.clone());
+                    return self.outcome(
+                        offered_batch_id,
+                        BatchDisposition::Rejected { error },
+                        Vec::new(),
+                    );
+                }
+            };
+        // One coarse unit already paid for opening and authenticating the
+        // offered manifest and its object set. The canonical manifest already
+        // validated strictly sorted dependency heads. After this point the
+        // queue receives only the count, then point-selects one borrowed head
+        // at the durable ordinal per charged dependency; it never collects,
+        // sorts, validates, clones, or rewrites the whole sequence.
+        let staged = super::dependency_queue::begin_stage(
             &store,
             &self.scratch_roots,
             offered_batch_id,
             fingerprint,
-            direct_dependencies,
-            |dependency| {
-                Ok(matches!(
-                    self.archive_status(dependency).map_err(|error| {
-                        super::dependency_queue::DependencyQueueError::Scratch(error.to_string())
-                    })?,
-                    Some(ArchiveStatus::Accepted { .. } | ArchiveStatus::Quarantined)
-                ))
-            },
+            event_binding_digest,
+            dependency_set_commitment,
+            batch.manifest().causal_dependency_heads().len(),
+            finalization_work,
         );
-        let (roots, record, queue_work) = match staged {
+        let (roots, mut record, queue_work) = match staged {
             Ok(result) => result,
             Err(error) => {
                 let (error, latch_failure) = match error {
@@ -4593,8 +5206,204 @@ impl ShardedHotEngine {
         };
         self.scratch_roots = roots;
         self.record_queue_work(queue_work);
+        self.record_staged_record_size(&record);
+        if !was_staged {
+            if let Some(budget) = budget.as_deref_mut() {
+                if !budget.consume_one() {
+                    let disposition = self.compact_incomplete_staged_disposition();
+                    return self.outcome(offered_batch_id, disposition, Vec::new());
+                }
+            }
+        }
+        // Point-paged direct-dependency registration. Each visit authenticates
+        // exactly one dependency, durably advances the record's registration
+        // cursor, and consumes exactly one staging unit. An exhausted slice
+        // leaves a `Registering` record whose cursor is the whole continuation.
+        while record.status() == super::dependency_queue::CompactBatchStatus::Registering {
+            let ordinal = record.registered_ordinal();
+            let dependency = batch.manifest().causal_dependency_heads()[ordinal as usize];
+            // Engine mutation is exclusive for the duration of this call:
+            // no parent can transition between this classification and the
+            // corresponding point insert / wait-edge append. That sequencing
+            // is what makes an observed Pending edge discoverable and makes an
+            // observed Final(Rejected) parent edge-free.
+            let classification = match self.archive_status(dependency) {
+                Ok(Some(ArchiveStatus::Accepted { .. } | ArchiveStatus::Quarantined)) => {
+                    let clock_len = match super::causal_index::batch_clock_len(
+                        &store,
+                        &self.scratch_roots,
+                        dependency,
+                    ) {
+                        Ok(Some(clock_len)) => clock_len,
+                        Ok(None) => {
+                            let error = EngineError::Archive(format!(
+                                "satisfied dependency {dependency} has no causal clock length"
+                            ));
+                            self.history_failure = Some(error.clone());
+                            return self.outcome(
+                                offered_batch_id,
+                                BatchDisposition::Rejected { error },
+                                Vec::new(),
+                            );
+                        }
+                        Err(error) => {
+                            let error = EngineError::Archive(error.to_string());
+                            self.history_failure = Some(error.clone());
+                            return self.outcome(
+                                offered_batch_id,
+                                BatchDisposition::Rejected { error },
+                                Vec::new(),
+                            );
+                        }
+                    };
+                    let required_work = clock_len.saturating_add(1);
+                    let available = budget
+                        .as_ref()
+                        .map_or(usize::MAX, |budget| budget.remaining);
+                    let prepaid = super::dependency_queue::prepay_registration(
+                        &store,
+                        &self.scratch_roots,
+                        offered_batch_id,
+                        fingerprint,
+                        ordinal,
+                        required_work,
+                        available,
+                    );
+                    let (roots, next, prepayment) = match prepaid {
+                        Ok(result) => result,
+                        Err(error) => {
+                            let error = EngineError::Archive(error.to_string());
+                            self.history_failure = Some(error.clone());
+                            return self.outcome(
+                                offered_batch_id,
+                                BatchDisposition::Rejected { error },
+                                Vec::new(),
+                            );
+                        }
+                    };
+                    self.scratch_roots = roots;
+                    record = next;
+                    self.record_staged_record_size(&record);
+                    if let Some(budget) = budget.as_deref_mut() {
+                        let consumed = budget.consume_up_to(prepayment.consumed);
+                        debug_assert_eq!(consumed, prepayment.consumed);
+                        self.record_weighted_work(consumed);
+                    }
+                    if !prepayment.complete {
+                        break;
+                    }
+                    let parent = match super::causal_index::batch_record(
+                        &store,
+                        &self.scratch_roots,
+                        dependency,
+                    ) {
+                        Ok(Some(parent)) => parent,
+                        Ok(None) => {
+                            let error = EngineError::Archive(format!(
+                                "satisfied dependency {dependency} has no causal record"
+                            ));
+                            self.history_failure = Some(error.clone());
+                            return self.outcome(
+                                offered_batch_id,
+                                BatchDisposition::Rejected { error },
+                                Vec::new(),
+                            );
+                        }
+                        Err(error) => {
+                            let error = EngineError::Archive(error.to_string());
+                            self.history_failure = Some(error.clone());
+                            return self.outcome(
+                                offered_batch_id,
+                                BatchDisposition::Rejected { error },
+                                Vec::new(),
+                            );
+                        }
+                    };
+                    super::dependency_queue::DependencyClassification::Satisfied {
+                        causal_clock: parent.clock().to_vec(),
+                    }
+                }
+                Ok(Some(ArchiveStatus::Rejected(_))) => {
+                    if let Some(budget) = budget.as_deref_mut() {
+                        if !budget.consume_one() {
+                            break;
+                        }
+                    }
+                    super::dependency_queue::DependencyClassification::Rejected
+                }
+                Ok(Some(ArchiveStatus::Staged) | None) => {
+                    if let Some(budget) = budget.as_deref_mut() {
+                        if !budget.consume_one() {
+                            break;
+                        }
+                    }
+                    super::dependency_queue::DependencyClassification::Pending
+                }
+                Err(error) => {
+                    self.history_failure = Some(error.clone());
+                    return self.outcome(
+                        offered_batch_id,
+                        BatchDisposition::Rejected { error },
+                        Vec::new(),
+                    );
+                }
+            };
+            let satisfied_points = match &classification {
+                super::dependency_queue::DependencyClassification::Satisfied { causal_clock } => {
+                    causal_clock.len()
+                }
+                _ => 0,
+            };
+            let advanced = super::dependency_queue::advance_registration(
+                &store,
+                &self.scratch_roots,
+                offered_batch_id,
+                fingerprint,
+                ordinal,
+                dependency,
+                |_| Ok(classification),
+            );
+            match advanced {
+                Ok((roots, next, _)) => {
+                    self.scratch_roots = roots;
+                    record = next;
+                    self.record_staged_record_size(&record);
+                    let mut work = self.history_work.get();
+                    work.dependency_head_visits = work.dependency_head_visits.saturating_add(1);
+                    work.causal_accumulator_parent_points = work
+                        .causal_accumulator_parent_points
+                        .saturating_add(satisfied_points);
+                    self.history_work.set(work);
+                }
+                Err(error) => {
+                    let error = EngineError::Archive(error.to_string());
+                    self.history_failure = Some(error.clone());
+                    return self.outcome(
+                        offered_batch_id,
+                        BatchDisposition::Rejected { error },
+                        Vec::new(),
+                    );
+                }
+            }
+        }
+        if record.status() == super::dependency_queue::CompactBatchStatus::Registering {
+            let disposition = self.compact_incomplete_staged_disposition();
+            return self.outcome(offered_batch_id, disposition, Vec::new());
+        }
+        if let Some(budget) = budget.as_deref_mut() {
+            if let Err(error) = self.drain_durable_fanout(&store, Some(budget)) {
+                self.history_failure = Some(error.clone());
+                return self.outcome(
+                    offered_batch_id,
+                    BatchDisposition::Rejected { error },
+                    Vec::new(),
+                );
+            }
+        }
 
-        if record.status() == super::dependency_queue::CompactBatchStatus::Final {
+        let offered_already_final =
+            record.status() == super::dependency_queue::CompactBatchStatus::Final;
+        if offered_already_final {
             let status = record
                 .final_status()
                 .and_then(|bytes| decode_archive_status(bytes).ok())
@@ -4631,16 +5440,50 @@ impl ShardedHotEngine {
                     );
                 }
             }
-            return self.outcome(
-                offered_batch_id,
-                disposition_from_final_status(status, true),
-                Vec::new(),
-            );
         }
 
-        let mut supplied = Some(batch);
+        let mut supplied = (!offered_already_final).then_some(batch);
         let mut accepted = Vec::new();
         loop {
+            if let Err(error) = self.drain_durable_fanout(&store, budget.as_deref_mut()) {
+                self.history_failure = Some(error);
+                break;
+            }
+            let next_ready = match super::dependency_queue::peek_ready(&store, &self.scratch_roots)
+            {
+                Ok(ready) => ready,
+                Err(error) => {
+                    self.history_failure = Some(EngineError::Archive(error.to_string()));
+                    break;
+                }
+            };
+            let Some(next_ready) = next_ready else {
+                break;
+            };
+            let available = budget
+                .as_ref()
+                .map_or(usize::MAX, |budget| budget.remaining);
+            let (prepaid_roots, prepayment) = match super::dependency_queue::prepay_finalization(
+                &store,
+                &self.scratch_roots,
+                next_ready,
+                available,
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.history_failure = Some(EngineError::Archive(error.to_string()));
+                    break;
+                }
+            };
+            self.scratch_roots = prepaid_roots;
+            if let Some(budget) = budget.as_deref_mut() {
+                let consumed = budget.consume_up_to(prepayment.consumed);
+                debug_assert_eq!(consumed, prepayment.consumed);
+                self.record_weighted_work(consumed);
+            }
+            if !prepayment.complete {
+                break;
+            }
             let roots_before_pop = self.scratch_roots.clone();
             let (roots, ready) =
                 match super::dependency_queue::pop_ready(&store, &self.scratch_roots) {
@@ -4687,44 +5530,75 @@ impl ShardedHotEngine {
                 .insert(batch_id, ready_fingerprint);
             self.statuses.insert(batch_id, ArchiveStatus::Staged);
 
-            let dependencies: BTreeSet<_> = self.archive[&batch_id]
-                .manifest()
-                .causal_dependency_heads()
-                .iter()
-                .copied()
-                .collect();
+            let ready_record =
+                match super::dependency_queue::lookup(&store, &self.scratch_roots, batch_id) {
+                    Ok(Some(record))
+                        if record.status()
+                            == super::dependency_queue::CompactBatchStatus::Processing
+                            && (record.registered_ordinal() == record.dependency_count()
+                                || record.dependency_rejected())
+                            && (record.unresolved_count() == 0 || record.dependency_rejected()) =>
+                    {
+                        record
+                    }
+                    Ok(_) => {
+                        self.history_failure = Some(EngineError::Archive(format!(
+                            "ready batch {batch_id} has no complete dependency accumulation"
+                        )));
+                        break;
+                    }
+                    Err(error) => {
+                        self.history_failure = Some(EngineError::Archive(error.to_string()));
+                        break;
+                    }
+                };
             let allow_publication = !self.is_blocked();
-            let final_status = match self.dependency_status_gate(&dependencies, !allow_publication)
-            {
-                Err(error) => ArchiveStatus::Rejected(error),
-                Ok(false) => {
-                    self.history_failure = Some(EngineError::Archive(format!(
-                        "ready queue released {batch_id} before its dependencies"
-                    )));
-                    break;
-                }
-                Ok(true) => {
-                    match super::causal_index::insert_batch(
-                        &store,
-                        &self.scratch_roots,
-                        self.archive[&batch_id].manifest(),
-                    ) {
-                        Err(error) => {
-                            ArchiveStatus::Rejected(EngineError::InvalidCrdt(error.to_string()))
-                        }
-                        Ok(causal_roots) => {
-                            match self.validate_and_apply(
-                                batch_id,
-                                allow_publication,
-                                Some(causal_roots),
-                            ) {
-                                Ok(BatchApplication::Accepted { no_op, evidence }) => {
-                                    accepted.push(AcceptedBatch { batch_id, no_op });
-                                    ArchiveStatus::Accepted { no_op, evidence }
-                                }
-                                Ok(BatchApplication::Quarantined) => ArchiveStatus::Quarantined,
-                                Err(error) => ArchiveStatus::Rejected(error),
+            // Every dependency status and parent clock was already folded by
+            // its charged registration/fanout step. Finalization consumes that
+            // authenticated result directly and never traverses dependency
+            // heads or point-reads parents again.
+            let final_status = if ready_record.dependency_rejected() {
+                ArchiveStatus::Rejected(EngineError::RejectedDependencySet(
+                    ready_record.dependency_set_commitment(),
+                ))
+            } else {
+                let causal_clock = match super::dependency_queue::materialize_causal_accumulator(
+                    &store,
+                    &ready_record,
+                ) {
+                    Ok(clock) => clock,
+                    Err(error) => {
+                        self.history_failure = Some(EngineError::Archive(error.to_string()));
+                        break;
+                    }
+                };
+                let mut work = self.history_work.get();
+                work.causal_accumulator_materialized_points = work
+                    .causal_accumulator_materialized_points
+                    .saturating_add(causal_clock.len());
+                self.history_work.set(work);
+                match super::causal_index::insert_batch_accumulated(
+                    &store,
+                    &self.scratch_roots,
+                    self.archive[&batch_id].manifest(),
+                    &causal_clock,
+                ) {
+                    Err(error) => {
+                        ArchiveStatus::Rejected(EngineError::InvalidCrdt(error.to_string()))
+                    }
+                    Ok(causal_roots) => {
+                        match self.validate_and_apply(
+                            batch_id,
+                            allow_publication,
+                            Some(causal_roots),
+                            Some(ready_record.event_binding_digest()),
+                        ) {
+                            Ok(BatchApplication::Accepted { no_op, evidence }) => {
+                                accepted.push(AcceptedBatch { batch_id, no_op });
+                                ArchiveStatus::Accepted { no_op, evidence }
                             }
+                            Ok(BatchApplication::Quarantined) => ArchiveStatus::Quarantined,
+                            Err(error) => ArchiveStatus::Rejected(error),
                         }
                     }
                 }
@@ -4751,11 +5625,22 @@ impl ShardedHotEngine {
                     break;
                 }
             };
-            match super::dependency_queue::finish(&store, &self.scratch_roots, batch_id, encoded) {
-                Ok((roots, _, queue_work)) => {
-                    self.scratch_roots = roots;
-                    self.record_queue_work(queue_work);
-                }
+            let final_dependency_status = if matches!(
+                final_status,
+                ArchiveStatus::Accepted { .. } | ArchiveStatus::Quarantined
+            ) {
+                super::dependency_queue::FinalDependencyStatus::Satisfied
+            } else {
+                super::dependency_queue::FinalDependencyStatus::Rejected
+            };
+            match super::dependency_queue::begin_finish(
+                &store,
+                &self.scratch_roots,
+                batch_id,
+                encoded,
+                final_dependency_status,
+            ) {
+                Ok(roots) => self.scratch_roots = roots,
                 Err(error) => {
                     self.history_failure = Some(EngineError::Archive(error.to_string()));
                     break;
@@ -4791,6 +5676,9 @@ impl ShardedHotEngine {
             Ok(Some(ArchiveStatus::Accepted { no_op, .. })) => BatchDisposition::Accepted { no_op },
             Ok(Some(ArchiveStatus::Quarantined)) => BatchDisposition::Quarantined,
             Ok(Some(ArchiveStatus::Rejected(error))) => BatchDisposition::Rejected { error },
+            Ok(Some(ArchiveStatus::Staged)) if budget.is_some() => {
+                self.compact_incomplete_staged_disposition()
+            }
             Ok(Some(ArchiveStatus::Staged)) => self.incomplete_staged_disposition(offered_batch_id),
             Ok(None) => BatchDisposition::Rejected {
                 error: EngineError::Archive("offered batch disappeared from scratch status".into()),
@@ -4925,6 +5813,7 @@ impl ShardedHotEngine {
             prospective_documents: parts.prospective_documents,
             requirements,
             pages,
+            external_observation: parts.external_observation,
         })
     }
 
@@ -4957,6 +5846,20 @@ impl ShardedHotEngine {
             return Err(EngineError::ProjectionManifest(
                 "captured projection input is not bound to the enrolled receipt store".into(),
             ));
+        }
+        if matches!(draft.origin, BatchOrigin::ExternalReconciliation { .. }) {
+            let (_, work_index) = self.enrolled_projection_runtime()?;
+            for input in &captured_inputs {
+                let expected = work_index
+                    .completed_receipts_for_path(&input.path)
+                    .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+                if input.draft_completed_path.as_ref() != Some(&expected) {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "captured path {} no longer has its draft-owned completion authority",
+                        input.path
+                    )));
+                }
+            }
         }
         if draft.generation != self.history_generation
             || draft.root_token != self.author_generation_root()?
@@ -4991,11 +5894,13 @@ impl ShardedHotEngine {
         }
         let inputs = captured_inputs
             .into_iter()
-            .map(|input| (input.path, input.state))
+            .map(|input| (input.path, input.material))
             .collect::<BTreeMap<_, _>>();
 
         let mut objects = draft.prepared_core.objects().to_vec();
-        let mut bases =
+        let mut observed_bases =
+            BTreeMap::<ManagedPath, (ManifestObjectRef, AnnotatedProjectionBase)>::new();
+        let mut render_bases =
             BTreeMap::<ManagedPath, (ManifestObjectRef, AnnotatedProjectionBase)>::new();
         for path in &expected_paths {
             let state = &inputs[path];
@@ -5007,78 +5912,64 @@ impl ShardedHotEngine {
                 })
                 .expect("expected path came from a requirement");
             let page = &draft.pages[&requirement.page_id];
-            match state {
-                CapabilityCapturedProjectionState::Absent => {
-                    let path_requires_present = draft.requirements.iter().any(|candidate| {
-                        (candidate.path == *path
-                            && candidate.precondition == ProjectionRequirementState::Present)
-                            || candidate.render_base_path.as_ref() == Some(path)
-                    });
-                    if path_requires_present {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "captured path {path} is absent but an exact base is required"
-                        )));
-                    }
-                }
-                CapabilityCapturedProjectionState::Present {
-                    bytes,
-                    prior_intent,
-                    prior_completion,
-                } => {
-                    prior_completion
-                        .validate_against(prior_intent)
-                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                    if prior_intent.workspace_id() != self.workspace_id
-                        || prior_intent.page_id() != requirement.page_id
-                        || prior_intent.path() != path
-                        || prior_intent.frontier()
-                            != page
-                                .before
-                                .as_ref()
-                                .map(|before| &before.frontier)
-                                .ok_or_else(|| {
-                                    EngineError::ProjectionManifest(format!(
-                                        "captured path {path} is present without semantic pre-state"
-                                    ))
-                                })?
-                        || prior_intent.claim_evidence()
-                            != page
-                                .before
-                                .as_ref()
-                                .map(|before| before.claim_evidence.as_slice())
-                                .unwrap_or_default()
-                        || prior_intent.target() != super::BlobDescription::of(bytes)
-                    {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "captured path {path} completion is not its intended semantic predecessor"
-                        )));
-                    }
-                    let before = page.before.as_ref().ok_or_else(|| {
+            let prior = match state {
+                CapabilityCapturedProjectionMaterial::Absent { prior }
+                | CapabilityCapturedProjectionMaterial::Present { prior, .. } => prior.as_ref(),
+            };
+            if let Some(prior) = prior {
+                prior
+                    .completion
+                    .validate_against(&prior.intent)
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let before = draft
+                    .requirements
+                    .iter()
+                    .find_map(|candidate| {
+                        draft.pages[&candidate.page_id]
+                            .before
+                            .as_ref()
+                            .filter(|before| before.page.path == *path)
+                    })
+                    .ok_or_else(|| {
                         EngineError::ProjectionManifest(format!(
-                            "captured path {path} is present without semantic pre-state"
+                            "captured path {path} has prior authority without semantic pre-state"
                         ))
                     })?;
-                    if before.page.path != *path {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "captured path {path} is not the semantic source path"
-                        )));
-                    }
-                    let replay =
-                        super::projection::plan_projection(self.workspace_id, before, Some(bytes))
-                            .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                    if replay.target() != bytes {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "captured path {path} is not the exact semantic pre-state"
-                        )));
-                    }
+                if prior.intent.workspace_id() != self.workspace_id
+                    || prior.intent.page_id() != before.page.page_id
+                    || prior.intent.path() != path
+                    || prior.intent.frontier() != &before.frontier
+                    || prior.intent.claim_evidence() != before.claim_evidence
+                    || prior.intent.target() != super::BlobDescription::of(&prior.bytes)
+                {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "captured path {path} completion is not its intended semantic predecessor"
+                    )));
+                }
+                let replay = super::projection::plan_projection(
+                    self.workspace_id,
+                    before,
+                    Some(&prior.bytes),
+                )
+                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                if replay.target() != prior.bytes {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "captured path {path} prior bytes are not the exact semantic pre-state"
+                    )));
+                }
+                if draft
+                    .requirements
+                    .iter()
+                    .any(|candidate| candidate.render_base_path.as_ref() == Some(path))
+                {
                     let base = AnnotatedProjectionBase::new(
                         self.workspace_id,
                         source.endpoint_id,
                         before.page.page_id,
                         path.clone(),
-                        Some(prior_completion.logical_completion_id()),
+                        Some(prior.completion.logical_completion_id()),
                         before.frontier.clone(),
-                        bytes.clone(),
+                        prior.bytes.clone(),
                         replay.intent().annotations().to_vec(),
                         before.claim_evidence.clone(),
                     )
@@ -5096,33 +5987,83 @@ impl ShardedHotEngine {
                         payload,
                     )?;
                     let reference = ManifestObjectRef::from_descriptor(&object.descriptor()?);
-                    bases.insert(path.clone(), (reference, base));
+                    render_bases.insert(path.clone(), (reference, base));
                     objects.push(object);
                 }
+            }
+            if let CapabilityCapturedProjectionMaterial::Present {
+                bytes,
+                annotations,
+                prior,
+            } = state
+            {
+                let prior_frontier = page
+                    .before
+                    .as_ref()
+                    .map(|before| before.frontier.clone())
+                    .unwrap_or_default();
+                let prior_claim_evidence = page
+                    .before
+                    .as_ref()
+                    .map(|before| before.claim_evidence.clone())
+                    .unwrap_or_default();
+                let base = AnnotatedProjectionBase::new(
+                    self.workspace_id,
+                    source.endpoint_id,
+                    requirement.page_id,
+                    path.clone(),
+                    prior
+                        .as_ref()
+                        .map(|prior| prior.completion.logical_completion_id()),
+                    prior_frontier,
+                    bytes.clone(),
+                    annotations.clone(),
+                    prior_claim_evidence,
+                )
+                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let payload = base
+                    .encode()
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let document_id = base
+                    .descriptor_document_id()
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                let object = OperationObject::new(
+                    self.workspace_id,
+                    document_id,
+                    ObjectKind::AnnotatedBaseBlob,
+                    payload,
+                )?;
+                let reference = ManifestObjectRef::from_descriptor(&object.descriptor()?);
+                observed_bases.insert(path.clone(), (reference, base));
+                objects.push(object);
             }
         }
 
         for requirement in &draft.requirements {
             let page = &draft.pages[&requirement.page_id];
-            let precondition = match requirement.precondition {
-                ProjectionRequirementState::Absent => ManifestProjectionPrecondition::Absent,
-                ProjectionRequirementState::Present => ManifestProjectionPrecondition::Present {
-                    base: bases
-                        .get(&requirement.path)
-                        .ok_or_else(|| {
-                            EngineError::ProjectionManifest(
-                                "required precondition base was not captured".into(),
-                            )
-                        })?
-                        .0
-                        .clone(),
-                },
+            let precondition = match &inputs[&requirement.path] {
+                CapabilityCapturedProjectionMaterial::Absent { .. } => {
+                    ManifestProjectionPrecondition::Absent
+                }
+                CapabilityCapturedProjectionMaterial::Present { .. } => {
+                    ManifestProjectionPrecondition::Present {
+                        base: observed_bases
+                            .get(&requirement.path)
+                            .ok_or_else(|| {
+                                EngineError::ProjectionManifest(
+                                    "fresh observed precondition base was not captured".into(),
+                                )
+                            })?
+                            .0
+                            .clone(),
+                    }
+                }
             };
             let render_base = requirement
                 .render_base_path
                 .as_ref()
                 .map(|path| {
-                    bases
+                    render_bases
                         .get(path)
                         .map(|(reference, _)| reference.clone())
                         .ok_or_else(|| {
@@ -5143,15 +6084,12 @@ impl ShardedHotEngine {
                     let render_bytes = requirement
                         .render_base_path
                         .as_ref()
-                        .or_else(|| {
-                            (requirement.precondition == ProjectionRequirementState::Present)
-                                .then_some(&requirement.path)
-                        })
-                        .and_then(|path| match &inputs[path] {
-                            CapabilityCapturedProjectionState::Present { bytes, .. } => {
+                        .and_then(|path| render_bases.get(path).map(|(_, base)| base.bytes()))
+                        .or_else(|| match &inputs[&requirement.path] {
+                            CapabilityCapturedProjectionMaterial::Present { bytes, .. } => {
                                 Some(bytes.as_slice())
                             }
-                            CapabilityCapturedProjectionState::Absent => None,
+                            CapabilityCapturedProjectionMaterial::Absent { .. } => None,
                         });
                     let plan =
                         super::projection::plan_projection(self.workspace_id, after, render_bytes)
@@ -5236,6 +6174,65 @@ impl ShardedHotEngine {
         Ok(prepared)
     }
 
+    pub(crate) fn finalize_external_import_transaction(
+        &self,
+        draft: AuthorTransactionDraft,
+        source: ProjectionEndpointBinding,
+        captured_inputs: Vec<CapabilityCapturedProjectionInput>,
+        receipts: &ProjectionReceiptStore,
+    ) -> Result<PreparedBatch, EngineError> {
+        if !matches!(draft.origin, BatchOrigin::ExternalReconciliation { .. }) {
+            return Err(EngineError::ProjectionManifest(
+                "external finalizer requires an external reconciliation draft".into(),
+            ));
+        }
+        let (_, work_index) = self.enrolled_projection_runtime()?;
+        if receipts.workspace_id() != self.workspace_id
+            || receipts.endpoint_binding() != Some(source)
+            || receipts.store_id() != work_index.receipt_store_id()
+        {
+            return Err(EngineError::ProjectionManifest(
+                "external finalizer receipt authority is not enrolled".into(),
+            ));
+        }
+        for input in &captured_inputs {
+            let expected = work_index
+                .completed_receipts_for_path(&input.path)
+                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+            if input.draft_completed_path.as_ref() != Some(&expected) {
+                return Err(EngineError::ProjectionManifest(format!(
+                    "captured path {} no longer has its draft-owned completion authority",
+                    input.path
+                )));
+            }
+            let prior = match &input.material {
+                CapabilityCapturedProjectionMaterial::Absent { prior }
+                | CapabilityCapturedProjectionMaterial::Present { prior, .. } => prior.as_ref(),
+            };
+            match (expected.as_slice(), prior) {
+                ([], None) => {}
+                ([authority], Some(prior)) => {
+                    let (intent, completion) = receipts
+                        .load_completed_receipt(authority)
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                    if intent != prior.intent || completion != prior.completion {
+                        return Err(EngineError::ProjectionManifest(format!(
+                            "captured path {} receipt bytes changed after draft capture",
+                            input.path
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "captured path {} prior completion authority changed shape",
+                        input.path
+                    )));
+                }
+            }
+        }
+        self.finalize_author_transaction(draft, source, captured_inputs)
+    }
+
     fn prepare_transaction_core(
         &self,
         author: AuthorBatch,
@@ -5315,6 +6312,13 @@ impl ShardedHotEngine {
         self.validate_logseq_identity_triggers(transaction, &working)?;
 
         let affected: Vec<DocumentId> = working.keys().copied().collect();
+        if matches!(origin, BatchOrigin::ExternalReconciliation { .. })
+            && before_vectors
+                .values()
+                .any(|vector| vector.get(&author.crdt_peer_id.as_u64()).is_some())
+        {
+            return Err(EngineError::CrdtPeerCollision(author.crdt_peer_id));
+        }
         let after_snapshots = snapshot_engine_documents(self.catalog_document_id, &working, true)?;
         let effect = derive_effect_from_snapshots(&before_snapshots, &after_snapshots)?;
         let effect_bytes = effect.encode()?;
@@ -5508,6 +6512,7 @@ impl ShardedHotEngine {
                 ));
             }
         }
+        let mut external_observation = None;
         if let Some(observation) = observation {
             let import_id = match manifest.origin() {
                 BatchOrigin::ExternalReconciliation { import_id } => import_id,
@@ -5524,11 +6529,11 @@ impl ShardedHotEngine {
                     "external-import observation is not bound to the drafted import".into(),
                 ));
             }
-            objects.push(
-                observation
-                    .into_operation_object(portable_path_root)
-                    .map_err(|error| EngineError::InvalidTransaction(error.to_string()))?,
-            );
+            let (object, retained) = observation
+                .into_operation_object_and_material(portable_path_root)
+                .map_err(|error| EngineError::InvalidTransaction(error.to_string()))?;
+            objects.push(object);
+            external_observation = Some(retained);
             let descriptors = objects
                 .iter()
                 .map(OperationObject::descriptor)
@@ -5578,6 +6583,7 @@ impl ShardedHotEngine {
             semantic_effect: effect,
             prospective_documents,
             portable_path_root,
+            external_observation,
         })
     }
 
@@ -5913,8 +6919,34 @@ impl ShardedHotEngine {
                 .iter()
                 .filter(|intent| intent.page_id() == *page_id)
                 .collect::<Vec<_>>();
-            validate_intent_directions(effect, *page_id, &intents)?;
+            validate_intent_directions(
+                effect,
+                *page_id,
+                &intents,
+                matches!(
+                    batch.manifest().origin(),
+                    BatchOrigin::ExternalReconciliation { .. }
+                ),
+            )?;
         }
+        let external_observation = match batch.manifest().origin() {
+            BatchOrigin::ExternalReconciliation { .. } => {
+                let object = batch
+                    .objects()
+                    .iter()
+                    .find(|object| object.kind() == ObjectKind::ExternalImportObservation)
+                    .ok_or_else(|| {
+                        EngineError::ProjectionManifest(
+                            "external reconciliation has no immutable observation".into(),
+                        )
+                    })?;
+                Some(
+                    super::external_import::ExternalImportObservation::decode(object.payload())
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?,
+                )
+            }
+            BatchOrigin::LocalMutation | BatchOrigin::BootstrapImport => None,
+        };
 
         for intent in projection.intents() {
             let documents =
@@ -6010,17 +7042,57 @@ impl ShardedHotEngine {
                     }
                 }
             }
-            for reference in intent
-                .precondition()
-                .base()
-                .into_iter()
-                .chain(intent.render_base())
-            {
+            if let Some(reference) = intent.precondition().base() {
                 let base = projection
                     .bases()
                     .get(&reference.document_id())
                     .ok_or_else(|| {
                         EngineError::ProjectionManifest("referenced base is unavailable".into())
+                    })?;
+                if let Some(observation) = &external_observation {
+                    let entry = observation
+                        .entries()
+                        .iter()
+                        .find(|entry| entry.path() == intent.path())
+                        .ok_or_else(|| {
+                            EngineError::ProjectionManifest(format!(
+                                "manifested path {} has no fresh external observation",
+                                intent.path()
+                            ))
+                        })?;
+                    if base.workspace_id() != self.workspace_id
+                        || base.source_page_id() != intent.page_id()
+                        || base.source_path() != intent.path()
+                        || base.endpoint_id() != intent.source_endpoint_id()
+                        || entry.state().bytes() != Some(base.bytes())
+                        || entry.state().annotations() != base.annotations()
+                    {
+                        return Err(EngineError::ProjectionManifest(format!(
+                            "manifested path {} precondition differs from its fresh external observation",
+                            intent.path()
+                        )));
+                    }
+                } else {
+                    self.validate_manifested_base(base)?;
+                }
+            } else if external_observation.as_ref().is_some_and(|observation| {
+                observation
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path() == intent.path())
+                    .is_none_or(|entry| entry.state().bytes().is_some())
+            }) {
+                return Err(EngineError::ProjectionManifest(format!(
+                    "manifested path {} absent precondition differs from its fresh external observation",
+                    intent.path()
+                )));
+            }
+            if let Some(reference) = intent.render_base() {
+                let base = projection
+                    .bases()
+                    .get(&reference.document_id())
+                    .ok_or_else(|| {
+                        EngineError::ProjectionManifest("render base is unavailable".into())
                     })?;
                 self.validate_manifested_base(base)?;
             }
@@ -7498,7 +8570,7 @@ impl ShardedHotEngine {
                         }
                     }
                 }
-                match self.validate_and_apply(batch_id, true, None) {
+                match self.validate_and_apply(batch_id, true, None, None) {
                     Ok(BatchApplication::Accepted { no_op, evidence }) => {
                         let manifest_fingerprint = self.archive_fingerprints[&batch_id];
                         self.set_final_status(
@@ -7607,7 +8679,7 @@ impl ShardedHotEngine {
                         }
                     }
                 }
-                match self.validate_and_apply(batch_id, false, None) {
+                match self.validate_and_apply(batch_id, false, None, None) {
                     Ok(_) => {
                         self.set_final_status(batch_id, ArchiveStatus::Quarantined);
                     }
@@ -7646,18 +8718,33 @@ impl ShardedHotEngine {
         }
     }
 
+    fn compact_incomplete_staged_disposition(&self) -> BatchDisposition {
+        BatchDisposition::IncompleteStaged {
+            missing_objects: 0,
+            // A bounded slice deliberately returns a compact continuation
+            // indication. The public unbounded API materializes the legacy
+            // exact list only after all ordinals have been charged.
+            missing_dependencies: Vec::new(),
+        }
+    }
+
     fn missing_dependencies(&self, batch_id: BatchId) -> Result<Vec<BatchId>, EngineError> {
-        let dependencies = if let Some(store) = &self.scratch {
-            super::dependency_queue::lookup(store, &self.scratch_roots, batch_id)
-                .map_err(|error| EngineError::Archive(error.to_string()))?
-                .ok_or_else(|| {
-                    EngineError::Archive(format!("missing staged dependency record for {batch_id}"))
-                })?
-                .direct_dependencies()
-                .to_vec()
-        } else {
-            self.declared_dependencies(batch_id).into_iter().collect()
-        };
+        // Store-backed public unbounded staging reaches this only after
+        // registration completed. Preserve its legacy exact disposition by
+        // materializing the authenticated unresolved point set here, outside
+        // every bounded per-dependency unit.
+        if let Some(store) = &self.scratch {
+            return super::dependency_queue::unresolved_dependencies(
+                store,
+                &self.scratch_roots,
+                batch_id,
+            )
+            .map_err(|error| EngineError::Archive(error.to_string()));
+        }
+        let dependencies = self
+            .declared_dependencies(batch_id)
+            .into_iter()
+            .collect::<Vec<_>>();
         let mut missing = Vec::new();
         for dependency in dependencies {
             if !matches!(
@@ -8079,7 +9166,8 @@ impl ShardedHotEngine {
                             EngineError::Archive("final scratch status has no result".into())
                         })?)?
                     }
-                    super::dependency_queue::CompactBatchStatus::Waiting
+                    super::dependency_queue::CompactBatchStatus::Registering
+                    | super::dependency_queue::CompactBatchStatus::Waiting
                     | super::dependency_queue::CompactBatchStatus::Ready
                     | super::dependency_queue::CompactBatchStatus::Processing => {
                         ArchiveStatus::Staged
@@ -8205,7 +9293,8 @@ impl ShardedHotEngine {
                                 EngineError::Archive("final scratch status has no result".into())
                             })?)?
                         }
-                        super::dependency_queue::CompactBatchStatus::Waiting
+                        super::dependency_queue::CompactBatchStatus::Registering
+                        | super::dependency_queue::CompactBatchStatus::Waiting
                         | super::dependency_queue::CompactBatchStatus::Ready
                         | super::dependency_queue::CompactBatchStatus::Processing => {
                             ArchiveStatus::Staged
@@ -8246,6 +9335,20 @@ impl ShardedHotEngine {
         let mut work = self.history_work.get();
         work.wait_edge_visits = work.wait_edge_visits.saturating_add(queue.wait_edge_visits);
         work.ready_queue_residency = work.ready_queue_residency.max(queue.ready_queue_residency);
+        self.history_work.set(work);
+    }
+
+    fn record_staged_record_size(&self, record: &super::dependency_queue::StagedBatchRecord) {
+        let mut work = self.history_work.get();
+        work.staged_record_max_bytes = work
+            .staged_record_max_bytes
+            .max(super::dependency_queue::encoded_record_len(record));
+        self.history_work.set(work);
+    }
+
+    fn record_weighted_work(&self, consumed: usize) {
+        let mut work = self.history_work.get();
+        work.weighted_work_prepaid = work.weighted_work_prepaid.saturating_add(consumed);
         self.history_work.set(work);
     }
 
@@ -8656,6 +9759,7 @@ impl ShardedHotEngine {
         batch_id: BatchId,
         allow_publication: bool,
         candidate_roots: Option<ScratchRoots>,
+        event_binding_digest: Option<ContentDigest>,
     ) -> Result<BatchApplication, EngineError> {
         #[cfg(test)]
         let mut phase_started = Instant::now();
@@ -8716,10 +9820,16 @@ impl ShardedHotEngine {
                 self.pending_author_fast_path_attempts =
                     self.pending_author_fast_path_attempts.saturating_add(1);
             }
+            let pending_candidate_roots = candidate_roots
+                .as_ref()
+                .unwrap_or(&self.scratch_roots)
+                .clone();
             match self.validate_and_apply_pending_author(
                 batch_id,
                 batch.manifest().causal_dot(),
                 allow_publication,
+                event_binding_digest,
+                &pending_candidate_roots,
                 &frontier,
                 &updates,
                 &declared_effect,
@@ -9298,6 +10408,7 @@ impl ShardedHotEngine {
         let (post_documents, accepted_evidence, candidate_roots) = self
             .prepare_acceptance_evidence(
                 batch_id,
+                event_binding_digest,
                 &updates,
                 &replacements,
                 &replacement_heads,
@@ -10247,6 +11358,8 @@ impl ShardedHotEngine {
         batch_id: BatchId,
         causal_dot: BatchCausalDot,
         allow_publication: bool,
+        event_binding_digest: Option<ContentDigest>,
+        candidate_roots: &ScratchRoots,
         frontier: &FrontierV2,
         updates: &BTreeMap<DocumentId, CrdtUpdatePayload>,
         declared_effect: &SemanticEffect,
@@ -10328,7 +11441,7 @@ impl ShardedHotEngine {
             derived_catalog_pages,
         )?;
         let portable_paths = self.prepare_portable_path_updates(
-            &self.scratch_roots,
+            candidate_roots,
             batch_id,
             causal_dot,
             frontier,
@@ -10353,7 +11466,7 @@ impl ShardedHotEngine {
             )
             .map_err(|error| EngineError::Archive(error.to_string()))?;
             self.prepare_page_name_updates(
-                &self.scratch_roots,
+                candidate_roots,
                 batch_id,
                 causal_dot,
                 self.archive[&batch_id].manifest().causal_dependency_heads(),
@@ -10383,7 +11496,7 @@ impl ShardedHotEngine {
             BTreeSet::new()
         };
         let identity = self.validate_and_prepare_semantic_roles_and_block_homes(
-            &self.scratch_roots.clone(),
+            candidate_roots,
             batch_id,
             causal_dot,
             &dependencies,
@@ -10465,6 +11578,7 @@ impl ShardedHotEngine {
         let (post_documents, accepted_evidence, candidate_roots) = self
             .prepare_acceptance_evidence(
                 batch_id,
+                event_binding_digest,
                 updates,
                 &pending_engine_documents,
                 &BTreeMap::new(),
@@ -12511,6 +13625,7 @@ fn validate_intent_directions(
     effect: &SemanticEffect,
     page_id: PageId,
     intents: &[&ManifestedProjectionIntent],
+    fresh_external_preconditions: bool,
 ) -> Result<(), EngineError> {
     let page_delta = effect.pages().iter().find(|delta| delta.page_id == page_id);
     let before_path = page_delta
@@ -12524,16 +13639,17 @@ fn validate_intent_directions(
                              precondition: ProjectionRequirementState,
                              target: ProjectionRequirementState| {
         path.is_none_or(|path| intent.path() == path)
-            && matches!(
-                (intent.precondition(), precondition),
-                (
-                    ManifestProjectionPrecondition::Absent,
-                    ProjectionRequirementState::Absent
-                ) | (
-                    ManifestProjectionPrecondition::Present { .. },
-                    ProjectionRequirementState::Present
-                )
-            )
+            && (fresh_external_preconditions
+                || matches!(
+                    (intent.precondition(), precondition),
+                    (
+                        ManifestProjectionPrecondition::Absent,
+                        ProjectionRequirementState::Absent
+                    ) | (
+                        ManifestProjectionPrecondition::Present { .. },
+                        ProjectionRequirementState::Present
+                    )
+                ))
             && matches!(
                 (intent.target(), target),
                 (
@@ -13071,6 +14187,97 @@ pub(crate) fn accepted_causal_record_digest(
     }
     bytes.extend_from_slice(clock_root_digest.as_bytes());
     ContentDigest::of(&bytes)
+}
+
+/// Timing-independent rejection evidence for the complete immutable canonical
+/// direct-dependency sequence. Length and every ID are committed under a
+/// dedicated domain; the meaning is that at least one member of this exact set
+/// was rejected.
+fn rejected_dependency_set_commitment(dependencies: &[BatchId]) -> ContentDigest {
+    let mut bytes = b"tine/oplog/rejected-dependency-set/v1\0".to_vec();
+    bytes.extend_from_slice(&(dependencies.len() as u64).to_be_bytes());
+    for dependency in dependencies {
+        bytes.extend_from_slice(dependency.as_uuid().as_bytes());
+    }
+    ContentDigest::of(&bytes)
+}
+
+const BOUNDED_STAGE_BYTE_QUANTUM: u64 = 64 * 1024;
+const BOUNDED_STAGE_OPERATION_QUANTUM: u64 = 16;
+const BOUNDED_STAGE_SCRATCH_CALLS_PER_UNIT: u64 = 128;
+
+/// A weighted work unit is intentionally a worst-case physical allowance, not
+/// a latency-preemption promise. One unit covers this many complete scratch
+/// index calls. Each authenticated point call may contain the fixed maximum
+/// ready-heap mutation path, and each mutation may read/rewrite the maximum
+/// authenticated-tree path. LSM-backed materialization indexes have fewer
+/// pages (32 levels plus one output) and are therefore also covered by this
+/// point-map ceiling. Every page/blob is independently capped by scratch-store
+/// decoding before allocation, validation, hashing, or use.
+pub(crate) const BOUNDED_STAGE_MAX_SCRATCH_IO_PER_UNIT: u64 = BOUNDED_STAGE_SCRATCH_CALLS_PER_UNIT
+    * super::scratch_store::AUTHENTICATED_POINT_MAX_MUTATIONS as u64
+    * super::scratch_store::AUTHENTICATED_POINT_MAX_IO_PER_MUTATION as u64;
+pub(crate) const BOUNDED_STAGE_MAX_SCRATCH_BYTES_PER_UNIT: u64 =
+    BOUNDED_STAGE_MAX_SCRATCH_IO_PER_UNIT
+        * super::scratch_store::AUTHENTICATED_POINT_MAX_PAGE_BYTES as u64;
+
+/// Conservative whole-batch weight derived while the offered immutable batch
+/// is already authenticated. It uses the actual canonical encoded byte count,
+/// actual object and CRDT-update counts, actual decoded semantic-delta count
+/// (or the semantic payload byte count when decoding will later reject), and
+/// the actual dependency count. Each term is additive: no object-count proxy
+/// substitutes for semantic/CRDT validation. Execution occurs only after this
+/// durable credit reaches zero.
+fn bounded_finalization_work(batch: &ValidatedBatch) -> u64 {
+    let manifest_bytes = batch.manifest().encode().map_or(u64::MAX, |bytes| {
+        u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+    });
+    let mut object_bytes = 0_u64;
+    let mut crdt_updates = 0_u64;
+    let mut semantic_effects = 0_u64;
+    for object in batch.objects() {
+        object_bytes = object_bytes.saturating_add(object.encode().map_or(u64::MAX, |bytes| {
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+        }));
+        match object.kind() {
+            ObjectKind::CrdtUpdate => crdt_updates = crdt_updates.saturating_add(1),
+            ObjectKind::SemanticEffect => {
+                semantic_effects = semantic_effects.saturating_add(
+                    SemanticEffect::decode(object.payload()).map_or_else(
+                        |_| u64::try_from(object.payload().len()).unwrap_or(u64::MAX),
+                        |effect| {
+                            u64::try_from(
+                                effect
+                                    .pages()
+                                    .len()
+                                    .saturating_add(effect.page_preambles().len())
+                                    .saturating_add(effect.blocks().len())
+                                    .saturating_add(effect.memberships().len()),
+                            )
+                            .unwrap_or(u64::MAX)
+                        },
+                    ),
+                );
+            }
+            ObjectKind::ProjectionIntent
+            | ObjectKind::AnnotatedBaseBlob
+            | ObjectKind::ExternalImportObservation => {}
+        }
+    }
+    let byte_units = manifest_bytes
+        .saturating_add(object_bytes)
+        .saturating_add(BOUNDED_STAGE_BYTE_QUANTUM - 1)
+        / BOUNDED_STAGE_BYTE_QUANTUM;
+    let validator_items = u64::try_from(batch.objects().len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(crdt_updates)
+        .saturating_add(semantic_effects)
+        .saturating_add(
+            u64::try_from(batch.manifest().causal_dependency_heads().len()).unwrap_or(u64::MAX),
+        );
+    let operation_units = validator_items.saturating_add(BOUNDED_STAGE_OPERATION_QUANTUM - 1)
+        / BOUNDED_STAGE_OPERATION_QUANTUM;
+    byte_units.saturating_add(operation_units).saturating_add(1)
 }
 
 fn authenticated_map_subtree(
@@ -15332,6 +16539,7 @@ pub enum EngineError {
         found: LineageDigest,
     },
     BatchCollision(BatchId),
+    CrdtPeerCollision(CrdtPeerId),
     SelfDependency(BatchId),
     MissingDependency(BatchId),
     RejectedDependency(BatchId),
@@ -15394,6 +16602,9 @@ pub enum EngineError {
         expected: PageId,
         found: Option<PageId>,
     },
+    /// At least one member of the exact canonical dependency sequence bound by
+    /// this commitment was rejected. Appended to preserve prior enum tags.
+    RejectedDependencySet(ContentDigest),
 }
 
 impl fmt::Display for EngineError {
@@ -15420,6 +16631,9 @@ impl fmt::Display for EngineError {
                 write!(f, "lineage mismatch: expected {expected}, found {found}")
             }
             Self::BatchCollision(batch_id) => write!(f, "batch collision for {batch_id}"),
+            Self::CrdtPeerCollision(peer_id) => {
+                write!(f, "CRDT peer {peer_id} collides in an affected document")
+            }
             Self::SelfDependency(batch_id) => write!(f, "batch {batch_id} depends on itself"),
             Self::MissingDependency(batch_id) => write!(f, "missing dependency {batch_id}"),
             Self::RejectedDependency(batch_id) => write!(f, "dependency {batch_id} was rejected"),
@@ -15534,6 +16748,10 @@ impl fmt::Display for EngineError {
             } => write!(
                 f,
                 "shard {document_id} page identity changed from {expected} to {found:?}"
+            ),
+            Self::RejectedDependencySet(commitment) => write!(
+                f,
+                "at least one member of dependency set {commitment} was rejected"
             ),
         }
     }
@@ -20509,7 +21727,7 @@ mod validation_tests {
         let left_then_right = deliver(left.manifest().batch_id(), right.manifest().batch_id());
         let right_then_left = deliver(right.manifest().batch_id(), left.manifest().batch_id());
         assert_eq!(left_then_right, right_then_left);
-        assert_eq!(ENGINE_HISTORY_SCHEMA_VERSION, 10);
+        assert_eq!(ENGINE_HISTORY_SCHEMA_VERSION, 11);
         assert_eq!(
             super::super::page_name_index::PAGE_NAME_OWNERSHIP_ROOT_SCHEMA_VERSION,
             1
@@ -20693,6 +21911,1567 @@ mod validation_tests {
         drop(receiver);
         drop(left_author);
         drop(right_author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_stage_resumes_dependency_fanout_without_duplicates_or_skips() {
+        const CHILDREN: usize = 19;
+        const SLICE: usize = 4;
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(98_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(98_001));
+        let lineage = LineageDigest::of(b"bounded-stage-fanout");
+        let root =
+            std::env::temp_dir().join(format!("tine-bounded-stage-fanout-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let mut author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let page_id = PageId::from_uuid(Uuid::from_u128(98_002));
+        let home = DocumentId::from_uuid(Uuid::from_u128(98_003));
+        let block = BlockLocation {
+            block_id: BlockId::from_uuid(Uuid::from_u128(98_004)),
+            home_document_id: home,
+        };
+        let base = author
+            .prepare_bootstrap_transaction(
+                test_author(98_010, 98_010),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::CreatePage {
+                        page_id,
+                        home_document_id: home,
+                        name: LogicalPageName::parse("Bounded Fanout").unwrap(),
+                        path: ManagedPath::parse("pages/bounded-fanout.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreateBlock {
+                        block,
+                        page_id,
+                        parent: None,
+                        order: "a".into(),
+                        content: "base".into(),
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&base).unwrap();
+        author
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        let parent = author
+            .prepare_bootstrap_transaction(
+                test_author(98_020, 98_020),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block,
+                    content: "parent".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&parent).unwrap();
+        author
+            .stage_archive_batch(parent.manifest().batch_id())
+            .unwrap();
+        let mut children = Vec::new();
+        for index in 0..CHILDREN {
+            let prepared = author
+                .prepare_bootstrap_transaction(
+                    test_author(98_100 + index as u128, 98_100 + index as u64),
+                    &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                        block,
+                        content: format!("child-{index}"),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            writer.publish_prepared(&prepared).unwrap();
+            children.push(prepared.manifest().batch_id());
+        }
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        receiver
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        let base_clock_len = crate::oplog::causal_index::batch_clock_len(
+            receiver.scratch.as_ref().unwrap(),
+            &receiver.scratch_roots,
+            base.manifest().batch_id(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            parent.manifest().causal_dependency_heads(),
+            &[base.manifest().batch_id()],
+            "the fanout parent must depend only on the accepted base"
+        );
+        for child in children.iter().rev() {
+            assert!(matches!(
+                receiver.stage_archive_batch(*child).unwrap().disposition(),
+                BatchDisposition::IncompleteStaged { .. }
+            ));
+        }
+
+        let child_batches = children
+            .iter()
+            .map(|child| match writer.inspect_batch(*child).unwrap() {
+                BatchInspection::Ready(batch) => batch,
+                other => panic!("fanout child {child} is not ready: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        let parent_batch = match writer.inspect_batch(parent.manifest().batch_id()).unwrap() {
+            BatchInspection::Ready(batch) => batch,
+            other => panic!("fanout parent is not ready: {other:?}"),
+        };
+        assert!(
+            child_batches.iter().all(|child| {
+                child.manifest().causal_dependency_heads() == [parent.manifest().batch_id()]
+            }),
+            "each child must contribute exactly one durable wait edge to the parent"
+        );
+
+        // The parent adds its distinct author point to the base clock.  Every
+        // fanout edge is then prepaid for that exact clock plus its point
+        // mutation; the current state machine uses the same prepayment when
+        // retiring the drained parent.  Each awakened child materializes that
+        // parent clock before its own immutable finalization work.
+        let parent_clock_len = base_clock_len.saturating_add(1);
+        let maximum_weighted_work = 1_u64
+            .saturating_add(base_clock_len.saturating_add(1))
+            .saturating_add(bounded_finalization_work(&parent_batch))
+            .saturating_add(base_clock_len)
+            .saturating_add(
+                parent_clock_len
+                    .saturating_add(1)
+                    .saturating_mul(u64::try_from(CHILDREN).unwrap().saturating_add(1)),
+            )
+            .saturating_add(child_batches.iter().fold(0_u64, |work, child| {
+                work.saturating_add(
+                    bounded_finalization_work(child).saturating_add(parent_clock_len),
+                )
+            }));
+        let maximum_resumes =
+            usize::try_from(maximum_weighted_work.saturating_add(1)).unwrap_or(usize::MAX);
+
+        let mut accepted = BTreeSet::new();
+        let mut resumes = 0;
+        let mut total_work = 0_u64;
+        loop {
+            resumes += 1;
+            assert!(
+                resumes <= maximum_resumes,
+                "bounded fanout exceeded its construction-derived bound: resumes={resumes}, maximum_resumes={maximum_resumes}, maximum_weighted_work={maximum_weighted_work}"
+            );
+            let roots_before_slice = receiver.scratch_roots.clone();
+            let slice = receiver
+                .stage_archive_batch_bounded(parent.manifest().batch_id(), SLICE)
+                .unwrap();
+            assert!(
+                slice.work() <= SLICE,
+                "slice charged {} units for a {SLICE}-unit limit",
+                slice.work()
+            );
+            total_work = total_work.saturating_add(slice.work() as u64);
+            assert!(slice.outcome().newly_accepted().len() <= slice.work());
+            for event in slice.outcome().newly_accepted() {
+                assert!(accepted.insert(event.batch_id), "duplicate accepted event");
+            }
+            if !slice.has_more() {
+                break;
+            }
+            assert!(
+                slice.work() > 0,
+                "continuation reported has_more without consuming weighted work"
+            );
+            assert_ne!(
+                receiver.scratch_roots, roots_before_slice,
+                "continuation reported has_more without changing durable scratch roots"
+            );
+        }
+        assert!(
+            total_work <= maximum_weighted_work,
+            "fanout consumed {total_work} weighted units, above its construction-derived maximum of {maximum_weighted_work}"
+        );
+        assert_eq!(accepted.len(), CHILDREN + 1);
+        assert!(accepted.contains(&parent.manifest().batch_id()));
+        assert!(children.iter().all(|child| accepted.contains(child)));
+        assert_eq!(
+            receiver.accepted_batch_count().unwrap(),
+            (CHILDREN + 2) as u64
+        );
+        drop(receiver);
+        drop(author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Direct-dependency registration is charged per dependency and resumes
+    /// from the durable cursor after engine reconstruction.
+    ///
+    /// The prior construction authenticated, sorted, and inserted every
+    /// dependency of an offered manifest inside the single coarse unit charged
+    /// for that manifest.
+    #[test]
+    fn bounded_staging_charges_each_direct_dependency_and_resumes_after_reconstruction() {
+        const PARENTS: usize = 9;
+        const SLICE: usize = 3;
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(96_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(96_001));
+        let lineage = LineageDigest::of(b"charged-dependency-registration");
+        let root =
+            std::env::temp_dir().join(format!("tine-charged-registration-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let mut author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let blocks = (0..PARENTS)
+            .map(|index| BlockLocation {
+                block_id: BlockId::from_uuid(Uuid::from_u128(96_100 + index as u128)),
+                home_document_id: DocumentId::from_uuid(Uuid::from_u128(96_200 + index as u128)),
+            })
+            .collect::<Vec<_>>();
+        let mut bootstrap = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            let page_id = PageId::from_uuid(Uuid::from_u128(96_300 + index as u128));
+            bootstrap.push(SemanticOperation::CreatePage {
+                page_id,
+                home_document_id: block.home_document_id,
+                name: LogicalPageName::parse(&format!("Charged Dependency {index}")).unwrap(),
+                path: ManagedPath::parse(&format!("pages/charged-dependency-{index}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
+            });
+            bootstrap.push(SemanticOperation::CreateBlock {
+                block: *block,
+                page_id,
+                parent: None,
+                order: "a".into(),
+                content: format!("base-{index}"),
+            });
+        }
+        let base = author
+            .prepare_bootstrap_transaction(
+                test_author(96_010, 96_010),
+                &OperationTransaction::new(bootstrap).unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&base).unwrap();
+        author
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        // One accepted batch per home document, so the wide batch below owns
+        // one distinct causal dependency head per document.
+        let mut parents = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            let prepared = author
+                .prepare_bootstrap_transaction(
+                    test_author(96_400 + index as u128, 96_400 + index as u64),
+                    &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                        block: *block,
+                        content: format!("parent-{index}"),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            writer.publish_prepared(&prepared).unwrap();
+            author
+                .stage_archive_batch(prepared.manifest().batch_id())
+                .unwrap();
+            parents.push(prepared.manifest().batch_id());
+        }
+        let wide = author
+            .prepare_bootstrap_transaction(
+                test_author(96_600, 96_600),
+                &OperationTransaction::new(
+                    blocks
+                        .iter()
+                        .enumerate()
+                        .map(|(index, block)| SemanticOperation::EditBlockContent {
+                            block: *block,
+                            content: format!("wide-{index}"),
+                        })
+                        .collect(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&wide).unwrap();
+        let wide_id = wide.manifest().batch_id();
+        let dependencies = wide
+            .manifest()
+            .causal_dependency_heads()
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len();
+        assert!(
+            dependencies > SLICE,
+            "the offered batch must own more direct dependencies than one slice"
+        );
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        receiver
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        for parent in &parents {
+            assert!(matches!(
+                receiver.stage_archive_batch(*parent).unwrap().disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+        }
+        let parent_merge_work = wide
+            .manifest()
+            .causal_dependency_heads()
+            .iter()
+            .map(|parent| {
+                crate::oplog::causal_index::batch_clock_len(
+                    receiver.scratch.as_ref().unwrap(),
+                    &receiver.scratch_roots,
+                    *parent,
+                )
+                .unwrap()
+                .unwrap()
+                .saturating_add(1)
+            })
+            .sum::<u64>();
+        let validated_wide = match writer.inspect_batch(wide_id).unwrap() {
+            BatchInspection::Ready(batch) => batch,
+            other => panic!("wide batch is not ready: {other:?}"),
+        };
+        let accumulated_clock_points = wide
+            .manifest()
+            .causal_dependency_heads()
+            .iter()
+            .filter_map(|parent| {
+                crate::oplog::causal_index::batch_record(
+                    receiver.scratch.as_ref().unwrap(),
+                    &receiver.scratch_roots,
+                    *parent,
+                )
+                .unwrap()
+            })
+            .flat_map(|record| {
+                record
+                    .clock()
+                    .iter()
+                    .map(|(peer, _)| *peer)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<BTreeSet<_>>()
+            .len() as u64;
+        let expected_work = 1_u64
+            .saturating_add(parent_merge_work)
+            .saturating_add(accumulated_clock_points)
+            .saturating_add(bounded_finalization_work(&validated_wide));
+        let stage_before = receiver.instrumentation();
+        let scratch_before = receiver.scratch.as_ref().unwrap().stats();
+
+        let mut total_work = 0;
+        let mut slices = 0;
+        let mut interrupted = false;
+        let mut accepted = BTreeSet::new();
+        let mut prior_registered = 0_u32;
+        loop {
+            slices += 1;
+            let slice = receiver
+                .stage_archive_batch_bounded(wide_id, SLICE)
+                .unwrap();
+            assert!(slice.work() <= SLICE);
+            total_work += slice.work();
+            for event in slice.outcome().newly_accepted() {
+                assert!(accepted.insert(event.batch_id), "duplicate accepted event");
+            }
+            let record = crate::oplog::dependency_queue::lookup(
+                receiver.scratch.as_ref().unwrap(),
+                &receiver.scratch_roots,
+                wide_id,
+            )
+            .unwrap()
+            .unwrap();
+            assert!(
+                record.registered_ordinal() >= prior_registered,
+                "durable ordinal never rewinds"
+            );
+            prior_registered = record.registered_ordinal();
+            assert_eq!(
+                crate::oplog::dependency_queue::point_state_counts(
+                    receiver.scratch.as_ref().unwrap(),
+                    &receiver.scratch_roots,
+                    wide_id,
+                )
+                .unwrap(),
+                (record.registered_ordinal() as usize, 0),
+                "one authenticated identity point exists per visited ordinal and no accepted parent is unresolved"
+            );
+            if !slice.has_more() {
+                break;
+            }
+            // Interrupt exactly once while the registration cursor is still
+            // mid-sequence, and rebuild every run-local structure.
+            if !interrupted {
+                interrupted = true;
+                receiver.reconstruct_run_local_state().unwrap();
+            }
+            assert!(slices <= expected_work as usize + 2);
+        }
+        assert!(interrupted, "registration must span more than one slice");
+        assert_eq!(prior_registered as usize, dependencies);
+        assert_eq!(accepted, BTreeSet::from([wide_id]));
+        // Weighted accounting: one initial worst-case point unit, each selected
+        // parent's clock-entry/path-derived units, and the actual
+        // byte/object/CRDT/semantic-count-derived finalization prepayment.
+        assert_eq!(total_work as u64, expected_work);
+        let stage_after = receiver.instrumentation();
+        let scratch_after = receiver.scratch.as_ref().unwrap().stats();
+        let physical_io = scratch_after
+            .page_reads
+            .saturating_sub(scratch_before.page_reads)
+            .saturating_add(
+                scratch_after
+                    .page_writes
+                    .saturating_sub(scratch_before.page_writes),
+            )
+            .saturating_add(
+                scratch_after
+                    .blob_reads
+                    .saturating_sub(scratch_before.blob_reads),
+            )
+            .saturating_add(
+                scratch_after
+                    .blob_writes
+                    .saturating_sub(scratch_before.blob_writes),
+            ) as u64;
+        let physical_bytes = scratch_after
+            .page_bytes_read
+            .saturating_sub(scratch_before.page_bytes_read)
+            .saturating_add(
+                scratch_after
+                    .page_bytes_written
+                    .saturating_sub(scratch_before.page_bytes_written),
+            )
+            .saturating_add(
+                scratch_after
+                    .blob_bytes_read
+                    .saturating_sub(scratch_before.blob_bytes_read),
+            )
+            .saturating_add(
+                scratch_after
+                    .blob_bytes_written
+                    .saturating_sub(scratch_before.blob_bytes_written),
+            ) as u64;
+        assert!(
+            physical_io
+                <= (total_work as u64).saturating_mul(BOUNDED_STAGE_MAX_SCRATCH_IO_PER_UNIT),
+            "charged scratch I/O {physical_io} exceeds the documented unit bound"
+        );
+        assert!(
+            physical_bytes
+                <= (total_work as u64).saturating_mul(BOUNDED_STAGE_MAX_SCRATCH_BYTES_PER_UNIT),
+            "charged scratch bytes {physical_bytes} exceed the documented unit bound"
+        );
+        assert_eq!(
+            stage_after.store.inspected_manifest_operations
+                - stage_before.store.inspected_manifest_operations,
+            2,
+            "the offered batch authenticates once initially and once after reconstruction"
+        );
+        assert_eq!(
+            stage_after.store.inspected_object_operations
+                - stage_before.store.inspected_object_operations,
+            2 * wide.objects().len()
+        );
+        assert_eq!(
+            stage_after.store.inspected_manifest_bytes + stage_after.store.inspected_object_bytes
+                - stage_before.store.inspected_manifest_bytes
+                - stage_before.store.inspected_object_bytes,
+            2 * wide.retained_bytes().unwrap()
+        );
+        assert_eq!(
+            stage_after.dependency_head_visits - stage_before.dependency_head_visits,
+            dependencies
+        );
+        assert_eq!(
+            stage_after.causal_accumulator_parent_points
+                - stage_before.causal_accumulator_parent_points,
+            parent_merge_work as usize - dependencies
+        );
+        assert!(
+            stage_after.causal_accumulator_materialized_points
+                > stage_before.causal_accumulator_materialized_points
+        );
+        assert!(stage_after.staged_record_max_bytes < 1024);
+        assert_eq!(
+            stage_after.weighted_work_prepaid - stage_before.weighted_work_prepaid,
+            expected_work as usize - 1
+        );
+        assert!(stage_after.scratch_page_bytes_read > stage_before.scratch_page_bytes_read);
+        assert_eq!(
+            receiver.accepted_batch_count().unwrap(),
+            (PARENTS + 2) as u64
+        );
+        drop(receiver);
+        drop(author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A reconstructed engine must rediscover the exact remaining dependent
+    /// fanout from the authenticated durable scratch roots alone.
+    ///
+    /// The prior construction kept fanout continuation in the run-local
+    /// `bounded_waiters`/`bounded_pending_fanout` maps. Reconstruction emptied
+    /// them while the durable wait edges stayed live under a `Final` parent, so
+    /// `has_more()` reported false and every remaining waiter was stranded.
+    #[test]
+    fn reconstructed_engine_rediscovers_durable_fanout_and_drains_each_edge_once() {
+        const CHILDREN: usize = 11;
+        const SLICE: usize = 3;
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(97_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(97_001));
+        let lineage = LineageDigest::of(b"reconstructed-stage-fanout");
+        let root = std::env::temp_dir().join(format!(
+            "tine-reconstructed-stage-fanout-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let mut author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let page_id = PageId::from_uuid(Uuid::from_u128(97_002));
+        let home = DocumentId::from_uuid(Uuid::from_u128(97_003));
+        let block = BlockLocation {
+            block_id: BlockId::from_uuid(Uuid::from_u128(97_004)),
+            home_document_id: home,
+        };
+        let base = author
+            .prepare_bootstrap_transaction(
+                test_author(97_010, 97_010),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::CreatePage {
+                        page_id,
+                        home_document_id: home,
+                        name: LogicalPageName::parse("Reconstructed Fanout").unwrap(),
+                        path: ManagedPath::parse("pages/reconstructed-fanout.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreateBlock {
+                        block,
+                        page_id,
+                        parent: None,
+                        order: "a".into(),
+                        content: "base".into(),
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&base).unwrap();
+        author
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        let parent = author
+            .prepare_bootstrap_transaction(
+                test_author(97_020, 97_020),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block,
+                    content: "parent".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&parent).unwrap();
+        author
+            .stage_archive_batch(parent.manifest().batch_id())
+            .unwrap();
+        let mut children = Vec::new();
+        for index in 0..CHILDREN {
+            let prepared = author
+                .prepare_bootstrap_transaction(
+                    test_author(97_100 + index as u128, 97_100 + index as u64),
+                    &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                        block,
+                        content: format!("child-{index}"),
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            writer.publish_prepared(&prepared).unwrap();
+            children.push(prepared.manifest().batch_id());
+        }
+        // One grandchild depends on the first child, so resuming after
+        // reconstruction must also drive a recursive wakeup.
+        author.stage_archive_batch(children[0]).unwrap();
+        let grandchild = author
+            .prepare_bootstrap_transaction(
+                test_author(97_300, 97_300),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block,
+                    content: "grandchild".into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&grandchild).unwrap();
+        let grandchild_id = grandchild.manifest().batch_id();
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        receiver
+            .stage_archive_batch(base.manifest().batch_id())
+            .unwrap();
+        for child in children.iter().rev() {
+            assert!(matches!(
+                receiver.stage_archive_batch(*child).unwrap().disposition(),
+                BatchDisposition::IncompleteStaged { .. }
+            ));
+        }
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(grandchild_id)
+                .unwrap()
+                .disposition(),
+            BatchDisposition::IncompleteStaged { .. }
+        ));
+
+        // Use fixed small slices until the parent's weighted finalization is
+        // fully prepaid. The slice that finalizes it may resolve only a strict
+        // prefix of its durable fanout.
+        let mut accepted = BTreeSet::new();
+        let first = loop {
+            let slice = receiver
+                .stage_archive_batch_bounded(parent.manifest().batch_id(), SLICE)
+                .unwrap();
+            assert!(slice.work() <= SLICE);
+            for event in slice.outcome().newly_accepted() {
+                assert!(accepted.insert(event.batch_id), "duplicate accepted event");
+            }
+            if accepted.contains(&parent.manifest().batch_id()) {
+                break slice;
+            }
+            assert!(slice.has_more());
+        };
+        assert!(accepted.contains(&parent.manifest().batch_id()));
+        assert!(
+            accepted.len() < CHILDREN + 1,
+            "the first slice must stop on a strict prefix"
+        );
+        assert!(first.has_more());
+
+        // Destroy and reconstruct every run-local derived structure. Only the
+        // authenticated durable roots and retained capabilities survive.
+        receiver.reconstruct_run_local_state().unwrap();
+
+        // Resume through the public unbounded API before re-staging any child.
+        // It must consume the bounded call's durable fanout continuation,
+        // including the recursively awakened grandchild, exactly once.
+        let resumed = receiver
+            .stage_archive_batch(parent.manifest().batch_id())
+            .unwrap();
+        for event in resumed.newly_accepted() {
+            assert!(accepted.insert(event.batch_id), "duplicate accepted event");
+        }
+        assert_eq!(
+            crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots),
+            0
+        );
+        assert_eq!(receiver.scratch_roots.ready_queue_len, 0);
+        assert_eq!(
+            accepted.len(),
+            CHILDREN + 2,
+            "every remaining edge and the recursively ready grandchild drained"
+        );
+        assert!(children.iter().all(|child| accepted.contains(child)));
+        assert!(accepted.contains(&grandchild_id));
+        assert_eq!(
+            receiver.accepted_batch_count().unwrap(),
+            (CHILDREN + 3) as u64
+        );
+
+        // Re-staging each child after the fact is idempotent and neither
+        // reawakens nor duplicates any durable edge.
+        for child in children.iter().chain(std::iter::once(&grandchild_id)) {
+            assert!(matches!(
+                receiver.stage_archive_batch(*child).unwrap().disposition(),
+                BatchDisposition::DuplicateAccepted { .. } | BatchDisposition::Accepted { .. }
+            ));
+        }
+        assert_eq!(
+            receiver.accepted_batch_count().unwrap(),
+            (CHILDREN + 3) as u64
+        );
+        drop(receiver);
+        drop(author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejected_parent_is_identical_before_or_after_child_registration() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(97_400));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(97_401));
+        let lineage = LineageDigest::of(b"rejected-parent-registration-order");
+        let root = std::env::temp_dir().join(format!(
+            "tine-rejected-parent-registration-order-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let author = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        let page = PageId::from_uuid(Uuid::from_u128(97_402));
+        let home = DocumentId::from_uuid(Uuid::from_u128(97_403));
+        let block = BlockLocation {
+            block_id: BlockId::from_uuid(Uuid::from_u128(97_404)),
+            home_document_id: home,
+        };
+        let parent_template = author
+            .prepare_bootstrap_transaction(
+                test_author(97_410, 97_410),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::CreatePage {
+                        page_id: page,
+                        home_document_id: home,
+                        name: LogicalPageName::parse("Rejected Parent").unwrap(),
+                        path: ManagedPath::parse("pages/rejected-parent.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreateBlock {
+                        block,
+                        page_id: page,
+                        parent: None,
+                        order: "a".into(),
+                        content: "parent".into(),
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        let parent_manifest = parent_template.manifest();
+        let peer = parent_manifest.causal_dot().peer_id();
+        let parent = PreparedBatch::new(
+            OperationBatch::new_with_causality(
+                workspace,
+                lineage,
+                parent_manifest.batch_id(),
+                parent_manifest.author_device_id(),
+                parent_manifest.author_session_id(),
+                parent_manifest.origin(),
+                BatchCausalDot::new(peer, 2).unwrap(),
+                Vec::new(),
+                parent_manifest.dependency_frontier().clone(),
+                parent_manifest.semantic_effect_digest(),
+                parent_manifest.required_objects().to_vec(),
+            )
+            .unwrap(),
+            parent_template.objects().to_vec(),
+        )
+        .unwrap();
+        let parent_id = parent.manifest().batch_id();
+
+        let child_template = author
+            .prepare_bootstrap_transaction(
+                test_author(97_420, 97_420),
+                &create_page_with_block(
+                    PageId::from_uuid(Uuid::from_u128(97_421)),
+                    DocumentId::from_uuid(Uuid::from_u128(97_422)),
+                    BlockId::from_uuid(Uuid::from_u128(97_423)),
+                    "Rejected Child",
+                    "pages/rejected-child.md",
+                ),
+            )
+            .unwrap();
+        let child_manifest = child_template.manifest();
+        let child = PreparedBatch::new(
+            OperationBatch::new_with_causality(
+                workspace,
+                lineage,
+                child_manifest.batch_id(),
+                child_manifest.author_device_id(),
+                child_manifest.author_session_id(),
+                child_manifest.origin(),
+                BatchCausalDot::new(child_manifest.causal_dot().peer_id(), 3).unwrap(),
+                vec![parent_id],
+                child_manifest.dependency_frontier().clone(),
+                child_manifest.semantic_effect_digest(),
+                child_manifest.required_objects().to_vec(),
+            )
+            .unwrap(),
+            child_template.objects().to_vec(),
+        )
+        .unwrap();
+        let child_id = child.manifest().batch_id();
+        writer.publish_prepared(&parent).unwrap();
+        writer.publish_prepared(&child).unwrap();
+
+        for child_first in [false, true] {
+            let mut receiver = ShardedHotEngine::with_archive_store(
+                ObjectStore::open(&archive_path, workspace).unwrap(),
+                lineage,
+                catalog,
+            );
+            if child_first {
+                assert_eq!(
+                    receiver
+                        .stage_archive_batch(child_id)
+                        .unwrap()
+                        .disposition(),
+                    BatchDisposition::IncompleteStaged {
+                        missing_objects: 0,
+                        missing_dependencies: vec![parent_id],
+                    }
+                );
+            }
+            assert!(matches!(
+                receiver
+                    .stage_archive_batch(parent_id)
+                    .unwrap()
+                    .disposition(),
+                BatchDisposition::Rejected {
+                    error: EngineError::InvalidCrdt(_),
+                }
+            ));
+            let child_outcome = receiver.stage_archive_batch(child_id).unwrap();
+            assert_eq!(
+                child_outcome.disposition(),
+                BatchDisposition::Rejected {
+                    error: EngineError::RejectedDependencySet(rejected_dependency_set_commitment(
+                        &[parent_id]
+                    ),),
+                }
+            );
+            let child_record = crate::oplog::dependency_queue::lookup(
+                receiver.scratch.as_ref().unwrap(),
+                &receiver.scratch_roots,
+                child_id,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                child_record.status(),
+                crate::oplog::dependency_queue::CompactBatchStatus::Final
+            );
+            assert!(child_record.dependency_rejected());
+            assert_eq!(
+                child_record.dependency_set_commitment(),
+                rejected_dependency_set_commitment(&[parent_id])
+            );
+            assert_eq!(
+                crate::oplog::dependency_queue::point_state_counts(
+                    receiver.scratch.as_ref().unwrap(),
+                    &receiver.scratch_roots,
+                    child_id,
+                )
+                .unwrap(),
+                (1, 0)
+            );
+            assert_eq!(
+                crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots),
+                0
+            );
+            assert_eq!(
+                crate::oplog::dependency_queue::pending_registration(&receiver.scratch_roots),
+                0
+            );
+            assert_eq!(receiver.scratch_roots.ready_queue_len, 0);
+
+            let roots_before_reconstruction = receiver.scratch_roots.clone();
+            receiver.reconstruct_run_local_state().unwrap();
+            assert_eq!(receiver.scratch_roots, roots_before_reconstruction);
+            assert_eq!(
+                receiver
+                    .stage_archive_batch(child_id)
+                    .unwrap()
+                    .disposition(),
+                BatchDisposition::Rejected {
+                    error: EngineError::RejectedDependencySet(rejected_dependency_set_commitment(
+                        &[parent_id]
+                    ),),
+                }
+            );
+            assert_eq!(receiver.scratch_roots, roots_before_reconstruction);
+        }
+        drop(author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn three_parent_rejection_matrix_is_order_and_reconstruction_independent() {
+        #[derive(Clone, Copy, Debug)]
+        enum RegistrationTiming {
+            Before,
+            During,
+            After,
+        }
+
+        fn drive_bounded_to_final(
+            engine: &mut ShardedHotEngine,
+            batch_id: BatchId,
+        ) -> BatchDisposition {
+            for step in 0_usize..20_000 {
+                let roots_before_slice = engine.scratch_roots.clone();
+                let slice = engine.stage_archive_batch_bounded(batch_id, 1).unwrap();
+                assert!(slice.work() <= 1);
+                if step.is_multiple_of(3) {
+                    let roots = engine.scratch_roots.clone();
+                    engine.reconstruct_run_local_state().unwrap();
+                    assert_eq!(engine.scratch_roots, roots);
+                }
+                let record = crate::oplog::dependency_queue::lookup(
+                    engine.scratch.as_ref().unwrap(),
+                    &engine.scratch_roots,
+                    batch_id,
+                )
+                .unwrap()
+                .unwrap();
+                if record.status() == crate::oplog::dependency_queue::CompactBatchStatus::Final {
+                    return slice.outcome().disposition();
+                }
+                assert_eq!(slice.work(), 1);
+                assert_ne!(
+                    engine.scratch_roots, roots_before_slice,
+                    "slice size one must make durable progress"
+                );
+                assert!(slice.has_more());
+            }
+            panic!("bounded slice-one staging did not reach finality");
+        }
+
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(98_400));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(98_401));
+        let lineage = LineageDigest::of(b"three-parent-rejection-matrix");
+        let root = std::env::temp_dir().join(format!(
+            "tine-three-parent-rejection-matrix-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let author = ShardedHotEngine::new(workspace, lineage, catalog);
+
+        let make_parent = |seed: u128, invalid_dot: bool| {
+            let template = author
+                .prepare_bootstrap_transaction(
+                    test_author(seed, seed as u64),
+                    &create_page_with_block(
+                        PageId::from_uuid(Uuid::from_u128(seed + 1)),
+                        DocumentId::from_uuid(Uuid::from_u128(seed + 2)),
+                        BlockId::from_uuid(Uuid::from_u128(seed + 3)),
+                        &format!("Matrix Parent {seed}"),
+                        &format!("pages/matrix-parent-{seed}.md"),
+                    ),
+                )
+                .unwrap();
+            if !invalid_dot {
+                return template;
+            }
+            let manifest = template.manifest();
+            PreparedBatch::new(
+                OperationBatch::new_with_causality(
+                    workspace,
+                    lineage,
+                    manifest.batch_id(),
+                    manifest.author_device_id(),
+                    manifest.author_session_id(),
+                    manifest.origin(),
+                    BatchCausalDot::new(manifest.causal_dot().peer_id(), 2).unwrap(),
+                    Vec::new(),
+                    manifest.dependency_frontier().clone(),
+                    manifest.semantic_effect_digest(),
+                    manifest.required_objects().to_vec(),
+                )
+                .unwrap(),
+                template.objects().to_vec(),
+            )
+            .unwrap()
+        };
+        let rejected_a = make_parent(98_410, true);
+        let accepted = make_parent(98_420, false);
+        let rejected_c = make_parent(98_430, true);
+        let rejected_a_id = rejected_a.manifest().batch_id();
+        let accepted_id = accepted.manifest().batch_id();
+        let rejected_c_id = rejected_c.manifest().batch_id();
+        let dependencies = vec![rejected_a_id, accepted_id, rejected_c_id];
+        assert!(dependencies.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let child_template = author
+            .prepare_bootstrap_transaction(
+                test_author(98_440, 98_440),
+                &create_page_with_block(
+                    PageId::from_uuid(Uuid::from_u128(98_441)),
+                    DocumentId::from_uuid(Uuid::from_u128(98_442)),
+                    BlockId::from_uuid(Uuid::from_u128(98_443)),
+                    "Matrix Child",
+                    "pages/matrix-child.md",
+                ),
+            )
+            .unwrap();
+        let child_manifest = child_template.manifest();
+        let child = PreparedBatch::new(
+            OperationBatch::new_with_causality(
+                workspace,
+                lineage,
+                child_manifest.batch_id(),
+                child_manifest.author_device_id(),
+                child_manifest.author_session_id(),
+                child_manifest.origin(),
+                child_manifest.causal_dot(),
+                dependencies.clone(),
+                child_manifest.dependency_frontier().clone(),
+                child_manifest.semantic_effect_digest(),
+                child_manifest.required_objects().to_vec(),
+            )
+            .unwrap(),
+            child_template.objects().to_vec(),
+        )
+        .unwrap();
+        let child_id = child.manifest().batch_id();
+        for prepared in [&rejected_a, &accepted, &rejected_c, &child] {
+            writer.publish_prepared(prepared).unwrap();
+        }
+
+        let expected_error =
+            EngineError::RejectedDependencySet(rejected_dependency_set_commitment(&dependencies));
+        let mut observed = Vec::new();
+        for timing in [
+            RegistrationTiming::Before,
+            RegistrationTiming::During,
+            RegistrationTiming::After,
+        ] {
+            for rejection_order in [
+                [rejected_a_id, rejected_c_id],
+                [rejected_c_id, rejected_a_id],
+            ] {
+                let mut receiver = ShardedHotEngine::with_archive_store(
+                    ObjectStore::open(&archive_path, workspace).unwrap(),
+                    lineage,
+                    catalog,
+                );
+                assert!(matches!(
+                    drive_bounded_to_final(&mut receiver, accepted_id),
+                    BatchDisposition::Accepted { .. }
+                ));
+
+                if matches!(timing, RegistrationTiming::Before) {
+                    for parent in rejection_order {
+                        assert!(matches!(
+                            drive_bounded_to_final(&mut receiver, parent),
+                            BatchDisposition::Rejected {
+                                error: EngineError::InvalidCrdt(_),
+                            }
+                        ));
+                    }
+                } else {
+                    let first = receiver.stage_archive_batch_bounded(child_id, 1).unwrap();
+                    assert_eq!(first.work(), 1);
+                    assert!(first.has_more());
+                    let roots = receiver.scratch_roots.clone();
+                    receiver.reconstruct_run_local_state().unwrap();
+                    assert_eq!(receiver.scratch_roots, roots);
+
+                    if matches!(timing, RegistrationTiming::During) {
+                        loop {
+                            let slice = receiver.stage_archive_batch_bounded(child_id, 1).unwrap();
+                            assert!(slice.work() <= 1);
+                            let record = crate::oplog::dependency_queue::lookup(
+                                receiver.scratch.as_ref().unwrap(),
+                                &receiver.scratch_roots,
+                                child_id,
+                            )
+                            .unwrap()
+                            .unwrap();
+                            if record.registered_ordinal() == 1 {
+                                assert_eq!(record.unresolved_count(), 1);
+                                break;
+                            }
+                        }
+                    } else {
+                        loop {
+                            let slice = receiver.stage_archive_batch_bounded(child_id, 1).unwrap();
+                            assert!(slice.work() <= 1);
+                            let record = crate::oplog::dependency_queue::lookup(
+                                receiver.scratch.as_ref().unwrap(),
+                                &receiver.scratch_roots,
+                                child_id,
+                            )
+                            .unwrap()
+                            .unwrap();
+                            if record.status()
+                                == crate::oplog::dependency_queue::CompactBatchStatus::Waiting
+                            {
+                                assert_eq!(record.registered_ordinal(), 3);
+                                assert_eq!(record.unresolved_count(), 2);
+                                break;
+                            }
+                        }
+                    }
+                    let roots = receiver.scratch_roots.clone();
+                    receiver.reconstruct_run_local_state().unwrap();
+                    assert_eq!(receiver.scratch_roots, roots);
+
+                    assert!(matches!(
+                        drive_bounded_to_final(&mut receiver, rejection_order[0]),
+                        BatchDisposition::Rejected {
+                            error: EngineError::InvalidCrdt(_),
+                        }
+                    ));
+                }
+
+                let child_disposition = drive_bounded_to_final(&mut receiver, child_id);
+                assert_eq!(
+                    child_disposition,
+                    BatchDisposition::Rejected {
+                        error: expected_error.clone(),
+                    }
+                );
+                let child_record = crate::oplog::dependency_queue::lookup(
+                    receiver.scratch.as_ref().unwrap(),
+                    &receiver.scratch_roots,
+                    child_id,
+                )
+                .unwrap()
+                .unwrap();
+                assert!(child_record.dependency_rejected());
+                assert_eq!(
+                    child_record.dependency_set_commitment(),
+                    rejected_dependency_set_commitment(child.manifest().causal_dependency_heads())
+                );
+                let roots = receiver.scratch_roots.clone();
+                receiver.reconstruct_run_local_state().unwrap();
+                assert_eq!(receiver.scratch_roots, roots);
+
+                if !matches!(timing, RegistrationTiming::Before) {
+                    assert!(matches!(
+                        drive_bounded_to_final(&mut receiver, rejection_order[1]),
+                        BatchDisposition::Rejected {
+                            error: EngineError::InvalidCrdt(_),
+                        }
+                    ));
+                }
+                for _ in 0..20_000 {
+                    let slice = receiver
+                        .stage_archive_batch_bounded(rejection_order[1], 1)
+                        .unwrap();
+                    assert!(slice.work() <= 1);
+                    if !slice.has_more() {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots),
+                    0,
+                    "{timing:?} {rejection_order:?} stranded a fanout parent"
+                );
+                assert_eq!(
+                    crate::oplog::dependency_queue::pending_registration(&receiver.scratch_roots),
+                    0
+                );
+                assert_eq!(receiver.scratch_roots.ready_queue_len, 0);
+                assert_eq!(
+                    crate::oplog::dependency_queue::point_state_counts(
+                        receiver.scratch.as_ref().unwrap(),
+                        &receiver.scratch_roots,
+                        child_id,
+                    )
+                    .unwrap()
+                    .1,
+                    0,
+                    "every durable unresolved edge must retire"
+                );
+                assert_eq!(
+                    receiver
+                        .stage_archive_batch(child_id)
+                        .unwrap()
+                        .disposition(),
+                    BatchDisposition::Rejected {
+                        error: expected_error.clone(),
+                    }
+                );
+                observed.push(child_disposition);
+            }
+        }
+        assert!(observed.iter().all(|result| result == &observed[0]));
+        drop(author);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_duplicate_final_rejection_resumes_fanout_after_reconstruction() {
+        const CHILDREN: usize = 7;
+        const SLICE: usize = 1;
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(97_500));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(97_501));
+        let lineage = LineageDigest::of(b"bounded-duplicate-final-rejection");
+        let root = std::env::temp_dir().join(format!(
+            "tine-bounded-duplicate-final-rejection-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+        let author = ShardedHotEngine::new(workspace, lineage, catalog);
+        let parent_template = author
+            .prepare_bootstrap_transaction(
+                test_author(97_510, 97_510),
+                &create_page_with_block(
+                    PageId::from_uuid(Uuid::from_u128(97_511)),
+                    DocumentId::from_uuid(Uuid::from_u128(97_512)),
+                    BlockId::from_uuid(Uuid::from_u128(97_513)),
+                    "Rejected Fanout Parent",
+                    "pages/rejected-fanout-parent.md",
+                ),
+            )
+            .unwrap();
+        let manifest = parent_template.manifest();
+        let parent = PreparedBatch::new(
+            OperationBatch::new_with_causality(
+                workspace,
+                lineage,
+                manifest.batch_id(),
+                manifest.author_device_id(),
+                manifest.author_session_id(),
+                manifest.origin(),
+                BatchCausalDot::new(manifest.causal_dot().peer_id(), 2).unwrap(),
+                Vec::new(),
+                manifest.dependency_frontier().clone(),
+                manifest.semantic_effect_digest(),
+                manifest.required_objects().to_vec(),
+            )
+            .unwrap(),
+            parent_template.objects().to_vec(),
+        )
+        .unwrap();
+        let parent_id = parent.manifest().batch_id();
+        writer.publish_prepared(&parent).unwrap();
+
+        let mut children = Vec::new();
+        for index in 0..CHILDREN {
+            let template = author
+                .prepare_bootstrap_transaction(
+                    test_author(97_520 + index as u128, 97_520 + index as u64),
+                    &create_page_with_block(
+                        PageId::from_uuid(Uuid::from_u128(97_600 + index as u128)),
+                        DocumentId::from_uuid(Uuid::from_u128(97_700 + index as u128)),
+                        BlockId::from_uuid(Uuid::from_u128(97_800 + index as u128)),
+                        &format!("Rejected Fanout Child {index}"),
+                        &format!("pages/rejected-fanout-child-{index}.md"),
+                    ),
+                )
+                .unwrap();
+            let child_manifest = template.manifest();
+            let child = PreparedBatch::new(
+                OperationBatch::new_with_causality(
+                    workspace,
+                    lineage,
+                    child_manifest.batch_id(),
+                    child_manifest.author_device_id(),
+                    child_manifest.author_session_id(),
+                    child_manifest.origin(),
+                    child_manifest.causal_dot(),
+                    vec![parent_id],
+                    child_manifest.dependency_frontier().clone(),
+                    child_manifest.semantic_effect_digest(),
+                    child_manifest.required_objects().to_vec(),
+                )
+                .unwrap(),
+                template.objects().to_vec(),
+            )
+            .unwrap();
+            writer.publish_prepared(&child).unwrap();
+            children.push(child.manifest().batch_id());
+        }
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        for child in &children {
+            assert!(matches!(
+                receiver.stage_archive_batch(*child).unwrap().disposition(),
+                BatchDisposition::IncompleteStaged { .. }
+            ));
+        }
+
+        let final_slice = loop {
+            let slice = receiver
+                .stage_archive_batch_bounded(parent_id, SLICE)
+                .unwrap();
+            assert!(slice.work() <= SLICE);
+            let final_record = crate::oplog::dependency_queue::lookup(
+                receiver.scratch.as_ref().unwrap(),
+                &receiver.scratch_roots,
+                parent_id,
+            )
+            .unwrap()
+            .unwrap();
+            if final_record.status() == crate::oplog::dependency_queue::CompactBatchStatus::Final {
+                break slice;
+            }
+            assert!(slice.has_more());
+        };
+        assert!(matches!(
+            final_slice.outcome().disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::InvalidCrdt(_),
+            }
+        ));
+        assert!(final_slice.has_more());
+        assert!(crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots) > 0);
+
+        receiver.reconstruct_run_local_state().unwrap();
+        let resumed = receiver.stage_archive_batch(parent_id).unwrap();
+        assert!(matches!(
+            resumed.disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::InvalidCrdt(_),
+            }
+        ));
+        assert_eq!(
+            crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots),
+            0
+        );
+        assert_eq!(receiver.scratch_roots.ready_queue_len, 0);
+        let drained_roots = receiver.scratch_roots.clone();
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(parent_id)
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::InvalidCrdt(_),
+            }
+        ));
+        assert_eq!(
+            receiver.scratch_roots, drained_roots,
+            "the public duplicate-final continuation drains every edge exactly once"
+        );
+        for child in children {
+            let expected = rejected_dependency_set_commitment(&[parent_id]);
+            assert_eq!(
+                receiver.stage_archive_batch(child).unwrap().disposition(),
+                BatchDisposition::Rejected {
+                    error: EngineError::RejectedDependencySet(expected),
+                }
+            );
+        }
+        drop(receiver);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_duplicate_final_quarantine_resumes_fanout_after_reconstruction() {
+        const CHILDREN: usize = 3;
+        const SLICE: usize = 1;
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(97_900));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(97_901));
+        let lineage = LineageDigest::of(b"bounded-duplicate-final-quarantine");
+        let root = std::env::temp_dir().join(format!(
+            "tine-bounded-duplicate-final-quarantine-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("archive");
+        let writer = ObjectStore::open(&archive_path, workspace).unwrap();
+
+        let mut left_author = ShardedHotEngine::new(workspace, lineage, catalog);
+        let base = left_author
+            .prepare_bootstrap_transaction(
+                test_author(97_910, 97_910),
+                &create_page_with_block(
+                    PageId::from_uuid(Uuid::from_u128(97_911)),
+                    DocumentId::from_uuid(Uuid::from_u128(97_912)),
+                    BlockId::from_uuid(Uuid::from_u128(97_913)),
+                    "Quarantine Seed",
+                    "pages/quarantine-seed.md",
+                ),
+            )
+            .unwrap();
+        assert!(matches!(
+            left_author
+                .stage_ready(ValidatedBatch::new(base.clone()))
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        let mut right_author = ShardedHotEngine::new(workspace, lineage, catalog);
+        assert!(matches!(
+            right_author
+                .stage_ready(ValidatedBatch::new(base.clone()))
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        let left = left_author
+            .prepare_bootstrap_transaction(
+                test_author(97_920, 97_920),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(97_921)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(97_922)),
+                    name: LogicalPageName::parse("Bounded Shared Name").unwrap(),
+                    path: ManagedPath::parse("pages/bounded-left.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        let right = right_author
+            .prepare_bootstrap_transaction(
+                test_author(97_930, 97_930),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(97_931)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(97_932)),
+                    name: LogicalPageName::parse("bounded shared name").unwrap(),
+                    path: ManagedPath::parse("pages/bounded-right.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        let right_id = right.manifest().batch_id();
+        writer.publish_prepared(&base).unwrap();
+        writer.publish_prepared(&left).unwrap();
+        writer.publish_prepared(&right).unwrap();
+
+        let mut children = Vec::new();
+        for index in 0..CHILDREN {
+            let mut child_author = ShardedHotEngine::new(workspace, lineage, catalog);
+            assert!(matches!(
+                child_author
+                    .stage_ready(ValidatedBatch::new(base.clone()))
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+            assert!(matches!(
+                child_author
+                    .stage_ready(ValidatedBatch::new(right.clone()))
+                    .disposition(),
+                BatchDisposition::Accepted { .. }
+            ));
+            let child = child_author
+                .prepare_bootstrap_transaction(
+                    test_author(97_940 + index as u128, 97_940 + index as u64),
+                    &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                        page_id: PageId::from_uuid(Uuid::from_u128(98_000 + index as u128)),
+                        home_document_id: DocumentId::from_uuid(Uuid::from_u128(
+                            98_100 + index as u128,
+                        )),
+                        name: LogicalPageName::parse(format!("Quarantine Child {index}")).unwrap(),
+                        path: ManagedPath::parse(format!("pages/quarantine-child-{index}.md"))
+                            .unwrap(),
+                        kind: ManagedTextKind::Page,
+                    }])
+                    .unwrap(),
+                )
+                .unwrap();
+            assert_eq!(child.manifest().causal_dependency_heads(), &[right_id]);
+            writer.publish_prepared(&child).unwrap();
+            children.push(child.manifest().batch_id());
+        }
+
+        let mut receiver = ShardedHotEngine::with_archive_store(
+            ObjectStore::open(&archive_path, workspace).unwrap(),
+            lineage,
+            catalog,
+        );
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(base.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        assert!(matches!(
+            receiver
+                .stage_archive_batch(left.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Accepted { .. }
+        ));
+        for child in &children {
+            assert!(matches!(
+                receiver.stage_archive_batch(*child).unwrap().disposition(),
+                BatchDisposition::IncompleteStaged { .. }
+            ));
+        }
+
+        let final_slice = loop {
+            let slice = receiver
+                .stage_archive_batch_bounded(right_id, SLICE)
+                .unwrap();
+            assert!(slice.work() <= SLICE);
+            let final_record = crate::oplog::dependency_queue::lookup(
+                receiver.scratch.as_ref().unwrap(),
+                &receiver.scratch_roots,
+                right_id,
+            )
+            .unwrap()
+            .unwrap();
+            if final_record.status() == crate::oplog::dependency_queue::CompactBatchStatus::Final {
+                break slice;
+            }
+            assert!(slice.has_more());
+        };
+        assert_eq!(
+            final_slice.outcome().disposition(),
+            BatchDisposition::Quarantined
+        );
+        assert!(final_slice.has_more());
+        receiver.reconstruct_run_local_state().unwrap();
+
+        assert_eq!(
+            receiver
+                .stage_archive_batch(right_id)
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Quarantined
+        );
+        assert_eq!(
+            crate::oplog::dependency_queue::pending_fanout(&receiver.scratch_roots),
+            0
+        );
+        assert_eq!(receiver.scratch_roots.ready_queue_len, 0);
+        for child in children {
+            let record = crate::oplog::dependency_queue::lookup(
+                receiver.scratch.as_ref().unwrap(),
+                &receiver.scratch_roots,
+                child,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                record.status(),
+                crate::oplog::dependency_queue::CompactBatchStatus::Final
+            );
+        }
+        drop(receiver);
         drop(writer);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -21030,7 +23809,9 @@ mod replay_benchmark {
             inspection_elapsed += inspection_started.elapsed();
             let validation_started = Instant::now();
             assert!(matches!(
-                replay.stage_ready_internal(batch, true, None).disposition(),
+                replay
+                    .stage_ready_internal(batch, true, None, None)
+                    .disposition(),
                 BatchDisposition::Accepted { .. }
             ));
             replay.prune_persisted_archive_cache();

@@ -640,7 +640,7 @@ impl ApplicationRuntimeRoot {
     }
 
     #[cfg(test)]
-    fn open_for_test(path: &Path) -> Result<Self, ProjectionError> {
+    pub(crate) fn open_for_test(path: &Path) -> Result<Self, ProjectionError> {
         let path = prepare_application_runtime_root(path)?;
         Ok(Self { path })
     }
@@ -731,7 +731,7 @@ impl<'a> RebuildSource<'a> {
         })
     }
 
-    fn accepted_event_at(
+    pub(crate) fn accepted_event_at(
         &self,
         acceptance_sequence: u64,
     ) -> Result<AcceptedBatchEvent, ProjectionError> {
@@ -1480,6 +1480,16 @@ impl TailOverlay {
         self.reservations.insert(reservation.id, retained_bytes);
         self.reserved_bytes = self.reserved_bytes.saturating_add(retained_bytes);
         Ok(reservation)
+    }
+
+    pub(crate) fn reserve_bound_mutation(
+        &mut self,
+        database: &SqliteFrontier,
+        engine: &ShardedHotEngine,
+        retained_bytes: usize,
+    ) -> Result<TailReservation, TailOverlayError> {
+        self.authenticate_event_authority(database, engine)?;
+        self.reserve_mutation(retained_bytes)
     }
 
     pub fn cancel_reservation(
