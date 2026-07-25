@@ -11,6 +11,7 @@
 //! structured views (`properties`, `marker`, `collapsed`) are computed on top.
 
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 /// Recognized task markers (leading keyword of a block).
 pub const MARKERS: &[&str] = &[
@@ -36,6 +37,15 @@ pub struct Document {
     /// starts with a bullet.
     pub pre_block: Option<String>,
     pub roots: Vec<DocBlock>,
+}
+
+/// One canonical document parse plus the exact source-byte interval owned by
+/// each structural block in depth-first/source order. A parent's own interval
+/// ends at its first child's header; a leaf owns through the next structural
+/// header or file end.
+pub(crate) struct ParsedDocument {
+    pub(crate) document: Document,
+    pub(crate) block_spans: Vec<Range<usize>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -800,12 +810,15 @@ fn markdown_property_line(line: &str) -> bool {
 /// only an ATX heading at the END of the preamble, followed solely by block
 /// property lines and carrying `collapsed:: true`. Ordinary page prose/headings
 /// and genuine page properties remain untouched.
-fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mut Vec<DocBlock>) {
+fn promote_preamble_collapsed_heading(
+    pre_block: &mut Option<String>,
+    roots: &mut Vec<DocBlock>,
+) -> Option<usize> {
     if roots.is_empty() {
-        return;
+        return None;
     }
     let Some(pre) = pre_block.as_deref() else {
-        return;
+        return None;
     };
     let lines: Vec<&str> = pre.split('\n').collect();
     let Some(start) = lines.iter().rposition(|line| {
@@ -813,19 +826,19 @@ fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mu
         let hashes = trimmed.chars().take_while(|c| *c == '#').count();
         (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ')
     }) else {
-        return;
+        return None;
     };
     if !lines[start + 1..]
         .iter()
         .all(|line| !line.trim().is_empty() && markdown_property_line(line))
     {
-        return;
+        return None;
     }
 
     let raw = lines[start..].join("\n");
     let mut parent = DocBlock::new(raw);
     if parent.heading_level().is_none() || !parent.collapsed() {
-        return;
+        return None;
     }
     parent.children = std::mem::take(roots);
     roots.push(parent);
@@ -835,18 +848,36 @@ fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mu
         pre_end -= 1;
     }
     *pre_block = (pre_end > 0).then(|| lines[..pre_end].join("\n"));
+    Some(start)
 }
 
 pub fn parse(content: &str) -> Document {
+    parse_with_source_spans(content).document
+}
+
+pub(crate) fn parse_with_source_spans(content: &str) -> ParsedDocument {
     // Normalize CRLF / lone CR to LF so the in-memory model never carries a stray
     // `\r` (which would otherwise pollute property / `id::` values and break
     // matching). The file's original line endings are reproduced at the write
     // boundary (model.rs `write_page`), not here — the model is LF-canonical.
+    let original_len = content.len();
     let normalized;
+    let normalized_to_original;
     let content = if content.contains('\r') {
-        normalized = content.replace('\r', "");
+        let mut bytes = Vec::with_capacity(content.len());
+        let mut offsets = Vec::with_capacity(content.len() + 1);
+        for (offset, byte) in content.bytes().enumerate() {
+            if byte != b'\r' {
+                offsets.push(offset);
+                bytes.push(byte);
+            }
+        }
+        offsets.push(content.len());
+        normalized = String::from_utf8(bytes).expect("removing CR preserves valid UTF-8");
+        normalized_to_original = Some(offsets);
         normalized.as_str()
     } else {
+        normalized_to_original = None;
         content
     };
     let body = content.strip_suffix('\n').unwrap_or(content);
@@ -855,6 +886,12 @@ pub fn parse(content: &str) -> Document {
     } else {
         body.split('\n').collect()
     };
+    let mut line_starts = Vec::with_capacity(lines.len());
+    let mut line_start = 0_usize;
+    for line in &lines {
+        line_starts.push(line_start);
+        line_start = line_start.saturating_add(line.len()).saturating_add(1);
+    }
 
     // Find the first bullet to split pre-block from block region.
     let first_bullet = lines.iter().position(|l| bullet(l).is_some());
@@ -898,6 +935,7 @@ pub fn parse(content: &str) -> Document {
     // visible_lines so "is this line inside a code fence" has ONE implementation).
     let mut stack: Vec<Frame> = Vec::new();
     let mut roots: Vec<DocBlock> = Vec::new();
+    let mut block_starts = Vec::new();
 
     // Collapse frames at indent column >= `keep_above` into their parents.
     fn fold_to(stack: &mut Vec<Frame>, roots: &mut Vec<DocBlock>, keep_above: usize) {
@@ -945,6 +983,7 @@ pub fn parse(content: &str) -> Document {
                     fence: next_fence(None, content), // bullet line may open a fence
                     org_block,
                 });
+                block_starts.push(line_starts[pre_lines.len() + line_idx]);
                 continue;
             }
         }
@@ -972,9 +1011,30 @@ pub fn parse(content: &str) -> Document {
     }
     fold_to(&mut stack, &mut roots, 0);
 
-    promote_preamble_collapsed_heading(&mut pre_block, &mut roots);
+    if let Some(promoted_line) = promote_preamble_collapsed_heading(&mut pre_block, &mut roots) {
+        block_starts.insert(0, line_starts[promoted_line]);
+    }
 
-    Document { pre_block, roots }
+    let original_offset = |normalized_offset: usize| {
+        normalized_to_original
+            .as_ref()
+            .map_or(normalized_offset, |offsets| offsets[normalized_offset])
+    };
+    let block_spans = block_starts
+        .iter()
+        .enumerate()
+        .map(|(index, start)| {
+            original_offset(*start)
+                ..block_starts
+                    .get(index + 1)
+                    .map_or_else(|| original_len, |end| original_offset(*end))
+        })
+        .collect();
+
+    ParsedDocument {
+        document: Document { pre_block, roots },
+        block_spans,
+    }
 }
 
 /// Remove up to `n` leading whitespace characters (tabs or spaces).

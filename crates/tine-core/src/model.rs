@@ -3485,21 +3485,10 @@ impl Graph {
         &self,
     ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
         require_projection_platform()?;
-        if self.config.pages_dir != "pages" || self.config.journals_dir != "journals" {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "initial shadow capture requires the fixed pages/journals managed layout",
-            ));
-        }
-        let root = self.projection_root.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Unsupported,
-                "graph has no retained no-follow projection capability",
-            )
-        })?;
-        let first = collect_initial_shadow_managed_inventory(root, true)?;
+        let permit = self.admit_retained_managed_text_writer()?;
+        let first = collect_initial_shadow_managed_inventory(self, &permit, true)?;
         initial_shadow_revalidation_hook(&self.root)?;
-        let second = collect_initial_shadow_managed_inventory(root, false)?;
+        let second = collect_initial_shadow_managed_inventory(self, &permit, false)?;
         let first_digests = first
             .iter()
             .map(|entry| {
@@ -15649,14 +15638,21 @@ struct InitialShadowEntry {
 }
 
 fn collect_initial_shadow_managed_inventory(
-    root: &Dir,
+    graph: &Graph,
+    permit: &ManagedTextWritePermit,
     retain_bytes: bool,
 ) -> io::Result<Vec<InitialShadowEntry>> {
-    collect_initial_shadow_managed_inventory_with_limits(root, retain_bytes, INITIAL_SHADOW_LIMITS)
+    collect_initial_shadow_managed_inventory_with_limits(
+        graph,
+        permit,
+        retain_bytes,
+        INITIAL_SHADOW_LIMITS,
+    )
 }
 
 fn collect_initial_shadow_managed_inventory_with_limits(
-    root: &Dir,
+    graph: &Graph,
+    permit: &ManagedTextWritePermit,
     retain_bytes: bool,
     limits: InitialShadowLimits,
 ) -> io::Result<Vec<InitialShadowEntry>> {
@@ -15674,13 +15670,20 @@ fn collect_initial_shadow_managed_inventory_with_limits(
     let mut directory_resources = std::collections::BTreeMap::new();
     let mut file_resources = std::collections::BTreeMap::new();
     let mut pending = Vec::new();
-    for managed_root in ["journals", "pages"] {
-        match projection_real_directory(root, managed_root) {
-            Ok(()) => {}
+    for (managed_root, depth) in graph.managed_text_inventory_roots(permit)? {
+        if depth > limits.directory_depth {
+            return Err(initial_shadow_limit_error("managed directory depth"));
+        }
+        let sentinel = graph
+            .root
+            .join(managed_root)
+            .join(".tine-capability-initial-shadow");
+        let target = match graph.managed_target(permit, &sentinel, false) {
+            Ok(target) => target,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
-        }
-        let directory = open_projection_dir_nofollow(root, managed_root)?;
+        };
+        let directory = target.parent().try_clone()?;
         directory_count = directory_count
             .checked_add(1)
             .ok_or_else(|| initial_shadow_limit_error("directory count"))?;
@@ -15694,8 +15697,8 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 format!("managed directories alias one resource: {first} and {managed_root}"),
             ));
         }
-        let rebound = open_projection_dir_nofollow(root, managed_root)?;
-        if projection_dir_identity(&directory)? != projection_dir_identity(&rebound)? {
+        let rebound = graph.managed_target(permit, &sentinel, false)?;
+        if projection_dir_identity(&directory)? != projection_dir_identity(rebound.parent())? {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "managed root changed during initial shadow capture",
@@ -15707,7 +15710,7 @@ fn collect_initial_shadow_managed_inventory_with_limits(
         pending.push(PendingDirectory {
             directory,
             relative: managed_root.to_owned(),
-            depth: 1,
+            depth,
         });
     }
 
@@ -15755,6 +15758,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 ));
             }
             if file_type.is_dir() {
+                if name.starts_with('.') {
+                    continue;
+                }
                 let child_depth = depth
                     .checked_add(1)
                     .ok_or_else(|| initial_shadow_limit_error("managed directory depth"))?;
@@ -21311,15 +21317,193 @@ mod tests {
     }
 
     #[test]
+    fn initial_shadow_uses_configured_nested_roots_and_longest_root_identity() {
+        let root = scratch("initial-shadow-configured-nested");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(
+            root.join("logseq/config.edn"),
+            "{:pages-directory \"content/pages\"\n\
+              :journals-directory \"content/journals\"\n\
+              :journal/file-name-format \"dd-MM-yyyy\"\n\
+              :journal/page-title-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("content/pages/arbitrary/deeper")).unwrap();
+        fs::create_dir_all(root.join("content/journals/archive/deeper")).unwrap();
+        fs::write(
+            root.join("content/pages/arbitrary/deeper/Project%2FPlan.md"),
+            b"- page\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/journals/archive/deeper/25-07-2026.org"),
+            b"* journal\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&root);
+        let inventory = graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        assert_eq!(
+            inventory
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "content/journals/archive/deeper/25-07-2026.org",
+                    b"* journal\n".as_slice(),
+                ),
+                (
+                    "content/pages/arbitrary/deeper/Project%2FPlan.md",
+                    b"- page\n".as_slice(),
+                ),
+            ]
+        );
+        let journal = graph
+            .managed_entry_for_managed_path(&inventory[0].0)
+            .unwrap();
+        assert_eq!(journal.kind, PageKind::Journal);
+        assert_eq!(journal.name, "2026-07-25");
+        let page = graph
+            .managed_entry_for_managed_path(&inventory[1].0)
+            .unwrap();
+        assert_eq!(page.kind, PageKind::Page);
+        assert_eq!(page.name, "Project/Plan");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_shadow_handles_overlapping_roots_in_both_directions() {
+        for (tag, pages, journals, expected) in [
+            (
+                "outer-pages",
+                "content",
+                "content/journals",
+                vec![
+                    ("content/journals/archive.org", PageKind::Journal),
+                    ("content/project.md", PageKind::Page),
+                ],
+            ),
+            (
+                "outer-journals",
+                "content/pages",
+                "content",
+                vec![
+                    ("content/archive.org", PageKind::Journal),
+                    ("content/pages/project.md", PageKind::Page),
+                ],
+            ),
+        ] {
+            let root = scratch(&format!("initial-shadow-overlap-{tag}"));
+            fs::create_dir_all(root.join("logseq")).unwrap();
+            fs::write(
+                root.join("logseq/config.edn"),
+                format!("{{:pages-directory \"{pages}\"\n:journals-directory \"{journals}\"}}\n"),
+            )
+            .unwrap();
+            for (path, _) in &expected {
+                let path = root.join(path);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(
+                    &path,
+                    if path.extension().and_then(|value| value.to_str()) == Some("org") {
+                        b"* entry\n".as_slice()
+                    } else {
+                        b"- entry\n".as_slice()
+                    },
+                )
+                .unwrap();
+            }
+            let graph = Graph::open(&root);
+            let inventory = graph.initial_shadow_raw_managed_text_inventory().unwrap();
+            assert_eq!(inventory.len(), 2);
+            for (path, kind) in expected {
+                let (managed, _) = inventory
+                    .iter()
+                    .find(|(managed, _)| managed.as_str() == path)
+                    .unwrap();
+                assert_eq!(
+                    graph.managed_entry_for_managed_path(managed).unwrap().kind,
+                    kind
+                );
+            }
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn initial_shadow_rejects_equal_configured_roots_and_nested_root_retarget() {
+        let equal = scratch("initial-shadow-equal-roots");
+        fs::create_dir_all(equal.join("logseq")).unwrap();
+        fs::write(
+            equal.join("logseq/config.edn"),
+            "{:pages-directory \"content\" :journals-directory \"content\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(equal.join("content")).unwrap();
+        assert!(Graph::open(&equal)
+            .initial_shadow_raw_managed_text_inventory()
+            .is_err());
+
+        let retarget = scratch("initial-shadow-configured-retarget");
+        fs::create_dir_all(retarget.join("logseq")).unwrap();
+        fs::write(
+            retarget.join("logseq/config.edn"),
+            "{:pages-directory \"content/pages\" :journals-directory \"content/journals\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(retarget.join("content/pages")).unwrap();
+        fs::write(retarget.join("content/pages/a.md"), b"- same\n").unwrap();
+        let graph = Graph::open(&retarget);
+        INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| {
+            let pages = retarget.join("content/pages");
+            let retired = retarget.join("content/pages-retired");
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&pages, retired)?;
+                fs::create_dir_all(&pages)?;
+                fs::write(pages.join("a.md"), b"- same\n")
+            }));
+        });
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let _ = fs::remove_dir_all(&equal);
+        let _ = fs::remove_dir_all(&retarget);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn initial_shadow_rejects_a_configured_root_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = scratch("initial-shadow-configured-symlink");
+        let outside = scratch("initial-shadow-configured-symlink-outside");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(
+            root.join("logseq/config.edn"),
+            "{:pages-directory \"content/pages\" :journals-directory \"content/journals\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        symlink(outside.join("pages"), root.join("content/pages")).unwrap();
+        let graph = Graph::open(&root);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let _ = fs::remove_file(root.join("content/pages"));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
     fn initial_shadow_validation_pass_retains_metadata_not_second_raw_inventory() {
         let root = scratch("initial-shadow-peak");
         fs::write(root.join("pages/a.md"), vec![b'a'; 4096]).unwrap();
         fs::write(root.join("pages/b.md"), vec![b'b'; 8192]).unwrap();
         let graph = Graph::open(&root);
-        let capability = graph.projection_root.as_ref().unwrap();
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
 
-        let first = collect_initial_shadow_managed_inventory(capability, true).unwrap();
-        let validation = collect_initial_shadow_managed_inventory(capability, false).unwrap();
+        let first = collect_initial_shadow_managed_inventory(&graph, &permit, true).unwrap();
+        let validation = collect_initial_shadow_managed_inventory(&graph, &permit, false).unwrap();
         assert!(first.iter().all(|entry| entry.bytes.is_some()));
         assert!(validation.iter().all(|entry| entry.bytes.is_none()));
         assert_eq!(
@@ -21353,10 +21537,9 @@ mod tests {
             directory_depth: 3,
             ..INITIAL_SHADOW_LIMITS
         };
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            graph.projection_root.as_ref().unwrap(),
-            true,
-            limits,
+            &graph, &permit, true, limits,
         )
         .is_err());
 
@@ -21373,10 +21556,9 @@ mod tests {
             all_entries: 3,
             ..INITIAL_SHADOW_LIMITS
         };
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            graph.projection_root.as_ref().unwrap(),
-            true,
-            limits,
+            &graph, &permit, true, limits,
         )
         .is_err());
 
@@ -21387,10 +21569,9 @@ mod tests {
             pending_directories: 0,
             ..INITIAL_SHADOW_LIMITS
         };
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            graph.projection_root.as_ref().unwrap(),
-            true,
-            limits,
+            &graph, &permit, true, limits,
         )
         .is_err());
 

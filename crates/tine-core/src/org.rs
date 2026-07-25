@@ -20,7 +20,7 @@
 //! orgize 0.9, which splits the block at such a line). The self-check is the
 //! corruption firewall regardless of any parser's classification choices.
 
-use crate::doc::{DocBlock, Document};
+use crate::doc::{DocBlock, Document, ParsedDocument};
 
 /// Heading level of a line if it is an org headline (`*`/`**`/… followed by a
 /// space, tab, CR or end-of-line), else `None`. Headlines start at column 0.
@@ -81,12 +81,25 @@ fn trailing_newlines(s: &str) -> usize {
 /// headline level), the pre-headline region becomes `pre_block`, and each
 /// block's body is kept verbatim in `raw` (leading stars stripped).
 pub fn parse_org(content: &str) -> Document {
+    parse_org_with_source_spans(content).document
+}
+
+pub(crate) fn parse_org_with_source_spans(content: &str) -> ParsedDocument {
     let body = content.trim_end_matches('\n');
     if body.is_empty() {
-        return Document::default();
+        return ParsedDocument {
+            document: Document::default(),
+            block_spans: Vec::new(),
+        };
     }
     let lines: Vec<&str> = body.split('\n').collect();
     let heads = scan_headlines(&lines);
+    let mut line_starts = Vec::with_capacity(lines.len());
+    let mut line_start = 0_usize;
+    for line in &lines {
+        line_starts.push(line_start);
+        line_start = line_start.saturating_add(line.len()).saturating_add(1);
+    }
 
     let first = heads.first().map(|h| h.0).unwrap_or(lines.len());
     let pre_block = if first == 0 {
@@ -122,9 +135,22 @@ pub fn parse_org(content: &str) -> Document {
         flat.push((level, b));
     }
 
-    Document {
-        pre_block,
-        roots: build_tree(flat),
+    let block_spans = heads
+        .iter()
+        .enumerate()
+        .map(|(index, (line, _))| {
+            line_starts[*line]
+                ..heads
+                    .get(index + 1)
+                    .map_or(content.len(), |(next, _)| line_starts[*next])
+        })
+        .collect();
+    ParsedDocument {
+        document: Document {
+            pre_block,
+            roots: build_tree(flat),
+        },
+        block_spans,
     }
 }
 
