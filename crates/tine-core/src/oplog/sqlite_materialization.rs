@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use rusqlite::{params, Connection, OptionalExtension as _, Transaction};
+use rusqlite::{params, types::ValueRef, Connection, OptionalExtension as _, Transaction};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -2195,6 +2195,91 @@ pub(crate) fn validate_schema(connection: &Connection) -> Result<(), Materializa
     Ok(())
 }
 
+/// Canonical digest of every materialized row, including the FTS search
+/// surface. This is a harness observation only: normal reads stay on their
+/// bounded page/query APIs.
+///
+/// Rows are sorted by their canonical byte encodings rather than SQLite's
+/// comparison rules. That distinction is load-bearing for values that compare
+/// equal but have different exact representations, notably `0.0` and `-0.0`.
+pub(crate) fn row_digest(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
+    let mut bytes = b"tine/sqlite-materialization/rows/v2\0".to_vec();
+    for (table, columns) in MATERIALIZATION_TABLE_COLUMNS
+        .into_iter()
+        .chain(std::iter::once((
+            "search_fts",
+            &["entity_type", "entity_id", "page_id", "text"] as &[&str],
+        )))
+    {
+        encode_len(&mut bytes, table.len());
+        bytes.extend_from_slice(table.as_bytes());
+        encode_len(&mut bytes, columns.len());
+        for column in columns {
+            encode_len(&mut bytes, column.len());
+            bytes.extend_from_slice(column.as_bytes());
+        }
+        let sql = format!("SELECT {} FROM {table}", columns.join(", "));
+        let mut statement = connection.prepare(&sql)?;
+        let mut rows = statement.query([])?;
+        let mut canonical_rows = Vec::new();
+        while let Some(row) = rows.next()? {
+            let mut canonical_row = Vec::new();
+            encode_len(&mut canonical_row, columns.len());
+            for index in 0..columns.len() {
+                let mut value = Vec::new();
+                encode_sqlite_value(&mut value, row.get_ref(index)?)?;
+                encode_len(&mut canonical_row, value.len());
+                canonical_row.extend_from_slice(&value);
+            }
+            canonical_rows.push(canonical_row);
+        }
+        canonical_rows.sort_unstable();
+        encode_len(&mut bytes, canonical_rows.len());
+        for row in canonical_rows {
+            encode_len(&mut bytes, row.len());
+            bytes.extend_from_slice(&row);
+        }
+    }
+    Ok(ContentDigest::of(&bytes))
+}
+
+fn encode_len(bytes: &mut Vec<u8>, len: usize) {
+    bytes.extend_from_slice(&(len as u64).to_be_bytes());
+}
+
+fn encode_sqlite_value(
+    bytes: &mut Vec<u8>,
+    value: ValueRef<'_>,
+) -> Result<(), MaterializationError> {
+    match value {
+        ValueRef::Null => bytes.push(0),
+        ValueRef::Integer(value) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        ValueRef::Real(value) => {
+            bytes.push(2);
+            bytes.extend_from_slice(&value.to_bits().to_be_bytes());
+        }
+        ValueRef::Text(value) => {
+            std::str::from_utf8(value).map_err(|error| {
+                MaterializationError::Corrupt(format!(
+                    "materialized TEXT contains invalid UTF-8: {error}"
+                ))
+            })?;
+            bytes.push(3);
+            encode_len(bytes, value.len());
+            bytes.extend_from_slice(value);
+        }
+        ValueRef::Blob(value) => {
+            bytes.push(4);
+            encode_len(bytes, value.len());
+            bytes.extend_from_slice(value);
+        }
+    }
+    Ok(())
+}
+
 fn validate_schema_sql(
     connection: &Connection,
     object_type: &str,
@@ -3800,6 +3885,38 @@ mod tests {
             ContentDigest::of(b"external UUID authority"),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn exact_sqlite_value_encoding_separates_type_and_bit_collisions() {
+        fn encoded(value: ValueRef<'_>) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            encode_sqlite_value(&mut bytes, value).unwrap();
+            bytes
+        }
+
+        for (left, right) in [
+            (ValueRef::Integer(1), ValueRef::Text(b"1")),
+            (ValueRef::Null, ValueRef::Text(b"NULL")),
+            (ValueRef::Text(b"bytes"), ValueRef::Blob(b"bytes")),
+            (ValueRef::Text(b""), ValueRef::Blob(b"")),
+            (ValueRef::Null, ValueRef::Text(b"")),
+            (ValueRef::Real(0.0), ValueRef::Real(-0.0)),
+        ] {
+            assert_ne!(encoded(left), encoded(right));
+        }
+        assert_eq!(
+            &encoded(ValueRef::Integer(-1))[1..],
+            &(-1_i64).to_be_bytes()
+        );
+        assert_eq!(
+            &encoded(ValueRef::Real(-0.0))[1..],
+            &(-0.0_f64).to_bits().to_be_bytes()
+        );
+        assert!(matches!(
+            encode_sqlite_value(&mut Vec::new(), ValueRef::Text(&[0xff])),
+            Err(MaterializationError::Corrupt(message)) if message.contains("invalid UTF-8")
+        ));
     }
 
     #[test]

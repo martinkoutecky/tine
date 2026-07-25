@@ -39,13 +39,16 @@ use super::page_name_index::PageNameConflictEvidenceV1;
 use super::{
     AuthorBatch, BatchDisposition, BatchId, BatchInspection, CanonicalSnapshot, CrdtPeerId,
     DeviceId, DocumentId, EngineError, EngineStatus, ImmutableHomeEvidence, LineageDigest,
-    ObjectStore, OperationBatch, OperationTransaction, ProjectionEndpointBinding,
+    ManagedTextKind, ObjectStore, OperationBatch, OperationTransaction, ProjectionEndpointBinding,
     ProjectionEndpointId, ProjectionReceiptStore, SemanticOperation, SessionId, ShardedHotEngine,
     StageOutcome, WorkspaceId, WorkspaceStatus,
 };
 use crate::Graph;
 
-pub const SCENARIO_SCHEMA_VERSION: u32 = 4;
+/// Version 5 adds the operational-coordinator action vocabulary and its
+/// durable-state observations. Versions are deliberately never upgraded on
+/// decode: a fixture describes an exact replay contract.
+pub const SCENARIO_SCHEMA_VERSION: u32 = 5;
 pub const MAX_SCENARIO_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_SCENARIO_ACTIONS: usize = 16_384;
 pub const MAX_SCENARIO_DEVICES: usize = 8;
@@ -74,8 +77,8 @@ const PROVIDER_JOURNAL_SCHEMA_VERSION: u32 = 1;
 const PROVIDER_AUTHORITY_SCHEMA_VERSION: u32 = 1;
 const PROVIDER_DEVICE_AUTHORITY_NAME: &str = "provider-transaction.authority";
 const MAX_PROVIDER_AUTHORITY_BYTES: usize = 1024;
-pub const FAILURE_CAPSULE_SCHEMA_VERSION: u32 = 2;
-pub const MAX_FAILURE_CAPSULE_BYTES: usize = 64 * 1024;
+pub const FAILURE_CAPSULE_SCHEMA_VERSION: u32 = 5;
+pub const MAX_FAILURE_CAPSULE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MINIMIZATION_REPLAYS: usize = 10_000;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -330,6 +333,292 @@ pub enum IngressExpectation {
     Rejected { error: String },
 }
 
+/// Deterministic coordinator boundary names. These map one-for-one to the
+/// production coordinator's fault hooks; they are never wall-clock events.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorFault {
+    AfterHandoff,
+    AfterPlan,
+    AfterDraft,
+    AfterCapture,
+    AfterFinalize,
+    AfterReservation,
+    AfterObjects,
+    AfterManifest,
+    AfterStage,
+    AfterTailAdmission,
+    DuringSqliteApply,
+    AfterSqliteApply,
+    BeforeProjection,
+    DuringProjection,
+    AfterProjection,
+}
+
+/// Deliberate damage to the disposable SQLite file. The harness drops the
+/// live connection before every mutation and reopens only through the real
+/// authenticated rebuild entry point.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorSqliteMutation {
+    Delete,
+    Truncate { len: usize },
+    Corrupt { offset: usize, mask: u8 },
+    Reopen,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorHandoffState {
+    Released,
+    HeldFailedClosed,
+    /// All process-owned handles and the writer latch were dropped. The
+    /// simulator may prove recovery idempotence through crate-private
+    /// production interfaces, but normal writer routing remains inactive
+    /// until persisted enrollment reconstructs exclusion.
+    EnrollmentPendingUnprotected,
+    Unused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorReadGate {
+    Open,
+    Closed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorRunOutcome {
+    Complete,
+    Blocked,
+    Noop,
+    PrepublicationError { phase: String },
+    FailedClosed { phase: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorDurableBoundary {
+    Setup,
+    AfterHandoff,
+    AfterPlan,
+    AfterDraft,
+    AfterCapture,
+    AfterFinalize,
+    AfterReservation,
+    AfterObjects,
+    AfterManifest,
+    AfterStage,
+    AfterTailAdmission,
+    DuringSqliteApply,
+    AfterSqliteApply,
+    BeforeProjection,
+    DuringProjection,
+    AfterProjection,
+    Complete,
+    Blocked,
+    Noop,
+}
+
+/// The exact durable evidence exposed by the operational coordinator harness.
+/// Hashes are canonical content digests, while paths and file bytes remain
+/// separately observable through the explicit managed/archive/receipt images.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorObservation {
+    pub accepted_sequence: u64,
+    pub accepted_frontier_digest: String,
+    pub accepted_batches: Vec<BatchId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_frontier_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_row_digest: Option<String>,
+    pub managed_files: Vec<ExternalFileFixture>,
+    pub archive_files: Vec<ExternalFileFixture>,
+    pub receipt_files: Vec<ExternalFileFixture>,
+    pub pending_projection_work: usize,
+    pub tail_unapplied_batches: usize,
+    pub tail_retained_bytes: usize,
+    pub handoff: CoordinatorHandoffState,
+    pub read_gate: CoordinatorReadGate,
+    pub durable_boundary: CoordinatorDurableBoundary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<CoordinatorRunOutcome>,
+}
+
+/// Complete, canonical failure-capsule form of a coordinator observation.
+///
+/// The exact byte images are deliberately retained separately from the stable
+/// failure identity. In particular, receipt bytes can bind filesystem
+/// capability identities and are valuable host-bound diagnostic evidence, but
+/// are not replay-stable semantic identity material.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorFailureWitness {
+    pub accepted_sequence: u64,
+    pub accepted_frontier_digest: String,
+    pub accepted_batches: Vec<BatchId>,
+    pub sqlite_sequence: Option<u64>,
+    pub sqlite_frontier_digest: Option<String>,
+    pub sqlite_row_digest: Option<String>,
+    pub managed_files: Vec<ExternalFileFixture>,
+    pub archive_files: Vec<ExternalFileFixture>,
+    pub receipt_files: Vec<ExternalFileFixture>,
+    pub managed_file_digests: BTreeMap<String, String>,
+    pub archive_file_digests: BTreeMap<String, String>,
+    pub receipt_file_digests: BTreeMap<String, String>,
+    pub pending_projection_work: usize,
+    pub tail_unapplied_batches: usize,
+    pub tail_retained_bytes: usize,
+    pub handoff: CoordinatorHandoffState,
+    pub read_gate: CoordinatorReadGate,
+    pub durable_boundary: CoordinatorDurableBoundary,
+    pub last_outcome: Option<CoordinatorRunOutcome>,
+}
+
+impl From<&CoordinatorObservation> for CoordinatorFailureWitness {
+    fn from(observation: &CoordinatorObservation) -> Self {
+        let digest_files = |files: &[ExternalFileFixture]| {
+            files
+                .iter()
+                .map(|file| (file.path.clone(), provider_digest(&file.bytes_b64.0)))
+                .collect()
+        };
+        Self {
+            accepted_sequence: observation.accepted_sequence,
+            accepted_frontier_digest: observation.accepted_frontier_digest.clone(),
+            accepted_batches: observation.accepted_batches.clone(),
+            sqlite_sequence: observation.sqlite_sequence,
+            sqlite_frontier_digest: observation.sqlite_frontier_digest.clone(),
+            sqlite_row_digest: observation.sqlite_row_digest.clone(),
+            managed_files: observation.managed_files.clone(),
+            archive_files: observation.archive_files.clone(),
+            receipt_files: observation.receipt_files.clone(),
+            managed_file_digests: digest_files(&observation.managed_files),
+            archive_file_digests: digest_files(&observation.archive_files),
+            receipt_file_digests: digest_files(&observation.receipt_files),
+            pending_projection_work: observation.pending_projection_work,
+            tail_unapplied_batches: observation.tail_unapplied_batches,
+            tail_retained_bytes: observation.tail_retained_bytes,
+            handoff: observation.handoff,
+            read_gate: observation.read_gate,
+            durable_boundary: observation.durable_boundary,
+            last_outcome: observation.last_outcome.clone(),
+        }
+    }
+}
+
+/// A compact assertion over the exact coordinator observation. The complete
+/// observation stays available to callers for failure capsules; scenarios use
+/// only the stable evidence that matters to their family.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorOracle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_frontier_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_batches: Option<Vec<BatchId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_frontier_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_row_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontiers_match: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_projection_work: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_unapplied_batches: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_retained_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<CoordinatorHandoffState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_gate: Option<CoordinatorReadGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<CoordinatorRunOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_boundary: Option<CoordinatorDurableBoundary>,
+    /// When present, this is the complete managed-path byte image, including
+    /// the meaningful empty set after a deletion. `None` leaves managed files
+    /// out of this particular oracle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_files: Option<Vec<ExternalFileFixture>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_files: Option<Vec<ExternalFileFixture>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_files: Option<Vec<ExternalFileFixture>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_file_digests: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_file_digests: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorExpectedState {
+    Oracle(CoordinatorOracle),
+    Exact(CoordinatorFailureWitness),
+}
+
+/// All operational corpus actions are routed to the existing crate-private
+/// coordinator and production storage/projection interfaces.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorAction {
+    Setup {
+        managed_path: String,
+        kind: ManagedTextKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_edn: Option<WireBytes>,
+    },
+    ExternalWrite {
+        path: String,
+        bytes_b64: WireBytes,
+    },
+    ExternalDelete {
+        path: String,
+    },
+    ExternalRename {
+        from_path: String,
+        to_path: String,
+    },
+    InterfereAt {
+        point: CoordinatorFault,
+        path: String,
+        bytes_b64: WireBytes,
+    },
+    Execute {
+        paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fault: Option<CoordinatorFault>,
+    },
+    Retry {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fault: Option<CoordinatorFault>,
+    },
+    Crash,
+    Reopen,
+    Sqlite {
+        mutation: CoordinatorSqliteMutation,
+    },
+    Checkpoint {
+        name: String,
+    },
+    AssertCheckpoint {
+        name: String,
+    },
+    Assert {
+        oracle: CoordinatorOracle,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StageExpectation {
@@ -474,6 +763,12 @@ pub enum ScheduledActionKind {
     },
     Restart {
         device: String,
+    },
+    /// Execute the production operational coordinator (and only that
+    /// coordinator) against an isolated real-storage fixture for this device.
+    Coordinator {
+        device: String,
+        action: CoordinatorAction,
     },
     AssertInvariant {
         assertion: InvariantAssertion,
@@ -693,7 +988,7 @@ impl Scenario {
         let mut replays = 1usize;
         let mut exhausted = false;
         let protected = match &original_identity {
-            FailureIdentity::Invariant(signature) => Some(signature.assertion_or_event_id),
+            FailureIdentity::Invariant { signature, .. } => Some(signature.assertion_or_event_id),
             _ => None,
         };
 
@@ -791,6 +1086,16 @@ impl Scenario {
             }
         }
 
+        let minimized_replay =
+            replay_failure_details(&minimized)?.ok_or(ScenarioError::UnstableFailure)?;
+        if minimized_replay.error.failure_identity() != Some(original_identity.clone()) {
+            return Err(ScenarioError::UnstableFailure);
+        }
+        let observed_coordinator = minimized_replay.coordinator_witness;
+        let durable_boundaries = observed_coordinator
+            .iter()
+            .map(|(device, witness)| (device.clone(), witness.durable_boundary))
+            .collect();
         let capsule = FailureCapsule {
             schema_version: FAILURE_CAPSULE_SCHEMA_VERSION,
             family: self.family.clone(),
@@ -798,14 +1103,20 @@ impl Scenario {
             failure: original_identity,
             tested_commit: option_env!("TINE_GIT_COMMIT").unwrap_or("unknown").into(),
             scenario_hash: scenario_hash(self)?,
-            first_failing_event: first_failure_event(&original_replay.error),
-            ingress_receipt: original_replay.ingress_receipt,
-            accepted_witness: original_replay.accepted_witness,
-            offered_witness: original_replay.offered_witness,
-            status_witness: original_replay.status_witness,
-            expected_snapshot_hash: original_replay.expected_snapshot_hash,
-            observed_snapshot_hash: original_replay.observed_snapshot_hash,
-            first_canonical_difference: original_replay.first_canonical_difference,
+            minimized_scenario_hash: scenario_hash(&minimized)?,
+            minimized_scenario: minimized.clone(),
+            first_failing_event: first_failure_event(&minimized_replay.error),
+            failure_message: minimized_replay.error.to_string(),
+            ingress_receipt: minimized_replay.ingress_receipt,
+            accepted_witness: minimized_replay.accepted_witness,
+            offered_witness: minimized_replay.offered_witness,
+            status_witness: minimized_replay.status_witness,
+            observed_coordinator,
+            expected_coordinator: minimized_replay.expected_coordinator,
+            durable_boundaries,
+            expected_snapshot_hash: minimized_replay.expected_snapshot_hash,
+            observed_snapshot_hash: minimized_replay.observed_snapshot_hash,
+            first_canonical_difference: minimized_replay.first_canonical_difference,
             original_action_count,
             minimized_action_count: minimized.actions.len(),
             minimization_replays: replays,
@@ -940,6 +1251,7 @@ pub enum InvariantPredicate {
     LineageIsolation,
     RestartReplay,
     ProviderResidue,
+    CoordinatorDurableState,
     ExpectedReplica,
 }
 
@@ -955,11 +1267,112 @@ pub struct InvariantSignature {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureIdentity {
-    Invariant(InvariantSignature),
+    Invariant {
+        signature: InvariantSignature,
+        semantic: InvariantFailureKind,
+    },
     // Kept so the pre-v2 compatibility tests retain their public assertion.
-    Action(String),
+    Action {
+        action_index: usize,
+    },
     Diverged,
     GlobalOracleDiverged,
+}
+
+/// Stable, typed reason for an invariant failure. Diagnostic messages remain
+/// in the capsule, but never participate in minimization or replay matching.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvariantFailureKind {
+    ProbeOutcome,
+    CoordinatorOracle { expected: CoordinatorOracleIdentity },
+    CoordinatorCheckpoint,
+    CoordinatorGlobalOracle,
+    IngressReceipt,
+    VisibleSnapshot,
+    ForeignLineage,
+    ProviderResidue,
+    ReplicaExpectation,
+    AcceptedClosureSnapshot,
+    RestartReplay,
+    ExternalFixture,
+    AcceptedBatchReadiness,
+    OfferedClosureStatus,
+    Generic,
+}
+
+/// The host-independent portion of a coordinator oracle. It is deliberately
+/// explicit instead of deriving identity from debug formatting or serialized
+/// oracle bytes. Receipt file contents and receipt digests are excluded: they
+/// may embed the temporary root's filesystem capability identity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorOracleIdentity {
+    pub accepted_sequence: Option<u64>,
+    pub accepted_frontier_digest: Option<String>,
+    pub accepted_batches: Option<Vec<BatchId>>,
+    pub sqlite_sequence: Option<u64>,
+    pub sqlite_frontier_digest: Option<String>,
+    pub sqlite_row_digest: Option<String>,
+    pub frontiers_match: Option<bool>,
+    pub pending_projection_work: Option<usize>,
+    pub tail_unapplied_batches: Option<usize>,
+    pub tail_retained_bytes: Option<usize>,
+    pub handoff: Option<CoordinatorHandoffState>,
+    pub read_gate: Option<CoordinatorReadGate>,
+    pub last_outcome: Option<CoordinatorRunOutcome>,
+    pub durable_boundary: Option<CoordinatorDurableBoundary>,
+    pub managed_file_digests: Option<BTreeMap<String, String>>,
+    pub archive_file_digests: Option<BTreeMap<String, String>>,
+    pub receipt_file_paths: Option<Vec<String>>,
+    pub receipt_file_digest_paths: Option<Vec<String>>,
+}
+
+impl From<&CoordinatorOracle> for CoordinatorOracleIdentity {
+    fn from(oracle: &CoordinatorOracle) -> Self {
+        let paths = |files: &[ExternalFileFixture]| {
+            let mut paths = files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>();
+            paths.sort_unstable();
+            paths
+        };
+        Self {
+            accepted_sequence: oracle.accepted_sequence,
+            accepted_frontier_digest: oracle.accepted_frontier_digest.clone(),
+            accepted_batches: oracle.accepted_batches.clone(),
+            sqlite_sequence: oracle.sqlite_sequence,
+            sqlite_frontier_digest: oracle.sqlite_frontier_digest.clone(),
+            sqlite_row_digest: oracle.sqlite_row_digest.clone(),
+            frontiers_match: oracle.frontiers_match,
+            pending_projection_work: oracle.pending_projection_work,
+            tail_unapplied_batches: oracle.tail_unapplied_batches,
+            tail_retained_bytes: oracle.tail_retained_bytes,
+            handoff: oracle.handoff,
+            read_gate: oracle.read_gate,
+            last_outcome: oracle.last_outcome.clone(),
+            durable_boundary: oracle.durable_boundary,
+            managed_file_digests: oracle.managed_files.as_deref().map(oracle_file_digests),
+            archive_file_digests: oracle
+                .archive_files
+                .as_deref()
+                .map(oracle_file_digests)
+                .or_else(|| oracle.archive_file_digests.clone()),
+            receipt_file_paths: oracle.receipt_files.as_deref().map(paths),
+            receipt_file_digest_paths: oracle
+                .receipt_file_digests
+                .as_ref()
+                .map(|digests| digests.keys().cloned().collect()),
+        }
+    }
+}
+
+fn oracle_file_digests(files: &[ExternalFileFixture]) -> BTreeMap<String, String> {
+    files
+        .iter()
+        .map(|file| (file.path.clone(), provider_digest(&file.bytes_b64.0)))
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -984,7 +1397,10 @@ pub struct FailureCapsule {
     pub failure: FailureIdentity,
     pub tested_commit: String,
     pub scenario_hash: String,
+    pub minimized_scenario_hash: String,
+    pub minimized_scenario: Scenario,
     pub first_failing_event: u64,
+    pub failure_message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingress_receipt: Option<IngressReceipt>,
     #[serde(default)]
@@ -993,6 +1409,15 @@ pub struct FailureCapsule {
     pub offered_witness: BTreeMap<String, Vec<BatchId>>,
     #[serde(default)]
     pub status_witness: BTreeMap<String, String>,
+    /// Durable coordinator evidence at the first failure: accepted and SQLite
+    /// frontiers, exact durable file images, pending work, receipts, and the
+    /// held/released handoff state.
+    #[serde(default)]
+    pub observed_coordinator: BTreeMap<String, CoordinatorFailureWitness>,
+    #[serde(default)]
+    pub expected_coordinator: BTreeMap<String, CoordinatorExpectedState>,
+    #[serde(default)]
+    pub durable_boundaries: BTreeMap<String, CoordinatorDurableBoundary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_snapshot_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1036,14 +1461,37 @@ impl FailureCapsule {
         Ok(capsule)
     }
 
+    pub fn replay(&self) -> Result<FailureIdentity, ScenarioError> {
+        self.validate()?;
+        let replay =
+            replay_failure_details(&self.minimized_scenario)?.ok_or(ScenarioError::NotFailing)?;
+        let identity = replay
+            .error
+            .failure_identity()
+            .ok_or(ScenarioError::UnstableFailure)?;
+        if identity != self.failure {
+            return Err(ScenarioError::UnstableFailure);
+        }
+        Ok(identity)
+    }
+
     fn validate(&self) -> Result<(), ScenarioError> {
         if self.schema_version != FAILURE_CAPSULE_SCHEMA_VERSION
             || !valid_name(&self.family, 256)
             || self.minimized_action_count > self.original_action_count
             || self.minimization_replays > self.minimization_budget
+            || self.minimized_scenario.family != self.family
+            || self.minimized_scenario.seed != self.original_seed
+            || self.minimized_scenario.actions.len() != self.minimized_action_count
+            || scenario_hash(&self.minimized_scenario)? != self.minimized_scenario_hash
+            || self.observed_coordinator.values().any(|witness| {
+                witness.read_gate == CoordinatorReadGate::Open
+                    && witness.sqlite_row_digest.is_none()
+            })
         {
             return Err(ScenarioError::InvalidFailureCapsule);
         }
+        self.minimized_scenario.validate()?;
         Ok(())
     }
 }
@@ -3723,6 +4171,8 @@ pub struct DeterministicSimulator {
     outcomes: Vec<StageOutcome>,
     receipts: BTreeMap<u64, IngressReceipt>,
     provider_receipts: BTreeMap<(u64, String), IngressReceipt>,
+    coordinators:
+        BTreeMap<String, super::operational_coordinator::simulator_harness::CoordinatorHarness>,
 }
 
 impl DeterministicSimulator {
@@ -3777,6 +4227,7 @@ impl DeterministicSimulator {
             outcomes: Vec::new(),
             receipts: BTreeMap::new(),
             provider_receipts: BTreeMap::new(),
+            coordinators: BTreeMap::new(),
         };
         for replica in simulator.scenario.initial_replicas.clone() {
             for item_id in replica.stored_items {
@@ -3853,6 +4304,34 @@ impl DeterministicSimulator {
 
     pub fn provider_ingress_receipts(&self) -> &BTreeMap<(u64, String), IngressReceipt> {
         &self.provider_receipts
+    }
+
+    /// Exact durable-state observations from each coordinator fixture. They
+    /// are intentionally available after a failed-closed action as evidence,
+    /// not merely as debug output.
+    pub fn coordinator_observations(
+        &self,
+    ) -> Result<BTreeMap<String, CoordinatorObservation>, ScenarioError> {
+        self.coordinators
+            .iter()
+            .map(|(device, harness)| {
+                harness
+                    .observation()
+                    .map(|observation| (device.clone(), observation))
+                    .map_err(ScenarioError::Coordinator)
+            })
+            .collect()
+    }
+
+    fn coordinator_expectations(&self) -> BTreeMap<String, CoordinatorExpectedState> {
+        self.coordinators
+            .iter()
+            .filter_map(|(device, harness)| {
+                harness
+                    .expected_failure()
+                    .map(|expected| (device.clone(), expected))
+            })
+            .collect()
     }
 
     pub fn provider_snapshots(&self) -> Result<Vec<ProviderTreeSnapshot>, ScenarioError> {
@@ -4318,6 +4797,9 @@ impl DeterministicSimulator {
                 self.outcomes.extend(outcomes);
                 self.assert_restart_replay(event_id, device)
             }
+            ScheduledActionKind::Coordinator { device, action } => {
+                self.run_coordinator_action(event_id, device, action)
+            }
             ScheduledActionKind::AssertInvariant { assertion } => {
                 self.assert_invariant(event_id, assertion)
             }
@@ -4349,6 +4831,72 @@ impl DeterministicSimulator {
                 Ok(())
             }
         }
+    }
+
+    fn run_coordinator_action(
+        &mut self,
+        event_id: u64,
+        device: &str,
+        action: &CoordinatorAction,
+    ) -> Result<(), ScenarioError> {
+        if let CoordinatorAction::Setup { .. } = action {
+            if self.coordinators.contains_key(device) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+            let identity = self.identity(device)?.clone();
+            let ordinal = self
+                .scenario
+                .devices
+                .iter()
+                .position(|candidate| candidate.name == device)
+                .ok_or_else(|| ScenarioError::UnknownDeviceName(device.into()))?;
+            let root = self.root.0.join(format!("coordinator-{ordinal:04}"));
+            let harness =
+                super::operational_coordinator::simulator_harness::CoordinatorHarness::setup(
+                    root,
+                    &self.scenario.workspace,
+                    &identity,
+                    action,
+                )
+                .map_err(ScenarioError::Coordinator)?;
+            self.coordinators.insert(device.into(), harness);
+            return Ok(());
+        }
+        let result = {
+            let harness = self
+                .coordinators
+                .get_mut(device)
+                .ok_or(ScenarioError::CoordinatorNotSetup)?;
+            harness.run(action)
+        };
+        result.map_err(|error| {
+            if matches!(
+                action,
+                CoordinatorAction::Assert { .. } | CoordinatorAction::AssertCheckpoint { .. }
+            ) {
+                let semantic = match action {
+                    CoordinatorAction::Assert { oracle } => {
+                        InvariantFailureKind::CoordinatorOracle {
+                            expected: CoordinatorOracleIdentity::from(oracle),
+                        }
+                    }
+                    CoordinatorAction::AssertCheckpoint { .. } => {
+                        InvariantFailureKind::CoordinatorCheckpoint
+                    }
+                    _ => unreachable!("only assertion actions reach this branch"),
+                };
+                self.invariant_with_semantic(
+                    event_id,
+                    InvariantPredicate::CoordinatorDurableState,
+                    vec![device.into()],
+                    Vec::new(),
+                    semantic,
+                    &error,
+                )
+            } else {
+                ScenarioError::Coordinator(error)
+            }
+        })
     }
 
     fn acquire_provider_transaction_gates(
@@ -4895,6 +5443,18 @@ impl DeterministicSimulator {
 
     fn check_global_oracle(&self, event_id: u64) -> Result<(), ScenarioError> {
         self.assert_external_files(event_id)?;
+        for (device, coordinator) in &self.coordinators {
+            coordinator.assert_global_oracle().map_err(|message| {
+                self.invariant_with_semantic(
+                    event_id,
+                    InvariantPredicate::CoordinatorDurableState,
+                    vec![device.clone()],
+                    Vec::new(),
+                    InvariantFailureKind::CoordinatorGlobalOracle,
+                    &message,
+                )
+            })?;
+        }
         let mut snapshots = BTreeMap::<Vec<BatchId>, (CanonicalSnapshot, String)>::new();
         let mut offered = BTreeMap::<Vec<BatchId>, (OfferedState, String)>::new();
         for (name, runtime) in &self.devices {
@@ -4998,6 +5558,25 @@ impl DeterministicSimulator {
         required_closure_or_lineage: Vec<String>,
         message: &str,
     ) -> ScenarioError {
+        self.invariant_with_semantic(
+            event_id,
+            predicate,
+            subject,
+            required_closure_or_lineage,
+            invariant_failure_kind(message),
+            message,
+        )
+    }
+
+    fn invariant_with_semantic(
+        &self,
+        event_id: u64,
+        predicate: InvariantPredicate,
+        subject: Vec<String>,
+        required_closure_or_lineage: Vec<String>,
+        semantic: InvariantFailureKind,
+        message: &str,
+    ) -> ScenarioError {
         ScenarioError::Invariant {
             signature: InvariantSignature {
                 assertion_or_event_id: event_id,
@@ -5005,6 +5584,7 @@ impl DeterministicSimulator {
                 subject: sorted_subject(&subject),
                 required_closure_or_lineage,
             },
+            semantic,
             message: message.into(),
         }
     }
@@ -5152,6 +5732,12 @@ fn validate_scheduled_action(
         {
             return Err(ScenarioError::UnknownDeviceName(device.clone()));
         }
+        ScheduledActionKind::Coordinator { device, action } => {
+            if !known(device) {
+                return Err(ScenarioError::UnknownDeviceName(device.clone()));
+            }
+            validate_coordinator_action(action)?;
+        }
         ScheduledActionKind::AssertInvariant { assertion } => match assertion {
             InvariantAssertion::Replica { device, .. }
             | InvariantAssertion::NoVisibleEffect { device, .. }
@@ -5200,6 +5786,72 @@ fn validate_scheduled_action(
             )));
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_coordinator_action(action: &CoordinatorAction) -> Result<(), ScenarioError> {
+    let valid_path =
+        |path: &str| valid_relative_path(path) && path.len() <= MAX_PROVIDER_PATH_BYTES;
+    match action {
+        CoordinatorAction::Setup {
+            managed_path,
+            config_edn,
+            ..
+        } => {
+            if !valid_path(managed_path)
+                || config_edn
+                    .as_ref()
+                    .is_some_and(|bytes| bytes.0.len() > MAX_TRANSFER_BYTES)
+            {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::ExternalWrite { path, bytes_b64 }
+        | CoordinatorAction::InterfereAt {
+            path, bytes_b64, ..
+        } => {
+            if !valid_path(path) || bytes_b64.0.len() > MAX_TRANSFER_BYTES {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::ExternalDelete { path } => {
+            if !valid_path(path) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::ExternalRename { from_path, to_path } => {
+            if !valid_path(from_path) || !valid_path(to_path) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::Execute { paths, .. } => {
+            if paths.is_empty()
+                || paths.len() > MAX_SCENARIO_ACTIONS
+                || paths.iter().any(|path| !valid_path(path))
+            {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::Checkpoint { name } | CoordinatorAction::AssertCheckpoint { name } => {
+            if !valid_name(name, 128) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::Assert { oracle } => {
+            if oracle.managed_files.as_ref().is_some_and(|files| {
+                files.len() > MAX_SCENARIO_WIRE_ITEMS
+                    || files.iter().any(|file| {
+                        !valid_path(&file.path) || file.bytes_b64.0.len() > MAX_TRANSFER_BYTES
+                    })
+            }) {
+                return Err(ScenarioError::InvalidCoordinatorAction);
+            }
+        }
+        CoordinatorAction::Retry { .. }
+        | CoordinatorAction::Crash
+        | CoordinatorAction::Reopen
+        | CoordinatorAction::Sqlite { .. } => {}
     }
     Ok(())
 }
@@ -5570,6 +6222,8 @@ struct ReplayFailure {
     accepted_witness: BTreeMap<String, Vec<BatchId>>,
     offered_witness: BTreeMap<String, Vec<BatchId>>,
     status_witness: BTreeMap<String, String>,
+    coordinator_witness: BTreeMap<String, CoordinatorFailureWitness>,
+    expected_coordinator: BTreeMap<String, CoordinatorExpectedState>,
     expected_snapshot_hash: Option<String>,
     observed_snapshot_hash: Option<String>,
     first_canonical_difference: Option<String>,
@@ -5583,6 +6237,12 @@ fn replay_failure_details(scenario: &Scenario) -> Result<Option<ReplayFailure>, 
     let mut accepted_witness = BTreeMap::new();
     let mut offered_witness = BTreeMap::new();
     let mut status_witness = BTreeMap::new();
+    let coordinator_witness = simulator
+        .coordinator_observations()?
+        .iter()
+        .map(|(device, observation)| (device.clone(), CoordinatorFailureWitness::from(observation)))
+        .collect();
+    let expected_coordinator = simulator.coordinator_expectations();
     let mut snapshots = BTreeMap::new();
     for (name, runtime) in &simulator.devices {
         let Some(engine) = runtime.engine.as_ref() else {
@@ -5612,6 +6272,8 @@ fn replay_failure_details(scenario: &Scenario) -> Result<Option<ReplayFailure>, 
         accepted_witness,
         offered_witness,
         status_witness,
+        coordinator_witness,
+        expected_coordinator,
         expected_snapshot_hash,
         observed_snapshot_hash,
         first_canonical_difference,
@@ -5630,7 +6292,7 @@ fn snapshot_failure_witness(
     let Some(signature) = error
         .failure_identity()
         .and_then(|identity| match identity {
-            FailureIdentity::Invariant(signature) => Some(signature),
+            FailureIdentity::Invariant { signature, .. } => Some(signature),
             _ => None,
         })
     else {
@@ -5693,6 +6355,30 @@ fn first_failure_event(error: &ScenarioError) -> u64 {
         | ScenarioError::Diverged { action_index }
         | ScenarioError::GlobalOracleDiverged { action_index } => *action_index as u64,
         _ => 0,
+    }
+}
+
+fn invariant_failure_kind(message: &str) -> InvariantFailureKind {
+    match message {
+        "probe outcome differed from expectation" => InvariantFailureKind::ProbeOutcome,
+        "ingress receipt differed from expectation"
+        | "recorded ingress receipt differed from expectation" => {
+            InvariantFailureKind::IngressReceipt
+        }
+        "visible snapshot changed" => InvariantFailureKind::VisibleSnapshot,
+        "foreign lineage changed accepted frontier" => InvariantFailureKind::ForeignLineage,
+        "provider residue exceeded assertion bound" => InvariantFailureKind::ProviderResidue,
+        "replica expectation differed" => InvariantFailureKind::ReplicaExpectation,
+        "replicas did not converge" | "equal accepted closures had different snapshots" => {
+            InvariantFailureKind::AcceptedClosureSnapshot
+        }
+        "restart differed from clean archive replay" => InvariantFailureKind::RestartReplay,
+        "external fixture changed" => InvariantFailureKind::ExternalFixture,
+        "accepted batch is not locally ready" => InvariantFailureKind::AcceptedBatchReadiness,
+        "equal offered closures had different status or evidence" => {
+            InvariantFailureKind::OfferedClosureStatus
+        }
+        _ => InvariantFailureKind::Generic,
     }
 }
 
@@ -12451,6 +13137,8 @@ pub enum ScenarioError {
     InvalidWireItem(String),
     InvalidReplica,
     InvalidExternalFile(String),
+    InvalidCoordinatorAction,
+    CoordinatorNotSetup,
     InvalidProviderPath(String),
     UnknownProviderPath(String),
     UnsafeProviderEntry(String),
@@ -12467,6 +13155,7 @@ pub enum ScenarioError {
     Io(String),
     Store(String),
     Engine(String),
+    Coordinator(String),
     NonCanonical,
     Action {
         action_index: usize,
@@ -12474,6 +13163,7 @@ pub enum ScenarioError {
     },
     Invariant {
         signature: InvariantSignature,
+        semantic: InvariantFailureKind,
         message: String,
     },
     // Compatibility failures retained for the prior public API.
@@ -12491,10 +13181,17 @@ pub enum ScenarioError {
 impl ScenarioError {
     pub fn failure_identity(&self) -> Option<FailureIdentity> {
         match self {
-            Self::Invariant { signature, .. } => {
-                Some(FailureIdentity::Invariant(signature.clone()))
-            }
-            Self::Action { error, .. } => Some(FailureIdentity::Action(error.clone())),
+            Self::Invariant {
+                signature,
+                semantic,
+                ..
+            } => Some(FailureIdentity::Invariant {
+                signature: signature.clone(),
+                semantic: semantic.clone(),
+            }),
+            Self::Action { action_index, .. } => Some(FailureIdentity::Action {
+                action_index: *action_index,
+            }),
             Self::Diverged { .. } => Some(FailureIdentity::Diverged),
             Self::GlobalOracleDiverged { .. } => Some(FailureIdentity::GlobalOracleDiverged),
             _ => None,
@@ -12538,6 +13235,10 @@ impl fmt::Display for ScenarioError {
             Self::InvalidExternalFile(path) => {
                 write!(f, "external fixture path is invalid: {path}")
             }
+            Self::InvalidCoordinatorAction => f.write_str("coordinator scenario action is invalid"),
+            Self::CoordinatorNotSetup => {
+                f.write_str("coordinator action ran before its setup action")
+            }
             Self::InvalidProviderPath(path) => write!(f, "provider path is invalid: {path}"),
             Self::UnknownProviderPath(path) => write!(f, "unknown provider path: {path}"),
             Self::UnsafeProviderEntry(path) => write!(f, "unsafe provider entry: {path}"),
@@ -12566,12 +13267,17 @@ impl fmt::Display for ScenarioError {
             Self::Io(error) => write!(f, "scenario filesystem operation failed: {error}"),
             Self::Store(error) => write!(f, "scenario object-store operation failed: {error}"),
             Self::Engine(error) => write!(f, "scenario engine operation failed: {error}"),
+            Self::Coordinator(error) => {
+                write!(f, "scenario coordinator operation failed: {error}")
+            }
             Self::NonCanonical => f.write_str("scenario bytes are not canonical"),
             Self::Action {
                 action_index,
                 error,
             } => write!(f, "scenario action {action_index} failed: {error}"),
-            Self::Invariant { signature, message } => write!(
+            Self::Invariant {
+                signature, message, ..
+            } => write!(
                 f,
                 "scenario invariant {:?} at event {} failed: {message}",
                 signature.predicate, signature.assertion_or_event_id

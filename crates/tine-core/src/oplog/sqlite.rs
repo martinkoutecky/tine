@@ -645,6 +645,13 @@ impl ApplicationRuntimeRoot {
         Ok(Self { path })
     }
 
+    /// Isolated deterministic harnesses need a caller-owned runtime root so
+    /// they never consult or mutate normal application startup state.
+    pub(crate) fn open_for_harness(path: &Path) -> Result<Self, ProjectionError> {
+        let path = prepare_application_runtime_root(path)?;
+        Ok(Self { path })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -1816,6 +1823,29 @@ enum ApplyFault {
     AbortAfterCommit,
 }
 
+thread_local! {
+    // Crate-private deterministic simulator hook. It fires inside the same
+    // transaction as row materialization, before the authoritative frontier
+    // row moves, so returning an error proves rollback/reopen behavior at the
+    // actual atomic SQLite boundary.
+    static HARNESS_FAIL_DURING_APPLY: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn fail_next_apply_during_materialization_for_harness() {
+    HARNESS_FAIL_DURING_APPLY.with(|fail| fail.set(true));
+}
+
+fn fail_during_apply_for_harness() -> Result<(), ProjectionError> {
+    HARNESS_FAIL_DURING_APPLY.with(|fail| {
+        if fail.replace(false) {
+            Err(ProjectionError::InjectedFailure)
+        } else {
+            Ok(())
+        }
+    })
+}
+
 impl SqliteFrontier {
     pub fn open_or_rebuild(
         path: &Path,
@@ -2444,6 +2474,16 @@ impl SqliteFrontier {
         Ok(ContentDigest::of(&bytes))
     }
 
+    /// Exact materialized-row observation for the deterministic simulator.
+    /// Requiring `materialized_read` first keeps this diagnostic behind the
+    /// same stale-frontier read gate as production consumers.
+    pub(crate) fn materialized_row_digest_for_harness(
+        &self,
+    ) -> Result<ContentDigest, ProjectionError> {
+        let _gate = self.materialized_read()?;
+        super::sqlite_materialization::row_digest(&self.connection).map_err(Into::into)
+    }
+
     /// Test-only recovery inspection of the exact semantic records rebuilt into
     /// this frontier. Production consumers retain only the authenticated
     /// frontier APIs above.
@@ -2737,6 +2777,7 @@ impl SqliteFrontier {
                 authenticated_reference.as_ref(),
             )?;
         }
+        fail_during_apply_for_harness()?;
         #[cfg(test)]
         if matches!(fault, ApplyFault::ReturnAfterMaterialization) {
             return Err(ProjectionError::InjectedFailure);

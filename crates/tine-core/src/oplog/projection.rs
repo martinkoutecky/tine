@@ -26,6 +26,30 @@ use super::{
 use crate::doc::{DocBlock, Document, SerializeOpts};
 use crate::Graph;
 
+thread_local! {
+    // Crate-private deterministic simulator hook at the production manifested
+    // projection boundary: intent and attempt authority are durable, but the
+    // graph mutation has not started.
+    static HARNESS_FAIL_DURING_MANIFESTED_PROJECTION: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn fail_next_manifested_projection_during_write_for_harness() {
+    HARNESS_FAIL_DURING_MANIFESTED_PROJECTION.with(|fail| fail.set(true));
+}
+
+fn fail_during_manifested_projection_for_harness() -> Result<(), ProjectionError> {
+    HARNESS_FAIL_DURING_MANIFESTED_PROJECTION.with(|fail| {
+        if fail.replace(false) {
+            Err(ProjectionError::Work(
+                "deterministic failure during manifested projection".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectionFormat {
     Markdown,
@@ -471,12 +495,13 @@ fn execute_manifested_projection_work_with_runtime(
                 let reservation = receipts.reserve_attempt(&local_attempt_intent)?;
                 receipts.begin_mutation(&local_attempt_intent, Some(&reservation))?
             };
+            fail_during_manifested_projection_for_harness()?;
             let current = graph
                 .read_projection_input(work.path())
                 .map_err(ProjectionError::Io)?;
             let target_is_already_exact =
                 target.is_some_and(|target| current.as_deref() == Some(target));
-            let write_result = if handoff.is_some() && target_is_already_exact {
+            let write_result = if target_is_already_exact {
                 match (handoff, target.expect("exact present target")) {
                     (Some(handoff), target) => handoff.recover_page_projection(
                         graph,

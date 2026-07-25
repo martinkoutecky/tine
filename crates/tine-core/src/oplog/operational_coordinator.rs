@@ -730,7 +730,6 @@ fn authenticate_published(
     Ok(())
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OperationalFaultPoint {
     AfterHandoff,
@@ -747,24 +746,6 @@ pub(crate) enum OperationalFaultPoint {
     AfterProjection,
 }
 
-#[cfg(not(test))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OperationalFaultPoint {
-    AfterHandoff,
-    AfterPlan,
-    AfterDraft,
-    AfterCapture,
-    AfterFinalize,
-    AfterReservation,
-    AfterManifest,
-    AfterStage,
-    AfterTailAdmission,
-    AfterSqliteApply,
-    BeforeProjection,
-    AfterProjection,
-}
-
-#[cfg(test)]
 thread_local! {
     static OPERATIONAL_FAULT: std::cell::Cell<Option<OperationalFaultPoint>> =
         const { std::cell::Cell::new(None) };
@@ -773,19 +754,16 @@ thread_local! {
     > = std::cell::RefCell::new(None);
 }
 
-#[cfg(test)]
 pub(crate) fn fail_once_at(point: OperationalFaultPoint) {
     OPERATIONAL_FAULT.set(Some(point));
 }
 
-#[cfg(test)]
 pub(crate) fn act_once_at(point: OperationalFaultPoint, action: impl FnOnce() + 'static) {
     OPERATIONAL_ACTION.with(|slot| {
         *slot.borrow_mut() = Some((point, Box::new(action)));
     });
 }
 
-#[cfg(test)]
 fn fault(point: OperationalFaultPoint) -> Result<(), OperationalCoordinatorError> {
     OPERATIONAL_ACTION.with(|slot| {
         let matches = slot
@@ -820,9 +798,1050 @@ fn fault(point: OperationalFaultPoint) -> Result<(), OperationalCoordinatorError
     Ok(())
 }
 
-#[cfg(not(test))]
-fn fault(_: OperationalFaultPoint) -> Result<(), OperationalCoordinatorError> {
-    Ok(())
+/// Real-storage adapter used only by the deterministic scenario corpus. It
+/// owns no alternate import, SQLite, or projection implementation: every
+/// transition below calls the production coordinator or production recovery
+/// surfaces directly. Keeping it crate-private prevents app startup from
+/// gaining an experimental activation route.
+pub(crate) mod simulator_harness {
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+    use std::path::{Path, PathBuf};
+
+    use uuid::Uuid;
+
+    use super::{
+        act_once_at, fail_once_at, FailedClosedOperationalCoordinator, OperationalCoordinator,
+        OperationalCoordinatorState, OperationalFaultPoint,
+    };
+    use crate::oplog::simulator::{
+        CoordinatorAction, CoordinatorDurableBoundary, CoordinatorExpectedState,
+        CoordinatorFailureWitness, CoordinatorFault, CoordinatorHandoffState,
+        CoordinatorObservation, CoordinatorOracle, CoordinatorReadGate, CoordinatorRunOutcome,
+        CoordinatorSqliteMutation, ExternalFileFixture, ScenarioDevice, ScenarioWorkspace,
+        WireBytes,
+    };
+    use crate::oplog::{
+        write_projection_exact, ApplicationRuntimeRoot, AuthorBatch, BatchDisposition, BatchId,
+        BlockId, BlockLocation, ContentDigest, CrdtPeerId, DeviceId, DocumentId, LogicalPageName,
+        ManagedPath, ObjectStore, OperationTransaction, PageId, ProjectionClaim,
+        ProjectionEndpointBinding, ProjectionEndpointId, ProjectionReceiptStore, RebuildSource,
+        SemanticOperation, SessionId, ShardedHotEngine, SqliteFrontier, TailOverlay,
+    };
+    use crate::Graph;
+
+    pub(crate) struct CoordinatorHarness {
+        graph_root: PathBuf,
+        archive_root: PathBuf,
+        receipt_root: PathBuf,
+        database_path: PathBuf,
+        runtime_path: PathBuf,
+        workspace: ScenarioWorkspace,
+        identity: ScenarioDevice,
+        graph: Option<Graph>,
+        receipts: Option<ProjectionReceiptStore>,
+        archive: Option<ObjectStore>,
+        engine: Option<ShardedHotEngine>,
+        runtime_root: Option<ApplicationRuntimeRoot>,
+        database: Option<SqliteFrontier>,
+        tail: Option<TailOverlay>,
+        failed: Option<FailedClosedOperationalCoordinator>,
+        crashed_observation: Option<CoordinatorObservation>,
+        enrollment_pending_unprotected: bool,
+        checkpoints: BTreeMap<String, CoordinatorObservation>,
+        expected_failure: Option<CoordinatorExpectedState>,
+        durable_boundary: CoordinatorDurableBoundary,
+        last_outcome: Option<CoordinatorRunOutcome>,
+    }
+
+    impl CoordinatorHarness {
+        pub(crate) fn setup(
+            root: PathBuf,
+            workspace: &ScenarioWorkspace,
+            identity: &ScenarioDevice,
+            action: &CoordinatorAction,
+        ) -> Result<Self, String> {
+            let CoordinatorAction::Setup {
+                managed_path,
+                kind,
+                config_edn,
+            } = action
+            else {
+                return Err("coordinator harness requires setup action".into());
+            };
+            fs::create_dir_all(&root).map_err(io)?;
+            let graph_root = root.join("graph");
+            fs::create_dir_all(&graph_root).map_err(io)?;
+            if let Some(config) = config_edn {
+                fs::create_dir_all(graph_root.join("logseq")).map_err(io)?;
+                fs::write(graph_root.join("logseq/config.edn"), &config.0).map_err(io)?;
+            }
+            let graph = Graph::open(&graph_root);
+            let endpoint = ProjectionEndpointBinding::enroll_graph(
+                &graph,
+                ProjectionEndpointId::from_uuid(identity.device_id.as_uuid()),
+                identity.device_id,
+            )
+            .map_err(display)?;
+            let receipt_root = root.join("receipts");
+            let receipts = ProjectionReceiptStore::open_for_endpoint(
+                &receipt_root,
+                workspace.workspace_id,
+                endpoint,
+            )
+            .map_err(display)?;
+            let page_id = PageId::from_uuid(Uuid::from_u128(5));
+            let home = DocumentId::from_uuid(Uuid::from_u128(6));
+            let block = BlockId::from_uuid(Uuid::from_u128(7));
+            let transaction = OperationTransaction::new(vec![
+                SemanticOperation::CreatePage {
+                    page_id,
+                    home_document_id: home,
+                    name: LogicalPageName::parse("Coordinator Scenario Page").map_err(display)?,
+                    path: ManagedPath::parse(managed_path).map_err(display)?,
+                    kind: *kind,
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: block,
+                        home_document_id: home,
+                    },
+                    page_id,
+                    parent: None,
+                    order: "a".into(),
+                    content: "root".into(),
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: BlockId::from_uuid(Uuid::from_u128(8)),
+                        home_document_id: home,
+                    },
+                    page_id,
+                    parent: Some(block),
+                    order: "a".into(),
+                    content: "child".into(),
+                },
+            ])
+            .map_err(display)?;
+            let bootstrap_engine = ShardedHotEngine::new(
+                workspace.workspace_id,
+                workspace.lineage_digest,
+                workspace.catalog_document_id,
+            );
+            let bootstrap = bootstrap_engine
+                .prepare_bootstrap_transaction(
+                    AuthorBatch {
+                        batch_id: BatchId::from_uuid(Uuid::from_u128(9)),
+                        author_device_id: DeviceId::from_uuid(Uuid::from_u128(10)),
+                        author_session_id: SessionId::from_uuid(Uuid::from_u128(11)),
+                        crdt_peer_id: CrdtPeerId::from_u64(12),
+                    },
+                    &transaction,
+                )
+                .map_err(display)?;
+            let archive_root = root.join("archive");
+            ObjectStore::open(&archive_root, workspace.workspace_id)
+                .map_err(display)?
+                .publish_prepared(&bootstrap)
+                .map_err(display)?;
+            let mut engine = ShardedHotEngine::with_enrolled_projection(
+                ObjectStore::open(&archive_root, workspace.workspace_id).map_err(display)?,
+                workspace.lineage_digest,
+                workspace.catalog_document_id,
+                &graph,
+                &receipts,
+            );
+            engine
+                .stage_archive_batch(bootstrap.manifest().batch_id())
+                .map_err(display)?;
+            write_projection_exact(&graph, &receipts, &engine, page_id, None).map_err(display)?;
+            let archive =
+                ObjectStore::open(&archive_root, workspace.workspace_id).map_err(display)?;
+            let runtime_path = root.join("runtime");
+            let runtime_root =
+                ApplicationRuntimeRoot::open_for_harness(&runtime_path).map_err(display)?;
+            let database_path = root.join("sqlite/materialized.sqlite3");
+            let source = RebuildSource::new(&engine, &archive).map_err(display)?;
+            let database = SqliteFrontier::open_or_rebuild(
+                &database_path,
+                &runtime_root,
+                ProjectionClaim::current(workspace.workspace_id, workspace.lineage_digest),
+                source,
+            )
+            .map_err(display)?
+            .database;
+            let source = RebuildSource::new(&engine, &archive).map_err(display)?;
+            let tail = TailOverlay::from_durable(&database, &source).map_err(display)?;
+            Ok(Self {
+                graph_root,
+                archive_root,
+                receipt_root,
+                database_path,
+                runtime_path,
+                workspace: workspace.clone(),
+                identity: identity.clone(),
+                graph: Some(graph),
+                receipts: Some(receipts),
+                archive: Some(archive),
+                engine: Some(engine),
+                runtime_root: Some(runtime_root),
+                database: Some(database),
+                tail: Some(tail),
+                failed: None,
+                crashed_observation: None,
+                enrollment_pending_unprotected: false,
+                checkpoints: BTreeMap::new(),
+                expected_failure: None,
+                durable_boundary: CoordinatorDurableBoundary::Setup,
+                last_outcome: None,
+            })
+        }
+
+        pub(crate) fn run(&mut self, action: &CoordinatorAction) -> Result<(), String> {
+            match action {
+                CoordinatorAction::Setup { .. } => Err("coordinator setup ran twice".into()),
+                CoordinatorAction::ExternalWrite { path, bytes_b64 } => {
+                    self.external_write(path, &bytes_b64.0)
+                }
+                CoordinatorAction::ExternalDelete { path } => self.external_delete(path),
+                CoordinatorAction::ExternalRename { from_path, to_path } => {
+                    self.external_rename(from_path, to_path)
+                }
+                CoordinatorAction::InterfereAt {
+                    point,
+                    path,
+                    bytes_b64,
+                } => {
+                    let path = self.graph_root.join(path);
+                    let bytes = bytes_b64.0.clone();
+                    let point = fault_point(*point)
+                        .ok_or("coordinator interference requires an outer coordinator boundary")?;
+                    act_once_at(point, move || {
+                        if let Some(parent) = path.parent() {
+                            fs::create_dir_all(parent)
+                                .expect("coordinator interference parent must be writable");
+                        }
+                        fs::write(path, bytes)
+                            .expect("coordinator interference target must be writable");
+                    });
+                    Ok(())
+                }
+                CoordinatorAction::Execute { paths, fault } => self.execute(paths, *fault),
+                CoordinatorAction::Retry { fault } => self.retry(*fault),
+                CoordinatorAction::Crash => self.crash(),
+                CoordinatorAction::Reopen => self.reopen(),
+                CoordinatorAction::Sqlite { mutation } => self.sqlite(mutation),
+                CoordinatorAction::Checkpoint { name } => {
+                    let observation = self.observation()?;
+                    if self.checkpoints.insert(name.clone(), observation).is_some() {
+                        return Err(format!("duplicate coordinator checkpoint {name}"));
+                    }
+                    Ok(())
+                }
+                CoordinatorAction::AssertCheckpoint { name } => {
+                    let expected = self
+                        .checkpoints
+                        .get(name)
+                        .ok_or_else(|| format!("unknown coordinator checkpoint {name}"))?;
+                    let observed = self.observation()?;
+                    if expected == &observed {
+                        Ok(())
+                    } else {
+                        self.expected_failure = Some(CoordinatorExpectedState::Exact(
+                            CoordinatorFailureWitness::from(expected),
+                        ));
+                        Err(format!(
+                            "coordinator checkpoint {name} changed: expected {expected:?}, observed {observed:?}"
+                        ))
+                    }
+                }
+                CoordinatorAction::Assert { oracle } => self.assert_oracle(oracle),
+            }
+        }
+
+        pub(crate) fn observation(&self) -> Result<CoordinatorObservation, String> {
+            let Some(engine) = self.engine.as_ref() else {
+                let mut observed = self
+                    .crashed_observation
+                    .clone()
+                    .ok_or("coordinator is crashed without a durable observation")?;
+                observed.managed_files = snapshot_tree(&self.graph_root, true)?;
+                observed.archive_files = snapshot_archive(&self.archive_root)?;
+                observed.receipt_files = snapshot_tree(&self.receipt_root, false)?;
+                observed.handoff = CoordinatorHandoffState::EnrollmentPendingUnprotected;
+                return Ok(observed);
+            };
+            let archive = self
+                .archive
+                .as_ref()
+                .ok_or("coordinator archive handle is closed")?;
+            let receipts = self
+                .receipts
+                .as_ref()
+                .ok_or("coordinator receipt handle is closed")?;
+            let accepted = engine.accepted_frontier_root().map_err(display)?;
+            let accepted_frontier_digest = frontier_digest(&accepted)?;
+            let source = RebuildSource::new(engine, archive).map_err(display)?;
+            let mut accepted_batches =
+                Vec::with_capacity(usize::try_from(accepted.acceptance_sequence()).unwrap_or(0));
+            for sequence in 1..=accepted.acceptance_sequence() {
+                accepted_batches.push(
+                    source
+                        .accepted_event_at(sequence)
+                        .map_err(display)?
+                        .batch_id(),
+                );
+            }
+            let (sqlite_sequence, sqlite_frontier_digest, sqlite_row_digest, read_gate) =
+                if let Some(database) = &self.database {
+                    let root = database.frontier_root().map_err(display)?;
+                    let frontier_matches = root == accepted;
+                    let (read_gate, row_digest) =
+                        if frontier_matches && database.materialized_read().is_ok() {
+                            let digest = database
+                                .materialized_row_digest_for_harness()
+                                .map_err(display)?;
+                            (CoordinatorReadGate::Open, Some(hex(digest.as_bytes())))
+                        } else {
+                            (CoordinatorReadGate::Closed, None)
+                        };
+                    (
+                        Some(root.acceptance_sequence()),
+                        Some(frontier_digest(&root)?),
+                        row_digest,
+                        read_gate,
+                    )
+                } else {
+                    (None, None, None, CoordinatorReadGate::Closed)
+                };
+            let (tail_unapplied_batches, tail_retained_bytes) = self
+                .tail
+                .as_ref()
+                .map(|tail| {
+                    let status = tail.status();
+                    (status.unapplied_batches, status.retained_bytes)
+                })
+                .unwrap_or((0, 0));
+            Ok(CoordinatorObservation {
+                accepted_sequence: accepted.acceptance_sequence(),
+                accepted_frontier_digest,
+                accepted_batches,
+                sqlite_sequence,
+                sqlite_frontier_digest,
+                sqlite_row_digest,
+                managed_files: snapshot_tree(&self.graph_root, true)?,
+                archive_files: snapshot_archive(&self.archive_root)?,
+                receipt_files: snapshot_tree(receipts.root_path(), false)?,
+                pending_projection_work: pending_projection_work(engine)?,
+                tail_unapplied_batches,
+                tail_retained_bytes,
+                handoff: if self.enrollment_pending_unprotected {
+                    CoordinatorHandoffState::EnrollmentPendingUnprotected
+                } else if self.failed.is_some() {
+                    CoordinatorHandoffState::HeldFailedClosed
+                } else if self.last_outcome.is_some() {
+                    CoordinatorHandoffState::Released
+                } else {
+                    CoordinatorHandoffState::Unused
+                },
+                read_gate,
+                durable_boundary: self.durable_boundary,
+                last_outcome: self.last_outcome.clone(),
+            })
+        }
+
+        fn external_write(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+            let path = self.graph_root.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(io)?;
+            }
+            fs::write(path, bytes).map_err(io)
+        }
+
+        fn external_delete(&self, path: &str) -> Result<(), String> {
+            match fs::remove_file(self.graph_root.join(path)) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(io(error)),
+            }
+        }
+
+        fn external_rename(&self, from_path: &str, to_path: &str) -> Result<(), String> {
+            let destination = self.graph_root.join(to_path);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(io)?;
+            }
+            fs::rename(self.graph_root.join(from_path), destination).map_err(io)
+        }
+
+        fn execute(
+            &mut self,
+            paths: &[String],
+            fault: Option<CoordinatorFault>,
+        ) -> Result<(), String> {
+            if let Some(point) = fault {
+                install_fault(point);
+            }
+            let graph = self.graph.as_ref().ok_or("coordinator graph is closed")?;
+            let receipts = self
+                .receipts
+                .as_ref()
+                .ok_or("coordinator receipts are closed")?;
+            let engine = self.engine.as_mut().ok_or("coordinator engine is closed")?;
+            let database = self
+                .database
+                .as_mut()
+                .ok_or("coordinator SQLite is closed")?;
+            let tail = self.tail.as_mut().ok_or("coordinator tail is closed")?;
+            let requested = paths.iter().map(String::as_str).collect::<Vec<_>>();
+            match OperationalCoordinator::execute(
+                graph, receipts, engine, database, tail, &requested,
+            ) {
+                Ok(OperationalCoordinatorState::Complete(_)) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::Complete);
+                    self.durable_boundary = CoordinatorDurableBoundary::Complete;
+                }
+                Ok(OperationalCoordinatorState::Blocked(_)) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::Blocked);
+                    self.durable_boundary = CoordinatorDurableBoundary::Blocked;
+                }
+                Ok(OperationalCoordinatorState::Noop) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::Noop);
+                    self.durable_boundary = CoordinatorDurableBoundary::Noop;
+                }
+                Ok(OperationalCoordinatorState::FailedClosed(failed)) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::FailedClosed {
+                        phase: format!("{:?}", failed.phase()),
+                    });
+                    self.failed = Some(failed);
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                }
+                Err(error) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::PrepublicationError {
+                        phase: format!("{:?}", error.phase()),
+                    });
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        fn retry(&mut self, fault: Option<CoordinatorFault>) -> Result<(), String> {
+            if self.failed.is_none() && self.enrollment_pending_unprotected {
+                return self.recover_reopened(fault);
+            }
+            if let Some(point) = fault {
+                install_fault(point);
+            }
+            let failed = self
+                .failed
+                .take()
+                .ok_or("coordinator has no failed-closed retry")?;
+            let database = self
+                .database
+                .as_mut()
+                .ok_or("coordinator SQLite is closed")?;
+            let tail = self.tail.as_mut().ok_or("coordinator tail is closed")?;
+            let graph = self.graph.as_ref().ok_or("coordinator graph is closed")?;
+            let receipts = self
+                .receipts
+                .as_ref()
+                .ok_or("coordinator receipts are closed")?;
+            let engine = self.engine.as_mut().ok_or("coordinator engine is closed")?;
+            match failed.retry(graph, receipts, engine, database, tail) {
+                OperationalCoordinatorState::Complete(_) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::Complete);
+                    self.durable_boundary = CoordinatorDurableBoundary::Complete;
+                }
+                OperationalCoordinatorState::FailedClosed(next) => {
+                    self.last_outcome = Some(CoordinatorRunOutcome::FailedClosed {
+                        phase: format!("{:?}", next.phase()),
+                    });
+                    self.failed = Some(next);
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                }
+                OperationalCoordinatorState::Blocked(_) | OperationalCoordinatorState::Noop => {
+                    return Err("published coordinator retry changed to blocked/noop".into());
+                }
+            }
+            Ok(())
+        }
+
+        fn crash(&mut self) -> Result<(), String> {
+            if self.engine.is_none() {
+                return Err("coordinator is already crashed".into());
+            }
+            let mut observation = self.observation()?;
+            observation.handoff = CoordinatorHandoffState::EnrollmentPendingUnprotected;
+            self.failed.take();
+            self.tail.take();
+            self.database.take();
+            self.engine.take();
+            self.archive.take();
+            self.receipts.take();
+            self.graph.take();
+            self.runtime_root.take();
+            self.enrollment_pending_unprotected = true;
+            self.crashed_observation = Some(observation);
+            Ok(())
+        }
+
+        fn reopen(&mut self) -> Result<(), String> {
+            if self.engine.is_some()
+                || self.archive.is_some()
+                || self.graph.is_some()
+                || self.receipts.is_some()
+                || self.database.is_some()
+                || self.tail.is_some()
+                || self.runtime_root.is_some()
+                || !self.enrollment_pending_unprotected
+            {
+                return Err("coordinator reopen requires a dropped crashed process".into());
+            }
+            let graph = Graph::open(&self.graph_root);
+            let endpoint = ProjectionEndpointBinding::enroll_graph(
+                &graph,
+                ProjectionEndpointId::from_uuid(self.identity.device_id.as_uuid()),
+                self.identity.device_id,
+            )
+            .map_err(display)?;
+            let receipts = ProjectionReceiptStore::open_for_endpoint(
+                &self.receipt_root,
+                self.workspace.workspace_id,
+                endpoint,
+            )
+            .map_err(display)?;
+            let archive_audit = ObjectStore::open(&self.archive_root, self.workspace.workspace_id)
+                .map_err(display)?;
+            let manifests = archive_audit.committed_manifests().map_err(display)?;
+            let engine_store = ObjectStore::open(&self.archive_root, self.workspace.workspace_id)
+                .map_err(display)?;
+            let (mut engine, _) = ShardedHotEngine::open_enrolled_projection(
+                engine_store,
+                self.workspace.lineage_digest,
+                self.workspace.catalog_document_id,
+                &graph,
+                &receipts,
+                &manifests,
+            )
+            .map_err(display)?;
+
+            // A manifest may be durably published immediately before the
+            // process dies, while its accepted-history record is necessarily
+            // absent. Authenticated recovery first replays the existing
+            // history; ordinary production staging then admits any complete
+            // archive-only commit marker. Repeated deterministic passes cover
+            // BatchId order differing from dependency/acceptance order.
+            for _ in 0..=manifests.len() {
+                let before = engine
+                    .accepted_frontier_root()
+                    .map_err(display)?
+                    .acceptance_sequence();
+                for manifest in &manifests {
+                    if engine.accepted_batch_evidence(manifest.batch_id()).is_ok() {
+                        continue;
+                    }
+                    let outcome = engine
+                        .stage_archive_batch(manifest.batch_id())
+                        .map_err(display)?;
+                    if !matches!(
+                        outcome.disposition(),
+                        BatchDisposition::Accepted { .. }
+                            | BatchDisposition::DuplicateAccepted { .. }
+                            | BatchDisposition::IncompleteStaged { .. }
+                    ) {
+                        return Err(format!(
+                            "coordinator reopen rejected durable manifest {}: {:?}",
+                            manifest.batch_id(),
+                            outcome.disposition()
+                        ));
+                    }
+                }
+                let after = engine
+                    .accepted_frontier_root()
+                    .map_err(display)?
+                    .acceptance_sequence();
+                if after == before {
+                    break;
+                }
+            }
+            let accepted = engine
+                .accepted_frontier_root()
+                .map_err(display)?
+                .acceptance_sequence();
+            if accepted != manifests.len() as u64 {
+                return Err(format!(
+                    "coordinator reopen accepted {accepted} of {} durable manifests",
+                    manifests.len()
+                ));
+            }
+
+            let archive = ObjectStore::open(&self.archive_root, self.workspace.workspace_id)
+                .map_err(display)?;
+            let runtime_root =
+                ApplicationRuntimeRoot::open_for_harness(&self.runtime_path).map_err(display)?;
+            let source = RebuildSource::new(&engine, &archive).map_err(display)?;
+            let database = SqliteFrontier::open_or_rebuild(
+                &self.database_path,
+                &runtime_root,
+                ProjectionClaim::current(
+                    self.workspace.workspace_id,
+                    self.workspace.lineage_digest,
+                ),
+                source,
+            )
+            .map_err(display)?
+            .database;
+            let source = RebuildSource::new(&engine, &archive).map_err(display)?;
+            let tail = TailOverlay::from_durable(&database, &source).map_err(display)?;
+            self.graph = Some(graph);
+            self.receipts = Some(receipts);
+            self.archive = Some(archive);
+            self.engine = Some(engine);
+            self.runtime_root = Some(runtime_root);
+            self.database = Some(database);
+            self.tail = Some(tail);
+            self.crashed_observation = None;
+            Ok(())
+        }
+
+        fn recover_reopened(&mut self, fault: Option<CoordinatorFault>) -> Result<(), String> {
+            if let Some(point) = fault {
+                install_fault(point);
+            }
+            let graph = self.graph.as_ref().ok_or("coordinator graph is closed")?;
+            let receipts = self
+                .receipts
+                .as_ref()
+                .ok_or("coordinator receipts are closed")?;
+            let engine = self.engine.as_mut().ok_or("coordinator engine is closed")?;
+            loop {
+                let work = engine
+                    .projection_work_index()
+                    .map_err(display)?
+                    .ready_page(None, 1)
+                    .map_err(display)?
+                    .work()
+                    .first()
+                    .cloned();
+                let Some(work) = work else {
+                    break;
+                };
+                if let Err(error) = super::fault(OperationalFaultPoint::BeforeProjection) {
+                    self.last_outcome = Some(CoordinatorRunOutcome::FailedClosed {
+                        phase: format!("{:?}", error.phase()),
+                    });
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                    return Ok(());
+                }
+                if let Err(_error) = super::super::projection::execute_manifested_projection_work(
+                    graph, receipts, engine, &work,
+                ) {
+                    self.last_outcome = Some(CoordinatorRunOutcome::FailedClosed {
+                        phase: format!("{:?}", super::OperationalPhase::ProjectionDrain),
+                    });
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                    return Ok(());
+                }
+                if let Err(error) = super::fault(OperationalFaultPoint::AfterProjection) {
+                    self.last_outcome = Some(CoordinatorRunOutcome::FailedClosed {
+                        phase: format!("{:?}", error.phase()),
+                    });
+                    if let Some(point) = fault {
+                        self.durable_boundary = boundary_for_fault(point);
+                    }
+                    return Ok(());
+                }
+            }
+            self.last_outcome = Some(CoordinatorRunOutcome::Complete);
+            self.durable_boundary = CoordinatorDurableBoundary::Complete;
+            Ok(())
+        }
+
+        fn sqlite(&mut self, mutation: &CoordinatorSqliteMutation) -> Result<(), String> {
+            match mutation {
+                CoordinatorSqliteMutation::Reopen => self.reopen_sqlite(),
+                CoordinatorSqliteMutation::Delete => {
+                    self.close_sqlite();
+                    match fs::remove_file(&self.database_path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(io(error)),
+                    }
+                }
+                CoordinatorSqliteMutation::Truncate { len } => {
+                    self.close_sqlite();
+                    let file = fs::OpenOptions::new()
+                        .write(true)
+                        .open(&self.database_path)
+                        .map_err(io)?;
+                    file.set_len(u64::try_from(*len).map_err(display)?)
+                        .map_err(io)
+                }
+                CoordinatorSqliteMutation::Corrupt { offset, mask } => {
+                    self.close_sqlite();
+                    let mut file = fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&self.database_path)
+                        .map_err(io)?;
+                    let len =
+                        usize::try_from(file.metadata().map_err(io)?.len()).map_err(display)?;
+                    if *offset >= len {
+                        return Err("SQLite corruption offset is outside the file".into());
+                    }
+                    file.seek(SeekFrom::Start(u64::try_from(*offset).map_err(display)?))
+                        .map_err(io)?;
+                    let mut byte = [0_u8; 1];
+                    file.read_exact(&mut byte).map_err(io)?;
+                    byte[0] ^= *mask;
+                    file.seek(SeekFrom::Start(u64::try_from(*offset).map_err(display)?))
+                        .map_err(io)?;
+                    file.write_all(&byte).map_err(io)?;
+                    file.sync_all().map_err(io)
+                }
+            }
+        }
+
+        fn close_sqlite(&mut self) {
+            self.tail.take();
+            self.database.take();
+        }
+
+        fn reopen_sqlite(&mut self) -> Result<(), String> {
+            self.close_sqlite();
+            let engine = self.engine.as_ref().ok_or("coordinator engine is closed")?;
+            let archive = self
+                .archive
+                .as_ref()
+                .ok_or("coordinator archive is closed")?;
+            let runtime_root = self
+                .runtime_root
+                .as_ref()
+                .ok_or("coordinator runtime root is closed")?;
+            let source = RebuildSource::new(engine, archive).map_err(display)?;
+            let database = SqliteFrontier::open_or_rebuild(
+                &self.database_path,
+                runtime_root,
+                ProjectionClaim::current(
+                    self.workspace.workspace_id,
+                    self.workspace.lineage_digest,
+                ),
+                source,
+            )
+            .map_err(display)?
+            .database;
+            let source = RebuildSource::new(engine, archive).map_err(display)?;
+            let tail = TailOverlay::from_durable(&database, &source).map_err(display)?;
+            self.database = Some(database);
+            self.tail = Some(tail);
+            Ok(())
+        }
+
+        fn assert_oracle(&mut self, oracle: &CoordinatorOracle) -> Result<(), String> {
+            let observed = self.observation()?;
+            let frontiers_match = observed
+                .sqlite_frontier_digest
+                .as_deref()
+                .is_some_and(|sqlite| sqlite == observed.accepted_frontier_digest);
+            let scalar_matches = oracle
+                .accepted_sequence
+                .is_none_or(|value| value == observed.accepted_sequence)
+                && oracle
+                    .accepted_frontier_digest
+                    .as_ref()
+                    .is_none_or(|value| value == &observed.accepted_frontier_digest)
+                && oracle
+                    .accepted_batches
+                    .as_ref()
+                    .is_none_or(|value| value == &observed.accepted_batches)
+                && oracle
+                    .sqlite_sequence
+                    .is_none_or(|value| observed.sqlite_sequence == Some(value))
+                && oracle
+                    .sqlite_frontier_digest
+                    .as_ref()
+                    .is_none_or(|value| Some(value) == observed.sqlite_frontier_digest.as_ref())
+                && oracle
+                    .sqlite_row_digest
+                    .as_ref()
+                    .is_none_or(|value| Some(value) == observed.sqlite_row_digest.as_ref())
+                && oracle
+                    .frontiers_match
+                    .is_none_or(|value| value == frontiers_match)
+                && oracle
+                    .pending_projection_work
+                    .is_none_or(|value| value == observed.pending_projection_work)
+                && oracle
+                    .tail_unapplied_batches
+                    .is_none_or(|value| value == observed.tail_unapplied_batches)
+                && oracle
+                    .tail_retained_bytes
+                    .is_none_or(|value| value == observed.tail_retained_bytes)
+                && oracle.handoff.is_none_or(|value| value == observed.handoff)
+                && oracle
+                    .read_gate
+                    .is_none_or(|value| value == observed.read_gate)
+                && oracle
+                    .durable_boundary
+                    .is_none_or(|value| value == observed.durable_boundary)
+                && oracle
+                    .last_outcome
+                    .as_ref()
+                    .is_none_or(|value| Some(value) == observed.last_outcome.as_ref());
+            let files_match = oracle
+                .managed_files
+                .as_ref()
+                .is_none_or(|expected| expected == &observed.managed_files)
+                && oracle
+                    .archive_files
+                    .as_ref()
+                    .is_none_or(|expected| expected == &observed.archive_files)
+                && oracle
+                    .receipt_files
+                    .as_ref()
+                    .is_none_or(|expected| expected == &observed.receipt_files)
+                && oracle
+                    .archive_file_digests
+                    .as_ref()
+                    .is_none_or(|expected| expected == &file_digests(&observed.archive_files))
+                && oracle
+                    .receipt_file_digests
+                    .as_ref()
+                    .is_none_or(|expected| expected == &file_digests(&observed.receipt_files));
+            if scalar_matches && files_match {
+                Ok(())
+            } else {
+                self.expected_failure = Some(CoordinatorExpectedState::Oracle(oracle.clone()));
+                Err(format!(
+                    "coordinator oracle mismatch: expected {oracle:?}, observed {observed:?}"
+                ))
+            }
+        }
+
+        pub(crate) fn expected_failure(&self) -> Option<CoordinatorExpectedState> {
+            self.expected_failure.clone()
+        }
+
+        pub(crate) fn assert_global_oracle(&self) -> Result<(), String> {
+            let observed = self.observation()?;
+            if observed.read_gate == CoordinatorReadGate::Open
+                && (observed.sqlite_row_digest.is_none()
+                    || observed.sqlite_sequence != Some(observed.accepted_sequence)
+                    || observed.sqlite_frontier_digest.as_deref()
+                        != Some(observed.accepted_frontier_digest.as_str()))
+            {
+                return Err(format!(
+                    "open coordinator read gate lacks exact accepted SQLite evidence: {observed:?}"
+                ));
+            }
+            if observed.last_outcome == Some(CoordinatorRunOutcome::Complete)
+                && ((observed.sqlite_sequence.is_some()
+                    && observed.read_gate != CoordinatorReadGate::Open)
+                    || observed.pending_projection_work != 0
+                    || observed.tail_unapplied_batches != 0
+                    || observed.tail_retained_bytes != 0
+                    || !matches!(
+                        observed.handoff,
+                        CoordinatorHandoffState::Released
+                            | CoordinatorHandoffState::EnrollmentPendingUnprotected
+                    ))
+            {
+                return Err(format!(
+                    "completed coordinator retained unfinished durable work: {observed:?}"
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    fn install_fault(point: CoordinatorFault) {
+        match point {
+            CoordinatorFault::AfterObjects => {
+                super::super::object_store::fail_next_publish_after_objects_for_harness()
+            }
+            CoordinatorFault::DuringSqliteApply => {
+                super::super::sqlite::fail_next_apply_during_materialization_for_harness()
+            }
+            CoordinatorFault::DuringProjection => {
+                super::super::projection::fail_next_manifested_projection_during_write_for_harness()
+            }
+            point => fail_once_at(fault_point(point).expect("ordinary coordinator fault point")),
+        }
+    }
+
+    fn fault_point(point: CoordinatorFault) -> Option<OperationalFaultPoint> {
+        Some(match point {
+            CoordinatorFault::AfterHandoff => OperationalFaultPoint::AfterHandoff,
+            CoordinatorFault::AfterPlan => OperationalFaultPoint::AfterPlan,
+            CoordinatorFault::AfterDraft => OperationalFaultPoint::AfterDraft,
+            CoordinatorFault::AfterCapture => OperationalFaultPoint::AfterCapture,
+            CoordinatorFault::AfterFinalize => OperationalFaultPoint::AfterFinalize,
+            CoordinatorFault::AfterReservation => OperationalFaultPoint::AfterReservation,
+            CoordinatorFault::AfterManifest => OperationalFaultPoint::AfterManifest,
+            CoordinatorFault::AfterStage => OperationalFaultPoint::AfterStage,
+            CoordinatorFault::AfterTailAdmission => OperationalFaultPoint::AfterTailAdmission,
+            CoordinatorFault::AfterSqliteApply => OperationalFaultPoint::AfterSqliteApply,
+            CoordinatorFault::BeforeProjection => OperationalFaultPoint::BeforeProjection,
+            CoordinatorFault::AfterProjection => OperationalFaultPoint::AfterProjection,
+            CoordinatorFault::AfterObjects
+            | CoordinatorFault::DuringSqliteApply
+            | CoordinatorFault::DuringProjection => return None,
+        })
+    }
+
+    fn boundary_for_fault(point: CoordinatorFault) -> CoordinatorDurableBoundary {
+        match point {
+            CoordinatorFault::AfterHandoff => CoordinatorDurableBoundary::AfterHandoff,
+            CoordinatorFault::AfterPlan => CoordinatorDurableBoundary::AfterPlan,
+            CoordinatorFault::AfterDraft => CoordinatorDurableBoundary::AfterDraft,
+            CoordinatorFault::AfterCapture => CoordinatorDurableBoundary::AfterCapture,
+            CoordinatorFault::AfterFinalize => CoordinatorDurableBoundary::AfterFinalize,
+            CoordinatorFault::AfterReservation => CoordinatorDurableBoundary::AfterReservation,
+            CoordinatorFault::AfterObjects => CoordinatorDurableBoundary::AfterObjects,
+            CoordinatorFault::AfterManifest => CoordinatorDurableBoundary::AfterManifest,
+            CoordinatorFault::AfterStage => CoordinatorDurableBoundary::AfterStage,
+            CoordinatorFault::AfterTailAdmission => CoordinatorDurableBoundary::AfterTailAdmission,
+            CoordinatorFault::DuringSqliteApply => CoordinatorDurableBoundary::DuringSqliteApply,
+            CoordinatorFault::AfterSqliteApply => CoordinatorDurableBoundary::AfterSqliteApply,
+            CoordinatorFault::BeforeProjection => CoordinatorDurableBoundary::BeforeProjection,
+            CoordinatorFault::DuringProjection => CoordinatorDurableBoundary::DuringProjection,
+            CoordinatorFault::AfterProjection => CoordinatorDurableBoundary::AfterProjection,
+        }
+    }
+
+    fn file_digests(files: &[ExternalFileFixture]) -> BTreeMap<String, String> {
+        files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.clone(),
+                    hex(ContentDigest::of(&file.bytes_b64.0).as_bytes()),
+                )
+            })
+            .collect()
+    }
+
+    fn pending_projection_work(engine: &ShardedHotEngine) -> Result<usize, String> {
+        let index = engine.projection_work_index().map_err(display)?;
+        let mut ready = 0_usize;
+        let mut cursor = None;
+        loop {
+            let page = index.ready_page(cursor.as_ref(), 1).map_err(display)?;
+            ready = ready.saturating_add(page.work().len());
+            let next = page.next().cloned();
+            if next.is_none() {
+                break;
+            }
+            cursor = next;
+        }
+        let mut pending = 0_usize;
+        let mut cursor = None;
+        loop {
+            let page = index
+                .pending_activation_page(cursor.as_ref(), 1)
+                .map_err(display)?;
+            pending = pending.saturating_add(
+                page.pending()
+                    .iter()
+                    .map(|entry| entry.work_ids().len())
+                    .sum::<usize>(),
+            );
+            let next = page.next().cloned();
+            if next.is_none() {
+                break;
+            }
+            cursor = next;
+        }
+        Ok(ready.saturating_add(pending))
+    }
+
+    fn frontier_digest(root: &impl serde::Serialize) -> Result<String, String> {
+        let bytes = postcard::to_allocvec(root).map_err(display)?;
+        Ok(hex(ContentDigest::of(&bytes).as_bytes()))
+    }
+
+    fn snapshot_archive(root: &Path) -> Result<Vec<ExternalFileFixture>, String> {
+        let mut files = Vec::new();
+        for directory in ["objects", "batches"] {
+            let nested = root.join(directory);
+            let mut entries = snapshot_tree(&nested, false)?;
+            for entry in &mut entries {
+                entry.path = format!("{directory}/{}", entry.path);
+            }
+            files.extend(entries);
+        }
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(files)
+    }
+
+    fn snapshot_tree(root: &Path, skip_config: bool) -> Result<Vec<ExternalFileFixture>, String> {
+        fn walk(
+            root: &Path,
+            current: &Path,
+            skip_config: bool,
+            output: &mut Vec<ExternalFileFixture>,
+        ) -> Result<(), String> {
+            let mut entries = fs::read_dir(current)
+                .map_err(io)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(io)?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let path = entry.path();
+                if entry.file_type().map_err(io)?.is_dir() {
+                    walk(root, &path, skip_config, output)?;
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(display)?
+                    .to_str()
+                    .ok_or("non-UTF-8 harness path")?
+                    .replace('\\', "/");
+                if skip_config && relative == "logseq/config.edn" {
+                    continue;
+                }
+                output.push(ExternalFileFixture {
+                    path: relative,
+                    bytes_b64: WireBytes(fs::read(path).map_err(io)?),
+                });
+            }
+            Ok(())
+        }
+        let mut output = Vec::new();
+        walk(root, root, skip_config, &mut output)?;
+        Ok(output)
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        let mut value = String::with_capacity(bytes.len().saturating_mul(2));
+        for byte in bytes {
+            value.push(DIGITS[(byte >> 4) as usize] as char);
+            value.push(DIGITS[(byte & 0x0f) as usize] as char);
+        }
+        value
+    }
+
+    fn io(error: std::io::Error) -> String {
+        error.to_string()
+    }
+
+    fn display(error: impl std::fmt::Display) -> String {
+        error.to_string()
+    }
 }
 
 #[cfg(test)]

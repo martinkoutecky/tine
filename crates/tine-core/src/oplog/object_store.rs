@@ -79,6 +79,15 @@ const BLOCK_CLAIM_GLOBAL_FILTER_BYTES: usize = 1024 * 1024;
 const MAX_BLOCK_CLAIM_RECORD_BYTES: usize = 64 * 1024;
 const MAX_BLOCK_CLAIM_PAGE_BYTES: usize = 8 * 1024 * 1024;
 
+thread_local! {
+    // This one hook is also used by the crate-private deterministic simulator.
+    // It is deliberately narrower than a general object-store fault injector:
+    // the only observable boundary is after every immutable object is durable
+    // and before the manifest commit marker is published.
+    static HARNESS_PUBLISH_FAIL_AFTER_OBJECTS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     static ENROLLED_OPEN_USE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -86,8 +95,6 @@ thread_local! {
     static ENROLLED_OPEN_ACT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
     static ENGINE_HISTORY_FAIL_BEFORE_HEAD_SWAP: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
-    static PUBLISH_FAIL_AFTER_OBJECTS: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 
@@ -98,12 +105,15 @@ pub(crate) fn fail_next_engine_history_head_swap() {
 
 #[cfg(test)]
 pub(crate) fn fail_next_publish_after_objects() {
-    PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| fail.set(true));
+    fail_next_publish_after_objects_for_harness();
 }
 
-#[cfg(test)]
+pub(crate) fn fail_next_publish_after_objects_for_harness() {
+    HARNESS_PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| fail.set(true));
+}
+
 fn publish_after_objects_hook() -> Result<(), StoreError> {
-    PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| {
+    HARNESS_PUBLISH_FAIL_AFTER_OBJECTS.with(|fail| {
         if fail.replace(false) {
             Err(StoreError::Io(std::io::Error::other(
                 "deterministic failure after object publication",
@@ -112,11 +122,6 @@ fn publish_after_objects_hook() -> Result<(), StoreError> {
             Ok(())
         }
     })
-}
-
-#[cfg(not(test))]
-fn publish_after_objects_hook() -> Result<(), StoreError> {
-    Ok(())
 }
 
 #[cfg(test)]

@@ -132,9 +132,12 @@ pub use semantic::{
     MAX_LOGICAL_PAGE_NAME_BYTES, PAGE_NAME_KEY_VERSION, SEMANTIC_EFFECT_SCHEMA_VERSION,
 };
 pub use simulator::{
-    DeterministicSimulator, FailureCapsule, FailureIdentity, MinimizedScenario, Scenario,
-    ScenarioAction, ScenarioDevice, ScenarioError, SimulatorDeviceState,
-    FAILURE_CAPSULE_SCHEMA_VERSION, SCENARIO_SCHEMA_VERSION,
+    CoordinatorAction, CoordinatorDurableBoundary, CoordinatorExpectedState,
+    CoordinatorFailureWitness, CoordinatorFault, CoordinatorHandoffState, CoordinatorObservation,
+    CoordinatorOracle, CoordinatorOracleIdentity, CoordinatorReadGate, CoordinatorRunOutcome,
+    CoordinatorSqliteMutation, DeterministicSimulator, FailureCapsule, FailureIdentity,
+    InvariantFailureKind, MinimizedScenario, Scenario, ScenarioAction, ScenarioDevice,
+    ScenarioError, SimulatorDeviceState, FAILURE_CAPSULE_SCHEMA_VERSION, SCENARIO_SCHEMA_VERSION,
 };
 pub use sqlite::{
     AcceptedBatchEvent, ApplicationRuntimeRoot, ApplyDisposition, ForensicEvidence,

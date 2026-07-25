@@ -1,10 +1,12 @@
 use sha2::{Digest, Sha256};
 use tine_core::oplog::simulator::{
-    ByteMutation, DeterministicSimulator, ExpectedWorkspaceState, ExternalFileFixture,
-    IngressExpectation, InvariantAssertion, InvariantPredicate, ProviderLocation, ProviderSource,
-    ProviderTree, ReplicaExpectation, ScenarioError, ScenarioWorkspace, ScheduledAction,
-    ScheduledActionKind, SimulatorBlockedEvidence, SimulatorDeviceState, StageExpectation,
-    WireBatch, WireBytes, WireItem, MAX_PROVIDER_RESCAN_BYTES, MAX_PROVIDER_RESCAN_DEPTH,
+    ByteMutation, CoordinatorAction, CoordinatorFault, CoordinatorHandoffState, CoordinatorOracle,
+    CoordinatorReadGate, CoordinatorRunOutcome, CoordinatorSqliteMutation, DeterministicSimulator,
+    ExpectedWorkspaceState, ExternalFileFixture, IngressExpectation, InvariantAssertion,
+    InvariantPredicate, ProviderLocation, ProviderSource, ProviderTree, ReplicaExpectation,
+    ScenarioError, ScenarioWorkspace, ScheduledAction, ScheduledActionKind,
+    SimulatorBlockedEvidence, SimulatorDeviceState, StageExpectation, WireBatch, WireBytes,
+    WireItem, MAX_PROVIDER_RESCAN_BYTES, MAX_PROVIDER_RESCAN_DEPTH,
 };
 use tine_core::oplog::{
     AuthorBatch, BatchId, BlockId, BlockLocation, CrdtPeerId, DeviceId, DocumentId, LineageDigest,
@@ -644,8 +646,8 @@ fn reducer_preserves_the_first_exact_invariant_signature() {
     )
     .unwrap();
     let minimized = scenario.minimize_failure().unwrap();
-    match minimized.capsule.failure {
-        tine_core::oplog::FailureIdentity::Invariant(signature) => {
+    match &minimized.capsule.failure {
+        tine_core::oplog::FailureIdentity::Invariant { signature, .. } => {
             assert_eq!(signature.predicate, InvariantPredicate::NoVisibleEffect);
             assert_eq!(signature.assertion_or_event_id, first_assertion);
         }
@@ -2478,7 +2480,7 @@ fn filesystem_provider_fixture_executes_real_transport_and_terminal_oracles() {
 }
 
 #[test]
-fn fixture_seed_corpus_is_canonical_v4_json() {
+fn fixture_seed_corpus_is_canonical_v5_json() {
     let fixtures = [
         include_str!("fixtures/oplog-simulator/object-before-manifest.scenario.json"),
         include_str!("fixtures/oplog-simulator/manifest-before-objects-and-missing.scenario.json"),
@@ -2495,12 +2497,31 @@ fn fixture_seed_corpus_is_canonical_v4_json() {
         include_str!("fixtures/oplog-simulator/moved-away-move-delete.scenario.json"),
         include_str!("fixtures/oplog-simulator/filesystem-provider-transport.scenario.json"),
         include_str!("fixtures/oplog-simulator/page-name-conflict-restart.scenario.json"),
+        include_str!("fixtures/oplog-simulator/coordinator-v5-nested-retry.scenario.json"),
     ];
     for fixture in fixtures {
         let fixture = fixture.trim_end();
         let scenario = Scenario::decode(fixture.as_bytes()).unwrap();
         assert_eq!(scenario.encode().unwrap(), fixture.as_bytes());
     }
+}
+
+#[test]
+fn coordinator_v5_fixture_replays_real_storage_retry() {
+    let scenario = Scenario::decode(
+        include_str!("fixtures/oplog-simulator/coordinator-v5-nested-retry.scenario.json")
+            .trim_end()
+            .as_bytes(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+    let observed = simulator.coordinator_observations().unwrap();
+    let alpha = observed.get("alpha").unwrap();
+    assert_eq!(alpha.accepted_sequence, 2);
+    assert_eq!(alpha.sqlite_sequence, Some(2));
+    assert_eq!(alpha.handoff, CoordinatorHandoffState::Released);
+    assert_eq!(alpha.pending_projection_work, 0);
 }
 
 fn page_name_conflict_restart_scenario() -> Scenario {
@@ -2697,8 +2718,8 @@ fn page_name_conflict_restart_uses_typed_durable_evidence() {
 }
 
 #[test]
-fn scenario_decode_rejects_prior_v3_and_future_v5() {
-    for version in [3, 5] {
+fn scenario_decode_rejects_all_non_v5_schema_versions() {
+    for version in [0, 1, 2, 3, 4, 6, u32::MAX] {
         let bytes = format!(
             "{{\"scenario_schema_version\":{version},\"family\":\"version-gate\",\"seed\":1,\
              \"workspace\":{{\"workspace_id\":\"00000000-0000-0000-0000-000000000001\",\
@@ -2713,4 +2734,976 @@ fn scenario_decode_rejects_prior_v3_and_future_v5() {
             "accepted v{version}"
         );
     }
+}
+
+#[test]
+fn coordinator_v5_nested_success_and_projection_fault_are_replayable() {
+    let ids = Ids::new();
+    let scenario = Scenario::from_schedule(
+        "coordinator-v5-nested-success-and-projection-fault",
+        50_005,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: "content/pages/deep/projects/a.md".into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: Some(WireBytes(
+                            b"{:pages-directory \"content/pages\"\n:journals-directory \"content/journals\"}\n"
+                                .to_vec(),
+                        )),
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalWrite {
+                        path: "content/pages/deep/projects/a.md".into(),
+                        bytes_b64: WireBytes(b"- root edited\r\n\t- child edited\r\n".to_vec()),
+                    },
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec!["content/pages/deep/projects/a.md".into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                4,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            sqlite_sequence: Some(2),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::Complete),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                5,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Checkpoint {
+                        name: "before-projection-fault".into(),
+                    },
+                },
+            ),
+            event(
+                6,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalWrite {
+                        path: "content/pages/deep/projects/a.md".into(),
+                        bytes_b64: WireBytes(b"- root durable\n\t- child durable\n".to_vec()),
+                    },
+                },
+            ),
+            event(
+                7,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec!["content/pages/deep/projects/a.md".into()],
+                        fault: Some(CoordinatorFault::BeforeProjection),
+                    },
+                },
+            ),
+            event(
+                8,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            sqlite_sequence: Some(2),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::HeldFailedClosed),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::FailedClosed {
+                                phase: "ArchiveStage".into(),
+                            }),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                9,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Retry { fault: None },
+                },
+            ),
+            event(
+                10,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(3),
+                            sqlite_sequence: Some(3),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(1),
+                            handoff: Some(CoordinatorHandoffState::HeldFailedClosed),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::FailedClosed {
+                                phase: "ProjectionDrain".into(),
+                            }),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                11,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Retry { fault: None },
+                },
+            ),
+            event(
+                12,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(3),
+                            sqlite_sequence: Some(3),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::Complete),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let encoded = scenario.encode().unwrap();
+    assert_eq!(Scenario::decode(&encoded).unwrap(), scenario);
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+    let observation = simulator
+        .coordinator_observations()
+        .unwrap()
+        .remove("alpha")
+        .unwrap();
+    assert_eq!(observation.accepted_sequence, 3);
+    assert_eq!(observation.sqlite_sequence, Some(3));
+    assert!(observation.sqlite_row_digest.is_some());
+    assert_eq!(observation.pending_projection_work, 0);
+}
+
+#[test]
+fn coordinator_v5_sqlite_delete_truncate_and_corruption_rebuild_exactly() {
+    let ids = Ids::new();
+    let path = "pages/deep/sqlite/rebuild.md";
+    let scenario = Scenario::from_schedule(
+        "coordinator-v5-sqlite-rebuild",
+        50_102,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: path.into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: None,
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalWrite {
+                        path: path.into(),
+                        bytes_b64: WireBytes(b"- durable sqlite rebuild\n\t- nested\n".to_vec()),
+                    },
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec![path.into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                4,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Checkpoint {
+                        name: "durable-materialization".into(),
+                    },
+                },
+            ),
+            event(
+                5,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Delete,
+                    },
+                },
+            ),
+            event(
+                6,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            frontiers_match: Some(false),
+                            read_gate: Some(CoordinatorReadGate::Closed),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                7,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Reopen,
+                    },
+                },
+            ),
+            event(
+                8,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::AssertCheckpoint {
+                        name: "durable-materialization".into(),
+                    },
+                },
+            ),
+            event(
+                9,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Truncate { len: 0 },
+                    },
+                },
+            ),
+            event(
+                10,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Reopen,
+                    },
+                },
+            ),
+            event(
+                11,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::AssertCheckpoint {
+                        name: "durable-materialization".into(),
+                    },
+                },
+            ),
+            event(
+                12,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Corrupt {
+                            offset: 0,
+                            mask: 0xff,
+                        },
+                    },
+                },
+            ),
+            event(
+                13,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Sqlite {
+                        mutation: CoordinatorSqliteMutation::Reopen,
+                    },
+                },
+            ),
+            event(
+                14,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::AssertCheckpoint {
+                        name: "durable-materialization".into(),
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+}
+
+#[test]
+fn coordinator_v5_stale_plan_forces_recapture_before_publication() {
+    let ids = Ids::new();
+    let path = "pages/deep/stale/capture.md";
+    let scenario = Scenario::from_schedule(
+        "coordinator-v5-stale-plan-recapture",
+        50_203,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: path.into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: None,
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalWrite {
+                        path: path.into(),
+                        bytes_b64: WireBytes(b"- stale first\n\t- nested\n".to_vec()),
+                    },
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::InterfereAt {
+                        point: CoordinatorFault::AfterPlan,
+                        path: path.into(),
+                        bytes_b64: WireBytes(b"- stale replacement\n\t- nested\n".to_vec()),
+                    },
+                },
+            ),
+            event(
+                4,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec![path.into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                5,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(1),
+                            sqlite_sequence: Some(1),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::PrepublicationError {
+                                phase: "Capture".into(),
+                            }),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                6,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec![path.into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                7,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            sqlite_sequence: Some(2),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::Complete),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+}
+
+#[test]
+fn coordinator_v5_rename_then_deletion_reconciles_exact_managed_paths() {
+    let ids = Ids::new();
+    let old = "pages/deep/rename/old.md";
+    let new = "pages/deep/rename/new.md";
+    let scenario = Scenario::from_schedule(
+        "coordinator-v5-rename-delete",
+        50_304,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: old.into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: None,
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalRename {
+                        from_path: old.into(),
+                        to_path: new.into(),
+                    },
+                },
+            ),
+            event(
+                3,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec![old.into(), new.into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                4,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            sqlite_sequence: Some(2),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::Complete),
+                            managed_files: Some(vec![ExternalFileFixture {
+                                path: new.into(),
+                                bytes_b64: WireBytes(b"- root\n\t- child\n".to_vec()),
+                            }]),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                5,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::ExternalDelete { path: new.into() },
+                },
+            ),
+            event(
+                6,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Execute {
+                        paths: vec![new.into()],
+                        fault: None,
+                    },
+                },
+            ),
+            event(
+                7,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(2),
+                            sqlite_sequence: Some(2),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::HeldFailedClosed),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::FailedClosed {
+                                phase: "ArchiveStage".into(),
+                            }),
+                            managed_files: Some(Vec::new()),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+            event(
+                8,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Retry { fault: None },
+                },
+            ),
+            event(
+                9,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(3),
+                            sqlite_sequence: Some(3),
+                            frontiers_match: Some(true),
+                            pending_projection_work: Some(0),
+                            handoff: Some(CoordinatorHandoffState::Released),
+                            read_gate: Some(CoordinatorReadGate::Open),
+                            last_outcome: Some(CoordinatorRunOutcome::Complete),
+                            managed_files: Some(Vec::new()),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+    simulator.run().unwrap();
+}
+
+#[test]
+fn coordinator_v5_crash_reopen_reconstructs_every_durable_boundary_idempotently() {
+    let boundaries = std::iter::once((CoordinatorFault::AfterObjects, false))
+        .chain(
+            [
+                CoordinatorFault::AfterManifest,
+                CoordinatorFault::AfterStage,
+                CoordinatorFault::DuringSqliteApply,
+                CoordinatorFault::AfterSqliteApply,
+                CoordinatorFault::BeforeProjection,
+                CoordinatorFault::DuringProjection,
+                CoordinatorFault::AfterProjection,
+            ]
+            .into_iter()
+            .map(|fault| (fault, true)),
+        )
+        .collect::<Vec<_>>();
+    let ids = Ids::new();
+    let bytes = WireBytes(b"- durable boundary\n\t- nested durable boundary\n".to_vec());
+
+    for (index, (fault, published)) in boundaries.into_iter().enumerate() {
+        let path = format!("pages/deep/fault-boundaries/{index}.md");
+        let resume = if published {
+            CoordinatorAction::Retry { fault: None }
+        } else {
+            CoordinatorAction::Execute {
+                paths: vec![path.clone()],
+                fault: None,
+            }
+        };
+        let scenario = Scenario::from_schedule(
+            format!("coordinator-v5-fault-boundary-{index}"),
+            50_400 + index as u64,
+            ids.workspace(),
+            vec![device("alpha", 1)],
+            Vec::new(),
+            Vec::new(),
+            vec![
+                event(
+                    1,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Setup {
+                            managed_path: path.clone(),
+                            kind: ManagedTextKind::Page,
+                            config_edn: None,
+                        },
+                    },
+                ),
+                event(
+                    2,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::ExternalWrite {
+                            path: path.clone(),
+                            bytes_b64: bytes.clone(),
+                        },
+                    },
+                ),
+                event(
+                    3,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Execute {
+                            paths: vec![path.clone()],
+                            fault: Some(fault),
+                        },
+                    },
+                ),
+                event(
+                    4,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Crash,
+                    },
+                ),
+                event(
+                    5,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Assert {
+                            oracle: CoordinatorOracle {
+                                handoff: Some(
+                                    CoordinatorHandoffState::EnrollmentPendingUnprotected,
+                                ),
+                                durable_boundary: Some(match fault {
+                                    CoordinatorFault::AfterObjects => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::AfterObjects
+                                    }
+                                    CoordinatorFault::AfterManifest => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::AfterManifest
+                                    }
+                                    CoordinatorFault::AfterStage => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::AfterStage
+                                    }
+                                    CoordinatorFault::DuringSqliteApply => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::
+                                            DuringSqliteApply
+                                    }
+                                    CoordinatorFault::AfterSqliteApply => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::
+                                            AfterSqliteApply
+                                    }
+                                    CoordinatorFault::BeforeProjection => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::
+                                            BeforeProjection
+                                    }
+                                    CoordinatorFault::DuringProjection => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::
+                                            DuringProjection
+                                    }
+                                    CoordinatorFault::AfterProjection => {
+                                        tine_core::oplog::CoordinatorDurableBoundary::
+                                            AfterProjection
+                                    }
+                                    _ => unreachable!(),
+                                }),
+                                ..CoordinatorOracle::default()
+                            },
+                        },
+                    },
+                ),
+                event(
+                    6,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Reopen,
+                    },
+                ),
+                event(
+                    7,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: resume,
+                    },
+                ),
+                event(
+                    8,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Assert {
+                            oracle: CoordinatorOracle {
+                                accepted_sequence: Some(2),
+                                sqlite_sequence: Some(2),
+                                frontiers_match: Some(true),
+                                pending_projection_work: Some(0),
+                                tail_unapplied_batches: Some(0),
+                                tail_retained_bytes: Some(0),
+                                handoff: Some(
+                                    CoordinatorHandoffState::EnrollmentPendingUnprotected,
+                                ),
+                                read_gate: Some(CoordinatorReadGate::Open),
+                                last_outcome: Some(CoordinatorRunOutcome::Complete),
+                                managed_files: Some(vec![ExternalFileFixture {
+                                    path: path.clone(),
+                                    bytes_b64: bytes.clone(),
+                                }]),
+                                ..CoordinatorOracle::default()
+                            },
+                        },
+                    },
+                ),
+                event(
+                    9,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Checkpoint {
+                            name: "recovered".into(),
+                        },
+                    },
+                ),
+                event(
+                    10,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::Retry { fault: None },
+                    },
+                ),
+                event(
+                    11,
+                    ScheduledActionKind::Coordinator {
+                        device: "alpha".into(),
+                        action: CoordinatorAction::AssertCheckpoint {
+                            name: "recovered".into(),
+                        },
+                    },
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let mut simulator = DeterministicSimulator::new(scenario).unwrap();
+        simulator.run().unwrap();
+    }
+}
+
+#[test]
+fn coordinator_v5_failure_capsule_keeps_exact_durable_witness() {
+    let ids = Ids::new();
+    let path = "pages/capsule/nested.md";
+    let scenario = Scenario::from_schedule(
+        "coordinator-v5-failure-capsule",
+        50_512,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: path.into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: None,
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(999),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let minimized = scenario.minimize_failure().unwrap();
+    match &minimized.capsule.failure {
+        tine_core::oplog::FailureIdentity::Invariant { signature, .. } => {
+            assert_eq!(
+                signature.predicate,
+                InvariantPredicate::CoordinatorDurableState
+            );
+            assert_eq!(signature.assertion_or_event_id, 2);
+        }
+        other => panic!("unexpected failure identity: {other:?}"),
+    }
+    let witness = minimized.capsule.observed_coordinator.get("alpha").unwrap();
+    assert_eq!(witness.accepted_sequence, 1);
+    assert!(witness.managed_file_digests.contains_key(path));
+    assert_eq!(minimized.capsule.minimized_scenario, minimized.scenario);
+    assert!(!minimized.capsule.failure_message.is_empty());
+    assert!(minimized.capsule.expected_coordinator.contains_key("alpha"));
+    assert_eq!(
+        minimized.capsule.durable_boundaries.get("alpha"),
+        Some(&tine_core::oplog::CoordinatorDurableBoundary::Setup)
+    );
+    let encoded = minimized.capsule.encode().unwrap();
+    let decoded = tine_core::oplog::simulator::FailureCapsule::decode(&encoded).unwrap();
+    assert_eq!(decoded, minimized.capsule);
+    assert_eq!(decoded.replay().unwrap(), decoded.failure);
+}
+
+#[test]
+fn coordinator_oracle_capsules_match_semantics_across_host_bound_receipts() {
+    let ids = Ids::new();
+    let scenario = Scenario::from_schedule(
+        "coordinator-oracle-stable-capsule-identity",
+        50_513,
+        ids.workspace(),
+        vec![device("alpha", 1)],
+        Vec::new(),
+        Vec::new(),
+        vec![
+            event(
+                1,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Setup {
+                        managed_path: "pages/capsule/host-bound-receipt.md".into(),
+                        kind: ManagedTextKind::Page,
+                        config_edn: None,
+                    },
+                },
+            ),
+            event(
+                2,
+                ScheduledActionKind::Coordinator {
+                    device: "alpha".into(),
+                    action: CoordinatorAction::Assert {
+                        oracle: CoordinatorOracle {
+                            accepted_sequence: Some(999),
+                            // An empty expected set deliberately fails against
+                            // the durable enrollment receipt. Its bytes bind
+                            // the temporary graph/receipt-root identity.
+                            receipt_files: Some(Vec::new()),
+                            ..CoordinatorOracle::default()
+                        },
+                    },
+                },
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let first = scenario.minimize_failure().unwrap();
+    let second = scenario.minimize_failure().unwrap();
+    assert_eq!(first.capsule.failure, second.capsule.failure);
+    assert_eq!(first.capsule.replay().unwrap(), first.capsule.failure);
+
+    // Keep both random roots live concurrently so their graph/receipt
+    // filesystem identities cannot be reused between observations.
+    let mut first_root = DeterministicSimulator::new(scenario.clone()).unwrap();
+    let mut second_root = DeterministicSimulator::new(scenario.clone()).unwrap();
+    let first_error = first_root.run().unwrap_err();
+    let second_error = second_root.run().unwrap_err();
+    assert_eq!(
+        first_error.failure_identity(),
+        second_error.failure_identity()
+    );
+    let first_observed = first_root
+        .coordinator_observations()
+        .unwrap()
+        .remove("alpha")
+        .unwrap();
+    let second_observed = second_root
+        .coordinator_observations()
+        .unwrap()
+        .remove("alpha")
+        .unwrap();
+    assert!(!first_observed.receipt_files.is_empty());
+    assert!(!second_observed.receipt_files.is_empty());
+    assert_ne!(first_observed.receipt_files, second_observed.receipt_files);
+    assert!(!first
+        .capsule
+        .observed_coordinator
+        .get("alpha")
+        .unwrap()
+        .receipt_files
+        .is_empty());
+    let directory_identity = b"directory_identity";
+    assert!(first
+        .capsule
+        .observed_coordinator
+        .get("alpha")
+        .unwrap()
+        .receipt_files
+        .iter()
+        .any(|file| {
+            file.bytes_b64
+                .0
+                .windows(directory_identity.len())
+                .any(|bytes| bytes == directory_identity)
+        }));
+    assert!(matches!(
+        first.capsule.expected_coordinator.get("alpha"),
+        Some(tine_core::oplog::CoordinatorExpectedState::Oracle(CoordinatorOracle {
+            receipt_files: Some(files),
+            ..
+        })) if files.is_empty()
+    ));
+
+    let mut different_oracle = scenario.clone();
+    let ScheduledActionKind::Coordinator {
+        action: CoordinatorAction::Assert { oracle },
+        ..
+    } = &mut different_oracle.actions[1].action
+    else {
+        panic!("stable identity scenario must end with a coordinator oracle");
+    };
+    oracle.accepted_sequence = Some(998);
+    let different = different_oracle.minimize_failure().unwrap();
+    assert_ne!(first.capsule.failure, different.capsule.failure);
 }
