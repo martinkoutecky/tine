@@ -77,3 +77,4 @@ see the project `CLAUDE.md`.
 | [0048](0048-compatible-managed-sync.md) | Managed sync uses operation truth with an optional shared Markdown projection | Superseded by 0049 |
 | [0049](0049-oplog-first-sparse-storage.md) | Oplog-first sparse storage uses catalog and stable home-page shards | Accepted — implementation/LocalActive gated |
 | [0050](0050-private-enrollment-checkpoint-authority.md) | Private enrollment authority authenticates bounded immutable checkpoints | Accepted |
+| [0051](0051-single-user-multipart-bootstrap-authority.md) | Single-user multipart bootstrap authority is one commit-last V1 publication | Accepted — inactive format contract |
