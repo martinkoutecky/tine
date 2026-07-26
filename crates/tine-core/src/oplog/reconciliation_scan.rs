@@ -1,4 +1,4 @@
-//! Test-only scan discovery substrate.
+//! Inactive reconciliation scheduling and scan substrate.
 //!
 //! This module deliberately has no production caller and exposes no write,
 //! import, projection, watcher, or continuing filesystem authority. A stable
@@ -17,6 +17,7 @@ use super::{
     PortablePathKey, ProjectionWorkTarget,
 };
 use crate::graph_text_scope::GraphTextScopeBinding;
+#[cfg(test)]
 use crate::model::Graph;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1286,6 +1287,7 @@ impl fmt::Display for GraphTextScanFailure {
 
 impl std::error::Error for GraphTextScanFailure {}
 
+#[cfg(test)]
 pub(crate) fn scan_graph_text<S: AuthenticatedExpectedPathSource>(
     graph: &Graph,
     source: &S,
@@ -1294,6 +1296,7 @@ pub(crate) fn scan_graph_text<S: AuthenticatedExpectedPathSource>(
     scan_graph_text_with_hook(graph, source, limits, || Ok(()))
 }
 
+#[cfg(test)]
 pub(crate) fn scan_graph_text_with_hook<S, H>(
     graph: &Graph,
     source: &S,
