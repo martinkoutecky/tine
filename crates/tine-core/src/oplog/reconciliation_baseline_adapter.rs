@@ -157,6 +157,11 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
     let mut directory_page_path_bytes = 0_usize;
     for (path, resource) in evidence.directories {
         let path = BaselineDirectoryPath::parse(path.clone())?;
+        let resource = if path.as_str().is_empty() {
+            ContentDigest::from_bytes(*scan_identity.graph_resource.as_bytes())
+        } else {
+            *resource
+        };
         observe_page_row(
             &mut instrumentation,
             &directory_page,
@@ -165,10 +170,7 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
             mem::size_of::<BaselineScanDirectory>(),
         );
         directory_page_path_bytes = directory_page_path_bytes.saturating_add(path.as_str().len());
-        let row = BaselineScanDirectory {
-            path,
-            resource: *resource,
-        };
+        let row = BaselineScanDirectory { path, resource };
         rows_identity.observe_directory(&row);
         directory_page.push(row);
         if directory_page.len() == MAX_BASELINE_WRITE_ROWS {
@@ -264,12 +266,18 @@ pub(crate) fn finish_stable_scan_baseline<S: AuthenticatedExpectedPathSource>(
         ));
     }
     require_exact_baseline_binding(baseline, &pending.scan_identity)?;
-    require_current_scan_binding(&pending.scan_identity, source, true)?;
 
     let candidate_count = pending.scan_identity.candidate_count;
     let diagnostic_count = pending.scan_identity.diagnostic_count;
     let can_promote =
         candidate_count == 0 && diagnostic_count == 0 && terminal == BaselineTerminalOutcome::Noop;
+    // Diagnostic settlement is bound to the sealed scan and appended-row
+    // identities, even when a successful import has intentionally advanced
+    // expected authority. Clean promotion alone requires the scanned source
+    // identity to remain current through finish.
+    if can_promote {
+        require_current_scan_binding(&pending.scan_identity, source, true)?;
+    }
     let (outcome, complete_with_candidates) = match terminal {
         BaselineTerminalOutcome::Noop if can_promote => (BaselineEpochOutcome::Noop, false),
         BaselineTerminalOutcome::Noop => (BaselineEpochOutcome::Incomplete, false),
@@ -811,6 +819,13 @@ mod tests {
         (source, pending)
     }
 
+    #[test]
+    fn pending_baseline_is_a_constant_sized_identity_not_a_retained_scan() {
+        assert!(!std::mem::needs_drop::<PendingStableScanBaseline>());
+        assert!(std::mem::size_of::<PendingStableScanBaseline>() <= 4096);
+        assert!(std::mem::needs_drop::<StableGraphTextScan>());
+    }
+
     fn install_clean(fixture: &mut Fixture, generation: u64) -> BaselineHead {
         let scan = one_path_scan(fixture, generation, false);
         let (source, pending) = append(fixture, &scan, generation * 10);
@@ -858,6 +873,8 @@ mod tests {
         let mut fixture = Fixture::new("candidate-complete");
         let scan = one_path_scan(&fixture, 1, true);
         let (source, pending) = append(&mut fixture, &scan, 10);
+        source.set(expected_binding(2));
+        source.set_source_commitment(ContentDigest::of(b"post-import-source"));
         assert!(matches!(
             finish_stable_scan_baseline(
                 &mut fixture.baseline,
@@ -912,7 +929,7 @@ mod tests {
         let scan = one_path_scan(&fixture, 2, false);
         let (_source, pending) = append(&mut fixture, &scan, 20);
         assert!(pending.epoch().as_i64() > clean.epoch.as_i64());
-        drop(pending);
+        let _ = pending;
         assert_eq!(fixture.baseline.head().unwrap(), clean);
     }
 

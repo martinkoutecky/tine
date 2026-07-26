@@ -70,6 +70,7 @@ pub(crate) enum ReconciliationTrigger {
     Explicit,
     ProjectionPreconditionMismatch(BTreeSet<ManagedPath>),
     BaselineUnavailable,
+    PostDrain,
 }
 
 /// Bounded diagnostics retained on one coalesced full scan.
@@ -79,6 +80,7 @@ pub(crate) enum ReconciliationFullScanReason {
     WatcherUncertain,
     Startup,
     BaselineUnavailable,
+    PostDrain,
     Periodic,
     WatcherPathOverflow,
     ProjectionPreconditionPathOverflow,
@@ -347,6 +349,9 @@ impl ReconciliationScheduler {
                 ReconciliationFullScanReason::BaselineUnavailable,
                 self.limits,
             ),
+            ReconciliationTrigger::PostDrain => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::PostDrain, self.limits),
         }
     }
 
