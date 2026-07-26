@@ -209,8 +209,20 @@ pub struct PortablePathKey(String);
 
 impl PortablePathKey {
     fn from_managed_path(path: &ManagedPath) -> Self {
-        let mut key = String::with_capacity(path.as_str().len());
-        for (index, component) in path.as_str().split('/').enumerate() {
+        Self::from_components(path.as_str())
+    }
+
+    /// Apply the canonical versioned fold to an already-validated graph text
+    /// path. Graph text includes root-level and `.markdown` documents that are
+    /// deliberately outside sparse [`ManagedPath`] syntax, but must use exactly
+    /// the same component fold rather than a second approximation.
+    pub(crate) fn from_graph_text_path(path: &str) -> Self {
+        Self::from_components(path)
+    }
+
+    fn from_components(path: &str) -> Self {
+        let mut key = String::with_capacity(path.len());
+        for (index, component) in path.split('/').enumerate() {
             if index != 0 {
                 key.push('/');
             }

@@ -23,6 +23,636 @@ fn lists_journals_and_pages() {
 }
 
 #[test]
+fn gh246_discovers_and_loads_nonempty_document_outside_configured_roots() {
+    let root = std::env::temp_dir().join(format!("tine-gh246-graph-wide-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("archive/client")).unwrap();
+    std::fs::write(
+        root.join("archive/client/Plan.markdown"),
+        "- irreplaceable external bytes\n",
+    )
+    .unwrap();
+
+    let graph = Graph::open(&root);
+    let pages = graph.list_pages();
+    let entry = pages
+        .iter()
+        .cloned()
+        .into_iter()
+        .find(|entry| entry.rel_path == "archive/client/Plan.markdown")
+        .unwrap_or_else(|| {
+            panic!(
+                "eligible external graph document must be discoverable; pages={pages:?}, failures={:?}",
+                graph.page_index_failures()
+            )
+        });
+    assert_eq!(entry.name, "Plan");
+    let page = graph
+        .load_by_path("archive/client/Plan.markdown")
+        .unwrap()
+        .expect("eligible external graph document must load by its exact path");
+    assert_eq!(page.path, "archive/client/Plan.markdown");
+    assert_eq!(page.blocks[0].raw, "irreplaceable external bytes");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn graph_text_scope_discovers_all_formats_titles_dates_and_applies_exclusions() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-graph-text-scope-layout-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    for directory in [
+        "content/pages/nested",
+        "content/journals",
+        "external/multi/level",
+        "archive/private",
+        "node_modules/pkg",
+        "deep/node_modules/pkg",
+        "logseq/.recycle",
+        "logseq/bak",
+        "logseq/version-files",
+        "assets",
+        "publish",
+        ".tine-sync",
+        "logseq/.tine-trash/pages",
+        ".dot",
+    ] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:pages-directory \"content/pages\"\n\
+          :journals-directory \"content/journals\"\n\
+          :hidden [\"archive/private\" \"scratch\"]}\n",
+    )
+    .unwrap();
+    let accepted = [
+        ("Root.md", "- root\n"),
+        ("UPPER.MD", "- uppercase root\n"),
+        ("external/multi/level/Long.markdown", "- markdown\n"),
+        (
+            "external/multi/level/Mixed.Markdown",
+            "- mixed-case markdown\n",
+        ),
+        ("external/multi/level/Outline.org", "* org\n"),
+        ("content/pages/nested/Upper.ORG", "* uppercase org\n"),
+        ("external/Foo.Bar.md", "- legacy dotted namespace\n"),
+        ("content/pages/nested/Configured.md", "- configured\n"),
+        ("logseq/allowed.md", "- allowed\n"),
+        (
+            "external/Title Source.md",
+            "title:: Parsed Title\n\n- titled\n",
+        ),
+        ("external/2026_07_25.md", "- semantic journal\n"),
+    ];
+    for (path, bytes) in accepted {
+        if let Some(parent) = root.join(path).parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(root.join(path), bytes).unwrap();
+    }
+    for path in [
+        "archive/private/hidden.md",
+        "scratch-hidden.md",
+        "node_modules/pkg/hidden.md",
+        "deep/node_modules/pkg/hidden.org",
+        "logseq/.recycle/hidden.md",
+        "logseq/bak/hidden.md",
+        "logseq/version-files/hidden.md",
+        "assets/hidden.md",
+        "publish/hidden.org",
+        ".tine-sync/hidden.md",
+        "logseq/.tine-trash/pages/hidden.md",
+        ".dot/hidden.md",
+        ".hidden.md",
+        "external/Page.sync-conflict-20260725-120000-ABCDEF.md",
+        "external/Page (conflicted copy 2026-07-25).md",
+    ] {
+        if let Some(parent) = root.join(path).parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(root.join(path), "- excluded\n").unwrap();
+    }
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("Root.md"), root.join("external/symlink.md")).unwrap();
+    }
+
+    let graph = Graph::open(&root);
+    assert_eq!(graph.graph_text_scope_version(), 1);
+    let pages = graph.list_pages();
+    let paths = pages
+        .iter()
+        .map(|entry| entry.rel_path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for (path, _) in accepted {
+        assert!(
+            paths.contains(path),
+            "{path} missing from {paths:?}; failures={:?}",
+            graph.page_index_failures()
+        );
+    }
+    assert_eq!(
+        pages
+            .iter()
+            .find(|entry| entry.rel_path == "external/Title Source.md")
+            .map(|entry| entry.name.as_str()),
+        Some("Parsed Title")
+    );
+    assert_eq!(
+        pages
+            .iter()
+            .find(|entry| entry.rel_path == "external/Foo.Bar.md")
+            .map(|entry| entry.name.as_str()),
+        Some("Foo/Bar")
+    );
+    let journal = pages
+        .iter()
+        .find(|entry| entry.rel_path == "external/2026_07_25.md")
+        .unwrap();
+    assert_eq!(journal.kind, tine_core::PageKind::Journal);
+    assert!(journal.date_key.is_some());
+    let upper_org = graph
+        .load_by_path("content/pages/nested/Upper.ORG")
+        .unwrap()
+        .unwrap();
+    assert_eq!(upper_org.blocks[0].raw, "uppercase org");
+    assert_eq!(pages.len(), accepted.len(), "{pages:?}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn case_insensitive_extensions_edit_exact_paths_without_lowercase_duplicates() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-graph-text-case-extension-save-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    for directory in ["pages", "journals", "external/deep"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    for (relative, original, edited, serialized_prefix, lowercase_duplicate) in [
+        ("Root.MD", "- root\n", "root edited", "- ", "Root.md"),
+        (
+            "external/deep/Mixed.Markdown",
+            "- nested\n",
+            "nested edited",
+            "- ",
+            "external/deep/Mixed.markdown",
+        ),
+        (
+            "pages/Outline.ORG",
+            "* outline\n",
+            "outline edited",
+            "* ",
+            "pages/Outline.org",
+        ),
+    ] {
+        let path = root.join(relative);
+        std::fs::write(&path, original).unwrap();
+        let graph = Graph::open(&root);
+        let mut page = graph.load_by_path(relative).unwrap().unwrap();
+        page.blocks[0].raw = edited.into();
+        graph.save_page(&page, page.rev.as_deref()).unwrap();
+        assert!(path.is_file());
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with(&format!("{serialized_prefix}{edited}")));
+        let lowercase_duplicate = root.join(lowercase_duplicate);
+        assert!(!std::fs::read_dir(lowercase_duplicate.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == lowercase_duplicate.file_name().unwrap()));
+    }
+    assert!(!root.join("pages/Root.md").exists());
+    assert!(!root.join("pages/Mixed.markdown").exists());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn external_graph_text_save_keeps_exact_path_extension_and_rejects_stale_bytes() {
+    let root = std::env::temp_dir().join(format!("tine-graph-text-save-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("external/deep")).unwrap();
+    let path = root.join("external/deep/Exact.markdown");
+    std::fs::write(&path, "- original\n").unwrap();
+
+    let graph = Graph::open(&root);
+    let mut page = graph
+        .load_by_path("external/deep/Exact.markdown")
+        .unwrap()
+        .unwrap();
+    page.blocks[0].raw = "saved in place".into();
+    let revision = graph.save_page(&page, page.rev.as_deref()).unwrap();
+    assert_eq!(page.path, "external/deep/Exact.markdown");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "- saved in place\n"
+    );
+    assert!(!root.join("pages/Exact.md").exists());
+
+    page.rev = Some(revision);
+    page.blocks[0].raw = "stale overwrite attempt".into();
+    std::fs::write(&path, "- external winner\n").unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        graph
+            .save_page(&page, page.rev.as_deref())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    #[cfg(unix)]
+    {
+        let mut identity_bound = graph
+            .load_by_path("external/deep/Exact.markdown")
+            .unwrap()
+            .unwrap();
+        identity_bound.blocks[0].raw = "must not replace a new inode".into();
+        let replacement = root.join("external/deep/.replacement.markdown");
+        std::fs::write(&replacement, "- external winner\n").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(
+            graph.force_save_page(&identity_bound).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn invalid_utf8_never_loads_as_a_blank_writable_page() {
+    let root = std::env::temp_dir().join(format!("tine-graph-text-utf8-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("external")).unwrap();
+    let path = root.join("external/Invalid.md");
+    std::fs::write(&path, [0xff, 0xfe, b'\n']).unwrap();
+
+    let graph = Graph::open(&root);
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        graph
+            .load_by_path("external/Invalid.md")
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn duplicate_effective_identity_keeps_exact_owners_readable_and_external_mutations_explicit() {
+    let root =
+        std::env::temp_dir().join(format!("tine-graph-text-conflict-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("external/a")).unwrap();
+    std::fs::create_dir_all(root.join("external/b")).unwrap();
+    std::fs::write(root.join("external/a/Twin.md"), "- A\n").unwrap();
+    std::fs::write(root.join("external/b/Other.org"), "#+TITLE: Twin\n* B\n").unwrap();
+
+    let graph = Graph::open(&root);
+    let mut first = graph
+        .load_by_path("external/a/Twin.md")
+        .unwrap()
+        .expect("first physical owner remains readable");
+    let second = graph
+        .load_by_path("external/b/Other.org")
+        .unwrap()
+        .expect("second physical owner remains readable");
+    assert_eq!(first.blocks[0].raw, "A");
+    assert_eq!(second.blocks[0].raw, "B");
+    assert_eq!(
+        graph
+            .find_entry("Twin", tine_core::PageKind::Page)
+            .expect("logical lookup retains a deterministic owner")
+            .rel_path,
+        "external/a/Twin.md"
+    );
+    first.blocks[0].raw = "A edited through its retained owner".into();
+    graph
+        .save_page(&first, first.rev.as_deref())
+        .expect("an exact retained owner remains writable despite a semantic duplicate");
+    assert_eq!(
+        std::fs::read_to_string(root.join("external/a/Twin.md")).unwrap(),
+        "- A edited through its retained owner\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("external/b/Other.org")).unwrap(),
+        "#+TITLE: Twin\n* B\n"
+    );
+    let mut unpinned = first.clone();
+    unpinned.path.clear();
+    unpinned.blocks[0].raw = "must not choose an owner".into();
+    assert_eq!(
+        graph
+            .save_page(&unpinned, unpinned.rev.as_deref())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert!(!root.join("pages/Twin.md").exists());
+    let before = std::fs::read(root.join("external/a/Twin.md")).unwrap();
+    assert_eq!(
+        graph
+            .rename_page_expected("Twin", "Renamed", Some("external/a/Twin.md"))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::Unsupported
+    );
+    assert_eq!(
+        graph
+            .delete_page_expected(
+                "Twin",
+                tine_core::PageKind::Page,
+                Some("external/a/Twin.md")
+            )
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::Unsupported
+    );
+    assert_eq!(
+        std::fs::read(root.join("external/a/Twin.md")).unwrap(),
+        before
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn basename_and_same_stem_extension_conflicts_remain_exactly_readable() {
+    for (tag, files) in [
+        (
+            "basename",
+            vec![
+                ("external/a/Dup.md", "- A\n"),
+                ("external/b/Dup.md", "- B\n"),
+            ],
+        ),
+        (
+            "extension",
+            vec![
+                ("external/Dup.md", "- md\n"),
+                ("external/Dup.org", "* org\n"),
+            ],
+        ),
+    ] {
+        let root = std::env::temp_dir().join(format!(
+            "tine-graph-text-{tag}-conflict-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        for (path, content) in files {
+            std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            std::fs::write(root.join(path), content).unwrap();
+        }
+        let graph = Graph::open(&root);
+        let pages = graph.list_pages();
+        assert_eq!(pages.len(), 2);
+        for entry in &pages {
+            let loaded = graph
+                .load_by_path(&entry.rel_path)
+                .unwrap()
+                .expect("each colliding physical owner remains readable");
+            assert_eq!(loaded.path, entry.rel_path);
+        }
+        assert_eq!(
+            graph
+                .find_entry("Dup", tine_core::PageKind::Page)
+                .expect("logical lookup keeps its stable first owner")
+                .rel_path,
+            pages[0].rel_path
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn portable_case_nfc_and_file_identity_aliases_are_readable_but_non_writable() {
+    for (tag, first, second) in [
+        ("case", "External/Page.md", "external/page.md"),
+        (
+            "case-extension",
+            "external/Extension.MD",
+            "external/extension.md",
+        ),
+        ("nfc", "external/Caf\u{e9}.md", "external/Cafe\u{301}.md"),
+        (
+            "german-sharp-s",
+            "external/Straße.md",
+            "external/STRASSE.md",
+        ),
+        ("greek-sigma", "external/Σ.md", "external/ς.md"),
+    ] {
+        let root = std::env::temp_dir().join(format!(
+            "tine-graph-text-portable-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join(first).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(root.join(second).parent().unwrap()).unwrap();
+        std::fs::write(root.join(first), "- first\n").unwrap();
+        std::fs::write(root.join(second), "- second\n").unwrap();
+        let graph = Graph::open(&root);
+        assert_eq!(graph.list_pages().len(), 2);
+        for (path, expected) in [(first, "first"), (second, "second")] {
+            let mut page = graph
+                .load_by_path(path)
+                .unwrap()
+                .expect("portable aliases stay readable for recovery");
+            assert_eq!(page.blocks[0].raw, expected);
+            page.blocks[0].raw = "must not publish".into();
+            assert_eq!(
+                graph
+                    .save_page(&page, page.rev.as_deref())
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::AlreadyExists
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join(first)).unwrap(),
+            "- first\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(second)).unwrap(),
+            "- second\n"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    let root =
+        std::env::temp_dir().join(format!("tine-graph-text-hardlink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("external")).unwrap();
+    std::fs::write(root.join("external/One.md"), "- shared inode\n").unwrap();
+    std::fs::hard_link(root.join("external/One.md"), root.join("external/Two.md")).unwrap();
+    let graph = Graph::open(&root);
+    assert_eq!(graph.list_pages().len(), 2);
+    for path in ["external/One.md", "external/Two.md"] {
+        let mut page = graph
+            .load_by_path(path)
+            .unwrap()
+            .expect("same-inode aliases stay readable for recovery");
+        assert_eq!(page.blocks[0].raw, "shared inode");
+        page.blocks[0].raw = "must not publish".into();
+        assert_eq!(
+            graph
+                .save_page(&page, page.rev.as_deref())
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("external/One.md")).unwrap(),
+        "- shared inode\n"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn cold_filename_identity_and_warm_watcher_title_kind_changes_stay_coherent() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-graph-text-effective-identity-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("external")).unwrap();
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:pages-directory \"content/pages\"\n\
+          :journals-directory \"content/journals\"\n\
+          :file/name-format :legacy}\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("external/Foo.Bar.md"), "- namespace\n").unwrap();
+    let mutable = root.join("external/Mutable.md");
+    std::fs::write(&mutable, "title:: Initial Title\n\n- before\n").unwrap();
+
+    let graph = Graph::open(&root);
+    let cold = graph.list_pages();
+    assert_eq!(
+        cold.iter()
+            .find(|entry| entry.rel_path == "external/Foo.Bar.md")
+            .map(|entry| entry.name.as_str()),
+        Some("Foo/Bar")
+    );
+    graph.warm_cache();
+
+    std::fs::write(&mutable, "title:: 2026_07_25\n\n- dated\n").unwrap();
+    let dated = graph
+        .sync_file_checked(&mutable)
+        .unwrap()
+        .expect("watcher refresh must report the changed effective identity");
+    assert_eq!(dated.kind, tine_core::PageKind::Journal);
+    assert_eq!(dated.name, "Jul 25th, 2026");
+    assert!(dated.date_key.is_some());
+    graph.with_pages(|pages| {
+        let (entry, document) = pages
+            .iter()
+            .find(|(entry, _)| entry.rel_path == "external/Mutable.md")
+            .unwrap();
+        assert_eq!(entry.kind, tine_core::PageKind::Journal);
+        assert_eq!(entry.name, "Jul 25th, 2026");
+        assert!(entry.date_key.is_some());
+        assert_eq!(document.roots[0].raw, "dated");
+    });
+
+    std::fs::write(&mutable, "title:: Renamed Outside\n\n- after\n").unwrap();
+    let renamed = graph.sync_file_checked(&mutable).unwrap().unwrap();
+    assert_eq!(renamed.kind, tine_core::PageKind::Page);
+    assert_eq!(renamed.name, "Renamed Outside");
+    assert_eq!(renamed.date_key, None);
+    graph.with_pages(|pages| {
+        let (entry, document) = pages
+            .iter()
+            .find(|(entry, _)| entry.rel_path == "external/Mutable.md")
+            .unwrap();
+        assert_eq!(entry.kind, tine_core::PageKind::Page);
+        assert_eq!(entry.name, "Renamed Outside");
+        assert_eq!(entry.date_key, None);
+        assert_eq!(document.roots[0].raw, "after");
+    });
+    assert!(graph
+        .find_entry("Initial Title", tine_core::PageKind::Page)
+        .is_none());
+    assert!(graph
+        .find_entry("Renamed Outside", tine_core::PageKind::Page)
+        .is_some());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn malformed_hidden_edn_fails_graph_text_discovery_closed() {
+    let root =
+        std::env::temp_dir().join(format!("tine-graph-text-hidden-edn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("external")).unwrap();
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:hidden [\"external/private\"}\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("external/Visible.md"), "- must fail closed\n").unwrap();
+
+    let graph = Graph::open(&root);
+    assert!(graph.list_pages().is_empty());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn configured_creation_remains_in_configured_page_root() {
+    let root = std::env::temp_dir().join(format!("tine-graph-text-create-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:pages-directory \"content/pages\"\n\
+          :journals-directory \"content/journals\"}\n",
+    )
+    .unwrap();
+    let graph = Graph::open(&root);
+    assert!(graph
+        .create_markdown_page_if_absent("Created Here", "- created\n")
+        .unwrap());
+    assert!(root.join("content/pages/Created Here.md").is_file());
+    assert!(!root.join("Created Here.md").exists());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn loads_a_page_with_nesting_and_properties() {
     let g = demo_graph();
     let entry = g

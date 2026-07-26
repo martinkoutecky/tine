@@ -162,6 +162,28 @@ fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>
     crate::refs::rename_refs_multi(markdown, renames, false)
 }
 
+fn bind_copied_page_title(markdown: String, copied_name: &str) -> String {
+    let Some(first_newline) = markdown.find('\n') else {
+        return markdown;
+    };
+    let first = markdown[..first_newline].trim_end_matches('\r');
+    let Some((key, _)) = first.split_once("::") else {
+        return markdown;
+    };
+    if !key.trim().eq_ignore_ascii_case("title") {
+        return markdown;
+    }
+    let newline = if markdown[..first_newline].ends_with('\r') {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    format!(
+        "title:: {copied_name}{newline}{}",
+        &markdown[first_newline + 1..]
+    )
+}
+
 pub fn copy_guide_into_graph(graph: &Graph, title: &str) -> io::Result<GuideCopyResult> {
     let Some(viewed) = GUIDE_TEMPLATES
         .iter()
@@ -177,7 +199,10 @@ pub fn copy_guide_into_graph(graph: &Graph, title: &str) -> io::Result<GuideCopy
     let mut skipped_pages = Vec::new();
     for template in GUIDE_TEMPLATES {
         let name = guide_copy_page_name(template.title);
-        let markdown = rewrite_bundled_guide_links(template.markdown, &renames);
+        let markdown = bind_copied_page_title(
+            rewrite_bundled_guide_links(template.markdown, &renames),
+            &name,
+        );
         if graph.create_markdown_page_if_absent(&name, &markdown)? {
             created_pages.push(name);
         } else {

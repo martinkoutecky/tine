@@ -8,6 +8,9 @@
 //! values surgically — so writes preserve comments + formatting + unrelated keys,
 //! and reads are immune to whatever else the file contains.
 
+use crate::graph_text_scope::{
+    MAX_HIDDEN_EDN_BYTES, MAX_HIDDEN_EDN_DEPTH, MAX_HIDDEN_EDN_ENTRIES, MAX_HIDDEN_EDN_FORMS,
+};
 use crate::model::Graph;
 use std::collections::HashMap;
 #[cfg(test)]
@@ -18,6 +21,12 @@ use std::io;
 pub struct Config {
     pub journals_dir: String,
     pub pages_dir: String,
+    /// OG `:hidden` graph-relative string prefixes. Interpretation belongs to
+    /// the versioned graph text scope rather than individual callers.
+    pub hidden: Vec<String>,
+    /// A malformed or over-limit `:hidden` value cannot safely be treated as an
+    /// empty exclusion list. The graph-text classifier turns this into hide-all.
+    pub hidden_parse_failed_closed: bool,
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
     /// bindings only; vectors take the first binding, `false` disables).
@@ -128,6 +137,8 @@ impl Default for Config {
         Config {
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
+            hidden: Vec::new(),
+            hidden_parse_failed_closed: false,
             preferred_workflow: Workflow::Now,
             shortcuts: HashMap::new(),
             all_pages_public: false,
@@ -173,6 +184,10 @@ impl Config {
         }
         if let Some(v) = string_value(edn, ":pages-directory") {
             cfg.pages_dir = v;
+        }
+        match parse_hidden_paths(edn) {
+            HiddenParse::Valid(hidden) => cfg.hidden = hidden,
+            HiddenParse::FailedClosed => cfg.hidden_parse_failed_closed = true,
         }
         if let Some(v) = keyword_value(edn, ":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
@@ -907,6 +922,371 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     out
 }
 
+/// The `:hidden` value is security-relevant input: treating a malformed value as
+/// absent can admit a file the graph owner meant to exclude. Keep its reader
+/// independent from the deliberately permissive scanners used for display
+/// preferences, and bound the encoded value, recursive form depth, total form
+/// count, and number of top-level collection entries before allocating decoded
+/// strings.
+enum HiddenParse {
+    Valid(Vec<String>),
+    FailedClosed,
+}
+
+fn parse_hidden_paths(edn: &str) -> HiddenParse {
+    parse_hidden_paths_inner(edn).unwrap_or(HiddenParse::FailedClosed)
+}
+
+fn parse_hidden_paths_inner(edn: &str) -> Result<HiddenParse, ()> {
+    let mut reader = EdnReader::new(edn);
+    reader.skip_interstitial_and_discards()?;
+    if reader.peek() != Some(b'{') {
+        return Err(());
+    }
+    reader.begin_form()?;
+    reader.pos += 1;
+    let mut hidden = None;
+    let result = (|| {
+        loop {
+            reader.skip_interstitial_and_discards()?;
+            match reader.peek() {
+                Some(b'}') => {
+                    reader.pos += 1;
+                    break;
+                }
+                None => return Err(()),
+                _ => {}
+            }
+
+            let start = reader.pos;
+            let keyword = reader.peek() == Some(b':');
+            reader.skip_form()?;
+            let key = keyword.then_some(&edn[start..reader.pos]);
+            reader.skip_interstitial_and_discards()?;
+            if matches!(reader.peek(), None | Some(b'}')) {
+                return Err(());
+            }
+            if key == Some(":hidden") {
+                hidden = Some(reader.read_hidden_value()?);
+            } else {
+                reader.skip_form()?;
+            }
+        }
+        reader.skip_interstitial_and_discards()?;
+        (reader.pos == edn.len()).then_some(()).ok_or(())
+    })();
+    reader.end_form();
+    result?;
+    Ok(HiddenParse::Valid(hidden.unwrap_or_default()))
+}
+
+struct EdnReader<'a> {
+    source: &'a str,
+    pos: usize,
+    limit: usize,
+    depth: usize,
+    forms: usize,
+}
+
+impl<'a> EdnReader<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            pos: 0,
+            limit: source.len(),
+            depth: 0,
+            forms: 0,
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.source.as_bytes()
+    }
+
+    fn peek(&self) -> Option<u8> {
+        (self.pos < self.limit)
+            .then(|| self.bytes().get(self.pos).copied())
+            .flatten()
+    }
+
+    fn skip_interstitial(&mut self) -> Result<(), ()> {
+        loop {
+            while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r' | b',')) {
+                self.pos += 1;
+            }
+            if self.peek() == Some(b';') {
+                while self.peek().is_some_and(|byte| byte != b'\n') {
+                    self.pos += 1;
+                }
+                continue;
+            }
+            return Ok(());
+        }
+    }
+
+    fn skip_interstitial_and_discards(&mut self) -> Result<(), ()> {
+        loop {
+            self.skip_interstitial()?;
+            if self.peek() != Some(b'#') || self.bytes().get(self.pos + 1) != Some(&b'_') {
+                return Ok(());
+            }
+            self.begin_form()?;
+            self.pos += 2;
+            let result = self.skip_form();
+            self.end_form();
+            result?;
+        }
+    }
+
+    fn begin_form(&mut self) -> Result<(), ()> {
+        self.forms = self.forms.checked_add(1).ok_or(())?;
+        if self.forms > MAX_HIDDEN_EDN_FORMS {
+            return Err(());
+        }
+        self.depth = self.depth.checked_add(1).ok_or(())?;
+        if self.depth > MAX_HIDDEN_EDN_DEPTH {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    fn end_form(&mut self) {
+        self.depth -= 1;
+    }
+
+    fn skip_form(&mut self) -> Result<(), ()> {
+        self.skip_interstitial_and_discards()?;
+        self.begin_form()?;
+        let result = self.skip_form_body();
+        self.end_form();
+        result
+    }
+
+    fn skip_form_body(&mut self) -> Result<(), ()> {
+        match self.peek().ok_or(())? {
+            b'"' => self.scan_string(false).map(|_| ()),
+            b'[' => self.skip_collection(b']', false),
+            b'{' => self.skip_collection(b'}', true),
+            b'(' => self.skip_collection(b')', false),
+            b'#' if self.bytes().get(self.pos + 1) == Some(&b'{') => {
+                self.pos += 1;
+                self.skip_collection(b'}', false)
+            }
+            b'#' if self.bytes().get(self.pos + 1) == Some(&b'(') => {
+                self.pos += 1;
+                self.skip_collection(b')', false)
+            }
+            b'#' if self.bytes().get(self.pos + 1) == Some(&b'"') => {
+                self.pos += 1;
+                self.scan_string(false).map(|_| ())
+            }
+            b'#' if self.bytes().get(self.pos + 1) == Some(&b'\'') => {
+                self.pos += 2;
+                self.skip_form()
+            }
+            b'#' if self.bytes().get(self.pos + 1) == Some(&b'#') => self.skip_atom(),
+            b'#' => {
+                self.pos += 1;
+                self.skip_atom()?;
+                self.skip_form()
+            }
+            b'\'' | b'`' | b'@' => {
+                self.pos += 1;
+                self.skip_form()
+            }
+            b'~' => {
+                self.pos += 1;
+                if self.peek() == Some(b'@') {
+                    self.pos += 1;
+                }
+                self.skip_form()
+            }
+            b'^' => {
+                self.pos += 1;
+                self.skip_form()?;
+                self.skip_form()
+            }
+            b'\\' => self.skip_character(),
+            b']' | b'}' | b')' => Err(()),
+            _ => self.skip_atom(),
+        }
+    }
+
+    fn skip_collection(&mut self, close: u8, map: bool) -> Result<(), ()> {
+        self.pos += 1;
+        let mut forms = 0usize;
+        loop {
+            self.skip_interstitial_and_discards()?;
+            match self.peek() {
+                Some(byte) if byte == close => {
+                    self.pos += 1;
+                    if map && forms % 2 != 0 {
+                        return Err(());
+                    }
+                    return Ok(());
+                }
+                None => return Err(()),
+                _ => {
+                    self.skip_form()?;
+                    forms = forms.checked_add(1).ok_or(())?;
+                }
+            }
+        }
+    }
+
+    fn skip_atom(&mut self) -> Result<(), ()> {
+        let start = self.pos;
+        while self.peek().is_some_and(|byte| {
+            !matches!(
+                byte,
+                b' ' | b'\t'
+                    | b'\n'
+                    | b'\r'
+                    | b','
+                    | b';'
+                    | b'"'
+                    | b'['
+                    | b']'
+                    | b'{'
+                    | b'}'
+                    | b'('
+                    | b')'
+            )
+        }) {
+            self.pos += 1;
+        }
+        (self.pos != start).then_some(()).ok_or(())
+    }
+
+    fn skip_character(&mut self) -> Result<(), ()> {
+        self.pos += 1;
+        let character = self.source[self.pos..].chars().next().ok_or(())?;
+        self.pos = self.pos.checked_add(character.len_utf8()).ok_or(())?;
+        while self.peek().is_some_and(|byte| {
+            !matches!(
+                byte,
+                b' ' | b'\t'
+                    | b'\n'
+                    | b'\r'
+                    | b','
+                    | b';'
+                    | b'['
+                    | b']'
+                    | b'{'
+                    | b'}'
+                    | b'('
+                    | b')'
+            )
+        }) {
+            self.pos += 1;
+        }
+        Ok(())
+    }
+
+    fn scan_string(&mut self, decode: bool) -> Result<Option<String>, ()> {
+        if self.peek() != Some(b'"') {
+            return Err(());
+        }
+        self.pos += 1;
+        let mut output = decode.then(String::new);
+        loop {
+            let byte = self.peek().ok_or(())?;
+            if byte == b'"' {
+                self.pos += 1;
+                return Ok(output);
+            }
+            if byte == b'\\' {
+                self.pos += 1;
+                let escaped = self.peek().ok_or(())?;
+                self.pos += 1;
+                let character = match escaped {
+                    b'"' => '"',
+                    b'\\' => '\\',
+                    b'n' => '\n',
+                    b'r' => '\r',
+                    b't' => '\t',
+                    b'b' => '\u{0008}',
+                    b'f' => '\u{000c}',
+                    b'u' => {
+                        let end = self.pos.checked_add(4).ok_or(())?;
+                        if end > self.limit || end > self.source.len() {
+                            return Err(());
+                        }
+                        let digits = &self.source[self.pos..end];
+                        let value = u32::from_str_radix(digits, 16).map_err(|_| ())?;
+                        self.pos = end;
+                        char::from_u32(value).ok_or(())?
+                    }
+                    _ => return Err(()),
+                };
+                if let Some(output) = output.as_mut() {
+                    output.push(character);
+                }
+                continue;
+            }
+            let character = self.source[self.pos..]
+                .chars()
+                .next()
+                .filter(|character| self.pos + character.len_utf8() <= self.limit)
+                .ok_or(())?;
+            self.pos += character.len_utf8();
+            if let Some(output) = output.as_mut() {
+                output.push(character);
+            }
+        }
+    }
+
+    fn read_hidden_value(&mut self) -> Result<Vec<String>, ()> {
+        let start = self.pos;
+        let previous_limit = self.limit;
+        self.limit = previous_limit.min(start.checked_add(MAX_HIDDEN_EDN_BYTES).ok_or(())?);
+        let result = (|| {
+            self.skip_interstitial_and_discards()?;
+            if self.peek() != Some(b'[') {
+                self.skip_form()?;
+                return Ok(Vec::new());
+            }
+            self.begin_form()?;
+            self.pos += 1;
+            let value = (|| {
+                let mut entries = 0usize;
+                let mut values = Vec::new();
+                loop {
+                    self.skip_interstitial_and_discards()?;
+                    match self.peek() {
+                        Some(b']') => {
+                            self.pos += 1;
+                            return Ok(values);
+                        }
+                        None => return Err(()),
+                        Some(b'"') => {
+                            entries = entries.checked_add(1).ok_or(())?;
+                            if entries > MAX_HIDDEN_EDN_ENTRIES {
+                                return Err(());
+                            }
+                            self.begin_form()?;
+                            let string = self.scan_string(true);
+                            self.end_form();
+                            values.push(string?.ok_or(())?);
+                        }
+                        Some(_) => {
+                            entries = entries.checked_add(1).ok_or(())?;
+                            if entries > MAX_HIDDEN_EDN_ENTRIES {
+                                return Err(());
+                            }
+                            self.skip_form()?;
+                        }
+                    }
+                }
+            })();
+            self.end_form();
+            value
+        })();
+        self.limit = previous_limit;
+        result
+    }
+}
+
 /// The quoted string for `inner` inside the map following `outer`, e.g.
 /// `:default-templates {:journals "Daily"}` → "Daily". String/brace-aware.
 fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
@@ -1383,6 +1763,144 @@ mod tests {
             vec!["Inbox".to_string(), "Reading List".to_string()]
         );
         assert!(Config::parse("{}").favorites.is_empty());
+    }
+
+    #[test]
+    fn parses_og_hidden_string_collection_and_ignores_wrong_value_shapes() {
+        let cfg = Config::parse(
+            r#"{:other {:hidden ["nested-map"]}
+                 :predicate #(not= % \])
+                 :hidden ["/archive/private"
+                          #_ "discarded"
+                          ["nested-vector"]
+                          {:nested "map-value"}
+                          42 nil :keyword
+                          "scratch" ;; "commented"
+                          "../assets/archived"]}"#,
+        );
+        assert_eq!(
+            cfg.hidden,
+            vec![
+                "/archive/private".to_string(),
+                "scratch".to_string(),
+                "../assets/archived".to_string()
+            ]
+        );
+        assert!(!cfg.hidden_parse_failed_closed);
+        assert!(Config::parse(r#"{:hidden #{"/not-a-vector"}}"#)
+            .hidden
+            .is_empty());
+        assert!(Config::parse(r#"{:hidden [42 :keyword]}"#)
+            .hidden
+            .is_empty());
+    }
+
+    #[test]
+    fn hidden_reader_decodes_edn_strings_and_fails_closed_on_malformed_or_over_limit_values() {
+        let decoded = Config::parse(r#"{:hidden ["archive\u002fprivate" "tab\tpath"]}"#);
+        assert_eq!(
+            decoded.hidden,
+            vec!["archive/private".to_owned(), "tab\tpath".to_owned()]
+        );
+        assert!(!decoded.hidden_parse_failed_closed);
+
+        for malformed in [
+            r#"{:hidden ["private"]"#,
+            r#"{:hidden ["private\q"]}"#,
+            r#"{:hidden ["private" {:odd}]}"#,
+        ] {
+            let config = Config::parse(malformed);
+            assert!(
+                config.hidden_parse_failed_closed,
+                "malformed hidden EDN must fail closed: {malformed}"
+            );
+        }
+
+        let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(MAX_HIDDEN_EDN_BYTES));
+        assert!(Config::parse(&oversized).hidden_parse_failed_closed);
+
+        let too_many = format!(
+            "{{:hidden [{}]}}",
+            std::iter::repeat_n("nil", MAX_HIDDEN_EDN_ENTRIES + 1)
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert!(Config::parse(&too_many).hidden_parse_failed_closed);
+    }
+
+    #[test]
+    fn hidden_reader_counts_every_structured_form_kind() {
+        for (source, expected_forms) in [
+            ("nil", 1),
+            ("[nil]", 2),
+            ("(nil)", 2),
+            ("#{nil}", 2),
+            ("{:key nil}", 3),
+            ("#tag nil", 2),
+            ("'nil", 2),
+            ("^:meta nil", 3),
+            ("#_ nil kept", 3),
+        ] {
+            let mut reader = EdnReader::new(source);
+            reader.skip_form().unwrap();
+            reader.skip_interstitial_and_discards().unwrap();
+            assert_eq!(reader.pos, source.len(), "{source}");
+            assert_eq!(reader.depth, 0, "{source}");
+            assert_eq!(reader.forms, expected_forms, "{source}");
+        }
+    }
+
+    #[test]
+    fn hidden_reader_accepts_exact_depth_and_form_limits_and_rejects_plus_one() {
+        fn nested_hidden_collections(collections: usize) -> String {
+            format!(
+                "{{:hidden [{}nil{}]}}",
+                "[".repeat(collections),
+                "]".repeat(collections)
+            )
+        }
+        let exact_depth = nested_hidden_collections(MAX_HIDDEN_EDN_DEPTH - 3);
+        assert!(!Config::parse(&exact_depth).hidden_parse_failed_closed);
+        let over_depth = nested_hidden_collections(MAX_HIDDEN_EDN_DEPTH - 2);
+        assert!(Config::parse(&over_depth).hidden_parse_failed_closed);
+
+        fn hidden_nested_list(entries: usize) -> String {
+            format!(
+                "{{:hidden [({})]}}",
+                std::iter::repeat_n("x", entries)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        }
+        let exact_forms = hidden_nested_list(MAX_HIDDEN_EDN_FORMS - 4);
+        assert!(!Config::parse(&exact_forms).hidden_parse_failed_closed);
+        let over_forms = hidden_nested_list(MAX_HIDDEN_EDN_FORMS - 3);
+        assert!(Config::parse(&over_forms).hidden_parse_failed_closed);
+    }
+
+    #[test]
+    fn hidden_reader_bounds_deep_discard_tag_and_mixed_collection_paths() {
+        let discard_depth = MAX_HIDDEN_EDN_DEPTH / 2;
+        let discarded = format!(
+            "{{:hidden [{}{}\"kept\"]}}",
+            "#_ ".repeat(discard_depth),
+            "nil ".repeat(discard_depth)
+        );
+        let config = Config::parse(&discarded);
+        assert_eq!(config.hidden, vec!["kept"]);
+        assert!(!config.hidden_parse_failed_closed);
+
+        let tagged = format!("{{:hidden [{}nil]}}", "#deep ".repeat(MAX_HIDDEN_EDN_DEPTH));
+        assert!(Config::parse(&tagged).hidden_parse_failed_closed);
+
+        let mixed = Config::parse(
+            r#"{:hidden [[(#{:leaf})]
+                         {:map ['quoted ^:meta #tag nil]}
+                         #_ [#tag {:discarded (nil)}]
+                         "visible"]}"#,
+        );
+        assert_eq!(mixed.hidden, vec!["visible"]);
+        assert!(!mixed.hidden_parse_failed_closed);
     }
 
     #[test]

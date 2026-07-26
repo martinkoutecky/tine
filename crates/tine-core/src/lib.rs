@@ -7,6 +7,7 @@ pub mod crdt;
 pub mod date;
 pub mod doc;
 pub mod edn;
+pub mod graph_text_scope;
 pub mod html_sanitize;
 pub mod logbook;
 pub mod model;
