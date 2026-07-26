@@ -362,11 +362,14 @@ fn prepare_stable_scan<A: ReconciliationImportAuthority>(
         )));
     }
 
-    Ok(scan
+    let paths = scan
         .candidates
         .iter()
         .map(|candidate| candidate.path.clone())
-        .collect())
+        .collect();
+
+    authority.revalidate(&scan.binding)?;
+    Ok(paths)
 }
 
 enum CoordinatorDisposition<B, F> {
@@ -527,6 +530,7 @@ pub(crate) fn execute_stable_scan_import(
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
         collections::BTreeMap,
         fs,
         path::{Path, PathBuf},
@@ -592,6 +596,34 @@ mod tests {
                 return Err(PreparationFailure::RetryFull(ReconciliationImportRetry {
                     reason: ReconciliationImportRetryReason::ExpectedBindingMoved,
                     detail: "fixture binding differs".to_owned(),
+                }));
+            }
+            Ok(())
+        }
+
+        fn managed_kind(&self, path: &ManagedPath) -> Result<ManagedTextKind, ()> {
+            self.kinds.get(path).copied().ok_or(())
+        }
+    }
+
+    struct SequencedFixtureAuthority {
+        binding: GraphTextCandidateBinding,
+        kinds: BTreeMap<ManagedPath, ManagedTextKind>,
+        moves_before_handoff: bool,
+        revalidation_calls: Cell<usize>,
+    }
+
+    impl ReconciliationImportAuthority for SequencedFixtureAuthority {
+        fn revalidate(
+            &self,
+            binding: &GraphTextCandidateBinding,
+        ) -> Result<(), PreparationFailure> {
+            let call = self.revalidation_calls.get();
+            self.revalidation_calls.set(call.saturating_add(1));
+            if binding != &self.binding || (self.moves_before_handoff && call != 0) {
+                return Err(PreparationFailure::RetryFull(ReconciliationImportRetry {
+                    reason: ReconciliationImportRetryReason::ExpectedBindingMoved,
+                    detail: "fixture binding moved before handoff".to_owned(),
                 }));
             }
             Ok(())
@@ -763,13 +795,14 @@ mod tests {
                 &binding,
             ),
         ];
-        let authority = FixtureAuthority {
+        let authority = SequencedFixtureAuthority {
             binding: binding.clone(),
             kinds: candidates
                 .iter()
                 .map(|candidate| (candidate.path.clone(), ManagedTextKind::Page))
                 .collect(),
-            revalidation: Ok(()),
+            moves_before_handoff: false,
+            revalidation_calls: Cell::new(0),
         };
         let scan = scan(binding, candidates, Vec::new());
         let mut coordinator = CountingCoordinator::new(FakeDisposition::Noop);
@@ -783,6 +816,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(outcome, CoordinatorHandoff::Noop));
+        assert_eq!(authority.revalidation_calls.get(), 2);
         assert_eq!(coordinator.calls, 1);
         assert_eq!(
             coordinator.received,
@@ -1066,6 +1100,45 @@ mod tests {
                 ..
             })
         ));
+        assert_eq!(coordinator.calls, 0);
+    }
+
+    #[test]
+    fn reconciliation_import_binding_move_before_handoff_requests_fresh_full_scan() {
+        let binding = binding(None);
+        let candidate = candidate(
+            "pages/edit.md",
+            GraphTextCandidateKind::Edit,
+            Some(ManagedTextKind::Page),
+            &binding,
+        );
+        let authority = SequencedFixtureAuthority {
+            binding: binding.clone(),
+            kinds: [(candidate.path.clone(), ManagedTextKind::Page)]
+                .into_iter()
+                .collect(),
+            moves_before_handoff: true,
+            revalidation_calls: Cell::new(0),
+        };
+        let scan = scan(binding, vec![candidate], Vec::new());
+        let mut coordinator = CountingCoordinator::new(FakeDisposition::Noop);
+
+        let failure = execute_fixture(
+            &scan,
+            &authority,
+            &mut coordinator,
+            PreparationLimits::default(),
+        )
+        .expect_err("a binding move before handoff must discard the path set");
+
+        assert!(matches!(
+            failure,
+            PreparationFailure::RetryFull(ReconciliationImportRetry {
+                reason: ReconciliationImportRetryReason::ExpectedBindingMoved,
+                ..
+            })
+        ));
+        assert_eq!(authority.revalidation_calls.get(), 2);
         assert_eq!(coordinator.calls, 0);
     }
 
