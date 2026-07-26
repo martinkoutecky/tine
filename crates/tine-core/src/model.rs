@@ -30,6 +30,7 @@ use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
 use unicode_normalization::UnicodeNormalization;
@@ -1299,7 +1300,7 @@ pub struct Graph {
     /// Private, process-local graph-text completeness capability. This state is
     /// neither serialized nor consulted by durable import/projection paths in
     /// this packet.
-    graph_text_admission: RwLock<GraphTextAdmissionState>,
+    graph_text_admission: Arc<GraphTextAdmissionControl>,
     /// Unforgeable identity of this exact Graph instance. Reopening the same
     /// resource intentionally produces a different token.
     graph_text_admission_instance: Arc<GraphTextAdmissionInstance>,
@@ -1439,6 +1440,18 @@ pub struct Graph {
 
 #[derive(Debug)]
 struct GraphTextAdmissionInstance;
+
+struct GraphTextAdmissionControl {
+    state: RwLock<GraphTextAdmissionState>,
+}
+
+impl std::ops::Deref for GraphTextAdmissionControl {
+    type Target = RwLock<GraphTextAdmissionState>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
 
 struct GraphTextParseBudgetPermit {
     semantic_name_bytes: u64,
@@ -1814,9 +1827,188 @@ struct GraphTextAdmissionFeedFence {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Minted only by the next feed-integration packet and focused tests.
-struct GraphTextAdmissionFeedToken {
+struct GraphTextAdmissionFeedBinding {
     instance: Arc<GraphTextAdmissionInstance>,
+    scope_binding: GraphTextScopeBinding,
+    graph_resource: CanonicalGraphResourceId,
+    fence: GraphTextAdmissionFeedFence,
+    #[cfg(test)]
+    legacy_publish_on_build: bool,
+}
+
+/// Process-local ownership of one exact feed for one exact [`Graph`] instance.
+///
+/// This lease is deliberately opaque, non-cloneable, and non-serializable.
+/// Dropping it terminally withdraws admission authority from its Graph.
+pub struct GraphTextExactFeedLease {
+    control: Arc<GraphTextAdmissionControl>,
+    binding: GraphTextAdmissionFeedBinding,
+    terminal: AtomicBool,
+}
+
+#[cfg(test)]
+type GraphTextAdmissionFeedToken = GraphTextExactFeedLease;
+
+impl std::fmt::Debug for GraphTextExactFeedLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GraphTextExactFeedLease")
+            .finish_non_exhaustive()
+    }
+}
+
+impl GraphTextExactFeedLease {
+    /// Construct one bounded batch for this live lease.
+    ///
+    /// Any malformed range/path set is terminal because the platform can no
+    /// longer prove an unambiguous normalized callback drain.
+    pub fn batch(
+        &self,
+        first_sequence: u64,
+        last_sequence: u64,
+        touched_exact_relatives: impl IntoIterator<Item = String>,
+    ) -> io::Result<GraphTextExactFeedBatch> {
+        if self.terminal.load(Ordering::Acquire) {
+            return Err(graph_text_admission_unavailable(
+                "exact feed lease is terminal",
+            ));
+        }
+        match GraphTextExactFeedBatch::bounded(
+            Arc::clone(&self.binding.instance),
+            first_sequence,
+            last_sequence,
+            touched_exact_relatives,
+        ) {
+            Ok(batch) => Ok(batch),
+            Err(error) => {
+                let mut state = self.control.write().unwrap();
+                poison_graph_text_admission_state(
+                    &mut state,
+                    graph_text_exact_feed_failure_cause(
+                        GraphTextExactFeedFailure::UnsupportedOrAmbiguousEvent,
+                        &error.to_string(),
+                    ),
+                );
+                self.terminal.store(true, Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Drop for GraphTextExactFeedLease {
+    fn drop(&mut self) {
+        if self.terminal.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let mut state = self.control.write().unwrap();
+        poison_graph_text_admission_state(
+            &mut state,
+            graph_text_exact_feed_failure_cause(
+                GraphTextExactFeedFailure::LeaseDropped,
+                "exact feed lease dropped",
+            ),
+        );
+    }
+}
+
+/// Terminal reason supplied by a platform exact-feed adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GraphTextExactFeedFailure {
+    BackendError,
+    OverflowOrQueueLoss,
+    SequenceDiscontinuity,
+    UnsupportedOrAmbiguousEvent,
+    DirectoryMutation,
+    RootMutation,
+    ScopeOrConfigMutation,
+    ModeSwitch,
+    ExplicitDisconnect,
+    LeaseDropped,
+}
+
+/// Core classification for one exact graph-relative platform event path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GraphTextExactFeedPathClass {
+    /// The path is wholly within a fixed or configured excluded subtree.
+    Excluded,
+    /// The exact path may affect retained file/resource evidence.
+    RetainedFile,
+    /// `logseq/config.edn` changes always require a fresh Graph instance.
+    Configuration,
+}
+
+/// One bounded contiguous final-state feed range.
+///
+/// Paths are exact UTF-8 graph-relative spellings. Construction sorts them,
+/// rejects duplicates, and enforces count and aggregate-byte bounds before
+/// retaining the owned set.
+#[derive(Debug)]
+pub struct GraphTextExactFeedBatch {
+    instance: Arc<GraphTextAdmissionInstance>,
+    first_sequence: u64,
+    last_sequence: u64,
+    touched_exact_relatives: Vec<String>,
+}
+
+impl GraphTextExactFeedBatch {
+    pub const MAX_TOUCHED_PATHS: usize = 256;
+    pub const MAX_EXACT_RELATIVE_BYTES: usize = 4096;
+    pub const MAX_PATH_COMPONENTS: usize = MAX_INITIAL_SHADOW_DIRECTORY_DEPTH + 1;
+    pub const MAX_AGGREGATE_PATH_BYTES: usize = 64 * 1024;
+
+    fn bounded(
+        instance: Arc<GraphTextAdmissionInstance>,
+        first_sequence: u64,
+        last_sequence: u64,
+        touched_exact_relatives: impl IntoIterator<Item = String>,
+    ) -> io::Result<Self> {
+        if last_sequence < first_sequence {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "exact feed batch has an empty or reverse sequence range",
+            ));
+        }
+        let mut paths = Vec::new();
+        let mut path_bytes = 0_usize;
+        for relative in touched_exact_relatives {
+            if paths.len() == Self::MAX_TOUCHED_PATHS {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "exact feed batch touched-path count bound exceeded",
+                ));
+            }
+            validate_graph_text_exact_feed_relative(&relative)?;
+            path_bytes = path_bytes.checked_add(relative.len()).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "exact feed batch aggregate path-byte bound exceeded",
+                )
+            })?;
+            if path_bytes > Self::MAX_AGGREGATE_PATH_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "exact feed batch aggregate path-byte bound exceeded",
+                ));
+            }
+            paths.push(relative);
+        }
+        paths.sort_unstable();
+        if paths.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "exact feed batch contains a duplicate touched path",
+            ));
+        }
+        Ok(Self {
+            instance,
+            first_sequence,
+            last_sequence,
+            touched_exact_relatives: paths,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1879,13 +2071,13 @@ struct GraphTextAdmissionDiagnostics {
 
 #[allow(dead_code)] // `last_good` is intentionally diagnostic-only in this packet.
 enum GraphTextAdmissionState {
-    Unbuilt {
-        armed_feed: Option<GraphTextAdmissionFeedFence>,
-    },
+    Unbuilt,
+    Armed(GraphTextAdmissionFeedBinding),
     Building {
-        armed_feed: Option<GraphTextAdmissionFeedFence>,
+        armed_feed: Option<GraphTextAdmissionFeedBinding>,
     },
     SnapshotComplete(Arc<CompleteGraphTextAdmissionIndex>),
+    CatchingUp(Arc<CompleteGraphTextAdmissionIndex>),
     Complete(Arc<CompleteGraphTextAdmissionIndex>),
     Poisoned {
         last_good: Option<GraphTextAdmissionDiagnostics>,
@@ -1949,6 +2141,7 @@ struct GraphTextAdmissionCurrentProof {
 
 struct PreparedGraphTextAdmissionUpsert {
     relative: String,
+    description: BlobDescription,
     file_resource_id: ContentDigest,
     link_count: u64,
     retained_growth: u64,
@@ -1958,6 +2151,119 @@ struct PreparedGraphTextAdmissionUpsert {
 struct PreparedGraphTextAdmissionRemove {
     relative: String,
     retained_growth: u64,
+}
+
+enum PreparedGraphTextAdmissionFinalState {
+    Present(PreparedGraphTextAdmissionUpsert),
+    Absent(PreparedGraphTextAdmissionRemove),
+}
+
+#[derive(Default)]
+struct GraphTextExactFeedBatchActualCharges {
+    raw_bytes: u64,
+    parser_bytes: u64,
+    prepared_growth: u64,
+}
+
+impl GraphTextExactFeedBatchActualCharges {
+    fn remaining_raw(&self) -> io::Result<u64> {
+        MAX_GRAPH_TEXT_EXACT_FEED_BATCH_RAW_BYTES
+            .checked_sub(self.raw_bytes)
+            .ok_or_else(|| initial_shadow_limit_error("exact feed batch aggregate raw bytes"))
+    }
+
+    fn live_preparation_bytes(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+    ) -> io::Result<u64> {
+        checked_add_bytes(index.permanent_bytes, batch_scratch)
+            .and_then(|live| checked_add_bytes(live, self.prepared_growth))
+    }
+
+    fn remaining_peak(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+    ) -> io::Result<u64> {
+        index
+            .peak_limit
+            .checked_sub(self.live_preparation_bytes(index, batch_scratch)?)
+            .ok_or_else(|| initial_shadow_limit_error("peak build memory"))
+    }
+
+    fn ensure_aggregate_work_peak(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+    ) -> io::Result<()> {
+        ensure_graph_text_peak_limit(
+            self.live_preparation_bytes(index, batch_scratch)?,
+            checked_add_bytes(self.raw_bytes, self.parser_bytes)?,
+            index.peak_limit,
+        )
+    }
+
+    fn reserve_raw(
+        &mut self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+        raw_bytes: u64,
+    ) -> io::Result<()> {
+        if raw_bytes > self.remaining_raw()? {
+            return Err(initial_shadow_limit_error(
+                "exact feed batch aggregate raw bytes",
+            ));
+        }
+        self.raw_bytes = checked_add_bytes(self.raw_bytes, raw_bytes)?;
+        self.ensure_aggregate_work_peak(index, batch_scratch)
+    }
+
+    fn reserve_parser(
+        &mut self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+        parser_bytes: u64,
+    ) -> io::Result<()> {
+        let next = checked_add_bytes(self.parser_bytes, parser_bytes)?;
+        let prior = self.parser_bytes;
+        self.parser_bytes = next;
+        if let Err(error) = self.ensure_aggregate_work_peak(index, batch_scratch) {
+            self.parser_bytes = prior;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn ensure_permanent_growth(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        growth: u64,
+    ) -> io::Result<()> {
+        let permanent = checked_add_bytes(index.permanent_bytes, self.prepared_growth)
+            .and_then(|bytes| checked_add_bytes(bytes, growth))?;
+        if permanent > index.permanent_limit {
+            return Err(initial_shadow_limit_error("permanent index memory"));
+        }
+        Ok(())
+    }
+
+    fn retain_prepared_growth(
+        &mut self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch_scratch: u64,
+        growth: u64,
+    ) -> io::Result<()> {
+        self.ensure_permanent_growth(index, growth)?;
+        let next = checked_add_bytes(self.prepared_growth, growth)?;
+        let prior = self.prepared_growth;
+        self.prepared_growth = next;
+        if let Err(error) = self.ensure_aggregate_work_peak(index, batch_scratch) {
+            self.prepared_growth = prior;
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct ManagedTextObservation {
@@ -2676,6 +2982,8 @@ thread_local! {
     static GRAPH_TEXT_PARSE_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static GRAPH_TEXT_FIRST_CAPTURE_CHARGE_OVERRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
     static GRAPH_TEXT_EVENT_REVALIDATION_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static GRAPH_TEXT_EXACT_FEED_PREPARE_PATH: std::cell::RefCell<Option<Box<dyn FnMut(&str) -> io::Result<()>>>> = std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
@@ -2856,6 +3164,32 @@ fn graph_text_event_revalidation_race_hook() -> io::Result<()> {
 
 #[cfg(not(test))]
 fn graph_text_event_revalidation_race_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn graph_text_exact_feed_after_preflight_hook() -> io::Result<()> {
+    GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT.with(|hook| {
+        let callback = hook.borrow_mut().take();
+        callback.map_or(Ok(()), |callback| callback())
+    })
+}
+
+#[cfg(not(test))]
+fn graph_text_exact_feed_after_preflight_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn graph_text_exact_feed_prepare_path_hook(relative: &str) -> io::Result<()> {
+    GRAPH_TEXT_EXACT_FEED_PREPARE_PATH.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        hook.as_mut().map_or(Ok(()), |callback| callback(relative))
+    })
+}
+
+#[cfg(not(test))]
+fn graph_text_exact_feed_prepare_path_hook(_relative: &str) -> io::Result<()> {
     Ok(())
 }
 
@@ -3549,8 +3883,8 @@ impl Graph {
             root,
             config,
             graph_text_scope,
-            graph_text_admission: RwLock::new(GraphTextAdmissionState::Unbuilt {
-                armed_feed: None,
+            graph_text_admission: Arc::new(GraphTextAdmissionControl {
+                state: RwLock::new(GraphTextAdmissionState::Unbuilt),
             }),
             graph_text_admission_instance,
             journal_format,
@@ -5405,52 +5739,57 @@ impl Graph {
         Ok(result)
     }
 
-    /// Explicit whole-graph capture boundary for initial shadow import.
+    /// Legacy private admission-build helper retained for focused foundation
+    /// tests. Durable import uses the fresh capture method below instead.
     ///
     /// Names and bytes are captured together through retained directory/file
     /// handles. A second bounded capability traversal must reproduce the same
     /// complete path/digest set before the snapshot is returned.
+    #[cfg(test)]
     pub(crate) fn initial_shadow_raw_managed_text_inventory(
         &self,
     ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
         self.initial_shadow_raw_managed_text_inventory_with_limits(INITIAL_SHADOW_LIMITS)
     }
 
+    /// Fresh raw inventory for durable initial-shadow import.
+    ///
+    /// This capture never reads, advances, or consumes the process-local live
+    /// admission state. Import must always obtain current retained-capability
+    /// evidence of its own.
+    pub(crate) fn fresh_initial_shadow_raw_managed_text_inventory(
+        &self,
+    ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
+        let (first, _) = self.capture_initial_shadow_with_limits(INITIAL_SHADOW_LIMITS)?;
+        Ok(initial_shadow_capture_into_raw_inventory(first))
+    }
+
+    #[cfg(test)]
     fn initial_shadow_raw_managed_text_inventory_with_limits(
         &self,
         limits: InitialShadowLimits,
     ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
+        self.build_graph_text_admission_with_limits(limits)
+            .map(initial_shadow_capture_into_raw_inventory)
+    }
+
+    fn build_graph_text_admission_with_limits(
+        &self,
+        limits: InitialShadowLimits,
+    ) -> io::Result<InitialShadowCapture> {
         require_projection_platform()?;
         let armed_feed = self.begin_graph_text_admission_build()?;
-        let built = (|| {
-            let permit = self.admit_retained_managed_text_writer()?;
-            let first = collect_initial_shadow_managed_inventory_with_limits(
-                self, &permit, true, limits, 0,
-            )?;
-            initial_shadow_revalidation_hook(&self.root)?;
-            let second = collect_initial_shadow_managed_inventory_with_limits(
-                self,
-                &permit,
-                false,
-                limits,
-                first.peak_build_charge,
-            )?;
-            if !initial_shadow_captures_match(&first, &second) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "managed inventory changed during initial shadow capture",
-                ));
-            }
-            self.ensure_projection_root_binding()?;
-            let combined_capture_bytes =
-                checked_add_bytes(first.peak_build_charge, second.peak_build_charge)?;
-            if combined_capture_bytes > limits.peak_build_bytes {
-                return Err(initial_shadow_limit_error("peak build memory"));
-            }
+        let built: io::Result<(
+            InitialShadowCapture,
+            CompleteGraphTextAdmissionIndex,
+            Option<io::Error>,
+        )> = (|| {
+            let (first, combined_capture_bytes) =
+                self.capture_initial_shadow_with_limits(limits)?;
             let index = build_graph_text_admission_index(
                 self,
                 &first,
-                armed_feed.clone(),
+                armed_feed.as_ref().map(|binding| binding.fence.clone()),
                 limits,
                 combined_capture_bytes,
             )?;
@@ -5465,35 +5804,79 @@ impl Graph {
             }
         };
         self.finish_graph_text_admission_build(index, collision)?;
-        Ok(first
-            .entries
-            .into_iter()
-            .map(|entry| {
-                (
-                    entry.path,
-                    entry
-                        .bytes
-                        .expect("first initial-shadow pass retains exact bytes"),
-                )
-            })
-            .collect())
+        Ok(first)
     }
 
-    fn begin_graph_text_admission_build(&self) -> io::Result<Option<GraphTextAdmissionFeedFence>> {
+    fn capture_initial_shadow_with_limits(
+        &self,
+        limits: InitialShadowLimits,
+    ) -> io::Result<(InitialShadowCapture, u64)> {
+        require_projection_platform()?;
+        let permit = self.admit_retained_managed_text_writer()?;
+        let first =
+            collect_initial_shadow_managed_inventory_with_limits(self, &permit, true, limits, 0)?;
+        initial_shadow_revalidation_hook(&self.root)?;
+        let second = collect_initial_shadow_managed_inventory_with_limits(
+            self,
+            &permit,
+            false,
+            limits,
+            first.peak_build_charge,
+        )?;
+        if !initial_shadow_captures_match(&first, &second) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "managed inventory changed during initial shadow capture",
+            ));
+        }
+        self.ensure_projection_root_binding()?;
+        let combined_capture_bytes =
+            checked_add_bytes(first.peak_build_charge, second.peak_build_charge)?;
+        if combined_capture_bytes > limits.peak_build_bytes {
+            return Err(initial_shadow_limit_error("peak build memory"));
+        }
+        Ok((first, combined_capture_bytes))
+    }
+
+    fn begin_graph_text_admission_build(
+        &self,
+    ) -> io::Result<Option<GraphTextAdmissionFeedBinding>> {
         let mut state = self.graph_text_admission.write().unwrap();
-        let armed_feed = match &mut *state {
-            GraphTextAdmissionState::Unbuilt { armed_feed } => armed_feed.take(),
+        let armed_feed = match &*state {
+            GraphTextAdmissionState::Unbuilt => None,
+            GraphTextAdmissionState::Armed(binding) => Some(binding.clone()),
             GraphTextAdmissionState::Building { .. } => {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "a second graph-text admission build was attempted".to_owned(),
+                );
                 return Err(graph_text_admission_unavailable(
                     "index build is already active",
                 ));
             }
             GraphTextAdmissionState::SnapshotComplete(_) => {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "a second graph-text admission build was attempted".to_owned(),
+                );
                 return Err(graph_text_admission_unavailable(
                     "snapshot was already completed",
                 ));
             }
+            GraphTextAdmissionState::CatchingUp(_) => {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "a second graph-text admission build was attempted".to_owned(),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "authoritative index is catching up",
+                ));
+            }
             GraphTextAdmissionState::Complete(_) => {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "a second graph-text admission build was attempted".to_owned(),
+                );
                 return Err(graph_text_admission_unavailable(
                     "authoritative index was already completed",
                 ));
@@ -5515,11 +5898,17 @@ impl Graph {
     ) -> io::Result<()> {
         let mut state = self.graph_text_admission.write().unwrap();
         let GraphTextAdmissionState::Building { armed_feed } = &*state else {
+            poison_graph_text_admission_state(
+                &mut state,
+                "index build state changed before publication".to_owned(),
+            );
             return Err(graph_text_admission_unavailable(
                 "index build state changed before publication",
             ));
         };
-        if armed_feed.as_ref().map(|feed| feed.last_sequence)
+        if armed_feed
+            .as_ref()
+            .map(|binding| binding.fence.last_sequence)
             != index.feed.as_ref().map(|feed| feed.last_sequence)
         {
             *state = GraphTextAdmissionState::Poisoned {
@@ -5542,7 +5931,16 @@ impl Graph {
             return Err(error);
         }
         let index = Arc::new(index);
-        *state = if index.feed.is_some() {
+        #[cfg(not(test))]
+        let catching_up = index.feed.is_some();
+        #[cfg(test)]
+        let catching_up = index.feed.is_some()
+            && !armed_feed
+                .as_ref()
+                .is_some_and(|binding| binding.legacy_publish_on_build);
+        *state = if catching_up {
+            GraphTextAdmissionState::CatchingUp(index)
+        } else if index.feed.is_some() {
             GraphTextAdmissionState::Complete(index)
         } else {
             GraphTextAdmissionState::SnapshotComplete(index)
@@ -5557,6 +5955,7 @@ impl Graph {
         }
         let last_good = match &*state {
             GraphTextAdmissionState::SnapshotComplete(index)
+            | GraphTextAdmissionState::CatchingUp(index)
             | GraphTextAdmissionState::Complete(index) => Some(index.diagnostics()),
             _ => None,
         };
@@ -5566,32 +5965,487 @@ impl Graph {
         };
     }
 
-    /// Arm an exact, ordered feed before the sole explicit build. The current
-    /// packet has no platform integration; this narrow seam is retained for the
-    /// next packet and focused state-machine tests only.
-    #[allow(dead_code)]
-    fn arm_graph_text_admission_feed(
+    /// Arm one exact ordered feed before the sole bounded admission build.
+    pub fn arm_graph_text_exact_feed(
         &self,
         last_sequence: u64,
-    ) -> io::Result<GraphTextAdmissionFeedToken> {
+    ) -> io::Result<GraphTextExactFeedLease> {
+        let graph_resource = match self.canonical_resource_id() {
+            Ok(resource) => resource,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        let scope_binding = match self.graph_text_scope_binding() {
+            Ok(binding) => binding,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        if scope_binding.graph_resource_id() != graph_resource {
+            let error = graph_text_admission_unavailable(
+                "graph-text feed scope and retained root binding mismatch",
+            );
+            self.poison_graph_text_admission(error.to_string());
+            return Err(error);
+        }
+        let binding = GraphTextAdmissionFeedBinding {
+            instance: Arc::clone(&self.graph_text_admission_instance),
+            scope_binding,
+            graph_resource,
+            fence: GraphTextAdmissionFeedFence { last_sequence },
+            #[cfg(test)]
+            legacy_publish_on_build: false,
+        };
         let mut state = self.graph_text_admission.write().unwrap();
-        match &mut *state {
-            GraphTextAdmissionState::Unbuilt { armed_feed } if armed_feed.is_none() => {
-                *armed_feed = Some(GraphTextAdmissionFeedFence { last_sequence });
-                Ok(GraphTextAdmissionFeedToken {
-                    instance: Arc::clone(&self.graph_text_admission_instance),
+        match &*state {
+            GraphTextAdmissionState::Unbuilt => {
+                *state = GraphTextAdmissionState::Armed(binding.clone());
+                Ok(GraphTextExactFeedLease {
+                    control: Arc::clone(&self.graph_text_admission),
+                    binding,
+                    terminal: AtomicBool::new(false),
                 })
             }
-            GraphTextAdmissionState::Unbuilt { .. } => Err(graph_text_admission_unavailable(
-                "graph-text feed is already armed",
-            )),
             GraphTextAdmissionState::Poisoned { cause, .. } => {
                 Err(graph_text_admission_unavailable(cause))
             }
-            _ => Err(graph_text_admission_unavailable(
-                "graph-text feed must be armed before the build",
-            )),
+            _ => {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "a second or invalid graph-text feed arm was attempted".to_owned(),
+                );
+                Err(graph_text_admission_unavailable(
+                    "graph-text feed must be armed exactly once before the build",
+                ))
+            }
         }
+    }
+
+    /// Build the bounded graph-wide admission snapshot for an armed exact feed.
+    ///
+    /// Success publishes `CatchingUp`; it never creates complete authority.
+    pub fn build_graph_text_exact_feed(&self, lease: &GraphTextExactFeedLease) -> io::Result<()> {
+        self.ensure_graph_text_exact_feed_lease(lease)?;
+        self.build_graph_text_admission_with_limits(INITIAL_SHADOW_LIMITS)
+            .map(drop)
+    }
+
+    /// Classify one exact platform path without duplicating the scope policy.
+    pub fn classify_graph_text_exact_feed_path(
+        &self,
+        relative: &str,
+    ) -> io::Result<GraphTextExactFeedPathClass> {
+        validate_graph_text_exact_feed_relative(relative)?;
+        if relative.eq_ignore_ascii_case("logseq/config.edn") {
+            return Ok(GraphTextExactFeedPathClass::Configuration);
+        }
+        let mut parent = String::new();
+        let components = relative.split('/').collect::<Vec<_>>();
+        for component in &components[..components.len().saturating_sub(1)] {
+            if !parent.is_empty() {
+                parent.push('/');
+            }
+            parent.push_str(component);
+            if !self.graph_text_scope.should_descend(&parent) {
+                return Ok(GraphTextExactFeedPathClass::Excluded);
+            }
+        }
+        Ok(GraphTextExactFeedPathClass::RetainedFile)
+    }
+
+    /// Apply one bounded contiguous final-state batch while catching up or live.
+    pub fn apply_graph_text_exact_feed_batch(
+        &self,
+        lease: &GraphTextExactFeedLease,
+        batch: GraphTextExactFeedBatch,
+    ) -> io::Result<()> {
+        self.ensure_graph_text_exact_feed_lease(lease)?;
+        let (current, catching_up, next_generation) = {
+            let mut state = self.graph_text_admission.write().unwrap();
+            if !Arc::ptr_eq(&batch.instance, &lease.binding.instance) {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "exact feed batch belongs to a foreign session".to_owned(),
+                );
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "exact feed batch belongs to a foreign session",
+                ));
+            }
+            let (index, catching_up) = match &*state {
+                GraphTextAdmissionState::CatchingUp(index) => (Arc::clone(index), true),
+                GraphTextAdmissionState::Complete(index) => (Arc::clone(index), false),
+                GraphTextAdmissionState::Poisoned { cause, .. } => {
+                    return Err(graph_text_admission_unavailable(cause));
+                }
+                _ => {
+                    poison_graph_text_admission_state(
+                        &mut state,
+                        "exact feed batch was applied outside CatchingUp or Complete".to_owned(),
+                    );
+                    return Err(graph_text_admission_unavailable(
+                        "exact feed batch requires CatchingUp or Complete",
+                    ));
+                }
+            };
+            if !graph_text_exact_feed_index_matches_lease(&index, lease) {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "foreign or stale exact feed lease was applied".to_owned(),
+                );
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "exact feed lease belongs to a different Graph, root, or scope",
+                ));
+            }
+            let feed = index
+                .feed
+                .as_ref()
+                .expect("CatchingUp and Complete retain an exact feed");
+            let Some(expected_first) = feed.last_sequence.checked_add(1) else {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    graph_text_exact_feed_failure_cause(
+                        GraphTextExactFeedFailure::SequenceDiscontinuity,
+                        "exact feed sequence wrapped",
+                    ),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "exact feed sequence wrapped",
+                ));
+            };
+            if batch.first_sequence != expected_first {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    graph_text_exact_feed_failure_cause(
+                        GraphTextExactFeedFailure::SequenceDiscontinuity,
+                        &format!(
+                            "expected first sequence {expected_first}, received {}..={}",
+                            batch.first_sequence, batch.last_sequence
+                        ),
+                    ),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "exact feed sequence range is not contiguous",
+                ));
+            }
+            let Some(next_generation) = index.generation.checked_add(1) else {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "graph-text admission generation overflow".to_owned(),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "graph-text admission generation overflow",
+                ));
+            };
+            (index, catching_up, next_generation)
+        };
+
+        for relative in &batch.touched_exact_relatives {
+            if self.classify_graph_text_exact_feed_path(relative)?
+                == GraphTextExactFeedPathClass::Configuration
+            {
+                return Err(self.poison_graph_text_admission_error(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    graph_text_exact_feed_failure_cause(
+                        GraphTextExactFeedFailure::ScopeOrConfigMutation,
+                        "logseq/config.edn changed",
+                    ),
+                )));
+            }
+        }
+
+        let batch_scratch = match self.preflight_graph_text_exact_feed_batch(&current, &batch) {
+            Ok(scratch) => scratch,
+            Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+        };
+        if let Err(error) = graph_text_exact_feed_after_preflight_hook() {
+            return Err(self.poison_graph_text_admission_error(error));
+        }
+        let mut prepared = Vec::with_capacity(batch.touched_exact_relatives.len());
+        let mut actual_charges = GraphTextExactFeedBatchActualCharges::default();
+        for relative in &batch.touched_exact_relatives {
+            if let Err(error) = graph_text_exact_feed_prepare_path_hook(relative) {
+                return Err(self.poison_graph_text_admission_error(error));
+            }
+            let final_state = match self.prepare_graph_text_admission_final_state(
+                &current,
+                relative.clone(),
+                batch_scratch,
+                &mut actual_charges,
+            ) {
+                Ok(final_state) => final_state,
+                Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+            };
+            let retained_growth = match &final_state {
+                PreparedGraphTextAdmissionFinalState::Present(upsert) => upsert.retained_growth,
+                PreparedGraphTextAdmissionFinalState::Absent(remove) => remove.retained_growth,
+            };
+            if let Err(error) =
+                actual_charges.retain_prepared_growth(&current, batch_scratch, retained_growth)
+            {
+                return Err(self.poison_graph_text_admission_error(error));
+            }
+            prepared.push(final_state);
+        }
+
+        let mut prepared_growth = 0_u64;
+        let mut payload_peak = 0_u64;
+        for final_state in &prepared {
+            let (relative, growth, upsert) = match final_state {
+                PreparedGraphTextAdmissionFinalState::Present(upsert) => {
+                    (&upsert.relative, upsert.retained_growth, Some(upsert))
+                }
+                PreparedGraphTextAdmissionFinalState::Absent(remove) => {
+                    (&remove.relative, remove.retained_growth, None)
+                }
+            };
+            prepared_growth = match checked_add_bytes(prepared_growth, growth) {
+                Ok(growth) => growth,
+                Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+            };
+            payload_peak = match graph_text_admission_delta_payload_peak(&current, relative, upsert)
+                .and_then(|peak| checked_add_bytes(payload_peak, peak))
+            {
+                Ok(peak) => peak,
+                Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+            };
+        }
+        if prepared_growth != actual_charges.prepared_growth {
+            return Err(self.poison_graph_text_admission_error(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "exact feed batch prepared-growth charge diverged",
+            )));
+        }
+        if let Err(error) = self.revalidate_prepared_graph_text_admission_batch(
+            &current,
+            &prepared,
+            batch_scratch,
+            prepared_growth,
+        ) {
+            return Err(self.poison_graph_text_admission_error(error));
+        }
+        let structural_peak = match graph_text_admission_delta_structural_peak(&current)
+            .and_then(|peak| checked_mul_bytes(peak, usize_to_u64(prepared.len())?))
+        {
+            Ok(peak) => peak,
+            Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+        };
+        let event_peak = checked_add_bytes(current.permanent_bytes, prepared_growth)
+            .and_then(|value| checked_add_bytes(value, structural_peak))
+            .and_then(|value| checked_add_bytes(value, payload_peak))
+            .and_then(|value| checked_add_bytes(value, batch_scratch));
+        match event_peak {
+            Ok(peak) if peak <= current.peak_limit => {}
+            Ok(_) => {
+                return Err(
+                    self.poison_graph_text_admission_error(initial_shadow_limit_error(
+                        "peak build memory",
+                    )),
+                );
+            }
+            Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+        }
+
+        let mut state = self.graph_text_admission.write().unwrap();
+        let unchanged = match &*state {
+            GraphTextAdmissionState::CatchingUp(index) if catching_up => {
+                Arc::ptr_eq(index, &current)
+            }
+            GraphTextAdmissionState::Complete(index) if !catching_up => {
+                Arc::ptr_eq(index, &current)
+            }
+            _ => false,
+        };
+        if !unchanged {
+            poison_graph_text_admission_state(
+                &mut state,
+                "graph-text admission authority changed during batch proof".to_owned(),
+            );
+            return Err(graph_text_admission_unavailable(
+                "graph-text admission authority changed during batch proof",
+            ));
+        }
+
+        let mut next = (*current).clone();
+        for final_state in &prepared {
+            let relative = match final_state {
+                PreparedGraphTextAdmissionFinalState::Present(upsert) => &upsert.relative,
+                PreparedGraphTextAdmissionFinalState::Absent(remove) => &remove.relative,
+            };
+            let removed = remove_graph_text_admission_path(&mut next, relative);
+            if let (PreparedGraphTextAdmissionFinalState::Absent(remove), Some(tombstone)) =
+                (final_state, removed)
+            {
+                if let Ok(path) = ManagedPath::parse(relative.clone()) {
+                    next.tombstones_by_exact_path.insert(path, tombstone);
+                }
+                next.permanent_bytes =
+                    match checked_add_bytes(next.permanent_bytes, remove.retained_growth) {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            poison_graph_text_admission_state(&mut state, error.to_string());
+                            return Err(error);
+                        }
+                    };
+            }
+        }
+        for final_state in prepared {
+            if let PreparedGraphTextAdmissionFinalState::Present(upsert) = final_state {
+                if let Err(error) = self.apply_prepared_graph_text_file_upsert(&mut next, upsert) {
+                    poison_graph_text_admission_state(&mut state, error.to_string());
+                    return Err(error);
+                }
+            }
+        }
+        for relative in &batch.touched_exact_relatives {
+            if let Err(error) = validate_graph_text_admission_delta(&next, relative) {
+                poison_graph_text_admission_state(&mut state, error.to_string());
+                return Err(error);
+            }
+        }
+        if next.permanent_bytes > next.permanent_limit {
+            let error = initial_shadow_limit_error("permanent index memory");
+            poison_graph_text_admission_state(&mut state, error.to_string());
+            return Err(error);
+        }
+        next.generation = next_generation;
+        next.feed
+            .as_mut()
+            .expect("staged exact-feed indexes retain a fence")
+            .last_sequence = batch.last_sequence;
+        let next = Arc::new(next);
+        *state = if catching_up {
+            GraphTextAdmissionState::CatchingUp(next)
+        } else {
+            GraphTextAdmissionState::Complete(next)
+        };
+        Ok(())
+    }
+
+    /// Publish complete point authority only at the exact clean queue fence.
+    pub fn publish_graph_text_exact_feed_caught_up(
+        &self,
+        lease: &GraphTextExactFeedLease,
+        last_sequence: u64,
+    ) -> io::Result<()> {
+        self.ensure_graph_text_exact_feed_lease(lease)?;
+        let current = {
+            let state = self.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::CatchingUp(index) = &*state else {
+                drop(state);
+                self.poison_graph_text_admission(
+                    "caught-up publication requires the CatchingUp state",
+                );
+                return Err(graph_text_admission_unavailable(
+                    "caught-up publication requires the CatchingUp state",
+                ));
+            };
+            Arc::clone(index)
+        };
+        self.ensure_graph_text_admission_snapshot_binding(&current)
+            .map_err(|error| self.poison_graph_text_admission_error(error))?;
+        let mut state = self.graph_text_admission.write().unwrap();
+        let exact = matches!(
+            &*state,
+            GraphTextAdmissionState::CatchingUp(index)
+                if Arc::ptr_eq(index, &current)
+                    && graph_text_exact_feed_index_matches_lease(index, lease)
+                    && index.feed.as_ref().is_some_and(|feed| {
+                        feed.last_sequence == last_sequence
+                    })
+        );
+        if !exact {
+            poison_graph_text_admission_state(
+                &mut state,
+                "caught-up fence, generation, session, or snapshot changed".to_owned(),
+            );
+            return Err(graph_text_admission_unavailable(
+                "caught-up publication did not match the exact current fence",
+            ));
+        }
+        *state = GraphTextAdmissionState::Complete(current);
+        Ok(())
+    }
+
+    /// Terminally poison/disconnect this exact feed with a typed bounded cause.
+    pub fn poison_graph_text_exact_feed(
+        &self,
+        lease: &GraphTextExactFeedLease,
+        reason: GraphTextExactFeedFailure,
+        cause: &str,
+    ) -> io::Result<()> {
+        if !Arc::ptr_eq(&lease.control, &self.graph_text_admission)
+            || !Arc::ptr_eq(&lease.binding.instance, &self.graph_text_admission_instance)
+        {
+            self.poison_graph_text_admission(
+                "foreign exact feed lease attempted to disconnect this Graph",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "exact feed lease belongs to another Graph instance",
+            ));
+        }
+        lease.terminal.store(true, Ordering::Release);
+        self.poison_graph_text_admission(graph_text_exact_feed_failure_cause(reason, cause));
+        Ok(())
+    }
+
+    fn ensure_graph_text_exact_feed_lease(
+        &self,
+        lease: &GraphTextExactFeedLease,
+    ) -> io::Result<()> {
+        if lease.terminal.load(Ordering::Acquire) {
+            return Err(graph_text_admission_unavailable(
+                "exact feed lease is terminal",
+            ));
+        }
+        if !Arc::ptr_eq(&lease.control, &self.graph_text_admission)
+            || !Arc::ptr_eq(&lease.binding.instance, &self.graph_text_admission_instance)
+        {
+            self.poison_graph_text_admission(
+                "foreign exact feed lease was used with this Graph instance",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "exact feed lease belongs to another Graph instance",
+            ));
+        }
+        let graph_resource = self
+            .canonical_resource_id()
+            .map_err(|error| self.poison_graph_text_admission_error(error))?;
+        let scope_binding = self
+            .graph_text_scope_binding()
+            .map_err(|error| self.poison_graph_text_admission_error(error))?;
+        if graph_resource != lease.binding.graph_resource
+            || scope_binding != lease.binding.scope_binding
+            || scope_binding.graph_resource_id() != graph_resource
+        {
+            let error =
+                graph_text_admission_unavailable("exact feed lease root or scope binding changed");
+            self.poison_graph_text_admission(error.to_string());
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn arm_graph_text_admission_feed(
+        &self,
+        last_sequence: u64,
+    ) -> io::Result<GraphTextExactFeedLease> {
+        let mut lease = self.arm_graph_text_exact_feed(last_sequence)?;
+        lease.binding.legacy_publish_on_build = true;
+        let mut state = self.graph_text_admission.write().unwrap();
+        let GraphTextAdmissionState::Armed(binding) = &mut *state else {
+            unreachable!("test compatibility arm leaves the Graph armed");
+        };
+        binding.legacy_publish_on_build = true;
+        drop(state);
+        Ok(lease)
     }
 
     #[allow(dead_code)]
@@ -5601,11 +6455,13 @@ impl Graph {
             let state = self.graph_text_admission.read().unwrap();
             let GraphTextAdmissionState::Complete(index) = &*state else {
                 let cause = match &*state {
-                    GraphTextAdmissionState::Unbuilt { .. } => "index is unbuilt",
+                    GraphTextAdmissionState::Unbuilt => "index is unbuilt",
+                    GraphTextAdmissionState::Armed(_) => "exact feed is armed but unbuilt",
                     GraphTextAdmissionState::Building { .. } => "index is building",
                     GraphTextAdmissionState::SnapshotComplete(_) => {
                         "snapshot feed is not authoritative"
                     }
+                    GraphTextAdmissionState::CatchingUp(_) => "exact feed snapshot is catching up",
                     GraphTextAdmissionState::Poisoned { cause, .. } => cause,
                     GraphTextAdmissionState::Complete(_) => unreachable!(),
                 };
@@ -5958,7 +6814,7 @@ impl Graph {
         ))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn apply_graph_text_admission_event(
         &self,
         token: &GraphTextAdmissionFeedToken,
@@ -5967,7 +6823,7 @@ impl Graph {
     ) -> io::Result<()> {
         let (current, next_generation) = {
             let mut state = self.graph_text_admission.write().unwrap();
-            if !Arc::ptr_eq(&token.instance, &self.graph_text_admission_instance) {
+            if !Arc::ptr_eq(&token.binding.instance, &self.graph_text_admission_instance) {
                 poison_graph_text_admission_state(
                     &mut state,
                     "foreign graph-text feed token was applied to this Graph instance".to_owned(),
@@ -5982,9 +6838,7 @@ impl Graph {
                 GraphTextAdmissionState::Poisoned { cause, .. } => {
                     return Err(graph_text_admission_unavailable(cause));
                 }
-                GraphTextAdmissionState::Unbuilt {
-                    armed_feed: Some(_),
-                }
+                GraphTextAdmissionState::Armed(_)
                 | GraphTextAdmissionState::Building {
                     armed_feed: Some(_),
                 } => {
@@ -6178,12 +7032,263 @@ impl Graph {
         Ok(())
     }
 
+    fn preflight_graph_text_exact_feed_batch(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        batch: &GraphTextExactFeedBatch,
+    ) -> io::Result<u64> {
+        let mut scratch = conservative_vec_capacity_upper_bound::<
+            PreparedGraphTextAdmissionFinalState,
+        >(usize_to_u64(batch.touched_exact_relatives.len())?)?;
+        let mut raw_bytes = 0_u64;
+        let mut parser_peak = 0_u64;
+        let mut worst_permanent_growth = 0_u64;
+        for relative in &batch.touched_exact_relatives {
+            scratch = checked_add_bytes(scratch, graph_text_event_scratch_upper_bound(relative)?)?;
+            let target = self.graph_text_exact_path(relative, false)?;
+            let parent = self.graph_text_event_parent(&target)?;
+            validate_graph_text_event_parent(index, &target, &parent)?;
+            let mut present_len = None;
+            match parent.final_dir().symlink_metadata(&target.filename) {
+                Ok(metadata) if metadata.is_file() => {
+                    present_len = Some(metadata.len());
+                    raw_bytes = checked_add_bytes(raw_bytes, metadata.len())?;
+                    if raw_bytes > MAX_GRAPH_TEXT_EXACT_FEED_BATCH_RAW_BYTES {
+                        return Err(initial_shadow_limit_error(
+                            "exact feed batch aggregate raw bytes",
+                        ));
+                    }
+                    if self.graph_text_scope.is_eligible(relative) {
+                        parser_peak = checked_add_bytes(
+                            parser_peak,
+                            managed_page_build_metrics_upper_bound(metadata.len(), metadata.len())?,
+                        )?;
+                    }
+                }
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        graph_text_exact_feed_failure_cause(
+                            GraphTextExactFeedFailure::DirectoryMutation,
+                            &format!("touched path is not a regular file: {relative}"),
+                        ),
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            worst_permanent_growth = checked_add_bytes(
+                worst_permanent_growth,
+                self.graph_text_exact_feed_worst_permanent_growth(index, relative, present_len)?,
+            )?;
+        }
+        if checked_add_bytes(index.permanent_bytes, worst_permanent_growth)? > index.permanent_limit
+        {
+            return Err(initial_shadow_limit_error("permanent index memory"));
+        }
+        let live = checked_add_bytes(index.permanent_bytes, scratch)?;
+        ensure_graph_text_peak_limit(
+            live,
+            checked_add_bytes(raw_bytes, parser_peak)?,
+            index.peak_limit,
+        )?;
+        Ok(scratch)
+    }
+
+    fn graph_text_exact_feed_worst_permanent_growth(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: &str,
+        present_len: Option<u64>,
+    ) -> io::Result<u64> {
+        let eligible_path = self
+            .graph_text_scope
+            .is_eligible(relative)
+            .then(|| ManagedPath::parse(relative.to_owned()))
+            .transpose()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+        let mut path_growth =
+            graph_text_admission_upsert_retained_upper_bound(relative, None, None)?;
+        if eligible_path.is_some() {
+            let title_format = graph_text_journal_title_format_budget(self)?;
+            let accepted_semantic_name_bound = checked_add_bytes(present_len.unwrap_or(0), 64)?
+                .max(checked_add_bytes(usize_to_u64(relative.len())?, 64)?)
+                .max(title_format.rendered_bytes)
+                .min(MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES);
+            path_growth = checked_add_bytes(
+                path_growth,
+                graph_text_file_record_worst_case_upper_bound(
+                    self,
+                    usize_to_u64(relative.len())?,
+                    accepted_semantic_name_bound,
+                )?,
+            )?;
+        }
+        if let Some(path) = eligible_path.as_ref() {
+            path_growth = checked_add_bytes(
+                path_growth,
+                graph_text_admission_tombstone_upper_bound(
+                    relative,
+                    index.files_by_exact_path.get(path),
+                )?,
+            )?;
+        }
+        Ok(path_growth)
+    }
+
+    fn prepare_graph_text_admission_final_state(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: String,
+        batch_scratch: u64,
+        actual_charges: &mut GraphTextExactFeedBatchActualCharges,
+    ) -> io::Result<PreparedGraphTextAdmissionFinalState> {
+        let target = self.graph_text_exact_path(&relative, false)?;
+        let parent = self.graph_text_event_parent(&target)?;
+        validate_graph_text_event_parent(index, &target, &parent)?;
+        match parent.final_dir().symlink_metadata(&target.filename) {
+            Ok(metadata) if metadata.is_file() => self
+                .prepare_graph_text_file_upsert_for_batch(
+                    index,
+                    relative,
+                    batch_scratch,
+                    actual_charges,
+                )
+                .map(PreparedGraphTextAdmissionFinalState::Present),
+            Ok(_) => Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                graph_text_exact_feed_failure_cause(
+                    GraphTextExactFeedFailure::DirectoryMutation,
+                    &format!("touched path became non-regular: {relative}"),
+                ),
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => self
+                .prepare_graph_text_file_remove(index, relative)
+                .map(PreparedGraphTextAdmissionFinalState::Absent),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn revalidate_prepared_graph_text_admission_batch(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        prepared: &[PreparedGraphTextAdmissionFinalState],
+        batch_scratch: u64,
+        prepared_growth: u64,
+    ) -> io::Result<()> {
+        self.ensure_graph_text_admission_snapshot_binding(index)?;
+        let live = checked_add_bytes(index.permanent_bytes, batch_scratch)
+            .and_then(|bytes| checked_add_bytes(bytes, prepared_growth))?;
+        let remaining_peak = index
+            .peak_limit
+            .checked_sub(live)
+            .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?;
+        let mut raw_bytes = 0_u64;
+        for final_state in prepared {
+            let (relative, expected) = match final_state {
+                PreparedGraphTextAdmissionFinalState::Present(upsert) => {
+                    (&upsert.relative, Some(upsert))
+                }
+                PreparedGraphTextAdmissionFinalState::Absent(remove) => (&remove.relative, None),
+            };
+            let target = self.graph_text_exact_path(relative, false)?;
+            let parent = self.graph_text_event_parent(&target)?;
+            validate_graph_text_event_parent(index, &target, &parent)?;
+            match expected {
+                Some(upsert) => {
+                    let remaining_raw = MAX_GRAPH_TEXT_EXACT_FEED_BATCH_RAW_BYTES
+                        .checked_sub(raw_bytes)
+                        .ok_or_else(|| {
+                            initial_shadow_limit_error("exact feed batch aggregate raw bytes")
+                        })?;
+                    let expected_len = upsert.description.byte_length();
+                    if expected_len > remaining_raw {
+                        return Err(initial_shadow_limit_error(
+                            "exact feed batch aggregate raw bytes",
+                        ));
+                    }
+                    let file = open_projection_file_nofollow(parent.final_dir(), &target.filename)?;
+                    if canonical_projection_file_resource_id(&file)? != upsert.file_resource_id
+                        || projection_file_link_count(&file)? != upsert.link_count
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            format!("exact feed batch resource/link proof changed: {relative}"),
+                        ));
+                    }
+                    let (_, description, resource, _, _) =
+                        read_projection_optional_bound_capture_with_limits(
+                            parent.final_dir(),
+                            &target.filename,
+                            expected_len,
+                            remaining_peak,
+                        )?
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                format!(
+                                    "exact feed batch path disappeared during final proof: {relative}"
+                                ),
+                            )
+                        })?;
+                    raw_bytes = checked_add_bytes(raw_bytes, expected_len)?;
+                    if description != upsert.description || resource != upsert.file_resource_id {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            format!(
+                                "exact feed batch bytes/resource changed during final proof: {relative}"
+                            ),
+                        ));
+                    }
+                }
+                None => match parent.final_dir().symlink_metadata(&target.filename) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            format!(
+                                "exact feed batch absent path reappeared during final proof: {relative}"
+                            ),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                },
+            }
+        }
+        self.ensure_graph_text_admission_snapshot_binding(index)
+    }
+
     #[allow(dead_code)]
     fn prepare_graph_text_file_upsert(
         &self,
         index: &CompleteGraphTextAdmissionIndex,
         relative: String,
         event_scratch: u64,
+    ) -> io::Result<PreparedGraphTextAdmissionUpsert> {
+        self.prepare_graph_text_file_upsert_with_batch_charges(index, relative, event_scratch, None)
+    }
+
+    fn prepare_graph_text_file_upsert_for_batch(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: String,
+        batch_scratch: u64,
+        actual_charges: &mut GraphTextExactFeedBatchActualCharges,
+    ) -> io::Result<PreparedGraphTextAdmissionUpsert> {
+        self.prepare_graph_text_file_upsert_with_batch_charges(
+            index,
+            relative,
+            batch_scratch,
+            Some(actual_charges),
+        )
+    }
+
+    fn prepare_graph_text_file_upsert_with_batch_charges(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: String,
+        event_scratch: u64,
+        mut actual_charges: Option<&mut GraphTextExactFeedBatchActualCharges>,
     ) -> io::Result<PreparedGraphTextAdmissionUpsert> {
         let target = self.graph_text_exact_path(&relative, false)?;
         let parent = self.graph_text_event_parent(&target)?;
@@ -6197,16 +7302,36 @@ impl Graph {
                 format!("exact feed upsert has an unsafe link count: {relative}"),
             ));
         }
-        let live_bytes = checked_add_bytes(index.permanent_bytes, event_scratch)?;
-        let remaining_peak = index
-            .peak_limit
-            .checked_sub(live_bytes)
-            .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?;
+        let enumerated_len = enumerated.metadata()?.len();
+        if let Some(charges) = actual_charges.as_deref_mut() {
+            let worst_growth = self.graph_text_exact_feed_worst_permanent_growth(
+                index,
+                &relative,
+                Some(enumerated_len),
+            )?;
+            charges.ensure_permanent_growth(index, worst_growth)?;
+            charges.reserve_raw(index, event_scratch, enumerated_len)?;
+        }
+        let live_bytes = match actual_charges.as_deref() {
+            Some(charges) => charges.live_preparation_bytes(index, event_scratch)?,
+            None => checked_add_bytes(index.permanent_bytes, event_scratch)?,
+        };
+        let remaining_peak = match actual_charges.as_deref() {
+            Some(charges) => charges.remaining_peak(index, event_scratch)?,
+            None => index
+                .peak_limit
+                .checked_sub(live_bytes)
+                .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?,
+        };
+        let content_limit = match actual_charges.as_deref() {
+            Some(_) => enumerated_len,
+            None => MAX_PROJECTION_EVIDENCE_BYTES,
+        };
         let (bytes, description, file_resource_id, _, _) =
             read_projection_optional_bound_capture_with_limits(
                 parent.final_dir(),
                 &target.filename,
-                MAX_PROJECTION_EVIDENCE_BYTES,
+                content_limit,
                 remaining_peak,
             )?
             .ok_or_else(|| {
@@ -6215,6 +7340,12 @@ impl Graph {
                     format!("exact feed upsert disappeared: {}", relative),
                 )
             })?;
+        if actual_charges.is_some() && usize_to_u64(bytes.capacity())? != enumerated_len {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed upsert length changed after admission: {relative}"),
+            ));
+        }
         if file_resource_id != enumerated_resource {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
@@ -6246,12 +7377,16 @@ impl Graph {
             eligible_path.as_ref(),
             content_for_bound,
         )?;
-        let worst_permanent = index
-            .permanent_bytes
-            .checked_add(worst_growth)
-            .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
-        if worst_permanent > index.permanent_limit {
-            return Err(initial_shadow_limit_error("permanent index memory"));
+        if let Some(charges) = actual_charges.as_deref() {
+            charges.ensure_permanent_growth(index, worst_growth)?;
+        } else {
+            let worst_permanent = index
+                .permanent_bytes
+                .checked_add(worst_growth)
+                .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
+            if worst_permanent > index.permanent_limit {
+                return Err(initial_shadow_limit_error("permanent index memory"));
+            }
         }
         let eligible = if let Some(path) = eligible_path {
             let content = std::str::from_utf8(&bytes).map_err(|_| {
@@ -6260,6 +7395,13 @@ impl Graph {
                     format!("graph text is not UTF-8: {path}"),
                 )
             })?;
+            if let Some(charges) = actual_charges.as_deref_mut() {
+                charges.reserve_parser(
+                    index,
+                    event_scratch,
+                    managed_page_build_upper_bound(content)?,
+                )?;
+            }
             let parser_live = checked_add_bytes(live_bytes, usize_to_u64(bytes.capacity())?)?;
             let permit = graph_text_parse_budget_permit(
                 self,
@@ -6287,12 +7429,16 @@ impl Graph {
             eligible.as_ref().map(|(path, _)| path),
             eligible.as_ref().map(|(_, record)| &record.semantic),
         )?;
-        let final_permanent = index
-            .permanent_bytes
-            .checked_add(retained_growth)
-            .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
-        if final_permanent > index.permanent_limit {
-            return Err(initial_shadow_limit_error("permanent index memory"));
+        if let Some(charges) = actual_charges.as_deref() {
+            charges.ensure_permanent_growth(index, retained_growth)?;
+        } else {
+            let final_permanent = index
+                .permanent_bytes
+                .checked_add(retained_growth)
+                .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
+            if final_permanent > index.permanent_limit {
+                return Err(initial_shadow_limit_error("permanent index memory"));
+            }
         }
         let revalidation_live = checked_add_bytes(
             checked_add_bytes(live_bytes, usize_to_u64(bytes.capacity())?)?,
@@ -6318,7 +7464,7 @@ impl Graph {
             read_projection_optional_bound_capture_with_limits(
                 rebound_parent.final_dir(),
                 &target.filename,
-                MAX_PROJECTION_EVIDENCE_BYTES,
+                description.byte_length(),
                 revalidation_peak,
             )?
             .ok_or_else(|| {
@@ -6343,6 +7489,7 @@ impl Graph {
         self.ensure_graph_text_admission_snapshot_binding(index)?;
         Ok(PreparedGraphTextAdmissionUpsert {
             relative,
+            description,
             file_resource_id,
             link_count,
             retained_growth,
@@ -6431,15 +7578,6 @@ impl Graph {
         relative: String,
     ) -> io::Result<PreparedGraphTextAdmissionRemove> {
         let target = self.graph_text_exact_path(&relative, false)?;
-        if !index
-            .file_resource_by_exact_relative
-            .contains_key(relative.as_str())
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                format!("exact feed removal was never retained: {relative}"),
-            ));
-        }
         match self.graph_text_event_parent(&target) {
             Ok(parent) => {
                 validate_graph_text_event_parent(index, &target, &parent)?;
@@ -6486,11 +7624,18 @@ impl Graph {
         }
         self.ensure_graph_text_admission_snapshot_binding(index)?;
         let retained_growth = match target.managed_path.as_ref() {
-            Some(path) => graph_text_admission_tombstone_upper_bound(
-                &relative,
-                index.files_by_exact_path.get(path),
-            )?,
+            Some(path)
+                if index
+                    .file_resource_by_exact_relative
+                    .contains_key(relative.as_str()) =>
+            {
+                graph_text_admission_tombstone_upper_bound(
+                    &relative,
+                    index.files_by_exact_path.get(path),
+                )?
+            }
             None => 0,
+            Some(_) => 0,
         };
         Ok(PreparedGraphTextAdmissionRemove {
             relative,
@@ -6515,16 +7660,13 @@ impl Graph {
             0,
             graph_text_delta_reverse_members(index, &relative),
         );
-        let tombstone = remove_graph_text_admission_path(index, &relative).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Interrupted,
-                format!("exact feed removal was never retained: {relative}"),
-            )
-        })?;
-        if let Ok(path) = ManagedPath::parse(relative.to_owned()) {
-            index.tombstones_by_exact_path.insert(path, tombstone);
+        if let Some(tombstone) = remove_graph_text_admission_path(index, &relative) {
+            if let Ok(path) = ManagedPath::parse(relative.to_owned()) {
+                index.tombstones_by_exact_path.insert(path, tombstone);
+            }
+            index.permanent_bytes =
+                checked_add_bytes(index.permanent_bytes, prepared.retained_growth)?;
         }
-        index.permanent_bytes = checked_add_bytes(index.permanent_bytes, prepared.retained_growth)?;
         count_graph_text_admission_event_work(8, 5 + usize::from(prior_graph_text) * 3, 0);
         validate_graph_text_admission_delta(index, &relative)
     }
@@ -6565,13 +7707,13 @@ impl Graph {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn disconnect_graph_text_admission_feed(
         &self,
         token: &GraphTextAdmissionFeedToken,
     ) -> io::Result<()> {
         let mut state = self.graph_text_admission.write().unwrap();
-        if !Arc::ptr_eq(&token.instance, &self.graph_text_admission_instance) {
+        if !Arc::ptr_eq(&token.binding.instance, &self.graph_text_admission_instance) {
             poison_graph_text_admission_state(
                 &mut state,
                 "foreign graph-text feed token disconnected this Graph instance".to_owned(),
@@ -6581,6 +7723,7 @@ impl Graph {
                 "graph-text feed token belongs to another Graph instance",
             ));
         }
+        token.terminal.store(true, Ordering::Release);
         poison_graph_text_admission_state(&mut state, "graph-text feed disconnected".to_owned());
         Ok(())
     }
@@ -18434,6 +19577,7 @@ const MAX_INITIAL_SHADOW_PENDING_DIRECTORIES: usize = 1_000_000;
 const MAX_INITIAL_SHADOW_PATH_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_GRAPH_TEXT_ADMISSION_INDEX_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_GRAPH_TEXT_ADMISSION_BUILD_PEAK_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_GRAPH_TEXT_EXACT_FEED_BATCH_RAW_BYTES: u64 = 64 * 1024 * 1024;
 /// Peak content retained while mutable managed-text preparation has both parsed
 /// and raw/projection representations alive. This matches the 512 MiB initial
 /// shadow raw-byte ceiling, while accounting for those simultaneous copies.
@@ -20198,6 +21342,23 @@ fn initial_shadow_captures_match(
             })
 }
 
+fn initial_shadow_capture_into_raw_inventory(
+    capture: InitialShadowCapture,
+) -> Vec<(ManagedPath, Vec<u8>)> {
+    capture
+        .entries
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.path,
+                entry
+                    .bytes
+                    .expect("first initial-shadow pass retains exact bytes"),
+            )
+        })
+        .collect()
+}
+
 fn build_graph_text_admission_index(
     graph: &Graph,
     capture: &InitialShadowCapture,
@@ -21344,6 +22505,7 @@ fn poison_graph_text_admission_state(state: &mut GraphTextAdmissionState, cause:
     }
     let last_good = match state {
         GraphTextAdmissionState::SnapshotComplete(index)
+        | GraphTextAdmissionState::CatchingUp(index)
         | GraphTextAdmissionState::Complete(index) => Some(index.diagnostics()),
         _ => None,
     };
@@ -21354,6 +22516,57 @@ fn poison_graph_text_admission_state(state: &mut GraphTextAdmissionState, cause:
 }
 
 const MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES: usize = 4096;
+
+fn validate_graph_text_exact_feed_relative(relative: &str) -> io::Result<()> {
+    if relative != relative.trim()
+        || relative.is_empty()
+        || relative.len() > GraphTextExactFeedBatch::MAX_EXACT_RELATIVE_BYTES
+        || relative.starts_with('/')
+        || relative.contains('\\')
+        || relative.contains('\0')
+        || relative.split('/').count() > GraphTextExactFeedBatch::MAX_PATH_COMPONENTS
+        || relative
+            .split('/')
+            .any(|component| !projection_component_is_portable(component))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid exact graph-relative feed path",
+        ));
+    }
+    Ok(())
+}
+
+fn graph_text_exact_feed_index_matches_lease(
+    index: &CompleteGraphTextAdmissionIndex,
+    lease: &GraphTextExactFeedLease,
+) -> bool {
+    Arc::ptr_eq(&index.instance, &lease.binding.instance)
+        && index.scope_binding == lease.binding.scope_binding
+        && index.graph_resource == lease.binding.graph_resource
+        && index.feed.is_some()
+}
+
+fn graph_text_exact_feed_failure_cause(reason: GraphTextExactFeedFailure, cause: &str) -> String {
+    let label = match reason {
+        GraphTextExactFeedFailure::BackendError => "backend error",
+        GraphTextExactFeedFailure::OverflowOrQueueLoss => "overflow or queue loss",
+        GraphTextExactFeedFailure::SequenceDiscontinuity => "sequence discontinuity",
+        GraphTextExactFeedFailure::UnsupportedOrAmbiguousEvent => "unsupported or ambiguous event",
+        GraphTextExactFeedFailure::DirectoryMutation => "directory mutation",
+        GraphTextExactFeedFailure::RootMutation => "root mutation",
+        GraphTextExactFeedFailure::ScopeOrConfigMutation => "scope or config mutation",
+        GraphTextExactFeedFailure::ModeSwitch => "mode switch",
+        GraphTextExactFeedFailure::ExplicitDisconnect => "explicit disconnect",
+        GraphTextExactFeedFailure::LeaseDropped => "lease drop",
+    };
+    let available = MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES.saturating_sub(label.len() + 2);
+    let mut boundary = cause.len().min(available);
+    while !cause.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    bounded_graph_text_admission_cause(format!("{label}: {}", &cause[..boundary]))
+}
 
 fn bounded_graph_text_admission_cause(mut cause: String) -> String {
     if cause.len() <= MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES {
@@ -29316,7 +30529,7 @@ mod tests {
 
         let other = scratch("admission-feed-cross-instance");
         let other_graph = Graph::open(&other);
-        other_graph.arm_graph_text_admission_feed(0).unwrap();
+        let _other_lease = other_graph.arm_graph_text_admission_feed(0).unwrap();
         other_graph
             .initial_shadow_raw_managed_text_inventory()
             .unwrap();
@@ -29335,7 +30548,7 @@ mod tests {
 
         let disconnected = scratch("admission-disconnect-cross-instance");
         let disconnected_graph = Graph::open(&disconnected);
-        disconnected_graph.arm_graph_text_admission_feed(0).unwrap();
+        let _disconnected_lease = disconnected_graph.arm_graph_text_admission_feed(0).unwrap();
         disconnected_graph
             .initial_shadow_raw_managed_text_inventory()
             .unwrap();
@@ -29452,20 +30665,16 @@ mod tests {
         let token = graph.arm_graph_text_admission_feed(0).unwrap();
         graph.initial_shadow_raw_managed_text_inventory().unwrap();
         let hook_graph = Arc::clone(&graph);
-        let hook_token = token.clone();
         GRAPH_TEXT_EVENT_REVALIDATION_RACE.with(|hook| {
             let aba_root = aba_root.clone();
             *hook.borrow_mut() = Some(Box::new(move || {
                 let retired = aba_root.join("retired");
                 fs::rename(aba_root.join("nested"), &retired)?;
                 fs::rename(&retired, aba_root.join("nested"))?;
-                hook_graph.apply_graph_text_admission_event(
-                    &hook_token,
-                    1,
-                    GraphTextAdmissionExactEvent::DirectoryChanged {
-                        relative: Some("nested".to_owned()),
-                    },
-                )
+                hook_graph.poison_graph_text_admission(
+                    "exact directory event requires a new bounded snapshot",
+                );
+                Ok(())
             }));
         });
         assert!(graph
@@ -29852,7 +31061,7 @@ mod tests {
         let outside = scratch("admission-exact-live-hardlink-outside");
         fs::write(root.join("Page.md"), b"- retained\n").unwrap();
         let graph = Graph::open(&root);
-        graph.arm_graph_text_admission_feed(0).unwrap();
+        let _lease = graph.arm_graph_text_admission_feed(0).unwrap();
         graph.initial_shadow_raw_managed_text_inventory().unwrap();
         let epoch = graph.graph_text_admission_epoch().unwrap();
         let path = ManagedPath::parse("Page.md").unwrap();
@@ -29889,7 +31098,7 @@ mod tests {
         let point_root = scratch("admission-point-root-substitution");
         fs::write(point_root.join("Page.md"), b"- point\n").unwrap();
         let point_graph = Graph::open(&point_root);
-        point_graph.arm_graph_text_admission_feed(0).unwrap();
+        let _point_lease = point_graph.arm_graph_text_admission_feed(0).unwrap();
         point_graph
             .initial_shadow_raw_managed_text_inventory()
             .unwrap();
@@ -29909,7 +31118,7 @@ mod tests {
         let epoch_root = scratch("admission-epoch-root-substitution");
         fs::write(epoch_root.join("Page.md"), b"- epoch\n").unwrap();
         let epoch_graph = Graph::open(&epoch_root);
-        epoch_graph.arm_graph_text_admission_feed(0).unwrap();
+        let _epoch_lease = epoch_graph.arm_graph_text_admission_feed(0).unwrap();
         epoch_graph
             .initial_shadow_raw_managed_text_inventory()
             .unwrap();
@@ -29931,7 +31140,7 @@ mod tests {
             let outside = scratch(&format!("admission-exact-{kind}-replacement-outside"));
             fs::write(root.join("Page.md"), b"- retained\n").unwrap();
             let graph = Graph::open(&root);
-            graph.arm_graph_text_admission_feed(0).unwrap();
+            let _lease = graph.arm_graph_text_admission_feed(0).unwrap();
             graph.initial_shadow_raw_managed_text_inventory().unwrap();
             let epoch = graph.graph_text_admission_epoch().unwrap();
             let path = ManagedPath::parse("Page.md").unwrap();
@@ -29971,7 +31180,7 @@ mod tests {
         )
         .unwrap();
         let graph = Graph::open(&root);
-        graph.arm_graph_text_admission_feed(8).unwrap();
+        let _lease = graph.arm_graph_text_admission_feed(8).unwrap();
         graph.initial_shadow_raw_managed_text_inventory().unwrap();
         let epoch = graph.graph_text_admission_epoch().unwrap();
         let path = ManagedPath::parse("deep/tree/Page.Markdown").unwrap();
@@ -30341,7 +31550,7 @@ mod tests {
             (&semantic, "a/One.md"),
         ] {
             let graph = Graph::open(root);
-            graph.arm_graph_text_admission_feed(0).unwrap();
+            let _lease = graph.arm_graph_text_admission_feed(0).unwrap();
             assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
             assert!(matches!(
                 &*graph.graph_text_admission.read().unwrap(),
@@ -30400,6 +31609,965 @@ mod tests {
         let _ = fs::remove_dir_all(&resource);
         let _ = fs::remove_dir_all(&semantic);
         let _ = fs::remove_dir_all(&defensive);
+    }
+
+    fn staged_exact_feed_build(graph: &Graph, last_sequence: u64) -> GraphTextExactFeedLease {
+        let lease = graph.arm_graph_text_exact_feed(last_sequence).unwrap();
+        graph.build_graph_text_exact_feed(&lease).unwrap();
+        lease
+    }
+
+    #[test]
+    fn staged_exact_feed_states_publish_only_at_the_exact_clean_fence() {
+        let root = scratch("staged-exact-feed-states");
+        let graph = Graph::open(&root);
+        let lease = graph.arm_graph_text_exact_feed(7).unwrap();
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Armed(_)
+        ));
+        assert!(graph.graph_text_admission_epoch().is_err());
+        graph.build_graph_text_exact_feed(&lease).unwrap();
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::CatchingUp(_)
+        ));
+        assert!(graph.graph_text_admission_epoch().is_err());
+        let empty = lease.batch(8, 10, Vec::new()).unwrap();
+        graph
+            .apply_graph_text_exact_feed_batch(&lease, empty)
+            .unwrap();
+        assert!(graph
+            .publish_graph_text_exact_feed_caught_up(&lease, 9)
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let clean = Graph::open(&root);
+        let clean_lease = staged_exact_feed_build(&clean, 40);
+        clean
+            .publish_graph_text_exact_feed_caught_up(&clean_lease, 40)
+            .unwrap();
+        let epoch = clean.graph_text_admission_epoch().unwrap();
+        assert_eq!(epoch.feed_sequence, 40);
+        assert!(matches!(
+            &*clean.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Complete(_)
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn staged_exact_feed_lease_drop_is_terminal_in_every_owned_state() {
+        let armed_root = scratch("staged-exact-feed-drop-armed");
+        let armed = Graph::open(&armed_root);
+        drop(armed.arm_graph_text_exact_feed(0).unwrap());
+        assert!(matches!(
+            &*armed.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let building_root = scratch("staged-exact-feed-drop-building");
+        let building = Graph::open(&building_root);
+        let lease = building.arm_graph_text_exact_feed(0).unwrap();
+        building.begin_graph_text_admission_build().unwrap();
+        drop(lease);
+        assert!(matches!(
+            &*building.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let catching_root = scratch("staged-exact-feed-drop-catching");
+        let catching = Graph::open(&catching_root);
+        let lease = staged_exact_feed_build(&catching, 0);
+        drop(lease);
+        assert!(matches!(
+            &*catching.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let complete_root = scratch("staged-exact-feed-drop-complete");
+        let complete = Graph::open(&complete_root);
+        let lease = staged_exact_feed_build(&complete, 0);
+        complete
+            .publish_graph_text_exact_feed_caught_up(&lease, 0)
+            .unwrap();
+        drop(lease);
+        assert!(matches!(
+            &*complete.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        for root in [armed_root, building_root, catching_root, complete_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_explicit_disconnect_is_terminal_in_every_owned_state() {
+        for stage in ["armed", "building", "catching-up", "complete"] {
+            let root = scratch(&format!("staged-exact-feed-disconnect-{stage}"));
+            let graph = Graph::open(&root);
+            let lease = graph.arm_graph_text_exact_feed(0).unwrap();
+            match stage {
+                "armed" => {}
+                "building" => {
+                    graph.begin_graph_text_admission_build().unwrap();
+                }
+                "catching-up" => {
+                    graph.build_graph_text_exact_feed(&lease).unwrap();
+                }
+                "complete" => {
+                    graph.build_graph_text_exact_feed(&lease).unwrap();
+                    graph
+                        .publish_graph_text_exact_feed_caught_up(&lease, 0)
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            graph
+                .poison_graph_text_exact_feed(
+                    &lease,
+                    GraphTextExactFeedFailure::ExplicitDisconnect,
+                    "platform session disconnected",
+                )
+                .unwrap();
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_build_time_final_states_are_idempotent() {
+        let upsert_root = scratch("staged-exact-feed-build-upsert");
+        let upsert = Graph::open(&upsert_root);
+        let lease = upsert.arm_graph_text_exact_feed(0).unwrap();
+        fs::write(upsert_root.join("During.MD"), b"- included\n").unwrap();
+        upsert.build_graph_text_exact_feed(&lease).unwrap();
+        upsert
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(1, 1, vec!["During.MD".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        upsert
+            .publish_graph_text_exact_feed_caught_up(&lease, 1)
+            .unwrap();
+        let epoch = upsert.graph_text_admission_epoch().unwrap();
+        assert!(matches!(
+            upsert
+                .graph_text_admission_exact(&epoch, &ManagedPath::parse("During.MD").unwrap())
+                .unwrap(),
+            GraphTextAdmissionExactObservation::Present(_)
+        ));
+
+        let remove_root = scratch("staged-exact-feed-build-remove");
+        fs::write(remove_root.join("Gone.md"), b"- before arm\n").unwrap();
+        let remove = Graph::open(&remove_root);
+        let lease = remove.arm_graph_text_exact_feed(0).unwrap();
+        fs::remove_file(remove_root.join("Gone.md")).unwrap();
+        remove.build_graph_text_exact_feed(&lease).unwrap();
+        remove
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(1, 1, vec!["Gone.md".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        remove
+            .publish_graph_text_exact_feed_caught_up(&lease, 1)
+            .unwrap();
+        let epoch = remove.graph_text_admission_epoch().unwrap();
+        assert!(matches!(
+            remove
+                .graph_text_admission_exact(&epoch, &ManagedPath::parse("Gone.md").unwrap())
+                .unwrap(),
+            GraphTextAdmissionExactObservation::AbsentUnowned { .. }
+        ));
+
+        let transient_root = scratch("staged-exact-feed-build-transient");
+        let transient = Graph::open(&transient_root);
+        let lease = transient.arm_graph_text_exact_feed(0).unwrap();
+        fs::write(transient_root.join("Transient.org"), b"* transient\n").unwrap();
+        fs::remove_file(transient_root.join("Transient.org")).unwrap();
+        transient.build_graph_text_exact_feed(&lease).unwrap();
+        transient
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 2, Vec::new()).unwrap())
+            .unwrap();
+        transient
+            .publish_graph_text_exact_feed_caught_up(&lease, 2)
+            .unwrap();
+        let epoch = transient.graph_text_admission_epoch().unwrap();
+        assert!(matches!(
+            transient
+                .graph_text_admission_exact(&epoch, &ManagedPath::parse("Transient.org").unwrap())
+                .unwrap(),
+            GraphTextAdmissionExactObservation::AbsentUnowned { .. }
+        ));
+
+        for root in [upsert_root, remove_root, transient_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_atomic_rename_crossings_and_mixed_case_paths() {
+        let root = scratch("staged-exact-feed-atomic-renames");
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("A.md"), b"title:: A\n").unwrap();
+        fs::write(root.join("Page.md"), b"title:: Page\n").unwrap();
+        fs::write(root.join("save.tmp"), b"title:: New\n").unwrap();
+        fs::write(root.join("nested/Old.org"), b"#+title: Old\n").unwrap();
+        let graph = Graph::open(&root);
+        let lease = staged_exact_feed_build(&graph, 0);
+
+        fs::rename(root.join("A.md"), root.join("B.Markdown")).unwrap();
+        fs::rename(root.join("Page.md"), root.join("Page.tmp")).unwrap();
+        fs::rename(root.join("save.tmp"), root.join("nested/New.ORG")).unwrap();
+        fs::rename(root.join("nested/Old.org"), root.join("nested/Mixed.Md")).unwrap();
+        let touched = [
+            "A.md",
+            "B.Markdown",
+            "Page.md",
+            "Page.tmp",
+            "save.tmp",
+            "nested/New.ORG",
+            "nested/Old.org",
+            "nested/Mixed.Md",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        graph
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 4, touched).unwrap())
+            .unwrap();
+        assert!(graph.graph_text_admission_epoch().is_err());
+        graph
+            .publish_graph_text_exact_feed_caught_up(&lease, 4)
+            .unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        for present in ["B.Markdown", "nested/New.ORG", "nested/Mixed.Md"] {
+            assert!(matches!(
+                graph
+                    .graph_text_admission_exact(&epoch, &ManagedPath::parse(present).unwrap())
+                    .unwrap(),
+                GraphTextAdmissionExactObservation::Present(_)
+            ));
+        }
+        for retained in ["A.md", "Page.md", "nested/Old.org"] {
+            assert!(matches!(
+                graph
+                    .graph_text_admission_exact(&epoch, &ManagedPath::parse(retained).unwrap())
+                    .unwrap(),
+                GraphTextAdmissionExactObservation::AbsentRetained { .. }
+            ));
+        }
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::Complete(index) = &*state else {
+            panic!("caught-up rename batch must publish one complete index");
+        };
+        assert_eq!(
+            index.file_is_graph_text_by_exact_relative.get("Page.tmp"),
+            Some(&false)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn staged_exact_feed_sequence_range_and_generation_failures_poison() {
+        fn catching(name: &str, sequence: u64) -> (PathBuf, Graph, GraphTextExactFeedLease) {
+            let root = scratch(name);
+            let graph = Graph::open(&root);
+            let lease = staged_exact_feed_build(&graph, sequence);
+            (root, graph, lease)
+        }
+
+        let (gap_root, gap, lease) = catching("staged-exact-feed-gap", 0);
+        let batch = lease.batch(2, 2, Vec::new()).unwrap();
+        assert!(gap
+            .apply_graph_text_exact_feed_batch(&lease, batch)
+            .is_err());
+
+        let (duplicate_root, duplicate, lease) = catching("staged-exact-feed-duplicate-range", 0);
+        duplicate
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 1, Vec::new()).unwrap())
+            .unwrap();
+        assert!(duplicate
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 1, Vec::new()).unwrap())
+            .is_err());
+
+        let (overlap_root, overlap, lease) = catching("staged-exact-feed-overlap", 0);
+        overlap
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 2, Vec::new()).unwrap())
+            .unwrap();
+        assert!(overlap
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(2, 3, Vec::new()).unwrap())
+            .is_err());
+
+        let (reverse_root, reverse, lease) = catching("staged-exact-feed-reverse", 0);
+        assert!(lease.batch(2, 1, Vec::new()).is_err());
+        assert!(matches!(
+            &*reverse.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let (wrap_root, wrap, lease) = catching("staged-exact-feed-wrap", u64::MAX);
+        let batch = lease.batch(u64::MAX, u64::MAX, Vec::new()).unwrap();
+        assert!(wrap
+            .apply_graph_text_exact_feed_batch(&lease, batch)
+            .is_err());
+
+        let (generation_root, generation, lease) = catching("staged-exact-feed-generation-wrap", 0);
+        generation
+            .publish_graph_text_exact_feed_caught_up(&lease, 0)
+            .unwrap();
+        generation.set_graph_text_admission_generation_for_test(u64::MAX);
+        assert!(generation
+            .apply_graph_text_exact_feed_batch(&lease, lease.batch(1, 1, Vec::new()).unwrap())
+            .is_err());
+
+        for graph in [&gap, &duplicate, &overlap, &wrap, &generation] {
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+        }
+        for root in [
+            gap_root,
+            duplicate_root,
+            overlap_root,
+            reverse_root,
+            wrap_root,
+            generation_root,
+        ] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_final_state_retention_and_superseded_writes() {
+        let root = scratch("staged-exact-feed-final-state");
+        fs::write(root.join("Page.md"), b"title:: Page\n- first\n").unwrap();
+        let graph = Graph::open(&root);
+        let lease = staged_exact_feed_build(&graph, 0);
+        graph
+            .publish_graph_text_exact_feed_caught_up(&lease, 0)
+            .unwrap();
+        let original_epoch = graph.graph_text_admission_epoch().unwrap();
+
+        graph
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(1, 1, vec!["Page.md".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        fs::write(root.join("Page.md"), b"title:: Page\n- second\n").unwrap();
+        fs::write(root.join("Page.md"), b"title:: Page\n- final\n").unwrap();
+        graph
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(2, 3, vec!["Page.md".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        let GraphTextAdmissionExactObservation::Present(observation) = graph
+            .graph_text_admission_exact(&epoch, &ManagedPath::parse("Page.md").unwrap())
+            .unwrap()
+        else {
+            panic!("superseded writes publish the current final file");
+        };
+        assert_eq!(
+            observation.record.description,
+            BlobDescription::of(b"title:: Page\n- final\n")
+        );
+
+        fs::remove_file(root.join("Page.md")).unwrap();
+        graph
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(4, 4, vec!["Page.md".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        graph
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease.batch(5, 5, vec!["Never.md".to_owned()]).unwrap(),
+            )
+            .unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        assert!(matches!(
+            graph
+                .graph_text_admission_exact(&epoch, &ManagedPath::parse("Page.md").unwrap())
+                .unwrap(),
+            GraphTextAdmissionExactObservation::AbsentRetained { .. }
+        ));
+        assert!(matches!(
+            graph
+                .graph_text_admission_exact(&epoch, &ManagedPath::parse("Never.md").unwrap())
+                .unwrap(),
+            GraphTextAdmissionExactObservation::AbsentUnowned { .. }
+        ));
+        assert!(graph
+            .graph_text_admission_exact(&original_epoch, &ManagedPath::parse("Page.md").unwrap())
+            .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn staged_exact_feed_batch_collisions_are_atomic_and_terminal() {
+        let portable_root = scratch("staged-exact-feed-portable-collision");
+        let portable = Graph::open(&portable_root);
+        let lease = staged_exact_feed_build(&portable, 0);
+        fs::write(portable_root.join("A.md"), b"- upper\n").unwrap();
+        fs::write(portable_root.join("a.MD"), b"- lower\n").unwrap();
+        assert!(portable
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease
+                    .batch(1, 2, vec!["A.md".to_owned(), "a.MD".to_owned()])
+                    .unwrap()
+            )
+            .is_err());
+
+        let semantic_root = scratch("staged-exact-feed-semantic-collision");
+        let semantic = Graph::open(&semantic_root);
+        let lease = staged_exact_feed_build(&semantic, 0);
+        fs::write(semantic_root.join("One.md"), b"title:: Shared\n- one\n").unwrap();
+        fs::write(semantic_root.join("Two.org"), b"#+title: Shared\n* two\n").unwrap();
+        assert!(semantic
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease
+                    .batch(1, 2, vec!["One.md".to_owned(), "Two.org".to_owned()])
+                    .unwrap()
+            )
+            .is_err());
+
+        let resource_root = scratch("staged-exact-feed-resource-collision");
+        let resource = Graph::open(&resource_root);
+        let lease = staged_exact_feed_build(&resource, 0);
+        fs::write(resource_root.join("One.md"), b"- linked\n").unwrap();
+        fs::hard_link(
+            resource_root.join("One.md"),
+            resource_root.join("alias.bin"),
+        )
+        .unwrap();
+        assert!(resource
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease
+                    .batch(1, 2, vec!["One.md".to_owned(), "alias.bin".to_owned()])
+                    .unwrap()
+            )
+            .is_err());
+
+        for graph in [&portable, &semantic, &resource] {
+            assert!(graph.graph_text_admission_epoch().is_err());
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+        }
+        for root in [portable_root, semantic_root, resource_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_races_config_directory_and_root_controls_poison() {
+        let race_root = scratch("staged-exact-feed-race");
+        fs::write(race_root.join("A.md"), b"- before\n").unwrap();
+        fs::write(race_root.join("B.md"), b"- stable\n").unwrap();
+        let race = Graph::open(&race_root);
+        let lease = staged_exact_feed_build(&race, 0);
+        fs::write(race_root.join("A.md"), b"- prepared\n").unwrap();
+        let changed_while_b_prepared = Rc::new(Cell::new(false));
+        GRAPH_TEXT_EXACT_FEED_PREPARE_PATH.with(|hook| {
+            let race_root = race_root.clone();
+            let changed_while_b_prepared = Rc::clone(&changed_while_b_prepared);
+            *hook.borrow_mut() = Some(Box::new(move |relative| {
+                if relative == "B.md" {
+                    changed_while_b_prepared.set(true);
+                    fs::write(race_root.join("A.md"), b"- raced\n")?;
+                }
+                Ok(())
+            }));
+        });
+        assert!(race
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease
+                    .batch(1, 1, vec!["A.md".to_owned(), "B.md".to_owned()])
+                    .unwrap()
+            )
+            .is_err());
+        GRAPH_TEXT_EXACT_FEED_PREPARE_PATH.with(|hook| {
+            hook.borrow_mut().take();
+        });
+        assert!(
+            changed_while_b_prepared.get(),
+            "A must change only after its own preparation, when B starts"
+        );
+        let state = race.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::Poisoned { cause, .. } = &*state else {
+            panic!("the final all-path sweep must poison");
+        };
+        assert!(
+            cause.contains("final proof"),
+            "the final all-path sweep must be the causal detector: {cause}"
+        );
+        drop(state);
+
+        let config_root = scratch("staged-exact-feed-config");
+        fs::create_dir(config_root.join("logseq")).unwrap();
+        let config = Graph::open(&config_root);
+        let lease = staged_exact_feed_build(&config, 0);
+        fs::write(
+            config_root.join("logseq/config.edn"),
+            b"{:hidden [\"x\"]}\n",
+        )
+        .unwrap();
+        assert!(config
+            .apply_graph_text_exact_feed_batch(
+                &lease,
+                lease
+                    .batch(1, 1, vec!["logseq/config.edn".to_owned()])
+                    .unwrap()
+            )
+            .is_err());
+
+        let directory_root = scratch("staged-exact-feed-directory");
+        let directory = Graph::open(&directory_root);
+        let lease = staged_exact_feed_build(&directory, 0);
+        directory
+            .poison_graph_text_exact_feed(
+                &lease,
+                GraphTextExactFeedFailure::DirectoryMutation,
+                "non-excluded directory created",
+            )
+            .unwrap();
+
+        let root_root = scratch("staged-exact-feed-root");
+        let root_graph = Graph::open(&root_root);
+        let lease = staged_exact_feed_build(&root_graph, 0);
+        root_graph
+            .poison_graph_text_exact_feed(
+                &lease,
+                GraphTextExactFeedFailure::RootMutation,
+                "root watch invalidated",
+            )
+            .unwrap();
+
+        assert_eq!(
+            config
+                .classify_graph_text_exact_feed_path("logseq/config.edn")
+                .unwrap(),
+            GraphTextExactFeedPathClass::Configuration
+        );
+        assert_eq!(
+            config
+                .classify_graph_text_exact_feed_path("assets/ignored.md")
+                .unwrap(),
+            GraphTextExactFeedPathClass::Excluded
+        );
+        assert_eq!(
+            config
+                .classify_graph_text_exact_feed_path("nested/Page.md")
+                .unwrap(),
+            GraphTextExactFeedPathClass::RetainedFile
+        );
+        for graph in [&race, &config, &directory, &root_graph] {
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+        }
+        for root in [race_root, config_root, directory_root, root_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_post_preflight_actual_charges_poison_before_overrun() {
+        fn batch_scratch(relatives: &[&str]) -> u64 {
+            let mut scratch = conservative_vec_capacity_upper_bound::<
+                PreparedGraphTextAdmissionFinalState,
+            >(usize_to_u64(relatives.len()).unwrap())
+            .unwrap();
+            for relative in relatives {
+                scratch = checked_add_bytes(
+                    scratch,
+                    graph_text_event_scratch_upper_bound(relative).unwrap(),
+                )
+                .unwrap();
+            }
+            scratch
+        }
+
+        fn constrain(graph: &Graph, permanent_limit: Option<u64>, peak_limit: Option<u64>) {
+            let mut state = graph.graph_text_admission.write().unwrap();
+            let GraphTextAdmissionState::CatchingUp(index) = &*state else {
+                panic!("staged exact feed must be catching up");
+            };
+            let mut constrained = (**index).clone();
+            if let Some(limit) = permanent_limit {
+                constrained.permanent_limit = limit;
+            }
+            if let Some(limit) = peak_limit {
+                constrained.peak_limit = limit;
+            }
+            *state = GraphTextAdmissionState::CatchingUp(Arc::new(constrained));
+        }
+
+        fn assert_poisoned_with(graph: &Graph, expected: &str) {
+            let state = graph.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::Poisoned { cause, .. } = &*state else {
+                panic!("actual charge overrun must poison");
+            };
+            assert!(
+                cause.contains(expected),
+                "expected poison cause containing {expected:?}, got {cause:?}"
+            );
+        }
+
+        let raw_root = scratch("staged-exact-feed-post-preflight-raw");
+        let raw = Graph::open(&raw_root);
+        let raw_lease = staged_exact_feed_build(&raw, 0);
+        GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT.with(|hook| {
+            let raw_root = raw_root.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::File::create(raw_root.join("A.bin"))?.set_len(33 * 1024 * 1024)?;
+                fs::File::create(raw_root.join("B.bin"))?.set_len(33 * 1024 * 1024)
+            }));
+        });
+        assert!(raw
+            .apply_graph_text_exact_feed_batch(
+                &raw_lease,
+                raw_lease
+                    .batch(1, 1, vec!["A.bin".to_owned(), "B.bin".to_owned()])
+                    .unwrap(),
+            )
+            .is_err());
+        assert_poisoned_with(&raw, "aggregate raw bytes");
+
+        let peak_root = scratch("staged-exact-feed-post-preflight-peak");
+        let peak = Graph::open(&peak_root);
+        let peak_lease = staged_exact_feed_build(&peak, 0);
+        let peak_scratch = batch_scratch(&["A.bin"]);
+        let peak_base = {
+            let state = peak.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::CatchingUp(index) = &*state else {
+                unreachable!()
+            };
+            index.permanent_bytes
+        };
+        constrain(
+            &peak,
+            Some(u64::MAX),
+            Some(
+                checked_add_bytes(peak_base, peak_scratch)
+                    .and_then(|bytes| checked_add_bytes(bytes, 16 * 1024))
+                    .unwrap(),
+            ),
+        );
+        GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT.with(|hook| {
+            let peak_root = peak_root.clone();
+            *hook.borrow_mut() = Some(Box::new(move || fs::write(peak_root.join("A.bin"), b"x")));
+        });
+        assert!(peak
+            .apply_graph_text_exact_feed_batch(
+                &peak_lease,
+                peak_lease.batch(1, 1, vec!["A.bin".to_owned()]).unwrap(),
+            )
+            .is_err());
+        assert_poisoned_with(&peak, "peak build memory");
+
+        let parser_root = scratch("staged-exact-feed-post-preflight-parser");
+        let parser = Graph::open(&parser_root);
+        let parser_lease = staged_exact_feed_build(&parser, 0);
+        let parser_content = b"- parser allocation\n".to_vec();
+        let parser_scratch = batch_scratch(&["Page.md"]);
+        let parser_base = {
+            let state = parser.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::CatchingUp(index) = &*state else {
+                unreachable!()
+            };
+            index.permanent_bytes
+        };
+        constrain(
+            &parser,
+            Some(u64::MAX),
+            Some(
+                checked_add_bytes(parser_base, parser_scratch)
+                    .and_then(|bytes| checked_add_bytes(bytes, parser_content.len() as u64))
+                    .and_then(|bytes| checked_add_bytes(bytes, 16 * 1024))
+                    .unwrap(),
+            ),
+        );
+        GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT.with(|hook| {
+            let parser_root = parser_root.clone();
+            let parser_content = parser_content.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(parser_root.join("Page.md"), parser_content)
+            }));
+        });
+        reset_graph_text_admission_test_counters();
+        assert!(parser
+            .apply_graph_text_exact_feed_batch(
+                &parser_lease,
+                parser_lease
+                    .batch(1, 1, vec!["Page.md".to_owned()])
+                    .unwrap(),
+            )
+            .is_err());
+        assert_eq!(
+            graph_text_admission_test_counters().parser_invocations,
+            0,
+            "post-preflight parser growth must fail before parser allocation"
+        );
+        assert_poisoned_with(&parser, "peak build memory");
+
+        let permanent_root = scratch("staged-exact-feed-post-preflight-permanent");
+        let permanent = Graph::open(&permanent_root);
+        let permanent_lease = staged_exact_feed_build(&permanent, 0);
+        let (permanent_base, admitted_growth) = {
+            let state = permanent.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::CatchingUp(index) = &*state else {
+                unreachable!()
+            };
+            (
+                index.permanent_bytes,
+                permanent
+                    .graph_text_exact_feed_worst_permanent_growth(index, "Page.md", None)
+                    .unwrap(),
+            )
+        };
+        constrain(
+            &permanent,
+            Some(checked_add_bytes(permanent_base, admitted_growth).unwrap()),
+            Some(u64::MAX),
+        );
+        GRAPH_TEXT_EXACT_FEED_AFTER_PREFLIGHT.with(|hook| {
+            let permanent_root = permanent_root.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(
+                    permanent_root.join("Page.md"),
+                    format!("title:: {}\n", "P".repeat(32 * 1024)),
+                )
+            }));
+        });
+        let read_started = Rc::new(Cell::new(false));
+        BOUNDED_READ_AFTER_METADATA.with(|hook| {
+            let read_started = Rc::clone(&read_started);
+            *hook.borrow_mut() = Some(Box::new(move || {
+                read_started.set(true);
+                Ok(())
+            }));
+        });
+        assert!(permanent
+            .apply_graph_text_exact_feed_batch(
+                &permanent_lease,
+                permanent_lease
+                    .batch(1, 1, vec!["Page.md".to_owned()])
+                    .unwrap(),
+            )
+            .is_err());
+        BOUNDED_READ_AFTER_METADATA.with(|hook| {
+            hook.borrow_mut().take();
+        });
+        assert!(
+            !read_started.get(),
+            "post-preflight permanent growth must fail before raw allocation"
+        );
+        assert_poisoned_with(&permanent, "permanent index memory");
+
+        for root in [raw_root, peak_root, parser_root, permanent_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_bounds_duplicate_paths_and_cause_text() {
+        let maximum_root = scratch("staged-exact-feed-maximum-count");
+        let maximum = Graph::open(&maximum_root);
+        let maximum_lease = staged_exact_feed_build(&maximum, 0);
+        let maximum_paths = (0..GraphTextExactFeedBatch::MAX_TOUCHED_PATHS)
+            .map(|index| {
+                let relative = format!("Maximum-{index:04}.md");
+                fs::write(maximum_root.join(&relative), b"- bounded\n").unwrap();
+                relative
+            })
+            .collect::<Vec<_>>();
+        maximum
+            .apply_graph_text_exact_feed_batch(
+                &maximum_lease,
+                maximum_lease.batch(1, 1, maximum_paths).unwrap(),
+            )
+            .unwrap();
+
+        let duplicate_root = scratch("staged-exact-feed-duplicate-path");
+        let duplicate = Graph::open(&duplicate_root);
+        let lease = staged_exact_feed_build(&duplicate, 0);
+        assert!(lease
+            .batch(1, 1, vec!["Page.md".to_owned(), "Page.md".to_owned()])
+            .is_err());
+        assert!(matches!(
+            &*duplicate.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let count_root = scratch("staged-exact-feed-count-bound");
+        let count = Graph::open(&count_root);
+        let lease = staged_exact_feed_build(&count, 0);
+        let paths = (0..=GraphTextExactFeedBatch::MAX_TOUCHED_PATHS)
+            .map(|index| format!("Page-{index:04}.md"))
+            .collect::<Vec<_>>();
+        assert!(lease.batch(1, 1, paths).is_err());
+
+        let path_root = scratch("staged-exact-feed-path-bound");
+        let path = Graph::open(&path_root);
+        let lease = staged_exact_feed_build(&path, 0);
+        let prefix = (0..20)
+            .map(|index| format!("component-{index:02}-{}", "a".repeat(180)))
+            .collect::<Vec<_>>()
+            .join("/");
+        let oversized_aggregate = (0..17)
+            .map(|index| format!("{prefix}/Page-{index:02}.md"))
+            .collect::<Vec<_>>();
+        assert!(lease.batch(1, 1, oversized_aggregate).is_err());
+
+        let cause_root = scratch("staged-exact-feed-cause-bound");
+        let cause_graph = Graph::open(&cause_root);
+        let lease = staged_exact_feed_build(&cause_graph, 0);
+        cause_graph
+            .poison_graph_text_exact_feed(
+                &lease,
+                GraphTextExactFeedFailure::BackendError,
+                &"é".repeat(MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES),
+            )
+            .unwrap();
+        let state = cause_graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::Poisoned { cause, .. } = &*state else {
+            panic!("backend error must poison");
+        };
+        assert!(cause.len() <= MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES);
+        assert!(cause.is_char_boundary(cause.len()));
+
+        for root in [
+            maximum_root,
+            duplicate_root,
+            count_root,
+            path_root,
+            cause_root,
+        ] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn staged_exact_feed_foreign_lease_second_arm_and_same_resource_instances_poison() {
+        let root = scratch("staged-exact-feed-foreign");
+        let first = Graph::open(&root);
+        let first_lease = staged_exact_feed_build(&first, 0);
+        let second = Graph::open(&root);
+        let second_lease = staged_exact_feed_build(&second, 0);
+        let foreign_batch = first_lease.batch(1, 1, Vec::new()).unwrap();
+        assert!(second
+            .apply_graph_text_exact_feed_batch(&second_lease, foreign_batch)
+            .is_err());
+        assert!(matches!(
+            &*second.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(matches!(
+            &*first.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::CatchingUp(_)
+        ));
+        drop(second_lease);
+
+        let arm_root = scratch("staged-exact-feed-second-arm");
+        let armed = Graph::open(&arm_root);
+        let _lease = armed.arm_graph_text_exact_feed(0).unwrap();
+        assert!(armed.arm_graph_text_exact_feed(0).is_err());
+        assert!(matches!(
+            &*armed.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(arm_root);
+    }
+
+    #[test]
+    fn staged_exact_feed_work_is_independent_of_unrelated_files() {
+        fn one_batch(unrelated: usize) -> GraphTextAdmissionTestCounters {
+            let root = scratch(&format!("staged-exact-feed-work-{unrelated}"));
+            fs::write(root.join("Target.md"), b"title:: Before\n").unwrap();
+            for index in 0..unrelated {
+                fs::write(
+                    root.join(format!("Unrelated-{index:04}.md")),
+                    format!("- ordinary {index}\n"),
+                )
+                .unwrap();
+            }
+            let graph = Graph::open(&root);
+            let lease = staged_exact_feed_build(&graph, 0);
+            fs::write(root.join("Target.md"), b"title:: After\n").unwrap();
+            reset_graph_text_admission_test_counters();
+            graph
+                .apply_graph_text_exact_feed_batch(
+                    &lease,
+                    lease.batch(1, 1, vec!["Target.md".to_owned()]).unwrap(),
+                )
+                .unwrap();
+            let counters = graph_text_admission_test_counters();
+            let _ = fs::remove_dir_all(root);
+            counters
+        }
+
+        let small = one_batch(8);
+        let large = one_batch(512);
+        assert_eq!(small.builder_enumerations, 0);
+        assert_eq!(small.parser_invocations, large.parser_invocations);
+        assert_eq!(small.index_map_insertions, large.index_map_insertions);
+        assert_eq!(small.event_map_key_reads, large.event_map_key_reads);
+        assert_eq!(small.event_map_key_writes, large.event_map_key_writes);
+        assert_eq!(small.event_reverse_members, large.event_reverse_members);
+        assert_eq!(
+            small.persistent_payload_members,
+            large.persistent_payload_members
+        );
+        assert!(
+            large.persistent_node_allocations < small.persistent_node_allocations * 4,
+            "batch path copying may grow only logarithmically: small={small:?}, large={large:?}"
+        );
+    }
+
+    #[test]
+    fn staged_exact_feed_fresh_import_inventory_is_independent() {
+        let root = scratch("staged-exact-feed-fresh-import");
+        fs::write(root.join("Initial.md"), b"- initial\n").unwrap();
+        let graph = Graph::open(&root);
+        let lease = staged_exact_feed_build(&graph, 0);
+        graph
+            .publish_graph_text_exact_feed_caught_up(&lease, 0)
+            .unwrap();
+        let before = graph.graph_text_admission_epoch().unwrap();
+        fs::write(root.join("Later.Markdown"), b"- later\n").unwrap();
+        let inventory = crate::oplog::inventory_initial_shadow(&graph).unwrap();
+        assert!(inventory.present("Initial.md").is_some());
+        assert!(inventory.present("Later.Markdown").is_some());
+        let after = graph.graph_text_admission_epoch().unwrap();
+        assert_eq!(before.generation, after.generation);
+        assert_eq!(before.feed_sequence, after.feed_sequence);
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Complete(_)
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

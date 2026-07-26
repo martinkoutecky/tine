@@ -400,7 +400,7 @@ pub fn inventory_affected(
 /// live graph remained unchanged.
 pub fn inventory_initial_shadow(graph: &Graph) -> Result<RawInventory, InventoryError> {
     let captured = graph
-        .initial_shadow_raw_managed_text_inventory()
+        .fresh_initial_shadow_raw_managed_text_inventory()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::InvalidData
                 && error.to_string().contains("bound exceeded")

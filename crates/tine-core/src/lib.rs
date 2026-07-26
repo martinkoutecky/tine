@@ -35,4 +35,7 @@ pub use graph_text_scope::{
     GraphTextScopeBinding, GraphTextScopeBindingError, GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION,
     GRAPH_TEXT_SCOPE_VERSION,
 };
-pub use model::{BlockDto, BlockPreview, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
+pub use model::{
+    BlockDto, BlockPreview, Graph, GraphMeta, GraphTextExactFeedBatch, GraphTextExactFeedFailure,
+    GraphTextExactFeedLease, GraphTextExactFeedPathClass, PageDto, PageEntry, PageKind, RefGroup,
+};
