@@ -13,14 +13,23 @@ use super::{
     operational_coordinator::{
         FailedClosedOperationalCoordinator, OperationalCoordinator, OperationalCoordinatorState,
     },
-    reconciliation_import::{execute_stable_scan_import, ReconciliationImportOutcome},
+    reconciliation_baseline::{BaselineBlockedReason, BaselineTimestamp, ReconciliationBaseline},
+    reconciliation_baseline_adapter::{
+        append_stable_scan_to_baseline, finish_stable_scan_baseline, BaselineAdapterStatus,
+        BaselineBlockedRegistration, BaselineTerminalOutcome, PendingStableScanBaseline,
+    },
+    reconciliation_import::{
+        execute_stable_scan_import, ReconciliationImportBlockReason, ReconciliationImportBlocked,
+        ReconciliationImportOutcome,
+    },
     reconciliation_scan::{
         scan_graph_text, GraphTextScanFailureClass, GraphTextScanLimits,
         JoinedAuthenticatedExpectedPathSource, ReconciliationCompletionOutcome, ReconciliationJob,
         ReconciliationLease, ReconciliationScheduler, ReconciliationSchedulerLimits,
         ReconciliationSchedulerStatus, ReconciliationTrigger, ReconciliationWork,
     },
-    ManagedPath, ProjectionReceiptStore, ShardedHotEngine, SqliteFrontier, TailOverlay,
+    ContentDigest, ManagedPath, ProjectionReceiptStore, ShardedHotEngine, SqliteFrontier,
+    TailOverlay,
 };
 
 /// Exact enrolled dependencies supplied for one synchronous session step.
@@ -34,6 +43,8 @@ pub(crate) struct ReconciliationSessionDependencies<'a> {
     pub(crate) engine: &'a mut ShardedHotEngine,
     pub(crate) database: &'a mut SqliteFrontier,
     pub(crate) tail: &'a mut TailOverlay,
+    pub(crate) baseline: &'a mut ReconciliationBaseline,
+    pub(crate) observed_at: BaselineTimestamp,
 }
 
 /// Opaque identity for a post-publication continuation retained by a session.
@@ -64,9 +75,10 @@ pub(crate) enum ReconciliationSessionError {
     StaleOrForeignContinuation,
 }
 
-struct PendingContinuation<C> {
+struct PendingContinuation<C, B> {
     token: ReconciliationPendingContinuation,
     continuation: C,
+    baseline: Option<B>,
 }
 
 /// One headless reconciliation session for exactly one enrolled endpoint.
@@ -74,12 +86,15 @@ struct PendingContinuation<C> {
 /// The type has no public export and intentionally exposes no lease-complete,
 /// cancellation, shutdown, enrollment, or persistence operation. A published
 /// failed-closed continuation therefore cannot be discarded through this API.
-pub(crate) struct ReconciliationSession<C = FailedClosedOperationalCoordinator> {
+pub(crate) struct ReconciliationSession<
+    C = FailedClosedOperationalCoordinator,
+    B = PendingStableScanBaseline,
+> {
     scheduler: ReconciliationScheduler,
-    pending: Option<PendingContinuation<C>>,
+    pending: Option<PendingContinuation<C, B>>,
 }
 
-impl<C> ReconciliationSession<C> {
+impl<C, B> ReconciliationSession<C, B> {
     pub(crate) fn new(limits: ReconciliationSchedulerLimits) -> Self {
         Self {
             scheduler: ReconciliationScheduler::new(limits),
@@ -102,7 +117,7 @@ impl<C> ReconciliationSession<C> {
         dispatch: &mut D,
     ) -> Result<ReconciliationSessionStep, ReconciliationSessionError>
     where
-        D: ReconciliationSessionDispatch<Continuation = C>,
+        D: ReconciliationSessionDispatch<Continuation = C, PendingBaseline = B>,
     {
         if let Some(pending) = &self.pending {
             return Err(ReconciliationSessionError::PendingContinuation(
@@ -116,7 +131,7 @@ impl<C> ReconciliationSession<C> {
             let mut arrive = |trigger| self.scheduler.trigger(trigger);
             dispatch.dispatch(job.work(), &mut arrive)
         };
-        self.settle_job(job, outcome)
+        self.settle_job(job, outcome, dispatch)
     }
 
     fn resume_with<D>(
@@ -125,7 +140,7 @@ impl<C> ReconciliationSession<C> {
         dispatch: &mut D,
     ) -> Result<ReconciliationSessionStep, ReconciliationSessionError>
     where
-        D: ReconciliationSessionDispatch<Continuation = C>,
+        D: ReconciliationSessionDispatch<Continuation = C, PendingBaseline = B>,
     {
         let Some(pending) = self.pending.as_ref() else {
             return Err(ReconciliationSessionError::StaleOrForeignContinuation);
@@ -138,42 +153,95 @@ impl<C> ReconciliationSession<C> {
             .take()
             .expect("checked reconciliation continuation disappeared");
         let outcome = dispatch.resume(pending.continuation);
-        self.settle_continuation(pending.token, outcome)
+        self.settle_continuation(pending.token, pending.baseline, outcome, dispatch)
     }
 
-    fn settle_job(
+    fn settle_job<D>(
         &mut self,
         job: ReconciliationJob,
-        outcome: ReconciliationSessionDispatchOutcome<C>,
-    ) -> Result<ReconciliationSessionStep, ReconciliationSessionError> {
-        match outcome {
+        result: ReconciliationSessionDispatchResult<C, B>,
+        dispatch: &mut D,
+    ) -> Result<ReconciliationSessionStep, ReconciliationSessionError>
+    where
+        D: ReconciliationSessionDispatch<Continuation = C, PendingBaseline = B>,
+    {
+        match result.outcome {
             ReconciliationSessionDispatchOutcome::FailedClosed(continuation) => {
                 let token = ReconciliationPendingContinuation { lease: job.lease() };
                 self.pending = Some(PendingContinuation {
                     token,
                     continuation,
+                    baseline: result.baseline,
                 });
                 Ok(ReconciliationSessionStep::Pending(token))
             }
-            outcome => self.settle_lease(job.lease(), outcome),
+            outcome => self.finish_baseline_and_settle_lease(
+                job.lease(),
+                result.baseline,
+                outcome,
+                dispatch,
+            ),
         }
     }
 
-    fn settle_continuation(
+    fn settle_continuation<D>(
         &mut self,
         token: ReconciliationPendingContinuation,
+        baseline: Option<B>,
         outcome: ReconciliationSessionDispatchOutcome<C>,
-    ) -> Result<ReconciliationSessionStep, ReconciliationSessionError> {
+        dispatch: &mut D,
+    ) -> Result<ReconciliationSessionStep, ReconciliationSessionError>
+    where
+        D: ReconciliationSessionDispatch<Continuation = C, PendingBaseline = B>,
+    {
         match outcome {
             ReconciliationSessionDispatchOutcome::FailedClosed(continuation) => {
                 self.pending = Some(PendingContinuation {
                     token,
                     continuation,
+                    baseline,
                 });
                 Ok(ReconciliationSessionStep::Pending(token))
             }
-            outcome => self.settle_lease(token.lease, outcome),
+            outcome => {
+                self.finish_baseline_and_settle_lease(token.lease, baseline, outcome, dispatch)
+            }
         }
+    }
+
+    fn finish_baseline_and_settle_lease<D>(
+        &mut self,
+        lease: ReconciliationLease,
+        baseline: Option<B>,
+        mut outcome: ReconciliationSessionDispatchOutcome<C>,
+        dispatch: &mut D,
+    ) -> Result<ReconciliationSessionStep, ReconciliationSessionError>
+    where
+        D: ReconciliationSessionDispatch<Continuation = C, PendingBaseline = B>,
+    {
+        let baseline_finish = if let Some(baseline) = baseline {
+            let terminal = outcome
+                .baseline_terminal_outcome()
+                .expect("failed-closed baseline cannot reach terminal settlement");
+            dispatch.finish_baseline(baseline, terminal)
+        } else {
+            ReconciliationSessionBaselineFinish::DiagnosticOnly
+        };
+        match baseline_finish {
+            ReconciliationSessionBaselineFinish::Clean
+            | ReconciliationSessionBaselineFinish::DiagnosticOnly => {}
+            ReconciliationSessionBaselineFinish::NeedPostDrainFullScan => {
+                self.scheduler.trigger(ReconciliationTrigger::PostDrain);
+            }
+            ReconciliationSessionBaselineFinish::Unavailable => {
+                outcome =
+                    ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                        BaselineBlockedReason::AuthorityUnavailable,
+                        "stable-scan baseline could not be finished",
+                    ));
+            }
+        }
+        self.settle_lease(lease, outcome)
     }
 
     fn settle_lease(
@@ -192,7 +260,7 @@ impl<C> ReconciliationSession<C> {
             ),
             // An ordinary coordinator error is deliberately classified as
             // blocked, never as a clean no-op or completion.
-            ReconciliationSessionDispatchOutcome::Blocked => (
+            ReconciliationSessionDispatchOutcome::Blocked(_) => (
                 ReconciliationCompletionOutcome::Blocked,
                 ReconciliationSessionStep::Blocked,
             ),
@@ -244,12 +312,60 @@ impl ReconciliationSession<FailedClosedOperationalCoordinator> {
     }
 }
 
+struct ReconciliationSessionDispatchResult<C, B> {
+    outcome: ReconciliationSessionDispatchOutcome<C>,
+    baseline: Option<B>,
+}
+
 enum ReconciliationSessionDispatchOutcome<C> {
     Noop,
     Complete,
-    Blocked,
+    Blocked(BaselineBlockedObservation),
     RetryFull,
     FailedClosed(C),
+}
+
+impl<C> ReconciliationSessionDispatchOutcome<C> {
+    fn baseline_terminal_outcome(&self) -> Option<BaselineTerminalOutcome<'_>> {
+        match self {
+            Self::Noop => Some(BaselineTerminalOutcome::Noop),
+            Self::Complete => Some(BaselineTerminalOutcome::Complete),
+            Self::Blocked(blocked) => Some(BaselineTerminalOutcome::Blocked(
+                BaselineBlockedRegistration {
+                    observation_digest: blocked.observation_digest,
+                    reason: blocked.reason,
+                    detail: &blocked.detail,
+                },
+            )),
+            Self::RetryFull => Some(BaselineTerminalOutcome::Retry),
+            Self::FailedClosed(_) => None,
+        }
+    }
+}
+
+struct BaselineBlockedObservation {
+    observation_digest: ContentDigest,
+    reason: BaselineBlockedReason,
+    detail: String,
+}
+
+impl BaselineBlockedObservation {
+    fn new(reason: BaselineBlockedReason, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        Self {
+            observation_digest: ContentDigest::of(detail.as_bytes()),
+            reason,
+            detail,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReconciliationSessionBaselineFinish {
+    Clean,
+    NeedPostDrainFullScan,
+    DiagnosticOnly,
+    Unavailable,
 }
 
 /// Private generic seam: production dispatch performs the authoritative scan
@@ -257,17 +373,24 @@ enum ReconciliationSessionDispatchOutcome<C> {
 /// behavior without manufacturing graph or publication state.
 trait ReconciliationSessionDispatch {
     type Continuation;
+    type PendingBaseline;
 
     fn dispatch(
         &mut self,
         work: &ReconciliationWork,
         arrive: &mut dyn FnMut(ReconciliationTrigger),
-    ) -> ReconciliationSessionDispatchOutcome<Self::Continuation>;
+    ) -> ReconciliationSessionDispatchResult<Self::Continuation, Self::PendingBaseline>;
 
     fn resume(
         &mut self,
         continuation: Self::Continuation,
     ) -> ReconciliationSessionDispatchOutcome<Self::Continuation>;
+
+    fn finish_baseline(
+        &mut self,
+        pending: Self::PendingBaseline,
+        terminal: BaselineTerminalOutcome<'_>,
+    ) -> ReconciliationSessionBaselineFinish;
 }
 
 struct LiveReconciliationSessionDispatch<'a> {
@@ -290,6 +413,7 @@ impl LiveReconciliationSessionDispatch<'_> {
             engine,
             database,
             tail,
+            ..
         } = &mut self.dependencies;
         match OperationalCoordinator::execute(
             graph,
@@ -304,9 +428,17 @@ impl LiveReconciliationSessionDispatch<'_> {
                 ReconciliationSessionDispatchOutcome::Complete
             }
             Ok(OperationalCoordinatorState::Blocked(_)) => {
-                ReconciliationSessionDispatchOutcome::Blocked
+                ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                    BaselineBlockedReason::ReconciliationFailed,
+                    "targeted reconciliation coordinator blocked",
+                ))
             }
-            Err(_) => ReconciliationSessionDispatchOutcome::Blocked,
+            Err(error) => {
+                ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                    BaselineBlockedReason::ReconciliationFailed,
+                    error.to_string(),
+                ))
+            }
             Ok(OperationalCoordinatorState::FailedClosed(continuation)) => {
                 ReconciliationSessionDispatchOutcome::FailedClosed(continuation)
             }
@@ -315,14 +447,33 @@ impl LiveReconciliationSessionDispatch<'_> {
 
     fn execute_full_scan(
         &mut self,
-    ) -> ReconciliationSessionDispatchOutcome<FailedClosedOperationalCoordinator> {
-        let scan = {
-            let ReconciliationSessionDependencies { graph, engine, .. } = &mut self.dependencies;
+    ) -> ReconciliationSessionDispatchResult<
+        FailedClosedOperationalCoordinator,
+        PendingStableScanBaseline,
+    > {
+        let (scan, pending_baseline) = {
+            let ReconciliationSessionDependencies {
+                graph,
+                engine,
+                baseline,
+                observed_at,
+                ..
+            } = &mut self.dependencies;
             let projection = match engine.projection_work_index() {
                 Ok(projection) => projection,
                 // A projection work index error is an authoritative failure,
                 // not evidence that rerunning the same scan can make progress.
-                Err(_) => return ReconciliationSessionDispatchOutcome::Blocked,
+                Err(error) => {
+                    return ReconciliationSessionDispatchResult {
+                        outcome: ReconciliationSessionDispatchOutcome::Blocked(
+                            BaselineBlockedObservation::new(
+                                BaselineBlockedReason::AuthorityUnavailable,
+                                error.to_string(),
+                            ),
+                        ),
+                        baseline: None,
+                    };
+                }
             };
             let source = JoinedAuthenticatedExpectedPathSource::new(engine, projection);
             #[cfg(test)]
@@ -341,10 +492,10 @@ impl LiveReconciliationSessionDispatch<'_> {
             };
             #[cfg(not(test))]
             let result = scan_graph_text(graph, &source, GraphTextScanLimits::default());
-            match result {
+            let scan = match result {
                 Ok(scan) => scan,
                 Err(error) => {
-                    return match error.class {
+                    let outcome = match error.class {
                         // The two-pass scanner established that its observed
                         // epoch moved. One coalesced fresh scan is meaningful.
                         GraphTextScanFailureClass::UnstableEpoch => {
@@ -353,11 +504,36 @@ impl LiveReconciliationSessionDispatch<'_> {
                         // Bounds, unsafe filesystems, and unavailable/corrupt
                         // expected authority are terminal for this lease.
                         GraphTextScanFailureClass::Blocked => {
-                            ReconciliationSessionDispatchOutcome::Blocked
+                            ReconciliationSessionDispatchOutcome::Blocked(
+                                BaselineBlockedObservation::new(
+                                    BaselineBlockedReason::ReconciliationFailed,
+                                    error.detail,
+                                ),
+                            )
                         }
                     };
+                    return ReconciliationSessionDispatchResult {
+                        outcome,
+                        baseline: None,
+                    };
                 }
-            }
+            };
+            let pending =
+                match append_stable_scan_to_baseline(baseline, &scan, &source, *observed_at) {
+                    Ok(pending) => pending,
+                    Err(error) => {
+                        return ReconciliationSessionDispatchResult {
+                            outcome: ReconciliationSessionDispatchOutcome::Blocked(
+                                BaselineBlockedObservation::new(
+                                    BaselineBlockedReason::AuthorityUnavailable,
+                                    error.to_string(),
+                                ),
+                            ),
+                            baseline: None,
+                        };
+                    }
+                };
+            (scan, pending)
         };
         let ReconciliationSessionDependencies {
             graph,
@@ -365,41 +541,86 @@ impl LiveReconciliationSessionDispatch<'_> {
             engine,
             database,
             tail,
+            ..
         } = &mut self.dependencies;
-        match execute_stable_scan_import(scan, graph, receipts, engine, database, tail) {
-            ReconciliationImportOutcome::Noop => ReconciliationSessionDispatchOutcome::Noop,
-            ReconciliationImportOutcome::Complete(_) => {
-                ReconciliationSessionDispatchOutcome::Complete
-            }
-            ReconciliationImportOutcome::Blocked(_) => {
-                ReconciliationSessionDispatchOutcome::Blocked
-            }
-            ReconciliationImportOutcome::RetryFull(_) => {
-                ReconciliationSessionDispatchOutcome::RetryFull
-            }
-            ReconciliationImportOutcome::FailedClosed(continuation) => {
-                ReconciliationSessionDispatchOutcome::FailedClosed(continuation)
-            }
+        let outcome =
+            match execute_stable_scan_import(scan, graph, receipts, engine, database, tail) {
+                ReconciliationImportOutcome::Noop => ReconciliationSessionDispatchOutcome::Noop,
+                ReconciliationImportOutcome::Complete(_) => {
+                    ReconciliationSessionDispatchOutcome::Complete
+                }
+                ReconciliationImportOutcome::Blocked(blocked) => {
+                    ReconciliationSessionDispatchOutcome::Blocked(import_blocked_observation(
+                        blocked,
+                    ))
+                }
+                ReconciliationImportOutcome::RetryFull(_) => {
+                    ReconciliationSessionDispatchOutcome::RetryFull
+                }
+                ReconciliationImportOutcome::FailedClosed(continuation) => {
+                    ReconciliationSessionDispatchOutcome::FailedClosed(continuation)
+                }
+            };
+        ReconciliationSessionDispatchResult {
+            outcome,
+            baseline: Some(pending_baseline),
         }
+    }
+}
+
+fn import_blocked_observation(blocked: ReconciliationImportBlocked) -> BaselineBlockedObservation {
+    match blocked {
+        ReconciliationImportBlocked::Discovery(blocked) => {
+            let reason = match blocked.reason {
+                ReconciliationImportBlockReason::CandidateCountLimit
+                | ReconciliationImportBlockReason::CandidatePathBytesLimit => {
+                    BaselineBlockedReason::BoundExceeded
+                }
+                ReconciliationImportBlockReason::ExpectedAuthorityUnavailable => {
+                    BaselineBlockedReason::AuthorityUnavailable
+                }
+                ReconciliationImportBlockReason::CandidateSetAmbiguous
+                | ReconciliationImportBlockReason::UnsupportedDiscovery => {
+                    BaselineBlockedReason::ReconciliationFailed
+                }
+            };
+            BaselineBlockedObservation::new(reason, blocked.detail)
+        }
+        ReconciliationImportBlocked::Coordinator(plan) => BaselineBlockedObservation::new(
+            BaselineBlockedReason::ReconciliationFailed,
+            format!(
+                "reconciliation coordinator blocked with {:?}",
+                plan.status()
+            ),
+        ),
+        ReconciliationImportBlocked::CoordinatorError(error) => BaselineBlockedObservation::new(
+            BaselineBlockedReason::ReconciliationFailed,
+            error.to_string(),
+        ),
     }
 }
 
 impl ReconciliationSessionDispatch for LiveReconciliationSessionDispatch<'_> {
     type Continuation = FailedClosedOperationalCoordinator;
+    type PendingBaseline = PendingStableScanBaseline;
 
     fn dispatch(
         &mut self,
         work: &ReconciliationWork,
-        arrive: &mut dyn FnMut(ReconciliationTrigger),
-    ) -> ReconciliationSessionDispatchOutcome<Self::Continuation> {
+        _arrive: &mut dyn FnMut(ReconciliationTrigger),
+    ) -> ReconciliationSessionDispatchResult<Self::Continuation, Self::PendingBaseline> {
         #[cfg(test)]
         if let Some(trigger) = self.arrival_before_dispatch.take() {
-            arrive(trigger);
+            _arrive(trigger);
         }
-        match work {
+        let outcome = match work {
             ReconciliationWork::ProjectionPreconditionMismatch { paths }
             | ReconciliationWork::WatcherPaths { paths } => self.execute_targeted(paths),
-            ReconciliationWork::FullScan(_) => self.execute_full_scan(),
+            ReconciliationWork::FullScan(_) => return self.execute_full_scan(),
+        };
+        ReconciliationSessionDispatchResult {
+            outcome,
+            baseline: None,
         }
     }
 
@@ -413,6 +634,7 @@ impl ReconciliationSessionDispatch for LiveReconciliationSessionDispatch<'_> {
             engine,
             database,
             tail,
+            ..
         } = &mut self.dependencies;
         match continuation.retry(graph, receipts, engine, database, tail) {
             OperationalCoordinatorState::Complete(_) => {
@@ -424,8 +646,39 @@ impl ReconciliationSessionDispatch for LiveReconciliationSessionDispatch<'_> {
             // `retry` only returns Complete or FailedClosed today. Preserve
             // safety if that implementation grows another terminal state.
             OperationalCoordinatorState::Blocked(_) | OperationalCoordinatorState::Noop => {
-                ReconciliationSessionDispatchOutcome::Blocked
+                ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                    BaselineBlockedReason::ReconciliationFailed,
+                    "failed-closed reconciliation resume returned a non-complete terminal state",
+                ))
             }
+        }
+    }
+
+    fn finish_baseline(
+        &mut self,
+        pending: Self::PendingBaseline,
+        terminal: BaselineTerminalOutcome<'_>,
+    ) -> ReconciliationSessionBaselineFinish {
+        let ReconciliationSessionDependencies {
+            engine,
+            baseline,
+            observed_at,
+            ..
+        } = &mut self.dependencies;
+        let projection = match engine.projection_work_index() {
+            Ok(projection) => projection,
+            Err(_) => return ReconciliationSessionBaselineFinish::Unavailable,
+        };
+        let source = JoinedAuthenticatedExpectedPathSource::new(engine, projection);
+        match finish_stable_scan_baseline(baseline, &source, pending, terminal, *observed_at) {
+            Ok(BaselineAdapterStatus::Clean { .. }) => ReconciliationSessionBaselineFinish::Clean,
+            Ok(BaselineAdapterStatus::NeedPostDrainFullScan { .. }) => {
+                ReconciliationSessionBaselineFinish::NeedPostDrainFullScan
+            }
+            Ok(BaselineAdapterStatus::DiagnosticOnly { .. }) => {
+                ReconciliationSessionBaselineFinish::DiagnosticOnly
+            }
+            Err(_) => ReconciliationSessionBaselineFinish::Unavailable,
         }
     }
 }
@@ -439,6 +692,10 @@ mod tests {
     };
 
     use super::*;
+    use crate::oplog::reconciliation_baseline::{
+        ReconciliationBaselineBinding, TrustedPrivateApplicationRuntimeRoot,
+    };
+    use crate::oplog::reconciliation_scan::ReconciliationFullScanReason;
     use crate::{
         model::Graph,
         oplog::{
@@ -481,6 +738,8 @@ mod tests {
         engine: ShardedHotEngine,
         database: SqliteFrontier,
         tail: TailOverlay,
+        baseline: ReconciliationBaseline,
+        next_timestamp: u64,
         path: String,
     }
 
@@ -548,6 +807,17 @@ mod tests {
             let archive = ObjectStore::open(&archive_root, workspace_id).unwrap();
             let runtime =
                 ApplicationRuntimeRoot::open_for_test(&root.path().join("runtime")).unwrap();
+            let baseline_binding = ReconciliationBaselineBinding::new(
+                workspace_id,
+                endpoint.endpoint_id(),
+                graph.canonical_resource_id().unwrap(),
+                graph.graph_text_scope_binding().unwrap(),
+            )
+            .unwrap();
+            let trusted =
+                TrustedPrivateApplicationRuntimeRoot::from_application_runtime_root(&runtime);
+            let baseline =
+                ReconciliationBaseline::create_fresh(&trusted, baseline_binding).unwrap();
             let database_path = root.path().join("sqlite/materialized.sqlite3");
             let source = RebuildSource::new(&engine, &archive).unwrap();
             let database = SqliteFrontier::open_or_rebuild(
@@ -568,17 +838,22 @@ mod tests {
                 engine,
                 database,
                 tail,
+                baseline,
+                next_timestamp: 0,
                 path,
             }
         }
 
         fn dependencies(&mut self) -> ReconciliationSessionDependencies<'_> {
+            self.next_timestamp += 1;
             ReconciliationSessionDependencies {
                 graph: &self.graph,
                 receipts: &self.receipts,
                 engine: &mut self.engine,
                 database: &mut self.database,
                 tail: &mut self.tail,
+                baseline: &mut self.baseline,
+                observed_at: BaselineTimestamp::from_millis(self.next_timestamp).unwrap(),
             }
         }
     }
@@ -632,6 +907,8 @@ mod tests {
                 engine: &mut unenrolled,
                 database: &mut fixture.database,
                 tail: &mut fixture.tail,
+                baseline: &mut fixture.baseline,
+                observed_at: BaselineTimestamp::from_millis(1).unwrap(),
             }),
             Ok(ReconciliationSessionStep::Blocked)
         );
@@ -649,6 +926,8 @@ mod tests {
                 engine: &mut unenrolled,
                 database: &mut fixture.database,
                 tail: &mut fixture.tail,
+                baseline: &mut fixture.baseline,
+                observed_at: BaselineTimestamp::from_millis(2).unwrap(),
             }),
             Ok(ReconciliationSessionStep::Idle)
         );
@@ -701,17 +980,49 @@ mod tests {
         assert!(!session.status().active);
         assert!(session.status().pending);
 
+        let retry = session.step(fixture.dependencies());
         assert!(matches!(
-            session.step(fixture.dependencies()),
+            retry,
             Ok(ReconciliationSessionStep::Complete)
                 | Ok(ReconciliationSessionStep::Noop)
                 | Ok(ReconciliationSessionStep::Blocked)
         ));
+        if retry == Ok(ReconciliationSessionStep::Complete) {
+            assert!(session.status().pending);
+            assert!(matches!(
+                session.step(fixture.dependencies()),
+                Ok(ReconciliationSessionStep::Noop) | Ok(ReconciliationSessionStep::Blocked)
+            ));
+        }
         assert!(!session.status().pending);
         assert_eq!(
             session.step(fixture.dependencies()),
             Ok(ReconciliationSessionStep::Idle)
         );
+    }
+
+    #[test]
+    fn live_candidate_completion_runs_post_drain_noop_before_clean_promotion() {
+        let mut fixture = LiveFixture::new("candidate-post-drain", true);
+        fs::write(
+            fixture.graph_root.join(&fixture.path),
+            b"- changed outside Tine\n",
+        )
+        .unwrap();
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Complete)
+        );
+        assert!(session.status().pending);
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Noop)
+        );
+        assert!(!session.status().pending);
+        assert_eq!(fixture.baseline.head().unwrap().baseline_generation, 1);
     }
 
     #[test]
@@ -769,13 +1080,20 @@ mod tests {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct FakeContinuation(u64);
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct FakePendingBaseline(u64);
+
     #[derive(Clone, Copy)]
     enum FakeDispatchResult {
         Noop,
+        NoopWithBaseline(u64),
         Complete,
         Blocked,
+        BlockedWithBaseline(u64),
         RetryFull,
+        RetryFullWithBaseline(u64),
         FailedClosed(u64),
+        FailedClosedWithBaseline { continuation: u64, baseline: u64 },
     }
 
     #[derive(Clone, Copy)]
@@ -784,12 +1102,29 @@ mod tests {
         FailedClosed(u64),
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum FakeBaselineTerminal {
+        Noop,
+        Complete,
+        Blocked,
+        Retry,
+    }
+
+    #[derive(Clone, Copy)]
+    enum FakeBaselineFinishResult {
+        Clean,
+        NeedPostDrainFullScan,
+        DiagnosticOnly,
+    }
+
     struct FakeDispatch {
         dispatch_results: VecDeque<FakeDispatchResult>,
         resume_results: VecDeque<FakeResumeResult>,
+        baseline_finish_results: VecDeque<FakeBaselineFinishResult>,
         arrivals: VecDeque<ReconciliationTrigger>,
         calls: Vec<ReconciliationWork>,
         resumed: Vec<u64>,
+        finished_baselines: Vec<(u64, FakeBaselineTerminal)>,
     }
 
     impl FakeDispatch {
@@ -797,38 +1132,78 @@ mod tests {
             Self {
                 dispatch_results: results.into_iter().collect(),
                 resume_results: VecDeque::new(),
+                baseline_finish_results: VecDeque::new(),
                 arrivals: VecDeque::new(),
                 calls: Vec::new(),
                 resumed: Vec::new(),
+                finished_baselines: Vec::new(),
             }
         }
     }
 
     impl ReconciliationSessionDispatch for FakeDispatch {
         type Continuation = FakeContinuation;
+        type PendingBaseline = FakePendingBaseline;
 
         fn dispatch(
             &mut self,
             work: &ReconciliationWork,
             arrive: &mut dyn FnMut(ReconciliationTrigger),
-        ) -> ReconciliationSessionDispatchOutcome<Self::Continuation> {
+        ) -> ReconciliationSessionDispatchResult<Self::Continuation, Self::PendingBaseline>
+        {
             self.calls.push(work.clone());
             for trigger in std::mem::take(&mut self.arrivals) {
                 arrive(trigger);
             }
-            match self
+            let (outcome, baseline) = match self
                 .dispatch_results
                 .pop_front()
                 .expect("fixture must supply a dispatch result")
             {
-                FakeDispatchResult::Noop => ReconciliationSessionDispatchOutcome::Noop,
-                FakeDispatchResult::Complete => ReconciliationSessionDispatchOutcome::Complete,
-                FakeDispatchResult::Blocked => ReconciliationSessionDispatchOutcome::Blocked,
-                FakeDispatchResult::RetryFull => ReconciliationSessionDispatchOutcome::RetryFull,
-                FakeDispatchResult::FailedClosed(identity) => {
-                    ReconciliationSessionDispatchOutcome::FailedClosed(FakeContinuation(identity))
+                FakeDispatchResult::Noop => (ReconciliationSessionDispatchOutcome::Noop, None),
+                FakeDispatchResult::NoopWithBaseline(identity) => (
+                    ReconciliationSessionDispatchOutcome::Noop,
+                    Some(FakePendingBaseline(identity)),
+                ),
+                FakeDispatchResult::Complete => {
+                    (ReconciliationSessionDispatchOutcome::Complete, None)
                 }
-            }
+                FakeDispatchResult::Blocked => (
+                    ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                        BaselineBlockedReason::ReconciliationFailed,
+                        "fake blocked",
+                    )),
+                    None,
+                ),
+                FakeDispatchResult::BlockedWithBaseline(identity) => (
+                    ReconciliationSessionDispatchOutcome::Blocked(BaselineBlockedObservation::new(
+                        BaselineBlockedReason::ReconciliationFailed,
+                        "fake blocked",
+                    )),
+                    Some(FakePendingBaseline(identity)),
+                ),
+                FakeDispatchResult::RetryFull => {
+                    (ReconciliationSessionDispatchOutcome::RetryFull, None)
+                }
+                FakeDispatchResult::RetryFullWithBaseline(identity) => (
+                    ReconciliationSessionDispatchOutcome::RetryFull,
+                    Some(FakePendingBaseline(identity)),
+                ),
+                FakeDispatchResult::FailedClosed(identity) => (
+                    ReconciliationSessionDispatchOutcome::FailedClosed(FakeContinuation(identity)),
+                    None,
+                ),
+                FakeDispatchResult::FailedClosedWithBaseline {
+                    continuation,
+                    baseline,
+                } => (
+                    ReconciliationSessionDispatchOutcome::FailedClosed(FakeContinuation(
+                        continuation,
+                    )),
+                    Some(FakePendingBaseline(baseline)),
+                ),
+            };
+            ReconciliationSessionDispatchResult { outcome, baseline }
         }
 
         fn resume(
@@ -847,6 +1222,36 @@ mod tests {
                 }
             }
         }
+
+        fn finish_baseline(
+            &mut self,
+            pending: Self::PendingBaseline,
+            terminal: BaselineTerminalOutcome<'_>,
+        ) -> ReconciliationSessionBaselineFinish {
+            let terminal = match terminal {
+                BaselineTerminalOutcome::Noop => FakeBaselineTerminal::Noop,
+                BaselineTerminalOutcome::Complete => FakeBaselineTerminal::Complete,
+                BaselineTerminalOutcome::Blocked(_) => FakeBaselineTerminal::Blocked,
+                BaselineTerminalOutcome::Retry => FakeBaselineTerminal::Retry,
+                BaselineTerminalOutcome::FailedClosed => {
+                    panic!("failed-closed is not a terminal baseline finish")
+                }
+            };
+            self.finished_baselines.push((pending.0, terminal));
+            match self
+                .baseline_finish_results
+                .pop_front()
+                .expect("fixture must supply a baseline finish result")
+            {
+                FakeBaselineFinishResult::Clean => ReconciliationSessionBaselineFinish::Clean,
+                FakeBaselineFinishResult::NeedPostDrainFullScan => {
+                    ReconciliationSessionBaselineFinish::NeedPostDrainFullScan
+                }
+                FakeBaselineFinishResult::DiagnosticOnly => {
+                    ReconciliationSessionBaselineFinish::DiagnosticOnly
+                }
+            }
+        }
     }
 
     fn paths(paths: &[&str]) -> BTreeSet<ManagedPath> {
@@ -856,7 +1261,7 @@ mod tests {
             .collect()
     }
 
-    fn session() -> ReconciliationSession<FakeContinuation> {
+    fn session() -> ReconciliationSession<FakeContinuation, FakePendingBaseline> {
         ReconciliationSession::new(ReconciliationSchedulerLimits::default())
     }
 
@@ -1044,15 +1449,186 @@ mod tests {
     }
 
     #[test]
+    fn full_scan_failed_closed_retains_lease_and_pending_baseline_identity() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch =
+            FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 41,
+                baseline: 701,
+            }]);
+
+        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+            panic!("expected retained full-scan continuation");
+        };
+        let pending = session
+            .pending
+            .as_ref()
+            .expect("failed-closed session must retain pending state");
+        assert_eq!(pending.token, token);
+        assert_eq!(pending.continuation, FakeContinuation(41));
+        assert_eq!(pending.baseline, Some(FakePendingBaseline(701)));
+        assert!(session.status().active);
+        assert!(dispatch.finished_baselines.is_empty());
+    }
+
+    #[test]
+    fn repeated_resume_failure_preserves_continuation_and_baseline_identities() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch =
+            FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 41,
+                baseline: 701,
+            }]);
+        dispatch
+            .resume_results
+            .extend([FakeResumeResult::FailedClosed(41); 2]);
+
+        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+            panic!("expected retained full-scan continuation");
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                session.resume_with(token, &mut dispatch),
+                Ok(ReconciliationSessionStep::Pending(token))
+            );
+            let pending = session
+                .pending
+                .as_ref()
+                .expect("failed resume must restore pending state");
+            assert_eq!(pending.token, token);
+            assert_eq!(pending.continuation, FakeContinuation(41));
+            assert_eq!(pending.baseline, Some(FakePendingBaseline(701)));
+            assert!(session.status().active);
+            assert!(dispatch.finished_baselines.is_empty());
+        }
+    }
+
+    #[test]
+    fn successful_resume_finishes_epoch_and_schedules_post_drain_before_settlement() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch =
+            FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 41,
+                baseline: 701,
+            }]);
+        dispatch
+            .resume_results
+            .push_back(FakeResumeResult::Complete);
+        dispatch
+            .baseline_finish_results
+            .push_back(FakeBaselineFinishResult::NeedPostDrainFullScan);
+
+        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+            panic!("expected retained full-scan continuation");
+        };
+        assert_eq!(
+            session.resume_with(token, &mut dispatch),
+            Ok(ReconciliationSessionStep::Complete)
+        );
+        assert_eq!(
+            dispatch.finished_baselines,
+            vec![(701, FakeBaselineTerminal::Complete)]
+        );
+        assert!(!session.status().active);
+        assert!(session.status().pending);
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Complete)
+        );
+
+        let post_drain = session
+            .scheduler
+            .next()
+            .expect("candidate completion must retain a post-drain full scan");
+        let ReconciliationWork::FullScan(reasons) = post_drain.work() else {
+            panic!("post-drain work must be a full scan");
+        };
+        assert!(reasons
+            .reasons
+            .contains(&ReconciliationFullScanReason::PostDrain));
+        session
+            .scheduler
+            .complete(post_drain.lease(), ReconciliationCompletionOutcome::Blocked)
+            .unwrap();
+    }
+
+    #[test]
+    fn post_drain_zero_candidate_noop_can_promote_clean() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::PostDrain);
+        let mut dispatch = FakeDispatch::with_dispatch([FakeDispatchResult::NoopWithBaseline(702)]);
+        dispatch
+            .baseline_finish_results
+            .push_back(FakeBaselineFinishResult::Clean);
+
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::Noop)
+        );
+        assert_eq!(
+            dispatch.finished_baselines,
+            vec![(702, FakeBaselineTerminal::Noop)]
+        );
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+    }
+
+    #[test]
+    fn blocked_and_retry_full_scans_never_request_clean_promotion() {
+        for (dispatch_result, expected_step, expected_terminal) in [
+            (
+                FakeDispatchResult::BlockedWithBaseline(801),
+                ReconciliationSessionStep::Blocked,
+                FakeBaselineTerminal::Blocked,
+            ),
+            (
+                FakeDispatchResult::RetryFullWithBaseline(802),
+                ReconciliationSessionStep::RetryFull,
+                FakeBaselineTerminal::Retry,
+            ),
+        ] {
+            let mut session = session();
+            session.trigger(ReconciliationTrigger::Explicit);
+            let mut dispatch = FakeDispatch::with_dispatch([dispatch_result]);
+            dispatch
+                .baseline_finish_results
+                .push_back(FakeBaselineFinishResult::DiagnosticOnly);
+
+            assert_eq!(session.step_with(&mut dispatch), Ok(expected_step));
+            assert_eq!(
+                dispatch.finished_baselines,
+                vec![(
+                    if expected_terminal == FakeBaselineTerminal::Blocked {
+                        801
+                    } else {
+                        802
+                    },
+                    expected_terminal,
+                )]
+            );
+        }
+    }
+
+    #[test]
     fn session_rejects_stale_foreign_and_double_resume_tokens() {
         let mut first = session();
         let mut second = session();
         first.trigger(ReconciliationTrigger::Explicit);
         second.trigger(ReconciliationTrigger::Explicit);
-        let mut first_dispatch = FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosed(1)]);
+        let mut first_dispatch =
+            FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 1,
+                baseline: 901,
+            }]);
         first_dispatch
             .resume_results
             .push_back(FakeResumeResult::Complete);
+        first_dispatch
+            .baseline_finish_results
+            .push_back(FakeBaselineFinishResult::DiagnosticOnly);
         let mut second_dispatch =
             FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosed(2)]);
 
@@ -1072,12 +1648,20 @@ mod tests {
             Err(ReconciliationSessionError::StaleOrForeignContinuation)
         );
         assert_eq!(
+            first.pending.as_ref().and_then(|pending| pending.baseline),
+            Some(FakePendingBaseline(901))
+        );
+        assert_eq!(
             first.resume_with(first_token, &mut first_dispatch),
             Ok(ReconciliationSessionStep::Complete)
         );
         assert_eq!(
             first.resume_with(first_token, &mut first_dispatch),
             Err(ReconciliationSessionError::StaleOrForeignContinuation)
+        );
+        assert_eq!(
+            first_dispatch.finished_baselines,
+            vec![(901, FakeBaselineTerminal::Complete)]
         );
     }
 
