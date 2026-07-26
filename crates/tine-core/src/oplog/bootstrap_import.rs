@@ -2630,6 +2630,26 @@ impl ArchiveLocalFrontierBindingV1 {
         })
     }
 
+    pub(crate) const fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    pub(crate) const fn accepted_count(self) -> u32 {
+        self.accepted_count
+    }
+
+    pub(crate) const fn last_part(self) -> Option<BootstrapPartId> {
+        self.last_part
+    }
+
+    pub(crate) fn encode(self) -> Vec<u8> {
+        archive_frontier_bytes(self)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        decode_archive_frontier(bytes)
+    }
+
     fn validate(self) -> Result<(), BootstrapImportError> {
         if self.accepted_count > MAX_BOOTSTRAP_PARTS {
             return Err(BootstrapImportError::CountLimit("bootstrap parts"));
@@ -2788,8 +2808,8 @@ impl BootstrapPartDescriptorV1 {
         self.full_object_root.encode_into(&mut bytes);
         bytes.extend_from_slice(self.accepted_event.as_bytes());
         bytes.extend_from_slice(&self.acceptance_sequence.to_be_bytes());
-        bytes.extend_from_slice(&archive_frontier_bytes(self.prior_frontier));
-        bytes.extend_from_slice(&archive_frontier_bytes(self.post_frontier));
+        bytes.extend_from_slice(&self.prior_frontier.encode());
+        bytes.extend_from_slice(&self.post_frontier.encode());
         debug_assert_eq!(bytes.len(), PART_DESCRIPTOR_BYTES);
         bytes
     }
@@ -2816,8 +2836,8 @@ impl BootstrapPartDescriptorV1 {
         let full_object_root = FullObjectRootV1::decode(cursor.take(44)?)?;
         let accepted_event = BootstrapAcceptedEventBindingV1::from_bytes(cursor.array_32()?);
         let acceptance_sequence = cursor.u32()?;
-        let prior_frontier = decode_archive_frontier(cursor.take(69)?)?;
-        let post_frontier = decode_archive_frontier(cursor.take(69)?)?;
+        let prior_frontier = ArchiveLocalFrontierBindingV1::decode(cursor.take(69)?)?;
+        let post_frontier = ArchiveLocalFrontierBindingV1::decode(cursor.take(69)?)?;
         cursor.finish()?;
         let evidence = BootstrapImportPartEvidenceV1::new(
             import_id,
@@ -2967,12 +2987,8 @@ impl BootstrapAggregateManifestV1 {
         put_field(&mut bytes, 10, &self.source_blob_page_count.to_be_bytes())?;
         put_field(&mut bytes, 11, self.profile_digest.as_bytes())?;
         put_field(&mut bytes, 12, &parts)?;
-        put_field(
-            &mut bytes,
-            13,
-            &archive_frontier_bytes(self.initial_frontier),
-        )?;
-        put_field(&mut bytes, 14, &archive_frontier_bytes(self.final_frontier))?;
+        put_field(&mut bytes, 13, &self.initial_frontier.encode())?;
+        put_field(&mut bytes, 14, &self.final_frontier.encode())?;
         put_field(&mut bytes, 15, self.final_frontier_proof.as_bytes())?;
         if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES {
             return Err(BootstrapImportError::EncodedSizeLimit("aggregate manifest"));
@@ -3000,8 +3016,8 @@ impl BootstrapAggregateManifestV1 {
         let source_blob_page_count = read_u32(fields.required(10)?)?;
         let profile_digest = BootstrapProfileDigestV1::from_bytes(array_32(fields.required(11)?)?);
         let parts = decode_parts(fields.required(12)?, import_id, profile_digest)?;
-        let initial_frontier = decode_archive_frontier(fields.required(13)?)?;
-        let final_frontier = decode_archive_frontier(fields.required(14)?)?;
+        let initial_frontier = ArchiveLocalFrontierBindingV1::decode(fields.required(13)?)?;
+        let final_frontier = ArchiveLocalFrontierBindingV1::decode(fields.required(14)?)?;
         let final_frontier_proof =
             BootstrapFinalFrontierProofV1::from_bytes(array_32(fields.required(15)?)?);
         let value = Self::new(
@@ -3280,7 +3296,7 @@ impl BootstrapAggregateCommitV1 {
         put_field(&mut bytes, 3, self.aggregate_digest.as_bytes())?;
         put_field(&mut bytes, 4, &self.aggregate_byte_length.to_be_bytes())?;
         put_field(&mut bytes, 5, &self.part_count.to_be_bytes())?;
-        put_field(&mut bytes, 6, &archive_frontier_bytes(self.final_frontier))?;
+        put_field(&mut bytes, 6, &self.final_frontier.encode())?;
         if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES {
             return Err(BootstrapImportError::EncodedSizeLimit("aggregate commit"));
         }
@@ -3301,7 +3317,7 @@ impl BootstrapAggregateCommitV1 {
             BootstrapAggregateDigestV1::from_bytes(array_32(fields.required(3)?)?),
             read_u64(fields.required(4)?)?,
             read_u32(fields.required(5)?)?,
-            decode_archive_frontier(fields.required(6)?)?,
+            ArchiveLocalFrontierBindingV1::decode(fields.required(6)?)?,
         )?;
         if value.encode()?.as_slice() != bytes {
             return Err(BootstrapImportError::NonCanonicalBytes);
@@ -3372,7 +3388,7 @@ fn final_frontier_proof(
             lineage_digest.as_bytes(),
             import_id.as_bytes(),
             profile_digest.as_bytes(),
-            &archive_frontier_bytes(final_frontier),
+            &final_frontier.encode(),
         ],
     )
 }
@@ -3964,6 +3980,61 @@ mod tests {
             final_frontier,
             proof,
         )
+    }
+
+    #[test]
+    fn archive_local_frontier_binding_codec_roundtrips_and_rejects_invalid_bytes() {
+        let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
+        let initial_bytes = initial.encode();
+        let decoded_initial = ArchiveLocalFrontierBindingV1::decode(&initial_bytes).unwrap();
+        assert_eq!(decoded_initial, initial);
+        assert_eq!(decoded_initial.digest(), initial.digest());
+        assert_eq!(decoded_initial.accepted_count(), 0);
+        assert_eq!(decoded_initial.last_part(), None);
+
+        let last_part = BootstrapPartId::from_digest([0x55; 32]);
+        let nonempty = initial
+            .advance(
+                last_part,
+                BootstrapAcceptedEventBindingV1::from_bytes([0x66; 32]),
+            )
+            .unwrap();
+        let nonempty_bytes = nonempty.encode();
+        let decoded_nonempty = ArchiveLocalFrontierBindingV1::decode(&nonempty_bytes).unwrap();
+        assert_eq!(decoded_nonempty, nonempty);
+        assert_eq!(decoded_nonempty.accepted_count(), 1);
+        assert_eq!(decoded_nonempty.last_part(), Some(last_part));
+
+        assert!(matches!(
+            ArchiveLocalFrontierBindingV1::decode(&initial_bytes[..initial_bytes.len() - 1]),
+            Err(BootstrapImportError::InvalidFieldLength)
+        ));
+        let mut trailing = initial_bytes.clone();
+        trailing.push(0);
+        assert!(matches!(
+            ArchiveLocalFrontierBindingV1::decode(&trailing),
+            Err(BootstrapImportError::InvalidFieldLength)
+        ));
+
+        let mut initial_with_last_part = initial_bytes.clone();
+        initial_with_last_part[36] = 1;
+        assert!(matches!(
+            ArchiveLocalFrontierBindingV1::decode(&initial_with_last_part),
+            Err(BootstrapImportError::InvalidArchiveFrontier)
+        ));
+        let mut nonempty_without_last_part = nonempty_bytes.clone();
+        nonempty_without_last_part[36] = 0;
+        nonempty_without_last_part[37..].fill(0);
+        assert!(matches!(
+            ArchiveLocalFrontierBindingV1::decode(&nonempty_without_last_part),
+            Err(BootstrapImportError::InvalidArchiveFrontier)
+        ));
+        let mut unsupported_tag = initial_bytes;
+        unsupported_tag[36] = 2;
+        assert!(matches!(
+            ArchiveLocalFrontierBindingV1::decode(&unsupported_tag),
+            Err(BootstrapImportError::NonCanonicalBytes)
+        ));
     }
 
     #[test]
