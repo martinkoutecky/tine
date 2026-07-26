@@ -8,6 +8,10 @@
 
 pub(crate) mod authenticated_patricia;
 pub mod batch;
+// P2N4 bootstrap import evidence is a pure, inactive identity/validation
+// boundary.  Import execution and acceptance remain deliberately unwired.
+#[allow(dead_code)]
+pub(crate) mod bootstrap_import;
 pub(crate) mod causal_index;
 pub(crate) mod dependency_queue;
 pub(crate) mod document_state;
