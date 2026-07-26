@@ -8,9 +8,10 @@
 
 use super::{
     object_store::{ensure_directory_nofollow, open_dir_nofollow, sync_dir_required},
+    projection_work_index::DurablyPublishedProjectionCompletion,
     ApplicationRuntimeRoot, BlobDescription, CanonicalGraphResourceId, ContentDigest,
     GraphTextScopeBinding, LogicalCompletionId, ManagedPath, ManagedTextKind, ProjectionEndpointId,
-    WorkspaceId, MANAGED_ENTITY_SET_VERSION,
+    ProjectionWorkTarget, WorkspaceId, MANAGED_ENTITY_SET_VERSION,
 };
 use cap_std::{
     ambient_authority,
@@ -26,7 +27,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub(crate) const RECONCILIATION_BASELINE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const RECONCILIATION_BASELINE_SCHEMA_VERSION: u32 = 2;
 pub(crate) const RECONCILIATION_BASELINE_APPLICATION_ID: u32 = 0x5449_4e42;
 pub(crate) const MAX_BASELINE_WRITE_ROWS: usize = 512;
 pub(crate) const MAX_BASELINE_PAGE_ROWS: usize = 512;
@@ -102,6 +103,8 @@ CREATE TABLE paths (
     source INTEGER NOT NULL CHECK (source IN (1, 2)),
     completion_identity BLOB
         CHECK (completion_identity IS NULL OR length(completion_identity) = 32),
+    completion_frontier BLOB
+        CHECK (completion_frontier IS NULL OR length(completion_frontier) = 32),
     PRIMARY KEY (epoch_id, exact_path),
     CHECK (
         (state = 1 AND content_digest IS NOT NULL AND byte_len IS NOT NULL)
@@ -110,9 +113,10 @@ CREATE TABLE paths (
             AND file_resource IS NULL AND link_count IS NULL)
     ),
     CHECK (
-        (source = 1 AND completion_identity IS NULL)
+        (source = 1 AND completion_identity IS NULL AND completion_frontier IS NULL)
         OR
-        (source = 2 AND completion_identity IS NOT NULL AND managed_kind IS NOT NULL)
+        (source = 2 AND completion_identity IS NOT NULL
+            AND completion_frontier IS NOT NULL AND managed_kind IS NOT NULL)
     )
 ) STRICT;";
 
@@ -361,67 +365,22 @@ impl BaselineCompletionIdentity {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TineCompletionState {
+enum TineCompletionState {
     Present(BlobDescription),
     Deleted,
 }
 
-/// A direct-update request constructed only after durable completion and
-/// current-path publication have both succeeded.
-///
-/// The future activation adapter must derive this from
-/// `ProjectionDirectCompletionAuthority`; this packet deliberately does not
-/// wire that adapter into projection execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DurablyPublishedTineCompletion {
+struct AuthenticatedTineCompletion<'a> {
     workspace: WorkspaceId,
     endpoint: ProjectionEndpointId,
     graph_resource: CanonicalGraphResourceId,
-    path: ManagedPath,
+    path: &'a ManagedPath,
     managed_kind: ManagedTextKind,
     state: TineCompletionState,
     completion_identity: BaselineCompletionIdentity,
-    accepted_frontier: ContentDigest,
-    expected_baseline_generation: u64,
-    expected_projection_generation: u64,
+    completion_frontier: ContentDigest,
     projection_generation: u64,
     completed_at: BaselineTimestamp,
-}
-
-impl DurablyPublishedTineCompletion {
-    /// This constructor is the narrow activation seam. Its caller must possess
-    /// durable projection-completion/current-path evidence before invoking it.
-    /// Packet 2 does not yet connect that authority-bearing caller.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn after_durable_publication(
-        workspace: WorkspaceId,
-        endpoint: ProjectionEndpointId,
-        graph_resource: CanonicalGraphResourceId,
-        path: ManagedPath,
-        managed_kind: ManagedTextKind,
-        state: TineCompletionState,
-        completion_identity: BaselineCompletionIdentity,
-        accepted_frontier: ContentDigest,
-        expected_baseline_generation: u64,
-        expected_projection_generation: u64,
-        projection_generation: u64,
-        completed_at: BaselineTimestamp,
-    ) -> Self {
-        Self {
-            workspace,
-            endpoint,
-            graph_resource,
-            path,
-            managed_kind,
-            state,
-            completion_identity,
-            accepted_frontier,
-            expected_baseline_generation,
-            expected_projection_generation,
-            projection_generation,
-            completed_at,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -520,14 +479,10 @@ impl ReconciliationBaseline {
         let (parent, path) = prepare_database_parent(runtime, &binding, true)?;
         create_database_file_nofollow(&parent, &path)?;
         let mut connection = open_connection(&path, true)?;
-        if let Err(error) = initialize_schema(&connection, &path, &binding)
-            .and_then(|()| validate_database(&mut connection, &path, &binding))
-        {
-            return Err(error);
-        }
+        initialize_schema(&connection, &path, &binding)?;
+        let trusted_data_version = validate_database(&mut connection, &path, &binding)?;
         sync_dir_required(&parent)
             .map_err(|error| unavailable(format!("cannot sync baseline directory: {error}")))?;
-        let trusted_data_version = read_data_version(&connection, &path)?;
         Ok(Self {
             connection,
             path,
@@ -545,9 +500,8 @@ impl ReconciliationBaseline {
         let (parent, path) = prepare_database_parent(runtime, &binding, false)?;
         require_existing_regular(&parent, &path)?;
         let mut connection = open_connection(&path, false)?;
-        validate_database(&mut connection, &path, &binding)?;
+        let trusted_data_version = validate_database(&mut connection, &path, &binding)?;
         configure_trusted_connection(&connection, &path)?;
-        let trusted_data_version = read_data_version(&connection, &path)?;
         Ok(Self {
             connection,
             path,
@@ -668,8 +622,9 @@ impl ReconciliationBaseline {
                 .prepare(
                     "INSERT INTO paths (
                         epoch_id, exact_path, managed_kind, state, content_digest,
-                        byte_len, file_resource, link_count, source, completion_identity
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL)",
+                        byte_len, file_resource, link_count, source, completion_identity,
+                        completion_frontier
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL, NULL)",
                 )
                 .map_err(|error| {
                     classify_sql_error(&path, error, "preparing baseline path insert")
@@ -940,9 +895,35 @@ impl ReconciliationBaseline {
 
     pub(crate) fn apply_tine_completion(
         &mut self,
-        update: &DurablyPublishedTineCompletion,
+        completion: &DurablyPublishedProjectionCompletion,
+        managed_kind: ManagedTextKind,
+        completed_at: BaselineTimestamp,
     ) -> Result<BaselineHead, ReconciliationBaselineError> {
-        validate_managed_path(&update.path)?;
+        let state = match completion.target() {
+            ProjectionWorkTarget::Present(description) => TineCompletionState::Present(description),
+            ProjectionWorkTarget::Absent => TineCompletionState::Deleted,
+        };
+        self.apply_authenticated_tine_completion(&AuthenticatedTineCompletion {
+            workspace: completion.workspace_id(),
+            endpoint: completion.endpoint_id(),
+            graph_resource: completion.graph_resource_id(),
+            path: completion.path(),
+            managed_kind,
+            state,
+            completion_identity: BaselineCompletionIdentity::from_logical(
+                completion.logical_completion_id(),
+            ),
+            completion_frontier: completion.frontier_digest(),
+            projection_generation: completion.projection_generation(),
+            completed_at,
+        })
+    }
+
+    fn apply_authenticated_tine_completion(
+        &mut self,
+        update: &AuthenticatedTineCompletion<'_>,
+    ) -> Result<BaselineHead, ReconciliationBaselineError> {
+        validate_managed_path(update.path)?;
         if update.workspace != self.binding.workspace
             || update.endpoint != self.binding.endpoint
             || update.graph_resource != self.binding.graph_resource
@@ -951,21 +932,14 @@ impl ReconciliationBaseline {
                 "durable completion update does not match the baseline binding",
             ));
         }
-        if update.projection_generation <= update.expected_projection_generation {
-            return Err(unavailable(
-                "durable completion projection generation did not advance",
-            ));
-        }
         let path = self.path.clone();
         let trusted_data_version = self.trusted_data_version;
         let transaction = begin_immediate(&mut self.connection, &path)?;
         require_data_version(&transaction, &path, trusted_data_version)?;
         let head = load_head(&transaction, &path)?;
-        if head.baseline_generation != update.expected_baseline_generation
-            || head.projection_generation != update.expected_projection_generation
-        {
+        if update.projection_generation <= head.projection_generation {
             return Err(unavailable(
-                "durable completion update was based on a stale clean baseline head",
+                "durable completion projection generation did not advance",
             ));
         }
         let started_at: i64 = transaction
@@ -1031,8 +1005,9 @@ impl ReconciliationBaseline {
             .execute(
                 "INSERT INTO paths (
                     epoch_id, exact_path, managed_kind, state, content_digest,
-                    byte_len, file_resource, link_count, source, completion_identity
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, 2, ?7)
+                    byte_len, file_resource, link_count, source, completion_identity,
+                    completion_frontier
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, 2, ?7, ?8)
                  ON CONFLICT(epoch_id, exact_path) DO UPDATE SET
                     managed_kind = excluded.managed_kind,
                     state = excluded.state,
@@ -1041,7 +1016,8 @@ impl ReconciliationBaseline {
                     file_resource = NULL,
                     link_count = NULL,
                     source = 2,
-                    completion_identity = excluded.completion_identity",
+                    completion_identity = excluded.completion_identity,
+                    completion_frontier = excluded.completion_frontier",
                 params![
                     head.epoch.as_i64(),
                     update.path.as_str(),
@@ -1049,7 +1025,8 @@ impl ReconciliationBaseline {
                     state,
                     digest,
                     length,
-                    update.completion_identity.as_bytes().as_slice()
+                    update.completion_identity.as_bytes().as_slice(),
+                    update.completion_frontier.as_bytes().as_slice()
                 ],
             )
             .map_err(|error| {
@@ -1064,15 +1041,15 @@ impl ReconciliationBaseline {
                  WHERE id = ?1 AND state = 1",
                 params![
                     head.epoch.as_i64(),
-                    digest_blob(update.accepted_frontier),
+                    digest_blob(head.accepted_frontier),
                     projection_generation
                 ],
             )
             .map_err(|error| {
                 classify_sql_error(&path, error, "advancing durable completion baseline")
             })?;
-        let baseline_generation = update
-            .expected_baseline_generation
+        let baseline_generation = head
+            .baseline_generation
             .checked_add(1)
             .ok_or_else(|| unavailable("baseline generation overflow"))?;
         transaction
@@ -1089,7 +1066,7 @@ impl ReconciliationBaseline {
         Ok(BaselineHead {
             epoch: head.epoch,
             baseline_generation,
-            accepted_frontier: update.accepted_frontier,
+            accepted_frontier: head.accepted_frontier,
             projection_generation: update.projection_generation,
         })
     }
@@ -1130,7 +1107,8 @@ impl ReconciliationBaseline {
         let mut statement = transaction
             .prepare(
                 "SELECT exact_path, managed_kind, state, content_digest, byte_len,
-                        file_resource, link_count, source, completion_identity
+                        file_resource, link_count, source, completion_identity,
+                        completion_frontier
                  FROM paths
                  WHERE epoch_id = ?1 AND exact_path > ?2
                  ORDER BY exact_path
@@ -1406,9 +1384,18 @@ fn validate_database(
     connection: &mut Connection,
     path: &Path,
     binding: &ReconciliationBaselineBinding,
-) -> Result<(), ReconciliationBaselineError> {
+) -> Result<i64, ReconciliationBaselineError> {
+    validate_database_with_after_commit_hook(connection, path, binding, || {})
+}
+
+fn validate_database_with_after_commit_hook(
+    connection: &mut Connection,
+    path: &Path,
+    binding: &ReconciliationBaselineBinding,
+    after_commit: impl FnOnce(),
+) -> Result<i64, ReconciliationBaselineError> {
     let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| classify_sql_error(path, error, "starting baseline validation"))?;
     let quick_check: String = transaction
         .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
@@ -1422,9 +1409,16 @@ fn validate_database(
     validate_schema(&transaction, path)?;
     require_binding(&transaction, path, binding)?;
     validate_rows(&transaction, path, binding)?;
+    let trusted_data_version = transaction
+        .query_row("PRAGMA data_version", [], |row| row.get(0))
+        .map_err(|error| {
+            classify_sql_error(path, error, "binding baseline validation data version")
+        })?;
     transaction
         .commit()
-        .map_err(|error| classify_sql_error(path, error, "closing baseline validation"))
+        .map_err(|error| classify_sql_error(path, error, "closing baseline validation"))?;
+    after_commit();
+    Ok(trusted_data_version)
 }
 
 fn validate_schema(
@@ -1867,7 +1861,8 @@ fn validate_path_rows(
     let mut statement = transaction
         .prepare(
             "SELECT epoch_id, exact_path, managed_kind, state, content_digest,
-                    byte_len, file_resource, link_count, source, completion_identity
+                    byte_len, file_resource, link_count, source, completion_identity,
+                    completion_frontier
              FROM paths ORDER BY epoch_id, exact_path",
         )
         .map_err(|error| classify_sql_error(path, error, "preparing baseline path validation"))?;
@@ -2184,8 +2179,10 @@ fn require_epoch_counters_match(
                 "SELECT
                     (SELECT COUNT(*) FROM paths WHERE epoch_id = ?1),
                     (SELECT COUNT(*) FROM directories WHERE epoch_id = ?1),
-                    COALESCE((SELECT SUM(length(exact_path)) FROM paths WHERE epoch_id = ?1), 0),
-                    COALESCE((SELECT SUM(length(exact_path)) FROM directories WHERE epoch_id = ?1), 0)",
+                    COALESCE((SELECT SUM(length(CAST(exact_path AS BLOB)))
+                              FROM paths WHERE epoch_id = ?1), 0),
+                    COALESCE((SELECT SUM(length(CAST(exact_path AS BLOB)))
+                              FROM directories WHERE epoch_id = ?1), 0)",
                 [epoch.as_i64()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
@@ -2311,6 +2308,9 @@ fn decode_path_row_at(
     let completion: Option<Vec<u8>> = row
         .get(offset + 8)
         .map_err(|error| classify_sql_error(path, error, "decoding completion identity"))?;
+    let completion_frontier: Option<Vec<u8>> = row
+        .get(offset + 9)
+        .map_err(|error| classify_sql_error(path, error, "decoding completion frontier"))?;
     let (recorded_state, file_resource, link_count) =
         match (state, content, byte_len, resource, link_count) {
             (1, Some(content), Some(length), resource, links) if length >= 0 => {
@@ -2342,8 +2342,8 @@ fn decode_path_row_at(
             (2, None, None, None, None) => (BaselineRecordedState::ExpectedAbsent, None, None),
             _ => return Err(rebuild(path, "malformed baseline path state")),
         };
-    let source = match (source, completion) {
-        (1, None) => {
+    let source = match (source, completion, completion_frontier) {
+        (1, None, None) => {
             if matches!(recorded_state, BaselineRecordedState::Present(_))
                 && (file_resource.is_none() || link_count != Some(1))
             {
@@ -2354,9 +2354,14 @@ fn decode_path_row_at(
             }
             BaselinePathSource::StableScan
         }
-        (2, Some(completion)) if managed_kind.is_some() => BaselinePathSource::TineCompletion(
-            BaselineCompletionIdentity(decode_fixed_32(&completion, path, "completion identity")?),
-        ),
+        (2, Some(completion), Some(frontier)) if managed_kind.is_some() => {
+            decode_fixed_32(&frontier, path, "completion frontier")?;
+            BaselinePathSource::TineCompletion(BaselineCompletionIdentity(decode_fixed_32(
+                &completion,
+                path,
+                "completion identity",
+            )?))
+        }
         _ => return Err(rebuild(path, "malformed baseline path source")),
     };
     Ok(BaselinePathRecord {
@@ -2485,15 +2490,6 @@ fn begin_read<'a>(
     connection
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(|error| classify_sql_error(path, error, "starting baseline read"))
-}
-
-fn read_data_version(
-    connection: &Connection,
-    path: &Path,
-) -> Result<i64, ReconciliationBaselineError> {
-    connection
-        .query_row("PRAGMA data_version", [], |row| row.get(0))
-        .map_err(|error| classify_sql_error(path, error, "reading baseline data version"))
 }
 
 fn require_data_version(
@@ -2977,22 +2973,35 @@ mod tests {
             &[present("unusual/layout/page.md", b"old")],
         );
         let completion = BaselineCompletionIdentity([9; 32]);
+        let page_path = ManagedPath::parse("unusual/layout/page.md").unwrap();
         let updated = baseline
-            .apply_tine_completion(&DurablyPublishedTineCompletion {
+            .apply_authenticated_tine_completion(&AuthenticatedTineCompletion {
                 workspace: binding.workspace(),
                 endpoint: binding.endpoint(),
                 graph_resource: binding.graph_resource(),
-                path: ManagedPath::parse("unusual/layout/page.md").unwrap(),
+                path: &page_path,
                 managed_kind: ManagedTextKind::Page,
                 state: TineCompletionState::Present(BlobDescription::of(b"new")),
                 completion_identity: completion,
-                accepted_frontier: ContentDigest::of(b"frontier-8"),
-                expected_baseline_generation: head.baseline_generation,
-                expected_projection_generation: head.projection_generation,
+                completion_frontier: ContentDigest::of(b"frontier-8"),
                 projection_generation: 8,
                 completed_at: BaselineTimestamp::from_millis(80).unwrap(),
             })
             .unwrap();
+        assert_eq!(updated.accepted_frontier, head.accepted_frontier);
+        let stored_frontier: Vec<u8> = baseline
+            .connection
+            .query_row(
+                "SELECT completion_frontier FROM paths
+                 WHERE epoch_id = ?1 AND exact_path = ?2",
+                params![head.epoch.as_i64(), page_path.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored_frontier,
+            ContentDigest::of(b"frontier-8").as_bytes().as_slice()
+        );
         let page = baseline.read_head_paths_page(None, 8).unwrap();
         assert_eq!(page.head, updated);
         assert_eq!(
@@ -3005,17 +3014,15 @@ mod tests {
         );
 
         let deleted = baseline
-            .apply_tine_completion(&DurablyPublishedTineCompletion {
+            .apply_authenticated_tine_completion(&AuthenticatedTineCompletion {
                 workspace: binding.workspace(),
                 endpoint: binding.endpoint(),
                 graph_resource: binding.graph_resource(),
-                path: ManagedPath::parse("unusual/layout/page.md").unwrap(),
+                path: &page_path,
                 managed_kind: ManagedTextKind::Page,
                 state: TineCompletionState::Deleted,
                 completion_identity: BaselineCompletionIdentity([10; 32]),
-                accepted_frontier: ContentDigest::of(b"frontier-9"),
-                expected_baseline_generation: updated.baseline_generation,
-                expected_projection_generation: updated.projection_generation,
+                completion_frontier: ContentDigest::of(b"frontier-9"),
                 projection_generation: 9,
                 completed_at: BaselineTimestamp::from_millis(90).unwrap(),
             })
@@ -3025,18 +3032,16 @@ mod tests {
         assert_eq!(page.rows[0].state, BaselineRecordedState::ExpectedAbsent);
 
         assert!(matches!(
-            baseline.apply_tine_completion(&DurablyPublishedTineCompletion {
+            baseline.apply_authenticated_tine_completion(&AuthenticatedTineCompletion {
                 workspace: binding.workspace(),
                 endpoint: binding.endpoint(),
                 graph_resource: binding.graph_resource(),
-                path: ManagedPath::parse("unusual/layout/page.md").unwrap(),
+                path: &page_path,
                 managed_kind: ManagedTextKind::Page,
                 state: TineCompletionState::Deleted,
                 completion_identity: BaselineCompletionIdentity([11; 32]),
-                accepted_frontier: ContentDigest::of(b"stale"),
-                expected_baseline_generation: updated.baseline_generation,
-                expected_projection_generation: updated.projection_generation,
-                projection_generation: 10,
+                completion_frontier: ContentDigest::of(b"stale"),
+                projection_generation: 8,
                 completed_at: BaselineTimestamp::from_millis(100).unwrap(),
             }),
             Err(ReconciliationBaselineError::BaselineUnavailable { .. })
@@ -3156,6 +3161,109 @@ mod tests {
         ));
         blocker.execute_batch("ROLLBACK").unwrap();
         assert_eq!(baseline.head().unwrap(), head);
+    }
+
+    #[test]
+    fn validation_binds_data_version_before_releasing_the_writer_exclusion() {
+        let (directory, binding, mut baseline) = open_fresh("validation-watermark");
+        clean_epoch(
+            &mut baseline,
+            &binding,
+            1,
+            &[present("nested/page.md", b"bytes")],
+        );
+        let database_path = baseline.path().to_path_buf();
+        drop(baseline);
+
+        let mut connection = open_connection(&database_path, false).unwrap();
+        let writer = Connection::open(&database_path).unwrap();
+        let changed = ContentDigest::of(b"writer-after-validation-commit");
+        let trusted_data_version = validate_database_with_after_commit_hook(
+            &mut connection,
+            &database_path,
+            &binding,
+            || {
+                writer
+                    .execute(
+                        "INSERT INTO blocked (
+                            exact_observation_digest, reason, detail, first_seen, last_seen
+                         ) VALUES (?1, 5, 'validation race', 1, 1)",
+                        [changed.as_bytes().as_slice()],
+                    )
+                    .unwrap();
+            },
+        )
+        .unwrap();
+        configure_trusted_connection(&connection, &database_path).unwrap();
+        let mut reopened = ReconciliationBaseline {
+            connection,
+            path: database_path,
+            binding,
+            trusted_data_version,
+        };
+        assert!(matches!(
+            reopened.head(),
+            Err(ReconciliationBaselineError::RebuildRequired { .. })
+        ));
+        drop(reopened);
+        drop(writer);
+        drop(directory);
+    }
+
+    #[test]
+    fn nested_unicode_paths_count_utf8_bytes_and_round_trip_on_reopen() {
+        let (directory, binding, mut baseline) = open_fresh("unicode-paths");
+        let epoch = baseline
+            .begin_epoch(BeginBaselineEpoch {
+                started_at: BaselineTimestamp::from_millis(1).unwrap(),
+                accepted_frontier: ContentDigest::of(b"unicode-frontier"),
+                projection_generation: 1,
+            })
+            .unwrap();
+        baseline
+            .append_scan_directories(
+                epoch,
+                &[
+                    root(&binding),
+                    BaselineScanDirectory {
+                        path: BaselineDirectoryPath::parse("资料/层级").unwrap(),
+                        resource: ContentDigest::of(b"unicode-directory"),
+                    },
+                ],
+            )
+            .unwrap();
+        let exact_path = "资料/层级/页面-é.md";
+        baseline
+            .append_scan_paths(epoch, &[present(exact_path, b"unicode path bytes")])
+            .unwrap();
+        let pass = ContentDigest::of(b"unicode-pass");
+        baseline
+            .finish_epoch(
+                epoch,
+                FinishBaselineEpoch {
+                    completed_at: BaselineTimestamp::from_millis(2).unwrap(),
+                    pass_a_digest: pass,
+                    pass_b_digest: pass,
+                    candidate_digest: ContentDigest::of(b"unicode-none"),
+                    candidate_count: 0,
+                    outcome: BaselineEpochOutcome::Noop,
+                    instrumentation: instrumentation(0),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        drop(baseline);
+
+        let runtime = ApplicationRuntimeRoot::open_for_test(directory.path()).unwrap();
+        let mut reopened =
+            ReconciliationBaseline::open_existing(&runtime, binding.clone()).unwrap();
+        let page = reopened.read_head_paths_page(None, 8).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].path.as_str(), exact_path);
+        assert_eq!(
+            page.rows[0].state,
+            BaselineRecordedState::Present(BlobDescription::of(b"unicode path bytes"))
+        );
     }
 
     #[test]

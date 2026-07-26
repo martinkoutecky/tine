@@ -12,6 +12,10 @@
 //! let _: fn(&ProjectionWorkIndex, ProjectionWorkId) -> _ =
 //!     ProjectionWorkIndex::mark_blocked;
 //! ```
+//!
+//! Durable completion proofs are sealed inside this module. Even another
+//! crate-private module can only receive one from a successful authenticated
+//! terminal transition; it cannot construct a parallel metadata packet.
 
 use std::fmt;
 use std::io::{ErrorKind, Write};
@@ -261,6 +265,63 @@ pub(crate) struct ProjectionWorkCompletionAuthority {
     target: ProjectionWorkTarget,
     intent_id: ProjectionIntentId,
     logical_completion_id: LogicalCompletionId,
+}
+
+mod durable_completion_proof {
+    #[derive(Debug, Eq, PartialEq)]
+    pub(super) struct Seal;
+}
+
+/// Run-local evidence that one exact completion is durably published through
+/// the enrolled work-index head and remains the authenticated current-path
+/// entry of that committed head.
+///
+/// Private fields plus the private seal prevent sibling modules from
+/// constructing this value. The only production minting sites are
+/// `mark_completed` and `mark_direct_completed`, after the durable head swap.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct DurablyPublishedProjectionCompletion {
+    _seal: durable_completion_proof::Seal,
+    workspace_id: WorkspaceId,
+    endpoint_id: ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    projection_generation: u64,
+    receipt: ProjectionCompletedReceipt,
+    frontier_digest: ContentDigest,
+}
+
+impl DurablyPublishedProjectionCompletion {
+    pub(crate) const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn endpoint_id(&self) -> ProjectionEndpointId {
+        self.endpoint_id
+    }
+
+    pub(crate) const fn graph_resource_id(&self) -> super::CanonicalGraphResourceId {
+        self.graph_resource_id
+    }
+
+    pub(crate) const fn projection_generation(&self) -> u64 {
+        self.projection_generation
+    }
+
+    pub(crate) fn path(&self) -> &ManagedPath {
+        self.receipt.path()
+    }
+
+    pub(crate) const fn target(&self) -> ProjectionWorkTarget {
+        self.receipt.target()
+    }
+
+    pub(crate) const fn logical_completion_id(&self) -> LogicalCompletionId {
+        self.receipt.logical_completion_id()
+    }
+
+    pub(crate) const fn frontier_digest(&self) -> ContentDigest {
+        self.frontier_digest
+    }
 }
 
 /// A completed receipt selected through the authenticated exact-path tree.
@@ -1920,6 +1981,7 @@ impl ProjectionWorkIndex {
                 logical_completion_id,
             },
         })
+        .map(|_| ())
     }
 
     #[cfg(test)]
@@ -1945,6 +2007,7 @@ impl ProjectionWorkIndex {
             intent_id,
             logical_completion_id,
         })
+        .map(|_| ())
     }
 
     pub(crate) fn require_accepted_ready(
@@ -2025,21 +2088,25 @@ impl ProjectionWorkIndex {
     }
 
     #[allow(clippy::result_large_err)]
+    /// Returns a proof only when the committed exact-path row is the one
+    /// unambiguous current completion. A safely persisted ambiguity returns
+    /// `None` and cannot advance a reconciliation baseline.
     pub(crate) fn mark_completed(
         &self,
         authority: ProjectionWorkCompletionAuthority,
-    ) -> Result<(), ProjectionWorkError> {
-        self.transition(|index, _, mut root| {
+    ) -> Result<Option<DurablyPublishedProjectionCompletion>, ProjectionWorkError> {
+        let (committed, receipt) = self.transition_with_output(|index, _, mut root| {
             let Some(mut state) = index.load_state(&root, authority.work_id)? else {
                 return Err(ProjectionWorkError::MissingWork(authority.work_id));
             };
             index.require_completion_authority(&state.work, &authority)?;
+            let receipt = completed_path_receipt(&state.work, &authority);
             let terminal = StoredWorkStatus::Completed {
                 intent_id: authority.intent_id,
                 logical_completion_id: authority.logical_completion_id,
             };
             if state.status == terminal {
-                return Ok(root);
+                return Ok((root, receipt));
             }
             if !matches!(state.status, StoredWorkStatus::Ready) {
                 return Err(ProjectionWorkError::ConflictingStatus);
@@ -2052,8 +2119,9 @@ impl ProjectionWorkIndex {
                 encode_canonical(&state)?,
             )?;
             root = index.add_completed_path_work(root, &state.work, &authority)?;
-            Ok(root)
-        })
+            Ok((root, receipt))
+        })?;
+        self.proof_for_committed_completion(&committed, receipt)
     }
 
     #[allow(clippy::result_large_err)]
@@ -2081,10 +2149,12 @@ impl ProjectionWorkIndex {
     /// opaque authority can only be minted by the enrolled receipt store after
     /// it rereads a durable completion, so this remains rooted in both durable
     /// authorities rather than trusting caller metadata.
+    ///
+    /// A safely persisted ambiguous current-path result returns `None`.
     pub(crate) fn mark_direct_completed(
         &self,
         authority: ProjectionDirectCompletionAuthority,
-    ) -> Result<(), ProjectionWorkError> {
+    ) -> Result<Option<DurablyPublishedProjectionCompletion>, ProjectionWorkError> {
         if authority.workspace_id != self.workspace_id
             || authority.endpoint_id != self.endpoint_id
             || authority.graph_resource_id != self.graph_resource_id
@@ -2092,7 +2162,7 @@ impl ProjectionWorkIndex {
         {
             return Err(ProjectionWorkError::BindingMismatch);
         }
-        self.transition(|index, _, root| {
+        let (committed, receipt) = self.transition_with_output(|index, _, root| {
             let key = path_key(authority.receipt.path());
             if root.engine_history_generation != authority.engine_history_generation
                 || root.engine_history_root != authority.engine_history_root
@@ -2111,7 +2181,7 @@ impl ProjectionWorkIndex {
                 Some(ProjectionCompletedPathRow::Current(current))
                     if current.receipt == authority.receipt =>
                 {
-                    return Ok(root);
+                    return Ok((root, authority.receipt.clone()));
                 }
                 Some(existing) if existing.state_matches(&authority.receipt) => {
                     ProjectionCompletedPathRow::Ambiguous {
@@ -2130,8 +2200,10 @@ impl ProjectionWorkIndex {
                 key,
                 encode_completed_path_row(&next_row)?,
             )?;
-            Ok(next)
-        })
+            Ok((next, authority.receipt.clone()))
+        })?;
+        debug_assert_eq!(receipt, authority.receipt);
+        self.proof_for_committed_completion(&committed, receipt)
     }
 
     #[allow(clippy::result_large_err)]
@@ -2258,14 +2330,28 @@ impl ProjectionWorkIndex {
             ProjectionRoot,
         ) -> Result<ProjectionRoot, ProjectionWorkError>,
     ) -> Result<(), ProjectionWorkError> {
+        self.transition_with_output(|index, digest, root| {
+            update(index, digest, root).map(|updated| (updated, ()))
+        })
+        .map(|_| ())
+    }
+
+    fn transition_with_output<T>(
+        &self,
+        update: impl FnOnce(
+            &Self,
+            ContentDigest,
+            ProjectionRoot,
+        ) -> Result<(ProjectionRoot, T), ProjectionWorkError>,
+    ) -> Result<(ProjectionRoot, T), ProjectionWorkError> {
         let _guard = self
             .transition
             .lock()
             .map_err(|_| ProjectionWorkError::Poisoned)?;
         let (before_digest, before) = self.load_head_root()?;
-        let mut after = update(self, before_digest, before.clone())?;
+        let (mut after, output) = update(self, before_digest, before.clone())?;
         if after == before {
-            return Ok(());
+            return Ok((before, output));
         }
         after.generation = before
             .generation
@@ -2273,7 +2359,8 @@ impl ProjectionWorkIndex {
             .ok_or(ProjectionWorkError::NonCanonical)?;
         self.require_root_binding(&after)?;
         let after_digest = self.publish_root(&after)?;
-        self.replace_head(before_digest, after_digest)
+        self.replace_head(before_digest, after_digest)?;
+        Ok((after, output))
     }
 
     fn replace_head(
@@ -2751,14 +2838,7 @@ impl ProjectionWorkIndex {
         authority: &ProjectionWorkCompletionAuthority,
     ) -> Result<ProjectionRoot, ProjectionWorkError> {
         let key = path_key(work.path());
-        let receipt = ProjectionCompletedReceipt {
-            page_id: work.page_id(),
-            path: work.path().clone(),
-            frontier: work.post_frontier().clone(),
-            target: work.target(),
-            intent_id: authority.intent_id,
-            logical_completion_id: authority.logical_completion_id,
-        };
+        let receipt = completed_path_receipt(work, authority);
         let existing = self
             .tree_lookup(root.completed_paths_root, &key)?
             .map(|bytes| decode_completed_path_row(&key, &bytes))
@@ -2790,6 +2870,35 @@ impl ProjectionWorkIndex {
             encode_completed_path_row(&row)?,
         )?;
         Ok(root)
+    }
+
+    fn proof_for_committed_completion(
+        &self,
+        committed: &ProjectionRoot,
+        receipt: ProjectionCompletedReceipt,
+    ) -> Result<Option<DurablyPublishedProjectionCompletion>, ProjectionWorkError> {
+        let key = path_key(receipt.path());
+        let Some(bytes) = self.tree_lookup(committed.completed_paths_root, &key)? else {
+            return Ok(None);
+        };
+        let current = match decode_completed_path_row(&key, &bytes)? {
+            ProjectionCompletedPathRow::Current(current) if current.receipt == receipt => current,
+            ProjectionCompletedPathRow::Current(_)
+            | ProjectionCompletedPathRow::Ambiguous { .. } => {
+                return Ok(None);
+            }
+        };
+        self.require_current_completed_path_source(committed, &current)?;
+        let frontier_digest = ContentDigest::of(&encode_canonical(receipt.frontier())?);
+        Ok(Some(DurablyPublishedProjectionCompletion {
+            _seal: durable_completion_proof::Seal,
+            workspace_id: committed.workspace_id,
+            endpoint_id: committed.endpoint_id,
+            graph_resource_id: committed.graph_resource_id,
+            projection_generation: committed.generation,
+            receipt,
+            frontier_digest,
+        }))
     }
 
     fn remove_ready(
@@ -3704,6 +3813,20 @@ fn direct_completed_path_row(
             engine_history_root: authority.engine_history_root,
         },
     })
+}
+
+fn completed_path_receipt(
+    work: &ProjectionWork,
+    authority: &ProjectionWorkCompletionAuthority,
+) -> ProjectionCompletedReceipt {
+    ProjectionCompletedReceipt {
+        page_id: work.page_id(),
+        path: work.path().clone(),
+        frontier: work.post_frontier().clone(),
+        target: work.target(),
+        intent_id: authority.intent_id,
+        logical_completion_id: authority.logical_completion_id,
+    }
 }
 
 fn decode_completed_path_row(
@@ -4645,6 +4768,149 @@ mod tests {
         assert_eq!(
             fixture.index.status(second.work_id()).unwrap(),
             Some(ProjectionWorkStatus::Ready)
+        );
+    }
+
+    #[test]
+    fn successful_terminal_transition_returns_exact_sealed_completion_proof() {
+        let fixture = Fixture::new("sealed-completion-proof");
+        let work = fixture.work(1, "nested/证明-é.md");
+        let fingerprint = fixture.prepare(&work);
+        fixture
+            .index
+            .accept_batch(work.batch_id(), fingerprint)
+            .unwrap();
+        let authority = fixture.completion_authority(&work);
+        let logical_completion_id = authority.logical_completion_id;
+        let (_, before) = fixture.index.load_head_root().unwrap();
+
+        let proof = fixture.index.mark_completed(authority).unwrap().unwrap();
+        let (_, committed) = fixture.index.load_head_root().unwrap();
+
+        assert_eq!(proof.workspace_id(), fixture.workspace_id);
+        assert_eq!(proof.endpoint_id(), fixture.endpoint_id);
+        assert_eq!(proof.graph_resource_id(), fixture.graph_resource_id);
+        assert_eq!(proof.path(), work.path());
+        assert_eq!(proof.target(), work.target());
+        assert_eq!(proof.logical_completion_id(), logical_completion_id);
+        assert_eq!(
+            proof.frontier_digest(),
+            ContentDigest::of(&encode_canonical(work.post_frontier()).unwrap())
+        );
+        assert_eq!(proof.projection_generation(), committed.generation);
+        assert_eq!(committed.generation, before.generation + 1);
+    }
+
+    #[test]
+    fn sealed_completion_proof_advances_the_exact_bound_baseline_path() {
+        use super::super::reconciliation_baseline::{
+            BaselineDirectoryPath, BaselineEpochOutcome, BaselineObservedState, BaselinePathSource,
+            BaselineRecordedState, BaselineScanDirectory, BaselineScanInstrumentation,
+            BaselineScanPath, BaselineTimestamp, BeginBaselineEpoch, FinishBaselineEpoch,
+            ReconciliationBaseline, ReconciliationBaselineBinding,
+        };
+        use crate::graph_text_scope::GraphTextScope;
+
+        let fixture = Fixture::new("sealed-proof-baseline");
+        let work = fixture.work(1, "nested/证明-é.md");
+        let fingerprint = fixture.prepare(&work);
+        fixture
+            .index
+            .accept_batch(work.batch_id(), fingerprint)
+            .unwrap();
+        let (_, scanned_projection) = fixture.index.load_head_root().unwrap();
+
+        let runtime_path = fixture.path.join("baseline-runtime");
+        let runtime = super::super::ApplicationRuntimeRoot::open_for_test(&runtime_path).unwrap();
+        let scope = GraphTextScope::new(&[], false).bind_graph_resource(fixture.graph_resource_id);
+        let binding = ReconciliationBaselineBinding::new(
+            fixture.workspace_id,
+            fixture.endpoint_id,
+            fixture.graph_resource_id,
+            scope,
+        )
+        .unwrap();
+        let mut baseline = ReconciliationBaseline::create_fresh(&runtime, binding).unwrap();
+        let accepted_frontier = ContentDigest::of(b"accepted-engine-frontier");
+        let epoch = baseline
+            .begin_epoch(BeginBaselineEpoch {
+                started_at: BaselineTimestamp::from_millis(1).unwrap(),
+                accepted_frontier,
+                projection_generation: scanned_projection.generation,
+            })
+            .unwrap();
+        baseline
+            .append_scan_directories(
+                epoch,
+                &[BaselineScanDirectory {
+                    path: BaselineDirectoryPath::parse("").unwrap(),
+                    resource: ContentDigest::from_bytes(*fixture.graph_resource_id.as_bytes()),
+                }],
+            )
+            .unwrap();
+        baseline
+            .append_scan_paths(
+                epoch,
+                &[BaselineScanPath {
+                    path: work.path().clone(),
+                    managed_kind: Some(super::super::ManagedTextKind::Page),
+                    state: BaselineObservedState::Present {
+                        description: BlobDescription::of(b"old"),
+                        file_resource: ContentDigest::of(b"old-file-resource"),
+                        link_count: 1,
+                    },
+                }],
+            )
+            .unwrap();
+        let pass = ContentDigest::of(b"stable-pass");
+        baseline
+            .finish_epoch(
+                epoch,
+                FinishBaselineEpoch {
+                    completed_at: BaselineTimestamp::from_millis(2).unwrap(),
+                    pass_a_digest: pass,
+                    pass_b_digest: pass,
+                    candidate_digest: ContentDigest::of(b"no-candidates"),
+                    candidate_count: 0,
+                    outcome: BaselineEpochOutcome::Noop,
+                    instrumentation: BaselineScanInstrumentation {
+                        passes: 2,
+                        ..BaselineScanInstrumentation::default()
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        let proof = fixture
+            .index
+            .mark_completed(fixture.completion_authority(&work))
+            .unwrap()
+            .unwrap();
+        let head = baseline
+            .apply_tine_completion(
+                &proof,
+                super::super::ManagedTextKind::Page,
+                BaselineTimestamp::from_millis(3).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(head.accepted_frontier, accepted_frontier);
+        assert_eq!(head.projection_generation, proof.projection_generation());
+        let page = baseline.read_head_paths_page(None, 1).unwrap();
+        assert_eq!(
+            page.rows[0].state,
+            BaselineRecordedState::Present(match work.target() {
+                ProjectionWorkTarget::Present(description) => description,
+                ProjectionWorkTarget::Absent => unreachable!(),
+            })
+        );
+        assert_eq!(
+            page.rows[0].source,
+            BaselinePathSource::TineCompletion(
+                super::super::reconciliation_baseline::BaselineCompletionIdentity::from_logical(
+                    proof.logical_completion_id()
+                )
+            )
         );
     }
 
