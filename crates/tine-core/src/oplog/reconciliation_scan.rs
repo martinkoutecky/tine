@@ -17,7 +17,6 @@ use super::{
     PortablePathKey, ProjectionWorkTarget,
 };
 use crate::graph_text_scope::GraphTextScopeBinding;
-#[cfg(test)]
 use crate::model::Graph;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -617,8 +616,7 @@ impl fmt::Display for ExpectedPathSourceFailure {
     }
 }
 
-/// Test fixture boundary for the later joined authenticated engine/projection
-/// cursor.
+/// Joined authenticated engine/projection cursor boundary.
 ///
 /// Each open returns a small cursor over one PageId-sorted live set. Pages
 /// must be allocated causally within the supplied row/path/retained limits.
@@ -654,7 +652,7 @@ pub(crate) trait AuthenticatedExpectedPathSource {
     ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure>;
 }
 
-/// Test-only joined semantic/projection expected-state source.
+/// Joined semantic/projection expected-state source.
 pub(crate) struct JoinedAuthenticatedExpectedPathSource<'a> {
     engine: &'a ShardedHotEngine,
     projection: &'a ProjectionWorkIndex,
@@ -666,6 +664,15 @@ impl<'a> JoinedAuthenticatedExpectedPathSource<'a> {
         projection: &'a ProjectionWorkIndex,
     ) -> Self {
         Self { engine, projection }
+    }
+
+    pub(crate) fn current_scan_identity(
+        &self,
+        maximum_retained_bytes: u64,
+    ) -> Result<(ExpectedPathBinding, ContentDigest), ExpectedPathSourceFailure> {
+        let mut budget = ProjectionExpectedPathReadBudget::new(maximum_retained_bytes);
+        self.pin_join(&mut budget)
+            .map(|(_, _, binding, source_commitment)| (binding, source_commitment))
     }
 
     fn pin_join(
@@ -1079,7 +1086,7 @@ fn joined_source_commitment(
     device_id: super::DeviceId,
 ) -> ContentDigest {
     let mut hasher = Sha256::new();
-    hasher.update(b"tine/test-only/joined-expected-path-source/v1\0");
+    hasher.update(b"tine/reconciliation/joined-expected-path-source/v1\0");
     hasher.update(engine.workspace_id().as_uuid().as_bytes());
     hasher.update(engine.lineage_digest().as_bytes());
     hasher.update(engine.accepted_frontier().as_bytes());
@@ -1105,7 +1112,7 @@ fn joined_owner_binding(
     path: &ManagedPath,
 ) -> ContentDigest {
     let mut hasher = Sha256::new();
-    hasher.update(b"tine/test-only/joined-expected-path-owner/v1\0");
+    hasher.update(b"tine/reconciliation/joined-expected-path-owner/v1\0");
     hasher.update(source_commitment.as_bytes());
     hasher.update(page_id.as_uuid().as_bytes());
     hash_len_bytes(&mut hasher, path.as_str().as_bytes());
@@ -1287,17 +1294,29 @@ impl fmt::Display for GraphTextScanFailure {
 
 impl std::error::Error for GraphTextScanFailure {}
 
-#[cfg(test)]
 pub(crate) fn scan_graph_text<S: AuthenticatedExpectedPathSource>(
     graph: &Graph,
     source: &S,
     limits: GraphTextScanLimits,
 ) -> Result<StableGraphTextScan, GraphTextScanFailure> {
-    scan_graph_text_with_hook(graph, source, limits, || Ok(()))
+    scan_graph_text_impl(graph, source, limits, || Ok(()))
 }
 
 #[cfg(test)]
 pub(crate) fn scan_graph_text_with_hook<S, H>(
+    graph: &Graph,
+    source: &S,
+    limits: GraphTextScanLimits,
+    between_passes: H,
+) -> Result<StableGraphTextScan, GraphTextScanFailure>
+where
+    S: AuthenticatedExpectedPathSource,
+    H: FnOnce() -> io::Result<()>,
+{
+    scan_graph_text_impl(graph, source, limits, between_passes)
+}
+
+fn scan_graph_text_impl<S, H>(
     graph: &Graph,
     source: &S,
     limits: GraphTextScanLimits,

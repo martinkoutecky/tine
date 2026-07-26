@@ -1297,12 +1297,10 @@ pub struct Graph {
     /// Sole versioned eligibility policy for normal graph text discovery and
     /// exact existing-file access. It grants no creation/projection authority.
     graph_text_scope: GraphTextScope,
-    /// Exact bytes from which this test-only scan instance derived its scope and
+    /// Exact bytes from which this scan-capable instance derived its scope and
     /// managed roots. A scan must require a fresh Graph when the case-insensitive
     /// on-disk config path no longer has this description.
-    #[cfg(test)]
     reconciliation_scan_open_config_description: Option<BlobDescription>,
-    #[cfg(test)]
     reconciliation_scan_open_config_utf8: bool,
     /// Private, process-local graph-text completeness capability. This state is
     /// neither serialized nor consulted by durable import/projection paths in
@@ -3762,7 +3760,6 @@ pub struct GraphMeta {
     pub guide_announced: bool,
 }
 
-#[cfg(test)]
 fn reconciliation_scan_config_path_at_open(root: &Path) -> PathBuf {
     let exact = root.join("logseq").join("config.edn");
     let matching = |directory: &Path, expected: &str| -> Option<PathBuf> {
@@ -3908,10 +3905,7 @@ impl Graph {
         let projection_root = open_projection_root_nofollow(&root).ok();
         let managed_write_binding =
             managed_text_write_binding_for_resource(&root, projection_root.as_ref());
-        #[cfg(test)]
         let config_path = reconciliation_scan_config_path_at_open(&root);
-        #[cfg(not(test))]
-        let config_path = root.join("logseq").join("config.edn");
         let config_bytes = fs::read(config_path).ok();
         let config_text = config_bytes
             .as_deref()
@@ -3930,11 +3924,9 @@ impl Graph {
             root,
             config,
             graph_text_scope,
-            #[cfg(test)]
             reconciliation_scan_open_config_description: config_bytes
                 .as_deref()
                 .map(BlobDescription::of),
-            #[cfg(test)]
             reconciliation_scan_open_config_utf8: config_bytes.is_none() || config_text.is_some(),
             graph_text_admission: Arc::new(GraphTextAdmissionControl {
                 state: RwLock::new(GraphTextAdmissionState::Unbuilt),
@@ -5891,10 +5883,9 @@ impl Graph {
         Ok((first, combined_capture_bytes))
     }
 
-    /// One complete streaming fingerprint pass for the test-only scan
+    /// One complete streaming fingerprint pass for the inactive scan
     /// substrate. The returned rows contain no file bytes and grant no import,
     /// projection, watcher, or continuing filesystem authority.
-    #[cfg(test)]
     pub(crate) fn capture_reconciliation_scan_pass(
         &self,
         limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
@@ -21028,7 +21019,6 @@ struct InitialShadowCapture {
     peak_build_charge: u64,
 }
 
-#[cfg(test)]
 fn collect_reconciliation_scan_pass(
     graph: &Graph,
     _permit: &ManagedTextWritePermit,
@@ -21411,7 +21401,6 @@ fn collect_reconciliation_scan_pass(
     })
 }
 
-#[cfg(test)]
 fn reconciliation_scan_current_config_description(
     root: &Dir,
     aggregate_hashed_bytes: &mut u64,
@@ -21504,7 +21493,6 @@ fn reconciliation_scan_current_config_description(
     .map(Some)
 }
 
-#[cfg(test)]
 fn reconciliation_scan_hash_file(
     file: &mut fs::File,
     relative: &str,
@@ -21570,7 +21558,6 @@ fn reconciliation_scan_hash_file(
     ))
 }
 
-#[cfg(test)]
 fn reconciliation_scan_update_peak(
     instrumentation: &mut crate::oplog::reconciliation_scan::GraphTextScanPassInstrumentation,
     directories: usize,
@@ -21591,7 +21578,6 @@ fn reconciliation_scan_update_peak(
     Ok(())
 }
 
-#[cfg(test)]
 fn reconciliation_scan_add_retained_bytes(
     current: u64,
     growth: u64,
@@ -21608,7 +21594,6 @@ fn reconciliation_scan_add_retained_bytes(
     Ok(next)
 }
 
-#[cfg(test)]
 fn reconciliation_scan_limit_error(resource: &'static str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -21616,7 +21601,6 @@ fn reconciliation_scan_limit_error(resource: &'static str) -> io::Error {
     )
 }
 
-#[cfg(test)]
 fn reconciliation_scan_unsafe_error(detail: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, detail.into())
 }
