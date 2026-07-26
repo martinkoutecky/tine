@@ -1,10 +1,12 @@
 //! Device-local, disposable reconciliation acceleration and diagnostics.
 //!
 //! Nothing in this module is semantic authority. In particular, a clean head,
-//! a recorded absence, or a missing row cannot authorize an oplog operation,
-//! suppress comparison with authenticated projection expectations, or
-//! authorize overwriting graph text. Callers must explicitly create this
-//! database and may discard it whenever it is unavailable.
+//! a recorded absence, or a missing row cannot suppress full authenticated
+//! hashing, authorize import or oplog publication, or authorize overwriting
+//! graph Markdown. An unavailable or suspicious baseline requires a full
+//! authenticated scan. Callers must explicitly place this database in Tine's
+//! private, device-local application runtime root and may discard it whenever
+//! it is unavailable.
 
 use super::{
     object_store::{ensure_directory_nofollow, open_dir_nofollow, sync_dir_required},
@@ -43,6 +45,8 @@ const MAX_SCHEMA_OBJECTS: i64 = 32;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_DIRECTORY: &str = "reconciliation";
 const DATABASE_FILE: &str = "scan.sqlite";
+const DATABASE_SIDECAR_FILES: &[&str] =
+    &["scan.sqlite-journal", "scan.sqlite-wal", "scan.sqlite-shm"];
 
 const BINDING_DDL: &str = "
 CREATE TABLE binding (
@@ -158,6 +162,39 @@ const EXPECTED_TABLES: &[&str] = &[
     "paths",
 ];
 const EXPECTED_INDEXES: &[&str] = &["blocked_last_seen_idx", "epochs_state_id_idx"];
+
+/// Placement authority for disposable reconciliation baselines.
+///
+/// Production callers may construct this only from Tine's platform-selected,
+/// private, device-local application runtime root. A user graph, synced
+/// directory, or caller-selected shared path does not satisfy this contract.
+/// Construction stays crate-private so later activation can be owned by the
+/// Tauri app-data bootstrap without exposing a general path-based API.
+///
+/// This marker is not a same-OS-user security boundary. Stock SQLite opens the
+/// database and its sidecars by ambient path, so another process with the same
+/// app-data authority is out of scope. No-follow namespace inspections and
+/// database/binding validation are best-effort accidental-substitution
+/// defenses, not protection from an adversarial namespace race.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TrustedPrivateApplicationRuntimeRoot {
+    path: PathBuf,
+}
+
+impl TrustedPrivateApplicationRuntimeRoot {
+    /// Acknowledge the private-runtime placement contract for an application
+    /// root selected by Tine. Non-test callers must not promote harness or
+    /// caller-arbitrary roots through this conversion.
+    pub(crate) fn from_application_runtime_root(runtime: &ApplicationRuntimeRoot) -> Self {
+        Self {
+            path: runtime.path().to_path_buf(),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ReconciliationBaselineBinding {
@@ -473,12 +510,15 @@ impl ReconciliationBaseline {
     /// preserving/moving an unavailable database and retrying is an explicit
     /// caller recovery action.
     pub(crate) fn create_fresh(
-        runtime: &ApplicationRuntimeRoot,
+        trusted_runtime_root: &TrustedPrivateApplicationRuntimeRoot,
         binding: ReconciliationBaselineBinding,
     ) -> Result<Self, ReconciliationBaselineError> {
-        let (parent, path) = prepare_database_parent(runtime, &binding, true)?;
+        let (parent, path) = prepare_database_parent(trusted_runtime_root, &binding, true)?;
+        require_vacant_database_namespace(&parent, &path)?;
         create_database_file_nofollow(&parent, &path)?;
-        let mut connection = open_connection(&path, true)?;
+        let mut connection = open_ambient_sqlite_connection(&path, true)?;
+        require_existing_regular(&parent, &path)?;
+        require_safe_sqlite_sidecars(&parent, &path)?;
         initialize_schema(&connection, &path, &binding)?;
         let trusted_data_version = validate_database(&mut connection, &path, &binding)?;
         sync_dir_required(&parent)
@@ -494,12 +534,15 @@ impl ReconciliationBaseline {
     /// Open and fully validate an existing baseline without creating or
     /// repairing anything.
     pub(crate) fn open_existing(
-        runtime: &ApplicationRuntimeRoot,
+        trusted_runtime_root: &TrustedPrivateApplicationRuntimeRoot,
         binding: ReconciliationBaselineBinding,
     ) -> Result<Self, ReconciliationBaselineError> {
-        let (parent, path) = prepare_database_parent(runtime, &binding, false)?;
+        let (parent, path) = prepare_database_parent(trusted_runtime_root, &binding, false)?;
         require_existing_regular(&parent, &path)?;
-        let mut connection = open_connection(&path, false)?;
+        require_safe_sqlite_sidecars(&parent, &path)?;
+        let mut connection = open_ambient_sqlite_connection(&path, false)?;
+        require_existing_regular(&parent, &path)?;
+        require_safe_sqlite_sidecars(&parent, &path)?;
         let trusted_data_version = validate_database(&mut connection, &path, &binding)?;
         configure_trusted_connection(&connection, &path)?;
         Ok(Self {
@@ -1340,7 +1383,15 @@ fn initialize_schema(
     Ok(())
 }
 
-fn open_connection(path: &Path, create: bool) -> Result<Connection, ReconciliationBaselineError> {
+/// Open stock SQLite by ambient filename.
+///
+/// The surrounding no-follow checks reduce accidental placement mistakes, but
+/// this connection is not capability-anchored and the checks do not close
+/// namespace races against a process with the same app-data authority.
+fn open_ambient_sqlite_connection(
+    path: &Path,
+    create: bool,
+) -> Result<Connection, ReconciliationBaselineError> {
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
@@ -2375,11 +2426,11 @@ fn decode_path_row_at(
 }
 
 fn prepare_database_parent(
-    runtime: &ApplicationRuntimeRoot,
+    trusted_runtime_root: &TrustedPrivateApplicationRuntimeRoot,
     binding: &ReconciliationBaselineBinding,
     create: bool,
 ) -> Result<(Dir, PathBuf), ReconciliationBaselineError> {
-    let root = Dir::open_ambient_dir(runtime.path(), ambient_authority())
+    let root = Dir::open_ambient_dir(trusted_runtime_root.path(), ambient_authority())
         .map_err(|error| unavailable(format!("cannot retain application runtime root: {error}")))?;
     let open_component = |parent: &Dir, name: &str| {
         if create {
@@ -2393,7 +2444,7 @@ fn prepare_database_parent(
     let workspace = open_component(&reconciliation, &workspace_name)?;
     let endpoint_name = binding.endpoint.to_string();
     let endpoint = open_component(&workspace, &endpoint_name)?;
-    let path = runtime
+    let path = trusted_runtime_root
         .path()
         .join(RECONCILIATION_DIRECTORY)
         .join(workspace_name)
@@ -2458,12 +2509,48 @@ fn create_database_file_nofollow(
     }
 }
 
+fn require_vacant_database_namespace(
+    parent: &Dir,
+    path: &Path,
+) -> Result<(), ReconciliationBaselineError> {
+    require_namespace_entry_absent(parent, path, DATABASE_FILE)?;
+    for sidecar in DATABASE_SIDECAR_FILES {
+        require_namespace_entry_absent(parent, path, sidecar)?;
+    }
+    Ok(())
+}
+
+fn require_namespace_entry_absent(
+    parent: &Dir,
+    path: &Path,
+    name: &str,
+) -> Result<(), ReconciliationBaselineError> {
+    match parent.symlink_metadata(name) {
+        Ok(metadata) => {
+            let kind = if metadata_is_link_or_reparse(&metadata) {
+                "link or reparse point"
+            } else if metadata.is_file() {
+                "file"
+            } else {
+                "unsupported file type"
+            };
+            Err(unavailable(format!(
+                "{} already has a {kind} at {name}; preserve it and request an explicit fresh create",
+                path.display()
+            )))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(unavailable(format!(
+            "cannot inspect fresh baseline namespace entry {name}: {error}"
+        ))),
+    }
+}
+
 fn require_existing_regular(parent: &Dir, path: &Path) -> Result<(), ReconciliationBaselineError> {
     match parent.symlink_metadata(DATABASE_FILE) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(rebuild(
-            path,
-            "baseline path is not a regular no-follow file",
-        )),
+        Ok(metadata) if metadata_is_link_or_reparse(&metadata) || !metadata.is_file() => Err(
+            rebuild(path, "baseline path is not a regular no-follow file"),
+        ),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => {
             Err(unavailable("reconciliation baseline does not exist"))
@@ -2471,6 +2558,47 @@ fn require_existing_regular(parent: &Dir, path: &Path) -> Result<(), Reconciliat
         Err(error) => Err(unavailable(format!(
             "cannot inspect reconciliation baseline: {error}"
         ))),
+    }
+}
+
+fn require_safe_sqlite_sidecars(
+    parent: &Dir,
+    path: &Path,
+) -> Result<(), ReconciliationBaselineError> {
+    for sidecar in DATABASE_SIDECAR_FILES {
+        match parent.symlink_metadata(sidecar) {
+            Ok(metadata) if metadata_is_link_or_reparse(&metadata) || !metadata.is_file() => {
+                return Err(rebuild(
+                    path,
+                    format!("baseline SQLite sidecar {sidecar} has an unsupported file type"),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(unavailable(format!(
+                    "cannot inspect baseline SQLite sidecar {sidecar}: {error}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn metadata_is_link_or_reparse(metadata: &cap_std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt as _;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 
@@ -2807,6 +2935,11 @@ mod tests {
         .unwrap()
     }
 
+    fn trusted_runtime(path: &Path) -> TrustedPrivateApplicationRuntimeRoot {
+        let runtime = ApplicationRuntimeRoot::open_for_test(path).unwrap();
+        TrustedPrivateApplicationRuntimeRoot::from_application_runtime_root(&runtime)
+    }
+
     fn open_fresh(
         label: &str,
     ) -> (
@@ -2815,7 +2948,7 @@ mod tests {
         ReconciliationBaseline,
     ) {
         let directory = TestDir::new(label);
-        let runtime = ApplicationRuntimeRoot::open_for_test(directory.path()).unwrap();
+        let runtime = trusted_runtime(directory.path());
         let binding = binding(label.as_bytes());
         let baseline = ReconciliationBaseline::create_fresh(&runtime, binding.clone()).unwrap();
         (directory, binding, baseline)
@@ -3094,7 +3227,7 @@ mod tests {
                 _ => unreachable!(),
             }
             drop(connection);
-            let runtime = ApplicationRuntimeRoot::open_for_test(directory.path()).unwrap();
+            let runtime = trusted_runtime(directory.path());
             let error = match ReconciliationBaseline::open_existing(&runtime, binding.clone()) {
                 Err(error) => error,
                 Ok(_) => panic!("{corruption} unexpectedly opened"),
@@ -3112,7 +3245,7 @@ mod tests {
         let (directory, binding, baseline) = open_fresh("substitution");
         let database_path = baseline.path().to_path_buf();
         drop(baseline);
-        let runtime = ApplicationRuntimeRoot::open_for_test(directory.path()).unwrap();
+        let runtime = trusted_runtime(directory.path());
 
         assert!(matches!(
             ReconciliationBaseline::create_fresh(&runtime, binding.clone()),
@@ -3136,6 +3269,94 @@ mod tests {
         };
         assert!(error.requires_rebuild());
         assert_eq!(fs::metadata(database_path).unwrap().len(), original_length);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preexisting_database_symlink_is_rejected_without_touching_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDir::new("database-symlink");
+        let runtime = trusted_runtime(directory.path());
+        let binding = binding(b"database-symlink");
+        let (_parent, database_path) = prepare_database_parent(&runtime, &binding, true).unwrap();
+        let target = directory.path().join("database-symlink-target");
+        let original = b"preserve non-SQLite target bytes";
+        fs::write(&target, original).unwrap();
+        symlink(&target, &database_path).unwrap();
+
+        assert!(ReconciliationBaseline::create_fresh(&runtime, binding.clone()).is_err());
+        assert!(ReconciliationBaseline::open_existing(&runtime, binding).is_err());
+        assert_eq!(fs::read(target).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preexisting_sqlite_sidecar_symlinks_are_rejected_on_create_and_open() {
+        use std::os::unix::fs::symlink;
+
+        for sidecar in DATABASE_SIDECAR_FILES {
+            let create_directory = TestDir::new(&format!("create-{sidecar}"));
+            let create_runtime = trusted_runtime(create_directory.path());
+            let create_binding = binding(format!("create-{sidecar}").as_bytes());
+            let (_parent, database_path) =
+                prepare_database_parent(&create_runtime, &create_binding, true).unwrap();
+            let sidecar_path = database_path.with_file_name(sidecar);
+            let target = create_directory.path().join("create-sidecar-target");
+            let original = b"preserve create-sidecar target bytes";
+            fs::write(&target, original).unwrap();
+            symlink(&target, &sidecar_path).unwrap();
+
+            assert!(ReconciliationBaseline::create_fresh(&create_runtime, create_binding).is_err());
+            assert!(
+                !database_path.exists(),
+                "failed create through {sidecar} must not create a database or clean head"
+            );
+            assert_eq!(fs::read(target).unwrap(), original);
+
+            let (open_directory, open_binding, baseline) = open_fresh(&format!("open-{sidecar}"));
+            let database_path = baseline.path().to_path_buf();
+            drop(baseline);
+            let open_runtime = trusted_runtime(open_directory.path());
+            let sidecar_path = database_path.with_file_name(sidecar);
+            let target = open_directory.path().join("open-sidecar-target");
+            let original = b"preserve open-sidecar target bytes";
+            fs::write(&target, original).unwrap();
+            symlink(&target, &sidecar_path).unwrap();
+
+            assert!(
+                ReconciliationBaseline::open_existing(&open_runtime, open_binding.clone()).is_err()
+            );
+            assert_eq!(fs::read(target).unwrap(), original);
+            fs::remove_file(sidecar_path).unwrap();
+            let mut reopened =
+                ReconciliationBaseline::open_existing(&open_runtime, open_binding).unwrap();
+            assert!(
+                matches!(
+                    reopened.head(),
+                    Err(ReconciliationBaselineError::BaselineUnavailable { .. })
+                ),
+                "failed open through {sidecar} must not produce a clean head"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_sqlite_sidecar_file_type_fails_closed() {
+        let (directory, binding, baseline) = open_fresh("sidecar-directory");
+        let database_path = baseline.path().to_path_buf();
+        drop(baseline);
+        let runtime = trusted_runtime(directory.path());
+        let sidecar_path = database_path.with_file_name(DATABASE_SIDECAR_FILES[0]);
+        fs::create_dir(&sidecar_path).unwrap();
+
+        assert!(ReconciliationBaseline::open_existing(&runtime, binding.clone()).is_err());
+        fs::remove_dir(sidecar_path).unwrap();
+        let mut reopened = ReconciliationBaseline::open_existing(&runtime, binding).unwrap();
+        assert!(matches!(
+            reopened.head(),
+            Err(ReconciliationBaselineError::BaselineUnavailable { .. })
+        ));
     }
 
     #[test]
@@ -3175,7 +3396,7 @@ mod tests {
         let database_path = baseline.path().to_path_buf();
         drop(baseline);
 
-        let mut connection = open_connection(&database_path, false).unwrap();
+        let mut connection = open_ambient_sqlite_connection(&database_path, false).unwrap();
         let writer = Connection::open(&database_path).unwrap();
         let changed = ContentDigest::of(b"writer-after-validation-commit");
         let trusted_data_version = validate_database_with_after_commit_hook(
@@ -3254,7 +3475,7 @@ mod tests {
             .unwrap();
         drop(baseline);
 
-        let runtime = ApplicationRuntimeRoot::open_for_test(directory.path()).unwrap();
+        let runtime = trusted_runtime(directory.path());
         let mut reopened =
             ReconciliationBaseline::open_existing(&runtime, binding.clone()).unwrap();
         let page = reopened.read_head_paths_page(None, 8).unwrap();
