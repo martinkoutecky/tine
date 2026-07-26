@@ -910,16 +910,7 @@ fn completed_release_allows_exact_recreation_as_new_but_blocks_portable_neighbor
 }
 
 #[test]
-fn affected_scope_does_not_enumerate_unrelated_entries_and_nondefault_layout_refuses() {
-    let dir = TestDir::new("scope");
-    fs::create_dir_all(dir.path().join("pages")).unwrap();
-    fs::create_dir_all(dir.path().join("journals")).unwrap();
-    write(dir.path(), "pages/affected.md", b"- affected\n");
-    fs::create_dir(dir.path().join("pages/unrelated.md")).unwrap();
-    let graph = Graph::open(dir.path());
-    let inventory = inventory_affected(&graph, &["pages/affected.md"]).unwrap();
-    assert_eq!(inventory.entries().len(), 1);
-
+fn affected_scope_avoids_unrelated_entries_and_accepts_only_configured_roots() {
     let custom = TestDir::new("custom-layout");
     fs::create_dir_all(custom.path().join("logseq")).unwrap();
     fs::write(
@@ -927,10 +918,50 @@ fn affected_scope_does_not_enumerate_unrelated_entries_and_nondefault_layout_ref
         "{:pages-directory \"notes\" :journals-directory \"diary\"}\n",
     )
     .unwrap();
-    fs::create_dir_all(custom.path().join("notes")).unwrap();
+    let affected_page = "notes/projects/affected.md";
+    let affected_journal = "diary/2026_07_26.md";
+    write(custom.path(), affected_page, b"- affected page\n");
+    write(custom.path(), affected_journal, b"- affected journal\n");
+    write(custom.path(), "notes/unrelated.md", b"- unrelated\n");
     let graph = Graph::open(custom.path());
+
+    let inventory = inventory_affected(&graph, &[affected_page, affected_journal]).unwrap();
+    assert_eq!(
+        inventory
+            .entries()
+            .keys()
+            .map(ManagedPath::as_str)
+            .collect::<Vec<_>>(),
+        vec![affected_journal, affected_page],
+        "affected inventory must not enumerate the unrelated configured page"
+    );
+    for (path, expected_kind) in [
+        (affected_page, ManagedTextKind::Page),
+        (affected_journal, ManagedTextKind::Journal),
+    ] {
+        assert!(matches!(
+            inventory.entries().get(&ManagedPath::parse(path).unwrap()),
+            Some(RawObservation::Present(bytes)) if !bytes.bytes().is_empty()
+        ));
+        let entry = graph.entry_for_path(&custom.path().join(path)).unwrap();
+        assert_eq!(entry.rel_path, path);
+        let kind = match entry.kind {
+            tine_core::PageKind::Page => ManagedTextKind::Page,
+            tine_core::PageKind::Journal => ManagedTextKind::Journal,
+        };
+        assert_eq!(kind, expected_kind, "configured path {path}");
+    }
+
     assert!(inventory_affected(&graph, &["pages/page.md"]).is_err());
-    assert!(inventory_initial_shadow(&graph).is_err());
+    let initial = inventory_initial_shadow(&graph).unwrap();
+    assert_eq!(
+        initial
+            .entries()
+            .keys()
+            .map(ManagedPath::as_str)
+            .collect::<Vec<_>>(),
+        vec![affected_journal, affected_page, "notes/unrelated.md"]
+    );
 }
 
 #[test]
