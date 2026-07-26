@@ -13,7 +13,7 @@ use loro::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::external_import::ExternalImportObservationMaterial;
+use super::external_import::{ExternalImportObservationEntry, ExternalImportObservationMaterial};
 use super::import::ImportExecutionMaterial;
 use super::object_store::{BlockClaimIndexRoot, BlockClaimIndexStore, BlockClaimIndexValue};
 use super::page_name_index::{
@@ -1621,6 +1621,7 @@ pub(crate) struct CapturedAuthorTransaction {
     receipt_store_id: super::ProjectionReceiptStoreId,
     graph_scope: GraphTextScopeBinding,
     requirement_digest: ContentDigest,
+    requirement_index: AuthorRequirementIndex,
     captured_inputs: Vec<CapabilityCapturedProjectionInput>,
 }
 
@@ -6483,7 +6484,11 @@ impl ShardedHotEngine {
                 "draft capture graph-text scope is not bound to its enrolled endpoint".into(),
             ));
         }
-        let paths = exact_author_requirement_paths(&draft)?;
+        let (requirement_index, external_observation_index) = derive_preauthoring_indexes(
+            &draft.requirements,
+            &draft.pages,
+            draft.external_observation.as_ref(),
+        )?;
         let requirement_digest =
             author_requirement_digest(&draft, source, receipts.store_id(), graph_scope)?;
         let external_observation = if external {
@@ -6509,11 +6514,18 @@ impl ShardedHotEngine {
         };
 
         let mut retained_bytes = 0_u64;
-        let mut captured_inputs = Vec::with_capacity(paths.len());
+        charge_preauthoring_capture_bytes(
+            &mut retained_bytes,
+            requirement_index.retained_bytes()?,
+            "requirement index",
+        )?;
+        let mut captured_inputs = Vec::with_capacity(requirement_index.len());
         let mut mismatches = Vec::new();
-        for path in paths {
+        for indexed_path in requirement_index.entries() {
+            let path = indexed_path.path(&draft.requirements);
+            let roles = indexed_path.roles();
             let current = graph
-                .read_projection_input(&path)
+                .read_projection_input(path)
                 .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
             if let Some(bytes) = &current {
                 charge_preauthoring_capture_bytes(
@@ -6523,16 +6535,11 @@ impl ShardedHotEngine {
                 )?;
             }
             let completed = work_index
-                .completed_receipts_for_path(&path)
+                .completed_receipts_for_path(path)
                 .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
-            let prior_requirement = draft.requirements.iter().find(|requirement| {
-                draft.pages[&requirement.page_id]
-                    .before
-                    .as_ref()
-                    .is_some_and(|before| before.page.path == path)
-            });
             let mut authority_matches = true;
-            let prior = if let Some(requirement) = prior_requirement {
+            let prior = if let Some(requirement_index) = roles.semantic_predecessor {
+                let requirement = &draft.requirements[requirement_index];
                 let authority = match completed.as_slice() {
                     [authority]
                         if matches!(authority.target(), ProjectionWorkTarget::Present(_)) =>
@@ -6595,15 +6602,18 @@ impl ShardedHotEngine {
             };
 
             let material = if let Some(observation) = external_observation {
-                let observed = observation
-                    .entries()
-                    .iter()
-                    .find(|entry| entry.path() == &path)
-                    .ok_or_else(|| {
-                        EngineError::ProjectionManifest(format!(
-                            "draft path {path} has no exact fresh external observation"
-                        ))
-                    })?;
+                let observed = external_observation_for_path(
+                    external_observation_index
+                        .as_ref()
+                        .expect("external draft derived an observation index"),
+                    observation,
+                    path,
+                )
+                .ok_or_else(|| {
+                    EngineError::ProjectionManifest(format!(
+                        "draft path {path} has no exact fresh external observation"
+                    ))
+                })?;
                 if current.as_deref() != observed.state().bytes() || !authority_matches {
                     return Err(EngineError::ProjectionManifest(format!(
                         "draft path {path} changed after external observation"
@@ -6635,13 +6645,13 @@ impl ShardedHotEngine {
                         }
                     }
                     _ => {
-                        mismatches.push(path);
+                        mismatches.push(path.clone());
                         continue;
                     }
                 }
             };
             let mut input = CapabilityCapturedProjectionInput::from_draft_capability(
-                path,
+                path.clone(),
                 source,
                 receipts.store_id(),
                 material,
@@ -6667,6 +6677,7 @@ impl ShardedHotEngine {
             captured_inputs.push(input);
         }
 
+        drop(external_observation_index);
         if !mismatches.is_empty() {
             debug_assert!(mismatches.windows(2).all(|pair| pair[0] < pair[1]));
             return Ok(Err(ReconciliationNeeded { paths: mismatches }));
@@ -6677,6 +6688,7 @@ impl ShardedHotEngine {
             receipt_store_id: receipts.store_id(),
             graph_scope,
             requirement_digest,
+            requirement_index,
             captured_inputs,
         }))
     }
@@ -6714,6 +6726,7 @@ impl ShardedHotEngine {
             receipt_store_id,
             graph_scope,
             requirement_digest,
+            requirement_index,
             mut captured_inputs,
         } = captured;
         self.ensure_not_blocked()?;
@@ -6796,19 +6809,12 @@ impl ShardedHotEngine {
                 "captured projection inputs contain a duplicate path".into(),
             ));
         }
-        let expected_paths = draft
-            .requirements
-            .iter()
-            .flat_map(|requirement| {
-                std::iter::once(requirement.path.clone())
-                    .chain(requirement.render_base_path.iter().cloned())
-            })
-            .collect::<BTreeSet<_>>();
-        let actual_paths = captured_inputs
-            .iter()
-            .map(|input| input.path.clone())
-            .collect::<BTreeSet<_>>();
-        if actual_paths != expected_paths {
+        if captured_inputs.len() != requirement_index.len()
+            || captured_inputs
+                .iter()
+                .zip(requirement_index.entries())
+                .any(|(input, indexed)| input.path != *indexed.path(&draft.requirements))
+        {
             return Err(EngineError::ProjectionManifest(
                 "captured projection inputs do not exactly cover requirements".into(),
             ));
@@ -6823,15 +6829,11 @@ impl ShardedHotEngine {
             BTreeMap::<ManagedPath, (ManifestObjectRef, AnnotatedProjectionBase)>::new();
         let mut render_bases =
             BTreeMap::<ManagedPath, (ManifestObjectRef, AnnotatedProjectionBase)>::new();
-        for path in &expected_paths {
+        for indexed_path in requirement_index.entries() {
+            let path = indexed_path.path(&draft.requirements);
+            let roles = indexed_path.roles();
             let state = &inputs[path];
-            let requirement = draft
-                .requirements
-                .iter()
-                .find(|requirement| {
-                    requirement.path == *path || requirement.render_base_path.as_ref() == Some(path)
-                })
-                .expect("expected path came from a requirement");
+            let requirement = &draft.requirements[roles.owner];
             let page = &draft.pages[&requirement.page_id];
             let prior = match state {
                 CapabilityCapturedProjectionMaterial::Absent { prior }
@@ -6842,14 +6844,12 @@ impl ShardedHotEngine {
                     .completion
                     .validate_against(&prior.intent)
                     .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                let before = draft
-                    .requirements
-                    .iter()
-                    .find_map(|candidate| {
-                        draft.pages[&candidate.page_id]
+                let before = roles
+                    .semantic_predecessor
+                    .and_then(|index| {
+                        draft.pages[&draft.requirements[index].page_id]
                             .before
                             .as_ref()
-                            .filter(|before| before.page.path == *path)
                     })
                     .ok_or_else(|| {
                         EngineError::ProjectionManifest(format!(
@@ -6878,11 +6878,7 @@ impl ShardedHotEngine {
                         "captured path {path} prior bytes are not the exact semantic pre-state"
                     )));
                 }
-                if draft
-                    .requirements
-                    .iter()
-                    .any(|candidate| candidate.render_base_path.as_ref() == Some(path))
-                {
+                if roles.render_base_owner.is_some() {
                     let base = AnnotatedProjectionBase::new(
                         self.workspace_id,
                         source.endpoint_id,
@@ -14491,18 +14487,135 @@ fn projection_requirements(
     Ok(requirements)
 }
 
-fn exact_author_requirement_paths(
-    draft: &AuthorTransactionDraft,
-) -> Result<Vec<ManagedPath>, EngineError> {
-    let paths = draft
-        .requirements
-        .iter()
-        .flat_map(|requirement| {
-            std::iter::once(requirement.path.clone())
-                .chain(requirement.render_base_path.iter().cloned())
-        })
-        .collect::<BTreeSet<_>>();
-    let path_bytes = paths.iter().try_fold(0_u64, |total, path| {
+const NO_REQUIREMENT_INDEX: u32 = u32::MAX;
+
+#[derive(Clone, Copy)]
+struct AuthorRequirementPathEntry {
+    source_requirement: u32,
+    source_is_render_base: bool,
+    owner: u32,
+    semantic_predecessor: u32,
+    render_base_owner: u32,
+}
+
+impl AuthorRequirementPathEntry {
+    fn path<'a>(&self, requirements: &'a [ProjectionRequirement]) -> &'a ManagedPath {
+        let requirement = &requirements[self.source_requirement as usize];
+        if self.source_is_render_base {
+            requirement
+                .render_base_path
+                .as_ref()
+                .expect("indexed render-base source exists")
+        } else {
+            &requirement.path
+        }
+    }
+
+    fn roles(&self) -> AuthorRequirementPathRoles {
+        #[cfg(test)]
+        record_preauthor_requirement_lookup();
+        AuthorRequirementPathRoles {
+            owner: self.owner as usize,
+            semantic_predecessor: requirement_index_option(self.semantic_predecessor),
+            render_base_owner: requirement_index_option(self.render_base_owner),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AuthorRequirementPathRoles {
+    owner: usize,
+    semantic_predecessor: Option<usize>,
+    render_base_owner: Option<usize>,
+}
+
+struct AuthorRequirementIndex {
+    entries: Vec<AuthorRequirementPathEntry>,
+}
+
+impl AuthorRequirementIndex {
+    fn entries(&self) -> &[AuthorRequirementPathEntry] {
+        &self.entries
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn retained_bytes(&self) -> Result<usize, EngineError> {
+        self.entries
+            .capacity()
+            .checked_mul(std::mem::size_of::<AuthorRequirementPathEntry>())
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Self>()))
+            .ok_or_else(|| {
+                EngineError::ProjectionManifest(
+                    "pre-authoring requirement index byte length overflowed".into(),
+                )
+            })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AuthorRequirementPathBuilder {
+    source_requirement: u32,
+    source_is_render_base: bool,
+    owner: u32,
+    semantic_predecessor: u32,
+    render_base_owner: u32,
+}
+
+type ExternalObservationIndex<'a> = BTreeMap<&'a ManagedPath, usize>;
+
+fn derive_preauthoring_indexes<'a>(
+    requirements: &[ProjectionRequirement],
+    pages: &BTreeMap<PageId, DraftProjectionPage>,
+    observation: Option<&'a ExternalImportObservationMaterial>,
+) -> Result<(AuthorRequirementIndex, Option<ExternalObservationIndex<'a>>), EngineError> {
+    let mut paths = BTreeMap::<&ManagedPath, AuthorRequirementPathBuilder>::new();
+    for (requirement_index, requirement) in requirements.iter().enumerate() {
+        #[cfg(test)]
+        record_preauthor_requirement_visit();
+        let requirement_index = u32::try_from(requirement_index).map_err(|_| {
+            EngineError::ProjectionManifest(
+                "pre-authoring requirement index exceeds its compact bound".into(),
+            )
+        })?;
+        paths
+            .entry(&requirement.path)
+            .or_insert(AuthorRequirementPathBuilder {
+                source_requirement: requirement_index,
+                source_is_render_base: false,
+                owner: requirement_index,
+                semantic_predecessor: NO_REQUIREMENT_INDEX,
+                render_base_owner: NO_REQUIREMENT_INDEX,
+            });
+        if let Some(render_base_path) = requirement.render_base_path.as_ref() {
+            let indexed = paths
+                .entry(render_base_path)
+                .or_insert(AuthorRequirementPathBuilder {
+                    source_requirement: requirement_index,
+                    source_is_render_base: true,
+                    owner: requirement_index,
+                    semantic_predecessor: NO_REQUIREMENT_INDEX,
+                    render_base_owner: NO_REQUIREMENT_INDEX,
+                });
+            if indexed.render_base_owner == NO_REQUIREMENT_INDEX {
+                indexed.render_base_owner = requirement_index;
+            }
+        }
+        if let Some(before) = pages[&requirement.page_id].before.as_ref() {
+            let indexed = paths.get_mut(&before.page.path).ok_or_else(|| {
+                EngineError::ProjectionManifest(format!(
+                    "semantic predecessor path {} is absent from its exact requirements",
+                    before.page.path
+                ))
+            })?;
+            if indexed.semantic_predecessor == NO_REQUIREMENT_INDEX {
+                indexed.semantic_predecessor = requirement_index;
+            }
+        }
+    }
+    let path_bytes = paths.keys().try_fold(0_u64, |total, path| {
         let bytes = u64::try_from(path.as_str().len()).map_err(|_| {
             EngineError::ProjectionManifest(
                 "pre-authoring exact path length does not fit its bounded counter".into(),
@@ -14515,7 +14628,111 @@ fn exact_author_requirement_paths(
         })
     })?;
     enforce_preauthoring_path_bounds(paths.len(), path_bytes)?;
-    Ok(paths.into_iter().collect())
+    let requirement_index = AuthorRequirementIndex {
+        entries: paths
+            .into_values()
+            .map(|entry| AuthorRequirementPathEntry {
+                source_requirement: entry.source_requirement,
+                source_is_render_base: entry.source_is_render_base,
+                owner: entry.owner,
+                semantic_predecessor: entry.semantic_predecessor,
+                render_base_owner: entry.render_base_owner,
+            })
+            .collect(),
+    };
+    let observation_index = observation.map(|observation| {
+        observation
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                #[cfg(test)]
+                record_preauthor_observation_visit();
+                (entry.path(), index)
+            })
+            .collect()
+    });
+    Ok((requirement_index, observation_index))
+}
+
+fn external_observation_for_path<'a>(
+    index: &ExternalObservationIndex<'_>,
+    observation: &'a ExternalImportObservationMaterial,
+    path: &ManagedPath,
+) -> Option<&'a ExternalImportObservationEntry> {
+    #[cfg(test)]
+    record_preauthor_observation_lookup();
+    index.get(path).map(|index| &observation.entries()[*index])
+}
+
+fn requirement_index_option(index: u32) -> Option<usize> {
+    (index != NO_REQUIREMENT_INDEX).then_some(index as usize)
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct PreauthorLookupStats {
+    requirement_visits: usize,
+    observation_visits: usize,
+    requirement_lookups: usize,
+    observation_lookups: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PREAUTHOR_LOOKUP_STATS: Cell<PreauthorLookupStats> =
+        const { Cell::new(PreauthorLookupStats {
+            requirement_visits: 0,
+            observation_visits: 0,
+            requirement_lookups: 0,
+            observation_lookups: 0,
+        }) };
+}
+
+#[cfg(test)]
+fn reset_preauthor_lookup_stats() {
+    PREAUTHOR_LOOKUP_STATS.set(PreauthorLookupStats::default());
+}
+
+#[cfg(test)]
+fn preauthor_lookup_stats() -> PreauthorLookupStats {
+    PREAUTHOR_LOOKUP_STATS.get()
+}
+
+#[cfg(test)]
+fn record_preauthor_requirement_visit() {
+    PREAUTHOR_LOOKUP_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.requirement_visits = stats.requirement_visits.saturating_add(1);
+        cell.set(stats);
+    });
+}
+
+#[cfg(test)]
+fn record_preauthor_observation_visit() {
+    PREAUTHOR_LOOKUP_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.observation_visits = stats.observation_visits.saturating_add(1);
+        cell.set(stats);
+    });
+}
+
+#[cfg(test)]
+fn record_preauthor_requirement_lookup() {
+    PREAUTHOR_LOOKUP_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.requirement_lookups = stats.requirement_lookups.saturating_add(1);
+        cell.set(stats);
+    });
+}
+
+#[cfg(test)]
+fn record_preauthor_observation_lookup() {
+    PREAUTHOR_LOOKUP_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.observation_lookups = stats.observation_lookups.saturating_add(1);
+        cell.set(stats);
+    });
 }
 
 fn enforce_preauthoring_path_bounds(path_count: usize, path_bytes: u64) -> Result<(), EngineError> {
@@ -17838,6 +18055,9 @@ mod validation_tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::oplog::external_import::{
+        ExternalImportObservationEntry, ExternalImportObservationState,
+    };
     use crate::oplog::projection_work_index::ProjectionExpectedPathReadBudget;
     use crate::oplog::reconciliation_scan::{
         scan_graph_text, AuthenticatedExpectedPath, AuthenticatedExpectedPathSource,
@@ -17845,7 +18065,7 @@ mod validation_tests {
         ExpectedPathStreamLimits, GraphTextCandidateKind, GraphTextScanLimits,
         JoinedAuthenticatedExpectedPathSource,
     };
-    use crate::oplog::{BlobDescription, ProjectionReceiptStoreId};
+    use crate::oplog::{BlobDescription, ImportId, ProjectionReceiptStoreId};
 
     fn validated_transition(
         engine: &ShardedHotEngine,
@@ -18577,6 +18797,114 @@ mod validation_tests {
             Err(EngineError::ProjectionManifest(message))
                 if message.contains("exceed bound")
         ));
+    }
+
+    #[test]
+    fn preauthor_gate_index_work_scales_with_requirements_and_observations() {
+        const REQUIREMENTS: usize = 20_000;
+        const EXACT_PATHS: usize = REQUIREMENTS * 2;
+
+        let mut requirements = Vec::with_capacity(REQUIREMENTS);
+        let mut pages = BTreeMap::new();
+        let mut observations = Vec::with_capacity(EXACT_PATHS);
+        for index in 0..REQUIREMENTS {
+            let page_id = PageId::from_uuid(Uuid::from_u128(100_000 + index as u128));
+            let home_document_id = DocumentId::from_uuid(Uuid::from_u128(200_000 + index as u128));
+            let path = ManagedPath::parse(&format!("pages/scale-new-{index:05}.md")).unwrap();
+            let render_base_path =
+                ManagedPath::parse(&format!("pages/scale-old-{index:05}.md")).unwrap();
+            requirements.push(ProjectionRequirement {
+                page_id,
+                path: path.clone(),
+                precondition: ProjectionRequirementState::Absent,
+                target: ProjectionRequirementState::Present,
+                render_base_path: Some(render_base_path.clone()),
+            });
+            pages.insert(
+                page_id,
+                DraftProjectionPage {
+                    before: Some(ProjectionPageState {
+                        page: MaterializedPage {
+                            page_id,
+                            home_document_id,
+                            name: LogicalPageName::parse(&format!("Scale {index}")).unwrap(),
+                            path: render_base_path.clone(),
+                            kind: ManagedTextKind::Page,
+                            preamble: None,
+                            blocks: Vec::new(),
+                            stats: MaterializationStats::default(),
+                        },
+                        frontier: FrontierV2::default(),
+                        claim_evidence: Vec::new(),
+                    }),
+                    after: None,
+                    post_frontier: FrontierV2::default(),
+                },
+            );
+            observations.push(
+                ExternalImportObservationEntry::new(
+                    path,
+                    ManagedTextKind::Page,
+                    ExternalImportObservationState::Absent,
+                )
+                .unwrap(),
+            );
+            observations.push(
+                ExternalImportObservationEntry::new(
+                    render_base_path,
+                    ManagedTextKind::Page,
+                    ExternalImportObservationState::Absent,
+                )
+                .unwrap(),
+            );
+        }
+        let observation = ExternalImportObservationMaterial::new(
+            WorkspaceId::from_uuid(Uuid::from_u128(300_000)),
+            ImportId::from_digest([0x5a; 32]),
+            observations,
+        )
+        .unwrap();
+
+        reset_preauthor_lookup_stats();
+        let (index, observation_index) =
+            derive_preauthoring_indexes(&requirements, &pages, Some(&observation)).unwrap();
+        assert_eq!(index.len(), EXACT_PATHS);
+        assert_eq!(
+            index.retained_bytes().unwrap(),
+            EXACT_PATHS * std::mem::size_of::<AuthorRequirementPathEntry>()
+                + std::mem::size_of::<AuthorRequirementIndex>()
+        );
+
+        let observation_index = observation_index.unwrap();
+        let mut predecessor_paths = 0;
+        let mut render_base_paths = 0;
+        for indexed_path in index.entries() {
+            let path = indexed_path.path(&requirements);
+            let roles = indexed_path.roles();
+            predecessor_paths += usize::from(roles.semantic_predecessor.is_some());
+            render_base_paths += usize::from(roles.render_base_owner.is_some());
+            assert!(
+                external_observation_for_path(&observation_index, &observation, path).is_some()
+            );
+        }
+        for indexed_path in index.entries() {
+            let _ = indexed_path.roles();
+        }
+        assert_eq!(predecessor_paths, REQUIREMENTS);
+        assert_eq!(render_base_paths, REQUIREMENTS);
+
+        let stats = preauthor_lookup_stats();
+        assert_eq!(stats.requirement_visits, REQUIREMENTS);
+        assert_eq!(stats.observation_visits, EXACT_PATHS);
+        assert_eq!(stats.requirement_lookups, EXACT_PATHS * 2);
+        assert_eq!(stats.observation_lookups, EXACT_PATHS);
+        assert_eq!(
+            stats.requirement_visits
+                + stats.observation_visits
+                + stats.requirement_lookups
+                + stats.observation_lookups,
+            REQUIREMENTS + EXACT_PATHS * 4
+        );
     }
 
     #[test]
