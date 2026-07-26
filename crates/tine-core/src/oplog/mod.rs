@@ -38,6 +38,10 @@ pub(crate) mod reconciliation_import;
 // P2N4I keeps the scheduler/scan boundary crate-private and inactive.
 #[allow(dead_code)]
 pub(crate) mod reconciliation_scan;
+// P2N4K composes one inactive endpoint scheduler with the existing scan and
+// coordinator paths. It deliberately adds no lifecycle or persistence owner.
+#[allow(dead_code)]
+pub(crate) mod reconciliation_session;
 pub mod reference_catalog;
 pub(crate) mod scratch_store;
 pub mod semantic;
