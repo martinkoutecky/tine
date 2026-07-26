@@ -18,8 +18,8 @@ use crate::graph_text_scope::{GraphTextScope, GraphTextScopeBinding};
 use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
     managed_component_is_portable, BlobDescription, CanonicalGraphResourceId, ContentDigest,
-    ManagedPath, ManagedTextKind, ProjectionAttemptReservation, ProjectionEndpointBinding,
-    ReceiptError, WorkspaceId,
+    ManagedPath, ManagedTextKind, PortablePathKey, ProjectionAttemptReservation,
+    ProjectionEndpointBinding, ReceiptError, WorkspaceId,
 };
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
@@ -238,6 +238,17 @@ struct ProjectionTarget {
     parent_components: Vec<String>,
     filename: String,
     twin_filename: String,
+}
+
+/// One lexical/scope validation result shared by exact points and feed events.
+///
+/// This deliberately has no twin path. `.markdown` is one exact physical
+/// spelling, not an instruction to synthesize an `.md` or `.org` neighbor.
+#[derive(Clone, Debug)]
+struct GraphTextExactPath {
+    managed_path: Option<ManagedPath>,
+    parent_components: Vec<String>,
+    filename: String,
 }
 
 struct ProjectionParent {
@@ -1285,6 +1296,13 @@ pub struct Graph {
     /// Sole versioned eligibility policy for normal graph text discovery and
     /// exact existing-file access. It grants no creation/projection authority.
     graph_text_scope: GraphTextScope,
+    /// Private, process-local graph-text completeness capability. This state is
+    /// neither serialized nor consulted by durable import/projection paths in
+    /// this packet.
+    graph_text_admission: RwLock<GraphTextAdmissionState>,
+    /// Unforgeable identity of this exact Graph instance. Reopening the same
+    /// resource intentionally produces a different token.
+    graph_text_admission_instance: Arc<GraphTextAdmissionInstance>,
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. Built once
     /// at open (config changes need a reopen, as in OG).
@@ -1417,6 +1435,529 @@ pub struct Graph {
     search_lanes: std::sync::Mutex<
         std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicU64>>,
     >,
+}
+
+#[derive(Debug)]
+struct GraphTextAdmissionInstance;
+
+struct GraphTextParseBudgetPermit {
+    semantic_name_bytes: u64,
+    semantic_name_allocation_bytes: u64,
+}
+
+struct PersistentMapNode<K, V> {
+    key: Arc<K>,
+    value: Arc<V>,
+    left: Option<Arc<PersistentMapNode<K, V>>>,
+    right: Option<Arc<PersistentMapNode<K, V>>>,
+    height: u8,
+    len: usize,
+}
+
+/// Small private AVL map whose immutable snapshots share untouched branches.
+///
+/// Exact feed events copy only the search paths for the exact forward and
+/// reverse keys they change. Node keys and values are separately shared so a
+/// copied path never deep-clones an owned collision group. This is deliberately
+/// not `Arc<BTreeMap<..>>`: copy-on-write over a standard map would still clone
+/// the complete graph.
+#[derive(Clone)]
+struct PersistentMap<K, V> {
+    root: Option<Arc<PersistentMapNode<K, V>>>,
+}
+
+impl<K, V> Default for PersistentMap<K, V> {
+    fn default() -> Self {
+        Self { root: None }
+    }
+}
+
+impl<K: Ord, V> PersistentMap<K, V> {
+    fn node(
+        key: Arc<K>,
+        value: Arc<V>,
+        left: Option<Arc<PersistentMapNode<K, V>>>,
+        right: Option<Arc<PersistentMapNode<K, V>>>,
+    ) -> Arc<PersistentMapNode<K, V>> {
+        count_graph_text_admission_persistent_node_allocation();
+        Arc::new(PersistentMapNode {
+            key,
+            value,
+            height: 1 + Self::height(&left).max(Self::height(&right)),
+            len: 1 + Self::node_len(&left) + Self::node_len(&right),
+            left,
+            right,
+        })
+    }
+
+    fn height(node: &Option<Arc<PersistentMapNode<K, V>>>) -> u8 {
+        node.as_ref().map_or(0, |node| node.height)
+    }
+
+    fn node_len(node: &Option<Arc<PersistentMapNode<K, V>>>) -> usize {
+        node.as_ref().map_or(0, |node| node.len)
+    }
+
+    fn rotate_left(node: &Arc<PersistentMapNode<K, V>>) -> Arc<PersistentMapNode<K, V>> {
+        count_graph_text_admission_persistent_rotation();
+        let right = node
+            .right
+            .as_ref()
+            .expect("AVL left rotation has a right child");
+        let moved = right.left.clone();
+        let left = Self::node(
+            Arc::clone(&node.key),
+            Arc::clone(&node.value),
+            node.left.clone(),
+            moved,
+        );
+        Self::node(
+            Arc::clone(&right.key),
+            Arc::clone(&right.value),
+            Some(left),
+            right.right.clone(),
+        )
+    }
+
+    fn rotate_right(node: &Arc<PersistentMapNode<K, V>>) -> Arc<PersistentMapNode<K, V>> {
+        count_graph_text_admission_persistent_rotation();
+        let left = node
+            .left
+            .as_ref()
+            .expect("AVL right rotation has a left child");
+        let moved = left.right.clone();
+        let right = Self::node(
+            Arc::clone(&node.key),
+            Arc::clone(&node.value),
+            moved,
+            node.right.clone(),
+        );
+        Self::node(
+            Arc::clone(&left.key),
+            Arc::clone(&left.value),
+            left.left.clone(),
+            Some(right),
+        )
+    }
+
+    fn balanced(
+        key: Arc<K>,
+        value: Arc<V>,
+        mut left: Option<Arc<PersistentMapNode<K, V>>>,
+        mut right: Option<Arc<PersistentMapNode<K, V>>>,
+    ) -> Arc<PersistentMapNode<K, V>> {
+        let balance = i16::from(Self::height(&left)) - i16::from(Self::height(&right));
+        if balance > 1 {
+            let left_node = left.as_ref().expect("left-heavy AVL node has a left child");
+            if Self::height(&left_node.right) > Self::height(&left_node.left) {
+                left = Some(Self::rotate_left(left_node));
+            }
+            return Self::rotate_right(&Self::node(key, value, left, right));
+        }
+        if balance < -1 {
+            let right_node = right
+                .as_ref()
+                .expect("right-heavy AVL node has a right child");
+            if Self::height(&right_node.left) > Self::height(&right_node.right) {
+                right = Some(Self::rotate_right(right_node));
+            }
+            return Self::rotate_left(&Self::node(key, value, left, right));
+        }
+        Self::node(key, value, left, right)
+    }
+
+    fn insert_node(
+        node: &Option<Arc<PersistentMapNode<K, V>>>,
+        key: Arc<K>,
+        value: Arc<V>,
+    ) -> (Arc<PersistentMapNode<K, V>>, Option<Arc<V>>) {
+        let Some(current) = node else {
+            return (Self::node(key, value, None, None), None);
+        };
+        match key.as_ref().cmp(current.key.as_ref()) {
+            std::cmp::Ordering::Less => {
+                let (left, previous) = Self::insert_node(&current.left, key, value);
+                (
+                    Self::balanced(
+                        Arc::clone(&current.key),
+                        Arc::clone(&current.value),
+                        Some(left),
+                        current.right.clone(),
+                    ),
+                    previous,
+                )
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, previous) = Self::insert_node(&current.right, key, value);
+                (
+                    Self::balanced(
+                        Arc::clone(&current.key),
+                        Arc::clone(&current.value),
+                        current.left.clone(),
+                        Some(right),
+                    ),
+                    previous,
+                )
+            }
+            std::cmp::Ordering::Equal => (
+                Self::node(key, value, current.left.clone(), current.right.clone()),
+                Some(Arc::clone(&current.value)),
+            ),
+        }
+    }
+
+    fn minimum(node: &Arc<PersistentMapNode<K, V>>) -> (&Arc<K>, &Arc<V>) {
+        let mut current = node;
+        while let Some(left) = &current.left {
+            current = left;
+        }
+        (&current.key, &current.value)
+    }
+
+    fn remove_node(
+        node: &Option<Arc<PersistentMapNode<K, V>>>,
+        key: &K,
+    ) -> (Option<Arc<PersistentMapNode<K, V>>>, Option<Arc<V>>) {
+        let Some(current) = node else {
+            return (None, None);
+        };
+        match key.cmp(current.key.as_ref()) {
+            std::cmp::Ordering::Less => {
+                let (left, previous) = Self::remove_node(&current.left, key);
+                if previous.is_none() {
+                    return (Some(Arc::clone(current)), None);
+                }
+                (
+                    Some(Self::balanced(
+                        Arc::clone(&current.key),
+                        Arc::clone(&current.value),
+                        left,
+                        current.right.clone(),
+                    )),
+                    previous,
+                )
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, previous) = Self::remove_node(&current.right, key);
+                if previous.is_none() {
+                    return (Some(Arc::clone(current)), None);
+                }
+                (
+                    Some(Self::balanced(
+                        Arc::clone(&current.key),
+                        Arc::clone(&current.value),
+                        current.left.clone(),
+                        right,
+                    )),
+                    previous,
+                )
+            }
+            std::cmp::Ordering::Equal => {
+                let previous = Some(Arc::clone(&current.value));
+                match (&current.left, &current.right) {
+                    (None, None) => (None, previous),
+                    (Some(left), None) => (Some(Arc::clone(left)), previous),
+                    (None, Some(right)) => (Some(Arc::clone(right)), previous),
+                    (Some(_), Some(right)) => {
+                        let (successor_key, successor_value) = Self::minimum(right);
+                        let (new_right, removed) = Self::remove_node(&current.right, successor_key);
+                        debug_assert!(removed.is_some());
+                        (
+                            Some(Self::balanced(
+                                Arc::clone(successor_key),
+                                Arc::clone(successor_value),
+                                current.left.clone(),
+                                new_right,
+                            )),
+                            previous,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let mut current = self.root.as_deref();
+        while let Some(node) = current {
+            match key.cmp(node.key.as_ref().borrow()) {
+                std::cmp::Ordering::Less => current = node.left.as_deref(),
+                std::cmp::Ordering::Greater => current = node.right.as_deref(),
+                std::cmp::Ordering::Equal => return Some(node.value.as_ref()),
+            }
+        }
+        None
+    }
+
+    fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.get(key).is_some()
+    }
+
+    #[cfg(test)]
+    fn shared_value<Q>(&self, key: &Q) -> Option<Arc<V>>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        let mut current = self.root.as_deref();
+        while let Some(node) = current {
+            match key.cmp(node.key.as_ref().borrow()) {
+                std::cmp::Ordering::Less => current = node.left.as_deref(),
+                std::cmp::Ordering::Greater => current = node.right.as_deref(),
+                std::cmp::Ordering::Equal => return Some(Arc::clone(&node.value)),
+            }
+        }
+        None
+    }
+
+    fn insert(&mut self, key: K, value: V) -> Option<Arc<V>> {
+        let (root, previous) = Self::insert_node(&self.root, Arc::new(key), Arc::new(value));
+        self.root = Some(root);
+        previous
+    }
+
+    fn remove(&mut self, key: &K) -> Option<Arc<V>> {
+        let (root, previous) = Self::remove_node(&self.root, key);
+        self.root = root;
+        previous
+    }
+
+    fn len(&self) -> usize {
+        Self::node_len(&self.root)
+    }
+
+    fn iter(&self) -> PersistentMapIter<'_, K, V> {
+        PersistentMapIter::new(self.root.as_deref())
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &K> {
+        self.iter().map(|(key, _)| key)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, value)| value)
+    }
+
+    fn path_copy_peak_upper_bound(&self) -> io::Result<u64> {
+        // Deletion can copy both the search path and the in-order-successor
+        // path. Each level can allocate five nodes for a double rotation.
+        let copied_nodes = checked_add_bytes(
+            checked_mul_bytes(u64::from(Self::height(&self.root)), 10)?,
+            1,
+        )?;
+        checked_mul_bytes(
+            copied_nodes,
+            usize_to_u64(std::mem::size_of::<PersistentMapNode<K, V>>())?,
+        )
+    }
+}
+
+impl<K: Ord, V> FromIterator<(K, V)> for PersistentMap<K, V> {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+        let mut map = Self::default();
+        for (key, value) in iter {
+            map.insert(key, value);
+        }
+        map
+    }
+}
+
+struct PersistentMapIter<'a, K, V> {
+    stack: Vec<&'a PersistentMapNode<K, V>>,
+}
+
+impl<'a, K, V> PersistentMapIter<'a, K, V> {
+    fn new(root: Option<&'a PersistentMapNode<K, V>>) -> Self {
+        let mut iter = Self { stack: Vec::new() };
+        iter.push_left(root);
+        iter
+    }
+
+    fn push_left(&mut self, mut node: Option<&'a PersistentMapNode<K, V>>) {
+        while let Some(current) = node {
+            self.stack.push(current);
+            node = current.left.as_deref();
+        }
+    }
+}
+
+impl<'a, K, V> Iterator for PersistentMapIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.stack.pop()?;
+        self.push_left(node.right.as_deref());
+        Some((node.key.as_ref(), node.value.as_ref()))
+    }
+}
+
+impl<'a, K: Ord, V> IntoIterator for &'a PersistentMap<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = PersistentMapIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GraphTextAdmissionFeedFence {
+    last_sequence: u64,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Minted only by the next feed-integration packet and focused tests.
+struct GraphTextAdmissionFeedToken {
+    instance: Arc<GraphTextAdmissionInstance>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Point authority is deliberately not wired to durable callers yet.
+struct GraphTextAdmissionEpoch {
+    instance: Arc<GraphTextAdmissionInstance>,
+    scope_binding: GraphTextScopeBinding,
+    graph_resource: CanonicalGraphResourceId,
+    generation: u64,
+    feed_sequence: u64,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Some evidence is consumed only by the later point-authority packet.
+struct GraphTextAdmissionRecord {
+    description: BlobDescription,
+    file_resource_id: ContentDigest,
+    link_count: u64,
+    semantic: PageEntry,
+    format: Format,
+}
+
+#[derive(Clone)]
+struct GraphTextAdmissionTombstone {
+    prior_record: Option<Arc<GraphTextAdmissionRecord>>,
+    prior_file_resource_id: ContentDigest,
+    prior_link_count: u64,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Complete-only fields stay inert until exact feed activation.
+struct CompleteGraphTextAdmissionIndex {
+    instance: Arc<GraphTextAdmissionInstance>,
+    scope_binding: GraphTextScopeBinding,
+    graph_resource: CanonicalGraphResourceId,
+    generation: u64,
+    feed: Option<GraphTextAdmissionFeedFence>,
+    files_by_exact_path: PersistentMap<ManagedPath, GraphTextAdmissionRecord>,
+    paths_by_portable_key: PersistentMap<PortablePathKey, std::collections::BTreeSet<ManagedPath>>,
+    paths_by_file_resource: PersistentMap<ContentDigest, std::collections::BTreeSet<String>>,
+    file_resource_by_exact_relative: PersistentMap<String, ContentDigest>,
+    file_link_count_by_exact_relative: PersistentMap<String, u64>,
+    file_is_graph_text_by_exact_relative: PersistentMap<String, bool>,
+    paths_by_semantic_key: PersistentMap<(u8, String), std::collections::BTreeSet<ManagedPath>>,
+    tombstones_by_exact_path: PersistentMap<ManagedPath, GraphTextAdmissionTombstone>,
+    directories_by_exact_relative: PersistentMap<String, ContentDigest>,
+    permanent_bytes: u64,
+    permanent_limit: u64,
+    peak_limit: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // Poison retains diagnostics without retaining authority.
+struct GraphTextAdmissionDiagnostics {
+    generation: u64,
+    files: usize,
+    directories: usize,
+    permanent_bytes: u64,
+}
+
+#[allow(dead_code)] // `last_good` is intentionally diagnostic-only in this packet.
+enum GraphTextAdmissionState {
+    Unbuilt {
+        armed_feed: Option<GraphTextAdmissionFeedFence>,
+    },
+    Building {
+        armed_feed: Option<GraphTextAdmissionFeedFence>,
+    },
+    SnapshotComplete(Arc<CompleteGraphTextAdmissionIndex>),
+    Complete(Arc<CompleteGraphTextAdmissionIndex>),
+    Poisoned {
+        last_good: Option<GraphTextAdmissionDiagnostics>,
+        cause: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Exact platform feed integration lands in the next packet.
+enum GraphTextAdmissionExactEvent {
+    FileUpsert { relative: String },
+    FileRemove { relative: String },
+    DirectoryChanged { relative: Option<String> },
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // No durable caller can consume this private observation yet.
+struct GraphTextAdmissionObservation {
+    epoch: GraphTextAdmissionEpoch,
+    record: GraphTextAdmissionRecord,
+    current: GraphTextAdmissionCurrentProof,
+    portable_members: Vec<ManagedPath>,
+    resource_members: Vec<String>,
+    semantic_members: Vec<ManagedPath>,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Private exact absence authority is consumed by the next packet.
+enum GraphTextAdmissionExactObservation {
+    Present(GraphTextAdmissionObservation),
+    AbsentRetained {
+        epoch: GraphTextAdmissionEpoch,
+        tombstone: GraphTextAdmissionTombstone,
+    },
+    AbsentUnowned {
+        epoch: GraphTextAdmissionEpoch,
+        provisional: PageEntry,
+    },
+}
+
+#[cfg(test)]
+impl GraphTextAdmissionExactObservation {
+    fn into_present(self) -> GraphTextAdmissionObservation {
+        match self {
+            Self::Present(observation) => observation,
+            Self::AbsentRetained { .. } | Self::AbsentUnowned { .. } => {
+                panic!("expected a present exact graph-text observation")
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Sealed for the next private packet; no durable consumer exists yet.
+struct GraphTextAdmissionCurrentProof {
+    bytes: Vec<u8>,
+    description: BlobDescription,
+    file_resource_id: ContentDigest,
+    link_count: u64,
+}
+
+struct PreparedGraphTextAdmissionUpsert {
+    relative: String,
+    file_resource_id: ContentDigest,
+    link_count: u64,
+    retained_growth: u64,
+    eligible: Option<(ManagedPath, GraphTextAdmissionRecord)>,
+}
+
+struct PreparedGraphTextAdmissionRemove {
+    relative: String,
+    retained_growth: u64,
 }
 
 pub(crate) struct ManagedTextObservation {
@@ -2067,6 +2608,21 @@ pub(crate) struct ProjectionGraphTestCounters {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct GraphTextAdmissionTestCounters {
+    builder_enumerations: usize,
+    point_query_attempts: usize,
+    parser_invocations: usize,
+    index_map_insertions: usize,
+    event_map_key_reads: usize,
+    event_map_key_writes: usize,
+    event_reverse_members: usize,
+    persistent_node_allocations: usize,
+    persistent_rotations: usize,
+    persistent_payload_members: usize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ManagedMigrationWriterBoundary {
     final_reread_retained: u64,
     final_reread_bytes: u64,
@@ -2116,6 +2672,10 @@ thread_local! {
     static MANAGED_WRITE_REPLACEMENT_HANDOFF: std::cell::RefCell<Option<HandoffSafe>> = const { std::cell::RefCell::new(None) };
     static SYNC_IDENTITY_AFTER_PREPARE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static GRAPH_TEXT_ADMISSION_TEST_COUNTERS: std::cell::Cell<GraphTextAdmissionTestCounters> = const { std::cell::Cell::new(GraphTextAdmissionTestCounters { builder_enumerations: 0, point_query_attempts: 0, parser_invocations: 0, index_map_insertions: 0, event_map_key_reads: 0, event_map_key_writes: 0, event_reverse_members: 0, persistent_node_allocations: 0, persistent_rotations: 0, persistent_payload_members: 0 }) };
+    static GRAPH_TEXT_PARSE_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static GRAPH_TEXT_FIRST_CAPTURE_CHARGE_OVERRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static GRAPH_TEXT_EVENT_REVALIDATION_RACE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
@@ -2174,6 +2734,148 @@ fn observe_managed_migration_writer(update: impl FnOnce(&mut ManagedMigrationWri
 #[cfg(test)]
 pub(crate) fn reset_projection_graph_test_counters() {
     PROJECTION_GRAPH_CALLS.with(|counters| counters.set(ProjectionGraphTestCounters::default()));
+}
+
+#[cfg(test)]
+fn reset_graph_text_admission_test_counters() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS
+        .with(|counters| counters.set(GraphTextAdmissionTestCounters::default()));
+}
+
+#[cfg(test)]
+fn graph_text_admission_test_counters() -> GraphTextAdmissionTestCounters {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(Cell::get)
+}
+
+#[cfg(test)]
+fn count_graph_text_admission_builder_enumeration() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.builder_enumerations += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_builder_enumeration() {}
+
+#[cfg(test)]
+fn count_graph_text_admission_point_query() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.point_query_attempts += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(test)]
+fn count_graph_text_admission_parser_invocation() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.parser_invocations += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_parser_invocation() {}
+
+#[cfg(test)]
+fn count_graph_text_admission_index_map_insertion() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.index_map_insertions += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_index_map_insertion() {}
+
+#[cfg(test)]
+fn count_graph_text_admission_event_work(reads: usize, writes: usize, members: usize) {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.event_map_key_reads += reads;
+        value.event_map_key_writes += writes;
+        value.event_reverse_members += members;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_event_work(_reads: usize, _writes: usize, _members: usize) {}
+
+#[cfg(test)]
+fn count_graph_text_admission_persistent_node_allocation() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.persistent_node_allocations += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_persistent_node_allocation() {}
+
+#[cfg(test)]
+fn count_graph_text_admission_persistent_rotation() {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.persistent_rotations += 1;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_persistent_rotation() {}
+
+#[cfg(test)]
+fn count_graph_text_admission_persistent_payload_members(members: usize) {
+    GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.persistent_payload_members += members;
+        counters.set(value);
+    });
+}
+
+#[cfg(not(test))]
+fn count_graph_text_admission_persistent_payload_members(_members: usize) {}
+
+#[cfg(not(test))]
+#[allow(dead_code)]
+fn count_graph_text_admission_point_query() {}
+
+#[cfg(test)]
+fn graph_text_event_revalidation_race_hook() -> io::Result<()> {
+    GRAPH_TEXT_EVENT_REVALIDATION_RACE.with(|hook| {
+        let callback = hook.borrow_mut().take();
+        callback.map_or(Ok(()), |callback| callback())
+    })
+}
+
+#[cfg(not(test))]
+fn graph_text_event_revalidation_race_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn graph_text_parse_failure_hook() -> io::Result<()> {
+    GRAPH_TEXT_PARSE_FAILURE.with(|failure| {
+        if failure.replace(false) {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "injected graph-text parse failure",
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn graph_text_parse_failure_hook() -> io::Result<()> {
+    Ok(())
 }
 
 /// Clear thread-local projection test controls without affecting measurements.
@@ -2473,9 +3175,12 @@ fn projection_directory_sync_hook(_dir: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 fn managed_inventory_read_hook() -> io::Result<()> {
-    MANAGED_INVENTORY_READ_RACE.with(|hook| match hook.borrow_mut().take() {
-        Some(hook) => hook(),
-        None => Ok(()),
+    MANAGED_INVENTORY_READ_RACE.with(|hook| {
+        let hook = hook.borrow_mut().take();
+        match hook {
+            Some(hook) => hook(),
+            None => Ok(()),
+        }
     })
 }
 
@@ -2837,12 +3542,17 @@ impl Graph {
         );
         let graph_text_scope =
             GraphTextScope::new(&config.hidden, config.hidden_parse_failed_closed);
+        let graph_text_admission_instance = Arc::new(GraphTextAdmissionInstance);
         Graph {
             assets_root: root.join("assets"),
             projection_root,
             root,
             config,
             graph_text_scope,
+            graph_text_admission: RwLock::new(GraphTextAdmissionState::Unbuilt {
+                armed_feed: None,
+            }),
+            graph_text_admission_instance,
             journal_format,
             cache: RwLock::new(None),
             page_index_failures: RwLock::new(Vec::new()),
@@ -3573,10 +4283,55 @@ impl Graph {
         })
     }
 
-    /// Interpret one already-validated graph-relative managed path exactly as
-    /// normal Graph loading does, without touching the filesystem or warming
-    /// the page cache. The final filename component is the logical source;
-    /// nested directories select ownership only and never form namespaces.
+    /// Filename-only semantic evidence for an exact graph-relative path.
+    ///
+    /// This is intentionally provisional: callers with present bytes must use
+    /// `decode_present_graph_text`, which parses content title properties before
+    /// assigning kind. Directories never choose Page versus Journal.
+    fn provisional_graph_entry_for_managed_path(
+        &self,
+        path: &ManagedPath,
+    ) -> io::Result<PageEntry> {
+        if !self.graph_text_scope.is_eligible(path.as_str()) {
+            return Err(bad_path());
+        }
+        self.graph_entry_for_relative_path(path.as_str())
+    }
+
+    fn decode_present_graph_text(
+        &self,
+        path: &ManagedPath,
+        bytes: &[u8],
+        permit: GraphTextParseBudgetPermit,
+    ) -> io::Result<(PageEntry, Format)> {
+        count_graph_text_admission_parser_invocation();
+        graph_text_parse_failure_hook()?;
+        let content = std::str::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("graph text is not UTF-8: {path}"),
+            )
+        })?;
+        let provisional = self.provisional_graph_entry_for_managed_path(path)?;
+        let format = Format::from_path(Path::new(path.file_name()));
+        let (semantic, _, _) = parse_exact_page(self, &provisional, content)?;
+        let actual_name_allocation = checked_add_bytes(
+            usize_to_u64(std::mem::size_of::<String>())?,
+            usize_to_u64(semantic.name.capacity())?,
+        )?;
+        if usize_to_u64(semantic.name.len())? > permit.semantic_name_bytes
+            || actual_name_allocation > permit.semantic_name_allocation_bytes
+        {
+            return Err(initial_shadow_limit_error(
+                "rendered semantic title allocation",
+            ));
+        }
+        Ok((semantic, format))
+    }
+
+    /// Interpret one already-validated configured-root managed path exactly as
+    /// existing import and managed-inventory callers expect. This authority
+    /// input deliberately remains separate from the inert graph-wide decoder.
     pub(crate) fn managed_entry_for_managed_path(
         &self,
         path: &ManagedPath,
@@ -4658,39 +5413,60 @@ impl Graph {
     pub(crate) fn initial_shadow_raw_managed_text_inventory(
         &self,
     ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
+        self.initial_shadow_raw_managed_text_inventory_with_limits(INITIAL_SHADOW_LIMITS)
+    }
+
+    fn initial_shadow_raw_managed_text_inventory_with_limits(
+        &self,
+        limits: InitialShadowLimits,
+    ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
         require_projection_platform()?;
-        let permit = self.admit_retained_managed_text_writer()?;
-        let first = collect_initial_shadow_managed_inventory(self, &permit, true)?;
-        initial_shadow_revalidation_hook(&self.root)?;
-        let second = collect_initial_shadow_managed_inventory(self, &permit, false)?;
-        let first_digests = first
-            .iter()
-            .map(|entry| {
-                (
-                    entry.path.clone(),
-                    entry.description,
-                    entry.file_resource_id,
-                )
-            })
-            .collect::<Vec<_>>();
-        let second_digests = second
-            .iter()
-            .map(|entry| {
-                (
-                    entry.path.clone(),
-                    entry.description,
-                    entry.file_resource_id,
-                )
-            })
-            .collect::<Vec<_>>();
-        if first_digests != second_digests {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "managed inventory changed during initial shadow capture",
-            ));
-        }
-        self.ensure_projection_root_binding()?;
+        let armed_feed = self.begin_graph_text_admission_build()?;
+        let built = (|| {
+            let permit = self.admit_retained_managed_text_writer()?;
+            let first = collect_initial_shadow_managed_inventory_with_limits(
+                self, &permit, true, limits, 0,
+            )?;
+            initial_shadow_revalidation_hook(&self.root)?;
+            let second = collect_initial_shadow_managed_inventory_with_limits(
+                self,
+                &permit,
+                false,
+                limits,
+                first.peak_build_charge,
+            )?;
+            if !initial_shadow_captures_match(&first, &second) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "managed inventory changed during initial shadow capture",
+                ));
+            }
+            self.ensure_projection_root_binding()?;
+            let combined_capture_bytes =
+                checked_add_bytes(first.peak_build_charge, second.peak_build_charge)?;
+            if combined_capture_bytes > limits.peak_build_bytes {
+                return Err(initial_shadow_limit_error("peak build memory"));
+            }
+            let index = build_graph_text_admission_index(
+                self,
+                &first,
+                armed_feed.clone(),
+                limits,
+                combined_capture_bytes,
+            )?;
+            let collision = initial_shadow_global_collision(&index);
+            Ok((first, index, collision))
+        })();
+        let (first, index, collision) = match built {
+            Ok(built) => built,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        self.finish_graph_text_admission_build(index, collision)?;
         Ok(first
+            .entries
             .into_iter()
             .map(|entry| {
                 (
@@ -4701,6 +5477,1129 @@ impl Graph {
                 )
             })
             .collect())
+    }
+
+    fn begin_graph_text_admission_build(&self) -> io::Result<Option<GraphTextAdmissionFeedFence>> {
+        let mut state = self.graph_text_admission.write().unwrap();
+        let armed_feed = match &mut *state {
+            GraphTextAdmissionState::Unbuilt { armed_feed } => armed_feed.take(),
+            GraphTextAdmissionState::Building { .. } => {
+                return Err(graph_text_admission_unavailable(
+                    "index build is already active",
+                ));
+            }
+            GraphTextAdmissionState::SnapshotComplete(_) => {
+                return Err(graph_text_admission_unavailable(
+                    "snapshot was already completed",
+                ));
+            }
+            GraphTextAdmissionState::Complete(_) => {
+                return Err(graph_text_admission_unavailable(
+                    "authoritative index was already completed",
+                ));
+            }
+            GraphTextAdmissionState::Poisoned { cause, .. } => {
+                return Err(graph_text_admission_unavailable(cause));
+            }
+        };
+        *state = GraphTextAdmissionState::Building {
+            armed_feed: armed_feed.clone(),
+        };
+        Ok(armed_feed)
+    }
+
+    fn finish_graph_text_admission_build(
+        &self,
+        index: CompleteGraphTextAdmissionIndex,
+        collision: Option<io::Error>,
+    ) -> io::Result<()> {
+        let mut state = self.graph_text_admission.write().unwrap();
+        let GraphTextAdmissionState::Building { armed_feed } = &*state else {
+            return Err(graph_text_admission_unavailable(
+                "index build state changed before publication",
+            ));
+        };
+        if armed_feed.as_ref().map(|feed| feed.last_sequence)
+            != index.feed.as_ref().map(|feed| feed.last_sequence)
+        {
+            *state = GraphTextAdmissionState::Poisoned {
+                last_good: None,
+                cause: "feed fence changed before index publication".to_owned(),
+            };
+            return Err(graph_text_admission_unavailable(
+                "feed fence changed before index publication",
+            ));
+        }
+        if let Some(error) = collision {
+            if index.feed.is_some() {
+                *state = GraphTextAdmissionState::Poisoned {
+                    last_good: Some(index.diagnostics()),
+                    cause: bounded_graph_text_admission_cause(error.to_string()),
+                };
+            } else {
+                *state = GraphTextAdmissionState::SnapshotComplete(Arc::new(index));
+            }
+            return Err(error);
+        }
+        let index = Arc::new(index);
+        *state = if index.feed.is_some() {
+            GraphTextAdmissionState::Complete(index)
+        } else {
+            GraphTextAdmissionState::SnapshotComplete(index)
+        };
+        Ok(())
+    }
+
+    fn poison_graph_text_admission(&self, cause: impl Into<String>) {
+        let mut state = self.graph_text_admission.write().unwrap();
+        if matches!(&*state, GraphTextAdmissionState::Poisoned { .. }) {
+            return;
+        }
+        let last_good = match &*state {
+            GraphTextAdmissionState::SnapshotComplete(index)
+            | GraphTextAdmissionState::Complete(index) => Some(index.diagnostics()),
+            _ => None,
+        };
+        *state = GraphTextAdmissionState::Poisoned {
+            last_good,
+            cause: bounded_graph_text_admission_cause(cause.into()),
+        };
+    }
+
+    /// Arm an exact, ordered feed before the sole explicit build. The current
+    /// packet has no platform integration; this narrow seam is retained for the
+    /// next packet and focused state-machine tests only.
+    #[allow(dead_code)]
+    fn arm_graph_text_admission_feed(
+        &self,
+        last_sequence: u64,
+    ) -> io::Result<GraphTextAdmissionFeedToken> {
+        let mut state = self.graph_text_admission.write().unwrap();
+        match &mut *state {
+            GraphTextAdmissionState::Unbuilt { armed_feed } if armed_feed.is_none() => {
+                *armed_feed = Some(GraphTextAdmissionFeedFence { last_sequence });
+                Ok(GraphTextAdmissionFeedToken {
+                    instance: Arc::clone(&self.graph_text_admission_instance),
+                })
+            }
+            GraphTextAdmissionState::Unbuilt { .. } => Err(graph_text_admission_unavailable(
+                "graph-text feed is already armed",
+            )),
+            GraphTextAdmissionState::Poisoned { cause, .. } => {
+                Err(graph_text_admission_unavailable(cause))
+            }
+            _ => Err(graph_text_admission_unavailable(
+                "graph-text feed must be armed before the build",
+            )),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn graph_text_admission_epoch(&self) -> io::Result<GraphTextAdmissionEpoch> {
+        count_graph_text_admission_point_query();
+        let index = {
+            let state = self.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::Complete(index) = &*state else {
+                let cause = match &*state {
+                    GraphTextAdmissionState::Unbuilt { .. } => "index is unbuilt",
+                    GraphTextAdmissionState::Building { .. } => "index is building",
+                    GraphTextAdmissionState::SnapshotComplete(_) => {
+                        "snapshot feed is not authoritative"
+                    }
+                    GraphTextAdmissionState::Poisoned { cause, .. } => cause,
+                    GraphTextAdmissionState::Complete(_) => unreachable!(),
+                };
+                return Err(graph_text_admission_unavailable(cause));
+            };
+            Arc::clone(index)
+        };
+        let feed = index
+            .feed
+            .as_ref()
+            .expect("Complete indexes always retain an armed feed");
+        let authority_check = (|| {
+            if !Arc::ptr_eq(&index.instance, &self.graph_text_admission_instance) {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text index belongs to another Graph instance",
+                ));
+            }
+            self.ensure_projection_root_binding()?;
+            let graph_resource = self.canonical_resource_id()?;
+            let scope_binding = self.graph_text_scope_binding()?;
+            if graph_resource != index.graph_resource
+                || scope_binding != index.scope_binding
+                || scope_binding.graph_resource_id() != graph_resource
+            {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text scope or root binding changed",
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = authority_check {
+            return Err(self.poison_graph_text_admission_error(error));
+        }
+
+        let generation = index.generation;
+        let feed_sequence = feed.last_sequence;
+        let mut state = self.graph_text_admission.write().unwrap();
+        let unchanged = matches!(
+            &*state,
+            GraphTextAdmissionState::Complete(current)
+                if Arc::ptr_eq(current, &index)
+                    && Arc::ptr_eq(&current.instance, &self.graph_text_admission_instance)
+                    && current.scope_binding == index.scope_binding
+                    && current.graph_resource == index.graph_resource
+                    && current.generation == generation
+                    && current
+                        .feed
+                        .as_ref()
+                        .is_some_and(|current_feed| current_feed.last_sequence == feed_sequence)
+        );
+        if !unchanged {
+            let cause = "graph-text admission authority changed during epoch proof".to_owned();
+            poison_graph_text_admission_state(&mut state, cause.clone());
+            return Err(graph_text_admission_unavailable(&cause));
+        }
+        Ok(GraphTextAdmissionEpoch {
+            instance: Arc::clone(&index.instance),
+            scope_binding: index.scope_binding,
+            graph_resource: index.graph_resource,
+            generation,
+            feed_sequence,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn graph_text_admission_exact(
+        &self,
+        epoch: &GraphTextAdmissionEpoch,
+        path: &ManagedPath,
+    ) -> io::Result<GraphTextAdmissionExactObservation> {
+        count_graph_text_admission_point_query();
+        let target = self.graph_text_exact_path(path.as_str(), true)?;
+        let index = {
+            let state = self.graph_text_admission.read().unwrap();
+            let GraphTextAdmissionState::Complete(index) = &*state else {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text admission authority is unavailable",
+                ));
+            };
+            Arc::clone(index)
+        };
+        let feed = index
+            .feed
+            .as_ref()
+            .expect("Complete indexes always retain an armed feed");
+        if !Arc::ptr_eq(&epoch.instance, &self.graph_text_admission_instance)
+            || !Arc::ptr_eq(&index.instance, &self.graph_text_admission_instance)
+            || !Arc::ptr_eq(&epoch.instance, &index.instance)
+            || epoch.scope_binding != index.scope_binding
+            || epoch.graph_resource != index.graph_resource
+            || epoch.generation != index.generation
+            || epoch.feed_sequence != feed.last_sequence
+        {
+            return Err(
+                self.poison_graph_text_admission_error(graph_text_admission_unavailable(
+                    "graph-text admission epoch or Graph instance is stale",
+                )),
+            );
+        }
+        let binding_check = (|| {
+            self.ensure_projection_root_binding()?;
+            let graph_resource = self.canonical_resource_id()?;
+            let scope_binding = self.graph_text_scope_binding()?;
+            if graph_resource != index.graph_resource
+                || scope_binding != index.scope_binding
+                || scope_binding.graph_resource_id() != graph_resource
+            {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text scope or root binding changed",
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = binding_check {
+            return Err(self.poison_graph_text_admission_error(error));
+        }
+        let Some(record) = index.files_by_exact_path.get(path).cloned() else {
+            let absent = match (|| {
+                if index
+                    .paths_by_portable_key
+                    .get(&path.portable_key())
+                    .is_some_and(|members| !members.is_empty())
+                {
+                    return Err(graph_text_admission_unavailable(
+                        "absent graph-text spelling has a retained portable collision",
+                    ));
+                }
+                let first_parent = self.graph_text_event_parent(&target)?;
+                validate_graph_text_event_parent(&index, &target, &first_parent)?;
+                match first_parent.final_dir().symlink_metadata(&target.filename) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        return Err(graph_text_admission_unavailable(
+                            "unindexed graph-text path is present",
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
+                graph_text_event_revalidation_race_hook()?;
+                let second_parent = self.graph_text_event_parent(&target)?;
+                validate_graph_text_event_parent(&index, &target, &second_parent)?;
+                match second_parent.final_dir().symlink_metadata(&target.filename) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        return Err(graph_text_admission_unavailable(
+                            "absent graph-text path appeared during proof",
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
+                self.ensure_graph_text_admission_snapshot_binding(&index)?;
+                Ok(index.tombstones_by_exact_path.get(path).cloned())
+            })() {
+                Ok(tombstone) => tombstone,
+                Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+            };
+            let generation = index.generation;
+            let feed_sequence = feed.last_sequence;
+            let mut state = self.graph_text_admission.write().unwrap();
+            let unchanged = matches!(
+                &*state,
+                GraphTextAdmissionState::Complete(current)
+                    if Arc::ptr_eq(current, &index)
+                        && current.generation == generation
+                        && current.feed.as_ref().is_some_and(|feed| {
+                            feed.last_sequence == feed_sequence
+                        })
+            );
+            if !unchanged {
+                let cause =
+                    "graph-text admission authority changed during exact absence proof".to_owned();
+                poison_graph_text_admission_state(&mut state, cause.clone());
+                return Err(graph_text_admission_unavailable(&cause));
+            }
+            let epoch = GraphTextAdmissionEpoch {
+                instance: Arc::clone(&index.instance),
+                scope_binding: index.scope_binding,
+                graph_resource: index.graph_resource,
+                generation,
+                feed_sequence,
+            };
+            return Ok(match absent {
+                Some(tombstone) => {
+                    GraphTextAdmissionExactObservation::AbsentRetained { epoch, tombstone }
+                }
+                None => GraphTextAdmissionExactObservation::AbsentUnowned {
+                    epoch,
+                    provisional: self.provisional_graph_entry_for_managed_path(path)?,
+                },
+            });
+        };
+        let portable_members = index
+            .paths_by_portable_key
+            .get(&path.portable_key())
+            .cloned()
+            .unwrap_or_default();
+        let resource_members = index
+            .paths_by_file_resource
+            .get(&record.file_resource_id)
+            .cloned()
+            .unwrap_or_default();
+        let semantic_members = index
+            .paths_by_semantic_key
+            .get(&graph_text_semantic_key(&record.semantic))
+            .cloned()
+            .unwrap_or_default();
+        if record.link_count != 1
+            || portable_members.len() != 1
+            || !portable_members.contains(path)
+            || resource_members.len() != 1
+            || !resource_members.contains(path.as_str())
+            || semantic_members.len() != 1
+            || !semantic_members.contains(path)
+            || index
+                .file_resource_by_exact_relative
+                .get(path.as_str())
+                .copied()
+                != Some(record.file_resource_id)
+            || index
+                .file_link_count_by_exact_relative
+                .get(path.as_str())
+                .copied()
+                != Some(record.link_count)
+        {
+            return Err(
+                self.poison_graph_text_admission_error(graph_text_admission_unavailable(
+                    "exact graph-text member has colliding or unsafe retained evidence",
+                )),
+            );
+        }
+
+        let current = match (|| {
+            self.ensure_projection_root_binding()?;
+            if self.canonical_resource_id()? != index.graph_resource
+                || self.graph_text_scope_binding()? != index.scope_binding
+            {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text scope or root binding changed",
+                ));
+            }
+
+            let parent = self.graph_text_event_parent(&target)?;
+            validate_graph_text_event_parent(&index, &target, &parent)?;
+            let opened = open_projection_file_nofollow(parent.final_dir(), &target.filename)?;
+            let opened_resource = canonical_projection_file_resource_id(&opened)?;
+            let opened_link_count = projection_file_link_count(&opened)?;
+            if opened_resource != record.file_resource_id || opened_link_count != 1 {
+                return Err(graph_text_admission_unavailable(
+                    "exact graph-text resource or link proof changed before read",
+                ));
+            }
+
+            let content_limit = record.description.byte_length();
+            let peak_limit = checked_add_bytes(content_limit, 16 * 1024)?;
+            let (bytes, description, file_resource_id, _, _) =
+                read_projection_optional_bound_capture_with_limits(
+                    parent.final_dir(),
+                    &target.filename,
+                    content_limit,
+                    peak_limit,
+                )?
+                .ok_or_else(|| {
+                    graph_text_admission_unavailable(
+                        "exact graph-text path disappeared during current proof",
+                    )
+                })?;
+            std::str::from_utf8(&bytes).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "exact graph text is not UTF-8")
+            })?;
+            if description != record.description || file_resource_id != record.file_resource_id {
+                return Err(graph_text_admission_unavailable(
+                    "exact graph-text bytes or resource changed during current proof",
+                ));
+            }
+
+            let rebound_parent = self.graph_text_event_parent(&target)?;
+            validate_graph_text_event_parent(&index, &target, &rebound_parent)?;
+            let rebound =
+                open_projection_file_nofollow(rebound_parent.final_dir(), &target.filename)?;
+            let rebound_resource = canonical_projection_file_resource_id(&rebound)?;
+            let rebound_link_count = projection_file_link_count(&rebound)?;
+            if rebound_resource != file_resource_id || rebound_link_count != 1 {
+                return Err(graph_text_admission_unavailable(
+                    "exact graph-text resource or link proof changed after read",
+                ));
+            }
+
+            self.ensure_projection_root_binding()?;
+            let graph_resource = self.canonical_resource_id()?;
+            let scope_binding = self.graph_text_scope_binding()?;
+            if graph_resource != index.graph_resource
+                || scope_binding != index.scope_binding
+                || scope_binding.graph_resource_id() != graph_resource
+            {
+                return Err(graph_text_admission_unavailable(
+                    "graph-text scope or root binding changed after point IO",
+                ));
+            }
+            Ok(GraphTextAdmissionCurrentProof {
+                bytes,
+                description,
+                file_resource_id,
+                link_count: rebound_link_count,
+            })
+        })() {
+            Ok(current) => current,
+            Err(error) => return Err(self.poison_graph_text_admission_error(error)),
+        };
+
+        let generation = index.generation;
+        let feed_sequence = feed.last_sequence;
+        let mut state = self.graph_text_admission.write().unwrap();
+        let unchanged = matches!(
+            &*state,
+            GraphTextAdmissionState::Complete(current_index)
+                if Arc::ptr_eq(current_index, &index)
+                    && Arc::ptr_eq(
+                        &current_index.instance,
+                        &self.graph_text_admission_instance,
+                    )
+                    && current_index.scope_binding == index.scope_binding
+                    && current_index.graph_resource == index.graph_resource
+                    && current_index.generation == generation
+                    && current_index
+                        .feed
+                        .as_ref()
+                        .is_some_and(|current_feed| current_feed.last_sequence == feed_sequence)
+        );
+        if !unchanged {
+            let cause =
+                "graph-text admission authority changed during exact point proof".to_owned();
+            poison_graph_text_admission_state(&mut state, cause.clone());
+            return Err(graph_text_admission_unavailable(&cause));
+        }
+        Ok(GraphTextAdmissionExactObservation::Present(
+            GraphTextAdmissionObservation {
+                epoch: GraphTextAdmissionEpoch {
+                    instance: Arc::clone(&index.instance),
+                    scope_binding: index.scope_binding,
+                    graph_resource: index.graph_resource,
+                    generation,
+                    feed_sequence,
+                },
+                record,
+                current,
+                portable_members: portable_members.iter().cloned().collect(),
+                resource_members: resource_members.iter().cloned().collect(),
+                semantic_members: semantic_members.iter().cloned().collect(),
+            },
+        ))
+    }
+
+    #[allow(dead_code)]
+    fn apply_graph_text_admission_event(
+        &self,
+        token: &GraphTextAdmissionFeedToken,
+        sequence: u64,
+        event: GraphTextAdmissionExactEvent,
+    ) -> io::Result<()> {
+        let (current, next_generation) = {
+            let mut state = self.graph_text_admission.write().unwrap();
+            if !Arc::ptr_eq(&token.instance, &self.graph_text_admission_instance) {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "foreign graph-text feed token was applied to this Graph instance".to_owned(),
+                );
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "graph-text feed token belongs to another Graph instance",
+                ));
+            }
+            let current = match &*state {
+                GraphTextAdmissionState::Complete(index) => Arc::clone(index),
+                GraphTextAdmissionState::Poisoned { cause, .. } => {
+                    return Err(graph_text_admission_unavailable(cause));
+                }
+                GraphTextAdmissionState::Unbuilt {
+                    armed_feed: Some(_),
+                }
+                | GraphTextAdmissionState::Building {
+                    armed_feed: Some(_),
+                } => {
+                    poison_graph_text_admission_state(
+                        &mut state,
+                        "graph-text feed event raced the initial snapshot".to_owned(),
+                    );
+                    return Err(graph_text_admission_unavailable(
+                        "graph-text feed event raced the initial snapshot",
+                    ));
+                }
+                _ => {
+                    return Err(graph_text_admission_unavailable(
+                        "exact feed event requires an authoritative index",
+                    ));
+                }
+            };
+            let feed = current
+                .feed
+                .as_ref()
+                .expect("Complete indexes always retain an armed feed");
+            let Some(expected_sequence) = feed.last_sequence.checked_add(1) else {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "graph-text feed sequence overflow".to_owned(),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "graph-text feed sequence overflow",
+                ));
+            };
+            if sequence != expected_sequence {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    format!(
+                        "graph-text feed sequence gap: expected {expected_sequence}, received {sequence}"
+                    ),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "graph-text feed sequence gap",
+                ));
+            }
+            let Some(next_generation) = current.generation.checked_add(1) else {
+                poison_graph_text_admission_state(
+                    &mut state,
+                    "graph-text admission generation overflow".to_owned(),
+                );
+                return Err(graph_text_admission_unavailable(
+                    "graph-text admission generation overflow",
+                ));
+            };
+            if let GraphTextAdmissionExactEvent::DirectoryChanged { relative } = &event {
+                let cause = match relative {
+                    Some(_) => "exact directory event requires a new bounded snapshot".to_owned(),
+                    None => "unnamed graph-text directory event".to_owned(),
+                };
+                poison_graph_text_admission_state(&mut state, cause.clone());
+                return Err(graph_text_admission_unavailable(&cause));
+            }
+            (current, next_generation)
+        };
+
+        let event_relative = match &event {
+            GraphTextAdmissionExactEvent::FileUpsert { relative }
+            | GraphTextAdmissionExactEvent::FileRemove { relative } => relative,
+            GraphTextAdmissionExactEvent::DirectoryChanged { .. } => unreachable!(),
+        };
+        let event_scratch = match graph_text_event_scratch_upper_bound(event_relative) {
+            Ok(scratch) => scratch,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        if let Err(error) =
+            ensure_graph_text_peak_limit(current.permanent_bytes, event_scratch, current.peak_limit)
+        {
+            self.poison_graph_text_admission(error.to_string());
+            return Err(error);
+        }
+        let prepared = match &event {
+            GraphTextAdmissionExactEvent::FileUpsert { relative } => {
+                match self.prepare_graph_text_file_upsert(&current, relative.clone(), event_scratch)
+                {
+                    Ok(prepared) => (Some(prepared), None),
+                    Err(error) => {
+                        self.poison_graph_text_admission(error.to_string());
+                        return Err(error);
+                    }
+                }
+            }
+            GraphTextAdmissionExactEvent::FileRemove { relative } => {
+                match self.prepare_graph_text_file_remove(&current, relative.clone()) {
+                    Ok(prepared) => (None, Some(prepared)),
+                    Err(error) => {
+                        self.poison_graph_text_admission(error.to_string());
+                        return Err(error);
+                    }
+                }
+            }
+            GraphTextAdmissionExactEvent::DirectoryChanged { .. } => unreachable!(),
+        };
+        let prepared_growth = prepared
+            .0
+            .as_ref()
+            .map(|prepared| prepared.retained_growth)
+            .or_else(|| prepared.1.as_ref().map(|prepared| prepared.retained_growth))
+            .unwrap_or(0);
+        let structural_peak = match graph_text_admission_delta_structural_peak(&current) {
+            Ok(peak) => peak,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        let payload_peak = match graph_text_admission_delta_payload_peak(
+            &current,
+            event_relative,
+            prepared.0.as_ref(),
+        ) {
+            Ok(peak) => peak,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        let event_peak = match (|| {
+            checked_add_bytes(
+                checked_add_bytes(
+                    checked_add_bytes(
+                        checked_add_bytes(current.permanent_bytes, prepared_growth)?,
+                        structural_peak,
+                    )?,
+                    payload_peak,
+                )?,
+                event_scratch,
+            )
+        })() {
+            Ok(peak) => peak,
+            Err(error) => {
+                self.poison_graph_text_admission(error.to_string());
+                return Err(error);
+            }
+        };
+        if event_peak > current.peak_limit {
+            let error = initial_shadow_limit_error("peak build memory");
+            self.poison_graph_text_admission(error.to_string());
+            return Err(error);
+        }
+
+        let mut state = self.graph_text_admission.write().unwrap();
+        let unchanged = matches!(
+            &*state,
+            GraphTextAdmissionState::Complete(index)
+                if Arc::ptr_eq(index, &current)
+                    && Arc::ptr_eq(&index.instance, &self.graph_text_admission_instance)
+                    && index.scope_binding == current.scope_binding
+                    && index.graph_resource == current.graph_resource
+                    && index.generation == current.generation
+                    && index.feed.as_ref().is_some_and(|feed| {
+                        feed.last_sequence
+                            == current.feed.as_ref().map(|feed| feed.last_sequence).unwrap()
+                    })
+        );
+        if !unchanged {
+            let cause =
+                "graph-text admission authority changed during exact event proof".to_owned();
+            poison_graph_text_admission_state(&mut state, cause.clone());
+            return Err(graph_text_admission_unavailable(&cause));
+        }
+        let mut next = (*current).clone(); // O(1): persistent map roots are shared.
+        let update = match (event, prepared.0, prepared.1) {
+            (GraphTextAdmissionExactEvent::FileUpsert { .. }, Some(prepared), None) => {
+                self.apply_prepared_graph_text_file_upsert(&mut next, prepared)
+            }
+            (GraphTextAdmissionExactEvent::FileRemove { .. }, None, Some(prepared)) => {
+                self.apply_prepared_graph_text_file_remove(&mut next, prepared)
+            }
+            (GraphTextAdmissionExactEvent::DirectoryChanged { .. }, _, _) => unreachable!(),
+            _ => unreachable!("upsert events always retain prepared evidence"),
+        };
+        if let Err(error) = update {
+            poison_graph_text_admission_state(&mut state, error.to_string());
+            return Err(error);
+        }
+        next.generation = next_generation;
+        next.feed
+            .as_mut()
+            .expect("Complete indexes always retain an armed feed")
+            .last_sequence = sequence;
+        *state = GraphTextAdmissionState::Complete(Arc::new(next));
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn prepare_graph_text_file_upsert(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: String,
+        event_scratch: u64,
+    ) -> io::Result<PreparedGraphTextAdmissionUpsert> {
+        let target = self.graph_text_exact_path(&relative, false)?;
+        let parent = self.graph_text_event_parent(&target)?;
+        validate_graph_text_event_parent(index, &target, &parent)?;
+        let enumerated = open_projection_file_nofollow(parent.final_dir(), &target.filename)?;
+        let enumerated_resource = canonical_projection_file_resource_id(&enumerated)?;
+        let link_count = projection_file_link_count(&enumerated)?;
+        if link_count != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("exact feed upsert has an unsafe link count: {relative}"),
+            ));
+        }
+        let live_bytes = checked_add_bytes(index.permanent_bytes, event_scratch)?;
+        let remaining_peak = index
+            .peak_limit
+            .checked_sub(live_bytes)
+            .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?;
+        let (bytes, description, file_resource_id, _, _) =
+            read_projection_optional_bound_capture_with_limits(
+                parent.final_dir(),
+                &target.filename,
+                MAX_PROJECTION_EVIDENCE_BYTES,
+                remaining_peak,
+            )?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("exact feed upsert disappeared: {}", relative),
+                )
+            })?;
+        if file_resource_id != enumerated_resource {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed upsert changed after observation: {relative}"),
+            ));
+        }
+        self.ensure_graph_text_admission_snapshot_binding(index)?;
+        let eligible_path =
+            if self.graph_text_scope.is_eligible(&relative) {
+                Some(ManagedPath::parse(relative.clone()).map_err(|error| {
+                    io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
+                })?)
+            } else {
+                None
+            };
+        let content_for_bound = if eligible_path.is_some() {
+            std::str::from_utf8(&bytes).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("graph text is not UTF-8: {relative}"),
+                )
+            })?
+        } else {
+            ""
+        };
+        let worst_growth = graph_text_admission_upsert_worst_case_upper_bound(
+            self,
+            &relative,
+            eligible_path.as_ref(),
+            content_for_bound,
+        )?;
+        let worst_permanent = index
+            .permanent_bytes
+            .checked_add(worst_growth)
+            .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
+        if worst_permanent > index.permanent_limit {
+            return Err(initial_shadow_limit_error("permanent index memory"));
+        }
+        let eligible = if let Some(path) = eligible_path {
+            let content = std::str::from_utf8(&bytes).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("graph text is not UTF-8: {path}"),
+                )
+            })?;
+            let parser_live = checked_add_bytes(live_bytes, usize_to_u64(bytes.capacity())?)?;
+            let permit = graph_text_parse_budget_permit(
+                self,
+                &path,
+                content,
+                parser_live,
+                index.peak_limit,
+            )?;
+            let (semantic, format) = self.decode_present_graph_text(&path, &bytes, permit)?;
+            Some((
+                path,
+                GraphTextAdmissionRecord {
+                    description,
+                    file_resource_id,
+                    link_count,
+                    semantic,
+                    format,
+                },
+            ))
+        } else {
+            None
+        };
+        let retained_growth = graph_text_admission_upsert_retained_upper_bound(
+            &relative,
+            eligible.as_ref().map(|(path, _)| path),
+            eligible.as_ref().map(|(_, record)| &record.semantic),
+        )?;
+        let final_permanent = index
+            .permanent_bytes
+            .checked_add(retained_growth)
+            .ok_or_else(|| initial_shadow_limit_error("permanent index memory"))?;
+        if final_permanent > index.permanent_limit {
+            return Err(initial_shadow_limit_error("permanent index memory"));
+        }
+        let revalidation_live = checked_add_bytes(
+            checked_add_bytes(live_bytes, usize_to_u64(bytes.capacity())?)?,
+            retained_growth,
+        )?;
+        let revalidation_peak = index
+            .peak_limit
+            .checked_sub(revalidation_live)
+            .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?;
+        graph_text_event_revalidation_race_hook()?;
+        let rebound_parent = self.graph_text_event_parent(&target)?;
+        validate_graph_text_event_parent(index, &target, &rebound_parent)?;
+        let rebound = open_projection_file_nofollow(rebound_parent.final_dir(), &target.filename)?;
+        if canonical_projection_file_resource_id(&rebound)? != file_resource_id
+            || projection_file_link_count(&rebound)? != 1
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed upsert resource or link proof changed: {relative}"),
+            ));
+        }
+        let (rebound_bytes, rebound_description, rebound_resource, _, _) =
+            read_projection_optional_bound_capture_with_limits(
+                rebound_parent.final_dir(),
+                &target.filename,
+                MAX_PROJECTION_EVIDENCE_BYTES,
+                revalidation_peak,
+            )?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("exact feed upsert disappeared during revalidation: {relative}"),
+                )
+            })?;
+        let final_file =
+            open_projection_file_nofollow(rebound_parent.final_dir(), &target.filename)?;
+        if rebound_bytes != bytes
+            || rebound_description != description
+            || rebound_resource != file_resource_id
+            || canonical_projection_file_resource_id(&final_file)? != file_resource_id
+            || projection_file_link_count(&final_file)? != 1
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed upsert changed during two-sided proof: {relative}"),
+            ));
+        }
+        self.ensure_graph_text_admission_snapshot_binding(index)?;
+        Ok(PreparedGraphTextAdmissionUpsert {
+            relative,
+            file_resource_id,
+            link_count,
+            retained_growth,
+            eligible,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn apply_prepared_graph_text_file_upsert(
+        &self,
+        index: &mut CompleteGraphTextAdmissionIndex,
+        prepared: PreparedGraphTextAdmissionUpsert,
+    ) -> io::Result<()> {
+        let prior_active = index
+            .file_resource_by_exact_relative
+            .contains_key(prepared.relative.as_str());
+        let prior_graph_text = index
+            .file_is_graph_text_by_exact_relative
+            .get(prepared.relative.as_str())
+            .copied()
+            == Some(true);
+        let prior_tombstone = ManagedPath::parse(prepared.relative.clone())
+            .ok()
+            .is_some_and(|path| index.tombstones_by_exact_path.contains_key(&path));
+        count_graph_text_admission_event_work(
+            8,
+            0,
+            graph_text_delta_reverse_members(index, &prepared.relative),
+        );
+        let _ = remove_graph_text_admission_path(index, &prepared.relative);
+        let is_graph_text = prepared.eligible.is_some();
+        if let Ok(path) = ManagedPath::parse(prepared.relative.clone()) {
+            index.tombstones_by_exact_path.remove(&path);
+        }
+        index.permanent_bytes = checked_add_bytes(index.permanent_bytes, prepared.retained_growth)?;
+        count_graph_text_admission_index_map_insertion();
+        persistent_set_insert(
+            &mut index.paths_by_file_resource,
+            prepared.file_resource_id,
+            prepared.relative.clone(),
+        );
+        count_graph_text_admission_index_map_insertion();
+        index
+            .file_resource_by_exact_relative
+            .insert(prepared.relative.clone(), prepared.file_resource_id);
+        count_graph_text_admission_index_map_insertion();
+        index
+            .file_link_count_by_exact_relative
+            .insert(prepared.relative.clone(), prepared.link_count);
+        index
+            .file_is_graph_text_by_exact_relative
+            .insert(prepared.relative.clone(), is_graph_text);
+        if let Some((path, record)) = prepared.eligible {
+            count_graph_text_admission_index_map_insertion();
+            persistent_set_insert(
+                &mut index.paths_by_portable_key,
+                path.portable_key(),
+                path.clone(),
+            );
+            count_graph_text_admission_index_map_insertion();
+            persistent_set_insert(
+                &mut index.paths_by_semantic_key,
+                graph_text_semantic_key(&record.semantic),
+                path.clone(),
+            );
+            count_graph_text_admission_index_map_insertion();
+            index.files_by_exact_path.insert(path, record);
+        }
+        let writes = usize::from(prior_active) * 4
+            + usize::from(prior_graph_text) * 3
+            + usize::from(prior_tombstone)
+            + 4
+            + usize::from(is_graph_text) * 3;
+        count_graph_text_admission_event_work(
+            8,
+            writes,
+            graph_text_delta_reverse_members(index, &prepared.relative),
+        );
+        validate_graph_text_admission_delta(index, &prepared.relative)
+    }
+
+    #[allow(dead_code)]
+    fn prepare_graph_text_file_remove(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+        relative: String,
+    ) -> io::Result<PreparedGraphTextAdmissionRemove> {
+        let target = self.graph_text_exact_path(&relative, false)?;
+        if !index
+            .file_resource_by_exact_relative
+            .contains_key(relative.as_str())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed removal was never retained: {relative}"),
+            ));
+        }
+        match self.graph_text_event_parent(&target) {
+            Ok(parent) => {
+                validate_graph_text_event_parent(index, &target, &parent)?;
+                match parent.final_dir().symlink_metadata(&target.filename) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            format!("exact feed removal is still present: {relative}"),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("exact feed removal parent is unavailable: {relative}"),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+        self.ensure_graph_text_admission_snapshot_binding(index)?;
+        graph_text_event_revalidation_race_hook()?;
+        let rebound_parent = self.graph_text_event_parent(&target).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed removal parent changed: {error}"),
+            )
+        })?;
+        validate_graph_text_event_parent(index, &target, &rebound_parent)?;
+        match rebound_parent
+            .final_dir()
+            .symlink_metadata(&target.filename)
+        {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("exact feed removal reappeared: {relative}"),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+        self.ensure_graph_text_admission_snapshot_binding(index)?;
+        let retained_growth = match target.managed_path.as_ref() {
+            Some(path) => graph_text_admission_tombstone_upper_bound(
+                &relative,
+                index.files_by_exact_path.get(path),
+            )?,
+            None => 0,
+        };
+        Ok(PreparedGraphTextAdmissionRemove {
+            relative,
+            retained_growth,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn apply_prepared_graph_text_file_remove(
+        &self,
+        index: &mut CompleteGraphTextAdmissionIndex,
+        prepared: PreparedGraphTextAdmissionRemove,
+    ) -> io::Result<()> {
+        let relative = prepared.relative;
+        let prior_graph_text = index
+            .file_is_graph_text_by_exact_relative
+            .get(relative.as_str())
+            .copied()
+            == Some(true);
+        count_graph_text_admission_event_work(
+            8,
+            0,
+            graph_text_delta_reverse_members(index, &relative),
+        );
+        let tombstone = remove_graph_text_admission_path(index, &relative).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed removal was never retained: {relative}"),
+            )
+        })?;
+        if let Ok(path) = ManagedPath::parse(relative.to_owned()) {
+            index.tombstones_by_exact_path.insert(path, tombstone);
+        }
+        index.permanent_bytes = checked_add_bytes(index.permanent_bytes, prepared.retained_growth)?;
+        count_graph_text_admission_event_work(8, 5 + usize::from(prior_graph_text) * 3, 0);
+        validate_graph_text_admission_delta(index, &relative)
+    }
+
+    #[allow(dead_code)]
+    fn graph_text_event_parent(&self, target: &GraphTextExactPath) -> io::Result<ProjectionParent> {
+        let root = self.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?;
+        let mut chain = vec![root.try_clone()?];
+        for component in &target.parent_components {
+            let current = chain.last().expect("graph-text parent contains root");
+            projection_real_directory(current, component)?;
+            chain.push(open_projection_dir_nofollow(current, component)?);
+        }
+        Ok(ProjectionParent { chain })
+    }
+
+    fn ensure_graph_text_admission_snapshot_binding(
+        &self,
+        index: &CompleteGraphTextAdmissionIndex,
+    ) -> io::Result<()> {
+        self.ensure_projection_root_binding()?;
+        let graph_resource = self.canonical_resource_id()?;
+        let scope_binding = self.graph_text_scope_binding()?;
+        if !Arc::ptr_eq(&index.instance, &self.graph_text_admission_instance)
+            || graph_resource != index.graph_resource
+            || scope_binding != index.scope_binding
+            || scope_binding.graph_resource_id() != graph_resource
+        {
+            return Err(graph_text_admission_unavailable(
+                "graph-text event snapshot binding changed",
+            ));
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn disconnect_graph_text_admission_feed(
+        &self,
+        token: &GraphTextAdmissionFeedToken,
+    ) -> io::Result<()> {
+        let mut state = self.graph_text_admission.write().unwrap();
+        if !Arc::ptr_eq(&token.instance, &self.graph_text_admission_instance) {
+            poison_graph_text_admission_state(
+                &mut state,
+                "foreign graph-text feed token disconnected this Graph instance".to_owned(),
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "graph-text feed token belongs to another Graph instance",
+            ));
+        }
+        poison_graph_text_admission_state(&mut state, "graph-text feed disconnected".to_owned());
+        Ok(())
+    }
+
+    fn poison_graph_text_admission_error(&self, error: io::Error) -> io::Error {
+        let cause = error.to_string();
+        let mut state = self.graph_text_admission.write().unwrap();
+        poison_graph_text_admission_state(&mut state, cause);
+        error
+    }
+
+    #[cfg(test)]
+    fn set_graph_text_admission_generation_for_test(&self, generation: u64) {
+        let mut state = self.graph_text_admission.write().unwrap();
+        if let GraphTextAdmissionState::Complete(index) = &*state {
+            let mut changed = (**index).clone();
+            changed.generation = generation;
+            *state = GraphTextAdmissionState::Complete(Arc::new(changed));
+        }
     }
 
     fn ensure_projection_root_binding(&self) -> io::Result<()> {
@@ -5783,6 +7682,52 @@ impl Graph {
             parent_components,
             filename: (*filename).to_owned(),
             twin_filename,
+        })
+    }
+
+    fn graph_text_exact_path(
+        &self,
+        relative: &str,
+        require_eligible: bool,
+    ) -> io::Result<GraphTextExactPath> {
+        if relative != relative.trim()
+            || relative.is_empty()
+            || relative.starts_with('/')
+            || relative.contains('\\')
+            || relative.contains('\0')
+        {
+            return Err(bad_path());
+        }
+        let components = relative.split('/').collect::<Vec<_>>();
+        if components
+            .iter()
+            .any(|component| !projection_component_is_portable(component))
+        {
+            return Err(bad_path());
+        }
+        let managed_path = ManagedPath::parse(relative.to_owned()).ok();
+        if require_eligible
+            && (!self.graph_text_scope.is_eligible(relative) || managed_path.is_none())
+        {
+            return Err(bad_path());
+        }
+        let filename = components.last().copied().ok_or_else(bad_path)?;
+        let mut parent_components = Vec::with_capacity(components.len().saturating_sub(1));
+        let mut parent_relative = String::new();
+        for component in &components[..components.len() - 1] {
+            if !parent_relative.is_empty() {
+                parent_relative.push('/');
+            }
+            parent_relative.push_str(component);
+            if !self.graph_text_scope.should_descend(&parent_relative) {
+                return Err(bad_path());
+            }
+            parent_components.push((*component).to_owned());
+        }
+        Ok(GraphTextExactPath {
+            managed_path,
+            parent_components,
+            filename: filename.to_owned(),
         })
     }
 
@@ -16343,7 +18288,33 @@ fn read_projection_optional_bound_capture(
     dir: &Dir,
     name: &str,
 ) -> io::Result<Option<(Vec<u8>, BlobDescription, ContentDigest, u64, u64)>> {
-    let (opened, bytes) = match open_and_read_projection_regular(dir, name) {
+    read_projection_optional_bound_capture_impl(dir, name, None)
+}
+
+fn read_projection_optional_bound_capture_with_limits(
+    dir: &Dir,
+    name: &str,
+    content_limit: u64,
+    peak_limit: u64,
+) -> io::Result<Option<(Vec<u8>, BlobDescription, ContentDigest, u64, u64)>> {
+    read_projection_optional_bound_capture_impl(dir, name, Some((content_limit, peak_limit)))
+}
+
+fn read_projection_optional_bound_capture_impl(
+    dir: &Dir,
+    name: &str,
+    limits: Option<(u64, u64)>,
+) -> io::Result<Option<(Vec<u8>, BlobDescription, ContentDigest, u64, u64)>> {
+    let rebound_limit = limits
+        .map(|(content_limit, _)| content_limit)
+        .unwrap_or(MAX_PROJECTION_EVIDENCE_BYTES);
+    let opened = match limits {
+        Some((content_limit, peak_limit)) => {
+            open_and_read_projection_regular_exact_bound(dir, name, content_limit, peak_limit)
+        }
+        None => open_and_read_projection_regular(dir, name),
+    };
+    let (opened, bytes) = match opened {
         Ok(result) => result,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             managed_inventory_read_hook()?;
@@ -16379,7 +18350,7 @@ fn read_projection_optional_bound_capture(
         rebound_bytes = rebound_bytes
             .checked_add(read as u64)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "read-byte overflow"))?;
-        if rebound_bytes > MAX_PROJECTION_EVIDENCE_BYTES {
+        if rebound_bytes > rebound_limit {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "managed target grew beyond the capture bound",
@@ -16407,6 +18378,53 @@ fn read_projection_optional_bound_capture(
     )))
 }
 
+fn open_and_read_projection_regular_exact_bound(
+    dir: &Dir,
+    name: &str,
+    content_limit: u64,
+    peak_limit: u64,
+) -> io::Result<(fs::File, Vec<u8>)> {
+    let mut file = open_projection_file_nofollow(dir, name)?;
+    let len = file.metadata()?.len();
+    if len > content_limit {
+        return Err(initial_shadow_limit_error("aggregate raw bytes"));
+    }
+    let allocation_peak = checked_add_bytes(len, 16 * 1024)?;
+    if allocation_peak > peak_limit {
+        return Err(initial_shadow_limit_error("peak build memory"));
+    }
+    bounded_read_after_metadata_hook()?;
+    let capacity = usize::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence length is not addressable",
+        )
+    })?;
+    let mut bytes = vec![0_u8; capacity].into_boxed_slice().into_vec();
+    assert_eq!(
+        bytes.capacity(),
+        capacity,
+        "boxed bounded read must transfer exact retained capacity"
+    );
+    let mut filled = 0usize;
+    while filled < bytes.len() {
+        let read = file.read(&mut bytes[filled..])?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    bytes.truncate(filled);
+    let mut growth_probe = [0_u8; 1];
+    if file.read(&mut growth_probe)? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projection evidence grew after its bounded allocation",
+        ));
+    }
+    Ok((file, bytes))
+}
+
 const MAX_INITIAL_SHADOW_MANAGED_FILES: usize = 1_000_000;
 const MAX_INITIAL_SHADOW_RAW_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_INITIAL_SHADOW_DIRECTORY_DEPTH: usize = 256;
@@ -16414,6 +18432,8 @@ const MAX_INITIAL_SHADOW_ALL_ENTRIES: usize = 2_000_000;
 const MAX_INITIAL_SHADOW_DIRECTORIES: usize = 1_000_000;
 const MAX_INITIAL_SHADOW_PENDING_DIRECTORIES: usize = 1_000_000;
 const MAX_INITIAL_SHADOW_PATH_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_GRAPH_TEXT_ADMISSION_INDEX_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_GRAPH_TEXT_ADMISSION_BUILD_PEAK_BYTES: u64 = 1024 * 1024 * 1024;
 /// Peak content retained while mutable managed-text preparation has both parsed
 /// and raw/projection representations alive. This matches the 512 MiB initial
 /// shadow raw-byte ceiling, while accounting for those simultaneous copies.
@@ -16428,6 +18448,8 @@ struct InitialShadowLimits {
     directories: usize,
     pending_directories: usize,
     path_bytes: u64,
+    permanent_index_bytes: u64,
+    peak_build_bytes: u64,
 }
 
 const INITIAL_SHADOW_LIMITS: InitialShadowLimits = InitialShadowLimits {
@@ -16438,6 +18460,8 @@ const INITIAL_SHADOW_LIMITS: InitialShadowLimits = InitialShadowLimits {
     directories: MAX_INITIAL_SHADOW_DIRECTORIES,
     pending_directories: MAX_INITIAL_SHADOW_PENDING_DIRECTORIES,
     path_bytes: MAX_INITIAL_SHADOW_PATH_BYTES,
+    permanent_index_bytes: MAX_GRAPH_TEXT_ADMISSION_INDEX_BYTES,
+    peak_build_bytes: MAX_GRAPH_TEXT_ADMISSION_BUILD_PEAK_BYTES,
 };
 
 /// Bounds for mutable managed-text inventories. These deliberately reuse the
@@ -16768,6 +18792,19 @@ fn owned_path_upper_bound(value: &Path) -> io::Result<u64> {
 fn page_entry_clone_upper_bound(entry: &PageEntry) -> io::Result<u64> {
     let mut bytes = usize_to_u64(std::mem::size_of::<PageEntry>())?;
     bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.name)?)?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.rel_path)?)?;
+    checked_add_bytes(bytes, owned_path_upper_bound(&entry.path)?)
+}
+
+fn graph_text_page_entry_retained_upper_bound(entry: &PageEntry) -> io::Result<u64> {
+    let mut bytes = usize_to_u64(std::mem::size_of::<PageEntry>())?;
+    bytes = checked_add_bytes(
+        bytes,
+        checked_add_bytes(
+            usize_to_u64(std::mem::size_of::<String>())?,
+            usize_to_u64(entry.name.capacity())?,
+        )?,
+    )?;
     bytes = checked_add_bytes(bytes, owned_string_upper_bound(&entry.rel_path)?)?;
     checked_add_bytes(bytes, owned_path_upper_bound(&entry.path)?)
 }
@@ -17765,27 +19802,40 @@ struct InitialShadowEntry {
     bytes: Option<Vec<u8>>,
     description: BlobDescription,
     file_resource_id: ContentDigest,
+    link_count: u64,
 }
 
+struct InitialShadowCapture {
+    entries: Vec<InitialShadowEntry>,
+    directories_by_exact_relative: std::collections::BTreeMap<String, ContentDigest>,
+    paths_by_file_resource:
+        std::collections::BTreeMap<ContentDigest, std::collections::BTreeSet<String>>,
+    file_link_count_by_exact_relative: std::collections::BTreeMap<String, u64>,
+    peak_build_charge: u64,
+}
+
+#[cfg(test)]
 fn collect_initial_shadow_managed_inventory(
     graph: &Graph,
     permit: &ManagedTextWritePermit,
     retain_bytes: bool,
-) -> io::Result<Vec<InitialShadowEntry>> {
+) -> io::Result<InitialShadowCapture> {
     collect_initial_shadow_managed_inventory_with_limits(
         graph,
         permit,
         retain_bytes,
         INITIAL_SHADOW_LIMITS,
+        0,
     )
 }
 
 fn collect_initial_shadow_managed_inventory_with_limits(
     graph: &Graph,
-    permit: &ManagedTextWritePermit,
+    _permit: &ManagedTextWritePermit,
     retain_bytes: bool,
     limits: InitialShadowLimits,
-) -> io::Result<Vec<InitialShadowEntry>> {
+    simultaneous_capture_bytes: u64,
+) -> io::Result<InitialShadowCapture> {
     struct PendingDirectory {
         directory: Dir,
         relative: String,
@@ -17795,54 +19845,45 @@ fn collect_initial_shadow_managed_inventory_with_limits(
     let mut entries = Vec::new();
     let mut raw_bytes = 0_u64;
     let mut all_entries = 0_usize;
-    let mut directory_count = 0_usize;
+    let mut directory_count = 1_usize;
     let mut path_bytes = 0_u64;
+    let mut peak_build_charge = initial_shadow_root_capture_upper_bound()?;
+    let mut directories_by_exact_relative = std::collections::BTreeMap::new();
     let mut directory_resources = std::collections::BTreeMap::new();
-    let mut file_resources = std::collections::BTreeMap::new();
+    let mut paths_by_file_resource =
+        std::collections::BTreeMap::<ContentDigest, std::collections::BTreeSet<String>>::new();
+    let mut file_link_count_by_exact_relative = std::collections::BTreeMap::new();
     let mut pending = Vec::new();
-    for (managed_root, depth) in graph.managed_text_inventory_roots(permit)? {
-        if depth > limits.directory_depth {
-            return Err(initial_shadow_limit_error("managed directory depth"));
-        }
-        let sentinel = graph
-            .root
-            .join(managed_root)
-            .join(".tine-capability-initial-shadow");
-        let target = match graph.managed_target(permit, &sentinel, false) {
-            Ok(target) => target,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        let directory = target.parent().try_clone()?;
-        directory_count = directory_count
-            .checked_add(1)
-            .ok_or_else(|| initial_shadow_limit_error("directory count"))?;
-        if directory_count > limits.directories {
-            return Err(initial_shadow_limit_error("directory count"));
-        }
-        let resource = canonical_projection_directory_resource_id(&directory)?;
-        if let Some(first) = directory_resources.insert(resource, managed_root.to_owned()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("managed directories alias one resource: {first} and {managed_root}"),
-            ));
-        }
-        let rebound = graph.managed_target(permit, &sentinel, false)?;
-        if projection_dir_identity(&directory)? != projection_dir_identity(rebound.parent())? {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "managed root changed during initial shadow capture",
-            ));
-        }
-        if pending.len() == limits.pending_directories {
-            return Err(initial_shadow_limit_error("pending directories"));
-        }
-        pending.push(PendingDirectory {
-            directory,
-            relative: managed_root.to_owned(),
-            depth,
-        });
+    ensure_graph_text_peak_limit(
+        simultaneous_capture_bytes,
+        peak_build_charge,
+        limits.peak_build_bytes,
+    )?;
+    if directory_count > limits.directories {
+        return Err(initial_shadow_limit_error("directory count"));
     }
+    graph.ensure_projection_root_binding()?;
+    let directory = graph
+        .projection_root
+        .as_ref()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?
+        .try_clone()?;
+    let root_resource = canonical_projection_directory_resource_id(&directory)?;
+    directories_by_exact_relative.insert(String::new(), root_resource);
+    directory_resources.insert(root_resource, String::new());
+    if pending.len() == limits.pending_directories {
+        return Err(initial_shadow_limit_error("pending directories"));
+    }
+    pending.push(PendingDirectory {
+        directory,
+        relative: String::new(),
+        depth: 0,
+    });
 
     while let Some(PendingDirectory {
         directory,
@@ -17850,6 +19891,7 @@ fn collect_initial_shadow_managed_inventory_with_limits(
         depth,
     }) = pending.pop()
     {
+        count_graph_text_admission_builder_enumeration();
         for entry in directory.entries()? {
             all_entries = all_entries
                 .checked_add(1)
@@ -17867,9 +19909,9 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             })?;
             let relative_len = relative
                 .len()
-                .checked_add(1)
+                .checked_add(usize::from(!relative.is_empty()))
                 .and_then(|length| length.checked_add(name.len()))
-                .ok_or_else(|| initial_shadow_limit_error("aggregate path bytes"))?;
+                .ok_or_else(allocation_overflow)?;
             path_bytes = path_bytes
                 .checked_add(
                     usize_to_u64(relative_len)
@@ -17879,16 +19921,31 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             if path_bytes > limits.path_bytes {
                 return Err(initial_shadow_limit_error("aggregate path bytes"));
             }
-            let child_relative = format!("{relative}/{name}");
+            grow_initial_shadow_capture_charge(
+                &mut peak_build_charge,
+                initial_shadow_discovered_path_upper_bound(usize_to_u64(relative_len)?)?,
+                simultaneous_capture_bytes,
+                limits.peak_build_bytes,
+            )?;
+            let child_relative = if relative.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{relative}/{name}")
+            };
             let file_type = entry.file_type()?;
             if file_type.is_symlink() {
+                if !graph.graph_text_scope.should_descend(&child_relative)
+                    && !graph.graph_text_scope.is_eligible(&child_relative)
+                {
+                    continue;
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("managed text entry is a symlink or reparse point: {child_relative}"),
                 ));
             }
             if file_type.is_dir() {
-                if name.starts_with('.') {
+                if !graph.graph_text_scope.should_descend(&child_relative) {
                     continue;
                 }
                 let child_depth = depth
@@ -17914,6 +19971,7 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                         ),
                     ));
                 }
+                directories_by_exact_relative.insert(child_relative.clone(), resource);
                 let rebound = open_projection_dir_nofollow(&directory, name)?;
                 if projection_dir_identity(&child)? != projection_dir_identity(&rebound)? {
                     return Err(io::Error::new(
@@ -17939,18 +19997,13 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             }
             let file = open_projection_file_nofollow(&directory, name)?;
             let file_resource = canonical_projection_file_resource_id(&file)?;
-            if let Some(first) = file_resources.insert(file_resource, child_relative.clone()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("managed files alias one resource: {first} and {child_relative}"),
-                ));
-            }
-            if !matches!(
-                Path::new(name)
-                    .extension()
-                    .and_then(|extension| extension.to_str()),
-                Some("md" | "org")
-            ) {
+            let link_count = projection_file_link_count(&file)?;
+            paths_by_file_resource
+                .entry(file_resource)
+                .or_default()
+                .insert(child_relative.clone());
+            file_link_count_by_exact_relative.insert(child_relative.clone(), link_count);
+            if !graph.graph_text_scope.is_eligible(&child_relative) {
                 continue;
             }
             if entries.len() == limits.managed_files {
@@ -17958,13 +20011,37 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             }
             let path = ManagedPath::parse(child_relative)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+            let remaining_raw = limits
+                .raw_bytes
+                .checked_sub(raw_bytes)
+                .ok_or_else(|| initial_shadow_limit_error("aggregate raw bytes"))?;
+            let live_capture_bytes =
+                checked_add_bytes(simultaneous_capture_bytes, peak_build_charge)?;
+            let remaining_peak = limits
+                .peak_build_bytes
+                .checked_sub(live_capture_bytes)
+                .ok_or_else(|| initial_shadow_limit_error("peak build memory"))?;
             let (bytes, description, captured_resource, _, _) =
-                read_projection_optional_bound_capture(&directory, name)?.ok_or_else(|| {
+                read_projection_optional_bound_capture_with_limits(
+                    &directory,
+                    name,
+                    remaining_raw,
+                    remaining_peak,
+                )?
+                .ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::Interrupted,
                         format!("managed entry disappeared during capture: {path}"),
                     )
                 })?;
+            if retain_bytes {
+                grow_initial_shadow_capture_charge(
+                    &mut peak_build_charge,
+                    usize_to_u64(bytes.capacity())?,
+                    simultaneous_capture_bytes,
+                    limits.peak_build_bytes,
+                )?;
+            }
             if captured_resource != file_resource {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
@@ -17982,6 +20059,7 @@ fn collect_initial_shadow_managed_inventory_with_limits(
                 description,
                 bytes: retain_bytes.then_some(bytes),
                 file_resource_id: captured_resource,
+                link_count,
             });
         }
     }
@@ -17996,21 +20074,1304 @@ fn collect_initial_shadow_managed_inventory_with_limits(
             "initial shadow capture contains duplicate managed paths",
         ));
     }
-    let mut portable = std::collections::BTreeMap::new();
-    for entry in &entries {
-        if let Some(first) =
-            portable.insert(entry.path.portable_key(), entry.path.as_str().to_owned())
+    Ok(InitialShadowCapture {
+        entries,
+        directories_by_exact_relative,
+        paths_by_file_resource,
+        file_link_count_by_exact_relative,
+        peak_build_charge: {
+            #[cfg(test)]
+            {
+                if retain_bytes {
+                    GRAPH_TEXT_FIRST_CAPTURE_CHARGE_OVERRIDE
+                        .with(|override_charge| override_charge.take())
+                        .unwrap_or(peak_build_charge)
+                } else {
+                    peak_build_charge
+                }
+            }
+            #[cfg(not(test))]
+            {
+                peak_build_charge
+            }
+        },
+    })
+}
+
+fn ensure_graph_text_peak_limit(base: u64, additional: u64, limit: u64) -> io::Result<()> {
+    if checked_add_bytes(base, additional)? > limit {
+        return Err(initial_shadow_limit_error("peak build memory"));
+    }
+    Ok(())
+}
+
+fn grow_initial_shadow_capture_charge(
+    charge: &mut u64,
+    growth: u64,
+    simultaneous_capture_bytes: u64,
+    peak_limit: u64,
+) -> io::Result<()> {
+    let next = checked_add_bytes(*charge, growth)?;
+    ensure_graph_text_peak_limit(simultaneous_capture_bytes, next, peak_limit)?;
+    *charge = next;
+    Ok(())
+}
+
+fn initial_shadow_discovered_path_upper_bound(relative_len: u64) -> io::Result<u64> {
+    let owned_path = owned_string_len_upper_bound(relative_len)?;
+    let mut bytes = checked_add_bytes(
+        conservative_vec_entry_bytes::<InitialShadowEntry>()?,
+        checked_add_bytes(
+            conservative_vec_entry_bytes::<(Dir, String, usize)>()?,
+            owned_path,
+        )?,
+    )?;
+    // Charge the maximum simultaneous directory and file bookkeeping for every
+    // discovered name. This intentionally over-reserves rows that are used by
+    // only one branch so no branch can allocate before admission.
+    for row in [
+        conservative_btree_entry_bytes::<String, ContentDigest>()?,
+        conservative_btree_entry_bytes::<ContentDigest, String>()?,
+        conservative_btree_entry_bytes::<ContentDigest, std::collections::BTreeSet<String>>()?,
+        conservative_btree_entry_bytes::<String, ()>()?,
+        conservative_btree_entry_bytes::<String, u64>()?,
+    ] {
+        bytes = checked_add_bytes(bytes, row)?;
+        bytes = checked_add_bytes(bytes, owned_path)?;
+    }
+    // Exact path construction plus the transient child-relative string.
+    bytes = checked_add_bytes(bytes, checked_mul_bytes(owned_path, 2)?)?;
+    checked_add_bytes(bytes, 512)
+}
+
+fn initial_shadow_root_capture_upper_bound() -> io::Result<u64> {
+    let empty = owned_string_len_upper_bound(0)?;
+    let mut bytes = conservative_vec_entry_bytes::<(Dir, String, usize)>()?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<String, ContentDigest>()?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<ContentDigest, String>()?,
+    )?;
+    bytes = checked_add_bytes(bytes, checked_mul_bytes(empty, 3)?)?;
+    checked_add_bytes(bytes, 512)
+}
+
+impl CompleteGraphTextAdmissionIndex {
+    fn diagnostics(&self) -> GraphTextAdmissionDiagnostics {
+        GraphTextAdmissionDiagnostics {
+            generation: self.generation,
+            files: self.files_by_exact_path.len(),
+            directories: self.directories_by_exact_relative.len(),
+            permanent_bytes: self.permanent_bytes,
+        }
+    }
+}
+
+fn graph_text_semantic_key(entry: &PageEntry) -> (u8, String) {
+    let kind = match entry.kind {
+        PageKind::Page => 0,
+        PageKind::Journal => 1,
+    };
+    (kind, crate::refs::page_key(&entry.name))
+}
+
+fn initial_shadow_captures_match(
+    first: &InitialShadowCapture,
+    second: &InitialShadowCapture,
+) -> bool {
+    first.directories_by_exact_relative == second.directories_by_exact_relative
+        && first.paths_by_file_resource == second.paths_by_file_resource
+        && first.file_link_count_by_exact_relative == second.file_link_count_by_exact_relative
+        && first.entries.len() == second.entries.len()
+        && first
+            .entries
+            .iter()
+            .zip(&second.entries)
+            .all(|(first, second)| {
+                first.path == second.path
+                    && first.description == second.description
+                    && first.file_resource_id == second.file_resource_id
+                    && first.link_count == second.link_count
+            })
+}
+
+fn build_graph_text_admission_index(
+    graph: &Graph,
+    capture: &InitialShadowCapture,
+    feed: Option<GraphTextAdmissionFeedFence>,
+    limits: InitialShadowLimits,
+    combined_capture_bytes: u64,
+) -> io::Result<CompleteGraphTextAdmissionIndex> {
+    let scope_binding = graph.graph_text_scope_binding()?;
+    let graph_resource = graph.canonical_resource_id()?;
+    if scope_binding.graph_resource_id() != graph_resource {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "graph-text scope binding does not match the retained graph resource",
+        ));
+    }
+    let permanent_bytes = graph_text_initial_permanent_upper_bound(graph, capture)?;
+    if permanent_bytes > limits.permanent_index_bytes {
+        return Err(initial_shadow_limit_error("permanent index memory"));
+    }
+    let validation_scratch = graph_text_index_validation_scratch_upper_bound(graph, capture)?;
+    ensure_graph_text_peak_limit(
+        combined_capture_bytes,
+        checked_add_bytes(permanent_bytes, validation_scratch)?,
+        limits.peak_build_bytes,
+    )?;
+
+    // All permanent rows are reserved above before the first map allocation.
+    let mut file_resource_by_exact_relative = PersistentMap::default();
+    let mut file_is_graph_text_by_exact_relative = PersistentMap::default();
+    for (resource, paths) in &capture.paths_by_file_resource {
+        for path in paths {
+            count_graph_text_admission_index_map_insertion();
+            file_resource_by_exact_relative.insert(path.clone(), *resource);
+            count_graph_text_admission_index_map_insertion();
+            file_is_graph_text_by_exact_relative.insert(path.clone(), false);
+        }
+    }
+    let mut index = CompleteGraphTextAdmissionIndex {
+        instance: Arc::clone(&graph.graph_text_admission_instance),
+        scope_binding,
+        graph_resource,
+        generation: 1,
+        feed,
+        files_by_exact_path: PersistentMap::default(),
+        paths_by_portable_key: PersistentMap::default(),
+        paths_by_file_resource: capture
+            .paths_by_file_resource
+            .iter()
+            .map(|(key, value)| (*key, value.clone()))
+            .collect(),
+        file_resource_by_exact_relative,
+        file_link_count_by_exact_relative: capture
+            .file_link_count_by_exact_relative
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect(),
+        file_is_graph_text_by_exact_relative,
+        paths_by_semantic_key: PersistentMap::default(),
+        tombstones_by_exact_path: PersistentMap::default(),
+        directories_by_exact_relative: capture
+            .directories_by_exact_relative
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect(),
+        permanent_bytes,
+        permanent_limit: limits.permanent_index_bytes,
+        peak_limit: limits.peak_build_bytes,
+    };
+    // Collision groups are assembled mutably and sealed once. Updating a
+    // persistent value for every member would repeatedly copy a growing set
+    // before the boundary collision check.
+    let mut portable_groups = std::collections::BTreeMap::new();
+    let mut semantic_groups = std::collections::BTreeMap::new();
+    for entry in &capture.entries {
+        let bytes = entry
+            .bytes
+            .as_deref()
+            .expect("the first initial-shadow pass retains bytes");
+        let content = std::str::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("graph text is not UTF-8: {}", entry.path),
+            )
+        })?;
+        let permit = graph_text_parse_budget_permit(
+            graph,
+            &entry.path,
+            content,
+            checked_add_bytes(combined_capture_bytes, permanent_bytes)?,
+            limits.peak_build_bytes,
+        )?;
+        let (semantic, format) = graph.decode_present_graph_text(&entry.path, bytes, permit)?;
+        let record = GraphTextAdmissionRecord {
+            description: entry.description,
+            file_resource_id: entry.file_resource_id,
+            link_count: entry.link_count,
+            semantic,
+            format,
+        };
+        index
+            .file_is_graph_text_by_exact_relative
+            .insert(entry.path.as_str().to_owned(), true);
+        count_graph_text_admission_index_map_insertion();
+        initial_graph_text_collision_group_insert(
+            &mut portable_groups,
+            entry.path.portable_key(),
+            entry.path.clone(),
+        );
+        count_graph_text_admission_index_map_insertion();
+        initial_graph_text_collision_group_insert(
+            &mut semantic_groups,
+            graph_text_semantic_key(&record.semantic),
+            entry.path.clone(),
+        );
+        count_graph_text_admission_index_map_insertion();
+        if index
+            .files_by_exact_path
+            .insert(entry.path.clone(), record)
+            .is_some()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "initial shadow managed paths share one portable key: {first} and {}",
-                    entry.path
-                ),
+                "initial shadow contains duplicate exact graph-text paths",
             ));
         }
     }
-    Ok(entries)
+    index.paths_by_portable_key = portable_groups.into_iter().collect();
+    index.paths_by_semantic_key = semantic_groups.into_iter().collect();
+    validate_graph_text_admission_index(&index)?;
+    Ok(index)
+}
+
+fn graph_text_initial_permanent_upper_bound(
+    graph: &Graph,
+    capture: &InitialShadowCapture,
+) -> io::Result<u64> {
+    let title_format = graph_text_journal_title_format_budget(graph)?;
+    let mut bytes = checked_add_bytes(
+        usize_to_u64(std::mem::size_of::<CompleteGraphTextAdmissionIndex>())?,
+        512,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        owned_string_len_upper_bound(title_format.input_bytes)?,
+    )?;
+    for relative in capture.directories_by_exact_relative.keys() {
+        bytes = checked_add_bytes(
+            bytes,
+            graph_text_owned_btree_row_upper_bound::<String, ContentDigest>(usize_to_u64(
+                relative.len(),
+            )?)?,
+        )?;
+    }
+    for paths in capture.paths_by_file_resource.values() {
+        bytes = checked_add_bytes(
+            bytes,
+            conservative_btree_entry_bytes::<ContentDigest, std::collections::BTreeSet<String>>()?,
+        )?;
+        for path in paths {
+            let path_len = usize_to_u64(path.len())?;
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<String, ()>(path_len)?,
+            )?;
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<String, ContentDigest>(path_len)?,
+            )?;
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<String, u64>(path_len)?,
+            )?;
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<String, bool>(path_len)?,
+            )?;
+        }
+    }
+    for entry in &capture.entries {
+        let content =
+            std::str::from_utf8(entry.bytes.as_ref().expect("first capture retains bytes"))
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "graph text is not UTF-8")
+                })?;
+        let semantic_name_len =
+            graph_text_observed_semantic_name_upper_bound(graph, &entry.path, content)?
+                .semantic_name_bytes;
+        bytes = checked_add_bytes(
+            bytes,
+            graph_text_file_record_worst_case_upper_bound(
+                graph,
+                usize_to_u64(entry.path.as_str().len())?,
+                semantic_name_len,
+            )?,
+        )?;
+    }
+    Ok(bytes)
+}
+
+fn graph_text_index_validation_scratch_upper_bound(
+    graph: &Graph,
+    capture: &InitialShadowCapture,
+) -> io::Result<u64> {
+    let mut largest_path = 0_u64;
+    let mut largest_name = 0_u64;
+    for entry in &capture.entries {
+        let path = usize_to_u64(entry.path.as_str().len())?;
+        let content =
+            std::str::from_utf8(entry.bytes.as_ref().expect("first capture retains bytes"))
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "graph text is not UTF-8")
+                })?;
+        largest_path = largest_path.max(path);
+        largest_name = largest_name.max(
+            graph_text_observed_semantic_name_upper_bound(graph, &entry.path, content)?
+                .semantic_name_bytes,
+        );
+    }
+    let mut bytes = checked_add_bytes(
+        checked_add_bytes(
+            owned_string_len_upper_bound(checked_mul_bytes(largest_path, 8)?)?,
+            owned_string_len_upper_bound(checked_mul_bytes(largest_name, 8)?)?,
+        )?,
+        1024,
+    )?;
+    let all_files = capture.file_link_count_by_exact_relative.len();
+    let graph_text_files = capture.entries.len();
+    for structural in [
+        persistent_map_build_path_peak_upper_bound::<ManagedPath, GraphTextAdmissionRecord>(
+            graph_text_files,
+        )?,
+        persistent_map_build_path_peak_upper_bound::<
+            PortablePathKey,
+            std::collections::BTreeSet<ManagedPath>,
+        >(graph_text_files)?,
+        persistent_map_build_path_peak_upper_bound::<
+            ContentDigest,
+            std::collections::BTreeSet<String>,
+        >(all_files)?,
+        persistent_map_build_path_peak_upper_bound::<String, ContentDigest>(all_files)?,
+        persistent_map_build_path_peak_upper_bound::<String, u64>(all_files)?,
+        persistent_map_build_path_peak_upper_bound::<String, bool>(all_files)?,
+        persistent_map_build_path_peak_upper_bound::<
+            (u8, String),
+            std::collections::BTreeSet<ManagedPath>,
+        >(graph_text_files)?,
+    ] {
+        bytes = checked_add_bytes(bytes, structural)?;
+    }
+    Ok(bytes)
+}
+
+fn persistent_map_build_path_peak_upper_bound<K, V>(entries: usize) -> io::Result<u64> {
+    if entries == 0 {
+        return Ok(0);
+    }
+    let binary_digits = u64::from(usize::BITS - entries.leading_zeros());
+    let conservative_avl_depth = checked_mul_bytes(binary_digits, 2)?;
+    let copied_nodes = checked_add_bytes(checked_mul_bytes(conservative_avl_depth, 5)?, 1)?;
+    checked_mul_bytes(
+        copied_nodes,
+        usize_to_u64(std::mem::size_of::<PersistentMapNode<K, V>>())?,
+    )
+}
+
+fn graph_text_owned_btree_row_upper_bound<K, V>(owned_len: u64) -> io::Result<u64> {
+    checked_add_bytes(
+        conservative_btree_entry_bytes::<K, V>()?,
+        owned_string_len_upper_bound(owned_len)?,
+    )
+}
+
+const MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES: u64 = 256 * 1024;
+const MAX_JOURNAL_TITLE_BYTES_PER_FORMAT_BYTE: u64 = 11;
+
+#[derive(Clone, Copy)]
+struct GraphTextJournalTitleFormatBudget {
+    input_bytes: u64,
+    rendered_bytes: u64,
+}
+
+#[derive(Clone, Copy)]
+struct GraphTextSemanticNameBudget {
+    semantic_name_bytes: u64,
+    title_format: GraphTextJournalTitleFormatBudget,
+}
+
+fn graph_text_journal_title_format_budget(
+    graph: &Graph,
+) -> io::Result<GraphTextJournalTitleFormatBudget> {
+    let input_bytes = usize_to_u64(graph.journal_format.title_format().len())?;
+    // `date::Format` consumes at least one ASCII pattern byte per token and no
+    // token can render more than an i32 year (11 bytes). Literal UTF-8 bytes are
+    // copied one-for-one, so this is a strict bound for every compiled pattern.
+    let rendered_bytes = checked_mul_bytes(input_bytes, MAX_JOURNAL_TITLE_BYTES_PER_FORMAT_BYTE)?;
+    if input_bytes > MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES
+        || rendered_bytes > MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES
+    {
+        return Err(initial_shadow_limit_error("journal title format expansion"));
+    }
+    Ok(GraphTextJournalTitleFormatBudget {
+        input_bytes,
+        rendered_bytes,
+    })
+}
+
+fn graph_text_observed_semantic_name_upper_bound(
+    graph: &Graph,
+    path: &ManagedPath,
+    content: &str,
+) -> io::Result<GraphTextSemanticNameBudget> {
+    let title_format = graph_text_journal_title_format_budget(graph)?;
+    let mut observed = checked_add_bytes(usize_to_u64(path.as_str().len())?, 64)?;
+    let format = Format::from_path(Path::new(path.as_str()));
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let title = line
+            .split_once("::")
+            .and_then(|(key, value)| key.trim().eq_ignore_ascii_case("title").then_some(value))
+            .or_else(|| {
+                (format == Format::Org)
+                    .then(|| {
+                        ["#+TITLE:", "#+title:", ":TITLE:", ":title:"]
+                            .into_iter()
+                            .find_map(|prefix| trimmed.strip_prefix(prefix))
+                    })
+                    .flatten()
+            });
+        if let Some(title) = title {
+            observed = observed.max(checked_add_bytes(usize_to_u64(title.trim().len())?, 64)?);
+        }
+    }
+    observed = observed.max(title_format.rendered_bytes);
+    if observed > MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES {
+        return Err(initial_shadow_limit_error("semantic title bytes"));
+    }
+    Ok(GraphTextSemanticNameBudget {
+        semantic_name_bytes: observed,
+        title_format,
+    })
+}
+
+fn graph_text_file_record_worst_case_upper_bound(
+    graph: &Graph,
+    path_len: u64,
+    semantic_name_len: u64,
+) -> io::Result<u64> {
+    let absolute_len = checked_add_bytes(
+        checked_add_bytes(
+            usize_to_u64(graph.root.as_os_str().len())?,
+            usize::from(path_len != 0) as u64,
+        )?,
+        path_len,
+    )?;
+    let portable_key_len = checked_mul_bytes(path_len, 8)?;
+    let semantic_key_len = checked_mul_bytes(semantic_name_len, 8)?;
+    let mut bytes = conservative_btree_entry_bytes::<ManagedPath, GraphTextAdmissionRecord>()?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(path_len)?)?;
+    bytes = checked_add_bytes(bytes, usize_to_u64(std::mem::size_of::<PageEntry>())?)?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(semantic_name_len)?)?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(path_len)?)?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(absolute_len)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<PortablePathKey, std::collections::BTreeSet<ManagedPath>>(
+        )?,
+    )?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(portable_key_len)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<ManagedPath, ()>(path_len)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<(u8, String), std::collections::BTreeSet<ManagedPath>>()?,
+    )?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(semantic_key_len)?)?;
+    checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<ManagedPath, ()>(path_len)?,
+    )
+}
+
+fn graph_text_present_parse_peak_upper_bound(
+    graph: &Graph,
+    path: &ManagedPath,
+    content: &str,
+    semantic_budget: GraphTextSemanticNameBudget,
+) -> io::Result<u64> {
+    let path_len = usize_to_u64(path.as_str().len())?;
+    let mut bytes = managed_page_build_upper_bound(content)?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_file_record_worst_case_upper_bound(
+            graph,
+            path_len,
+            semantic_budget.semantic_name_bytes,
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        owned_string_len_upper_bound(semantic_budget.title_format.input_bytes)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        owned_string_len_upper_bound(semantic_budget.title_format.rendered_bytes)?,
+    )?;
+    checked_add_bytes(bytes, 1024)
+}
+
+fn graph_text_parse_budget_permit(
+    graph: &Graph,
+    path: &ManagedPath,
+    content: &str,
+    live_bytes: u64,
+    peak_limit: u64,
+) -> io::Result<GraphTextParseBudgetPermit> {
+    let semantic_budget = graph_text_observed_semantic_name_upper_bound(graph, path, content)?;
+    let parse_peak =
+        graph_text_present_parse_peak_upper_bound(graph, path, content, semantic_budget)?;
+    ensure_graph_text_peak_limit(live_bytes, parse_peak, peak_limit)?;
+    Ok(GraphTextParseBudgetPermit {
+        semantic_name_bytes: semantic_budget.semantic_name_bytes,
+        semantic_name_allocation_bytes: owned_string_len_upper_bound(
+            semantic_budget.semantic_name_bytes,
+        )?,
+    })
+}
+
+fn graph_text_admission_upsert_retained_upper_bound(
+    relative: &str,
+    path: Option<&ManagedPath>,
+    semantic: Option<&PageEntry>,
+) -> io::Result<u64> {
+    let relative_len = usize_to_u64(relative.len())?;
+    let mut bytes = graph_text_owned_btree_row_upper_bound::<String, ContentDigest>(relative_len)?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<String, u64>(relative_len)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<String, bool>(relative_len)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<ContentDigest, std::collections::BTreeSet<String>>()?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<String, ()>(relative_len)?,
+    )?;
+    let (Some(path), Some(semantic)) = (path, semantic) else {
+        return Ok(bytes);
+    };
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<ManagedPath, GraphTextAdmissionRecord>()?,
+    )?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(path.as_str())?)?;
+    bytes = checked_add_bytes(bytes, graph_text_page_entry_retained_upper_bound(semantic)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<PortablePathKey, std::collections::BTreeSet<ManagedPath>>(
+        )?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        owned_string_len_upper_bound(checked_mul_bytes(relative_len, 8)?)?,
+    )?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<ManagedPath, ()>(relative_len)?,
+    )?;
+    let semantic_key = graph_text_semantic_key(semantic);
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_btree_entry_bytes::<(u8, String), std::collections::BTreeSet<ManagedPath>>()?,
+    )?;
+    bytes = checked_add_bytes(bytes, owned_string_upper_bound(&semantic_key.1)?)?;
+    bytes = checked_add_bytes(
+        bytes,
+        graph_text_owned_btree_row_upper_bound::<ManagedPath, ()>(relative_len)?,
+    )?;
+    Ok(bytes)
+}
+
+fn graph_text_admission_tombstone_upper_bound(
+    relative: &str,
+    record: Option<&GraphTextAdmissionRecord>,
+) -> io::Result<u64> {
+    let relative_len = usize_to_u64(relative.len())?;
+    let mut bytes = conservative_btree_entry_bytes::<ManagedPath, GraphTextAdmissionTombstone>()?;
+    bytes = checked_add_bytes(bytes, owned_string_len_upper_bound(relative_len)?)?;
+    if let Some(record) = record {
+        bytes = checked_add_bytes(bytes, page_entry_clone_upper_bound(&record.semantic)?)?;
+    }
+    checked_add_bytes(bytes, 512)
+}
+
+fn graph_text_admission_delta_structural_peak(
+    index: &CompleteGraphTextAdmissionIndex,
+) -> io::Result<u64> {
+    let mut bytes = 0;
+    for charge in [
+        index.files_by_exact_path.path_copy_peak_upper_bound()?,
+        index.paths_by_portable_key.path_copy_peak_upper_bound()?,
+        index.paths_by_file_resource.path_copy_peak_upper_bound()?,
+        index
+            .file_resource_by_exact_relative
+            .path_copy_peak_upper_bound()?,
+        index
+            .file_link_count_by_exact_relative
+            .path_copy_peak_upper_bound()?,
+        index
+            .file_is_graph_text_by_exact_relative
+            .path_copy_peak_upper_bound()?,
+        index.paths_by_semantic_key.path_copy_peak_upper_bound()?,
+        index
+            .tombstones_by_exact_path
+            .path_copy_peak_upper_bound()?,
+    ] {
+        bytes = checked_add_bytes(bytes, charge)?;
+    }
+    Ok(bytes)
+}
+
+fn graph_text_admission_delta_payload_peak(
+    index: &CompleteGraphTextAdmissionIndex,
+    relative: &str,
+    prepared: Option<&PreparedGraphTextAdmissionUpsert>,
+) -> io::Result<u64> {
+    fn managed_members(
+        members: Option<&std::collections::BTreeSet<ManagedPath>>,
+    ) -> io::Result<u64> {
+        let Some(members) = members else {
+            return Ok(0);
+        };
+        count_graph_text_admission_persistent_payload_members(members.len());
+        let mut bytes = conservative_btree_entry_bytes::<ManagedPath, ()>()?;
+        for member in members {
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<ManagedPath, ()>(usize_to_u64(
+                    member.as_str().len(),
+                )?)?,
+            )?;
+        }
+        Ok(bytes)
+    }
+
+    fn string_members(members: Option<&std::collections::BTreeSet<String>>) -> io::Result<u64> {
+        let Some(members) = members else {
+            return Ok(0);
+        };
+        count_graph_text_admission_persistent_payload_members(members.len());
+        let mut bytes = conservative_btree_entry_bytes::<String, ()>()?;
+        for member in members {
+            bytes = checked_add_bytes(
+                bytes,
+                graph_text_owned_btree_row_upper_bound::<String, ()>(usize_to_u64(member.len())?)?,
+            )?;
+        }
+        Ok(bytes)
+    }
+
+    let mut bytes = 0;
+    if let Ok(path) = ManagedPath::parse(relative.to_owned()) {
+        if let Some(record) = index.files_by_exact_path.get(&path) {
+            bytes = checked_add_bytes(
+                bytes,
+                managed_members(index.paths_by_portable_key.get(&path.portable_key()))?,
+            )?;
+            bytes = checked_add_bytes(
+                bytes,
+                managed_members(
+                    index
+                        .paths_by_semantic_key
+                        .get(&graph_text_semantic_key(&record.semantic)),
+                )?,
+            )?;
+        }
+    }
+    if let Some(resource) = index.file_resource_by_exact_relative.get(relative) {
+        bytes = checked_add_bytes(
+            bytes,
+            string_members(index.paths_by_file_resource.get(resource))?,
+        )?;
+    }
+    if let Some(prepared) = prepared {
+        bytes = checked_add_bytes(
+            bytes,
+            string_members(index.paths_by_file_resource.get(&prepared.file_resource_id))?,
+        )?;
+        if let Some((path, record)) = &prepared.eligible {
+            bytes = checked_add_bytes(
+                bytes,
+                managed_members(index.paths_by_portable_key.get(&path.portable_key()))?,
+            )?;
+            bytes = checked_add_bytes(
+                bytes,
+                managed_members(
+                    index
+                        .paths_by_semantic_key
+                        .get(&graph_text_semantic_key(&record.semantic)),
+                )?,
+            )?;
+        }
+    }
+    Ok(bytes)
+}
+
+fn graph_text_admission_upsert_worst_case_upper_bound(
+    graph: &Graph,
+    relative: &str,
+    eligible_path: Option<&ManagedPath>,
+    content: &str,
+) -> io::Result<u64> {
+    let relative_len = usize_to_u64(relative.len())?;
+    let mut bytes = graph_text_admission_upsert_retained_upper_bound(relative, None, None)?;
+    if eligible_path.is_some() {
+        let path = eligible_path.expect("checked eligible path");
+        let semantic_name_len =
+            graph_text_observed_semantic_name_upper_bound(graph, path, content)?
+                .semantic_name_bytes;
+        bytes = checked_add_bytes(
+            bytes,
+            graph_text_file_record_worst_case_upper_bound(graph, relative_len, semantic_name_len)?,
+        )?;
+    }
+    Ok(bytes)
+}
+
+fn persistent_set_insert<K, T>(
+    map: &mut PersistentMap<K, std::collections::BTreeSet<T>>,
+    key: K,
+    member: T,
+) where
+    K: Ord + Clone,
+    T: Ord + Clone,
+{
+    let mut members = map.get(&key).cloned().unwrap_or_default();
+    count_graph_text_admission_persistent_payload_members(members.len().saturating_add(1));
+    members.insert(member);
+    map.insert(key, members);
+}
+
+fn persistent_set_remove<K, T>(
+    map: &mut PersistentMap<K, std::collections::BTreeSet<T>>,
+    key: &K,
+    member: &T,
+) where
+    K: Ord + Clone,
+    T: Ord + Clone,
+{
+    let Some(mut members) = map.get(key).cloned() else {
+        return;
+    };
+    count_graph_text_admission_persistent_payload_members(members.len().saturating_add(1));
+    members.remove(member);
+    if members.is_empty() {
+        map.remove(key);
+    } else {
+        map.insert(key.clone(), members);
+    }
+}
+
+fn initial_graph_text_collision_group_insert<K, T>(
+    map: &mut std::collections::BTreeMap<K, std::collections::BTreeSet<T>>,
+    key: K,
+    member: T,
+) where
+    K: Ord,
+    T: Ord,
+{
+    count_graph_text_admission_persistent_payload_members(1);
+    map.entry(key).or_default().insert(member);
+}
+
+fn initial_shadow_global_collision(index: &CompleteGraphTextAdmissionIndex) -> Option<io::Error> {
+    if index
+        .file_link_count_by_exact_relative
+        .iter()
+        .find(|(_, links)| **links != 1)
+        .is_some()
+    {
+        return Some(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "managed file has an unsafe retained link count",
+        ));
+    }
+    if index
+        .paths_by_file_resource
+        .values()
+        .any(|members| members.len() > 1)
+    {
+        return Some(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "managed files alias one retained resource",
+        ));
+    }
+    if index
+        .paths_by_portable_key
+        .values()
+        .any(|members| members.len() > 1)
+    {
+        return Some(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "initial shadow managed paths share one portable key",
+        ));
+    }
+    if index
+        .paths_by_semantic_key
+        .values()
+        .any(|members| members.len() > 1)
+    {
+        return Some(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "initial shadow managed paths share one semantic key",
+        ));
+    }
+    None
+}
+
+fn validate_graph_text_admission_index(index: &CompleteGraphTextAdmissionIndex) -> io::Result<()> {
+    for (path, record) in &index.files_by_exact_path {
+        if !index
+            .paths_by_portable_key
+            .get(&path.portable_key())
+            .is_some_and(|members| members.contains(path))
+            || !index
+                .paths_by_file_resource
+                .get(&record.file_resource_id)
+                .is_some_and(|members| members.contains(path.as_str()))
+            || index
+                .file_resource_by_exact_relative
+                .get(path.as_str())
+                .copied()
+                != Some(record.file_resource_id)
+            || index
+                .file_link_count_by_exact_relative
+                .get(path.as_str())
+                .copied()
+                != Some(record.link_count)
+            || index
+                .file_is_graph_text_by_exact_relative
+                .get(path.as_str())
+                .copied()
+                != Some(true)
+            || !index
+                .paths_by_semantic_key
+                .get(&graph_text_semantic_key(&record.semantic))
+                .is_some_and(|members| members.contains(path))
+            || index.tombstones_by_exact_path.contains_key(path)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "graph-text admission reverse map is incomplete",
+            ));
+        }
+    }
+    for (portable, members) in &index.paths_by_portable_key {
+        for path in members {
+            let Some(record) = index.files_by_exact_path.get(path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "graph-text portable map contains a reverse-only member",
+                ));
+            };
+            if path.portable_key() != *portable
+                || index
+                    .file_resource_by_exact_relative
+                    .get(&path.as_str().to_owned())
+                    .copied()
+                    != Some(record.file_resource_id)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "graph-text portable member is under the wrong reverse key",
+                ));
+            }
+        }
+    }
+    for (semantic, members) in &index.paths_by_semantic_key {
+        for path in members {
+            let Some(record) = index.files_by_exact_path.get(path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "graph-text semantic map contains a reverse-only member",
+                ));
+            };
+            if graph_text_semantic_key(&record.semantic) != *semantic {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "graph-text semantic member is under the wrong reverse key",
+                ));
+            }
+        }
+    }
+    for (resource, members) in &index.paths_by_file_resource {
+        for relative in members {
+            if index.file_resource_by_exact_relative.get(relative) != Some(resource) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "graph-text resource member is under the wrong reverse key",
+                ));
+            }
+        }
+    }
+    for (relative, resource) in &index.file_resource_by_exact_relative {
+        if !index
+            .paths_by_file_resource
+            .get(resource)
+            .is_some_and(|members| members.contains(relative))
+            || !index
+                .file_link_count_by_exact_relative
+                .contains_key(relative)
+            || !index
+                .file_is_graph_text_by_exact_relative
+                .contains_key(relative)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "graph-text file-resource map contains a reverse-only member",
+            ));
+        }
+    }
+    for relative in index.file_link_count_by_exact_relative.keys() {
+        if !index.file_resource_by_exact_relative.contains_key(relative)
+            || !index
+                .file_is_graph_text_by_exact_relative
+                .contains_key(relative)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "graph-text link-count map contains a forward-only member",
+            ));
+        }
+    }
+    for (relative, is_graph_text) in &index.file_is_graph_text_by_exact_relative {
+        let exact = ManagedPath::parse(relative.clone())
+            .ok()
+            .and_then(|path| index.files_by_exact_path.get(&path));
+        if !index.file_resource_by_exact_relative.contains_key(relative)
+            || !index
+                .file_link_count_by_exact_relative
+                .contains_key(relative)
+            || (*is_graph_text != exact.is_some())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "graph-text path-kind relationships are inconsistent",
+            ));
+        }
+    }
+    for (path, tombstone) in &index.tombstones_by_exact_path {
+        if index.files_by_exact_path.contains_key(path)
+            || index
+                .file_resource_by_exact_relative
+                .contains_key(&path.as_str().to_owned())
+            || index
+                .file_link_count_by_exact_relative
+                .contains_key(&path.as_str().to_owned())
+            || index
+                .file_is_graph_text_by_exact_relative
+                .contains_key(path.as_str())
+            || tombstone.prior_record.as_ref().is_some_and(|record| {
+                record.file_resource_id != tombstone.prior_file_resource_id
+                    || record.link_count != tombstone.prior_link_count
+                    || record.semantic.rel_path != path.as_str()
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "graph-text tombstone relationships are inconsistent",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_graph_text_admission_delta(
+    index: &CompleteGraphTextAdmissionIndex,
+    relative: &str,
+) -> io::Result<()> {
+    let path = match ManagedPath::parse(relative.to_owned()) {
+        Ok(path) => path,
+        Err(_) => {
+            let resource = index.file_resource_by_exact_relative.get(relative);
+            let link_count = index.file_link_count_by_exact_relative.get(relative);
+            let is_graph_text = index
+                .file_is_graph_text_by_exact_relative
+                .get(relative)
+                .copied();
+            if let Some(resource) = resource {
+                if link_count.is_none()
+                    || link_count.copied() != Some(1)
+                    || is_graph_text != Some(false)
+                    || !index
+                        .paths_by_file_resource
+                        .get(resource)
+                        .is_some_and(|members| members.len() == 1 && members.contains(relative))
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "exact non-text delta has inconsistent resource evidence",
+                    ));
+                }
+            } else if link_count.is_some() || is_graph_text.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "removed non-text delta retained forward evidence",
+                ));
+            }
+            return Ok(());
+        }
+    };
+    let record = index.files_by_exact_path.get(&path);
+    let resource = index
+        .file_resource_by_exact_relative
+        .get(&relative.to_owned());
+    let link_count = index
+        .file_link_count_by_exact_relative
+        .get(&relative.to_owned());
+    let is_graph_text = index
+        .file_is_graph_text_by_exact_relative
+        .get(relative)
+        .copied();
+    if let Some(record) = record {
+        let portable = index
+            .paths_by_portable_key
+            .get(&path.portable_key())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing portable reverse group")
+            })?;
+        let resources = index
+            .paths_by_file_resource
+            .get(&record.file_resource_id)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing resource reverse group")
+            })?;
+        let semantic = index
+            .paths_by_semantic_key
+            .get(&graph_text_semantic_key(&record.semantic))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing semantic reverse group")
+            })?;
+        if resource != Some(&record.file_resource_id)
+            || link_count != Some(&record.link_count)
+            || record.link_count != 1
+            || portable.len() != 1
+            || !portable.contains(&path)
+            || resources.len() != 1
+            || !resources.contains(relative)
+            || semantic.len() != 1
+            || !semantic.contains(&path)
+            || index.tombstones_by_exact_path.contains_key(&path)
+            || is_graph_text != Some(true)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "exact graph-text delta has colliding or inconsistent evidence",
+            ));
+        }
+    } else if let Some(resource) = resource {
+        let resources = index.paths_by_file_resource.get(resource).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "missing resource reverse group")
+        })?;
+        if link_count.copied() != Some(1)
+            || resources.len() != 1
+            || !resources.contains(relative)
+            || is_graph_text != Some(false)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "exact non-text delta has inconsistent resource evidence",
+            ));
+        }
+    } else if link_count.is_some() || is_graph_text.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "exact delta retained link evidence without a resource",
+        ));
+    }
+    if index.tombstones_by_exact_path.contains_key(&path)
+        && (record.is_some()
+            || resource.is_some()
+            || link_count.is_some()
+            || is_graph_text.is_some())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "exact delta is simultaneously active and deleted",
+        ));
+    }
+    Ok(())
+}
+
+fn graph_text_delta_reverse_members(
+    index: &CompleteGraphTextAdmissionIndex,
+    relative: &str,
+) -> usize {
+    let Ok(path) = ManagedPath::parse(relative.to_owned()) else {
+        return 0;
+    };
+    let Some(record) = index.files_by_exact_path.get(&path) else {
+        return index
+            .file_resource_by_exact_relative
+            .get(relative)
+            .and_then(|resource| index.paths_by_file_resource.get(resource))
+            .map_or(0, std::collections::BTreeSet::len);
+    };
+    index
+        .paths_by_portable_key
+        .get(&path.portable_key())
+        .map_or(0, std::collections::BTreeSet::len)
+        + index
+            .paths_by_file_resource
+            .get(&record.file_resource_id)
+            .map_or(0, std::collections::BTreeSet::len)
+        + index
+            .paths_by_semantic_key
+            .get(&graph_text_semantic_key(&record.semantic))
+            .map_or(0, std::collections::BTreeSet::len)
+}
+
+#[allow(dead_code)]
+fn remove_graph_text_admission_path(
+    index: &mut CompleteGraphTextAdmissionIndex,
+    relative: &str,
+) -> Option<GraphTextAdmissionTombstone> {
+    let mut prior_record = None;
+    if let Ok(path) = ManagedPath::parse(relative.to_owned()) {
+        if let Some(record) = index.files_by_exact_path.remove(&path) {
+            let portable = path.portable_key();
+            persistent_set_remove(&mut index.paths_by_portable_key, &portable, &path);
+            let semantic = graph_text_semantic_key(&record.semantic);
+            persistent_set_remove(&mut index.paths_by_semantic_key, &semantic, &path);
+            prior_record = Some(record);
+        }
+    }
+    let relative_owned = relative.to_owned();
+    let resource = index
+        .file_resource_by_exact_relative
+        .remove(&relative_owned)?;
+    persistent_set_remove(
+        &mut index.paths_by_file_resource,
+        resource.as_ref(),
+        &relative_owned,
+    );
+    let link_count = index
+        .file_link_count_by_exact_relative
+        .remove(&relative_owned)
+        .map_or(0, |links| *links);
+    index
+        .file_is_graph_text_by_exact_relative
+        .remove(&relative_owned);
+    Some(GraphTextAdmissionTombstone {
+        prior_record,
+        prior_file_resource_id: *resource,
+        prior_link_count: link_count,
+    })
+}
+
+fn graph_text_event_scratch_upper_bound(relative: &str) -> io::Result<u64> {
+    let relative_len = usize_to_u64(relative.len())?;
+    let component_slots = relative_len.max(1);
+    let mut bytes = conservative_vec_capacity_upper_bound::<String>(component_slots)?;
+    bytes = checked_add_bytes(
+        bytes,
+        conservative_vec_capacity_upper_bound::<Dir>(component_slots)?,
+    )?;
+    // Component strings, filename, parent-relative construction, ManagedPath,
+    // normalized keys, and error-path scratch are never simultaneously larger
+    // than these conservative full-relative clones.
+    bytes = checked_add_bytes(
+        bytes,
+        checked_mul_bytes(owned_string_len_upper_bound(relative_len)?, 8)?,
+    )?;
+    checked_add_bytes(bytes, 1024)
+}
+
+#[cfg(unix)]
+fn projection_file_link_count(file: &fs::File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.nlink())
+}
+
+#[cfg(windows)]
+fn projection_file_link_count(file: &fs::File) -> io::Result<u64> {
+    use std::os::windows::fs::MetadataExt;
+    Ok(u64::from(file.metadata()?.number_of_links().ok_or_else(
+        || io::Error::new(io::ErrorKind::Unsupported, "file link count is unavailable"),
+    )?))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn projection_file_link_count(_file: &fs::File) -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "file link-count proof is unavailable on this platform",
+    ))
+}
+
+#[allow(dead_code)]
+fn validate_graph_text_event_parent(
+    index: &CompleteGraphTextAdmissionIndex,
+    target: &GraphTextExactPath,
+    parent: &ProjectionParent,
+) -> io::Result<()> {
+    let mut retained_relative = String::new();
+    for (depth, directory) in parent.chain.iter().enumerate() {
+        if depth > 0 {
+            if !retained_relative.is_empty() {
+                retained_relative.push('/');
+            }
+            retained_relative.push_str(&target.parent_components[depth - 1]);
+        }
+        let expected = index
+            .directories_by_exact_relative
+            .get(&retained_relative)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!(
+                        "exact feed parent was not retained in the snapshot: {retained_relative}"
+                    ),
+                )
+            })?;
+        if canonical_projection_directory_resource_id(directory)? != *expected {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("exact feed parent identity changed: {retained_relative}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn poison_graph_text_admission_state(state: &mut GraphTextAdmissionState, cause: String) {
+    if matches!(state, GraphTextAdmissionState::Poisoned { .. }) {
+        return;
+    }
+    let last_good = match state {
+        GraphTextAdmissionState::SnapshotComplete(index)
+        | GraphTextAdmissionState::Complete(index) => Some(index.diagnostics()),
+        _ => None,
+    };
+    *state = GraphTextAdmissionState::Poisoned {
+        last_good,
+        cause: bounded_graph_text_admission_cause(cause),
+    };
+}
+
+const MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES: usize = 4096;
+
+fn bounded_graph_text_admission_cause(mut cause: String) -> String {
+    if cause.len() <= MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES {
+        return cause;
+    }
+    let mut boundary = MAX_GRAPH_TEXT_ADMISSION_DIAGNOSTIC_CAUSE_BYTES;
+    while !cause.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    cause.truncate(boundary);
+    cause
+}
+
+fn graph_text_admission_unavailable(cause: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("graph-text admission authority unavailable: {cause}"),
+    )
 }
 
 fn initial_shadow_limit_error(resource: &'static str) -> io::Error {
@@ -25424,8 +28785,1621 @@ mod tests {
             }));
         });
         assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_shadow_rejects_ambient_root_identity_replacement() {
+        let root = scratch("initial-shadow-root-replacement");
+        fs::write(root.join("Root.md"), b"- retained\n").unwrap();
+        let retired = root.with_file_name(format!(
+            "{}-retired",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&retired);
+        let graph = Graph::open(&root);
+        INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| {
+            let root = root.clone();
+            let retired = retired.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&root, &retired)?;
+                fs::create_dir_all(root.join("pages"))?;
+                fs::create_dir_all(root.join("journals"))?;
+                fs::write(root.join("Root.md"), b"- retained\n")
+            }));
+        });
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&retired);
+    }
+
+    #[test]
+    fn initial_shadow_discovers_graph_wide_mixed_case_text_paths() {
+        let root = scratch("initial-shadow-graph-wide");
+        fs::create_dir_all(root.join("archive/client/deep")).unwrap();
+        fs::write(root.join("Root.MD"), b"- root\n").unwrap();
+        fs::write(
+            root.join("archive/client/deep/Plan.Markdown"),
+            b"- markdown\n",
+        )
+        .unwrap();
+        fs::write(root.join("archive/client/deep/25-07-2026.ORG"), b"* org\n").unwrap();
+
+        let graph = Graph::open(&root);
+        reset_graph_text_admission_test_counters();
+        let inventory = graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        assert_eq!(
+            inventory
+                .iter()
+                .map(|(path, _)| path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Root.MD",
+                "archive/client/deep/25-07-2026.ORG",
+                "archive/client/deep/Plan.Markdown",
+            ]
+        );
+        let counters = graph_text_admission_test_counters();
+        assert_eq!(counters.builder_enumerations, 12);
+        assert_eq!(counters.point_query_attempts, 0);
+        assert_eq!(counters.parser_invocations, 3);
+        assert_eq!(counters.index_map_insertions, 15);
+        assert_eq!(counters.event_map_key_reads, 0);
+        assert_eq!(counters.event_map_key_writes, 0);
+        assert_eq!(counters.event_reverse_members, 0);
+        assert!(counters.persistent_node_allocations > 0);
+        assert_eq!(counters.persistent_payload_members, 6);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_snapshot_uses_parser_owned_semantics_and_preserves_creation_roots() {
+        let root = scratch("admission-semantic");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(
+            root.join("logseq/config.edn"),
+            "{:pages-directory \"create/pages\"\n\
+              :journals-directory \"create/journals\"\n\
+              :journal/file-name-format \"dd-MM-yyyy\"\n\
+              :journal/page-title-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("archive")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(
+            root.join("archive/Not-A-Date.Markdown"),
+            b"title:: 25-07-2026\n\n- journal by title\n",
+        )
+        .unwrap();
+        fs::write(root.join("journals/Plan.ORG"), b"* ordinary page\n").unwrap();
+
+        let graph = Graph::open(&root);
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("unarmed initial build must install SnapshotComplete");
+        };
+        let journal = index
+            .files_by_exact_path
+            .get(&ManagedPath::parse("archive/Not-A-Date.Markdown").unwrap())
+            .unwrap();
+        assert_eq!(journal.semantic.name, "2026-07-25");
+        assert_eq!(journal.semantic.kind, PageKind::Journal);
+        assert_eq!(journal.format, Format::Md);
+        let page = index
+            .files_by_exact_path
+            .get(&ManagedPath::parse("journals/Plan.ORG").unwrap())
+            .unwrap();
+        assert_eq!(page.semantic.name, "Plan");
+        assert_eq!(page.semantic.kind, PageKind::Page);
+        assert_eq!(page.format, Format::Org);
+        drop(state);
+
+        fs::create_dir_all(root.join("create/pages")).unwrap();
+        fs::create_dir_all(root.join("create/journals")).unwrap();
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
+        assert_eq!(
+            graph
+                .managed_path_for(&permit, "New Page", PageKind::Page)
+                .unwrap(),
+            root.join("create/pages/New Page.md")
+        );
+        assert_eq!(
+            graph
+                .managed_path_for(&permit, "2026-07-25", PageKind::Journal)
+                .unwrap(),
+            root.join("create/journals/25-07-2026.md")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn configured_root_helper_stays_inert_while_private_present_decoder_uses_bytes() {
+        let root = scratch("admission-inert-helper-regression");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(
+            root.join("logseq/config.edn"),
+            "{:pages-directory \"content/pages\"\n\
+              :journals-directory \"content/journals\"\n\
+              :journal/file-name-format \"dd-MM-yyyy\"\n\
+              :journal/page-title-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&root);
+        let path = ManagedPath::parse("content/pages/25-07-2026.md").unwrap();
+
+        let configured = graph.managed_entry_for_managed_path(&path).unwrap();
+        assert_eq!(configured.kind, PageKind::Page);
+        assert_eq!(configured.name, "25-07-2026");
+        assert_eq!(configured.date_key, None);
+
+        let bytes = b"title:: 26-07-2026\n\n- parser-owned title\n";
+        let content = std::str::from_utf8(bytes).unwrap();
+        let permit = graph_text_parse_budget_permit(&graph, &path, content, 0, u64::MAX).unwrap();
+        let (present, format) = graph
+            .decode_present_graph_text(&path, bytes, permit)
+            .unwrap();
+        assert_eq!(present.kind, PageKind::Journal);
+        assert_eq!(present.name, "2026-07-26");
+        assert!(present.date_key.is_some());
+        assert_eq!(format, Format::Md);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_snapshot_excludes_reserved_paths_and_poisoned_builds_have_no_authority() {
+        let root = scratch("admission-exclusions");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(root.join("logseq/config.edn"), "{:hidden [\"private\"]}\n").unwrap();
+        for relative in [
+            ".hidden/x.md",
+            "assets/x.md",
+            "publish/x.org",
+            "node_modules/x.md",
+            ".tine-sync/x.md",
+            "logseq/.recycle/x.md",
+            "private/x.md",
+        ] {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"- excluded\n").unwrap();
+        }
+        fs::write(
+            root.join("Dropbox (conflicted copy 2026-07-25).md"),
+            b"- conflict\n",
+        )
+        .unwrap();
+        fs::write(root.join("Visible.md"), b"- visible\n").unwrap();
+        let graph = Graph::open(&root);
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("expected an unarmed complete snapshot");
+        };
+        assert_eq!(index.files_by_exact_path.len(), 1);
+        assert!(index
+            .files_by_exact_path
+            .contains_key(&ManagedPath::parse("Visible.md").unwrap()));
+        drop(state);
+
+        let invalid = scratch("admission-invalid-utf8");
+        fs::write(invalid.join("Bad.md"), [0xff, 0xfe]).unwrap();
+        let invalid_graph = Graph::open(&invalid);
+        assert!(invalid_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .is_err());
+        assert!(matches!(
+            &*invalid_graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(invalid_graph.graph_text_admission_epoch().is_err());
+
+        let parse = scratch("admission-parse-failure");
+        fs::write(parse.join("Bad.md"), b"- valid bytes\n").unwrap();
+        let parse_graph = Graph::open(&parse);
+        GRAPH_TEXT_PARSE_FAILURE.with(|failure| failure.set(true));
+        assert!(parse_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .is_err());
+        assert!(matches!(
+            &*parse_graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&invalid);
+        let _ = fs::remove_dir_all(&parse);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_snapshot_retains_all_collision_group_evidence() {
+        let portable = scratch("admission-portable-groups");
+        fs::write(portable.join("Caf\u{e9}.md"), b"- composed\n").unwrap();
+        fs::write(
+            portable.join("Cafe\u{301}.MD"),
+            b"- decomposed and mixed case\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&portable);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("collision evidence must remain in the private snapshot");
+        };
+        assert_eq!(
+            index
+                .paths_by_portable_key
+                .get(&ManagedPath::parse("Caf\u{e9}.md").unwrap().portable_key())
+                .unwrap()
+                .len(),
+            2
+        );
+        drop(state);
+
+        let semantic = scratch("admission-semantic-groups");
+        fs::create_dir_all(semantic.join("a")).unwrap();
+        fs::create_dir_all(semantic.join("b")).unwrap();
+        fs::write(semantic.join("a/One.md"), b"title:: Shared\n\n- one\n").unwrap();
+        fs::write(semantic.join("b/Two.org"), b"#+title: Shared\n* two\n").unwrap();
+        let graph = Graph::open(&semantic);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("unarmed semantic collision remains diagnostic-only");
+        };
+        assert_eq!(
+            index
+                .paths_by_semantic_key
+                .get(&(0, crate::refs::page_key("Shared")))
+                .unwrap()
+                .len(),
+            2
+        );
+        drop(state);
+
+        let alias = scratch("admission-resource-groups");
+        fs::write(alias.join("Page.md"), b"- same inode\n").unwrap();
+        fs::hard_link(alias.join("Page.md"), alias.join("alias.bin")).unwrap();
+        let graph = Graph::open(&alias);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("resource collision evidence must remain in the private snapshot");
+        };
+        assert!(index
+            .paths_by_file_resource
+            .values()
+            .any(|members| members.len() == 2
+                && members.contains("Page.md")
+                && members.contains("alias.bin")));
+        drop(state);
+
+        let outside_alias = scratch("admission-resource-outside");
+        let outside = scratch("admission-resource-outside-target");
+        fs::write(outside_alias.join("Only.md"), b"- linked outside\n").unwrap();
+        fs::hard_link(
+            outside_alias.join("Only.md"),
+            outside.join("outside-link.bin"),
+        )
+        .unwrap();
+        let graph = Graph::open(&outside_alias);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("outside-link proof must remain in the private snapshot");
+        };
+        assert_eq!(
+            index
+                .files_by_exact_path
+                .get(&ManagedPath::parse("Only.md").unwrap())
+                .unwrap()
+                .link_count,
+            2
+        );
+
+        let _ = fs::remove_dir_all(&portable);
+        let _ = fs::remove_dir_all(&semantic);
+        let _ = fs::remove_dir_all(&alias);
+        let _ = fs::remove_dir_all(&outside_alias);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn graph_text_exact_path_authority_preserves_root_nested_and_markdown_spelling() {
+        let root = scratch("admission-target");
+        let graph = Graph::open(&root);
+        let root_target = graph.graph_text_exact_path("Root.MarkDown", true).unwrap();
+        assert!(root_target.parent_components.is_empty());
+        assert_eq!(
+            root_target.managed_path.as_ref().unwrap().as_str(),
+            "Root.MarkDown"
+        );
+        assert_eq!(root_target.filename, "Root.MarkDown");
+        assert_eq!(
+            Format::from_path(Path::new(&root_target.filename)),
+            Format::Md
+        );
+        assert_eq!(
+            graph
+                .graph_text_event_parent(&root_target)
+                .unwrap()
+                .chain
+                .len(),
+            1
+        );
+
+        fs::create_dir_all(root.join("archive/client")).unwrap();
+        let nested = graph
+            .graph_text_exact_path("archive/client/Plan.Markdown", true)
+            .unwrap();
+        assert_eq!(nested.parent_components, ["archive", "client"]);
+        assert_eq!(
+            nested.managed_path.as_ref().unwrap().as_str(),
+            "archive/client/Plan.Markdown"
+        );
+        assert_eq!(nested.filename, "Plan.Markdown");
+        assert_eq!(Format::from_path(Path::new(&nested.filename)), Format::Md);
+        assert_eq!(
+            graph.graph_text_event_parent(&nested).unwrap().chain.len(),
+            3
+        );
+        assert!(graph
+            .graph_text_exact_path("archive/client/alias.bin", false)
+            .is_ok());
+        assert!(graph
+            .graph_text_exact_path("archive/client/alias.bin", true)
+            .is_err());
+        assert!(graph.projection_page_target("Root.MarkDown").is_err());
+        assert!(graph
+            .projection_page_target("archive/client/Plan.Markdown")
+            .is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unarmed_and_poisoned_admission_queries_never_enumerate() {
+        let unbuilt_root = scratch("admission-query-unbuilt");
+        let unbuilt = Graph::open(&unbuilt_root);
+        reset_graph_text_admission_test_counters();
+        assert!(unbuilt.graph_text_admission_epoch().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters(),
+            GraphTextAdmissionTestCounters {
+                builder_enumerations: 0,
+                point_query_attempts: 1,
+                ..GraphTextAdmissionTestCounters::default()
+            }
+        );
+
+        let building_root = scratch("admission-query-building");
+        let building = Graph::open(&building_root);
+        building.begin_graph_text_admission_build().unwrap();
+        reset_graph_text_admission_test_counters();
+        assert!(building.graph_text_admission_epoch().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters(),
+            GraphTextAdmissionTestCounters {
+                builder_enumerations: 0,
+                point_query_attempts: 1,
+                ..GraphTextAdmissionTestCounters::default()
+            }
+        );
+
+        let root = scratch("admission-query-boundary");
+        fs::create_dir_all(root.join("deep/tree")).unwrap();
+        fs::write(root.join("deep/tree/Page.md"), b"- page\n").unwrap();
+        let graph = Graph::open(&root);
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        reset_graph_text_admission_test_counters();
+        assert!(graph.graph_text_admission_epoch().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters(),
+            GraphTextAdmissionTestCounters {
+                builder_enumerations: 0,
+                point_query_attempts: 1,
+                ..GraphTextAdmissionTestCounters::default()
+            }
+        );
+
+        graph.poison_graph_text_admission("injected poison");
+        reset_graph_text_admission_test_counters();
+        assert!(graph.graph_text_admission_epoch().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters(),
+            GraphTextAdmissionTestCounters {
+                builder_enumerations: 0,
+                point_query_attempts: 1,
+                ..GraphTextAdmissionTestCounters::default()
+            }
+        );
+        let _ = fs::remove_dir_all(&unbuilt_root);
+        let _ = fs::remove_dir_all(&building_root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exact_feed_events_atomically_update_reverse_maps_and_fail_closed() {
+        let root = scratch("admission-feed");
+        fs::write(root.join("Page.md"), b"title:: First\n\n- page\n").unwrap();
+        let graph = Graph::open(&root);
+        let token = graph.arm_graph_text_admission_feed(40).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        let page_path = ManagedPath::parse("Page.md").unwrap();
+        let before = graph
+            .graph_text_admission_exact(&epoch, &page_path)
+            .unwrap()
+            .into_present();
+        assert_eq!(before.record.semantic.name, "First");
+        assert_eq!(before.current.bytes, b"title:: First\n\n- page\n");
+        assert_eq!(before.current.description, before.record.description);
+        assert_eq!(
+            before.current.file_resource_id,
+            before.record.file_resource_id
+        );
+        assert_eq!(before.current.link_count, 1);
+        assert_eq!(before.portable_members, [page_path.clone()]);
+        assert_eq!(before.resource_members, ["Page.md"]);
+        assert_eq!(before.semantic_members, [page_path.clone()]);
+
+        fs::write(root.join("Page.md"), b"title:: Second\n\n- changed\n").unwrap();
+        graph
+            .apply_graph_text_admission_event(
+                &token,
+                41,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .unwrap();
+        let changed_epoch = graph.graph_text_admission_epoch().unwrap();
+        let changed = graph
+            .graph_text_admission_exact(&changed_epoch, &page_path)
+            .unwrap()
+            .into_present();
+        assert_eq!(changed.record.semantic.name, "Second");
+        assert_eq!(
+            changed.record.description,
+            BlobDescription::of(b"title:: Second\n\n- changed\n")
+        );
+        assert_eq!(changed.record.format, Format::Md);
+        assert_eq!(changed.epoch.generation, epoch.generation + 1);
+        assert_eq!(changed.portable_members, [page_path.clone()]);
+        assert_eq!(changed.resource_members, ["Page.md"]);
+        assert_eq!(changed.semantic_members, [page_path.clone()]);
+
+        fs::remove_file(root.join("Page.md")).unwrap();
+        graph
+            .apply_graph_text_admission_event(
+                &token,
+                42,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .unwrap();
+        let removed_epoch = graph.graph_text_admission_epoch().unwrap();
+        assert!(matches!(
+            graph
+                .graph_text_admission_exact(&removed_epoch, &page_path)
+                .unwrap(),
+            GraphTextAdmissionExactObservation::AbsentRetained { .. }
+        ));
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                44,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let other = scratch("admission-feed-cross-instance");
+        let other_graph = Graph::open(&other);
+        other_graph.arm_graph_text_admission_feed(0).unwrap();
+        other_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .unwrap();
+        assert!(other_graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::DirectoryChanged { relative: None },
+            )
+            .is_err());
+        assert!(matches!(
+            &*other_graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(other_graph.graph_text_admission_epoch().is_err());
+
+        let disconnected = scratch("admission-disconnect-cross-instance");
+        let disconnected_graph = Graph::open(&disconnected);
+        disconnected_graph.arm_graph_text_admission_feed(0).unwrap();
+        disconnected_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .unwrap();
+        assert!(disconnected_graph
+            .disconnect_graph_text_admission_feed(&token)
+            .is_err());
+        assert!(matches!(
+            &*disconnected_graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(disconnected_graph.graph_text_admission_epoch().is_err());
+        assert!(other_graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::DirectoryChanged { relative: None },
+            )
+            .is_err());
+        assert!(other_graph.graph_text_admission_epoch().is_err());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&other);
+        let _ = fs::remove_dir_all(&disconnected);
+    }
+
+    #[test]
+    fn admission_exact_absence_distinguishes_retained_deletion_from_never_owned() {
+        let root = scratch("admission-retained-delete");
+        fs::write(root.join("Page.md"), b"title:: Retained Title\n\n- body\n").unwrap();
+        let graph = Graph::open(&root);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        fs::remove_file(root.join("Page.md")).unwrap();
+        graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        match graph
+            .graph_text_admission_exact(&epoch, &ManagedPath::parse("Page.md").unwrap())
+            .unwrap()
+        {
+            GraphTextAdmissionExactObservation::AbsentRetained {
+                epoch: observed,
+                tombstone,
+            } => {
+                assert_eq!(observed.generation, epoch.generation);
+                assert_eq!(
+                    tombstone.prior_record.unwrap().semantic.name,
+                    "Retained Title"
+                );
+                assert_eq!(tombstone.prior_link_count, 1);
+            }
+            _ => panic!("deleted retained path must return tombstone evidence"),
+        }
+        match graph
+            .graph_text_admission_exact(&epoch, &ManagedPath::parse("Never.md").unwrap())
+            .unwrap()
+        {
+            GraphTextAdmissionExactObservation::AbsentUnowned {
+                epoch: observed,
+                provisional,
+            } => {
+                assert_eq!(observed.generation, epoch.generation);
+                assert_eq!(provisional.name, "Never");
+            }
+            _ => panic!("never-owned path must remain distinct from retained deletion"),
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_event_parent_replacement_and_hardlink_add_poison_before_publication() {
+        let parent_root = scratch("admission-event-parent-replacement");
+        fs::create_dir_all(parent_root.join("nested")).unwrap();
+        fs::write(parent_root.join("nested/Page.md"), b"- retained\n").unwrap();
+        let graph = Graph::open(&parent_root);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let retired = parent_root.join("retired");
+        GRAPH_TEXT_EVENT_REVALIDATION_RACE.with(|hook| {
+            let parent_root = parent_root.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(parent_root.join("nested"), &retired)?;
+                fs::create_dir(parent_root.join("nested"))?;
+                fs::write(parent_root.join("nested/Page.md"), b"- retained\n")
+            }));
+        });
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "nested/Page.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let aba_root = scratch("admission-event-parent-aba");
+        fs::create_dir_all(aba_root.join("nested")).unwrap();
+        fs::write(aba_root.join("nested/Page.md"), b"- retained\n").unwrap();
+        let graph = Arc::new(Graph::open(&aba_root));
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let hook_graph = Arc::clone(&graph);
+        let hook_token = token.clone();
+        GRAPH_TEXT_EVENT_REVALIDATION_RACE.with(|hook| {
+            let aba_root = aba_root.clone();
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let retired = aba_root.join("retired");
+                fs::rename(aba_root.join("nested"), &retired)?;
+                fs::rename(&retired, aba_root.join("nested"))?;
+                hook_graph.apply_graph_text_admission_event(
+                    &hook_token,
+                    1,
+                    GraphTextAdmissionExactEvent::DirectoryChanged {
+                        relative: Some("nested".to_owned()),
+                    },
+                )
+            }));
+        });
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "nested/Page.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let link_root = scratch("admission-event-hardlink-add");
+        let outside = scratch("admission-event-hardlink-add-outside");
+        fs::write(link_root.join("Page.md"), b"- retained\n").unwrap();
+        let graph = Graph::open(&link_root);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        GRAPH_TEXT_EVENT_REVALIDATION_RACE.with(|hook| {
+            let source = link_root.join("Page.md");
+            let alias = outside.join("alias.bin");
+            *hook.borrow_mut() = Some(Box::new(move || fs::hard_link(source, alias)));
+        });
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&parent_root);
+        let _ = fs::remove_dir_all(&aba_root);
+        let _ = fs::remove_dir_all(&link_root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn admission_event_work_is_independent_of_unrelated_retained_files() {
+        fn one_event(unrelated: usize) -> GraphTextAdmissionTestCounters {
+            let root = scratch(&format!("admission-event-complexity-{unrelated}"));
+            fs::write(root.join("Target.md"), b"title:: Before\n").unwrap();
+            for index in 0..unrelated {
+                fs::write(
+                    root.join(format!("Unrelated-{index:04}.md")),
+                    format!("- ordinary {index}\n"),
+                )
+                .unwrap();
+            }
+            let graph = Graph::open(&root);
+            let token = graph.arm_graph_text_admission_feed(0).unwrap();
+            graph.initial_shadow_raw_managed_text_inventory().unwrap();
+            fs::write(root.join("Target.md"), b"title:: After\n").unwrap();
+            reset_graph_text_admission_test_counters();
+            graph
+                .apply_graph_text_admission_event(
+                    &token,
+                    1,
+                    GraphTextAdmissionExactEvent::FileUpsert {
+                        relative: "Target.md".to_owned(),
+                    },
+                )
+                .unwrap();
+            let counters = graph_text_admission_test_counters();
+            let _ = fs::remove_dir_all(root);
+            counters
+        }
+
+        let small = one_event(8);
+        let large = one_event(512);
+        assert_eq!(small.builder_enumerations, 0);
+        assert_eq!(small.parser_invocations, large.parser_invocations);
+        assert_eq!(small.index_map_insertions, large.index_map_insertions);
+        assert_eq!(small.event_map_key_reads, large.event_map_key_reads);
+        assert_eq!(small.event_map_key_writes, large.event_map_key_writes);
+        assert_eq!(small.event_reverse_members, large.event_reverse_members);
+        assert_eq!(
+            small.persistent_payload_members,
+            large.persistent_payload_members
+        );
+        assert!(
+            large.persistent_node_allocations < small.persistent_node_allocations * 4,
+            "persistent path copies may grow only logarithmically: small={small:?}, large={large:?}"
+        );
+        assert!(small.persistent_rotations <= 4);
+        assert!(large.persistent_rotations <= 4);
+        assert_eq!(small.parser_invocations, 1);
+        assert!(small.event_map_key_reads > 0);
+        assert!(small.event_map_key_writes > 0);
+        assert!(small.event_reverse_members > 0);
+        assert!(small.persistent_node_allocations > 0);
+        assert!(small.persistent_payload_members > 0);
+    }
+
+    #[test]
+    fn admission_event_collision_rejects_with_bounded_payload_work() {
+        let root = scratch("admission-event-bounded-collision");
+        fs::write(root.join("One.md"), b"title:: One\n").unwrap();
+        fs::write(root.join("Two.md"), b"title:: Two\n").unwrap();
+        let graph = Graph::open(&root);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        fs::write(root.join("Two.md"), b"title:: One\n").unwrap();
+
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "Two.md".to_owned(),
+                },
+            )
+            .is_err());
+        let counters = graph_text_admission_test_counters();
+        assert_eq!(counters.builder_enumerations, 0);
+        assert_eq!(counters.parser_invocations, 1);
+        assert!(
+            counters.persistent_payload_members <= 20,
+            "a collision-free complete index bounds every touched old/new group: {counters:?}"
+        );
+        assert!(counters.persistent_node_allocations < 256);
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_persistent_avl_ordered_keys_stay_logarithmic_and_share_large_values() {
+        fn ordered_work(entries: usize) -> (GraphTextAdmissionTestCounters, u8) {
+            reset_graph_text_admission_test_counters();
+            let mut map = PersistentMap::default();
+            for key in 0..entries {
+                map.insert(key, key);
+            }
+            (
+                graph_text_admission_test_counters(),
+                PersistentMap::<usize, usize>::height(&map.root),
+            )
+        }
+
+        let (small, small_height) = ordered_work(1024);
+        let (large, large_height) = ordered_work(4096);
+        assert!(small_height <= 2 * 11);
+        assert!(large_height <= 2 * 13);
+        assert!(
+            large.persistent_node_allocations < small.persistent_node_allocations * 6,
+            "ordered AVL insertion must remain O(N log N): small={small:?}, large={large:?}"
+        );
+        assert!(small.persistent_rotations < 2 * 1024);
+        assert!(large.persistent_rotations < 2 * 4096);
+
+        let large_group = (0..4096)
+            .map(|member| format!("member-{member:04}"))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut map = PersistentMap::default();
+        map.insert(2048_usize, large_group);
+        let snapshot = map.clone();
+        let before = map.shared_value(&2048).unwrap();
+        reset_graph_text_admission_test_counters();
+        map.insert(4096, std::collections::BTreeSet::new());
+        let after = map.shared_value(&2048).unwrap();
+        let snapshot_value = snapshot.shared_value(&2048).unwrap();
+        assert!(Arc::ptr_eq(&before, &after));
+        assert!(Arc::ptr_eq(&before, &snapshot_value));
+        assert_eq!(
+            graph_text_admission_test_counters().persistent_payload_members,
+            0,
+            "path copying must not walk or clone an untouched owned payload"
+        );
+    }
+
+    #[test]
+    fn admission_large_same_semantic_key_build_is_linear_in_collision_members() {
+        const FILES: usize = 2048;
+        let root = scratch("admission-large-same-semantic-key");
+        for index in 0..FILES {
+            fs::write(
+                root.join(format!("Page-{index:04}.md")),
+                b"title:: Shared\n\n- body\n",
+            )
+            .unwrap();
+        }
+
+        let graph = Graph::open(&root);
+        reset_graph_text_admission_test_counters();
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        let counters = graph_text_admission_test_counters();
+        assert_eq!(
+            counters.persistent_payload_members,
+            FILES * 2,
+            "each input joins one portable and one semantic group exactly once"
+        );
+        assert!(
+            counters.persistent_node_allocations < FILES * 256,
+            "persistent sealing must stay logarithmic, not clone growing groups: {counters:?}"
+        );
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("an unarmed collision build must retain diagnostic evidence");
+        };
+        let first = ManagedPath::parse("Page-0000.md").unwrap();
+        let semantic_key =
+            graph_text_semantic_key(&index.files_by_exact_path.get(&first).unwrap().semantic);
+        assert_eq!(
+            index
+                .paths_by_semantic_key
+                .get(&semantic_key)
+                .unwrap()
+                .len(),
+            FILES
+        );
+        drop(state);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_semantic_accounting_admits_large_ordinary_text_and_rejects_overlong_title() {
+        let root = scratch("admission-realistic-semantic-accounting");
+        let graph = Graph::open(&root);
+        let path = ManagedPath::parse("Ordinary.md").unwrap();
+        let observed =
+            graph_text_observed_semantic_name_upper_bound(&graph, &path, "- ordinary body\n")
+                .unwrap()
+                .semantic_name_bytes;
+        let one_record = graph_text_file_record_worst_case_upper_bound(
+            &graph,
+            path.as_str().len() as u64,
+            observed,
+        )
+        .unwrap();
+        let realistic_raw_corpus = 480_u64 * 1024 * 1024;
+        assert!(realistic_raw_corpus < INITIAL_SHADOW_LIMITS.raw_bytes);
+        assert!(
+            checked_mul_bytes(one_record, 4).unwrap() < INITIAL_SHADOW_LIMITS.permanent_index_bytes,
+            "ordinary titles must not be charged as four 120 MiB document bodies"
+        );
+
+        let overlong = "T".repeat(MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES as usize + 1);
+        let content = format!("title:: {overlong}\n\n- body\n");
+        assert!(graph_text_observed_semantic_name_upper_bound(&graph, &path, &content).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_journal_title_format_expansion_rejects_before_render_or_parse() {
+        let root = scratch("admission-huge-journal-title-format");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        let huge_format = "X".repeat(
+            (MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES / MAX_JOURNAL_TITLE_BYTES_PER_FORMAT_BYTE) as usize
+                + 1,
+        );
+        fs::write(
+            root.join("logseq/config.edn"),
+            format!("{{:journal/page-title-format \"{huge_format}\"}}\n"),
+        )
+        .unwrap();
+        fs::write(root.join("2026_07_25.md"), b"- short journal\n").unwrap();
+
+        let graph = Graph::open(&root);
+        reset_graph_text_admission_test_counters();
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters().parser_invocations,
+            0,
+            "format input and rendered bound must reject before title rendering or parsing"
+        );
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_normal_journal_title_format_is_budgeted_and_reconciled() {
+        let root = scratch("admission-normal-journal-title-format");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        let title_format = "EEEE, dd-MM-yyyy";
+        fs::write(
+            root.join("logseq/config.edn"),
+            format!("{{:journal/page-title-format \"{title_format}\"}}\n"),
+        )
+        .unwrap();
+        fs::write(root.join("2026_07_25.md"), b"- short journal\n").unwrap();
+
+        let graph = Graph::open(&root);
+        let format_budget = graph_text_journal_title_format_budget(&graph).unwrap();
+        assert_eq!(format_budget.input_bytes, title_format.len() as u64);
+        assert_eq!(
+            format_budget.rendered_bytes,
+            title_format.len() as u64 * MAX_JOURNAL_TITLE_BYTES_PER_FORMAT_BYTE
+        );
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("normal configured format must produce a complete snapshot");
+        };
+        let record = index
+            .files_by_exact_path
+            .get(&ManagedPath::parse("2026_07_25.md").unwrap())
+            .unwrap();
+        assert_eq!(record.semantic.name, "Saturday, 25-07-2026");
+        assert!(
+            record.semantic.name.capacity() as u64
+                <= owned_string_len_upper_bound(format_budget.rendered_bytes).unwrap()
+        );
+        drop(state);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_complete_validator_checks_exact_reverse_keys_and_path_kinds() {
+        let root = scratch("admission-total-invariant-checker");
+        fs::write(root.join("One.md"), b"title:: One\n").unwrap();
+        fs::write(root.join("Two.md"), b"title:: Two\n").unwrap();
+        let graph = Graph::open(&root);
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let state = graph.graph_text_admission.read().unwrap();
+        let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+            panic!("unarmed build must retain a complete diagnostic snapshot");
+        };
+        let one = ManagedPath::parse("One.md").unwrap();
+        let two = ManagedPath::parse("Two.md").unwrap();
+
+        let mut wrong_semantic = (**index).clone();
+        persistent_set_insert(
+            &mut wrong_semantic.paths_by_semantic_key,
+            graph_text_semantic_key(
+                &wrong_semantic
+                    .files_by_exact_path
+                    .get(&two)
+                    .unwrap()
+                    .semantic,
+            ),
+            one.clone(),
+        );
+        assert!(validate_graph_text_admission_index(&wrong_semantic).is_err());
+
+        let mut wrong_resource = (**index).clone();
+        let two_resource = wrong_resource
+            .files_by_exact_path
+            .get(&two)
+            .unwrap()
+            .file_resource_id;
+        persistent_set_insert(
+            &mut wrong_resource.paths_by_file_resource,
+            two_resource,
+            "One.md".to_owned(),
+        );
+        assert!(validate_graph_text_admission_index(&wrong_resource).is_err());
+
+        let mut missing_kind = (**index).clone();
+        missing_kind
+            .file_is_graph_text_by_exact_relative
+            .remove(&"One.md".to_owned());
+        assert!(validate_graph_text_admission_index(&missing_kind).is_err());
+
+        drop(state);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_exact_live_hardlink_failure_poisons_permanently() {
+        let root = scratch("admission-exact-live-hardlink");
+        let outside = scratch("admission-exact-live-hardlink-outside");
+        fs::write(root.join("Page.md"), b"- retained\n").unwrap();
+        let graph = Graph::open(&root);
+        graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        let path = ManagedPath::parse("Page.md").unwrap();
+
+        let alias = outside.join("alias.bin");
+        fs::hard_link(root.join("Page.md"), &alias).unwrap();
+        assert!(graph.graph_text_admission_exact(&epoch, &path).is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        fs::remove_file(alias).unwrap();
+        assert!(graph.graph_text_admission_epoch().is_err());
+        assert!(graph.graph_text_admission_exact(&epoch, &path).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_root_substitution_poison_survives_restoration_for_epoch_and_point() {
+        fn substitute(root: &Path, retained: &Path) {
+            let _ = fs::remove_dir_all(retained);
+            fs::rename(root, retained).unwrap();
+            fs::create_dir_all(root).unwrap();
+        }
+
+        fn restore(root: &Path, retained: &Path) {
+            fs::remove_dir_all(root).unwrap();
+            fs::rename(retained, root).unwrap();
+        }
+
+        let point_root = scratch("admission-point-root-substitution");
+        fs::write(point_root.join("Page.md"), b"- point\n").unwrap();
+        let point_graph = Graph::open(&point_root);
+        point_graph.arm_graph_text_admission_feed(0).unwrap();
+        point_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .unwrap();
+        let point_epoch = point_graph.graph_text_admission_epoch().unwrap();
+        let point_path = ManagedPath::parse("Page.md").unwrap();
+        let point_retained = point_root.with_extension("retained");
+        substitute(&point_root, &point_retained);
+        assert!(point_graph
+            .graph_text_admission_exact(&point_epoch, &point_path)
+            .is_err());
+        restore(&point_root, &point_retained);
+        assert!(point_graph.graph_text_admission_epoch().is_err());
+        assert!(point_graph
+            .graph_text_admission_exact(&point_epoch, &point_path)
+            .is_err());
+
+        let epoch_root = scratch("admission-epoch-root-substitution");
+        fs::write(epoch_root.join("Page.md"), b"- epoch\n").unwrap();
+        let epoch_graph = Graph::open(&epoch_root);
+        epoch_graph.arm_graph_text_admission_feed(0).unwrap();
+        epoch_graph
+            .initial_shadow_raw_managed_text_inventory()
+            .unwrap();
+        let epoch_retained = epoch_root.with_extension("retained");
+        substitute(&epoch_root, &epoch_retained);
+        assert!(epoch_graph.graph_text_admission_epoch().is_err());
+        restore(&epoch_root, &epoch_retained);
+        assert!(epoch_graph.graph_text_admission_epoch().is_err());
+
+        let _ = fs::remove_dir_all(&point_root);
+        let _ = fs::remove_dir_all(&epoch_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admission_exact_read_replacement_bytes_resource_and_link_poison() {
+        for kind in ["bytes", "resource", "link"] {
+            let root = scratch(&format!("admission-exact-{kind}-replacement"));
+            let outside = scratch(&format!("admission-exact-{kind}-replacement-outside"));
+            fs::write(root.join("Page.md"), b"- retained\n").unwrap();
+            let graph = Graph::open(&root);
+            graph.arm_graph_text_admission_feed(0).unwrap();
+            graph.initial_shadow_raw_managed_text_inventory().unwrap();
+            let epoch = graph.graph_text_admission_epoch().unwrap();
+            let path = ManagedPath::parse("Page.md").unwrap();
+            let target = root.join("Page.md");
+            let retired = root.join("Page.retired");
+            let alias = outside.join("alias.bin");
+            MANAGED_INVENTORY_READ_RACE.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || match kind {
+                    "bytes" => fs::write(&target, b"- changed\n"),
+                    "resource" => {
+                        fs::rename(&target, &retired)?;
+                        fs::write(&target, b"- retained\n")
+                    }
+                    "link" => fs::hard_link(&target, &alias),
+                    _ => unreachable!(),
+                }));
+            });
+            assert!(graph.graph_text_admission_exact(&epoch, &path).is_err());
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+            assert!(graph.graph_text_admission_epoch().is_err());
+
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+        }
+    }
+
+    #[test]
+    fn admission_exact_valid_current_proof_has_no_builder_enumeration() {
+        let root = scratch("admission-exact-valid-live-proof");
+        fs::create_dir_all(root.join("deep/tree")).unwrap();
+        fs::write(
+            root.join("deep/tree/Page.Markdown"),
+            b"title:: Current\n\n- body\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&root);
+        graph.arm_graph_text_admission_feed(8).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        let path = ManagedPath::parse("deep/tree/Page.Markdown").unwrap();
+
+        reset_graph_text_admission_test_counters();
+        PROJECTION_EXACT_OPEN_COUNT.with(|count| count.set(0));
+        let observation = graph
+            .graph_text_admission_exact(&epoch, &path)
+            .unwrap()
+            .into_present();
+        assert_eq!(observation.current.bytes, b"title:: Current\n\n- body\n");
+        assert_eq!(
+            observation.current.description,
+            observation.record.description
+        );
+        assert_eq!(
+            observation.current.file_resource_id,
+            observation.record.file_resource_id
+        );
+        assert_eq!(observation.current.link_count, 1);
+        assert_eq!(
+            graph_text_admission_test_counters(),
+            GraphTextAdmissionTestCounters {
+                point_query_attempts: 1,
+                ..GraphTextAdmissionTestCounters::default()
+            }
+        );
+        PROJECTION_EXACT_OPEN_COUNT.with(|count| assert!(count.get() >= 4));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn admission_exact_concurrent_valid_feed_generation_cannot_return_old_observation() {
+        let root = scratch("admission-exact-concurrent-feed");
+        fs::write(root.join("Page.md"), b"- stable\n").unwrap();
+        let graph = Arc::new(Graph::open(&root));
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        let path = ManagedPath::parse("Page.md").unwrap();
+        MANAGED_INVENTORY_READ_RACE.with(|hook| {
+            let graph = Arc::clone(&graph);
+            *hook.borrow_mut() = Some(Box::new(move || {
+                graph.apply_graph_text_admission_event(
+                    &token,
+                    1,
+                    GraphTextAdmissionExactEvent::FileUpsert {
+                        relative: "Page.md".to_owned(),
+                    },
+                )
+            }));
+        });
+
+        assert!(graph.graph_text_admission_exact(&epoch, &path).is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(graph.graph_text_admission_epoch().is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn feed_overflow_disconnect_generation_wrap_and_build_bounds_poison_permanently() {
+        let prebuild = scratch("admission-feed-prebuild-event");
+        let graph = Graph::open(&prebuild);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Missing.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+
+        let building = scratch("admission-feed-building-event");
+        let graph = Graph::open(&building);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.begin_graph_text_admission_build().unwrap();
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Missing.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let overflow = scratch("admission-feed-overflow");
+        let graph = Graph::open(&overflow);
+        let token = graph.arm_graph_text_admission_feed(u64::MAX).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                0,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Missing.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert!(graph.graph_text_admission_epoch().is_err());
+
+        let generation = scratch("admission-generation-wrap");
+        let graph = Graph::open(&generation);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        graph.set_graph_text_admission_generation_for_test(u64::MAX);
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileRemove {
+                    relative: "Missing.md".to_owned(),
+                },
+            )
+            .is_err());
+
+        let disconnected = scratch("admission-feed-disconnect");
+        let graph = Graph::open(&disconnected);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        graph.disconnect_graph_text_admission_feed(&token).unwrap();
+        assert!(graph.graph_text_admission_epoch().is_err());
+
+        for (tag, limits) in [
+            (
+                "count",
+                InitialShadowLimits {
+                    managed_files: 0,
+                    ..INITIAL_SHADOW_LIMITS
+                },
+            ),
+            (
+                "permanent",
+                InitialShadowLimits {
+                    permanent_index_bytes: 1,
+                    ..INITIAL_SHADOW_LIMITS
+                },
+            ),
+            (
+                "peak",
+                InitialShadowLimits {
+                    peak_build_bytes: 1,
+                    ..INITIAL_SHADOW_LIMITS
+                },
+            ),
+        ] {
+            let root = scratch(&format!("admission-bound-{tag}"));
+            fs::write(root.join("Page.md"), b"- bounded\n").unwrap();
+            let graph = Graph::open(&root);
+            assert!(graph
+                .initial_shadow_raw_managed_text_inventory_with_limits(limits)
+                .is_err());
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+            assert!(graph.graph_text_admission_epoch().is_err());
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        let _ = fs::remove_dir_all(&overflow);
+        let _ = fs::remove_dir_all(&generation);
+        let _ = fs::remove_dir_all(&disconnected);
+        let _ = fs::remove_dir_all(&prebuild);
+        let _ = fs::remove_dir_all(&building);
+    }
+
+    #[test]
+    fn admission_memory_preflights_combined_captures_maps_parser_event_and_overflow() {
+        let combined_root = scratch("admission-combined-capture-bound");
+        for index in 0..8 {
+            fs::write(
+                combined_root.join(format!("Page-{index}.md")),
+                vec![b'x'; 8 * 1024],
+            )
+            .unwrap();
+        }
+        let graph = Graph::open(&combined_root);
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
+        let first = collect_initial_shadow_managed_inventory(&graph, &permit, true).unwrap();
+        let second = collect_initial_shadow_managed_inventory(&graph, &permit, false).unwrap();
+        let individual_limit = first
+            .peak_build_charge
+            .max(second.peak_build_charge)
+            .checked_add(16 * 1024)
+            .unwrap();
+        assert!(first.peak_build_charge < individual_limit);
+        assert!(second.peak_build_charge < individual_limit);
+        assert!(
+            checked_add_bytes(first.peak_build_charge, second.peak_build_charge).unwrap()
+                > individual_limit
+        );
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .initial_shadow_raw_managed_text_inventory_with_limits(InitialShadowLimits {
+                peak_build_bytes: individual_limit,
+                ..INITIAL_SHADOW_LIMITS
+            })
+            .is_err());
+        assert_eq!(graph_text_admission_test_counters().parser_invocations, 0);
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let resource_root = scratch("admission-resource-map-preflight");
+        fs::write(
+            resource_root.join("retained-resource-with-a-long-name.bin"),
+            b"x",
+        )
+        .unwrap();
+        let graph = Graph::open(&resource_root);
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
+        let capture = collect_initial_shadow_managed_inventory(&graph, &permit, true).unwrap();
+        let permanent = graph_text_initial_permanent_upper_bound(&graph, &capture).unwrap();
+        assert!(permanent > 0);
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .initial_shadow_raw_managed_text_inventory_with_limits(InitialShadowLimits {
+                permanent_index_bytes: permanent - 1,
+                ..INITIAL_SHADOW_LIMITS
+            })
+            .is_err());
+        assert_eq!(
+            graph_text_admission_test_counters().index_map_insertions,
+            0,
+            "resource maps must be rejected before their first permanent insertion"
+        );
+
+        let parser_root = scratch("admission-parser-peak-preflight");
+        let title = "T".repeat(32 * 1024);
+        let parser_content = format!("title:: {title}\n\n- body\n");
+        fs::write(parser_root.join("Page.md"), &parser_content).unwrap();
+        let graph = Graph::open(&parser_root);
+        let permit = graph.admit_retained_managed_text_writer().unwrap();
+        let first = collect_initial_shadow_managed_inventory(&graph, &permit, true).unwrap();
+        let second = collect_initial_shadow_managed_inventory(&graph, &permit, false).unwrap();
+        let combined =
+            checked_add_bytes(first.peak_build_charge, second.peak_build_charge).unwrap();
+        let permanent = graph_text_initial_permanent_upper_bound(&graph, &first).unwrap();
+        let path = ManagedPath::parse("Page.md").unwrap();
+        let semantic_budget =
+            graph_text_observed_semantic_name_upper_bound(&graph, &path, &parser_content).unwrap();
+        let parse_peak = graph_text_present_parse_peak_upper_bound(
+            &graph,
+            &path,
+            &parser_content,
+            semantic_budget,
+        )
+        .unwrap();
+        let parser_limit = checked_add_bytes(
+            checked_add_bytes(combined, permanent).unwrap(),
+            parse_peak - 1,
+        )
+        .unwrap();
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .initial_shadow_raw_managed_text_inventory_with_limits(InitialShadowLimits {
+                peak_build_bytes: parser_limit,
+                ..INITIAL_SHADOW_LIMITS
+            })
+            .is_err());
+        let counters = graph_text_admission_test_counters();
+        assert_eq!(counters.parser_invocations, 0);
+        assert!(counters.index_map_insertions > 0);
+
+        let event_root = scratch("admission-exact-large-title-bound");
+        fs::write(event_root.join("Page.md"), b"title:: Small\n\n- body\n").unwrap();
+        let graph = Graph::open(&event_root);
+        let token = graph.arm_graph_text_admission_feed(0).unwrap();
+        graph.initial_shadow_raw_managed_text_inventory().unwrap();
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        {
+            let mut state = graph.graph_text_admission.write().unwrap();
+            let GraphTextAdmissionState::Complete(index) = &*state else {
+                panic!("armed build must be complete");
+            };
+            let mut constrained = (**index).clone();
+            constrained.permanent_limit =
+                constrained.permanent_bytes.checked_add(20 * 1024).unwrap();
+            constrained.peak_limit = u64::MAX;
+            *state = GraphTextAdmissionState::Complete(Arc::new(constrained));
+        }
+        let event_title = "E".repeat(32 * 1024);
+        fs::write(
+            event_root.join("Page.md"),
+            format!("title:: {event_title}\n\n- changed\n"),
+        )
+        .unwrap();
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .apply_graph_text_admission_event(
+                &token,
+                1,
+                GraphTextAdmissionExactEvent::FileUpsert {
+                    relative: "Page.md".to_owned(),
+                },
+            )
+            .is_err());
+        assert_eq!(
+            graph_text_admission_test_counters().parser_invocations,
+            0,
+            "the content-derived title bound must reject before parser allocation"
+        );
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+        assert!(graph
+            .graph_text_admission_exact(&epoch, &ManagedPath::parse("Page.md").unwrap())
+            .is_err());
+
+        let overflow_root = scratch("admission-capture-charge-overflow");
+        let graph = Graph::open(&overflow_root);
+        GRAPH_TEXT_FIRST_CAPTURE_CHARGE_OVERRIDE.with(|charge| charge.set(Some(u64::MAX)));
+        reset_graph_text_admission_test_counters();
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        assert_eq!(
+            graph_text_admission_test_counters().builder_enumerations,
+            3,
+            "combined-charge overflow must fail before the second capture enumerates"
+        );
+        assert!(matches!(
+            &*graph.graph_text_admission.read().unwrap(),
+            GraphTextAdmissionState::Poisoned { .. }
+        ));
+
+        let _ = fs::remove_dir_all(&combined_root);
+        let _ = fs::remove_dir_all(&resource_root);
+        let _ = fs::remove_dir_all(&parser_root);
+        let _ = fs::remove_dir_all(&event_root);
+        let _ = fs::remove_dir_all(&overflow_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn armed_collision_builds_poison_and_complete_collision_points_still_block() {
+        let portable = scratch("admission-armed-portable-collision");
+        fs::write(portable.join("Caf\u{e9}.md"), b"title:: One\n").unwrap();
+        fs::write(portable.join("Cafe\u{301}.MD"), b"title:: Two\n").unwrap();
+
+        let resource = scratch("admission-armed-resource-collision");
+        fs::write(resource.join("Page.md"), b"- page\n").unwrap();
+        fs::hard_link(resource.join("Page.md"), resource.join("alias.bin")).unwrap();
+
+        let semantic = scratch("admission-armed-semantic-collision");
+        fs::create_dir_all(semantic.join("a")).unwrap();
+        fs::create_dir_all(semantic.join("b")).unwrap();
+        fs::write(semantic.join("a/One.md"), b"title:: Shared\n").unwrap();
+        fs::write(semantic.join("b/Two.org"), b"#+title: Shared\n").unwrap();
+
+        for (root, member) in [
+            (&portable, "Caf\u{e9}.md"),
+            (&resource, "Page.md"),
+            (&semantic, "a/One.md"),
+        ] {
+            let graph = Graph::open(root);
+            graph.arm_graph_text_admission_feed(0).unwrap();
+            assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+            let forged = GraphTextAdmissionEpoch {
+                instance: Arc::clone(&graph.graph_text_admission_instance),
+                scope_binding: graph.graph_text_scope_binding().unwrap(),
+                graph_resource: graph.canonical_resource_id().unwrap(),
+                generation: 1,
+                feed_sequence: 0,
+            };
+            reset_graph_text_admission_test_counters();
+            assert!(graph.graph_text_admission_epoch().is_err());
+            assert!(graph
+                .graph_text_admission_exact(&forged, &ManagedPath::parse(member).unwrap())
+                .is_err());
+            assert_eq!(
+                graph_text_admission_test_counters(),
+                GraphTextAdmissionTestCounters {
+                    builder_enumerations: 0,
+                    point_query_attempts: 2,
+                    ..GraphTextAdmissionTestCounters::default()
+                }
+            );
+            assert!(matches!(
+                &*graph.graph_text_admission.read().unwrap(),
+                GraphTextAdmissionState::Poisoned { .. }
+            ));
+        }
+
+        let defensive = scratch("admission-defensive-complete-collision");
+        fs::create_dir_all(defensive.join("a")).unwrap();
+        fs::create_dir_all(defensive.join("b")).unwrap();
+        fs::write(defensive.join("a/One.md"), b"title:: Shared\n").unwrap();
+        fs::write(defensive.join("b/Two.md"), b"title:: Shared\n").unwrap();
+        let graph = Graph::open(&defensive);
+        assert!(graph.initial_shadow_raw_managed_text_inventory().is_err());
+        {
+            let mut state = graph.graph_text_admission.write().unwrap();
+            let GraphTextAdmissionState::SnapshotComplete(index) = &*state else {
+                panic!("unarmed collision must remain diagnostic-only");
+            };
+            let mut forced = (**index).clone();
+            forced.feed = Some(GraphTextAdmissionFeedFence { last_sequence: 9 });
+            *state = GraphTextAdmissionState::Complete(Arc::new(forced));
+        }
+        let epoch = graph.graph_text_admission_epoch().unwrap();
+        reset_graph_text_admission_test_counters();
+        assert!(graph
+            .graph_text_admission_exact(&epoch, &ManagedPath::parse("a/One.md").unwrap(),)
+            .is_err());
+        assert_eq!(graph_text_admission_test_counters().builder_enumerations, 0);
+
+        let _ = fs::remove_dir_all(&portable);
+        let _ = fs::remove_dir_all(&resource);
+        let _ = fs::remove_dir_all(&semantic);
+        let _ = fs::remove_dir_all(&defensive);
     }
 
     #[test]
@@ -25563,7 +30537,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_shadow_rejects_equal_configured_roots_and_nested_root_retarget() {
+    fn initial_shadow_ignores_equal_creation_roots_and_rejects_directory_retarget() {
         let equal = scratch("initial-shadow-equal-roots");
         fs::create_dir_all(equal.join("logseq")).unwrap();
         fs::write(
@@ -25574,7 +30548,8 @@ mod tests {
         fs::create_dir_all(equal.join("content")).unwrap();
         assert!(Graph::open(&equal)
             .initial_shadow_raw_managed_text_inventory()
-            .is_err());
+            .unwrap()
+            .is_empty());
 
         let retarget = scratch("initial-shadow-configured-retarget");
         fs::create_dir_all(retarget.join("logseq")).unwrap();
@@ -25634,10 +30609,11 @@ mod tests {
 
         let first = collect_initial_shadow_managed_inventory(&graph, &permit, true).unwrap();
         let validation = collect_initial_shadow_managed_inventory(&graph, &permit, false).unwrap();
-        assert!(first.iter().all(|entry| entry.bytes.is_some()));
-        assert!(validation.iter().all(|entry| entry.bytes.is_none()));
+        assert!(first.entries.iter().all(|entry| entry.bytes.is_some()));
+        assert!(validation.entries.iter().all(|entry| entry.bytes.is_none()));
         assert_eq!(
             first
+                .entries
                 .iter()
                 .map(|entry| (
                     entry.path.clone(),
@@ -25646,6 +30622,7 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             validation
+                .entries
                 .iter()
                 .map(|entry| (
                     entry.path.clone(),
@@ -25669,7 +30646,7 @@ mod tests {
         };
         let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            &graph, &permit, true, limits,
+            &graph, &permit, true, limits, 0,
         )
         .is_err());
 
@@ -25688,7 +30665,7 @@ mod tests {
         };
         let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            &graph, &permit, true, limits,
+            &graph, &permit, true, limits, 0,
         )
         .is_err());
 
@@ -25701,7 +30678,7 @@ mod tests {
         };
         let permit = graph.admit_retained_managed_text_writer().unwrap();
         assert!(collect_initial_shadow_managed_inventory_with_limits(
-            &graph, &permit, true, limits,
+            &graph, &permit, true, limits, 0,
         )
         .is_err());
 
