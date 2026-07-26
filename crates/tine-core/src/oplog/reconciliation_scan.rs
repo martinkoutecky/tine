@@ -19,10 +19,11 @@ use super::{
 use crate::graph_text_scope::GraphTextScopeBinding;
 use crate::model::Graph;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::mem;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub(crate) const GRAPH_TEXT_SCAN_READ_BUFFER_BYTES: usize = 64 * 1024;
@@ -31,6 +32,390 @@ pub(crate) const GRAPH_TEXT_EXPECTED_PAGE_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_RETAINED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SCAN_EXPECTED_PATHS: usize = 1_000_000;
 const MAX_SCAN_EXACT_PATH_BYTES: usize = 4096;
+
+/// Bounded, single-flight scheduling limits for one graph endpoint.
+///
+/// These limits bound only retained scheduler state. Callers may receive a
+/// larger watcher batch, but any path which cannot be retained turns that
+/// batch into a safe full-scan request instead of being silently forgotten.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationSchedulerLimits {
+    pub(crate) maximum_watcher_paths: usize,
+    pub(crate) maximum_watcher_path_bytes: usize,
+    pub(crate) maximum_precondition_paths: usize,
+    pub(crate) maximum_precondition_path_bytes: usize,
+    pub(crate) maximum_full_scan_reasons: usize,
+}
+
+impl Default for ReconciliationSchedulerLimits {
+    fn default() -> Self {
+        Self {
+            maximum_watcher_paths: 1024,
+            maximum_watcher_path_bytes: 128 * 1024,
+            maximum_precondition_paths: 1024,
+            maximum_precondition_path_bytes: 128 * 1024,
+            maximum_full_scan_reasons: 8,
+        }
+    }
+}
+
+/// A freshness signal. It does not grant filesystem, graph, or write
+/// authority; the future executor must recapture every selected path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ReconciliationTrigger {
+    WatcherPaths(BTreeSet<ManagedPath>),
+    WatcherUncertain,
+    Startup,
+    Periodic,
+    Explicit,
+    ProjectionPreconditionMismatch(BTreeSet<ManagedPath>),
+    BaselineUnavailable,
+}
+
+/// Bounded diagnostics retained on one coalesced full scan.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ReconciliationFullScanReason {
+    Explicit,
+    WatcherUncertain,
+    Startup,
+    BaselineUnavailable,
+    Periodic,
+    WatcherPathOverflow,
+    ProjectionPreconditionPathOverflow,
+    Retry,
+    Uncertain,
+    Cancelled,
+}
+
+/// The diagnostic reasons carried by a full scan job.
+///
+/// `omitted_reasons` means the configured diagnostic bound was reached. It
+/// never means that work was dropped: the job remains a full scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationFullScanReasons {
+    pub(crate) reasons: BTreeSet<ReconciliationFullScanReason>,
+    pub(crate) omitted_reasons: bool,
+}
+
+/// The only work a scheduler may ask a later executor to perform.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ReconciliationWork {
+    ProjectionPreconditionMismatch { paths: BTreeSet<ManagedPath> },
+    FullScan(ReconciliationFullScanReasons),
+    WatcherPaths { paths: BTreeSet<ManagedPath> },
+}
+
+/// Opaque identity for exactly one started reconciliation job.
+///
+/// The fields intentionally stay module-private so another endpoint cannot
+/// forge a completion token. Cloning this value is harmless: it remains the
+/// same exact lease, not a new lease.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ReconciliationLease {
+    scheduler_id: u64,
+    sequence: u64,
+}
+
+/// Immutable work and its exact completion lease.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationJob {
+    lease: ReconciliationLease,
+    work: ReconciliationWork,
+}
+
+impl ReconciliationJob {
+    pub(crate) fn lease(&self) -> ReconciliationLease {
+        self.lease
+    }
+
+    pub(crate) fn work(&self) -> &ReconciliationWork {
+        &self.work
+    }
+}
+
+/// Terminal result reported by a future scan/coordinator executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReconciliationCompletionOutcome {
+    Noop,
+    Complete,
+    Blocked,
+    Retry,
+    Uncertain,
+    Cancelled,
+    Shutdown,
+}
+
+/// Rejected completions never affect scheduler state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReconciliationCompletionError {
+    NoActiveJob,
+    StaleOrForeignLease,
+}
+
+/// The last blocked job remains visible until a later successful completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationBlockedStatus {
+    pub(crate) lease: ReconciliationLease,
+}
+
+/// A compact state snapshot; there is intentionally no inferred "clean"
+/// state. A blocked result stays represented even if fresh work is queued.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationSchedulerStatus {
+    pub(crate) active: bool,
+    pub(crate) pending: bool,
+    pub(crate) blocked: Option<ReconciliationBlockedStatus>,
+    pub(crate) last_completion: Option<ReconciliationCompletionOutcome>,
+}
+
+#[derive(Default)]
+struct PendingReconciliation {
+    precondition_paths: BTreeSet<ManagedPath>,
+    precondition_path_bytes: usize,
+    watcher_paths: BTreeSet<ManagedPath>,
+    watcher_path_bytes: usize,
+    full_scan_reasons: BTreeSet<ReconciliationFullScanReason>,
+    omitted_full_scan_reasons: bool,
+}
+
+impl PendingReconciliation {
+    fn retain_precondition_paths(
+        &mut self,
+        paths: BTreeSet<ManagedPath>,
+        limits: ReconciliationSchedulerLimits,
+    ) -> bool {
+        retain_bounded_paths(
+            &mut self.precondition_paths,
+            &mut self.precondition_path_bytes,
+            paths,
+            limits.maximum_precondition_paths,
+            limits.maximum_precondition_path_bytes,
+        )
+    }
+
+    fn retain_watcher_paths(
+        &mut self,
+        paths: BTreeSet<ManagedPath>,
+        limits: ReconciliationSchedulerLimits,
+    ) -> bool {
+        retain_bounded_paths(
+            &mut self.watcher_paths,
+            &mut self.watcher_path_bytes,
+            paths,
+            limits.maximum_watcher_paths,
+            limits.maximum_watcher_path_bytes,
+        )
+    }
+
+    fn request_full_scan(
+        &mut self,
+        reason: ReconciliationFullScanReason,
+        limits: ReconciliationSchedulerLimits,
+    ) {
+        self.watcher_paths.clear();
+        self.watcher_path_bytes = 0;
+        if self.full_scan_reasons.contains(&reason) {
+            return;
+        }
+        if self.full_scan_reasons.len() < limits.maximum_full_scan_reasons {
+            self.full_scan_reasons.insert(reason);
+        } else {
+            self.omitted_full_scan_reasons = true;
+        }
+    }
+
+    fn has_full_scan(&self) -> bool {
+        !self.full_scan_reasons.is_empty() || self.omitted_full_scan_reasons
+    }
+
+    fn has_pending_work(&self) -> bool {
+        !self.precondition_paths.is_empty()
+            || self.has_full_scan()
+            || !self.watcher_paths.is_empty()
+    }
+
+    fn take_next_work(&mut self) -> Option<ReconciliationWork> {
+        if !self.precondition_paths.is_empty() {
+            self.precondition_path_bytes = 0;
+            return Some(ReconciliationWork::ProjectionPreconditionMismatch {
+                paths: mem::take(&mut self.precondition_paths),
+            });
+        }
+        if self.has_full_scan() {
+            let reasons = ReconciliationFullScanReasons {
+                reasons: mem::take(&mut self.full_scan_reasons),
+                omitted_reasons: mem::replace(&mut self.omitted_full_scan_reasons, false),
+            };
+            return Some(ReconciliationWork::FullScan(reasons));
+        }
+        if !self.watcher_paths.is_empty() {
+            self.watcher_path_bytes = 0;
+            return Some(ReconciliationWork::WatcherPaths {
+                paths: mem::take(&mut self.watcher_paths),
+            });
+        }
+        None
+    }
+}
+
+fn retain_bounded_paths(
+    retained: &mut BTreeSet<ManagedPath>,
+    retained_path_bytes: &mut usize,
+    paths: BTreeSet<ManagedPath>,
+    maximum_paths: usize,
+    maximum_path_bytes: usize,
+) -> bool {
+    let mut overflowed = false;
+    for path in paths {
+        if retained.contains(&path) {
+            continue;
+        }
+        let path_bytes = path.as_str().len();
+        if retained.len() >= maximum_paths
+            || path_bytes > maximum_path_bytes.saturating_sub(*retained_path_bytes)
+        {
+            overflowed = true;
+            continue;
+        }
+        *retained_path_bytes = retained_path_bytes.saturating_add(path_bytes);
+        retained.insert(path);
+    }
+    overflowed
+}
+
+static NEXT_RECONCILIATION_SCHEDULER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A bounded, deterministic, in-memory single-flight scheduler for one
+/// enrolled graph endpoint. It owns only discovery work hints, never Graph
+/// truth or filesystem authority.
+pub(crate) struct ReconciliationScheduler {
+    limits: ReconciliationSchedulerLimits,
+    scheduler_id: u64,
+    next_lease_sequence: u64,
+    pending: PendingReconciliation,
+    active: Option<ReconciliationLease>,
+    blocked: Option<ReconciliationBlockedStatus>,
+    last_completion: Option<ReconciliationCompletionOutcome>,
+}
+
+impl ReconciliationScheduler {
+    pub(crate) fn new(limits: ReconciliationSchedulerLimits) -> Self {
+        Self {
+            limits,
+            scheduler_id: NEXT_RECONCILIATION_SCHEDULER_ID.fetch_add(1, Ordering::Relaxed),
+            next_lease_sequence: 0,
+            pending: PendingReconciliation::default(),
+            active: None,
+            blocked: None,
+            last_completion: None,
+        }
+    }
+
+    /// Retain a coalesced discovery hint. A path which cannot fit is converted
+    /// into full work before this call returns.
+    pub(crate) fn trigger(&mut self, trigger: ReconciliationTrigger) {
+        match trigger {
+            ReconciliationTrigger::WatcherPaths(paths) => {
+                if self.pending.retain_watcher_paths(paths, self.limits) {
+                    self.pending.request_full_scan(
+                        ReconciliationFullScanReason::WatcherPathOverflow,
+                        self.limits,
+                    );
+                }
+            }
+            ReconciliationTrigger::WatcherUncertain => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::WatcherUncertain, self.limits),
+            ReconciliationTrigger::Startup => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Startup, self.limits),
+            ReconciliationTrigger::Periodic => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Periodic, self.limits),
+            ReconciliationTrigger::Explicit => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Explicit, self.limits),
+            ReconciliationTrigger::ProjectionPreconditionMismatch(paths) => {
+                if self.pending.retain_precondition_paths(paths, self.limits) {
+                    self.pending.request_full_scan(
+                        ReconciliationFullScanReason::ProjectionPreconditionPathOverflow,
+                        self.limits,
+                    );
+                }
+            }
+            ReconciliationTrigger::BaselineUnavailable => self.pending.request_full_scan(
+                ReconciliationFullScanReason::BaselineUnavailable,
+                self.limits,
+            ),
+        }
+    }
+
+    /// Start the highest-priority retained work, if no lease is active.
+    pub(crate) fn next(&mut self) -> Option<ReconciliationJob> {
+        if self.active.is_some() {
+            return None;
+        }
+        let work = self.pending.take_next_work()?;
+        self.next_lease_sequence = self
+            .next_lease_sequence
+            .checked_add(1)
+            .expect("reconciliation scheduler lease sequence exhausted");
+        let lease = ReconciliationLease {
+            scheduler_id: self.scheduler_id,
+            sequence: self.next_lease_sequence,
+        };
+        self.active = Some(lease);
+        Some(ReconciliationJob { lease, work })
+    }
+
+    /// Finish exactly the currently active lease. Stale, duplicate, and
+    /// foreign leases fail without mutating pending work or status.
+    pub(crate) fn complete(
+        &mut self,
+        lease: ReconciliationLease,
+        outcome: ReconciliationCompletionOutcome,
+    ) -> Result<(), ReconciliationCompletionError> {
+        let Some(active) = self.active else {
+            return Err(ReconciliationCompletionError::NoActiveJob);
+        };
+        if active != lease {
+            return Err(ReconciliationCompletionError::StaleOrForeignLease);
+        }
+        self.active = None;
+        self.last_completion = Some(outcome);
+        match outcome {
+            ReconciliationCompletionOutcome::Noop | ReconciliationCompletionOutcome::Complete => {
+                self.blocked = None;
+            }
+            ReconciliationCompletionOutcome::Blocked => {
+                self.blocked = Some(ReconciliationBlockedStatus { lease });
+            }
+            ReconciliationCompletionOutcome::Retry => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Retry, self.limits),
+            ReconciliationCompletionOutcome::Uncertain => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Uncertain, self.limits),
+            ReconciliationCompletionOutcome::Cancelled => self
+                .pending
+                .request_full_scan(ReconciliationFullScanReason::Cancelled, self.limits),
+            // Shutdown hands control back to the lifecycle owner. It is
+            // observable through `last_completion`, while a later scheduler
+            // instance must receive its own Startup trigger.
+            ReconciliationCompletionOutcome::Shutdown => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn status(&self) -> ReconciliationSchedulerStatus {
+        ReconciliationSchedulerStatus {
+            active: self.active.is_some(),
+            pending: self.pending.has_pending_work(),
+            blocked: self.blocked,
+            last_completion: self.last_completion,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GraphTextScanLimits {
@@ -2931,6 +3316,332 @@ mod tests {
         assert_eq!(scan.instrumentation.eligible_files, 20_000);
         assert_eq!(scan.candidates.len(), 10_000);
         assert_eq!(scan.instrumentation.parser_invocations, 0);
+    }
+
+    fn scheduler_paths(paths: &[&str]) -> BTreeSet<ManagedPath> {
+        paths
+            .iter()
+            .map(|path| ManagedPath::parse(*path).unwrap())
+            .collect()
+    }
+
+    fn full_scan_reasons(job: &ReconciliationJob) -> &ReconciliationFullScanReasons {
+        match job.work() {
+            ReconciliationWork::FullScan(reasons) => reasons,
+            work => panic!("expected full scan work, got {work:?}"),
+        }
+    }
+
+    #[test]
+    fn reconciliation_scheduler_coalesces_full_reasons_and_supersedes_watcher_hints() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/a.md",
+            "pages/b.md",
+        ])));
+        scheduler.trigger(ReconciliationTrigger::Periodic);
+        scheduler.trigger(ReconciliationTrigger::Startup);
+        scheduler.trigger(ReconciliationTrigger::BaselineUnavailable);
+        scheduler.trigger(ReconciliationTrigger::WatcherUncertain);
+        scheduler.trigger(ReconciliationTrigger::Explicit);
+
+        let job = scheduler.next().unwrap();
+        assert_eq!(
+            full_scan_reasons(&job).reasons,
+            BTreeSet::from([
+                ReconciliationFullScanReason::Explicit,
+                ReconciliationFullScanReason::WatcherUncertain,
+                ReconciliationFullScanReason::Startup,
+                ReconciliationFullScanReason::BaselineUnavailable,
+                ReconciliationFullScanReason::Periodic,
+            ])
+        );
+        assert!(!full_scan_reasons(&job).omitted_reasons);
+        scheduler
+            .complete(job.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        assert!(scheduler.next().is_none());
+    }
+
+    #[test]
+    fn reconciliation_scheduler_prioritizes_exact_preconditions_before_full_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/watcher.md",
+        ])));
+        scheduler.trigger(ReconciliationTrigger::Periodic);
+        scheduler.trigger(ReconciliationTrigger::Explicit);
+        scheduler.trigger(ReconciliationTrigger::ProjectionPreconditionMismatch(
+            scheduler_paths(&["pages/z.md", "pages/a.md"]),
+        ));
+
+        let targeted = scheduler.next().unwrap();
+        assert_eq!(
+            targeted.work(),
+            &ReconciliationWork::ProjectionPreconditionMismatch {
+                paths: scheduler_paths(&["pages/a.md", "pages/z.md"]),
+            }
+        );
+        scheduler
+            .complete(targeted.lease(), ReconciliationCompletionOutcome::Noop)
+            .unwrap();
+
+        let full = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&full)
+            .reasons
+            .contains(&ReconciliationFullScanReason::Explicit));
+        assert!(full_scan_reasons(&full)
+            .reasons
+            .contains(&ReconciliationFullScanReason::Periodic));
+        scheduler
+            .complete(full.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        assert!(scheduler.next().is_none());
+    }
+
+    #[test]
+    fn reconciliation_scheduler_is_single_flight_and_retains_arrivals_during_active_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/first.md",
+        ])));
+        let first = scheduler.next().unwrap();
+        assert!(scheduler.status().active);
+        assert!(scheduler.next().is_none());
+
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/second.md",
+        ])));
+        scheduler.trigger(ReconciliationTrigger::ProjectionPreconditionMismatch(
+            scheduler_paths(&["pages/urgent.md"]),
+        ));
+        assert!(scheduler.status().pending);
+        assert!(scheduler.next().is_none());
+        scheduler
+            .complete(first.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+
+        let urgent = scheduler.next().unwrap();
+        assert_eq!(
+            urgent.work(),
+            &ReconciliationWork::ProjectionPreconditionMismatch {
+                paths: scheduler_paths(&["pages/urgent.md"]),
+            }
+        );
+        scheduler
+            .complete(urgent.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        let second = scheduler.next().unwrap();
+        assert_eq!(
+            second.work(),
+            &ReconciliationWork::WatcherPaths {
+                paths: scheduler_paths(&["pages/second.md"]),
+            }
+        );
+    }
+
+    #[test]
+    fn reconciliation_scheduler_rejects_foreign_stale_and_double_completion_tokens() {
+        let mut first_scheduler =
+            ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        let mut second_scheduler =
+            ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        first_scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/one.md",
+        ])));
+        second_scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/two.md",
+        ])));
+        let first = first_scheduler.next().unwrap();
+        let foreign = second_scheduler.next().unwrap();
+
+        assert_eq!(
+            first_scheduler.complete(foreign.lease(), ReconciliationCompletionOutcome::Complete),
+            Err(ReconciliationCompletionError::StaleOrForeignLease)
+        );
+        assert!(first_scheduler.status().active);
+        first_scheduler
+            .complete(first.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+
+        first_scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/three.md",
+        ])));
+        let second = first_scheduler.next().unwrap();
+        assert_eq!(
+            first_scheduler.complete(first.lease(), ReconciliationCompletionOutcome::Complete),
+            Err(ReconciliationCompletionError::StaleOrForeignLease)
+        );
+        first_scheduler
+            .complete(second.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        assert_eq!(
+            first_scheduler.complete(second.lease(), ReconciliationCompletionOutcome::Complete),
+            Err(ReconciliationCompletionError::NoActiveJob)
+        );
+    }
+
+    #[test]
+    fn reconciliation_scheduler_watcher_count_and_byte_overflow_become_full_work() {
+        let limits = ReconciliationSchedulerLimits {
+            maximum_watcher_paths: 1,
+            maximum_watcher_path_bytes: 64,
+            ..ReconciliationSchedulerLimits::default()
+        };
+        let mut scheduler = ReconciliationScheduler::new(limits);
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/a.md",
+            "pages/b.md",
+        ])));
+        let count_overflow = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&count_overflow)
+            .reasons
+            .contains(&ReconciliationFullScanReason::WatcherPathOverflow));
+
+        let mut byte_limited = ReconciliationScheduler::new(ReconciliationSchedulerLimits {
+            maximum_watcher_path_bytes: 1,
+            ..ReconciliationSchedulerLimits::default()
+        });
+        byte_limited.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/a.md",
+        ])));
+        let byte_overflow = byte_limited.next().unwrap();
+        assert!(full_scan_reasons(&byte_overflow)
+            .reasons
+            .contains(&ReconciliationFullScanReason::WatcherPathOverflow));
+    }
+
+    #[test]
+    fn reconciliation_scheduler_precondition_overflow_preserves_bounded_paths_then_full_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits {
+            maximum_precondition_paths: 1,
+            maximum_precondition_path_bytes: 64,
+            ..ReconciliationSchedulerLimits::default()
+        });
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/watcher.md",
+        ])));
+        scheduler.trigger(ReconciliationTrigger::ProjectionPreconditionMismatch(
+            scheduler_paths(&["pages/a.md", "pages/b.md"]),
+        ));
+
+        let targeted = scheduler.next().unwrap();
+        assert_eq!(
+            targeted.work(),
+            &ReconciliationWork::ProjectionPreconditionMismatch {
+                paths: scheduler_paths(&["pages/a.md"]),
+            }
+        );
+        scheduler
+            .complete(targeted.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        let full = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&full)
+            .reasons
+            .contains(&ReconciliationFullScanReason::ProjectionPreconditionPathOverflow));
+        scheduler
+            .complete(full.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        assert!(scheduler.next().is_none());
+    }
+
+    #[test]
+    fn reconciliation_scheduler_bounds_full_scan_diagnostics_without_dropping_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits {
+            maximum_full_scan_reasons: 1,
+            ..ReconciliationSchedulerLimits::default()
+        });
+        scheduler.trigger(ReconciliationTrigger::Startup);
+        scheduler.trigger(ReconciliationTrigger::Explicit);
+
+        let job = scheduler.next().unwrap();
+        let reasons = full_scan_reasons(&job);
+        assert_eq!(reasons.reasons.len(), 1);
+        assert!(reasons.omitted_reasons);
+    }
+
+    #[test]
+    fn reconciliation_scheduler_blocked_is_observable_and_retry_schedules_safe_full_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/blocked.md",
+        ])));
+        let blocked = scheduler.next().unwrap();
+        scheduler
+            .complete(blocked.lease(), ReconciliationCompletionOutcome::Blocked)
+            .unwrap();
+        assert_eq!(
+            scheduler.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Blocked)
+        );
+        assert_eq!(scheduler.status().blocked.unwrap().lease, blocked.lease());
+
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/retry.md",
+        ])));
+        let retrying = scheduler.next().unwrap();
+        scheduler
+            .complete(retrying.lease(), ReconciliationCompletionOutcome::Retry)
+            .unwrap();
+        assert!(scheduler.status().blocked.is_some());
+        let retry = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&retry)
+            .reasons
+            .contains(&ReconciliationFullScanReason::Retry));
+        scheduler
+            .complete(retry.lease(), ReconciliationCompletionOutcome::Complete)
+            .unwrap();
+        assert!(scheduler.status().blocked.is_none());
+
+        scheduler.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/uncertain.md",
+        ])));
+        let uncertain = scheduler.next().unwrap();
+        scheduler
+            .complete(
+                uncertain.lease(),
+                ReconciliationCompletionOutcome::Uncertain,
+            )
+            .unwrap();
+        let uncertain_retry = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&uncertain_retry)
+            .reasons
+            .contains(&ReconciliationFullScanReason::Uncertain));
+    }
+
+    #[test]
+    fn reconciliation_scheduler_periodic_trigger_always_requests_full_work() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::Periodic);
+        let periodic = scheduler.next().unwrap();
+        assert!(full_scan_reasons(&periodic)
+            .reasons
+            .contains(&ReconciliationFullScanReason::Periodic));
+        scheduler
+            .complete(periodic.lease(), ReconciliationCompletionOutcome::Noop)
+            .unwrap();
+        assert!(scheduler.next().is_none());
+    }
+
+    #[test]
+    fn reconciliation_schedulers_are_independent_per_endpoint() {
+        let mut first = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        let mut second = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        first.trigger(ReconciliationTrigger::WatcherPaths(scheduler_paths(&[
+            "pages/first.md",
+        ])));
+        second.trigger(ReconciliationTrigger::Periodic);
+
+        let first_job = first.next().unwrap();
+        let second_job = second.next().unwrap();
+        assert_ne!(first_job.lease(), second_job.lease());
+        assert!(matches!(
+            first_job.work(),
+            ReconciliationWork::WatcherPaths { .. }
+        ));
+        assert!(matches!(second_job.work(), ReconciliationWork::FullScan(_)));
+        assert!(first.status().active);
+        assert!(second.status().active);
     }
 
     #[allow(dead_code)]
