@@ -3,6 +3,12 @@
 //! This module deliberately has no object-store, engine, graph-writer, or
 //! authority token dependency.  Its only job is to make the v1 bytes and their
 //! validation rules unambiguous before a later packet connects them to I/O.
+//!
+//! Zero source files mean the canonical empty inventory and blob roots and
+//! zero pages in both indexes. Zero parts mean the initial frontier is also
+//! final, with accepted count zero and no last part; the aggregate commit still
+//! exists and binds that generation-zero frontier. A non-empty index always
+//! has at least one page and exactly one terminal page.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -11,7 +17,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::identity::BootstrapPartId;
-use super::{BatchId, CanonicalGraphResourceId, ImportId, WorkspaceId};
+use super::{
+    BatchId, CanonicalGraphResourceId, ContentDigest, ImportId, LineageDigest, ManagedPath,
+    ManagedTextKind, WorkspaceId,
+};
 
 pub(crate) const BOOTSTRAP_IMPORT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const BOOTSTRAP_PARTITION_POLICY_VERSION: u32 = 1;
@@ -21,7 +30,11 @@ pub(crate) const SOURCE_SPAN_SCHEMA_VERSION: u32 = 1;
 pub(crate) const OPERATION_ROOT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const PAYLOAD_OBJECT_ROOT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const FULL_OBJECT_ROOT_SCHEMA_VERSION: u32 = 1;
-pub(crate) const ARCHIVE_FRONTIER_SCHEMA_VERSION: u32 = 1;
+pub(crate) const BOOTSTRAP_FRONTIER_SCHEMA_VERSION: u32 = 1;
+pub(crate) const SOURCE_INVENTORY_INDEX_SCHEMA_VERSION: u32 = 1;
+pub(crate) const SOURCE_BLOB_INDEX_SCHEMA_VERSION: u32 = 1;
+pub(crate) const PART_SPAN_INDEX_SCHEMA_VERSION: u32 = 1;
+pub(crate) const BOOTSTRAP_AGGREGATE_COMMIT_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) const MAX_OPERATIONS_PER_BOOTSTRAP_PART: u32 = 4096;
 pub(crate) const MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART: u32 = 4096;
@@ -30,14 +43,20 @@ pub(crate) const MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART: u64 = 192 * 1024 * 1
 pub(crate) const MAX_BOOTSTRAP_PART_EVIDENCE_BYTES: usize = 768 * 1024;
 pub(crate) const MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES: usize = 768 * 1024;
 pub(crate) const MAX_SOURCE_BLOB_CHUNK_BYTES: u32 = 1024 * 1024;
+pub(crate) const MAX_SOURCE_INDEX_PAGE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_SOURCE_INDEX_PAGES: u32 = 4096;
+pub(crate) const MAX_PART_SPAN_INDEX_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES: usize = 1024;
+pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_TOTAL_SOURCE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+pub(crate) const MAX_PARSED_NODES_PER_SOURCE_FILE: u32 = 1_000_000;
 
 /// Fixed v1 caps that bound allocation in the pure schema.  They are not
 /// partition policy knobs; any future change needs a new profile version.
 pub(crate) const MAX_BOOTSTRAP_PARTS: u32 = 1024;
-pub(crate) const MAX_SOURCE_INVENTORY_LEAVES: u32 = 65_536;
-pub(crate) const MAX_SOURCE_BLOB_CHUNKS: u32 = 65_536;
+pub(crate) const MAX_SOURCE_INVENTORY_LEAVES: u32 = 1_000_000;
+pub(crate) const MAX_SOURCE_BLOB_CHUNKS: u32 = 1_000_000;
 pub(crate) const MAX_SOURCE_LOCATOR_BYTES: usize = 16 * 1024;
-pub(crate) const MAX_SELECTED_PEERS: u32 = 64;
 pub(crate) const MAX_CANONICAL_NESTING_DEPTH: u8 = 4;
 /// Complete descriptor sets include payload objects, the evidence object, and
 /// manifest-defined non-payload objects.  This is deliberately a separately
@@ -48,6 +67,10 @@ pub(crate) const MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART: u64 =
 
 const EVIDENCE_MAGIC: &[u8; 8] = b"TINBPE1\0";
 const MANIFEST_MAGIC: &[u8; 8] = b"TINBAM1\0";
+const INVENTORY_PAGE_MAGIC: &[u8; 8] = b"TINBII1\0";
+const BLOB_PAGE_MAGIC: &[u8; 8] = b"TINBBI1\0";
+const PART_SPAN_MAGIC: &[u8; 8] = b"TINBSI1\0";
+const COMMIT_MAGIC: &[u8; 8] = b"TINBAC1\0";
 
 macro_rules! digest_type {
     ($name:ident) => {
@@ -83,13 +106,12 @@ digest_type!(SourceBlobChunkDigestV1);
 digest_type!(SourceBlobChunkDescriptorDigestV1);
 digest_type!(SourceSpanDigestV1);
 digest_type!(OperationDigestV1);
-digest_type!(PayloadObjectDigestV1);
 digest_type!(BootstrapEvidenceDigestV1);
 digest_type!(BootstrapManifestFingerprintV1);
 digest_type!(BootstrapAcceptedEventBindingV1);
-digest_type!(BootstrapArchiveIdentityDigestV1);
 digest_type!(BootstrapAggregateDigestV1);
-digest_type!(ArchiveFinalFrontierProofV1);
+digest_type!(BootstrapFinalFrontierProofV1);
+digest_type!(BootstrapPublicationIdV1);
 
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SourceInventoryRootV1 {
@@ -255,8 +277,7 @@ impl SourceBlobChunkRootV1 {
     /// descriptor root, but remain unambiguous through their separate source
     /// inventory commitment.
     pub(crate) fn empty() -> Self {
-        SourceBlobChunkRootBuilderV1::new(&[])
-            .expect("empty source inventory is valid")
+        SourceBlobChunkRootBuilderV1::new()
             .finish()
             .expect("empty blob root is continuous")
     }
@@ -270,11 +291,24 @@ impl SourceBlobChunkRootV1 {
             MAX_SOURCE_BLOB_CHUNKS,
             "source blob chunks",
         )?;
-        let mut ordered = descriptors.iter().collect::<Vec<_>>();
-        ordered.sort_unstable();
-        let mut builder = SourceBlobChunkRootBuilderV1::new(source_leaves)?;
-        for descriptor in ordered {
-            builder.push(*descriptor)?;
+        let mut ordered_sources = source_leaves.iter().collect::<Vec<_>>();
+        ordered_sources.sort_unstable_by_key(|source| source.digest());
+        let mut ordered_descriptors = descriptors.iter().copied().collect::<Vec<_>>();
+        ordered_descriptors.sort_unstable();
+        let mut descriptor_index = 0;
+        let mut builder = SourceBlobChunkRootBuilderV1::new();
+        for source in ordered_sources {
+            builder.begin_source(source)?;
+            while ordered_descriptors
+                .get(descriptor_index)
+                .is_some_and(|descriptor| descriptor.source_leaf == source.digest())
+            {
+                builder.push(ordered_descriptors[descriptor_index])?;
+                descriptor_index += 1;
+            }
+        }
+        if descriptor_index != ordered_descriptors.len() {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
         }
         builder.finish()
     }
@@ -298,6 +332,9 @@ impl SourceBlobChunkRootV1 {
     fn validate(self) -> Result<(), BootstrapImportError> {
         if self.chunk_count > MAX_SOURCE_BLOB_CHUNKS {
             return Err(BootstrapImportError::CountLimit("source blob chunks"));
+        }
+        if self.total_bytes > MAX_TOTAL_SOURCE_BYTES {
+            return Err(BootstrapImportError::ByteLimit("total source bytes"));
         }
         Ok(())
     }
@@ -636,7 +673,11 @@ const PROFILE_CONSTANTS_V1: &[ProfileConstantV1] = &[
     ProfileConstantV1::U32(OPERATION_ROOT_SCHEMA_VERSION),
     ProfileConstantV1::U32(PAYLOAD_OBJECT_ROOT_SCHEMA_VERSION),
     ProfileConstantV1::U32(FULL_OBJECT_ROOT_SCHEMA_VERSION),
-    ProfileConstantV1::U32(ARCHIVE_FRONTIER_SCHEMA_VERSION),
+    ProfileConstantV1::U32(BOOTSTRAP_FRONTIER_SCHEMA_VERSION),
+    ProfileConstantV1::U32(SOURCE_INVENTORY_INDEX_SCHEMA_VERSION),
+    ProfileConstantV1::U32(SOURCE_BLOB_INDEX_SCHEMA_VERSION),
+    ProfileConstantV1::U32(PART_SPAN_INDEX_SCHEMA_VERSION),
+    ProfileConstantV1::U32(BOOTSTRAP_AGGREGATE_COMMIT_SCHEMA_VERSION),
     ProfileConstantV1::U32(MAX_BOOTSTRAP_PARTS),
     ProfileConstantV1::U32(MAX_OPERATIONS_PER_BOOTSTRAP_PART),
     ProfileConstantV1::U32(MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART),
@@ -648,7 +689,13 @@ const PROFILE_CONSTANTS_V1: &[ProfileConstantV1] = &[
     ProfileConstantV1::U32(MAX_SOURCE_INVENTORY_LEAVES),
     ProfileConstantV1::U32(MAX_SOURCE_BLOB_CHUNKS),
     ProfileConstantV1::U64(MAX_SOURCE_LOCATOR_BYTES as u64),
-    ProfileConstantV1::U32(MAX_SELECTED_PEERS),
+    ProfileConstantV1::U64(MAX_SOURCE_INDEX_PAGE_BYTES as u64),
+    ProfileConstantV1::U32(MAX_SOURCE_INDEX_PAGES),
+    ProfileConstantV1::U64(MAX_PART_SPAN_INDEX_BYTES as u64),
+    ProfileConstantV1::U64(MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES as u64),
+    ProfileConstantV1::U64(MAX_SOURCE_FILE_BYTES),
+    ProfileConstantV1::U64(MAX_TOTAL_SOURCE_BYTES),
+    ProfileConstantV1::U32(MAX_PARSED_NODES_PER_SOURCE_FILE),
     ProfileConstantV1::U8(MAX_CANONICAL_NESTING_DEPTH),
     ProfileConstantV1::U32(MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART),
     ProfileConstantV1::U64(MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART),
@@ -702,26 +749,34 @@ impl BootstrapPartitionProfileV1 {
     }
 }
 
-/// One source item in the complete inventory.  Locators are exact portable
-/// bytes, not platform paths or serialized maps.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// One source item in the complete inventory. The managed kind and exact UTF-8
+/// graph-relative path bytes come from Graph's configured-root classifier.
+/// Neither identity nor decoding reconstructs a conventional pages/journals
+/// layout.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SourceLeafV1 {
-    locator: Vec<u8>,
+    kind: ManagedTextKind,
+    path: ManagedPath,
     content_digest: SourceContentDigestV1,
     byte_length: u64,
 }
 
 impl SourceLeafV1 {
     pub(crate) fn new(
-        locator: Vec<u8>,
+        kind: ManagedTextKind,
+        path: ManagedPath,
         content_digest: SourceContentDigestV1,
         byte_length: u64,
     ) -> Result<Self, BootstrapImportError> {
-        if locator.is_empty() || locator.len() > MAX_SOURCE_LOCATOR_BYTES {
+        if path.as_str().len() > MAX_SOURCE_LOCATOR_BYTES {
             return Err(BootstrapImportError::LocatorLimit);
         }
+        if byte_length > MAX_SOURCE_FILE_BYTES {
+            return Err(BootstrapImportError::ByteLimit("source file"));
+        }
         Ok(Self {
-            locator,
+            kind,
+            path,
             content_digest,
             byte_length,
         })
@@ -732,7 +787,8 @@ impl SourceLeafV1 {
             b"tine/bootstrap-import/source-leaf/v1\0",
             &[
                 &SOURCE_LEAF_SCHEMA_VERSION.to_be_bytes(),
-                &self.locator,
+                &[managed_text_kind_byte(self.kind)],
+                self.path.as_str().as_bytes(),
                 self.content_digest.as_bytes(),
                 &self.byte_length.to_be_bytes(),
             ],
@@ -744,15 +800,65 @@ impl SourceLeafV1 {
             b"tine/bootstrap-import/source-leaf/v1\0",
             &[
                 &SOURCE_LEAF_SCHEMA_VERSION.to_be_bytes(),
-                &self.locator,
+                &[managed_text_kind_byte(self.kind)],
+                self.path.as_str().as_bytes(),
                 self.content_digest.as_bytes(),
                 &self.byte_length.to_be_bytes(),
             ],
         )
     }
 
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        let fields = decode_canonical_value(bytes, b"tine/bootstrap-import/source-leaf/v1\0", 5)?;
+        let version = read_u32(fields[0])?;
+        if version != SOURCE_LEAF_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let kind = decode_managed_text_kind(fields[1])?;
+        let path = std::str::from_utf8(fields[2])
+            .map_err(|_| BootstrapImportError::InvalidUtf8)
+            .and_then(|path| {
+                ManagedPath::parse(path.to_owned())
+                    .map_err(|_| BootstrapImportError::InvalidManagedPath)
+            })?;
+        let value = Self::new(
+            kind,
+            path,
+            SourceContentDigestV1::from_bytes(array_32(fields[3])?),
+            read_u64(fields[4])?,
+        )?;
+        if value.encode().as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    pub(crate) const fn kind(&self) -> ManagedTextKind {
+        self.kind
+    }
+
+    pub(crate) fn path(&self) -> &ManagedPath {
+        &self.path
+    }
+
+    pub(crate) const fn byte_length(&self) -> u64 {
+        self.byte_length
+    }
+
+    pub(crate) const fn content_digest(&self) -> SourceContentDigestV1 {
+        self.content_digest
+    }
+
     fn canonical_cmp(&self, other: &Self) -> Ordering {
-        self.encode().cmp(&other.encode())
+        self.path
+            .as_str()
+            .as_bytes()
+            .cmp(other.path.as_str().as_bytes())
+            .then_with(|| {
+                managed_text_kind_byte(self.kind).cmp(&managed_text_kind_byte(other.kind))
+            })
+            .then_with(|| self.content_digest.cmp(&other.content_digest))
+            .then_with(|| self.byte_length.cmp(&other.byte_length))
     }
 }
 
@@ -818,6 +924,694 @@ impl SourceBlobChunkDescriptorV1 {
             &[&self.encode()],
         )
     }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        let fields =
+            decode_canonical_value(bytes, b"tine/bootstrap-import/source-blob-chunk/v1\0", 7)?;
+        let version = read_u32(fields[0])?;
+        if version != SOURCE_BLOB_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let value = Self::new(
+            SourceLeafDigestV1::from_bytes(array_32(fields[1])?),
+            read_u32(fields[2])?,
+            read_u32(fields[3])?,
+            read_u64(fields[4])?,
+            read_u32(fields[5])?,
+            SourceBlobChunkDigestV1::from_bytes(array_32(fields[6])?),
+        )?;
+        if value.encode().as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    pub(crate) const fn source_leaf(self) -> SourceLeafDigestV1 {
+        self.source_leaf
+    }
+
+    pub(crate) const fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+
+    pub(crate) const fn offset(self) -> u64 {
+        self.offset
+    }
+
+    pub(crate) const fn byte_length(self) -> u32 {
+        self.byte_length
+    }
+
+    pub(crate) const fn content_digest(self) -> SourceBlobChunkDigestV1 {
+        self.content_digest
+    }
+}
+
+/// One directly loadable canonical inventory page. Empty inventories have no
+/// pages. Non-empty indexes have consecutive zero-based page ordinals, and
+/// exactly the last page has `terminal = true`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceInventoryIndexPageV1 {
+    root: SourceInventoryRootV1,
+    page_ordinal: u32,
+    first_entry_ordinal: u32,
+    terminal: bool,
+    entries: Vec<SourceLeafV1>,
+}
+
+impl SourceInventoryIndexPageV1 {
+    fn new(
+        root: SourceInventoryRootV1,
+        page_ordinal: u32,
+        first_entry_ordinal: u32,
+        terminal: bool,
+        entries: Vec<SourceLeafV1>,
+    ) -> Result<Self, BootstrapImportError> {
+        if entries.is_empty() {
+            return Err(BootstrapImportError::EmptyIndexPage);
+        }
+        if page_ordinal >= MAX_SOURCE_INDEX_PAGES {
+            return Err(BootstrapImportError::CountLimit(
+                "source inventory index pages",
+            ));
+        }
+        let entry_count =
+            u32::try_from(entries.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
+        if first_entry_ordinal
+            .checked_add(entry_count)
+            .ok_or(BootstrapImportError::LengthOverflow)?
+            > root.source_count()
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        for pair in entries.windows(2) {
+            if pair[0].canonical_cmp(&pair[1]) != Ordering::Less {
+                return Err(BootstrapImportError::NonCanonicalOrder);
+            }
+        }
+        let value = Self {
+            root,
+            page_ordinal,
+            first_entry_ordinal,
+            terminal,
+            entries,
+        };
+        if value.encoded_len()? > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source inventory index page",
+            ));
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, BootstrapImportError> {
+        let mut bytes = Vec::with_capacity(self.encoded_len()?);
+        bytes.extend_from_slice(INVENTORY_PAGE_MAGIC);
+        bytes.extend_from_slice(&SOURCE_INVENTORY_INDEX_SCHEMA_VERSION.to_be_bytes());
+        self.root.encode_into(&mut bytes);
+        bytes.extend_from_slice(&self.page_ordinal.to_be_bytes());
+        bytes.extend_from_slice(&self.first_entry_ordinal.to_be_bytes());
+        bytes.push(u8::from(self.terminal));
+        bytes.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        for entry in &self.entries {
+            put_sized(&mut bytes, &entry.encode())?;
+        }
+        if bytes.len() > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source inventory index page",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        if bytes.len() > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source inventory index page",
+            ));
+        }
+        let mut cursor = FixedReader::with_magic(bytes, INVENTORY_PAGE_MAGIC)?;
+        let version = cursor.u32()?;
+        if version != SOURCE_INVENTORY_INDEX_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let root = SourceInventoryRootV1::decode(cursor.take(36)?)?;
+        let page_ordinal = cursor.u32()?;
+        let first_entry_ordinal = cursor.u32()?;
+        let terminal = decode_bool(cursor.take(1)?)?;
+        let count = cursor.u32()?;
+        if count > root.source_count() {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(SourceLeafV1::decode(cursor.sized()?)?);
+        }
+        cursor.finish()?;
+        let value = Self::new(root, page_ordinal, first_entry_ordinal, terminal, entries)?;
+        if value.encode()?.as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    fn encoded_len(&self) -> Result<usize, BootstrapImportError> {
+        self.entries.iter().try_fold(61_usize, |length, entry| {
+            length
+                .checked_add(4)
+                .and_then(|length| length.checked_add(entry.encode().len()))
+                .ok_or(BootstrapImportError::LengthOverflow)
+        })
+    }
+
+    pub(crate) const fn page_ordinal(&self) -> u32 {
+        self.page_ordinal
+    }
+
+    pub(crate) const fn terminal(&self) -> bool {
+        self.terminal
+    }
+
+    pub(crate) fn entries(&self) -> &[SourceLeafV1] {
+        &self.entries
+    }
+}
+
+/// Streaming inventory index author. It retains at most one 1 MiB page and
+/// one prior leaf. The caller writes each returned non-terminal page before
+/// continuing, then writes the optional terminal page returned by `finish`.
+pub(crate) struct SourceInventoryIndexBuilderV1 {
+    expected_root: SourceInventoryRootV1,
+    root: SourceInventoryRootBuilderV1,
+    page_ordinal: u32,
+    first_entry_ordinal: u32,
+    page_bytes: usize,
+    entries: Vec<SourceLeafV1>,
+}
+
+impl SourceInventoryIndexBuilderV1 {
+    pub(crate) fn new(expected_root: SourceInventoryRootV1) -> Self {
+        Self {
+            expected_root,
+            root: SourceInventoryRootBuilderV1::new(),
+            page_ordinal: 0,
+            first_entry_ordinal: 0,
+            page_bytes: 61,
+            entries: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        leaf: SourceLeafV1,
+    ) -> Result<Option<SourceInventoryIndexPageV1>, BootstrapImportError> {
+        let entry_bytes = leaf
+            .encode()
+            .len()
+            .checked_add(4)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if 61 + entry_bytes > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source inventory index entry",
+            ));
+        }
+        let flushed = if !self.entries.is_empty()
+            && self
+                .page_bytes
+                .checked_add(entry_bytes)
+                .ok_or(BootstrapImportError::LengthOverflow)?
+                > MAX_SOURCE_INDEX_PAGE_BYTES
+        {
+            Some(self.take_page(false)?)
+        } else {
+            None
+        };
+        self.root.push(&leaf)?;
+        self.page_bytes = self
+            .page_bytes
+            .checked_add(entry_bytes)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.entries.push(leaf);
+        Ok(flushed)
+    }
+
+    pub(crate) fn finish(
+        mut self,
+    ) -> Result<Option<SourceInventoryIndexPageV1>, BootstrapImportError> {
+        let root = std::mem::replace(&mut self.root, SourceInventoryRootBuilderV1::new()).finish();
+        if root != self.expected_root {
+            return Err(BootstrapImportError::IndexRootMismatch);
+        }
+        if self.entries.is_empty() {
+            if self.expected_root.source_count() != 0 || self.page_ordinal != 0 {
+                return Err(BootstrapImportError::IndexContinuityMismatch);
+            }
+            return Ok(None);
+        }
+        self.take_page(true).map(Some)
+    }
+
+    fn take_page(
+        &mut self,
+        terminal: bool,
+    ) -> Result<SourceInventoryIndexPageV1, BootstrapImportError> {
+        let entries = std::mem::take(&mut self.entries);
+        let count =
+            u32::try_from(entries.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
+        let page = SourceInventoryIndexPageV1::new(
+            self.expected_root,
+            self.page_ordinal,
+            self.first_entry_ordinal,
+            terminal,
+            entries,
+        )?;
+        self.page_ordinal = self
+            .page_ordinal
+            .checked_add(1)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if self.page_ordinal > MAX_SOURCE_INDEX_PAGES {
+            return Err(BootstrapImportError::CountLimit(
+                "source inventory index pages",
+            ));
+        }
+        self.first_entry_ordinal = self
+            .first_entry_ordinal
+            .checked_add(count)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.page_bytes = 61;
+        Ok(page)
+    }
+}
+
+pub(crate) struct SourceInventoryIndexValidatorV1 {
+    expected_root: SourceInventoryRootV1,
+    expected_pages: u32,
+    root: SourceInventoryRootBuilderV1,
+    next_page: u32,
+    next_entry: u32,
+    terminal: bool,
+}
+
+impl SourceInventoryIndexValidatorV1 {
+    pub(crate) fn new(
+        expected_root: SourceInventoryRootV1,
+        expected_pages: u32,
+    ) -> Result<Self, BootstrapImportError> {
+        validate_page_count(
+            expected_pages,
+            expected_root.source_count(),
+            "source inventory index pages",
+        )?;
+        Ok(Self {
+            expected_root,
+            expected_pages,
+            root: SourceInventoryRootBuilderV1::new(),
+            next_page: 0,
+            next_entry: 0,
+            terminal: false,
+        })
+    }
+
+    pub(crate) fn push_page(
+        &mut self,
+        page: &SourceInventoryIndexPageV1,
+    ) -> Result<(), BootstrapImportError> {
+        if self.terminal
+            || page.root != self.expected_root
+            || page.page_ordinal != self.next_page
+            || page.first_entry_ordinal != self.next_entry
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        for entry in &page.entries {
+            self.root.push(entry)?;
+        }
+        self.next_entry = self
+            .next_entry
+            .checked_add(page.entries.len() as u32)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.next_page = self
+            .next_page
+            .checked_add(1)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.terminal = page.terminal;
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Result<u32, BootstrapImportError> {
+        let zero = self.expected_root.source_count() == 0;
+        if (zero && (self.next_page != 0 || self.terminal))
+            || (!zero && !self.terminal)
+            || self.next_page != self.expected_pages
+            || self.next_entry != self.expected_root.source_count()
+            || self.root.finish() != self.expected_root
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        Ok(self.next_page)
+    }
+}
+
+struct SourceBlobIndexRootAccumulatorV1 {
+    root: RootHasherV1,
+    last: Option<SourceBlobChunkDescriptorV1>,
+    total_bytes: u64,
+}
+
+impl SourceBlobIndexRootAccumulatorV1 {
+    fn new() -> Self {
+        Self {
+            root: RootHasherV1::new(b"tine/bootstrap-import/source-blob-root/v1\0"),
+            last: None,
+            total_bytes: 0,
+        }
+    }
+
+    fn push(
+        &mut self,
+        descriptor: SourceBlobChunkDescriptorV1,
+    ) -> Result<(), BootstrapImportError> {
+        if let Some(last) = self.last {
+            if descriptor == last {
+                return Err(BootstrapImportError::DuplicateCanonicalItem);
+            }
+            if descriptor < last {
+                return Err(BootstrapImportError::NonCanonicalOrder);
+            }
+            if descriptor.source_leaf == last.source_leaf && descriptor.ordinal == last.ordinal {
+                return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                    "source blob chunk ordinal",
+                ));
+            }
+        }
+        self.root.push(
+            &descriptor.encode(),
+            MAX_SOURCE_BLOB_CHUNKS,
+            "source blob chunks",
+        )?;
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(u64::from(descriptor.byte_length))
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if self.total_bytes > MAX_TOTAL_SOURCE_BYTES {
+            return Err(BootstrapImportError::ByteLimit("total source bytes"));
+        }
+        self.last = Some(descriptor);
+        Ok(())
+    }
+
+    fn finish(self) -> SourceBlobChunkRootV1 {
+        let count = self.root.count;
+        SourceBlobChunkRootV1 {
+            digest: self.root.finish(),
+            chunk_count: count,
+            total_bytes: self.total_bytes,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceBlobIndexPageV1 {
+    root: SourceBlobChunkRootV1,
+    page_ordinal: u32,
+    first_entry_ordinal: u32,
+    terminal: bool,
+    entries: Vec<SourceBlobChunkDescriptorV1>,
+}
+
+impl SourceBlobIndexPageV1 {
+    fn new(
+        root: SourceBlobChunkRootV1,
+        page_ordinal: u32,
+        first_entry_ordinal: u32,
+        terminal: bool,
+        entries: Vec<SourceBlobChunkDescriptorV1>,
+    ) -> Result<Self, BootstrapImportError> {
+        if entries.is_empty() {
+            return Err(BootstrapImportError::EmptyIndexPage);
+        }
+        if page_ordinal >= MAX_SOURCE_INDEX_PAGES {
+            return Err(BootstrapImportError::CountLimit("source blob index pages"));
+        }
+        let entry_count =
+            u32::try_from(entries.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
+        if first_entry_ordinal
+            .checked_add(entry_count)
+            .ok_or(BootstrapImportError::LengthOverflow)?
+            > root.chunk_count()
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        if entries.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(BootstrapImportError::NonCanonicalOrder);
+        }
+        let value = Self {
+            root,
+            page_ordinal,
+            first_entry_ordinal,
+            terminal,
+            entries,
+        };
+        if value.encoded_len()? > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source blob index page",
+            ));
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, BootstrapImportError> {
+        let mut bytes = Vec::with_capacity(self.encoded_len()?);
+        bytes.extend_from_slice(BLOB_PAGE_MAGIC);
+        bytes.extend_from_slice(&SOURCE_BLOB_INDEX_SCHEMA_VERSION.to_be_bytes());
+        self.root.encode_into(&mut bytes);
+        bytes.extend_from_slice(&self.page_ordinal.to_be_bytes());
+        bytes.extend_from_slice(&self.first_entry_ordinal.to_be_bytes());
+        bytes.push(u8::from(self.terminal));
+        bytes.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        for entry in &self.entries {
+            put_sized(&mut bytes, &entry.encode())?;
+        }
+        if bytes.len() > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source blob index page",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        if bytes.len() > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit(
+                "source blob index page",
+            ));
+        }
+        let mut cursor = FixedReader::with_magic(bytes, BLOB_PAGE_MAGIC)?;
+        let version = cursor.u32()?;
+        if version != SOURCE_BLOB_INDEX_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let root = SourceBlobChunkRootV1::decode(cursor.take(44)?)?;
+        let page_ordinal = cursor.u32()?;
+        let first_entry_ordinal = cursor.u32()?;
+        let terminal = decode_bool(cursor.take(1)?)?;
+        let count = cursor.u32()?;
+        if count > root.chunk_count() {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(SourceBlobChunkDescriptorV1::decode(cursor.sized()?)?);
+        }
+        cursor.finish()?;
+        let value = Self::new(root, page_ordinal, first_entry_ordinal, terminal, entries)?;
+        if value.encode()?.as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    fn encoded_len(&self) -> Result<usize, BootstrapImportError> {
+        self.entries.iter().try_fold(69_usize, |length, entry| {
+            length
+                .checked_add(4)
+                .and_then(|length| length.checked_add(entry.encode().len()))
+                .ok_or(BootstrapImportError::LengthOverflow)
+        })
+    }
+
+    pub(crate) const fn page_ordinal(&self) -> u32 {
+        self.page_ordinal
+    }
+
+    pub(crate) const fn terminal(&self) -> bool {
+        self.terminal
+    }
+
+    pub(crate) fn entries(&self) -> &[SourceBlobChunkDescriptorV1] {
+        &self.entries
+    }
+}
+
+pub(crate) struct SourceBlobIndexBuilderV1 {
+    expected_root: SourceBlobChunkRootV1,
+    root: SourceBlobIndexRootAccumulatorV1,
+    page_ordinal: u32,
+    first_entry_ordinal: u32,
+    page_bytes: usize,
+    entries: Vec<SourceBlobChunkDescriptorV1>,
+}
+
+impl SourceBlobIndexBuilderV1 {
+    pub(crate) fn new(expected_root: SourceBlobChunkRootV1) -> Self {
+        Self {
+            expected_root,
+            root: SourceBlobIndexRootAccumulatorV1::new(),
+            page_ordinal: 0,
+            first_entry_ordinal: 0,
+            page_bytes: 69,
+            entries: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        descriptor: SourceBlobChunkDescriptorV1,
+    ) -> Result<Option<SourceBlobIndexPageV1>, BootstrapImportError> {
+        let entry_bytes = descriptor
+            .encode()
+            .len()
+            .checked_add(4)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        let flushed = if !self.entries.is_empty()
+            && self
+                .page_bytes
+                .checked_add(entry_bytes)
+                .ok_or(BootstrapImportError::LengthOverflow)?
+                > MAX_SOURCE_INDEX_PAGE_BYTES
+        {
+            Some(self.take_page(false)?)
+        } else {
+            None
+        };
+        self.root.push(descriptor)?;
+        self.page_bytes = self
+            .page_bytes
+            .checked_add(entry_bytes)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.entries.push(descriptor);
+        Ok(flushed)
+    }
+
+    pub(crate) fn finish(mut self) -> Result<Option<SourceBlobIndexPageV1>, BootstrapImportError> {
+        let root =
+            std::mem::replace(&mut self.root, SourceBlobIndexRootAccumulatorV1::new()).finish();
+        if root != self.expected_root {
+            return Err(BootstrapImportError::IndexRootMismatch);
+        }
+        if self.entries.is_empty() {
+            if self.expected_root.chunk_count() != 0 || self.page_ordinal != 0 {
+                return Err(BootstrapImportError::IndexContinuityMismatch);
+            }
+            return Ok(None);
+        }
+        self.take_page(true).map(Some)
+    }
+
+    fn take_page(&mut self, terminal: bool) -> Result<SourceBlobIndexPageV1, BootstrapImportError> {
+        let entries = std::mem::take(&mut self.entries);
+        let count =
+            u32::try_from(entries.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
+        let page = SourceBlobIndexPageV1::new(
+            self.expected_root,
+            self.page_ordinal,
+            self.first_entry_ordinal,
+            terminal,
+            entries,
+        )?;
+        self.page_ordinal = self
+            .page_ordinal
+            .checked_add(1)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if self.page_ordinal > MAX_SOURCE_INDEX_PAGES {
+            return Err(BootstrapImportError::CountLimit("source blob index pages"));
+        }
+        self.first_entry_ordinal = self
+            .first_entry_ordinal
+            .checked_add(count)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.page_bytes = 69;
+        Ok(page)
+    }
+}
+
+pub(crate) struct SourceBlobIndexValidatorV1 {
+    expected_root: SourceBlobChunkRootV1,
+    expected_pages: u32,
+    root: SourceBlobIndexRootAccumulatorV1,
+    next_page: u32,
+    next_entry: u32,
+    terminal: bool,
+}
+
+impl SourceBlobIndexValidatorV1 {
+    pub(crate) fn new(
+        expected_root: SourceBlobChunkRootV1,
+        expected_pages: u32,
+    ) -> Result<Self, BootstrapImportError> {
+        validate_page_count(
+            expected_pages,
+            expected_root.chunk_count(),
+            "source blob index pages",
+        )?;
+        Ok(Self {
+            expected_root,
+            expected_pages,
+            root: SourceBlobIndexRootAccumulatorV1::new(),
+            next_page: 0,
+            next_entry: 0,
+            terminal: false,
+        })
+    }
+
+    pub(crate) fn push_page(
+        &mut self,
+        page: &SourceBlobIndexPageV1,
+    ) -> Result<(), BootstrapImportError> {
+        if self.terminal
+            || page.root != self.expected_root
+            || page.page_ordinal != self.next_page
+            || page.first_entry_ordinal != self.next_entry
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        for entry in &page.entries {
+            self.root.push(*entry)?;
+        }
+        self.next_entry = self
+            .next_entry
+            .checked_add(page.entries.len() as u32)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.next_page = self
+            .next_page
+            .checked_add(1)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        self.terminal = page.terminal;
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Result<u32, BootstrapImportError> {
+        let zero = self.expected_root.chunk_count() == 0;
+        if (zero && (self.next_page != 0 || self.terminal))
+            || (!zero && !self.terminal)
+            || self.next_page != self.expected_pages
+            || self.next_entry != self.expected_root.chunk_count()
+            || self.root.finish() != self.expected_root
+        {
+            return Err(BootstrapImportError::IndexContinuityMismatch);
+        }
+        Ok(self.next_page)
+    }
 }
 
 /// A source range attributed to one part.  Ranges are deliberately source
@@ -866,6 +1660,145 @@ impl SourceSpanV1 {
             &[&self.encode()],
         )
     }
+
+    fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        let fields = decode_canonical_value(bytes, b"tine/bootstrap-import/source-span/v1\0", 4)?;
+        let version = read_u32(fields[0])?;
+        if version != SOURCE_SPAN_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let value = Self::new(
+            SourceLeafDigestV1::from_bytes(array_32(fields[1])?),
+            read_u64(fields[2])?,
+            read_u64(fields[3])?,
+        )?;
+        if value.encode().as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    pub(crate) const fn source_leaf(self) -> SourceLeafDigestV1 {
+        self.source_leaf
+    }
+
+    pub(crate) const fn offset(self) -> u64 {
+        self.offset
+    }
+
+    pub(crate) const fn byte_length(self) -> u64 {
+        self.byte_length
+    }
+}
+
+/// The bounded direct `part-spans/<part-id>` object. It is intentionally
+/// loadable without walking either graph-sized source index.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BootstrapPartSpanIndexV1 {
+    part_id: BootstrapPartId,
+    root: SourceSpanRootV1,
+    spans: Vec<SourceSpanV1>,
+}
+
+impl BootstrapPartSpanIndexV1 {
+    pub(crate) fn new(
+        part_id: BootstrapPartId,
+        mut spans: Vec<SourceSpanV1>,
+    ) -> Result<Self, BootstrapImportError> {
+        checked_count(
+            spans.len(),
+            MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART,
+            "source spans",
+        )?;
+        spans.sort_unstable();
+        let root = SourceSpanRootV1::from_spans(&spans)?;
+        let value = Self {
+            part_id,
+            root,
+            spans,
+        };
+        if value.encoded_len()? > MAX_PART_SPAN_INDEX_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit("part span index"));
+        }
+        Ok(value)
+    }
+
+    pub(crate) const fn part_id(&self) -> BootstrapPartId {
+        self.part_id
+    }
+
+    pub(crate) const fn root(&self) -> SourceSpanRootV1 {
+        self.root
+    }
+
+    pub(crate) fn spans(&self) -> &[SourceSpanV1] {
+        &self.spans
+    }
+
+    pub(crate) fn validate_part(
+        &self,
+        evidence: BootstrapImportPartEvidenceV1,
+    ) -> Result<(), BootstrapImportError> {
+        if self.part_id != evidence.part_id() || self.root != evidence.source_span_root() {
+            return Err(BootstrapImportError::PartContextMismatch);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, BootstrapImportError> {
+        let mut bytes = Vec::with_capacity(self.encoded_len()?);
+        bytes.extend_from_slice(PART_SPAN_MAGIC);
+        bytes.extend_from_slice(&PART_SPAN_INDEX_SCHEMA_VERSION.to_be_bytes());
+        bytes.extend_from_slice(self.part_id.as_bytes());
+        self.root.encode_into(&mut bytes);
+        bytes.extend_from_slice(&(self.spans.len() as u32).to_be_bytes());
+        for span in &self.spans {
+            put_sized(&mut bytes, &span.encode())?;
+        }
+        if bytes.len() > MAX_PART_SPAN_INDEX_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit("part span index"));
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        if bytes.len() > MAX_PART_SPAN_INDEX_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit("part span index"));
+        }
+        let mut cursor = FixedReader::with_magic(bytes, PART_SPAN_MAGIC)?;
+        let version = cursor.u32()?;
+        if version != PART_SPAN_INDEX_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let part_id = BootstrapPartId::from_digest(cursor.array_32()?);
+        let declared_root = SourceSpanRootV1::decode(cursor.take(36)?)?;
+        let count = cursor.u32()?;
+        if count > MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART {
+            return Err(BootstrapImportError::CountLimit("source spans"));
+        }
+        let mut spans = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            spans.push(SourceSpanV1::decode(cursor.sized()?)?);
+        }
+        cursor.finish()?;
+        let value = Self::new(part_id, spans)?;
+        if value.root != declared_root {
+            return Err(BootstrapImportError::IndexRootMismatch);
+        }
+        if value.encode()?.as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    fn encoded_len(&self) -> Result<usize, BootstrapImportError> {
+        self.spans.iter().try_fold(84_usize, |length, span| {
+            length
+                .checked_add(4)
+                .and_then(|length| length.checked_add(span.encode().len()))
+                .ok_or(BootstrapImportError::LengthOverflow)
+        })
+    }
 }
 
 /// A digest-only operation commitment plus the semantic bytes it consumes.
@@ -906,7 +1839,7 @@ impl OperationLeafV1 {
 /// One full encoded object referenced by a bootstrap part.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct PayloadObjectDescriptorV1 {
-    content_digest: PayloadObjectDigestV1,
+    content_digest: ContentDigest,
     byte_length: u64,
 }
 
@@ -988,7 +1921,7 @@ impl FullObjectDescriptorV1 {
 
 impl PayloadObjectDescriptorV1 {
     pub(crate) fn new(
-        content_digest: PayloadObjectDigestV1,
+        content_digest: ContentDigest,
         byte_length: u64,
     ) -> Result<Self, BootstrapImportError> {
         if byte_length == 0 || byte_length > MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART {
@@ -1009,6 +1942,14 @@ impl PayloadObjectDescriptorV1 {
                 &self.byte_length.to_be_bytes(),
             ],
         )
+    }
+
+    pub(crate) const fn content_digest(self) -> ContentDigest {
+        self.content_digest
+    }
+
+    pub(crate) const fn byte_length(self) -> u64 {
+        self.byte_length
     }
 }
 
@@ -1061,12 +2002,12 @@ impl SourceInventoryRootBuilderV1 {
 
     pub(crate) fn push(&mut self, leaf: &SourceLeafV1) -> Result<(), BootstrapImportError> {
         if let Some(last) = &self.last {
-            if last.locator == leaf.locator {
+            if last.path == leaf.path {
                 return if last == leaf {
                     Err(BootstrapImportError::DuplicateCanonicalItem)
                 } else {
                     Err(BootstrapImportError::ConflictingProtocolIdentity(
-                        "source locator",
+                        "managed source path",
                     ))
                 };
             }
@@ -1099,44 +2040,55 @@ pub(crate) struct SourceBlobChunkRootBuilderV1 {
     root: RootHasherV1,
     last: Option<SourceBlobChunkDescriptorV1>,
     total_bytes: u64,
-    expected_sources: Vec<(SourceLeafDigestV1, u64)>,
-    expected_source_index: usize,
+    current_source: Option<(SourceLeafDigestV1, u64)>,
+    last_source: Option<SourceLeafDigestV1>,
 }
 
 impl SourceBlobChunkRootBuilderV1 {
-    /// Construct a blob root against the authoritative source leaves whose
-    /// digests commit their byte lengths.  A zero-length source has exactly
-    /// zero descriptors; every non-empty source must have one or more.
-    pub(crate) fn new(source_leaves: &[SourceLeafV1]) -> Result<Self, BootstrapImportError> {
-        SourceInventoryRootV1::from_leaves(source_leaves)?;
-        let mut expected_sources = source_leaves
-            .iter()
-            .map(|leaf| (leaf.digest(), leaf.byte_length))
-            .collect::<Vec<_>>();
-        expected_sources.sort_unstable_by_key(|source| source.0);
-        if expected_sources
-            .windows(2)
-            .any(|pair| pair[0].0 == pair[1].0)
-        {
-            return Err(BootstrapImportError::ConflictingProtocolIdentity(
-                "source leaf digest",
-            ));
-        }
-        let mut value = Self {
+    /// Sources are supplied in source-leaf-digest order. Each source is
+    /// finished before the next starts, so validation retains at most one
+    /// source leaf and one chunk descriptor.
+    pub(crate) fn new() -> Self {
+        Self {
             root: RootHasherV1::new(b"tine/bootstrap-import/source-blob-root/v1\0"),
             last: None,
             total_bytes: 0,
-            expected_sources,
-            expected_source_index: 0,
-        };
-        value.skip_zero_length_sources();
-        Ok(value)
+            current_source: None,
+            last_source: None,
+        }
+    }
+
+    pub(crate) fn begin_source(
+        &mut self,
+        source: &SourceLeafV1,
+    ) -> Result<(), BootstrapImportError> {
+        self.finish_source()?;
+        let digest = source.digest();
+        if self.last_source.is_some_and(|last| digest <= last) {
+            return if self.last_source == Some(digest) {
+                Err(BootstrapImportError::ConflictingProtocolIdentity(
+                    "source leaf digest",
+                ))
+            } else {
+                Err(BootstrapImportError::NonCanonicalOrder)
+            };
+        }
+        self.current_source = Some((digest, source.byte_length));
+        self.last_source = Some(digest);
+        self.last = None;
+        Ok(())
     }
 
     pub(crate) fn push(
         &mut self,
         descriptor: SourceBlobChunkDescriptorV1,
     ) -> Result<(), BootstrapImportError> {
+        let Some((expected_source, _)) = self.current_source else {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        };
+        if descriptor.source_leaf != expected_source {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        }
         if let Some(last) = self.last {
             if descriptor == last {
                 return Err(BootstrapImportError::DuplicateCanonicalItem);
@@ -1144,31 +2096,26 @@ impl SourceBlobChunkRootBuilderV1 {
             if descriptor < last {
                 return Err(BootstrapImportError::NonCanonicalOrder);
             }
-            if descriptor.source_leaf == last.source_leaf {
-                if descriptor.ordinal == last.ordinal {
-                    return Err(BootstrapImportError::ConflictingProtocolIdentity(
-                        "source blob chunk ordinal",
-                    ));
-                }
-                if descriptor.count != last.count {
-                    return Err(BootstrapImportError::ConflictingProtocolIdentity(
-                        "source blob chunk count",
-                    ));
-                }
-                let expected_ordinal = last
-                    .ordinal
-                    .checked_add(1)
-                    .ok_or(BootstrapImportError::LengthOverflow)?;
-                let expected_offset = last
-                    .offset
-                    .checked_add(u64::from(last.byte_length))
-                    .ok_or(BootstrapImportError::LengthOverflow)?;
-                if descriptor.ordinal != expected_ordinal || descriptor.offset != expected_offset {
-                    return Err(BootstrapImportError::BlobContinuityMismatch);
-                }
-            } else {
-                self.finish_current_source(last)?;
-                self.validate_first_descriptor(descriptor)?;
+            if descriptor.ordinal == last.ordinal {
+                return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                    "source blob chunk ordinal",
+                ));
+            }
+            if descriptor.count != last.count {
+                return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                    "source blob chunk count",
+                ));
+            }
+            let expected_ordinal = last
+                .ordinal
+                .checked_add(1)
+                .ok_or(BootstrapImportError::LengthOverflow)?;
+            let expected_offset = last
+                .offset
+                .checked_add(u64::from(last.byte_length))
+                .ok_or(BootstrapImportError::LengthOverflow)?;
+            if descriptor.ordinal != expected_ordinal || descriptor.offset != expected_offset {
+                return Err(BootstrapImportError::BlobContinuityMismatch);
             }
         } else {
             self.validate_first_descriptor(descriptor)?;
@@ -1185,12 +2132,9 @@ impl SourceBlobChunkRootBuilderV1 {
     }
 
     pub(crate) fn finish(mut self) -> Result<SourceBlobChunkRootV1, BootstrapImportError> {
-        if let Some(last) = self.last {
-            self.finish_current_source(last)?;
-        }
-        self.skip_zero_length_sources();
-        if self.expected_source_index != self.expected_sources.len() {
-            return Err(BootstrapImportError::BlobContinuityMismatch);
+        self.finish_source()?;
+        if self.total_bytes > MAX_TOTAL_SOURCE_BYTES {
+            return Err(BootstrapImportError::ByteLimit("total source bytes"));
         }
         let count = self.root.count;
         Ok(SourceBlobChunkRootV1 {
@@ -1204,11 +2148,7 @@ impl SourceBlobChunkRootBuilderV1 {
         &self,
         descriptor: SourceBlobChunkDescriptorV1,
     ) -> Result<(), BootstrapImportError> {
-        let Some((source_leaf, _)) = self
-            .expected_sources
-            .get(self.expected_source_index)
-            .copied()
-        else {
+        let Some((source_leaf, _)) = self.current_source else {
             return Err(BootstrapImportError::BlobContinuityMismatch);
         };
         if descriptor.source_leaf != source_leaf
@@ -1220,43 +2160,30 @@ impl SourceBlobChunkRootBuilderV1 {
         Ok(())
     }
 
-    fn finish_current_source(
-        &mut self,
-        last: SourceBlobChunkDescriptorV1,
-    ) -> Result<(), BootstrapImportError> {
-        let Some((source_leaf, byte_length)) = self
-            .expected_sources
-            .get(self.expected_source_index)
-            .copied()
-        else {
-            return Err(BootstrapImportError::BlobContinuityMismatch);
+    fn finish_source(&mut self) -> Result<(), BootstrapImportError> {
+        let Some((source_leaf, byte_length)) = self.current_source.take() else {
+            return Ok(());
         };
-        let received = last
-            .ordinal
-            .checked_add(1)
-            .ok_or(BootstrapImportError::LengthOverflow)?;
-        let terminal_offset = last
-            .offset
-            .checked_add(u64::from(last.byte_length))
-            .ok_or(BootstrapImportError::LengthOverflow)?;
-        if last.source_leaf != source_leaf
-            || received != last.count
-            || terminal_offset != byte_length
-        {
-            return Err(BootstrapImportError::BlobContinuityMismatch);
-        }
-        self.expected_source_index += 1;
-        self.skip_zero_length_sources();
-        Ok(())
-    }
-
-    fn skip_zero_length_sources(&mut self) {
-        while self
-            .expected_sources
-            .get(self.expected_source_index)
-            .is_some_and(|source| source.1 == 0)
-        {
-            self.expected_source_index += 1;
+        match self.last.take() {
+            None if byte_length == 0 => Ok(()),
+            Some(last) => {
+                let received = last
+                    .ordinal
+                    .checked_add(1)
+                    .ok_or(BootstrapImportError::LengthOverflow)?;
+                let terminal_offset = last
+                    .offset
+                    .checked_add(u64::from(last.byte_length))
+                    .ok_or(BootstrapImportError::LengthOverflow)?;
+                if last.source_leaf != source_leaf
+                    || received != last.count
+                    || terminal_offset != byte_length
+                {
+                    return Err(BootstrapImportError::BlobContinuityMismatch);
+                }
+                Ok(())
+            }
+            None => Err(BootstrapImportError::BlobContinuityMismatch),
         }
     }
 }
@@ -1691,7 +2618,7 @@ impl ArchiveLocalFrontierBindingV1 {
             digest: canonical_digest(
                 b"tine/bootstrap-import/archive-frontier-step/v1\0",
                 &[
-                    &ARCHIVE_FRONTIER_SCHEMA_VERSION.to_be_bytes(),
+                    &BOOTSTRAP_FRONTIER_SCHEMA_VERSION.to_be_bytes(),
                     &self.digest,
                     &accepted_count.to_be_bytes(),
                     part_id.as_bytes(),
@@ -1703,13 +2630,6 @@ impl ArchiveLocalFrontierBindingV1 {
         })
     }
 
-    pub(crate) fn final_proof(self) -> ArchiveFinalFrontierProofV1 {
-        ArchiveFinalFrontierProofV1::digest(
-            b"tine/bootstrap-import/archive-final-frontier-proof/v1\0",
-            &[&archive_frontier_bytes(self)],
-        )
-    }
-
     fn validate(self) -> Result<(), BootstrapImportError> {
         if self.accepted_count > MAX_BOOTSTRAP_PARTS {
             return Err(BootstrapImportError::CountLimit("bootstrap parts"));
@@ -1718,102 +2638,6 @@ impl ArchiveLocalFrontierBindingV1 {
             return Err(BootstrapImportError::InvalidArchiveFrontier);
         }
         Ok(())
-    }
-}
-
-/// A fixed, deterministic identity for the bounded peer sample selected by a
-/// future importer.  This packet never probes a peer or grants authority.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct BootstrapPeerProbeEntryV1 {
-    peer_identity: [u8; 32],
-    observation_digest: [u8; 32],
-}
-
-impl BootstrapPeerProbeEntryV1 {
-    pub(crate) const fn new(peer_identity: [u8; 32], observation_digest: [u8; 32]) -> Self {
-        Self {
-            peer_identity,
-            observation_digest,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct BootstrapPeerProbeV1 {
-    entries: Vec<BootstrapPeerProbeEntryV1>,
-}
-
-impl BootstrapPeerProbeV1 {
-    pub(crate) fn empty() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    pub(crate) fn new(
-        mut entries: Vec<BootstrapPeerProbeEntryV1>,
-    ) -> Result<Self, BootstrapImportError> {
-        checked_count(entries.len(), MAX_SELECTED_PEERS, "selected peers")?;
-        entries.sort_unstable();
-        for pair in entries.windows(2) {
-            if pair[0].peer_identity == pair[1].peer_identity {
-                return if pair[0] == pair[1] {
-                    Err(BootstrapImportError::DuplicateCanonicalItem)
-                } else {
-                    Err(BootstrapImportError::ConflictingProtocolIdentity(
-                        "peer identity",
-                    ))
-                };
-            }
-        }
-        Ok(Self { entries })
-    }
-
-    pub(crate) fn entries(&self) -> &[BootstrapPeerProbeEntryV1] {
-        &self.entries
-    }
-
-    fn encode(&self) -> Result<Vec<u8>, BootstrapImportError> {
-        checked_count(self.entries.len(), MAX_SELECTED_PEERS, "selected peers")?;
-        let mut bytes = Vec::with_capacity(4 + self.entries.len() * 64);
-        bytes.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
-        for entry in &self.entries {
-            bytes.extend_from_slice(&entry.peer_identity);
-            bytes.extend_from_slice(&entry.observation_digest);
-        }
-        Ok(bytes)
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
-        if bytes.len() < 4 {
-            return Err(BootstrapImportError::Truncated);
-        }
-        let count = read_u32(&bytes[..4])?;
-        if count > MAX_SELECTED_PEERS {
-            return Err(BootstrapImportError::CountLimit("selected peers"));
-        }
-        let expected = 4_usize
-            .checked_add(
-                (count as usize)
-                    .checked_mul(64)
-                    .ok_or(BootstrapImportError::LengthOverflow)?,
-            )
-            .ok_or(BootstrapImportError::LengthOverflow)?;
-        if expected != bytes.len() {
-            return Err(BootstrapImportError::InvalidFieldLength);
-        }
-        let mut entries = Vec::with_capacity(count as usize);
-        for chunk in bytes[4..].chunks_exact(64) {
-            entries.push(BootstrapPeerProbeEntryV1::new(
-                array_32(&chunk[..32])?,
-                array_32(&chunk[32..])?,
-            ));
-        }
-        let value = Self::new(entries)?;
-        if value.encode()?.as_slice() != bytes {
-            return Err(BootstrapImportError::NonCanonicalBytes);
-        }
-        Ok(value)
     }
 }
 
@@ -2025,54 +2849,57 @@ impl BootstrapPartDescriptorV1 {
     }
 }
 
-/// A complete archive-local aggregate.  The archive identity is an opaque
-/// digest supplied by the archive format; this module only binds and validates
-/// it, never opens an archive or publishes one.
+/// A complete portable aggregate. `graph_resource` is source provenance only:
+/// publication identity and final-frontier authority never use or compare it
+/// with a receiving graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BootstrapAggregateManifestV1 {
     workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
     graph_resource: CanonicalGraphResourceId,
-    archive_identity: BootstrapArchiveIdentityDigestV1,
     import_id: ImportId,
     complete_source_count: u32,
     source_inventory_root: SourceInventoryRootV1,
+    source_inventory_page_count: u32,
     source_blob_root: SourceBlobChunkRootV1,
+    source_blob_page_count: u32,
     profile_digest: BootstrapProfileDigestV1,
-    peer_probe: BootstrapPeerProbeV1,
     parts: Vec<BootstrapPartDescriptorV1>,
     initial_frontier: ArchiveLocalFrontierBindingV1,
     final_frontier: ArchiveLocalFrontierBindingV1,
-    final_frontier_proof: ArchiveFinalFrontierProofV1,
+    final_frontier_proof: BootstrapFinalFrontierProofV1,
 }
 
 impl BootstrapAggregateManifestV1 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
         graph_resource: CanonicalGraphResourceId,
-        archive_identity: BootstrapArchiveIdentityDigestV1,
         import_id: ImportId,
         complete_source_count: u32,
         source_inventory_root: SourceInventoryRootV1,
+        source_inventory_page_count: u32,
         source_blob_root: SourceBlobChunkRootV1,
+        source_blob_page_count: u32,
         profile_digest: BootstrapProfileDigestV1,
-        peer_probe: BootstrapPeerProbeV1,
         parts: Vec<BootstrapPartDescriptorV1>,
         initial_frontier: ArchiveLocalFrontierBindingV1,
         final_frontier: ArchiveLocalFrontierBindingV1,
-        final_frontier_proof: ArchiveFinalFrontierProofV1,
+        final_frontier_proof: BootstrapFinalFrontierProofV1,
     ) -> Result<Self, BootstrapImportError> {
         checked_count(parts.len(), MAX_BOOTSTRAP_PARTS, "bootstrap parts")?;
         let value = Self {
             workspace_id,
+            lineage_digest,
             graph_resource,
-            archive_identity,
             import_id,
             complete_source_count,
             source_inventory_root,
+            source_inventory_page_count,
             source_blob_root,
+            source_blob_page_count,
             profile_digest,
-            peer_probe,
             parts,
             initial_frontier,
             final_frontier,
@@ -2084,32 +2911,30 @@ impl BootstrapAggregateManifestV1 {
 
     pub(crate) fn empty(
         workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
         graph_resource: CanonicalGraphResourceId,
-        archive_identity: BootstrapArchiveIdentityDigestV1,
         import_id: ImportId,
-        source_inventory_root: SourceInventoryRootV1,
-        source_blob_root: SourceBlobChunkRootV1,
     ) -> Result<Self, BootstrapImportError> {
         let profile_digest = BootstrapPartitionProfileV1::v1().digest();
         let frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile_digest);
         let proof = final_frontier_proof(
             workspace_id,
-            graph_resource,
-            archive_identity,
+            lineage_digest,
             import_id,
             profile_digest,
             frontier,
         );
         Self::new(
             workspace_id,
+            lineage_digest,
             graph_resource,
-            archive_identity,
             import_id,
-            source_inventory_root.source_count(),
-            source_inventory_root,
-            source_blob_root,
+            0,
+            SourceInventoryRootV1::empty(),
+            0,
+            SourceBlobChunkRootV1::empty(),
+            0,
             profile_digest,
-            BootstrapPeerProbeV1::empty(),
             Vec::new(),
             frontier,
             frontier,
@@ -2128,22 +2953,27 @@ impl BootstrapAggregateManifestV1 {
             &BOOTSTRAP_IMPORT_SCHEMA_VERSION.to_be_bytes(),
         )?;
         put_field(&mut bytes, 2, self.workspace_id.as_uuid().as_bytes())?;
-        put_field(&mut bytes, 3, self.graph_resource.as_bytes())?;
-        put_field(&mut bytes, 4, self.archive_identity.as_bytes())?;
+        put_field(&mut bytes, 3, self.lineage_digest.as_bytes())?;
+        put_field(&mut bytes, 4, self.graph_resource.as_bytes())?;
         put_field(&mut bytes, 5, self.import_id.as_bytes())?;
         put_field(&mut bytes, 6, &self.complete_source_count.to_be_bytes())?;
         put_field(&mut bytes, 7, &root_bytes(self.source_inventory_root))?;
-        put_field(&mut bytes, 8, &root_bytes(self.source_blob_root))?;
-        put_field(&mut bytes, 9, self.profile_digest.as_bytes())?;
-        put_field(&mut bytes, 10, &self.peer_probe.encode()?)?;
-        put_field(&mut bytes, 11, &parts)?;
         put_field(
             &mut bytes,
-            12,
+            8,
+            &self.source_inventory_page_count.to_be_bytes(),
+        )?;
+        put_field(&mut bytes, 9, &root_bytes(self.source_blob_root))?;
+        put_field(&mut bytes, 10, &self.source_blob_page_count.to_be_bytes())?;
+        put_field(&mut bytes, 11, self.profile_digest.as_bytes())?;
+        put_field(&mut bytes, 12, &parts)?;
+        put_field(
+            &mut bytes,
+            13,
             &archive_frontier_bytes(self.initial_frontier),
         )?;
-        put_field(&mut bytes, 13, &archive_frontier_bytes(self.final_frontier))?;
-        put_field(&mut bytes, 14, self.final_frontier_proof.as_bytes())?;
+        put_field(&mut bytes, 14, &archive_frontier_bytes(self.final_frontier))?;
+        put_field(&mut bytes, 15, self.final_frontier_proof.as_bytes())?;
         if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES {
             return Err(BootstrapImportError::EncodedSizeLimit("aggregate manifest"));
         }
@@ -2154,36 +2984,37 @@ impl BootstrapAggregateManifestV1 {
         if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES {
             return Err(BootstrapImportError::EncodedSizeLimit("aggregate manifest"));
         }
-        let fields = CanonicalFieldsV1::parse(bytes, MANIFEST_MAGIC, 14, 1)?;
+        let fields = CanonicalFieldsV1::parse(bytes, MANIFEST_MAGIC, 15, 1)?;
         let version = read_u32(fields.required(1)?)?;
         if version != BOOTSTRAP_IMPORT_SCHEMA_VERSION {
             return Err(BootstrapImportError::UnsupportedVersion(version));
         }
         let workspace_id = WorkspaceId::from_uuid(Uuid::from_bytes(array_16(fields.required(2)?)?));
-        let graph_resource = CanonicalGraphResourceId::from_bytes(array_32(fields.required(3)?)?);
-        let archive_identity =
-            BootstrapArchiveIdentityDigestV1::from_bytes(array_32(fields.required(4)?)?);
+        let lineage_digest = LineageDigest::from_bytes(array_32(fields.required(3)?)?);
+        let graph_resource = CanonicalGraphResourceId::from_bytes(array_32(fields.required(4)?)?);
         let import_id = ImportId::from_digest(array_32(fields.required(5)?)?);
         let complete_source_count = read_u32(fields.required(6)?)?;
         let source_inventory_root = SourceInventoryRootV1::decode(fields.required(7)?)?;
-        let source_blob_root = SourceBlobChunkRootV1::decode(fields.required(8)?)?;
-        let profile_digest = BootstrapProfileDigestV1::from_bytes(array_32(fields.required(9)?)?);
-        let peer_probe = BootstrapPeerProbeV1::decode(fields.required(10)?)?;
-        let parts = decode_parts(fields.required(11)?, import_id, profile_digest)?;
-        let initial_frontier = decode_archive_frontier(fields.required(12)?)?;
-        let final_frontier = decode_archive_frontier(fields.required(13)?)?;
+        let source_inventory_page_count = read_u32(fields.required(8)?)?;
+        let source_blob_root = SourceBlobChunkRootV1::decode(fields.required(9)?)?;
+        let source_blob_page_count = read_u32(fields.required(10)?)?;
+        let profile_digest = BootstrapProfileDigestV1::from_bytes(array_32(fields.required(11)?)?);
+        let parts = decode_parts(fields.required(12)?, import_id, profile_digest)?;
+        let initial_frontier = decode_archive_frontier(fields.required(13)?)?;
+        let final_frontier = decode_archive_frontier(fields.required(14)?)?;
         let final_frontier_proof =
-            ArchiveFinalFrontierProofV1::from_bytes(array_32(fields.required(14)?)?);
+            BootstrapFinalFrontierProofV1::from_bytes(array_32(fields.required(15)?)?);
         let value = Self::new(
             workspace_id,
+            lineage_digest,
             graph_resource,
-            archive_identity,
             import_id,
             complete_source_count,
             source_inventory_root,
+            source_inventory_page_count,
             source_blob_root,
+            source_blob_page_count,
             profile_digest,
-            peer_probe,
             parts,
             initial_frontier,
             final_frontier,
@@ -2205,8 +3036,55 @@ impl BootstrapAggregateManifestV1 {
         )
     }
 
+    pub(crate) fn publication_id(&self) -> BootstrapPublicationIdV1 {
+        BootstrapPublicationIdV1::derive(
+            self.workspace_id,
+            self.lineage_digest,
+            self.import_id,
+            self.profile_digest,
+            self.source_inventory_root,
+            self.source_blob_root,
+        )
+    }
+
     pub(crate) fn parts(&self) -> &[BootstrapPartDescriptorV1] {
         &self.parts
+    }
+
+    pub(crate) const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn lineage_digest(&self) -> LineageDigest {
+        self.lineage_digest
+    }
+
+    pub(crate) const fn graph_resource(&self) -> CanonicalGraphResourceId {
+        self.graph_resource
+    }
+
+    pub(crate) const fn import_id(&self) -> ImportId {
+        self.import_id
+    }
+
+    pub(crate) const fn profile_digest(&self) -> BootstrapProfileDigestV1 {
+        self.profile_digest
+    }
+
+    pub(crate) const fn source_inventory_root(&self) -> SourceInventoryRootV1 {
+        self.source_inventory_root
+    }
+
+    pub(crate) const fn source_inventory_page_count(&self) -> u32 {
+        self.source_inventory_page_count
+    }
+
+    pub(crate) const fn source_blob_root(&self) -> SourceBlobChunkRootV1 {
+        self.source_blob_root
+    }
+
+    pub(crate) const fn source_blob_page_count(&self) -> u32 {
+        self.source_blob_page_count
     }
 
     pub(crate) fn final_frontier(&self) -> ArchiveLocalFrontierBindingV1 {
@@ -2230,6 +3108,16 @@ impl BootstrapAggregateManifestV1 {
         if self.complete_source_count != self.source_inventory_root.source_count() {
             return Err(BootstrapImportError::SourceCountMismatch);
         }
+        validate_page_count(
+            self.source_inventory_page_count,
+            self.source_inventory_root.source_count(),
+            "source inventory index pages",
+        )?;
+        validate_page_count(
+            self.source_blob_page_count,
+            self.source_blob_root.chunk_count(),
+            "source blob index pages",
+        )?;
         checked_count(self.parts.len(), MAX_BOOTSTRAP_PARTS, "bootstrap parts")?;
         self.initial_frontier.validate()?;
         self.final_frontier.validate()?;
@@ -2277,14 +3165,173 @@ impl BootstrapAggregateManifestV1 {
         if self.final_frontier_proof
             != final_frontier_proof(
                 self.workspace_id,
-                self.graph_resource,
-                self.archive_identity,
+                self.lineage_digest,
                 self.import_id,
                 self.profile_digest,
                 self.final_frontier,
             )
         {
             return Err(BootstrapImportError::FinalFrontierProofMismatch);
+        }
+        Ok(())
+    }
+}
+
+impl BootstrapPublicationIdV1 {
+    /// Exact portable identity:
+    /// SHA-256(domain || workspace || lineage || import || profile ||
+    /// inventory-root-digest || blob-root-digest). No field lengths or local
+    /// graph/source-provenance identity are inserted.
+    pub(crate) fn derive(
+        workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
+        import_id: ImportId,
+        profile_digest: BootstrapProfileDigestV1,
+        source_inventory_root: SourceInventoryRootV1,
+        source_blob_root: SourceBlobChunkRootV1,
+    ) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/bootstrap-publication/v1\0");
+        hasher.update(workspace_id.as_uuid().as_bytes());
+        hasher.update(lineage_digest.as_bytes());
+        hasher.update(import_id.as_bytes());
+        hasher.update(profile_digest.as_bytes());
+        hasher.update(source_inventory_root.digest());
+        hasher.update(source_blob_root.digest());
+        Self(hasher.finalize().into())
+    }
+}
+
+/// The bounded direct `commits/<publication-id>` marker. Prefix artifacts are
+/// not visible authority until these bytes validate against the named
+/// aggregate.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct BootstrapAggregateCommitV1 {
+    publication_id: BootstrapPublicationIdV1,
+    aggregate_digest: BootstrapAggregateDigestV1,
+    aggregate_byte_length: u64,
+    part_count: u32,
+    final_frontier: ArchiveLocalFrontierBindingV1,
+}
+
+impl BootstrapAggregateCommitV1 {
+    pub(crate) fn for_aggregate(
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<Self, BootstrapImportError> {
+        let aggregate_bytes = aggregate.encode()?;
+        Self::new(
+            aggregate.publication_id(),
+            aggregate.aggregate_digest(),
+            u64::try_from(aggregate_bytes.len())
+                .map_err(|_| BootstrapImportError::LengthOverflow)?,
+            aggregate.parts.len() as u32,
+            aggregate.final_frontier,
+        )
+    }
+
+    pub(crate) fn new(
+        publication_id: BootstrapPublicationIdV1,
+        aggregate_digest: BootstrapAggregateDigestV1,
+        aggregate_byte_length: u64,
+        part_count: u32,
+        final_frontier: ArchiveLocalFrontierBindingV1,
+    ) -> Result<Self, BootstrapImportError> {
+        let value = Self {
+            publication_id,
+            aggregate_digest,
+            aggregate_byte_length,
+            part_count,
+            final_frontier,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub(crate) const fn publication_id(self) -> BootstrapPublicationIdV1 {
+        self.publication_id
+    }
+
+    pub(crate) const fn aggregate_digest(self) -> BootstrapAggregateDigestV1 {
+        self.aggregate_digest
+    }
+
+    pub(crate) const fn aggregate_byte_length(self) -> u64 {
+        self.aggregate_byte_length
+    }
+
+    pub(crate) const fn part_count(self) -> u32 {
+        self.part_count
+    }
+
+    pub(crate) const fn final_frontier(self) -> ArchiveLocalFrontierBindingV1 {
+        self.final_frontier
+    }
+
+    pub(crate) fn encode(self) -> Result<Vec<u8>, BootstrapImportError> {
+        self.validate()?;
+        let mut bytes = Vec::with_capacity(220);
+        bytes.extend_from_slice(COMMIT_MAGIC);
+        put_field(
+            &mut bytes,
+            1,
+            &BOOTSTRAP_AGGREGATE_COMMIT_SCHEMA_VERSION.to_be_bytes(),
+        )?;
+        put_field(&mut bytes, 2, self.publication_id.as_bytes())?;
+        put_field(&mut bytes, 3, self.aggregate_digest.as_bytes())?;
+        put_field(&mut bytes, 4, &self.aggregate_byte_length.to_be_bytes())?;
+        put_field(&mut bytes, 5, &self.part_count.to_be_bytes())?;
+        put_field(&mut bytes, 6, &archive_frontier_bytes(self.final_frontier))?;
+        if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit("aggregate commit"));
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        if bytes.len() > MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES {
+            return Err(BootstrapImportError::EncodedSizeLimit("aggregate commit"));
+        }
+        let fields = CanonicalFieldsV1::parse(bytes, COMMIT_MAGIC, 6, 1)?;
+        let version = read_u32(fields.required(1)?)?;
+        if version != BOOTSTRAP_AGGREGATE_COMMIT_SCHEMA_VERSION {
+            return Err(BootstrapImportError::UnsupportedVersion(version));
+        }
+        let value = Self::new(
+            BootstrapPublicationIdV1::from_bytes(array_32(fields.required(2)?)?),
+            BootstrapAggregateDigestV1::from_bytes(array_32(fields.required(3)?)?),
+            read_u64(fields.required(4)?)?,
+            read_u32(fields.required(5)?)?,
+            decode_archive_frontier(fields.required(6)?)?,
+        )?;
+        if value.encode()?.as_slice() != bytes {
+            return Err(BootstrapImportError::NonCanonicalBytes);
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn validate_aggregate(
+        self,
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<(), BootstrapImportError> {
+        let expected = Self::for_aggregate(aggregate)?;
+        if self != expected {
+            return Err(BootstrapImportError::AggregateCommitMismatch);
+        }
+        Ok(())
+    }
+
+    fn validate(self) -> Result<(), BootstrapImportError> {
+        if self.aggregate_byte_length == 0
+            || self.aggregate_byte_length > MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64
+        {
+            return Err(BootstrapImportError::ByteLimit("aggregate manifest"));
+        }
+        if self.part_count > MAX_BOOTSTRAP_PARTS {
+            return Err(BootstrapImportError::CountLimit("bootstrap parts"));
+        }
+        self.final_frontier.validate()?;
+        if self.final_frontier.accepted_count != self.part_count {
+            return Err(BootstrapImportError::FinalFrontierMismatch);
         }
         Ok(())
     }
@@ -2313,18 +3360,16 @@ fn accepted_event_binding(
 
 fn final_frontier_proof(
     workspace_id: WorkspaceId,
-    graph_resource: CanonicalGraphResourceId,
-    archive_identity: BootstrapArchiveIdentityDigestV1,
+    lineage_digest: LineageDigest,
     import_id: ImportId,
     profile_digest: BootstrapProfileDigestV1,
     final_frontier: ArchiveLocalFrontierBindingV1,
-) -> ArchiveFinalFrontierProofV1 {
-    ArchiveFinalFrontierProofV1::digest(
-        b"tine/bootstrap-import/archive-final-frontier-proof/v1\0",
+) -> BootstrapFinalFrontierProofV1 {
+    BootstrapFinalFrontierProofV1::digest(
+        b"tine/bootstrap-import/final-frontier-proof/v1\0",
         &[
             workspace_id.as_uuid().as_bytes(),
-            graph_resource.as_bytes(),
-            archive_identity.as_bytes(),
+            lineage_digest.as_bytes(),
             import_id.as_bytes(),
             profile_digest.as_bytes(),
             &archive_frontier_bytes(final_frontier),
@@ -2495,6 +3540,45 @@ fn canonical_digest(domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn decode_canonical_value<'a>(
+    bytes: &'a [u8],
+    domain: &[u8],
+    field_count: usize,
+) -> Result<Vec<&'a [u8]>, BootstrapImportError> {
+    if !bytes.starts_with(domain) {
+        return Err(BootstrapImportError::InvalidMagic);
+    }
+    let mut cursor = domain.len();
+    let mut fields = Vec::with_capacity(field_count);
+    for _ in 0..field_count {
+        if bytes.len().saturating_sub(cursor) < 8 {
+            return Err(BootstrapImportError::Truncated);
+        }
+        let length = usize::try_from(read_u64(&bytes[cursor..cursor + 8])?)
+            .map_err(|_| BootstrapImportError::LengthOverflow)?;
+        cursor += 8;
+        let end = cursor
+            .checked_add(length)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if end > bytes.len() {
+            return Err(BootstrapImportError::Truncated);
+        }
+        fields.push(&bytes[cursor..end]);
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err(BootstrapImportError::TrailingBytes);
+    }
+    Ok(fields)
+}
+
+fn put_sized(bytes: &mut Vec<u8>, value: &[u8]) -> Result<(), BootstrapImportError> {
+    let length = u32::try_from(value.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
+    bytes.extend_from_slice(&length.to_be_bytes());
+    bytes.extend_from_slice(value);
+    Ok(())
+}
+
 fn put_field(bytes: &mut Vec<u8>, tag: u8, value: &[u8]) -> Result<(), BootstrapImportError> {
     let length = u32::try_from(value.len()).map_err(|_| BootstrapImportError::LengthOverflow)?;
     let projected = bytes
@@ -2583,6 +3667,16 @@ impl<'a> FixedReader<'a> {
         Self { bytes, cursor: 0 }
     }
 
+    fn with_magic(bytes: &'a [u8], magic: &[u8; 8]) -> Result<Self, BootstrapImportError> {
+        if !bytes.starts_with(magic) {
+            return Err(BootstrapImportError::InvalidMagic);
+        }
+        Ok(Self {
+            bytes,
+            cursor: magic.len(),
+        })
+    }
+
     fn take(&mut self, length: usize) -> Result<&'a [u8], BootstrapImportError> {
         let end = self
             .cursor
@@ -2606,6 +3700,11 @@ impl<'a> FixedReader<'a> {
 
     fn u32(&mut self) -> Result<u32, BootstrapImportError> {
         read_u32(self.take(4)?)
+    }
+
+    fn sized(&mut self) -> Result<&'a [u8], BootstrapImportError> {
+        let length = self.u32()? as usize;
+        self.take(length)
     }
 
     fn finish(self) -> Result<(), BootstrapImportError> {
@@ -2643,6 +3742,43 @@ fn read_u64(bytes: &[u8]) -> Result<u64, BootstrapImportError> {
         .map_err(|_| BootstrapImportError::InvalidFieldLength)
 }
 
+fn decode_bool(bytes: &[u8]) -> Result<bool, BootstrapImportError> {
+    match bytes {
+        [0] => Ok(false),
+        [1] => Ok(true),
+        _ => Err(BootstrapImportError::NonCanonicalBytes),
+    }
+}
+
+const fn managed_text_kind_byte(kind: ManagedTextKind) -> u8 {
+    match kind {
+        ManagedTextKind::Page => 1,
+        ManagedTextKind::Journal => 2,
+    }
+}
+
+fn decode_managed_text_kind(bytes: &[u8]) -> Result<ManagedTextKind, BootstrapImportError> {
+    match bytes {
+        [1] => Ok(ManagedTextKind::Page),
+        [2] => Ok(ManagedTextKind::Journal),
+        _ => Err(BootstrapImportError::InvalidManagedTextKind),
+    }
+}
+
+fn validate_page_count(
+    page_count: u32,
+    entry_count: u32,
+    label: &'static str,
+) -> Result<(), BootstrapImportError> {
+    if page_count > MAX_SOURCE_INDEX_PAGES {
+        return Err(BootstrapImportError::CountLimit(label));
+    }
+    if (page_count == 0) != (entry_count == 0) {
+        return Err(BootstrapImportError::IndexContinuityMismatch);
+    }
+    Ok(())
+}
+
 fn checked_count(length: usize, max: u32, label: &'static str) -> Result<(), BootstrapImportError> {
     if length > max as usize {
         return Err(BootstrapImportError::CountLimit(label));
@@ -2664,6 +3800,7 @@ fn hex(bytes: &[u8]) -> String {
 pub(crate) enum BootstrapImportError {
     AcceptedEventBindingMismatch,
     AcceptanceSequenceMismatch,
+    AggregateCommitMismatch,
     BatchIdMismatch,
     BlobContinuityMismatch,
     ByteLimit(&'static str),
@@ -2672,6 +3809,7 @@ pub(crate) enum BootstrapImportError {
     DepthLimit,
     DuplicateCanonicalItem,
     DuplicateField(u8),
+    EmptyIndexPage,
     EmptyOperationTransaction,
     EmptySourceSpan,
     EncodedSizeLimit(&'static str),
@@ -2681,10 +3819,14 @@ pub(crate) enum BootstrapImportError {
     FrontierChainMismatch,
     FullObjectRootMismatch,
     InitialFrontierMismatch,
+    IndexContinuityMismatch,
+    IndexRootMismatch,
     InvalidArchiveFrontier,
     InvalidFieldLength,
     InvalidMagic,
     InvalidFullObjectKind,
+    InvalidManagedPath,
+    InvalidManagedTextKind,
     InvalidOrdinal,
     InvalidPartCount,
     LengthOverflow,
@@ -2701,6 +3843,7 @@ pub(crate) enum BootstrapImportError {
     SourceCountMismatch,
     TrailingBytes,
     Truncated,
+    InvalidUtf8,
     UnexpectedPredecessor,
     UnknownField(u8),
     UnsupportedVersion(u32),
@@ -2730,8 +3873,8 @@ mod tests {
         CanonicalGraphResourceId::from_bytes([0x22; 32])
     }
 
-    fn archive_identity() -> BootstrapArchiveIdentityDigestV1 {
-        BootstrapArchiveIdentityDigestV1::from_bytes([0x33; 32])
+    fn lineage() -> LineageDigest {
+        LineageDigest::from_bytes([0x33; 32])
     }
 
     fn profile() -> BootstrapProfileDigestV1 {
@@ -2747,7 +3890,7 @@ mod tests {
     fn payload(index: u32) -> PayloadObjectDescriptorV1 {
         let mut digest = [0_u8; 32];
         digest[28..].copy_from_slice(&index.to_be_bytes());
-        PayloadObjectDescriptorV1::new(PayloadObjectDigestV1::from_bytes(digest), 16).unwrap()
+        PayloadObjectDescriptorV1::new(ContentDigest::from_bytes(digest), 16).unwrap()
     }
 
     fn source_span(index: u32) -> SourceSpanV1 {
@@ -2757,6 +3900,16 @@ mod tests {
             SourceLeafDigestV1::from_bytes(digest),
             u64::from(index) * 16,
             16,
+        )
+        .unwrap()
+    }
+
+    fn source(path: &str, digest: [u8; 32], byte_length: u64) -> SourceLeafV1 {
+        SourceLeafV1::new(
+            ManagedTextKind::Page,
+            ManagedPath::parse(path).unwrap(),
+            SourceContentDigestV1::from_bytes(digest),
+            byte_length,
         )
         .unwrap()
     }
@@ -2790,26 +3943,22 @@ mod tests {
         let final_frontier = parts.last().map_or(initial, |part| part.post_frontier);
         let proof = final_frontier_proof(
             workspace_id(),
-            graph_resource(),
-            archive_identity(),
+            lineage(),
             import_id(),
             profile(),
             final_frontier,
         );
         BootstrapAggregateManifestV1::new(
             workspace_id(),
+            lineage(),
             graph_resource(),
-            archive_identity(),
             import_id(),
             0,
             SourceInventoryRootV1::empty(),
+            0,
             SourceBlobChunkRootV1::empty(),
+            0,
             profile(),
-            BootstrapPeerProbeV1::new(vec![
-                BootstrapPeerProbeEntryV1::new([2; 32], [3; 32]),
-                BootstrapPeerProbeEntryV1::new([1; 32], [4; 32]),
-            ])
-            .unwrap(),
             parts,
             initial,
             final_frontier,
@@ -2833,18 +3982,8 @@ mod tests {
     #[test]
     fn canonical_roots_are_incremental_materialized_and_enumeration_stable() {
         let leaves = vec![
-            SourceLeafV1::new(
-                b"pages/b.md".to_vec(),
-                SourceContentDigestV1::from_bytes([2; 32]),
-                2,
-            )
-            .unwrap(),
-            SourceLeafV1::new(
-                b"pages/a.md".to_vec(),
-                SourceContentDigestV1::from_bytes([1; 32]),
-                1,
-            )
-            .unwrap(),
+            source("pages/b.md", [2; 32], 2),
+            source("pages/a.md", [1; 32], 1),
         ];
         let inventory = SourceInventoryRootV1::from_leaves(&leaves).unwrap();
         let reverse_inventory =
@@ -2861,12 +4000,7 @@ mod tests {
             .map(|index| {
                 let mut digest = [0; 32];
                 digest[28..].copy_from_slice(&index.to_be_bytes());
-                SourceLeafV1::new(
-                    format!("pages/{index:04}.md").into_bytes(),
-                    SourceContentDigestV1::from_bytes(digest),
-                    u64::from(index),
-                )
-                .unwrap()
+                source(&format!("pages/{index:04}.md"), digest, u64::from(index))
             })
             .collect::<Vec<_>>();
         let materialized_inventory = SourceInventoryRootV1::from_leaves(&many_leaves).unwrap();
@@ -2935,12 +4069,11 @@ mod tests {
         }
         assert_eq!(streaming_objects.finish(), materialized_objects);
 
-        let chunked_leaf = SourceLeafV1::new(
-            b"pages/chunked.md".to_vec(),
-            SourceContentDigestV1::from_bytes([9; 32]),
+        let chunked_leaf = source(
+            "pages/chunked.md",
+            [9; 32],
             u64::from(MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART),
-        )
-        .unwrap();
+        );
         let chunks = (0..MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART)
             .map(|index| {
                 let mut digest = [0; 32];
@@ -2959,8 +4092,8 @@ mod tests {
         let materialized_chunks =
             SourceBlobChunkRootV1::from_descriptors(std::slice::from_ref(&chunked_leaf), &chunks)
                 .unwrap();
-        let mut streaming_chunks =
-            SourceBlobChunkRootBuilderV1::new(std::slice::from_ref(&chunked_leaf)).unwrap();
+        let mut streaming_chunks = SourceBlobChunkRootBuilderV1::new();
+        streaming_chunks.begin_source(&chunked_leaf).unwrap();
         for chunk in &chunks {
             streaming_chunks.push(*chunk).unwrap();
         }
@@ -3006,10 +4139,6 @@ mod tests {
         assert!(matches!(
             BootstrapImportPartEvidenceV1::decode(&vec![0; MAX_BOOTSTRAP_PART_EVIDENCE_BYTES + 1]),
             Err(BootstrapImportError::EncodedSizeLimit("part evidence"))
-        ));
-        assert!(matches!(
-            BootstrapPeerProbeV1::decode(&(MAX_SELECTED_PEERS + 1).to_be_bytes()),
-            Err(BootstrapImportError::CountLimit("selected peers"))
         ));
     }
 
@@ -3111,11 +4240,9 @@ mod tests {
     fn aggregate_validates_zero_one_many_frontier_and_archive_bindings() {
         let empty = BootstrapAggregateManifestV1::empty(
             workspace_id(),
+            lineage(),
             graph_resource(),
-            archive_identity(),
             import_id(),
-            SourceInventoryRootV1::empty(),
-            SourceBlobChunkRootV1::empty(),
         )
         .unwrap();
         assert_eq!(
@@ -3136,10 +4263,16 @@ mod tests {
         .unwrap();
         let aggregate = aggregate(vec![one]).unwrap();
         assert!(BootstrapAggregateManifestV1::decode(&aggregate.encode().unwrap()).is_ok());
-        let mut wrong_archive = aggregate.clone();
-        wrong_archive.archive_identity = BootstrapArchiveIdentityDigestV1::from_bytes([8; 32]);
+        let mut wrong_page_count = aggregate.clone();
+        wrong_page_count.source_inventory_page_count = 1;
         assert!(matches!(
-            wrong_archive.encode(),
+            wrong_page_count.encode(),
+            Err(BootstrapImportError::IndexContinuityMismatch)
+        ));
+        let mut wrong_lineage = aggregate.clone();
+        wrong_lineage.lineage_digest = LineageDigest::from_bytes([8; 32]);
+        assert!(matches!(
+            wrong_lineage.encode(),
             Err(BootstrapImportError::FinalFrontierProofMismatch)
         ));
         let mut wrong_workspace = aggregate.clone();
@@ -3173,16 +4306,16 @@ mod tests {
             Err(BootstrapImportError::UnsupportedVersion(2))
         ));
         let mut unknown = bytes.clone();
-        unknown.extend_from_slice(&[15, 0, 0, 0, 0]);
+        unknown.extend_from_slice(&[16, 0, 0, 0, 0]);
         assert!(matches!(
             BootstrapAggregateManifestV1::decode(&unknown),
-            Err(BootstrapImportError::UnknownField(15))
+            Err(BootstrapImportError::UnknownField(16))
         ));
         let mut duplicate = bytes;
-        duplicate.extend_from_slice(&[14, 0, 0, 0, 0]);
+        duplicate.extend_from_slice(&[15, 0, 0, 0, 0]);
         assert!(matches!(
             BootstrapAggregateManifestV1::decode(&duplicate),
-            Err(BootstrapImportError::DuplicateField(14))
+            Err(BootstrapImportError::DuplicateField(15))
         ));
     }
 
@@ -3230,26 +4363,16 @@ mod tests {
 
     #[test]
     fn protocol_identities_and_blob_continuity_reject_conflicts() {
-        let leaf = SourceLeafV1::new(
-            b"pages/a.md".to_vec(),
-            SourceContentDigestV1::from_bytes([1; 32]),
-            2,
-        )
-        .unwrap();
+        let leaf = source("pages/a.md", [1; 32], 2);
         assert!(matches!(
             SourceInventoryRootV1::from_leaves(&[leaf.clone(), leaf.clone()]),
             Err(BootstrapImportError::DuplicateCanonicalItem)
         ));
-        let conflicting_leaf = SourceLeafV1::new(
-            b"pages/a.md".to_vec(),
-            SourceContentDigestV1::from_bytes([2; 32]),
-            2,
-        )
-        .unwrap();
+        let conflicting_leaf = source("pages/a.md", [2; 32], 2);
         assert!(matches!(
             SourceInventoryRootV1::from_leaves(&[leaf.clone(), conflicting_leaf]),
             Err(BootstrapImportError::ConflictingProtocolIdentity(
-                "source locator"
+                "managed source path"
             ))
         ));
 
@@ -3272,7 +4395,7 @@ mod tests {
 
         let object_a = payload(1);
         let object_conflict = PayloadObjectDescriptorV1::new(
-            PayloadObjectDigestV1::from_bytes(*object_a.content_digest.as_bytes()),
+            ContentDigest::from_bytes(*object_a.content_digest.as_bytes()),
             17,
         )
         .unwrap();
@@ -3287,24 +4410,7 @@ mod tests {
             ))
         ));
 
-        let peer = BootstrapPeerProbeEntryV1::new([1; 32], [2; 32]);
-        assert!(matches!(
-            BootstrapPeerProbeV1::new(vec![peer, peer]),
-            Err(BootstrapImportError::DuplicateCanonicalItem)
-        ));
-        assert!(matches!(
-            BootstrapPeerProbeV1::new(vec![peer, BootstrapPeerProbeEntryV1::new([1; 32], [3; 32])]),
-            Err(BootstrapImportError::ConflictingProtocolIdentity(
-                "peer identity"
-            ))
-        ));
-
-        let source_leaf = SourceLeafV1::new(
-            b"pages/blob.md".to_vec(),
-            SourceContentDigestV1::from_bytes([9; 32]),
-            7,
-        )
-        .unwrap();
+        let source_leaf = source("pages/blob.md", [9; 32], 7);
         let source = source_leaf.digest();
         let first = SourceBlobChunkDescriptorV1::new(
             source,
@@ -3403,24 +4509,9 @@ mod tests {
 
     #[test]
     fn source_blob_roots_require_exact_inventory_committed_coverage() {
-        let empty = SourceLeafV1::new(
-            b"pages/empty.md".to_vec(),
-            SourceContentDigestV1::from_bytes([1; 32]),
-            0,
-        )
-        .unwrap();
-        let nonempty = SourceLeafV1::new(
-            b"pages/nonempty.md".to_vec(),
-            SourceContentDigestV1::from_bytes([2; 32]),
-            7,
-        )
-        .unwrap();
-        let second_nonempty = SourceLeafV1::new(
-            b"pages/second.md".to_vec(),
-            SourceContentDigestV1::from_bytes([8; 32]),
-            2,
-        )
-        .unwrap();
+        let empty = source("pages/empty.md", [1; 32], 0);
+        let nonempty = source("pages/nonempty.md", [2; 32], 7);
+        let second_nonempty = source("pages/second.md", [8; 32], 2);
         let source = nonempty.digest();
         let exact = [
             SourceBlobChunkDescriptorV1::new(
@@ -3547,14 +4638,13 @@ mod tests {
             assert_ne!(baseline, profile_digest_from_constants(&changed));
         }
 
-        let blob_source = SourceLeafV1::new(
-            b"pages/boundary.md".to_vec(),
-            SourceContentDigestV1::from_bytes([7; 32]),
+        let blob_source = source(
+            "pages/boundary.md",
+            [7; 32],
             u64::from(MAX_SOURCE_BLOB_CHUNKS),
-        )
-        .unwrap();
-        let mut blobs =
-            SourceBlobChunkRootBuilderV1::new(std::slice::from_ref(&blob_source)).unwrap();
+        );
+        let mut blobs = SourceBlobChunkRootBuilderV1::new();
+        blobs.begin_source(&blob_source).unwrap();
         for index in 0..MAX_SOURCE_BLOB_CHUNKS {
             blobs
                 .push(
@@ -3595,33 +4685,427 @@ mod tests {
     }
 
     #[test]
-    fn golden_vectors_are_portable_and_fixed() {
+    fn managed_source_leaf_preserves_exact_kind_and_unicode_nested_path() {
+        let path = ManagedPath::parse("custom-root/深い/notes/e\u{301}.markdown").unwrap();
         let leaf = SourceLeafV1::new(
-            b"pages/a.md".to_vec(),
-            SourceContentDigestV1::from_bytes([0x44; 32]),
-            9,
+            ManagedTextKind::Journal,
+            path.clone(),
+            SourceContentDigestV1::from_bytes([0x42; 32]),
+            17,
         )
         .unwrap();
+        let decoded = SourceLeafV1::decode(&leaf.encode()).unwrap();
+        assert_eq!(decoded.kind(), ManagedTextKind::Journal);
+        assert_eq!(decoded.path(), &path);
+        assert_eq!(decoded.path().as_str().as_bytes(), path.as_str().as_bytes());
+        assert_eq!(decoded.byte_length(), 17);
+
+        let composed = SourceLeafV1::new(
+            ManagedTextKind::Journal,
+            ManagedPath::parse("custom-root/深い/notes/é.markdown").unwrap(),
+            SourceContentDigestV1::from_bytes([0x42; 32]),
+            17,
+        )
+        .unwrap();
+        assert_ne!(leaf.digest(), composed.digest());
+        assert!(matches!(
+            SourceLeafV1::new(
+                ManagedTextKind::Page,
+                ManagedPath::parse("pages/too-large.md").unwrap(),
+                SourceContentDigestV1::from_bytes([0; 32]),
+                MAX_SOURCE_FILE_BYTES + 1,
+            ),
+            Err(BootstrapImportError::ByteLimit("source file"))
+        ));
+    }
+
+    #[test]
+    fn paged_indexes_round_trip_and_reject_order_continuity_and_corruption() {
+        let leaves = [
+            source("custom/a.md", [1; 32], 3),
+            source("custom/nested/β.markdown", [2; 32], 2),
+        ];
+        let inventory_root = SourceInventoryRootV1::from_leaves(&leaves).unwrap();
+        let mut inventory_builder = SourceInventoryIndexBuilderV1::new(inventory_root);
+        assert!(inventory_builder.push(leaves[0].clone()).unwrap().is_none());
+        assert!(inventory_builder.push(leaves[1].clone()).unwrap().is_none());
+        let inventory_page = inventory_builder.finish().unwrap().unwrap();
+        let inventory_bytes = inventory_page.encode().unwrap();
+        let inventory_page_vector: [u8; 32] = Sha256::digest(&inventory_bytes).into();
+        assert_eq!(
+            hex(&inventory_page_vector),
+            "8bb7264e87a84f3bcacdff31f34cbdbe7d5f5e0e4b0bb5bf199b74bd9d103524"
+        );
+        let inventory_page = SourceInventoryIndexPageV1::decode(&inventory_bytes).unwrap();
+        let mut inventory_validator =
+            SourceInventoryIndexValidatorV1::new(inventory_root, 1).unwrap();
+        inventory_validator.push_page(&inventory_page).unwrap();
+        assert_eq!(inventory_validator.finish().unwrap(), 1);
+        assert!(
+            SourceInventoryIndexBuilderV1::new(SourceInventoryRootV1::empty())
+                .finish()
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            SourceInventoryIndexValidatorV1::new(SourceInventoryRootV1::empty(), 0)
+                .unwrap()
+                .finish()
+                .unwrap(),
+            0
+        );
+        assert!(matches!(
+            SourceInventoryIndexValidatorV1::new(SourceInventoryRootV1::empty(), 1),
+            Err(BootstrapImportError::IndexContinuityMismatch)
+        ));
+        assert!(matches!(
+            SourceInventoryIndexPageV1::new(
+                inventory_root,
+                MAX_SOURCE_INDEX_PAGES,
+                0,
+                true,
+                vec![leaves[0].clone()],
+            ),
+            Err(BootstrapImportError::CountLimit(
+                "source inventory index pages"
+            ))
+        ));
+        assert!(matches!(
+            SourceInventoryIndexPageV1::decode(&vec![0; MAX_SOURCE_INDEX_PAGE_BYTES + 1]),
+            Err(BootstrapImportError::EncodedSizeLimit(
+                "source inventory index page"
+            ))
+        ));
+
+        let mut wrong_order = SourceInventoryIndexBuilderV1::new(inventory_root);
+        wrong_order.push(leaves[1].clone()).unwrap();
+        assert!(matches!(
+            wrong_order.push(leaves[0].clone()),
+            Err(BootstrapImportError::NonCanonicalOrder)
+        ));
+        let mut nonterminal = inventory_page.clone();
+        nonterminal.terminal = false;
+        let mut validator = SourceInventoryIndexValidatorV1::new(inventory_root, 1).unwrap();
+        validator.push_page(&nonterminal).unwrap();
+        assert!(matches!(
+            validator.finish(),
+            Err(BootstrapImportError::IndexContinuityMismatch)
+        ));
+        let mut truncated = inventory_bytes.clone();
+        truncated.pop();
+        assert!(SourceInventoryIndexPageV1::decode(&truncated).is_err());
+        let mut corrupted = inventory_bytes;
+        *corrupted.last_mut().unwrap() ^= 1;
+        let corrupted = SourceInventoryIndexPageV1::decode(&corrupted).unwrap();
+        let mut validator = SourceInventoryIndexValidatorV1::new(inventory_root, 1).unwrap();
+        validator.push_page(&corrupted).unwrap();
+        assert!(matches!(
+            validator.finish(),
+            Err(BootstrapImportError::IndexContinuityMismatch)
+        ));
+
+        let descriptors = [
+            SourceBlobChunkDescriptorV1::new(
+                leaves[0].digest(),
+                0,
+                2,
+                0,
+                1,
+                SourceBlobChunkDigestV1::from_bytes([3; 32]),
+            )
+            .unwrap(),
+            SourceBlobChunkDescriptorV1::new(
+                leaves[0].digest(),
+                1,
+                2,
+                1,
+                2,
+                SourceBlobChunkDigestV1::from_bytes([4; 32]),
+            )
+            .unwrap(),
+            SourceBlobChunkDescriptorV1::new(
+                leaves[1].digest(),
+                0,
+                1,
+                0,
+                2,
+                SourceBlobChunkDigestV1::from_bytes([5; 32]),
+            )
+            .unwrap(),
+        ];
+        let blob_root = SourceBlobChunkRootV1::from_descriptors(&leaves, &descriptors).unwrap();
+        let mut blob_builder = SourceBlobIndexBuilderV1::new(blob_root);
+        for descriptor in descriptors {
+            assert!(blob_builder.push(descriptor).unwrap().is_none());
+        }
+        let blob_page = blob_builder.finish().unwrap().unwrap();
+        let blob_bytes = blob_page.encode().unwrap();
+        let blob_page = SourceBlobIndexPageV1::decode(&blob_bytes).unwrap();
+        let mut blob_validator = SourceBlobIndexValidatorV1::new(blob_root, 1).unwrap();
+        blob_validator.push_page(&blob_page).unwrap();
+        assert_eq!(blob_validator.finish().unwrap(), 1);
+        assert!(
+            SourceBlobIndexBuilderV1::new(SourceBlobChunkRootV1::empty())
+                .finish()
+                .unwrap()
+                .is_none()
+        );
+
+        let part = evidence(0, 1, None);
+        let spans =
+            BootstrapPartSpanIndexV1::new(part.part_id(), vec![source_span(2), source_span(1)])
+                .unwrap();
+        assert_eq!(spans.part_id(), part.part_id());
+        assert_eq!(
+            BootstrapPartSpanIndexV1::decode(&spans.encode().unwrap())
+                .unwrap()
+                .root(),
+            spans.root()
+        );
+        let matching = BootstrapPartSpanIndexV1::new(part.part_id(), vec![source_span(0)]).unwrap();
+        matching.validate_part(part).unwrap();
+        assert!(matches!(
+            spans.validate_part(part),
+            Err(BootstrapImportError::PartContextMismatch)
+        ));
+        let mut span_corrupt = spans.encode().unwrap();
+        span_corrupt.pop();
+        assert!(BootstrapPartSpanIndexV1::decode(&span_corrupt).is_err());
+    }
+
+    #[test]
+    fn million_source_inventory_limit_is_streaming_and_paged() {
+        fn generated(index: u32) -> SourceLeafV1 {
+            let mut digest = [0; 32];
+            digest[28..].copy_from_slice(&index.to_be_bytes());
+            source(&format!("bulk/{index:07}.md"), digest, 0)
+        }
+
+        let mut root_builder = SourceInventoryRootBuilderV1::new();
+        let mut expected_pages = 0_u32;
+        let mut current_page_bytes = 61_usize;
+        for index in 0..MAX_SOURCE_INVENTORY_LEAVES {
+            let leaf = generated(index);
+            let entry_bytes = 4 + leaf.encode().len();
+            if current_page_bytes + entry_bytes > MAX_SOURCE_INDEX_PAGE_BYTES {
+                expected_pages += 1;
+                current_page_bytes = 61;
+            }
+            current_page_bytes += entry_bytes;
+            root_builder.push(&leaf).unwrap();
+        }
+        expected_pages += 1;
+        let root = root_builder.finish();
+        assert_eq!(root.source_count(), 1_000_000);
+
+        let mut builder = SourceInventoryIndexBuilderV1::new(root);
+        let mut validator = SourceInventoryIndexValidatorV1::new(root, expected_pages).unwrap();
+        let mut page_count = 0;
+        for index in 0..MAX_SOURCE_INVENTORY_LEAVES {
+            if let Some(page) = builder.push(generated(index)).unwrap() {
+                assert!(page.encode().unwrap().len() <= MAX_SOURCE_INDEX_PAGE_BYTES);
+                validator.push_page(&page).unwrap();
+                page_count += 1;
+            }
+        }
+        if let Some(page) = builder.finish().unwrap() {
+            assert!(page.encode().unwrap().len() <= MAX_SOURCE_INDEX_PAGE_BYTES);
+            validator.push_page(&page).unwrap();
+            page_count += 1;
+        }
+        assert_eq!(validator.finish().unwrap(), page_count);
+        assert!(page_count <= MAX_SOURCE_INDEX_PAGES);
+
+        let mut capped = SourceInventoryRootBuilderV1::new();
+        capped.root.count = MAX_SOURCE_INVENTORY_LEAVES;
+        assert!(matches!(
+            capped.push(&generated(0)),
+            Err(BootstrapImportError::CountLimit("source inventory leaves"))
+        ));
+    }
+
+    #[test]
+    fn publication_commit_and_zero_behavior_are_exact() {
+        let empty = BootstrapAggregateManifestV1::empty(
+            workspace_id(),
+            lineage(),
+            graph_resource(),
+            import_id(),
+        )
+        .unwrap();
+        assert!(empty.parts().is_empty());
+        assert_eq!(empty.source_inventory_page_count, 0);
+        assert_eq!(empty.source_blob_page_count, 0);
+        assert_eq!(empty.initial_frontier, empty.final_frontier());
+
+        let publication = empty.publication_id();
+        let mut independent = Sha256::new();
+        independent.update(b"tine/bootstrap-publication/v1\0");
+        independent.update(workspace_id().as_uuid().as_bytes());
+        independent.update(lineage().as_bytes());
+        independent.update(import_id().as_bytes());
+        independent.update(profile().as_bytes());
+        independent.update(SourceInventoryRootV1::empty().digest());
+        independent.update(SourceBlobChunkRootV1::empty().digest());
+        assert_eq!(
+            publication.as_bytes(),
+            &<[u8; 32]>::from(independent.finalize())
+        );
+        assert_eq!(
+            hex(publication.as_bytes()),
+            "a51caa2c1f30c94477477b6423d146bc5214915864c6884cecebd33517f7f8d2"
+        );
+        let changed_inventory =
+            SourceInventoryRootV1::from_leaves(&[source("custom/a.md", [1; 32], 0)]).unwrap();
+        let changed_blob = SourceBlobChunkRootV1 {
+            digest: [7; 32],
+            chunk_count: 0,
+            total_bytes: 0,
+        };
+        let variants = [
+            BootstrapPublicationIdV1::derive(
+                WorkspaceId::from_uuid(Uuid::from_u128(2)),
+                lineage(),
+                import_id(),
+                profile(),
+                SourceInventoryRootV1::empty(),
+                SourceBlobChunkRootV1::empty(),
+            ),
+            BootstrapPublicationIdV1::derive(
+                workspace_id(),
+                LineageDigest::from_bytes([4; 32]),
+                import_id(),
+                profile(),
+                SourceInventoryRootV1::empty(),
+                SourceBlobChunkRootV1::empty(),
+            ),
+            BootstrapPublicationIdV1::derive(
+                workspace_id(),
+                lineage(),
+                ImportId::from_digest([5; 32]),
+                profile(),
+                SourceInventoryRootV1::empty(),
+                SourceBlobChunkRootV1::empty(),
+            ),
+            BootstrapPublicationIdV1::derive(
+                workspace_id(),
+                lineage(),
+                import_id(),
+                BootstrapProfileDigestV1::from_bytes([6; 32]),
+                SourceInventoryRootV1::empty(),
+                SourceBlobChunkRootV1::empty(),
+            ),
+            BootstrapPublicationIdV1::derive(
+                workspace_id(),
+                lineage(),
+                import_id(),
+                profile(),
+                changed_inventory,
+                SourceBlobChunkRootV1::empty(),
+            ),
+            BootstrapPublicationIdV1::derive(
+                workspace_id(),
+                lineage(),
+                import_id(),
+                profile(),
+                SourceInventoryRootV1::empty(),
+                changed_blob,
+            ),
+        ];
+        assert!(variants.iter().all(|variant| *variant != publication));
+        assert_eq!(
+            final_frontier_proof(
+                workspace_id(),
+                lineage(),
+                import_id(),
+                profile(),
+                empty.final_frontier(),
+            ),
+            empty.final_frontier_proof
+        );
+        assert_ne!(
+            final_frontier_proof(
+                workspace_id(),
+                LineageDigest::from_bytes([8; 32]),
+                import_id(),
+                profile(),
+                empty.final_frontier(),
+            ),
+            empty.final_frontier_proof
+        );
+
+        let commit = BootstrapAggregateCommitV1::for_aggregate(&empty).unwrap();
+        assert_eq!(commit.publication_id(), publication);
+        let commit_bytes = commit.encode().unwrap();
+        let commit_vector: [u8; 32] = Sha256::digest(&commit_bytes).into();
+        assert_eq!(
+            hex(&commit_vector),
+            "f8fbf9748d73842676c435bfcf3d79e1d053f69d1908b563db84f4e95543d58f"
+        );
+        assert_eq!(
+            BootstrapAggregateCommitV1::decode(&commit_bytes).unwrap(),
+            commit
+        );
+        commit.validate_aggregate(&empty).unwrap();
+
+        let mut different_provenance = empty.clone();
+        different_provenance.graph_resource = CanonicalGraphResourceId::from_bytes([0x99; 32]);
+        assert_eq!(different_provenance.publication_id(), publication);
+        assert_ne!(
+            different_provenance.aggregate_digest(),
+            empty.aggregate_digest()
+        );
+        assert!(different_provenance.encode().is_ok());
+
+        let mut truncated = commit.encode().unwrap();
+        truncated.pop();
+        assert!(BootstrapAggregateCommitV1::decode(&truncated).is_err());
+        let wrong = BootstrapAggregateCommitV1::new(
+            publication,
+            BootstrapAggregateDigestV1::from_bytes([9; 32]),
+            empty.encode().unwrap().len() as u64,
+            0,
+            empty.final_frontier(),
+        )
+        .unwrap();
+        assert!(matches!(
+            wrong.validate_aggregate(&empty),
+            Err(BootstrapImportError::AggregateCommitMismatch)
+        ));
+        assert!(matches!(
+            SourceBlobChunkRootV1 {
+                digest: [0; 32],
+                chunk_count: 0,
+                total_bytes: MAX_TOTAL_SOURCE_BYTES + 1,
+            }
+            .validate(),
+            Err(BootstrapImportError::ByteLimit("total source bytes"))
+        ));
+    }
+
+    #[test]
+    fn golden_vectors_are_portable_and_fixed() {
+        let leaf = source("pages/a.md", [0x44; 32], 9);
         let evidence = evidence(0, 1, None);
         assert_eq!(
             hex(leaf.digest().as_bytes()),
-            "45b68c3a687b7a8d12fd80b0e11f95a285f25ffd554cef069867d114796c82bb"
+            "d6d8d359e5ed9abeba25e2825fd0fc26069482a4f528cbb54a02d44820c64198"
         );
         assert_eq!(
             hex(profile().as_bytes()),
-            "383c99407d45f200358c08b96726c59a38d35f323df4753ff93daedf2dbdd846"
+            "f7502970e4e70d19fcbc8c2ebd3b4d1edebb102ba109bb9ad671c341b48d7b1a"
         );
         assert_eq!(
             hex(evidence.part_id().as_bytes()),
-            "0ebca968d536f4208bb8d91a722a10b686afde2baa436d9b6624d3eb4b0e7df0"
+            "6ed58cdf3aad6ee831d1d4b4d10242f0d04f2c94af47cfae12b64031dd3d56a6"
         );
         assert_eq!(
             evidence.batch_id().to_string(),
-            "e3bc7e41-489b-8e39-a9a0-dd72d811de52"
+            "5b491f0f-5ddf-8243-91f5-ec293e49814a"
         );
         assert_eq!(
             hex(evidence.evidence_digest().as_bytes()),
-            "ed0f569159028f69646ba0ab4b5e3a929270ff403dc50abb98a4befa09ca2368"
+            "912e634f676c44d1162933adc29b05c34d1fb0d668dab442311df265f90f04ad"
         );
         let inventory = SourceInventoryRootV1::from_leaves(std::slice::from_ref(&leaf)).unwrap();
         let blob = SourceBlobChunkRootV1::from_descriptors(
@@ -3655,7 +5139,7 @@ mod tests {
             ),
             (
                 hex(inventory.digest()),
-                "50565a1c46c9a37616f4aa37a6fdcd051437915e7bcf41cf8e8342243edb5460",
+                "9d3f18b371e59dfc7677cc31717e5158a8eda4a15c7dab3dc2652858c19eca5d",
             ),
             (
                 hex(SourceBlobChunkRootV1::empty().digest()),
@@ -3663,7 +5147,7 @@ mod tests {
             ),
             (
                 hex(blob.digest()),
-                "6cbff217ae778f0b5eacb2abbdb94719dc2bdecc5c6a02215f3fe39c8d01f22c",
+                "7c857042e951f333fdd886bff98b807d4ca11e63274930dd24d6c656164219fe",
             ),
             (
                 hex(SourceSpanRootV1::empty().digest()),
@@ -3679,15 +5163,15 @@ mod tests {
             ),
             (
                 hex(full.digest()),
-                "ab6237ff713776c31d345ed99322f3002b07e6f433085b6c76b04d5b0bcda0fc",
+                "03735b2d2b218ee2c38d4837477983b246403b9c556c3f9c13f446cf66b7982e",
             ),
             (
                 hex(descriptor.accepted_event.as_bytes()),
-                "4cd6668b601cc7b0ddbb3f8e3c0eed3da20f7786ac78cc0e40b3b2ce51e2a364",
+                "1522e530e61d753a612ce36709c5fd10f0a08f514019a4415dd763cf24b822a4",
             ),
             (
                 hex(one.aggregate_digest().as_bytes()),
-                "890c0a0ac5c572a6fb2f638f244483d69b93c0d2efa0bef33e6e5a0308492968",
+                "a2fc1a606052160a3e190c4fb46d9cdd9b5a8e050b0eee5339c65a01fe10c5c0",
             ),
         ];
         for (actual, expected) in vectors {
