@@ -4808,6 +4808,7 @@ mod tests {
             BaselineRecordedState, BaselineScanDirectory, BaselineScanInstrumentation,
             BaselineScanPath, BaselineTimestamp, BeginBaselineEpoch, FinishBaselineEpoch,
             ReconciliationBaseline, ReconciliationBaselineBinding,
+            TrustedPrivateApplicationRuntimeRoot,
         };
         use crate::graph_text_scope::GraphTextScope;
 
@@ -4822,6 +4823,7 @@ mod tests {
 
         let runtime_path = fixture.path.join("baseline-runtime");
         let runtime = super::super::ApplicationRuntimeRoot::open_for_test(&runtime_path).unwrap();
+        let runtime = TrustedPrivateApplicationRuntimeRoot::from_application_runtime_root(&runtime);
         let scope = GraphTextScope::new(&[], false).bind_graph_resource(fixture.graph_resource_id);
         let binding = ReconciliationBaselineBinding::new(
             fixture.workspace_id,
