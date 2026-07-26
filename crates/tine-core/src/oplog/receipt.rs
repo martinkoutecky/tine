@@ -59,6 +59,12 @@ pub enum ReceiptError {
     MissingProjectionClaimDocument(DocumentId),
     NonCanonicalInventory,
     NonCanonicalLogicalCompletionIds,
+    InvalidImportIdDerivationPhase,
+    FinalizedImportIdDerivation,
+    LogicalCompletionCountExceeded { declared: u64 },
+    LogicalCompletionCountMismatch { declared: u64, actual: u64 },
+    InventoryCountExceeded { declared: u64 },
+    InventoryCountMismatch { declared: u64, actual: u64 },
     BaseLengthMismatch { declared: u64, actual: u64 },
     BaseDigestMismatch,
     SpanOutsideTarget { end: u64, target_length: u64 },
@@ -147,6 +153,28 @@ impl fmt::Display for ReceiptError {
             Self::NonCanonicalLogicalCompletionIds => {
                 f.write_str("base logical completion IDs are not canonically sorted")
             }
+            Self::InvalidImportIdDerivationPhase => {
+                f.write_str("ImportId derivation entry was supplied in the wrong phase")
+            }
+            Self::FinalizedImportIdDerivation => {
+                f.write_str("ImportId derivation has already been finalized or poisoned")
+            }
+            Self::LogicalCompletionCountExceeded { declared } => write!(
+                f,
+                "ImportId derivation exceeded its declared logical completion count {declared}"
+            ),
+            Self::LogicalCompletionCountMismatch { declared, actual } => write!(
+                f,
+                "ImportId derivation declared {declared} logical completions but received {actual}"
+            ),
+            Self::InventoryCountExceeded { declared } => write!(
+                f,
+                "ImportId derivation exceeded its declared inventory count {declared}"
+            ),
+            Self::InventoryCountMismatch { declared, actual } => write!(
+                f,
+                "ImportId derivation declared {declared} inventory entries but received {actual}"
+            ),
             Self::BaseLengthMismatch { declared, actual } => write!(
                 f,
                 "base blob length mismatch: declared {declared}, actual {actual}"
@@ -1562,6 +1590,237 @@ impl ImportInventoryEntry {
     }
 }
 
+enum ImportIdDerivationPhase {
+    LogicalCompletions {
+        seen: u64,
+        previous: Option<LogicalCompletionId>,
+    },
+    Inventory {
+        seen: u64,
+        previous_path: Option<ManagedPath>,
+    },
+    Finalized,
+}
+
+/// Incremental derivation of the stable v2 reconciliation identity.
+///
+/// The v2 byte contract prefixes both entry sequences with their counts, so a
+/// caller cannot hash an unknown-length sequence in one pass. The bootstrap
+/// capture's prior sealed spool supplies these exact counts. `usize` preserves
+/// the existing materialized API's count bounds; each count is committed to
+/// the hasher immediately before the corresponding entry bytes.
+///
+/// At most one prior identity/path sort key is retained. Memory is constant in
+/// the number of entries and proportional to the longest supplied path. Graph
+/// admission currently bounds those paths separately, but this lower-level API
+/// intentionally preserves the existing unbounded `ManagedPath` input contract.
+pub(crate) struct ImportIdDerivation {
+    hasher: Option<Sha256>,
+    phase: ImportIdDerivationPhase,
+    logical_completion_count: u64,
+    inventory_count: u64,
+}
+
+impl ImportIdDerivation {
+    fn poison<T>(&mut self, error: ReceiptError) -> Result<T, ReceiptError> {
+        self.hasher = None;
+        self.phase = ImportIdDerivationPhase::Finalized;
+        Err(error)
+    }
+
+    pub(crate) fn new(
+        workspace_id: WorkspaceId,
+        logical_completion_count: usize,
+        inventory_count: usize,
+        diff_schema_version: u32,
+    ) -> Result<Self, ReceiptError> {
+        if diff_schema_version != DIFF_SCHEMA_VERSION {
+            return Err(ReceiptError::UnknownDiffSchema(diff_schema_version));
+        }
+
+        let logical_completion_count = logical_completion_count as u64;
+        let inventory_count = inventory_count as u64;
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/import/reconciliation-id/v2\0");
+        hasher.update(workspace_id.as_uuid().as_bytes());
+        hasher.update(diff_schema_version.to_be_bytes());
+        hasher.update(logical_completion_count.to_be_bytes());
+        Ok(Self {
+            hasher: Some(hasher),
+            phase: ImportIdDerivationPhase::LogicalCompletions {
+                seen: 0,
+                previous: None,
+            },
+            logical_completion_count,
+            inventory_count,
+        })
+    }
+
+    pub(crate) fn push_logical_completion(
+        &mut self,
+        id: LogicalCompletionId,
+    ) -> Result<(), ReceiptError> {
+        let (seen, previous) = match &self.phase {
+            ImportIdDerivationPhase::LogicalCompletions { seen, previous } => {
+                (*seen, previous.clone())
+            }
+            ImportIdDerivationPhase::Inventory { .. } => {
+                return self.poison(ReceiptError::InvalidImportIdDerivationPhase);
+            }
+            ImportIdDerivationPhase::Finalized => {
+                return Err(ReceiptError::FinalizedImportIdDerivation);
+            }
+        };
+        if seen >= self.logical_completion_count {
+            return self.poison(ReceiptError::LogicalCompletionCountExceeded {
+                declared: self.logical_completion_count,
+            });
+        }
+        if previous.is_some_and(|previous| previous >= id) {
+            return self.poison(ReceiptError::NonCanonicalLogicalCompletionIds);
+        }
+
+        self.hasher
+            .as_mut()
+            .expect("active ImportId derivation retains its hasher")
+            .update(id.as_bytes());
+        match &mut self.phase {
+            ImportIdDerivationPhase::LogicalCompletions { seen, previous } => {
+                *previous = Some(id);
+                *seen += 1;
+            }
+            ImportIdDerivationPhase::Inventory { .. } | ImportIdDerivationPhase::Finalized => {
+                unreachable!("ImportId derivation phase cannot change within one operation")
+            }
+        }
+        Ok(())
+    }
+
+    /// Close the logical-completion sequence and commit the inventory count.
+    pub(crate) fn begin_inventory(&mut self) -> Result<(), ReceiptError> {
+        let seen = match &self.phase {
+            ImportIdDerivationPhase::LogicalCompletions { seen, .. } => *seen,
+            ImportIdDerivationPhase::Inventory { .. } => {
+                return self.poison(ReceiptError::InvalidImportIdDerivationPhase);
+            }
+            ImportIdDerivationPhase::Finalized => {
+                return Err(ReceiptError::FinalizedImportIdDerivation);
+            }
+        };
+        if seen != self.logical_completion_count {
+            return self.poison(ReceiptError::LogicalCompletionCountMismatch {
+                declared: self.logical_completion_count,
+                actual: seen,
+            });
+        }
+
+        self.hasher
+            .as_mut()
+            .expect("active ImportId derivation retains its hasher")
+            .update(self.inventory_count.to_be_bytes());
+        self.phase = ImportIdDerivationPhase::Inventory {
+            seen: 0,
+            previous_path: None,
+        };
+        Ok(())
+    }
+
+    pub(crate) fn push_inventory(
+        &mut self,
+        entry: &ImportInventoryEntry,
+    ) -> Result<(), ReceiptError> {
+        let seen = match &self.phase {
+            ImportIdDerivationPhase::LogicalCompletions { .. } => {
+                return self.poison(ReceiptError::InvalidImportIdDerivationPhase);
+            }
+            ImportIdDerivationPhase::Inventory { seen, .. } => *seen,
+            ImportIdDerivationPhase::Finalized => {
+                return Err(ReceiptError::FinalizedImportIdDerivation);
+            }
+        };
+        if seen >= self.inventory_count {
+            return self.poison(ReceiptError::InventoryCountExceeded {
+                declared: self.inventory_count,
+            });
+        }
+        if matches!(
+            &self.phase,
+            ImportIdDerivationPhase::Inventory {
+                previous_path: Some(previous),
+                ..
+            } if previous >= &entry.path
+        ) {
+            return self.poison(ReceiptError::NonCanonicalInventory);
+        }
+
+        let hasher = self
+            .hasher
+            .as_mut()
+            .expect("active ImportId derivation retains its hasher");
+        let path = entry.path.as_str().as_bytes();
+        hasher.update((path.len() as u64).to_be_bytes());
+        hasher.update(path);
+        hasher.update([match entry.kind {
+            ManagedTextKind::Page => 0,
+            ManagedTextKind::Journal => 1,
+        }]);
+        match entry.state {
+            ImportInventoryState::Absent => hasher.update([0]),
+            ImportInventoryState::Present(description) => {
+                hasher.update([1]);
+                hasher.update(description.sha256());
+                hasher.update(description.byte_length().to_be_bytes());
+            }
+        }
+        match &mut self.phase {
+            ImportIdDerivationPhase::Inventory {
+                seen,
+                previous_path,
+            } => {
+                *previous_path = Some(entry.path.clone());
+                *seen += 1;
+            }
+            ImportIdDerivationPhase::LogicalCompletions { .. }
+            | ImportIdDerivationPhase::Finalized => {
+                unreachable!("ImportId derivation phase cannot change within one operation")
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(&mut self) -> Result<ImportId, ReceiptError> {
+        let seen = match &self.phase {
+            ImportIdDerivationPhase::LogicalCompletions { seen, .. } => {
+                if *seen != self.logical_completion_count {
+                    return self.poison(ReceiptError::LogicalCompletionCountMismatch {
+                        declared: self.logical_completion_count,
+                        actual: *seen,
+                    });
+                }
+                return self.poison(ReceiptError::InvalidImportIdDerivationPhase);
+            }
+            ImportIdDerivationPhase::Inventory { seen, .. } => *seen,
+            ImportIdDerivationPhase::Finalized => {
+                return Err(ReceiptError::FinalizedImportIdDerivation);
+            }
+        };
+        if seen != self.inventory_count {
+            return self.poison(ReceiptError::InventoryCountMismatch {
+                declared: self.inventory_count,
+                actual: seen,
+            });
+        }
+
+        let digest = self
+            .hasher
+            .take()
+            .expect("active ImportId derivation retains its hasher")
+            .finalize();
+        self.phase = ImportIdDerivationPhase::Finalized;
+        Ok(ImportId::from_digest(digest.into()))
+    }
+}
+
 /// Stable import derivation input for one unmatched page or block.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImportLocator {
@@ -1607,47 +1866,20 @@ impl ImportId {
         inventory: &[ImportInventoryEntry],
         diff_schema_version: u32,
     ) -> Result<Self, ReceiptError> {
-        if diff_schema_version != DIFF_SCHEMA_VERSION {
-            return Err(ReceiptError::UnknownDiffSchema(diff_schema_version));
-        }
-        if !is_strictly_sorted(logical_completion_ids) && logical_completion_ids.len() > 1 {
-            return Err(ReceiptError::NonCanonicalLogicalCompletionIds);
-        }
-        if !is_strictly_sorted_by_key(inventory, |entry| entry.path.clone()) && inventory.len() > 1
-        {
-            return Err(ReceiptError::NonCanonicalInventory);
-        }
-
-        let mut hasher = Sha256::new();
-        hasher.update(b"tine/import/reconciliation-id/v2\0");
-        hasher.update(workspace_id.as_uuid().as_bytes());
-        hasher.update(diff_schema_version.to_be_bytes());
-        hasher.update((logical_completion_ids.len() as u64).to_be_bytes());
+        let mut derivation = ImportIdDerivation::new(
+            workspace_id,
+            logical_completion_ids.len(),
+            inventory.len(),
+            diff_schema_version,
+        )?;
         for id in logical_completion_ids {
-            hasher.update(id.as_bytes());
+            derivation.push_logical_completion(*id)?;
         }
-        hasher.update((inventory.len() as u64).to_be_bytes());
+        derivation.begin_inventory()?;
         for entry in inventory {
-            let path = entry.path.as_str().as_bytes();
-            hasher.update((path.len() as u64).to_be_bytes());
-            hasher.update(path);
-            hasher.update([match entry.kind {
-                ManagedTextKind::Page => 0,
-                ManagedTextKind::Journal => 1,
-            }]);
-            match entry.state {
-                ImportInventoryState::Absent => hasher.update([0]),
-                ImportInventoryState::Present(description) => {
-                    hasher.update([1]);
-                    hasher.update(description.sha256());
-                    hasher.update(description.byte_length().to_be_bytes());
-                }
-            }
+            derivation.push_inventory(entry)?;
         }
-        let digest = hasher.finalize();
-        let mut value = [0_u8; 32];
-        value.copy_from_slice(&digest);
-        Ok(Self::from_digest(value))
+        derivation.finish()
     }
 
     pub fn unmatched_page_id(self, locator: &ImportLocator) -> PageId {
@@ -1732,6 +1964,120 @@ mod tests {
         ImportInventoryEntry::with_kind(kind, ManagedPath::parse(path).unwrap(), state)
     }
 
+    fn incremental_import_id(
+        logical_completion_ids: &[LogicalCompletionId],
+        inventory: &[ImportInventoryEntry],
+    ) -> Result<ImportId, ReceiptError> {
+        let mut derivation = ImportIdDerivation::new(
+            workspace(),
+            logical_completion_ids.len(),
+            inventory.len(),
+            DIFF_SCHEMA_VERSION,
+        )?;
+        for id in logical_completion_ids {
+            derivation.push_logical_completion(*id)?;
+        }
+        derivation.begin_inventory()?;
+        for entry in inventory {
+            derivation.push_inventory(entry)?;
+        }
+        derivation.finish()
+    }
+
+    /// Frozen test-only reproduction of the ImportId v2 wire contract that
+    /// predates `ImportIdDerivation`. Keep this independent of both production
+    /// derivation paths so compatibility tests cannot agree tautologically.
+    fn frozen_v2_reference_import_id(
+        workspace_id: WorkspaceId,
+        logical_completion_ids: &[LogicalCompletionId],
+        inventory: &[ImportInventoryEntry],
+        diff_schema_version: u32,
+    ) -> ImportId {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(b"tine/import/reconciliation-id/v2\0");
+        wire.extend_from_slice(workspace_id.as_uuid().as_bytes());
+        wire.extend_from_slice(&diff_schema_version.to_be_bytes());
+        wire.extend_from_slice(&(logical_completion_ids.len() as u64).to_be_bytes());
+        for id in logical_completion_ids {
+            wire.extend_from_slice(id.as_bytes());
+        }
+        wire.extend_from_slice(&(inventory.len() as u64).to_be_bytes());
+        for entry in inventory {
+            let path = entry.path.as_str().as_bytes();
+            wire.extend_from_slice(&(path.len() as u64).to_be_bytes());
+            wire.extend_from_slice(path);
+            wire.push(match entry.kind {
+                ManagedTextKind::Page => 0,
+                ManagedTextKind::Journal => 1,
+            });
+            match entry.state {
+                ImportInventoryState::Absent => wire.push(0),
+                ImportInventoryState::Present(description) => {
+                    wire.push(1);
+                    wire.extend_from_slice(description.sha256());
+                    wire.extend_from_slice(&description.byte_length().to_be_bytes());
+                }
+            }
+        }
+        ImportId::from_digest(Sha256::digest(wire).into())
+    }
+
+    fn assert_import_id_paths_match_frozen_v2(
+        logical_completion_ids: &[LogicalCompletionId],
+        inventory: &[ImportInventoryEntry],
+    ) {
+        let expected = frozen_v2_reference_import_id(
+            workspace(),
+            logical_completion_ids,
+            inventory,
+            DIFF_SCHEMA_VERSION,
+        );
+        assert_eq!(
+            ImportId::derive(
+                workspace(),
+                logical_completion_ids,
+                inventory,
+                DIFF_SCHEMA_VERSION,
+            ),
+            Ok(expected)
+        );
+        assert_eq!(
+            incremental_import_id(logical_completion_ids, inventory),
+            Ok(expected)
+        );
+    }
+
+    fn assert_import_id_derivation_consumed(derivation: &mut ImportIdDerivation) {
+        let completion = LogicalCompletionId::from_digest([0xfe; 32]);
+        let inventory = entry(
+            ManagedTextKind::Page,
+            "pages/recovery-must-fail.md",
+            ImportInventoryState::Absent,
+        );
+
+        assert!(derivation.hasher.is_none());
+        assert!(matches!(
+            derivation.phase,
+            ImportIdDerivationPhase::Finalized
+        ));
+        assert_eq!(
+            derivation.push_logical_completion(completion),
+            Err(ReceiptError::FinalizedImportIdDerivation)
+        );
+        assert_eq!(
+            derivation.begin_inventory(),
+            Err(ReceiptError::FinalizedImportIdDerivation)
+        );
+        assert_eq!(
+            derivation.push_inventory(&inventory),
+            Err(ReceiptError::FinalizedImportIdDerivation)
+        );
+        assert_eq!(
+            derivation.finish(),
+            Err(ReceiptError::FinalizedImportIdDerivation)
+        );
+    }
+
     #[test]
     fn prior_managed_entity_set_version_fails_closed() {
         assert_eq!(
@@ -1762,9 +2108,10 @@ mod tests {
             ),
         ];
         let id = ImportId::derive(workspace(), &[], &inventory, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(id, incremental_import_id(&[], &inventory).unwrap());
         assert_eq!(
             id,
-            ImportId::derive(workspace(), &[], &inventory, DIFF_SCHEMA_VERSION).unwrap()
+            frozen_v2_reference_import_id(workspace(), &[], &inventory, DIFF_SCHEMA_VERSION)
         );
         assert_eq!(
             id.to_string(),
@@ -1807,6 +2154,306 @@ mod tests {
             ImportId::derive(workspace(), &[], &[], DIFF_SCHEMA_VERSION - 1),
             Err(ReceiptError::UnknownDiffSchema(DIFF_SCHEMA_VERSION - 1))
         );
+    }
+
+    #[test]
+    fn frozen_v2_oracle_matches_materialized_and_incremental_representative_inputs() {
+        assert_import_id_paths_match_frozen_v2(&[], &[]);
+
+        let small_ids = [LogicalCompletionId::from_digest([7; 32])];
+        let small_inventory = [entry(
+            ManagedTextKind::Page,
+            "pages/small.md",
+            ImportInventoryState::Absent,
+        )];
+        assert_import_id_paths_match_frozen_v2(&small_ids, &small_inventory);
+
+        let boundary_ids: Vec<_> = (0_u8..=u8::MAX)
+            .map(|value| LogicalCompletionId::from_digest([value; 32]))
+            .collect();
+        let boundary_inventory: Vec<_> = (0..=256)
+            .map(|index| {
+                entry(
+                    ManagedTextKind::Page,
+                    &format!("pages/boundary/{index:03}.md"),
+                    ImportInventoryState::Absent,
+                )
+            })
+            .collect();
+        assert_import_id_paths_match_frozen_v2(&boundary_ids, &boundary_inventory);
+
+        let mixed_ids = [
+            LogicalCompletionId::from_digest([0x10; 32]),
+            LogicalCompletionId::from_digest([0x20; 32]),
+        ];
+        let mixed_inventory = [
+            entry(
+                ManagedTextKind::Journal,
+                "journals/2026/07/26.md",
+                ImportInventoryState::Present(BlobDescription::of(b"journal bytes")),
+            ),
+            entry(
+                ManagedTextKind::Page,
+                "pages/nested/cafe\u{301}.md",
+                ImportInventoryState::Absent,
+            ),
+            entry(
+                ManagedTextKind::Page,
+                "pages/nested/\u{6df1}\u{3044}.org",
+                ImportInventoryState::Present(BlobDescription::of(b"outline")),
+            ),
+        ];
+        assert_import_id_paths_match_frozen_v2(&mixed_ids, &mixed_inventory);
+
+        let nonstandard_inventory = [
+            entry(
+                ManagedTextKind::Journal,
+                "Archive/Loose.MarkDown",
+                ImportInventoryState::Absent,
+            ),
+            entry(
+                ManagedTextKind::Page,
+                "custom-root/nested/Entry.ORG",
+                ImportInventoryState::Present(BlobDescription::of(b"custom root")),
+            ),
+            entry(
+                ManagedTextKind::Journal,
+                "z-root/MixedCase.MD",
+                ImportInventoryState::Absent,
+            ),
+        ];
+        assert_import_id_paths_match_frozen_v2(&[], &nonstandard_inventory);
+
+        let composed_path = [entry(
+            ManagedTextKind::Page,
+            "pages/nested/café.md",
+            ImportInventoryState::Absent,
+        )];
+        let decomposed_path = [entry(
+            ManagedTextKind::Page,
+            "pages/nested/cafe\u{301}.md",
+            ImportInventoryState::Absent,
+        )];
+        assert_import_id_paths_match_frozen_v2(&[], &composed_path);
+        assert_import_id_paths_match_frozen_v2(&[], &decomposed_path);
+        assert_ne!(
+            frozen_v2_reference_import_id(workspace(), &[], &composed_path, DIFF_SCHEMA_VERSION),
+            frozen_v2_reference_import_id(workspace(), &[], &decomposed_path, DIFF_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn frozen_v2_oracle_matches_materialized_and_incremental_generated_matrix() {
+        for completion_count in [0_usize, 1, 2, 3, 8, 17, 32] {
+            let logical_completion_ids: Vec<_> = (0..completion_count)
+                .map(|index| {
+                    let mut digest = [0_u8; 32];
+                    digest[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                    digest[8..16]
+                        .copy_from_slice(&((completion_count - index) as u64).to_be_bytes());
+                    LogicalCompletionId::from_digest(digest)
+                })
+                .collect();
+
+            for inventory_count in [0_usize, 1, 2, 3, 7, 16, 33] {
+                let inventory: Vec<_> = (0..inventory_count)
+                    .map(|index| {
+                        let state = if (completion_count + index) % 3 == 0 {
+                            ImportInventoryState::Present(BlobDescription::of(
+                                format!("matrix:{completion_count}:{inventory_count}:{index}")
+                                    .as_bytes(),
+                            ))
+                        } else {
+                            ImportInventoryState::Absent
+                        };
+                        entry(
+                            if index % 2 == 0 {
+                                ManagedTextKind::Page
+                            } else {
+                                ManagedTextKind::Journal
+                            },
+                            &format!("matrix/{index:04}/entry-{completion_count:02}.md"),
+                            state,
+                        )
+                    })
+                    .collect();
+                assert_import_id_paths_match_frozen_v2(&logical_completion_ids, &inventory);
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_import_id_wrong_phase_and_premature_finish_poison_derivation() {
+        let completion = LogicalCompletionId::from_digest([1; 32]);
+        let inventory = entry(
+            ManagedTextKind::Page,
+            "pages/wrong-phase.md",
+            ImportInventoryState::Absent,
+        );
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 1, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(
+            derivation.push_inventory(&inventory),
+            Err(ReceiptError::InvalidImportIdDerivationPhase)
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 1, 0, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.push_logical_completion(completion).unwrap();
+        derivation.begin_inventory().unwrap();
+        assert_eq!(
+            derivation.push_logical_completion(completion),
+            Err(ReceiptError::InvalidImportIdDerivationPhase)
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 0, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.begin_inventory().unwrap();
+        assert_eq!(
+            derivation.begin_inventory(),
+            Err(ReceiptError::InvalidImportIdDerivationPhase)
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 0, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(
+            derivation.finish(),
+            Err(ReceiptError::InvalidImportIdDerivationPhase)
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+    }
+
+    #[test]
+    fn incremental_import_id_count_overruns_poison_derivation() {
+        let completion = LogicalCompletionId::from_digest([1; 32]);
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 1, 0, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.push_logical_completion(completion).unwrap();
+        assert_eq!(
+            derivation.push_logical_completion(LogicalCompletionId::from_digest([2; 32])),
+            Err(ReceiptError::LogicalCompletionCountExceeded { declared: 1 })
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+
+        let inventory = entry(
+            ManagedTextKind::Page,
+            "pages/count.md",
+            ImportInventoryState::Absent,
+        );
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 1, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.begin_inventory().unwrap();
+        derivation.push_inventory(&inventory).unwrap();
+        assert_eq!(
+            derivation.push_inventory(&entry(
+                ManagedTextKind::Page,
+                "pages/extra.md",
+                ImportInventoryState::Absent,
+            )),
+            Err(ReceiptError::InventoryCountExceeded { declared: 1 })
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+    }
+
+    #[test]
+    fn incremental_import_id_count_underruns_poison_derivation() {
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 1, 0, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(
+            derivation.begin_inventory(),
+            Err(ReceiptError::LogicalCompletionCountMismatch {
+                declared: 1,
+                actual: 0,
+            })
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 1, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.begin_inventory().unwrap();
+        assert_eq!(
+            derivation.finish(),
+            Err(ReceiptError::InventoryCountMismatch {
+                declared: 1,
+                actual: 0,
+            })
+        );
+        assert_import_id_derivation_consumed(&mut derivation);
+    }
+
+    #[test]
+    fn incremental_import_id_order_regressions_and_duplicates_poison_derivation() {
+        for second in [[1; 32], [2; 32]] {
+            let mut derivation =
+                ImportIdDerivation::new(workspace(), 2, 0, DIFF_SCHEMA_VERSION).unwrap();
+            derivation
+                .push_logical_completion(LogicalCompletionId::from_digest([2; 32]))
+                .unwrap();
+            assert_eq!(
+                derivation.push_logical_completion(LogicalCompletionId::from_digest(second)),
+                Err(ReceiptError::NonCanonicalLogicalCompletionIds)
+            );
+            assert_import_id_derivation_consumed(&mut derivation);
+        }
+
+        let first = entry(
+            ManagedTextKind::Page,
+            "pages/b.md",
+            ImportInventoryState::Absent,
+        );
+        for second in ["pages/a.md", "pages/b.md"] {
+            let mut derivation =
+                ImportIdDerivation::new(workspace(), 0, 2, DIFF_SCHEMA_VERSION).unwrap();
+            derivation.begin_inventory().unwrap();
+            derivation.push_inventory(&first).unwrap();
+            assert_eq!(
+                derivation.push_inventory(&entry(
+                    ManagedTextKind::Journal,
+                    second,
+                    ImportInventoryState::Present(BlobDescription::of(b"different"))
+                )),
+                Err(ReceiptError::NonCanonicalInventory)
+            );
+            assert_import_id_derivation_consumed(&mut derivation);
+        }
+    }
+
+    #[test]
+    fn successful_incremental_import_id_finalization_is_terminal() {
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, 0, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.begin_inventory().unwrap();
+        derivation.finish().unwrap();
+        assert_import_id_derivation_consumed(&mut derivation);
+    }
+
+    #[test]
+    fn incremental_import_id_streams_large_inventory_with_one_prior_sort_key() {
+        const ENTRY_COUNT: usize = 50_000;
+
+        let mut derivation =
+            ImportIdDerivation::new(workspace(), 0, ENTRY_COUNT, DIFF_SCHEMA_VERSION).unwrap();
+        derivation.begin_inventory().unwrap();
+        for index in 0..ENTRY_COUNT {
+            let entry = entry(
+                ManagedTextKind::Page,
+                &format!("pages/stream/{index:08}.md"),
+                ImportInventoryState::Absent,
+            );
+            derivation.push_inventory(&entry).unwrap();
+        }
+        assert!(matches!(
+            &derivation.phase,
+            ImportIdDerivationPhase::Inventory {
+                seen,
+                previous_path: Some(_),
+            } if *seen == ENTRY_COUNT as u64
+        ));
+        derivation.finish().unwrap();
     }
 
     #[test]
