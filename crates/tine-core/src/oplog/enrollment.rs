@@ -4,10 +4,12 @@
 //! writer or projection authorization. Content addressing, retained
 //! capabilities, no-follow opens, exact file identities, and an OS lease
 //! reject corruption, accidental substitution, and cooperating-process
-//! split-brain. They are not a signature or a malicious-local-filesystem
-//! boundary: a process with the same user authority can rewrite the complete
-//! private store, copy random claims, or race namespace operations. Filesystem
-//! and directory-sync guarantees also remain platform/filesystem dependent.
+//! split-brain. A private enrollment-authority key authenticates bounded
+//! immutable history checkpoints, so arbitrary record bytes cannot summarize
+//! an unvalidated prefix. The key is protected only by the private application
+//! directory: a process with the same user authority that can read the key and
+//! rewrite the complete store remains outside this boundary. Filesystem and
+//! directory-sync guarantees also remain platform/filesystem dependent.
 //! Windows authoritative handles reject reparse points after open; writable
 //! lease handles additionally deny delete/replacement sharing.
 //!
@@ -23,6 +25,8 @@ use cap_std::fs::OpenOptions;
 use cap_std::fs::{MetadataExt as _, OpenOptionsExt as _};
 use cap_std::{ambient_authority, fs::Dir};
 use fs2::FileExt as _;
+use ring::rand::SecureRandom as _;
+use ring::{hmac, rand as ring_rand};
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -54,7 +58,7 @@ use super::{
     PROJECTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION,
 };
 
-pub(crate) const ENROLLMENT_RECORD_SCHEMA_VERSION: u32 = 2;
+pub(crate) const ENROLLMENT_RECORD_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PUBLISHED_RECOVERY_PACKET_SCHEMA_VERSION: u32 = 1;
 pub(crate) const MAX_ENROLLMENT_RECORD_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_ENROLLMENT_JSON_DEPTH: usize = 16;
@@ -70,11 +74,17 @@ const LOCAL_DIRECTORY: &str = "local";
 const ENROLLMENT_DIRECTORY: &str = "enrollment";
 const RECORDS_DIRECTORY: &str = "records";
 const LEASE_FILE: &str = "lease";
+const AUTHORITY_FILE: &str = "authority-v1.claim";
 const HEAD_FILE: &str = "head";
 const RECORD_SUFFIX: &str = ".enrollment";
 const HEAD_BYTES: usize = 65;
 const HEAD_TEMP_PREFIX: &str = ".head-tmp-";
 const RECORD_TEMP_PREFIX: &str = ".record-tmp-";
+const AUTHORITY_TEMP_PREFIX: &str = ".authority-tmp-";
+const ENROLLMENT_AUTHORITY_SCHEMA_VERSION: u32 = 1;
+const ENROLLMENT_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
+const MAX_ENROLLMENT_AUTHORITY_BYTES: usize = 4 * 1024;
+const ENROLLMENT_AUTHORITY_KEY_BYTES: usize = 32;
 
 #[cfg(test)]
 thread_local! {
@@ -104,7 +114,8 @@ impl EnrollmentApplicationRoot {
         prepare_application_root(&base.join(application_id))
     }
 
-    pub(crate) fn open_for_harness(path: &Path) -> Result<Self, EnrollmentError> {
+    #[cfg(test)]
+    fn open_for_harness(path: &Path) -> Result<Self, EnrollmentError> {
         prepare_application_root(path)
     }
 
@@ -309,6 +320,179 @@ impl EnrollmentBindingV1 {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnrollmentAuthorityClaimV1 {
+    schema_version: u32,
+    authority_id: Uuid,
+    lease_resource_id: ContentDigest,
+    binding: EnrollmentBindingV1,
+    initial_preparation_id: PreparationId,
+    initial_source_inventory_digest: ContentDigest,
+    key: [u8; ENROLLMENT_AUTHORITY_KEY_BYTES],
+}
+
+impl EnrollmentAuthorityClaimV1 {
+    fn validate_initial_intent(&self, shadow: &ShadowImportV1) -> Result<(), EnrollmentError> {
+        if self.initial_preparation_id != shadow.preparation_id
+            || self.initial_source_inventory_digest != shadow.source_inventory_digest
+        {
+            return Err(EnrollmentError::InitialPreparationMismatch);
+        }
+        Ok(())
+    }
+}
+
+struct EnrollmentAuthorityMaterial {
+    claim: EnrollmentAuthorityClaimV1,
+    resource_id: ContentDigest,
+    key: hmac::Key,
+}
+
+impl EnrollmentAuthorityMaterial {
+    fn from_claim(
+        claim: EnrollmentAuthorityClaimV1,
+        resource_id: ContentDigest,
+        expected_binding: &EnrollmentBindingV1,
+        expected_lease_resource_id: ContentDigest,
+    ) -> Result<Self, EnrollmentError> {
+        if claim.schema_version != ENROLLMENT_AUTHORITY_SCHEMA_VERSION {
+            return Err(EnrollmentError::UnsupportedAuthoritySchema(
+                claim.schema_version,
+            ));
+        }
+        claim.binding.validate_exact(expected_binding)?;
+        if claim.lease_resource_id != expected_lease_resource_id {
+            return Err(EnrollmentError::LeaseResourceMismatch);
+        }
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &claim.key);
+        Ok(Self {
+            claim,
+            resource_id,
+            key,
+        })
+    }
+
+    fn checkpoint_for(
+        &self,
+        generation: u64,
+        previous: Option<ContentDigest>,
+        history_accumulator: ContentDigest,
+        lease_resource_id: ContentDigest,
+        binding: &EnrollmentBindingV1,
+        lifecycle: &EnrollmentLifecycleV1,
+    ) -> Result<AuthenticatedCheckpointV1, EnrollmentError> {
+        let message = checkpoint_message_bytes(
+            self.claim.authority_id,
+            self.resource_id,
+            generation,
+            previous,
+            history_accumulator,
+            lease_resource_id,
+            binding,
+            lifecycle,
+        )?;
+        Ok(AuthenticatedCheckpointV1 {
+            schema_version: ENROLLMENT_CHECKPOINT_SCHEMA_VERSION,
+            authority_id: self.claim.authority_id,
+            authority_resource_id: self.resource_id,
+            authentication_tag: ContentDigest::from_bytes(
+                hmac::sign(&self.key, &message)
+                    .as_ref()
+                    .try_into()
+                    .expect("SHA-256 tag"),
+            ),
+        })
+    }
+
+    fn verify_checkpoint(&self, record: &EnrollmentRecordV1) -> Result<(), EnrollmentError> {
+        let checkpoint = record
+            .checkpoint
+            .as_ref()
+            .ok_or(EnrollmentError::MissingAuthenticatedCheckpoint)?;
+        if checkpoint.schema_version != ENROLLMENT_CHECKPOINT_SCHEMA_VERSION {
+            return Err(EnrollmentError::UnsupportedCheckpointSchema(
+                checkpoint.schema_version,
+            ));
+        }
+        if checkpoint.authority_id != self.claim.authority_id
+            || checkpoint.authority_resource_id != self.resource_id
+        {
+            return Err(EnrollmentError::AuthorityMismatch);
+        }
+        let message = checkpoint_message_bytes(
+            checkpoint.authority_id,
+            checkpoint.authority_resource_id,
+            record.generation,
+            record.previous,
+            record.history_accumulator,
+            record.lease_resource_id,
+            &record.binding,
+            &record.lifecycle,
+        )?;
+        hmac::verify(
+            &self.key,
+            &message,
+            checkpoint.authentication_tag.as_bytes(),
+        )
+        .map_err(|_| EnrollmentError::CheckpointAuthenticationFailed)
+    }
+
+    fn audit_cursor_tag(
+        &self,
+        head: ContentDigest,
+        digest: ContentDigest,
+        generation: u64,
+        newer_digest: ContentDigest,
+    ) -> ContentDigest {
+        let mut message = Vec::with_capacity(32 * 4 + 8 + 48);
+        message.extend_from_slice(b"tine/enrollment-audit-cursor/v1\0");
+        message.extend_from_slice(self.claim.authority_id.as_bytes());
+        message.extend_from_slice(self.resource_id.as_bytes());
+        message.extend_from_slice(head.as_bytes());
+        message.extend_from_slice(digest.as_bytes());
+        message.extend_from_slice(&generation.to_be_bytes());
+        message.extend_from_slice(newer_digest.as_bytes());
+        ContentDigest::from_bytes(
+            hmac::sign(&self.key, &message)
+                .as_ref()
+                .try_into()
+                .expect("SHA-256 tag"),
+        )
+    }
+}
+
+struct EnrollmentAuthority {
+    material: EnrollmentAuthorityMaterial,
+    file: File,
+    directory: Dir,
+    identity: AuthoritativeFileIdentity,
+}
+
+impl EnrollmentAuthority {
+    fn validate_current(&self) -> Result<(), EnrollmentError> {
+        validate_authoritative_file(&self.file, "enrollment authority claim")?;
+        if authoritative_file_identity(&self.file)? != self.identity {
+            return Err(EnrollmentError::AuthorityMismatch);
+        }
+        let reopened = open_regular_readonly(&self.directory, AUTHORITY_FILE)
+            .map_err(|_| EnrollmentError::AuthorityMismatch)?;
+        validate_authoritative_file(&reopened, "enrollment authority claim")?;
+        if authoritative_file_identity(&reopened)? != self.identity {
+            return Err(EnrollmentError::AuthorityMismatch);
+        }
+        let expected = canonical_authority_claim_bytes(&self.material.claim)?;
+        let mut bytes = Vec::with_capacity(expected.len());
+        reopened
+            .take((MAX_ENROLLMENT_AUTHORITY_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes != expected {
+            return Err(EnrollmentError::AuthorityMismatch);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EnrollmentBindingField {
     Workspace,
@@ -507,6 +691,56 @@ fn validate_reason_code(reason: &str) -> Result<(), EnrollmentError> {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AuthenticatedCheckpointV1 {
+    schema_version: u32,
+    authority_id: Uuid,
+    authority_resource_id: ContentDigest,
+    authentication_tag: ContentDigest,
+}
+
+#[derive(Serialize)]
+struct CheckpointMessageV1<'a> {
+    domain: &'static str,
+    authority_id: Uuid,
+    authority_resource_id: ContentDigest,
+    generation: u64,
+    previous: Option<ContentDigest>,
+    history_accumulator: ContentDigest,
+    lease_resource_id: ContentDigest,
+    binding: &'a EnrollmentBindingV1,
+    lifecycle: &'a EnrollmentLifecycleV1,
+}
+
+fn checkpoint_message_bytes(
+    authority_id: Uuid,
+    authority_resource_id: ContentDigest,
+    generation: u64,
+    previous: Option<ContentDigest>,
+    history_accumulator: ContentDigest,
+    lease_resource_id: ContentDigest,
+    binding: &EnrollmentBindingV1,
+    lifecycle: &EnrollmentLifecycleV1,
+) -> Result<Vec<u8>, EnrollmentError> {
+    serde_json::to_vec(&CheckpointMessageV1 {
+        domain: "tine/enrollment-checkpoint/v1",
+        authority_id,
+        authority_resource_id,
+        generation,
+        previous,
+        history_accumulator,
+        lease_resource_id,
+        binding,
+        lifecycle,
+    })
+    .map_err(|error| EnrollmentError::Encode(error.to_string()))
+}
+
+const fn generation_requires_checkpoint(generation: u64) -> bool {
+    generation > 0 && (generation - 1).is_multiple_of(MAX_ENROLLMENT_OPEN_CHAIN_RECORDS as u64)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EnrollmentRecordV1 {
     schema_version: u32,
     generation: u64,
@@ -515,6 +749,7 @@ struct EnrollmentRecordV1 {
     lease_resource_id: ContentDigest,
     binding: EnrollmentBindingV1,
     lifecycle: EnrollmentLifecycleV1,
+    checkpoint: Option<AuthenticatedCheckpointV1>,
 }
 
 impl EnrollmentRecordV1 {
@@ -522,10 +757,11 @@ impl EnrollmentRecordV1 {
         binding: EnrollmentBindingV1,
         shadow: ShadowImportV1,
         lease_resource_id: ContentDigest,
+        authority: &EnrollmentAuthorityMaterial,
     ) -> Result<Self, EnrollmentError> {
         let lifecycle = EnrollmentLifecycleV1::ShadowImport(shadow);
         let history_accumulator = compute_history_accumulator(1, None, None, &binding, &lifecycle)?;
-        let record = Self {
+        let mut record = Self {
             schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
             generation: 1,
             previous: None,
@@ -533,7 +769,16 @@ impl EnrollmentRecordV1 {
             lease_resource_id,
             binding,
             lifecycle,
+            checkpoint: None,
         };
+        record.checkpoint = Some(authority.checkpoint_for(
+            record.generation,
+            record.previous,
+            record.history_accumulator,
+            record.lease_resource_id,
+            &record.binding,
+            &record.lifecycle,
+        )?);
         record.validate()?;
         Ok(record)
     }
@@ -541,6 +786,7 @@ impl EnrollmentRecordV1 {
     fn successor(
         current: &EnrollmentSnapshot,
         lifecycle: EnrollmentLifecycleV1,
+        authority: &EnrollmentAuthorityMaterial,
     ) -> Result<Self, EnrollmentError> {
         validate_transition(&current.record.lifecycle, &lifecycle, current.digest)?;
         let generation = current
@@ -548,7 +794,7 @@ impl EnrollmentRecordV1 {
             .generation
             .checked_add(1)
             .ok_or(EnrollmentError::GenerationOverflow)?;
-        let record = Self {
+        let mut record = Self {
             schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
             generation,
             previous: Some(current.digest),
@@ -562,7 +808,18 @@ impl EnrollmentRecordV1 {
             lease_resource_id: current.record.lease_resource_id,
             binding: current.record.binding.clone(),
             lifecycle,
+            checkpoint: None,
         };
+        if generation_requires_checkpoint(generation) {
+            record.checkpoint = Some(authority.checkpoint_for(
+                record.generation,
+                record.previous,
+                record.history_accumulator,
+                record.lease_resource_id,
+                &record.binding,
+                &record.lifecycle,
+            )?);
+        }
         record.validate()?;
         Ok(record)
     }
@@ -575,6 +832,9 @@ impl EnrollmentRecordV1 {
         }
         if self.generation == 0 || (self.generation == 1) != self.previous.is_none() {
             return Err(EnrollmentError::NonmonotonicGeneration);
+        }
+        if self.checkpoint.is_some() != generation_requires_checkpoint(self.generation) {
+            return Err(EnrollmentError::MissingAuthenticatedCheckpoint);
         }
         self.binding.validate_internal()?;
         self.lifecycle.validate(&self.binding, self.previous)
@@ -797,6 +1057,7 @@ pub(crate) enum EnrollmentOpen<T> {
 
 pub(crate) struct EnrollmentReader {
     directories: EnrollmentDirectories,
+    authority: EnrollmentAuthority,
     current: EnrollmentSnapshot,
 }
 
@@ -811,12 +1072,21 @@ impl EnrollmentReader {
         };
         validate_namespaces(&directories)?;
         let lease_resource_id = inspect_lease_resource_id(&directories)?;
-        let Some(current) = read_head_and_chain(&directories, expected_binding, lease_resource_id)?
-        else {
+        if read_head(&directories.enrollment)?.is_none() {
             return Ok(EnrollmentOpen::Absent);
-        };
+        }
+        let authority =
+            open_enrollment_authority(&directories, expected_binding, lease_resource_id)?;
+        let current = read_head_and_chain(
+            &directories,
+            expected_binding,
+            lease_resource_id,
+            &authority.material,
+        )?
+        .ok_or(EnrollmentError::MalformedHead)?;
         Ok(EnrollmentOpen::Present(Self {
             directories,
+            authority,
             current,
         }))
     }
@@ -833,29 +1103,51 @@ impl EnrollmentReader {
         if limit == 0 || limit > MAX_ENROLLMENT_AUDIT_PAGE {
             return Err(EnrollmentError::InvalidPageLimit(limit));
         }
-        let (mut next, mut expected_generation) = match start {
+        self.authority.validate_current()?;
+        let (mut next, mut expected_generation, mut newer) = match start {
             Some(cursor) => {
-                if cursor.head != self.current.digest {
+                if cursor.head != self.current.digest
+                    || cursor.authentication_tag
+                        != self.authority.material.audit_cursor_tag(
+                            cursor.head,
+                            cursor.digest,
+                            cursor.generation,
+                            cursor.newer_digest,
+                        )
+                {
                     return Err(EnrollmentError::InvalidAuditCursor);
                 }
-                (Some(cursor.digest), cursor.generation)
+                let newer_record = read_record(&self.directories.records, cursor.newer_digest)?;
+                validate_record_authority(
+                    &newer_record,
+                    &self.current.record.binding,
+                    self.current.record.lease_resource_id,
+                    &self.authority.material,
+                )?;
+                (
+                    Some(cursor.digest),
+                    cursor.generation,
+                    Some((cursor.newer_digest, newer_record)),
+                )
             }
-            None => (Some(self.current.digest), self.current.record.generation),
+            None => (
+                Some(self.current.digest),
+                self.current.record.generation,
+                None,
+            ),
         };
         let mut records = Vec::with_capacity(limit);
-        let mut newer: Option<(ContentDigest, EnrollmentRecordV1)> = None;
         while records.len() < limit {
             let Some(digest) = next else {
                 break;
             };
             let record = read_record(&self.directories.records, digest)?;
-            record
-                .binding
-                .validate_exact(&self.current.record.binding)?;
-            record.validate()?;
-            if record.lease_resource_id != self.current.record.lease_resource_id {
-                return Err(EnrollmentError::LeaseResourceMismatch);
-            }
+            validate_record_authority(
+                &record,
+                &self.current.record.binding,
+                self.current.record.lease_resource_id,
+                &self.authority.material,
+            )?;
             if record.generation != expected_generation {
                 return Err(EnrollmentError::NonmonotonicGeneration);
             }
@@ -878,10 +1170,23 @@ impl EnrollmentReader {
         }
         Ok(EnrollmentAuditPage {
             records,
-            next: next.map(|digest| EnrollmentAuditCursor {
-                head: self.current.digest,
-                digest,
-                generation: expected_generation,
+            next: next.map(|digest| {
+                let newer_digest = newer
+                    .as_ref()
+                    .expect("a continued page has a newer record")
+                    .0;
+                EnrollmentAuditCursor {
+                    head: self.current.digest,
+                    digest,
+                    generation: expected_generation,
+                    newer_digest,
+                    authentication_tag: self.authority.material.audit_cursor_tag(
+                        self.current.digest,
+                        digest,
+                        expected_generation,
+                        newer_digest,
+                    ),
+                }
             }),
         })
     }
@@ -892,6 +1197,8 @@ pub(crate) struct EnrollmentAuditCursor {
     head: ContentDigest,
     digest: ContentDigest,
     generation: u64,
+    newer_digest: ContentDigest,
+    authentication_tag: ContentDigest,
 }
 
 pub(crate) struct EnrollmentAuditPage {
@@ -940,20 +1247,30 @@ impl EnrollmentWriter {
         binding: EnrollmentBindingV1,
         shadow: ShadowImportV1,
     ) -> Result<Self, EnrollmentError> {
+        Self::create_at_cut(root, binding, shadow, CommitCut::None)
+    }
+
+    fn create_at_cut(
+        root: &EnrollmentApplicationRoot,
+        binding: EnrollmentBindingV1,
+        shadow: ShadowImportV1,
+        cut: CommitCut,
+    ) -> Result<Self, EnrollmentError> {
         binding.validate_internal()?;
         let directories = open_directories(root, binding.graph_resource_id, true)?
             .expect("create mode returns enrollment directories");
         validate_namespaces(&directories)?;
         let lease = acquire_lease(&directories, true)?;
-        if read_head(&directories.enrollment)?.is_some() {
-            return Err(EnrollmentError::AlreadyExists);
-        }
-        require_no_persisted_records(&directories.records)?;
-        let record = EnrollmentRecordV1::initial(binding, shadow, lease.resource_id)?;
-        let snapshot = persist_record_and_head(&directories, &lease, &record, CommitCut::None)?;
+        let authority =
+            provision_or_resume_enrollment_authority(&directories, &lease, &binding, &shadow)?;
+        let record =
+            EnrollmentRecordV1::initial(binding, shadow, lease.resource_id, &authority.material)?;
+        let snapshot =
+            resume_or_persist_initial_record(&directories, &lease, &authority, &record, cut)?;
         Ok(Self {
             reader: EnrollmentReader {
                 directories,
+                authority,
                 current: snapshot,
             },
             lease,
@@ -970,13 +1287,22 @@ impl EnrollmentWriter {
         };
         validate_namespaces(&directories)?;
         let lease = acquire_lease(&directories, false)?;
-        let Some(current) = read_head_and_chain(&directories, expected_binding, lease.resource_id)?
-        else {
+        if read_head(&directories.enrollment)?.is_none() {
             return Ok(EnrollmentOpen::Absent);
-        };
+        }
+        let authority =
+            open_enrollment_authority(&directories, expected_binding, lease.resource_id)?;
+        let current = read_head_and_chain(
+            &directories,
+            expected_binding,
+            lease.resource_id,
+            &authority.material,
+        )?
+        .ok_or(EnrollmentError::MalformedHead)?;
         Ok(EnrollmentOpen::Present(Self {
             reader: EnrollmentReader {
                 directories,
+                authority,
                 current,
             },
             lease,
@@ -1010,12 +1336,17 @@ impl EnrollmentWriter {
         cut: CommitCut,
     ) -> Result<&EnrollmentSnapshot, EnrollmentError> {
         self.lease.validate_current()?;
+        self.reader.authority.validate_current()?;
         if self.reader.current.digest != expected_current
             || read_head(&self.reader.directories.enrollment)? != Some(expected_current)
         {
             return Err(EnrollmentError::StaleCompareAndSwap);
         }
-        let record = EnrollmentRecordV1::successor(&self.reader.current, lifecycle)?;
+        let record = EnrollmentRecordV1::successor(
+            &self.reader.current,
+            lifecycle,
+            &self.reader.authority.material,
+        )?;
         let snapshot =
             persist_record_and_head(&self.reader.directories, &self.lease, &record, cut)?;
         self.reader.current = snapshot;
@@ -1045,6 +1376,7 @@ enum CommitCut {
     AfterRecordTempCreate,
     AfterRecordWrite,
     AfterRecordFileSync,
+    AfterRecordLink,
     AfterRecordInsert,
     AfterRecordsDirectorySync,
     AfterHeadTempCreate,
@@ -1316,16 +1648,18 @@ fn read_head_and_chain(
     directories: &EnrollmentDirectories,
     expected_binding: &EnrollmentBindingV1,
     expected_lease_resource_id: ContentDigest,
+    authority: &EnrollmentAuthorityMaterial,
 ) -> Result<Option<EnrollmentSnapshot>, EnrollmentError> {
     let Some(head) = read_head(&directories.enrollment)? else {
         return Ok(None);
     };
     let current = read_record(&directories.records, head)?;
-    current.binding.validate_exact(expected_binding)?;
-    current.validate()?;
-    if current.lease_resource_id != expected_lease_resource_id {
-        return Err(EnrollmentError::LeaseResourceMismatch);
-    }
+    validate_record_authority(
+        &current,
+        expected_binding,
+        expected_lease_resource_id,
+        authority,
+    )?;
 
     let mut seen = BTreeSet::new();
     let mut digest = head;
@@ -1334,34 +1668,53 @@ fn read_head_and_chain(
         if !seen.insert(digest) {
             return Err(EnrollmentError::ChainCycle);
         }
-        match record.previous {
-            None => {
+        if record.checkpoint.is_some() {
+            authority.verify_checkpoint(&record)?;
+            if record.previous.is_none() {
                 validate_initial_record(&record)?;
-                return Ok(Some(EnrollmentSnapshot {
-                    digest: head,
-                    record: current,
-                }));
             }
+            return Ok(Some(EnrollmentSnapshot {
+                digest: head,
+                record: current,
+            }));
+        }
+        match record.previous {
+            None => return Err(EnrollmentError::MissingAuthenticatedCheckpoint),
             Some(previous_digest) => {
                 let previous = read_record(&directories.records, previous_digest)?;
-                previous.binding.validate_exact(expected_binding)?;
-                previous.validate()?;
-                if previous.lease_resource_id != expected_lease_resource_id {
-                    return Err(EnrollmentError::LeaseResourceMismatch);
-                }
+                validate_record_authority(
+                    &previous,
+                    expected_binding,
+                    expected_lease_resource_id,
+                    authority,
+                )?;
                 validate_record_link(previous_digest, &previous, &record)?;
                 digest = previous_digest;
                 record = previous;
             }
         }
         if count + 1 == MAX_ENROLLMENT_OPEN_CHAIN_RECORDS {
-            return Ok(Some(EnrollmentSnapshot {
-                digest: head,
-                record: current,
-            }));
+            return Err(EnrollmentError::MissingAuthenticatedCheckpoint);
         }
     }
     unreachable!("bounded chain loop returns at its limit")
+}
+
+fn validate_record_authority(
+    record: &EnrollmentRecordV1,
+    expected_binding: &EnrollmentBindingV1,
+    expected_lease_resource_id: ContentDigest,
+    authority: &EnrollmentAuthorityMaterial,
+) -> Result<(), EnrollmentError> {
+    record.binding.validate_exact(expected_binding)?;
+    record.validate()?;
+    if record.lease_resource_id != expected_lease_resource_id {
+        return Err(EnrollmentError::LeaseResourceMismatch);
+    }
+    if record.checkpoint.is_some() {
+        authority.verify_checkpoint(record)?;
+    }
+    Ok(())
 }
 
 fn read_head(directory: &Dir) -> Result<Option<ContentDigest>, EnrollmentError> {
@@ -1442,7 +1795,8 @@ fn publish_record(
     cut: CommitCut,
 ) -> Result<(), EnrollmentError> {
     let target = format!("{digest}{RECORD_SUFFIX}");
-    let temp_name = format!("{RECORD_TEMP_PREFIX}{}", Uuid::new_v4());
+    let temp_name = format!("{RECORD_TEMP_PREFIX}{digest}");
+    recover_record_publication_temp(records, lease, &temp_name, &target, bytes)?;
     lease.validate_current()?;
     let mut temp = create_new_regular(records, &temp_name)?;
     validate_authoritative_file(&temp, "enrollment record temporary file")?;
@@ -1462,7 +1816,23 @@ fn publish_record(
         "after_record_file_sync",
     )?;
     lease.validate_current()?;
-    match rename_noreplace(records, &temp_name, &target) {
+    #[cfg(test)]
+    if cut == CommitCut::AfterRecordLink {
+        records.hard_link(&temp_name, records, &target)?;
+        inject_crash_cut(cut, CommitCut::AfterRecordLink, "after_record_link")?;
+        records.remove_file(&temp_name)?;
+    }
+    #[cfg(not(test))]
+    let _ = cut;
+    #[cfg(test)]
+    let inserted_at_test_link_seam = cut == CommitCut::AfterRecordLink;
+    #[cfg(not(test))]
+    let inserted_at_test_link_seam = false;
+    match if inserted_at_test_link_seam {
+        Ok(())
+    } else {
+        rename_noreplace(records, &temp_name, &target)
+    } {
         Ok(()) => {}
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             let existing = read_record(records, digest)?;
@@ -1484,9 +1854,96 @@ fn publish_record(
     )
 }
 
-fn require_no_persisted_records(records: &Dir) -> Result<(), EnrollmentError> {
+fn recover_record_publication_temp(
+    records: &Dir,
+    lease: &EnrollmentLease,
+    temp_name: &str,
+    target: &str,
+    expected_bytes: &[u8],
+) -> Result<(), EnrollmentError> {
+    let target_state = match records.symlink_metadata(target) {
+        Ok(metadata) if cap_metadata_is_authoritative_file(&metadata) => {
+            let (bytes, identity) = read_bounded_authoritative_file(
+                records,
+                target,
+                MAX_ENROLLMENT_RECORD_BYTES,
+                "enrollment record publication target",
+                true,
+            )?;
+            if bytes != expected_bytes {
+                return Err(EnrollmentError::AmbiguousRecordPublication);
+            }
+            let file = open_regular_readonly(records, target)?;
+            Some((identity, authoritative_file_link_count(&file)?))
+        }
+        Ok(_) => {
+            return Err(EnrollmentError::UnsafeNamespace(
+                "enrollment record publication target is not a regular no-follow file".into(),
+            ));
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let temp_state = match records.symlink_metadata(temp_name) {
+        Ok(metadata) if cap_metadata_is_authoritative_file(&metadata) => {
+            let (bytes, identity) = read_bounded_authoritative_file(
+                records,
+                temp_name,
+                MAX_ENROLLMENT_RECORD_BYTES,
+                "enrollment record publication temporary file",
+                true,
+            )?;
+            if !bytes.is_empty() && bytes != expected_bytes {
+                return Err(EnrollmentError::AmbiguousRecordPublication);
+            }
+            let file = open_regular_readonly(records, temp_name)?;
+            Some((bytes, identity, authoritative_file_link_count(&file)?))
+        }
+        Ok(_) => {
+            return Err(EnrollmentError::UnsafeNamespace(
+                "enrollment record publication temporary path is not a regular no-follow file"
+                    .into(),
+            ));
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+
+    match (&target_state, &temp_state) {
+        (Some((target_identity, 2)), Some((bytes, temp_identity, 2)))
+            if target_identity == temp_identity && bytes == expected_bytes => {}
+        (Some((_, 1)), Some((_, _, 1))) | (None, Some((_, _, 1))) => {}
+        (Some((_, 1)), None) | (None, None) => return Ok(()),
+        _ => return Err(EnrollmentError::AmbiguousRecordPublication),
+    }
+    lease.validate_current()?;
+    records.remove_file(temp_name)?;
+    sync_dir_required(records).map_err(|error| EnrollmentError::Durability(error.to_string()))
+}
+
+fn resume_or_persist_initial_record(
+    directories: &EnrollmentDirectories,
+    lease: &EnrollmentLease,
+    authority: &EnrollmentAuthority,
+    record: &EnrollmentRecordV1,
+    cut: CommitCut,
+) -> Result<EnrollmentSnapshot, EnrollmentError> {
+    lease.validate_current()?;
+    authority.validate_current()?;
+    let bytes = canonical_record_bytes(record)?;
+    let digest = ContentDigest::of(&bytes);
+    let target = format!("{digest}{RECORD_SUFFIX}");
+    let expected_head = format!("{digest}\n").into_bytes();
+    let head = read_head(&directories.enrollment)?;
+    if head.is_some_and(|found| found != digest) {
+        return Err(EnrollmentError::AlreadyExists);
+    }
+
+    let mut target_identity = None;
+    let mut target_has_two_links = false;
+    let mut record_temps = Vec::new();
     let mut count = 0usize;
-    for entry in records.entries()? {
+    for entry in directories.records.entries()? {
         let entry = entry?;
         count += 1;
         if count > MAX_ENROLLMENT_NAMESPACE_ENTRIES {
@@ -1496,12 +1953,116 @@ fn require_no_persisted_records(records: &Dir) -> Result<(), EnrollmentError> {
             .file_name()
             .into_string()
             .map_err(|_| EnrollmentError::UnsupportedArtifact("non-UTF-8 record name".into()))?;
-        if name.starts_with(RECORD_TEMP_PREFIX) && regular_entry(&entry)? {
+        if name == target {
+            let (found, identity) = read_bounded_authoritative_file(
+                &directories.records,
+                &name,
+                MAX_ENROLLMENT_RECORD_BYTES,
+                "initial enrollment record",
+                true,
+            )?;
+            if found != bytes {
+                return Err(EnrollmentError::AmbiguousInitialCreation);
+            }
+            target_has_two_links = authoritative_path_has_two_links(&directories.records, &name)?;
+            target_identity = Some(identity);
             continue;
         }
-        return Err(EnrollmentError::AlreadyExists);
+        if name.starts_with(RECORD_TEMP_PREFIX) && regular_entry(&entry)? {
+            let (found, identity) = read_bounded_authoritative_file(
+                &directories.records,
+                &name,
+                MAX_ENROLLMENT_RECORD_BYTES,
+                "initial enrollment record temporary file",
+                true,
+            )?;
+            if !found.is_empty() && found != bytes {
+                return Err(EnrollmentError::AmbiguousInitialCreation);
+            }
+            let has_two_links = authoritative_path_has_two_links(&directories.records, &name)?;
+            record_temps.push((name, identity, has_two_links));
+            continue;
+        }
+        return Err(EnrollmentError::AmbiguousInitialCreation);
     }
-    Ok(())
+
+    for (_, identity, has_two_links) in &record_temps {
+        if *has_two_links && target_identity.as_ref() != Some(identity) {
+            return Err(EnrollmentError::AmbiguousInitialCreation);
+        }
+    }
+    if target_has_two_links
+        && !record_temps.iter().any(|(_, identity, has_two_links)| {
+            *has_two_links && target_identity.as_ref() == Some(identity)
+        })
+    {
+        return Err(EnrollmentError::AmbiguousInitialCreation);
+    }
+
+    let mut head_temps = Vec::new();
+    for entry in directories.enrollment.entries()? {
+        let entry = entry?;
+        let name = entry.file_name().into_string().map_err(|_| {
+            EnrollmentError::UnsupportedArtifact("non-UTF-8 enrollment artifact".into())
+        })?;
+        if !name.starts_with(HEAD_TEMP_PREFIX) {
+            continue;
+        }
+        let (found, _) = read_bounded_authoritative_file(
+            &directories.enrollment,
+            &name,
+            HEAD_BYTES,
+            "initial enrollment head temporary file",
+            false,
+        )?;
+        if !found.is_empty() && found != expected_head {
+            return Err(EnrollmentError::AmbiguousInitialCreation);
+        }
+        head_temps.push(name);
+    }
+
+    if head.is_some() && target_identity.is_none() {
+        return Err(EnrollmentError::MissingChainRecord(digest));
+    }
+
+    let had_record_temps = !record_temps.is_empty();
+    let had_head_temps = !head_temps.is_empty();
+    for (name, _, _) in record_temps {
+        lease.validate_current()?;
+        authority.validate_current()?;
+        directories.records.remove_file(&name)?;
+    }
+    for name in head_temps {
+        lease.validate_current()?;
+        authority.validate_current()?;
+        directories.enrollment.remove_file(&name)?;
+    }
+    if had_record_temps {
+        sync_dir_required(&directories.records)
+            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    }
+    if had_head_temps {
+        sync_dir_required(&directories.enrollment)
+            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    }
+
+    if head.is_some() {
+        let found = read_record(&directories.records, digest)?;
+        if canonical_record_bytes(&found)? != bytes {
+            return Err(EnrollmentError::AmbiguousInitialCreation);
+        }
+        validate_record_authority(
+            &found,
+            &record.binding,
+            record.lease_resource_id,
+            &authority.material,
+        )?;
+        return Ok(EnrollmentSnapshot {
+            digest,
+            record: found,
+        });
+    }
+    persist_record_and_head(directories, lease, record, cut)
 }
 
 fn reject_unsafe_head_target(directory: &Dir) -> Result<(), EnrollmentError> {
@@ -1533,8 +2094,10 @@ fn validate_namespaces(directories: &EnrollmentDirectories) -> Result<(), Enroll
         })?;
         let accepted = match name.as_str() {
             RECORDS_DIRECTORY => entry.file_type()?.is_dir(),
-            HEAD_FILE | LEASE_FILE => regular_entry(&entry)?,
-            _ if name.starts_with(HEAD_TEMP_PREFIX) => regular_entry(&entry)?,
+            HEAD_FILE | LEASE_FILE | AUTHORITY_FILE => regular_entry(&entry)?,
+            _ if name.starts_with(HEAD_TEMP_PREFIX) || name.starts_with(AUTHORITY_TEMP_PREFIX) => {
+                regular_entry(&entry)?
+            }
             _ => false,
         };
         if !accepted {
@@ -1721,7 +2284,236 @@ fn inspect_lease_resource_id(
     Ok(lease_resource_id(&authoritative_file_identity(&file)?))
 }
 
+fn provision_or_resume_enrollment_authority(
+    directories: &EnrollmentDirectories,
+    lease: &EnrollmentLease,
+    binding: &EnrollmentBindingV1,
+    shadow: &ShadowImportV1,
+) -> Result<EnrollmentAuthority, EnrollmentError> {
+    lease.validate_current()?;
+    match directories.enrollment.symlink_metadata(AUTHORITY_FILE) {
+        Ok(metadata) if !cap_metadata_is_authoritative_file(&metadata) => {
+            return Err(EnrollmentError::UnsafeNamespace(
+                "enrollment authority claim is not a regular no-follow file".into(),
+            ));
+        }
+        Ok(_) => {
+            let authority =
+                open_enrollment_authority_allow_link_gap(directories, binding, lease.resource_id)?;
+            authority.material.claim.validate_initial_intent(shadow)?;
+            recover_authority_temps(directories, lease, binding, shadow, Some(&authority))?;
+            drop(authority);
+            return open_enrollment_authority(directories, binding, lease.resource_id);
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    if let Some(temp_name) = recover_authority_temps(directories, lease, binding, shadow, None)? {
+        lease.validate_current()?;
+        rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
+        sync_dir_required(&directories.enrollment)
+            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+        return open_enrollment_authority(directories, binding, lease.resource_id);
+    }
+
+    let mut key = [0_u8; ENROLLMENT_AUTHORITY_KEY_BYTES];
+    ring_rand::SystemRandom::new()
+        .fill(&mut key)
+        .map_err(|_| EnrollmentError::AuthorityRandomness)?;
+    let claim = EnrollmentAuthorityClaimV1 {
+        schema_version: ENROLLMENT_AUTHORITY_SCHEMA_VERSION,
+        authority_id: Uuid::new_v4(),
+        lease_resource_id: lease.resource_id,
+        binding: binding.clone(),
+        initial_preparation_id: shadow.preparation_id,
+        initial_source_inventory_digest: shadow.source_inventory_digest,
+        key,
+    };
+    let bytes = canonical_authority_claim_bytes(&claim)?;
+    let temp_name = format!("{AUTHORITY_TEMP_PREFIX}{}", Uuid::new_v4());
+    lease.validate_current()?;
+    let mut temp = create_new_regular(&directories.enrollment, &temp_name)?;
+    validate_authoritative_file(&temp, "enrollment authority temporary file")?;
+    temp.write_all(&bytes)?;
+    temp.sync_all()?;
+    lease.validate_current()?;
+    rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
+    sync_dir_required(&directories.enrollment)
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    open_enrollment_authority(directories, binding, lease.resource_id)
+}
+
+fn recover_authority_temps(
+    directories: &EnrollmentDirectories,
+    lease: &EnrollmentLease,
+    binding: &EnrollmentBindingV1,
+    shadow: &ShadowImportV1,
+    installed: Option<&EnrollmentAuthority>,
+) -> Result<Option<String>, EnrollmentError> {
+    let installed_bytes = installed
+        .map(|authority| canonical_authority_claim_bytes(&authority.material.claim))
+        .transpose()?;
+    let mut resumable = None;
+    let mut removable = Vec::new();
+    for entry in directories.enrollment.entries()? {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| EnrollmentError::AmbiguousAuthorityProvisioning)?;
+        if !name.starts_with(AUTHORITY_TEMP_PREFIX) {
+            continue;
+        }
+        if !regular_entry(&entry)? {
+            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+        }
+        let (bytes, identity) = read_bounded_authoritative_file(
+            &directories.enrollment,
+            &name,
+            MAX_ENROLLMENT_AUTHORITY_BYTES,
+            "enrollment authority temporary file",
+            true,
+        )?;
+        if let Some(expected) = &installed_bytes {
+            if bytes.is_empty() || bytes == *expected {
+                removable.push(name);
+                continue;
+            }
+            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+        }
+        let claim = decode_authority_claim(&bytes)?;
+        claim.validate_initial_intent(shadow)?;
+        let resource_id = authority_resource_id(&identity);
+        EnrollmentAuthorityMaterial::from_claim(claim, resource_id, binding, lease.resource_id)?;
+        if resumable.replace(name).is_some() {
+            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+        }
+    }
+    if installed.is_some() {
+        let removed = !removable.is_empty();
+        for name in removable {
+            lease.validate_current()?;
+            directories.enrollment.remove_file(&name)?;
+        }
+        if removed {
+            sync_dir_required(&directories.enrollment)
+                .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+        }
+    }
+    Ok(resumable)
+}
+
+fn open_enrollment_authority(
+    directories: &EnrollmentDirectories,
+    binding: &EnrollmentBindingV1,
+    lease_resource_id: ContentDigest,
+) -> Result<EnrollmentAuthority, EnrollmentError> {
+    let authority =
+        open_enrollment_authority_internal(directories, binding, lease_resource_id, false)?;
+    authority.validate_current()?;
+    Ok(authority)
+}
+
+fn open_enrollment_authority_allow_link_gap(
+    directories: &EnrollmentDirectories,
+    binding: &EnrollmentBindingV1,
+    lease_resource_id: ContentDigest,
+) -> Result<EnrollmentAuthority, EnrollmentError> {
+    open_enrollment_authority_internal(directories, binding, lease_resource_id, true)
+}
+
+fn open_enrollment_authority_internal(
+    directories: &EnrollmentDirectories,
+    binding: &EnrollmentBindingV1,
+    lease_resource_id: ContentDigest,
+    allow_link_gap: bool,
+) -> Result<EnrollmentAuthority, EnrollmentError> {
+    let (bytes, identity) = read_bounded_authoritative_file(
+        &directories.enrollment,
+        AUTHORITY_FILE,
+        MAX_ENROLLMENT_AUTHORITY_BYTES,
+        "enrollment authority claim",
+        allow_link_gap,
+    )?;
+    let file = open_regular_readonly(&directories.enrollment, AUTHORITY_FILE)?;
+    validate_authoritative_file_with_link_gap(&file, "enrollment authority claim", allow_link_gap)?;
+    if authoritative_file_identity(&file)? != identity {
+        return Err(EnrollmentError::AuthorityMismatch);
+    }
+    let material = EnrollmentAuthorityMaterial::from_claim(
+        decode_authority_claim(&bytes)?,
+        authority_resource_id(&identity),
+        binding,
+        lease_resource_id,
+    )?;
+    Ok(EnrollmentAuthority {
+        material,
+        file,
+        directory: directories.enrollment.try_clone()?,
+        identity,
+    })
+}
+
+fn canonical_authority_claim_bytes(
+    claim: &EnrollmentAuthorityClaimV1,
+) -> Result<Vec<u8>, EnrollmentError> {
+    let bytes =
+        serde_json::to_vec(claim).map_err(|error| EnrollmentError::Encode(error.to_string()))?;
+    if bytes.len() > MAX_ENROLLMENT_AUTHORITY_BYTES {
+        return Err(EnrollmentError::AuthorityClaimTooLarge(bytes.len()));
+    }
+    Ok(bytes)
+}
+
+fn decode_authority_claim(bytes: &[u8]) -> Result<EnrollmentAuthorityClaimV1, EnrollmentError> {
+    if bytes.len() > MAX_ENROLLMENT_AUTHORITY_BYTES {
+        return Err(EnrollmentError::AuthorityClaimTooLarge(bytes.len()));
+    }
+    reject_duplicate_json_fields(bytes)?;
+    let claim: EnrollmentAuthorityClaimV1 = serde_json::from_slice(bytes)
+        .map_err(|error| EnrollmentError::Decode(error.to_string()))?;
+    if canonical_authority_claim_bytes(&claim)? != bytes {
+        return Err(EnrollmentError::NonCanonicalAuthorityClaim);
+    }
+    Ok(claim)
+}
+
+fn read_bounded_authoritative_file(
+    directory: &Dir,
+    name: &str,
+    maximum: usize,
+    description: &str,
+    allow_link_gap: bool,
+) -> Result<(Vec<u8>, AuthoritativeFileIdentity), EnrollmentError> {
+    let metadata = directory.symlink_metadata(name)?;
+    if !cap_metadata_is_authoritative_file(&metadata) || metadata.len() > maximum as u64 {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "{description} is not a bounded regular no-follow file"
+        )));
+    }
+    let file = open_regular_readonly(directory, name)?;
+    validate_authoritative_file_with_link_gap(&file, description, allow_link_gap)?;
+    let identity = authoritative_file_identity(&file)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take((maximum + 1) as u64).read_to_end(&mut bytes)?;
+    if bytes.len() > maximum {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "{description} exceeds its byte bound"
+        )));
+    }
+    Ok((bytes, identity))
+}
+
 fn validate_authoritative_file(file: &File, name: &str) -> Result<(), EnrollmentError> {
+    validate_authoritative_file_with_link_gap(file, name, false)
+}
+
+fn validate_authoritative_file_with_link_gap(
+    file: &File,
+    name: &str,
+    allow_link_gap: bool,
+) -> Result<(), EnrollmentError> {
     let metadata = file.metadata()?;
     if !authoritative_file_kind_allowed(
         metadata.is_file(),
@@ -1736,13 +2528,49 @@ fn validate_authoritative_file(file: &File, name: &str) -> Result<(), Enrollment
     if metadata.uid() !=
         // SAFETY: geteuid has no arguments or memory-safety preconditions.
         unsafe { libc::geteuid() }
-        || metadata.nlink() != 1
     {
         return Err(EnrollmentError::UnsafeNamespace(format!(
             "opened {name} has unsafe ownership or links"
         )));
     }
+    let link_count = authoritative_file_link_count(file)?;
+    if link_count != 1 && !(allow_link_gap && link_count == 2) {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "opened {name} has unsafe ownership or links"
+        )));
+    }
     Ok(())
+}
+
+#[cfg(unix)]
+fn authoritative_file_link_count(file: &File) -> Result<u64, EnrollmentError> {
+    Ok(file.metadata()?.nlink())
+}
+
+#[cfg(windows)]
+fn authoritative_file_link_count(file: &File) -> Result<u64, EnrollmentError> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` retains the exact live handle and `information` is a
+    // correctly sized writable result value.
+    let result = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(u64::from(information.nNumberOfLinks))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn authoritative_file_link_count(_file: &File) -> Result<u64, EnrollmentError> {
+    Err(unsupported_filesystem().into())
+}
+
+fn authoritative_path_has_two_links(directory: &Dir, name: &str) -> Result<bool, EnrollmentError> {
+    let file = open_regular_readonly(directory, name)?;
+    Ok(authoritative_file_link_count(&file)? == 2)
 }
 
 #[cfg(unix)]
@@ -1823,6 +2651,29 @@ fn lease_resource_id(identity: &AuthoritativeFileIdentity) -> ContentDigest {
 
 #[cfg(not(any(unix, windows)))]
 fn lease_resource_id(_identity: &AuthoritativeFileIdentity) -> ContentDigest {
+    ContentDigest::from_bytes([0; 32])
+}
+
+#[cfg(unix)]
+fn authority_resource_id(identity: &AuthoritativeFileIdentity) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/enrollment-authority-resource/v1\0unix-dev-inode\0");
+    hasher.update(identity.device.to_be_bytes());
+    hasher.update(identity.inode.to_be_bytes());
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+#[cfg(windows)]
+fn authority_resource_id(identity: &AuthoritativeFileIdentity) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/enrollment-authority-resource/v1\0windows-volume-file-id\0");
+    hasher.update(identity.volume.to_be_bytes());
+    hasher.update(identity.file_id);
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn authority_resource_id(_identity: &AuthoritativeFileIdentity) -> ContentDigest {
     ContentDigest::from_bytes([0; 32])
 }
 
@@ -1980,7 +2831,7 @@ fn unsupported_filesystem() -> std::io::Error {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()> {
     let from = CString::new(from)
         .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid temporary name"))?;
@@ -2003,8 +2854,35 @@ fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "android", windows))]
+#[cfg(target_os = "macos")]
 fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()> {
+    let from = CString::new(from)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid temporary name"))?;
+    let to = CString::new(to)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid record name"))?;
+    // SAFETY: both names are live relative C strings beneath one retained dir.
+    let result = unsafe {
+        libc::renameatx_np(
+            directory.as_fd().as_raw_fd(),
+            from.as_ptr(),
+            directory.as_fd().as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()> {
+    // cap-std does not expose a retained-directory, atomic no-replace rename on
+    // Windows. Publication therefore uses the two-link fallback; the
+    // deterministic temporary name lets retry validate both exact handles,
+    // bytes, link count, and resource identity before unlinking only the temp.
     directory.hard_link(from, directory, to)?;
     directory.remove_file(from)
 }
@@ -2027,8 +2905,20 @@ pub(crate) enum EnrollmentError {
     UnsupportedArtifact(String),
     NamespaceBoundExceeded,
     AlreadyExists,
+    AmbiguousInitialCreation,
+    AmbiguousRecordPublication,
+    AmbiguousAuthorityProvisioning,
+    InitialPreparationMismatch,
     LeaseContended(PathBuf),
     LeaseResourceMismatch,
+    AuthorityMismatch,
+    AuthorityRandomness,
+    AuthorityClaimTooLarge(usize),
+    NonCanonicalAuthorityClaim,
+    UnsupportedAuthoritySchema(u32),
+    UnsupportedCheckpointSchema(u32),
+    MissingAuthenticatedCheckpoint,
+    CheckpointAuthenticationFailed,
     MalformedHead,
     MissingChainRecord(ContentDigest),
     RecordDigestMismatch(ContentDigest),
@@ -2075,6 +2965,18 @@ impl fmt::Display for EnrollmentError {
                 formatter.write_str("enrollment namespace entry bound exceeded")
             }
             Self::AlreadyExists => formatter.write_str("enrollment already exists"),
+            Self::AmbiguousInitialCreation => {
+                formatter.write_str("ambiguous stranded initial enrollment state")
+            }
+            Self::AmbiguousRecordPublication => {
+                formatter.write_str("ambiguous enrollment record publication state")
+            }
+            Self::AmbiguousAuthorityProvisioning => {
+                formatter.write_str("ambiguous enrollment authority provisioning state")
+            }
+            Self::InitialPreparationMismatch => {
+                formatter.write_str("enrollment authority initial preparation mismatch")
+            }
             Self::LeaseContended(path) => {
                 write!(
                     formatter,
@@ -2084,6 +2986,39 @@ impl fmt::Display for EnrollmentError {
             }
             Self::LeaseResourceMismatch => {
                 formatter.write_str("enrollment lease resource was replaced or unlinked")
+            }
+            Self::AuthorityMismatch => {
+                formatter.write_str("enrollment authority claim was replaced or substituted")
+            }
+            Self::AuthorityRandomness => {
+                formatter.write_str("enrollment authority randomness was unavailable")
+            }
+            Self::AuthorityClaimTooLarge(bytes) => {
+                write!(
+                    formatter,
+                    "enrollment authority claim is too large: {bytes} bytes"
+                )
+            }
+            Self::NonCanonicalAuthorityClaim => {
+                formatter.write_str("enrollment authority claim is not canonical")
+            }
+            Self::UnsupportedAuthoritySchema(schema) => {
+                write!(
+                    formatter,
+                    "unsupported enrollment authority schema {schema}"
+                )
+            }
+            Self::UnsupportedCheckpointSchema(schema) => {
+                write!(
+                    formatter,
+                    "unsupported enrollment checkpoint schema {schema}"
+                )
+            }
+            Self::MissingAuthenticatedCheckpoint => {
+                formatter.write_str("enrollment history suffix has no authenticated checkpoint")
+            }
+            Self::CheckpointAuthenticationFailed => {
+                formatter.write_str("enrollment checkpoint authentication failed")
             }
             Self::MalformedHead => formatter.write_str("enrollment head is malformed"),
             Self::MissingChainRecord(digest) => {
@@ -2187,6 +3122,27 @@ mod tests {
 
     fn test_lease_resource() -> ContentDigest {
         digest(24)
+    }
+
+    fn test_authority(
+        binding: EnrollmentBindingV1,
+        lease_resource_id: ContentDigest,
+    ) -> EnrollmentAuthorityMaterial {
+        EnrollmentAuthorityMaterial::from_claim(
+            EnrollmentAuthorityClaimV1 {
+                schema_version: ENROLLMENT_AUTHORITY_SCHEMA_VERSION,
+                authority_id: Uuid::from_u128(25),
+                lease_resource_id,
+                binding: binding.clone(),
+                initial_preparation_id: shadow().preparation_id,
+                initial_source_inventory_digest: shadow().source_inventory_digest,
+                key: [26; ENROLLMENT_AUTHORITY_KEY_BYTES],
+            },
+            digest(27),
+            &binding,
+            lease_resource_id,
+        )
+        .unwrap()
     }
 
     fn graph_resource(byte: u8) -> CanonicalGraphResourceId {
@@ -2358,8 +3314,11 @@ mod tests {
 
     #[test]
     fn unknown_tampered_future_and_noncanonical_records_fail_closed() {
+        let binding = test_binding();
+        let authority = test_authority(binding.clone(), test_lease_resource());
         let record =
-            EnrollmentRecordV1::initial(test_binding(), shadow(), test_lease_resource()).unwrap();
+            EnrollmentRecordV1::initial(binding, shadow(), test_lease_resource(), &authority)
+                .unwrap();
         let canonical = canonical_record_bytes(&record).unwrap();
 
         let mut unknown: serde_json::Value = serde_json::from_slice(&canonical).unwrap();
@@ -2533,6 +3492,11 @@ mod tests {
             reader.audit_chain_page(None, 0),
             Err(EnrollmentError::InvalidPageLimit(0))
         ));
+        assert!(matches!(
+            reader.audit_chain_page(None, MAX_ENROLLMENT_AUDIT_PAGE + 1),
+            Err(EnrollmentError::InvalidPageLimit(limit))
+                if limit == MAX_ENROLLMENT_AUDIT_PAGE + 1
+        ));
     }
 
     #[test]
@@ -2578,6 +3542,7 @@ mod tests {
             (CommitCut::AfterRecordTempCreate, Some(false)),
             (CommitCut::AfterRecordWrite, Some(false)),
             (CommitCut::AfterRecordFileSync, Some(false)),
+            (CommitCut::AfterRecordLink, Some(false)),
             (CommitCut::AfterRecordInsert, Some(false)),
             (CommitCut::AfterRecordsDirectorySync, Some(false)),
             (CommitCut::AfterHeadTempCreate, Some(false)),
@@ -2594,6 +3559,7 @@ mod tests {
             let next = EnrollmentRecordV1::successor(
                 writer.current(),
                 EnrollmentLifecycleV1::VerifiedLocal(verified()),
+                &writer.reader.authority.material,
             )
             .unwrap();
             let expected_new = ContentDigest::of(&canonical_record_bytes(&next).unwrap());
@@ -2625,6 +3591,7 @@ mod tests {
             ("record_temp_create", Some(false)),
             ("record_write", Some(false)),
             ("record_file_sync", Some(false)),
+            ("record_link", Some(false)),
             ("record_insert", Some(false)),
             ("records_directory_sync", Some(false)),
             ("head_temp_create", Some(false)),
@@ -2640,6 +3607,7 @@ mod tests {
             let next = EnrollmentRecordV1::successor(
                 writer.current(),
                 EnrollmentLifecycleV1::VerifiedLocal(verified()),
+                &writer.reader.authority.material,
             )
             .unwrap();
             let expected_new = ContentDigest::of(&canonical_record_bytes(&next).unwrap());
@@ -2666,6 +3634,21 @@ mod tests {
                     matches!(reader.current().digest, found if found == old || found == expected_new)
                 ),
             }
+            drop(reader);
+            if name == "record_link" {
+                let mut retry =
+                    expect_present(EnrollmentWriter::open_existing(&root.app(), &binding).unwrap());
+                assert_eq!(
+                    retry
+                        .transition(
+                            retry.current().digest,
+                            EnrollmentLifecycleV1::VerifiedLocal(verified()),
+                        )
+                        .unwrap()
+                        .digest,
+                    expected_new
+                );
+            }
         }
     }
 
@@ -2679,6 +3662,7 @@ mod tests {
             "record_temp_create" => CommitCut::AfterRecordTempCreate,
             "record_write" => CommitCut::AfterRecordWrite,
             "record_file_sync" => CommitCut::AfterRecordFileSync,
+            "record_link" => CommitCut::AfterRecordLink,
             "record_insert" => CommitCut::AfterRecordInsert,
             "records_directory_sync" => CommitCut::AfterRecordsDirectorySync,
             "head_temp_create" => CommitCut::AfterHeadTempCreate,
@@ -2698,6 +3682,76 @@ mod tests {
                 EnrollmentLifecycleV1::VerifiedLocal(verified()),
                 cut
             ),
+            Err(EnrollmentError::InjectedCrashCut(_))
+        ));
+        std::process::exit(86);
+    }
+
+    #[test]
+    fn abrupt_initial_creation_cuts_resume_and_open_exact_authority() {
+        for name in [
+            "record_temp_create",
+            "record_write",
+            "record_file_sync",
+            "record_link",
+            "record_insert",
+            "records_directory_sync",
+            "head_temp_create",
+            "head_write",
+            "head_file_sync",
+            "head_replace",
+            "enrollment_directory_sync",
+        ] {
+            let root = TestRoot::new("abrupt-initial");
+            let binding = test_binding();
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "oplog::enrollment::tests::abrupt_initial_creation_child_probe",
+                    "--nocapture",
+                ])
+                .env("TINE_ENROLLMENT_INITIAL_CRASH_CHILD_ROOT", &root.path)
+                .env("TINE_ENROLLMENT_INITIAL_CRASH_CHILD_CUT", name)
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(86), "child did not exit at {name}");
+
+            let resumed = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+            let initial = resumed.current().digest;
+            assert_eq!(resumed.current().generation(), 1);
+            drop(resumed);
+            assert_eq!(
+                expect_present(EnrollmentReader::open_existing(&root.app(), &binding).unwrap())
+                    .current()
+                    .digest,
+                initial
+            );
+        }
+    }
+
+    #[test]
+    fn abrupt_initial_creation_child_probe() {
+        let Some(path) = std::env::var_os("TINE_ENROLLMENT_INITIAL_CRASH_CHILD_ROOT") else {
+            return;
+        };
+        let name = std::env::var("TINE_ENROLLMENT_INITIAL_CRASH_CHILD_CUT").unwrap();
+        let cut = match name.as_str() {
+            "record_temp_create" => CommitCut::AfterRecordTempCreate,
+            "record_write" => CommitCut::AfterRecordWrite,
+            "record_file_sync" => CommitCut::AfterRecordFileSync,
+            "record_link" => CommitCut::AfterRecordLink,
+            "record_insert" => CommitCut::AfterRecordInsert,
+            "records_directory_sync" => CommitCut::AfterRecordsDirectorySync,
+            "head_temp_create" => CommitCut::AfterHeadTempCreate,
+            "head_write" => CommitCut::AfterHeadWrite,
+            "head_file_sync" => CommitCut::AfterHeadFileSync,
+            "head_replace" => CommitCut::AfterHeadReplace,
+            "enrollment_directory_sync" => CommitCut::AfterEnrollmentDirectorySync,
+            _ => panic!("unknown initial crash cut {name}"),
+        };
+        let app = EnrollmentApplicationRoot::open_for_harness(Path::new(&path)).unwrap();
+        assert!(matches!(
+            EnrollmentWriter::create_at_cut(&app, test_binding(), shadow(), cut),
             Err(EnrollmentError::InjectedCrashCut(_))
         ));
         std::process::exit(86);
@@ -2847,6 +3901,7 @@ mod tests {
         bad.generation = 4;
         bad.previous = Some(previous);
         bad.lifecycle = blocked(previous);
+        bad.checkpoint = None;
         drop(writer);
         let bad_bytes = serde_json::to_vec(&bad).unwrap();
         let bad_digest = ContentDigest::of(&bad_bytes);
@@ -2906,10 +3961,9 @@ mod tests {
         ));
         let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
         drop(writer);
-        assert!(matches!(
-            EnrollmentWriter::create(&root.app(), binding.clone(), shadow()),
-            Err(EnrollmentError::AlreadyExists)
-        ));
+        let resumed = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        assert_eq!(resumed.current().generation(), 1);
+        drop(resumed);
 
         fs::write(
             enrollment_directory(&root, &binding).join("future.store"),
@@ -2973,7 +4027,6 @@ mod tests {
         let binding = test_binding();
         let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
         let mut snapshot = writer.current().clone();
-        drop(writer);
         let records = enrollment_directory(&root, &binding).join(RECORDS_DIRECTORY);
         for index in 0..MAX_ENROLLMENT_OPEN_CHAIN_RECORDS {
             let lifecycle = match index {
@@ -2982,12 +4035,18 @@ mod tests {
                 _ if index % 2 == 0 => safe_idle(),
                 _ => unsafe_idle(200 + index as u128),
             };
-            let record = EnrollmentRecordV1::successor(&snapshot, lifecycle).unwrap();
+            let record = EnrollmentRecordV1::successor(
+                &snapshot,
+                lifecycle,
+                &writer.reader.authority.material,
+            )
+            .unwrap();
             let bytes = canonical_record_bytes(&record).unwrap();
             let digest = ContentDigest::of(&bytes);
             fs::write(records.join(format!("{digest}{RECORD_SUFFIX}")), bytes).unwrap();
             snapshot = EnrollmentSnapshot { digest, record };
         }
+        drop(writer);
         write_head(&root, &binding, snapshot.digest);
         let reopened =
             expect_present(EnrollmentReader::open_existing(&root.app(), &binding).unwrap());
@@ -3025,24 +4084,36 @@ mod tests {
         let reader =
             expect_present(EnrollmentReader::open_existing(&root.app(), &binding).unwrap());
         let open_reads = ENROLLMENT_RECORD_READS.with(std::cell::Cell::get);
-        assert!(
-            open_reads <= MAX_ENROLLMENT_OPEN_CHAIN_RECORDS + 1,
-            "bounded open read {open_reads} records"
-        );
+        assert_eq!(open_reads, 4, "head must reach generation-2049 checkpoint");
         assert_eq!(reader.current().digest, current);
-        let mut next = None;
-        let mut audited = 0_u64;
-        loop {
-            let page = reader
-                .audit_chain_page(next, MAX_ENROLLMENT_AUDIT_PAGE)
-                .unwrap();
-            audited += page.records.len() as u64;
-            next = page.next;
-            if next.is_none() {
-                break;
+        for page_size in [1, MAX_ENROLLMENT_AUDIT_PAGE] {
+            let mut next = None;
+            let mut audited = 0_u64;
+            let mut audit_reads = 0_usize;
+            let mut pages = 0_usize;
+            loop {
+                ENROLLMENT_RECORD_READS.with(|reads| reads.set(0));
+                let page = reader.audit_chain_page(next, page_size).unwrap();
+                let page_reads = ENROLLMENT_RECORD_READS.with(std::cell::Cell::get);
+                assert!(
+                    page_reads <= page_size + usize::from(next.is_some()),
+                    "bounded audit page read {page_reads} records for limit {page_size}"
+                );
+                audit_reads += page_reads;
+                pages += 1;
+                audited += page.records.len() as u64;
+                next = page.next;
+                if next.is_none() {
+                    break;
+                }
             }
+            assert_eq!(audited, reader.current().record.generation);
+            assert_eq!(
+                audit_reads,
+                usize::try_from(audited).unwrap() + pages - 1,
+                "each resumed page reads exactly one fixed-size successor proof"
+            );
         }
-        assert_eq!(audited, reader.current().record.generation);
     }
 
     #[cfg(unix)]
@@ -3341,6 +4412,7 @@ mod tests {
             lease_resource_id: test_lease_resource(),
             binding: test_binding(),
             lifecycle: wrong_archive,
+            checkpoint: None,
         };
         assert!(matches!(
             record.validate(),
@@ -3349,8 +4421,16 @@ mod tests {
             ))
         ));
 
+        let initial_binding = test_binding();
+        let initial_authority = test_authority(initial_binding.clone(), test_lease_resource());
         let canonical = canonical_record_bytes(
-            &EnrollmentRecordV1::initial(test_binding(), shadow(), test_lease_resource()).unwrap(),
+            &EnrollmentRecordV1::initial(
+                initial_binding,
+                shadow(),
+                test_lease_resource(),
+                &initial_authority,
+            )
+            .unwrap(),
         )
         .unwrap();
         for state in [
@@ -3384,5 +4464,568 @@ mod tests {
             .transition(head, EnrollmentLifecycleV1::VerifiedLocal(verified()))
             .unwrap();
         assert_eq!(fs::read(page).unwrap(), before);
+    }
+
+    #[test]
+    fn stranded_exact_initial_record_is_resumed_idempotently() {
+        let root = TestRoot::new("stranded-initial");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        fs::remove_file(enrollment_directory(&root, &binding).join(HEAD_FILE)).unwrap();
+
+        let resumed = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        assert_eq!(resumed.current().digest, initial);
+        drop(resumed);
+        assert_eq!(
+            expect_present(EnrollmentReader::open_existing(&root.app(), &binding).unwrap())
+                .current()
+                .digest,
+            initial
+        );
+    }
+
+    #[test]
+    fn stranded_initial_recovery_preserves_foreign_and_ambiguous_records() {
+        let root = TestRoot::new("stranded-initial-foreign");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        fs::remove_file(enrollment_directory(&root, &binding).join(HEAD_FILE)).unwrap();
+        let records = enrollment_directory(&root, &binding).join(RECORDS_DIRECTORY);
+        let foreign = records.join(format!("{}{RECORD_SUFFIX}", digest(201)));
+        fs::write(&foreign, b"foreign canonical-name bytes").unwrap();
+
+        assert_eq!(
+            EnrollmentWriter::create(&root.app(), binding.clone(), shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousInitialCreation
+        );
+        assert_eq!(fs::read(&foreign).unwrap(), b"foreign canonical-name bytes");
+
+        let suspicious_root = TestRoot::new("stranded-initial-suspicious-temp");
+        let writer =
+            EnrollmentWriter::create(&suspicious_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let enrollment = enrollment_directory(&suspicious_root, &binding);
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        let suspicious = enrollment.join(format!("{HEAD_TEMP_PREFIX}suspicious"));
+        fs::write(&suspicious, b"not a crash head").unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&suspicious_root.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousInitialCreation
+        );
+        assert_eq!(fs::read(&suspicious).unwrap(), b"not a crash head");
+    }
+
+    #[test]
+    fn authority_temp_provisioning_resumes_only_one_unambiguous_claim() {
+        let root = TestRoot::new("authority-provision-resume");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        let enrollment = enrollment_directory(&root, &binding);
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        fs::remove_file(record_path(&root, &binding, initial)).unwrap();
+        let authority_temp = enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}resumable"));
+        fs::rename(enrollment.join(AUTHORITY_FILE), &authority_temp).unwrap();
+
+        let resumed = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        assert_eq!(resumed.current().generation(), 1);
+        assert!(!authority_temp.exists());
+        drop(resumed);
+
+        let ambiguous_root = TestRoot::new("authority-provision-ambiguous");
+        let writer =
+            EnrollmentWriter::create(&ambiguous_root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        let enrollment = enrollment_directory(&ambiguous_root, &binding);
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        fs::remove_file(record_path(&ambiguous_root, &binding, initial)).unwrap();
+        let first = enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}first"));
+        let second = enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}second"));
+        fs::rename(enrollment.join(AUTHORITY_FILE), &first).unwrap();
+        fs::copy(&first, &second).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&ambiguous_root.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousAuthorityProvisioning
+        );
+        assert!(first.exists());
+        assert!(second.exists());
+
+        let mismatched_root = TestRoot::new("authority-provision-mismatched-preparation");
+        let writer =
+            EnrollmentWriter::create(&mismatched_root.app(), test_binding(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        let enrollment = enrollment_directory(&mismatched_root, &test_binding());
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        fs::remove_file(record_path(&mismatched_root, &test_binding(), initial)).unwrap();
+        let mismatched = ShadowImportV1::new(PreparationId::new(), digest(204));
+        assert_eq!(
+            EnrollmentWriter::create(&mismatched_root.app(), test_binding(), mismatched)
+                .err()
+                .unwrap(),
+            EnrollmentError::InitialPreparationMismatch
+        );
+        assert!(enrollment.join(AUTHORITY_FILE).exists());
+    }
+
+    #[test]
+    fn missing_substituted_and_incompatible_authority_fail_closed_and_are_preserved() {
+        let binding = test_binding();
+
+        let missing_root = TestRoot::new("authority-missing");
+        let writer =
+            EnrollmentWriter::create(&missing_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let missing = enrollment_directory(&missing_root, &binding).join(AUTHORITY_FILE);
+        fs::remove_file(&missing).unwrap();
+        assert!(EnrollmentReader::open_existing(&missing_root.app(), &binding).is_err());
+        assert!(!missing.exists());
+
+        let substituted_root = TestRoot::new("authority-substituted");
+        let writer =
+            EnrollmentWriter::create(&substituted_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let substituted = enrollment_directory(&substituted_root, &binding).join(AUTHORITY_FILE);
+        let mut claim: EnrollmentAuthorityClaimV1 =
+            serde_json::from_slice(&fs::read(&substituted).unwrap()).unwrap();
+        claim.key[0] ^= 1;
+        let bytes = canonical_authority_claim_bytes(&claim).unwrap();
+        fs::remove_file(&substituted).unwrap();
+        fs::write(&substituted, &bytes).unwrap();
+        assert!(matches!(
+            EnrollmentReader::open_existing(&substituted_root.app(), &binding),
+            Err(EnrollmentError::AuthorityMismatch
+                | EnrollmentError::CheckpointAuthenticationFailed)
+        ));
+        assert_eq!(fs::read(&substituted).unwrap(), bytes);
+
+        let incompatible_root = TestRoot::new("authority-incompatible");
+        let writer =
+            EnrollmentWriter::create(&incompatible_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let incompatible = enrollment_directory(&incompatible_root, &binding).join(AUTHORITY_FILE);
+        let mut claim: EnrollmentAuthorityClaimV1 =
+            serde_json::from_slice(&fs::read(&incompatible).unwrap()).unwrap();
+        claim.schema_version = ENROLLMENT_AUTHORITY_SCHEMA_VERSION + 1;
+        let incompatible_bytes = canonical_authority_claim_bytes(&claim).unwrap();
+        fs::write(&incompatible, &incompatible_bytes).unwrap();
+        assert_eq!(
+            EnrollmentReader::open_existing(&incompatible_root.app(), &binding)
+                .err()
+                .unwrap(),
+            EnrollmentError::UnsupportedAuthoritySchema(ENROLLMENT_AUTHORITY_SCHEMA_VERSION + 1)
+        );
+        assert_eq!(fs::read(&incompatible).unwrap(), incompatible_bytes);
+    }
+
+    #[test]
+    fn illegal_transition_immediately_beyond_open_window_fails_closed() {
+        let root = TestRoot::new("illegal-beyond-open-window");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().clone();
+        let records = enrollment_directory(&root, &binding).join(RECORDS_DIRECTORY);
+        let illegal_lifecycle = unsafe_idle(900);
+        let illegal_record = EnrollmentRecordV1 {
+            schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
+            generation: 2,
+            previous: Some(initial.digest),
+            history_accumulator: compute_history_accumulator(
+                2,
+                Some(initial.digest),
+                Some(initial.record.history_accumulator),
+                &binding,
+                &illegal_lifecycle,
+            )
+            .unwrap(),
+            lease_resource_id: initial.record.lease_resource_id,
+            binding: binding.clone(),
+            lifecycle: illegal_lifecycle,
+            checkpoint: None,
+        };
+        let bytes = canonical_record_bytes(&illegal_record).unwrap();
+        let digest = ContentDigest::of(&bytes);
+        fs::write(records.join(format!("{digest}{RECORD_SUFFIX}")), bytes).unwrap();
+        let mut snapshot = EnrollmentSnapshot {
+            digest,
+            record: illegal_record,
+        };
+        for index in 0..MAX_ENROLLMENT_OPEN_CHAIN_RECORDS {
+            let lifecycle = if index % 2 == 0 {
+                safe_idle()
+            } else {
+                unsafe_idle(901 + index as u128)
+            };
+            let forged_authority =
+                test_authority(binding.clone(), initial.record.lease_resource_id);
+            let record =
+                EnrollmentRecordV1::successor(&snapshot, lifecycle, &forged_authority).unwrap();
+            let bytes = canonical_record_bytes(&record).unwrap();
+            let digest = ContentDigest::of(&bytes);
+            fs::write(records.join(format!("{digest}{RECORD_SUFFIX}")), bytes).unwrap();
+            snapshot = EnrollmentSnapshot { digest, record };
+        }
+        drop(writer);
+        write_head(&root, &binding, snapshot.digest);
+
+        assert!(EnrollmentReader::open_existing(&root.app(), &binding).is_err());
+    }
+
+    #[test]
+    fn forged_checkpoint_immediately_at_open_boundary_fails_authentication() {
+        let root = TestRoot::new("forged-checkpoint-boundary");
+        let binding = test_binding();
+        let mut writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        let verified_digest = writer
+            .transition(initial, EnrollmentLifecycleV1::VerifiedLocal(verified()))
+            .unwrap()
+            .digest;
+        let mut current = writer
+            .transition(verified_digest, unsafe_idle(1_200))
+            .unwrap()
+            .digest;
+        while writer.current().generation() < 65 {
+            let next = if writer.current().generation() % 2 == 1 {
+                safe_idle()
+            } else {
+                unsafe_idle(1_200 + u128::from(writer.current().generation()))
+            };
+            current = writer.transition(current, next).unwrap().digest;
+        }
+        let mut forged = writer.current().record.clone();
+        forged.checkpoint.as_mut().unwrap().authentication_tag = digest(202);
+        let bytes = canonical_record_bytes(&forged).unwrap();
+        let forged_digest = ContentDigest::of(&bytes);
+        fs::write(record_path(&root, &binding, forged_digest), bytes).unwrap();
+        drop(writer);
+        write_head(&root, &binding, forged_digest);
+
+        assert_eq!(
+            EnrollmentReader::open_existing(&root.app(), &binding)
+                .err()
+                .unwrap(),
+            EnrollmentError::CheckpointAuthenticationFailed
+        );
+    }
+
+    #[test]
+    fn cycle_and_nonmonotonic_claims_beyond_window_cannot_mint_a_checkpoint() {
+        for cycle in [false, true] {
+            let root = TestRoot::new(if cycle {
+                "cycle-beyond-window"
+            } else {
+                "nonmonotonic-beyond-window"
+            });
+            let binding = test_binding();
+            let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+            let initial = writer.current().clone();
+            let records = enrollment_directory(&root, &binding).join(RECORDS_DIRECTORY);
+            let lifecycle = unsafe_idle(1_300);
+            let previous = if cycle { digest(203) } else { initial.digest };
+            let forged_authority =
+                test_authority(binding.clone(), initial.record.lease_resource_id);
+            let mut checkpoint_record = EnrollmentRecordV1 {
+                schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
+                generation: 65,
+                previous: Some(previous),
+                history_accumulator: compute_history_accumulator(
+                    65,
+                    Some(previous),
+                    Some(initial.record.history_accumulator),
+                    &binding,
+                    &lifecycle,
+                )
+                .unwrap(),
+                lease_resource_id: initial.record.lease_resource_id,
+                binding: binding.clone(),
+                lifecycle,
+                checkpoint: None,
+            };
+            checkpoint_record.checkpoint = Some(
+                forged_authority
+                    .checkpoint_for(
+                        checkpoint_record.generation,
+                        checkpoint_record.previous,
+                        checkpoint_record.history_accumulator,
+                        checkpoint_record.lease_resource_id,
+                        &checkpoint_record.binding,
+                        &checkpoint_record.lifecycle,
+                    )
+                    .unwrap(),
+            );
+            let bytes = canonical_record_bytes(&checkpoint_record).unwrap();
+            let digest = ContentDigest::of(&bytes);
+            fs::write(records.join(format!("{digest}{RECORD_SUFFIX}")), bytes).unwrap();
+            let mut snapshot = EnrollmentSnapshot {
+                digest,
+                record: checkpoint_record,
+            };
+            for index in 0..63_u128 {
+                let lifecycle = if index % 2 == 0 {
+                    safe_idle()
+                } else {
+                    unsafe_idle(1_301 + index)
+                };
+                let record =
+                    EnrollmentRecordV1::successor(&snapshot, lifecycle, &forged_authority).unwrap();
+                let bytes = canonical_record_bytes(&record).unwrap();
+                let digest = ContentDigest::of(&bytes);
+                fs::write(records.join(format!("{digest}{RECORD_SUFFIX}")), bytes).unwrap();
+                snapshot = EnrollmentSnapshot { digest, record };
+            }
+            drop(writer);
+            write_head(&root, &binding, snapshot.digest);
+            assert!(
+                EnrollmentReader::open_existing(&root.app(), &binding).is_err(),
+                "a forged {} summary crossed the bounded-open checkpoint",
+                if cycle { "cycle" } else { "nonmonotonic" }
+            );
+        }
+    }
+
+    #[test]
+    fn audit_limit_one_validates_the_transition_across_page_boundary() {
+        let root = TestRoot::new("audit-boundary");
+        let binding = test_binding();
+        let mut writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        let verified_snapshot = writer
+            .transition(initial, EnrollmentLifecycleV1::VerifiedLocal(verified()))
+            .unwrap()
+            .clone();
+        let illegal_lifecycle = EnrollmentLifecycleV1::VerifiedLocal(verified());
+        let illegal_record = EnrollmentRecordV1 {
+            schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
+            generation: 3,
+            previous: Some(verified_snapshot.digest),
+            history_accumulator: compute_history_accumulator(
+                3,
+                Some(verified_snapshot.digest),
+                Some(verified_snapshot.record.history_accumulator),
+                &binding,
+                &illegal_lifecycle,
+            )
+            .unwrap(),
+            lease_resource_id: verified_snapshot.record.lease_resource_id,
+            binding,
+            lifecycle: illegal_lifecycle,
+            checkpoint: None,
+        };
+        let bytes = canonical_record_bytes(&illegal_record).unwrap();
+        let digest = ContentDigest::of(&bytes);
+        fs::write(
+            writer
+                .reader
+                .directories
+                .display_path
+                .join(RECORDS_DIRECTORY)
+                .join(format!("{digest}{RECORD_SUFFIX}")),
+            bytes,
+        )
+        .unwrap();
+        writer.reader.current = EnrollmentSnapshot {
+            digest,
+            record: illegal_record,
+        };
+
+        let first = writer.audit_chain_page(None, 1).unwrap();
+        assert_eq!(
+            writer.audit_chain_page(first.next, 1).err().unwrap(),
+            EnrollmentError::IllegalTransition
+        );
+    }
+
+    #[test]
+    fn audit_limit_sixty_four_validates_the_transition_across_page_boundary() {
+        let root = TestRoot::new("audit-boundary-64");
+        let binding = test_binding();
+        let mut writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        let verified_snapshot = writer
+            .transition(initial, EnrollmentLifecycleV1::VerifiedLocal(verified()))
+            .unwrap()
+            .clone();
+        let illegal_lifecycle = EnrollmentLifecycleV1::VerifiedLocal(verified());
+        let illegal_record = EnrollmentRecordV1 {
+            schema_version: ENROLLMENT_RECORD_SCHEMA_VERSION,
+            generation: 3,
+            previous: Some(verified_snapshot.digest),
+            history_accumulator: compute_history_accumulator(
+                3,
+                Some(verified_snapshot.digest),
+                Some(verified_snapshot.record.history_accumulator),
+                &binding,
+                &illegal_lifecycle,
+            )
+            .unwrap(),
+            lease_resource_id: verified_snapshot.record.lease_resource_id,
+            binding: binding.clone(),
+            lifecycle: illegal_lifecycle,
+            checkpoint: None,
+        };
+        let bytes = canonical_record_bytes(&illegal_record).unwrap();
+        let digest = ContentDigest::of(&bytes);
+        fs::write(
+            writer
+                .reader
+                .directories
+                .display_path
+                .join(RECORDS_DIRECTORY)
+                .join(format!("{digest}{RECORD_SUFFIX}")),
+            bytes,
+        )
+        .unwrap();
+        let mut snapshot = EnrollmentSnapshot {
+            digest,
+            record: illegal_record,
+        };
+        for index in 0..63_u128 {
+            let lifecycle = match index {
+                0 => unsafe_idle(1_000),
+                _ if index % 2 == 1 => safe_idle(),
+                _ => unsafe_idle(1_000 + index),
+            };
+            let record = EnrollmentRecordV1::successor(
+                &snapshot,
+                lifecycle,
+                &writer.reader.authority.material,
+            )
+            .unwrap();
+            let bytes = canonical_record_bytes(&record).unwrap();
+            let digest = ContentDigest::of(&bytes);
+            fs::write(
+                writer
+                    .reader
+                    .directories
+                    .display_path
+                    .join(RECORDS_DIRECTORY)
+                    .join(format!("{digest}{RECORD_SUFFIX}")),
+                bytes,
+            )
+            .unwrap();
+            snapshot = EnrollmentSnapshot { digest, record };
+        }
+        assert_eq!(snapshot.generation(), 66);
+        writer.reader.current = snapshot;
+
+        let first = writer
+            .audit_chain_page(None, MAX_ENROLLMENT_AUDIT_PAGE)
+            .unwrap();
+        assert_eq!(first.records.len(), MAX_ENROLLMENT_AUDIT_PAGE);
+        assert_eq!(
+            writer
+                .audit_chain_page(first.next, MAX_ENROLLMENT_AUDIT_PAGE)
+                .err()
+                .unwrap(),
+            EnrollmentError::IllegalTransition
+        );
+    }
+
+    #[test]
+    fn audit_cursor_rejects_stale_foreign_and_substituted_state() {
+        let first_root = TestRoot::new("audit-cursor-first");
+        let binding = test_binding();
+        let mut first =
+            EnrollmentWriter::create(&first_root.app(), binding.clone(), shadow()).unwrap();
+        let initial = first.current().digest;
+        let verified_digest = first
+            .transition(initial, EnrollmentLifecycleV1::VerifiedLocal(verified()))
+            .unwrap()
+            .digest;
+        first
+            .transition(verified_digest, unsafe_idle(1_100))
+            .unwrap();
+        let cursor = first.audit_chain_page(None, 1).unwrap().next.unwrap();
+
+        let mut substituted = cursor;
+        substituted.generation = substituted.generation.saturating_sub(1);
+        assert_eq!(
+            first.audit_chain_page(Some(substituted), 1).err().unwrap(),
+            EnrollmentError::InvalidAuditCursor
+        );
+
+        let current = first.current().digest;
+        first.transition(current, safe_idle()).unwrap();
+        assert_eq!(
+            first.audit_chain_page(Some(cursor), 1).err().unwrap(),
+            EnrollmentError::InvalidAuditCursor
+        );
+
+        let second_root = TestRoot::new("audit-cursor-second");
+        let mut second =
+            EnrollmentWriter::create(&second_root.app(), binding.clone(), shadow()).unwrap();
+        let second_initial = second.current().digest;
+        let second_verified = second
+            .transition(
+                second_initial,
+                EnrollmentLifecycleV1::VerifiedLocal(verified()),
+            )
+            .unwrap()
+            .digest;
+        second
+            .transition(second_verified, unsafe_idle(1_100))
+            .unwrap();
+        assert_eq!(
+            second.audit_chain_page(Some(cursor), 1).err().unwrap(),
+            EnrollmentError::InvalidAuditCursor
+        );
+    }
+
+    #[test]
+    fn arbitrary_root_constructor_is_compiled_only_for_tests() {
+        let source = include_str!("enrollment.rs");
+        assert!(
+            source.contains("#[cfg(test)]\n    fn open_for_harness"),
+            "the arbitrary path constructor must not exist in production"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_record_link_gap_is_recovered_by_same_lease_retry() {
+        let root = TestRoot::new("record-link-gap");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        let records = enrollment_directory(&root, &binding).join(RECORDS_DIRECTORY);
+        let target = records.join(format!("{initial}{RECORD_SUFFIX}"));
+        let temp = records.join(format!("{RECORD_TEMP_PREFIX}link-gap"));
+        fs::hard_link(&target, &temp).unwrap();
+
+        let resumed = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        assert_eq!(resumed.current().digest, initial);
+        assert!(!temp.exists());
+        drop(resumed);
+
+        let ambiguous_root = TestRoot::new("record-link-gap-ambiguous");
+        let writer =
+            EnrollmentWriter::create(&ambiguous_root.app(), binding.clone(), shadow()).unwrap();
+        let initial = writer.current().digest;
+        drop(writer);
+        let records = enrollment_directory(&ambiguous_root, &binding).join(RECORDS_DIRECTORY);
+        let target = records.join(format!("{initial}{RECORD_SUFFIX}"));
+        let foreign = records.join("foreign-hardlink");
+        fs::hard_link(&target, &foreign).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&ambiguous_root.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousInitialCreation
+        );
+        assert!(target.exists());
+        assert!(foreign.exists());
     }
 }

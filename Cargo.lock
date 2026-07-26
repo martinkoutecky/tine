@@ -5551,6 +5551,7 @@ dependencies = [
  "postcard",
  "pretty_assertions",
  "regex",
+ "ring",
  "rusqlite",
  "same-file",
  "serde",

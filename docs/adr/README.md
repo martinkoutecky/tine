@@ -76,3 +76,4 @@ see the project `CLAUDE.md`.
 | [0047](0047-android-plugin-platform-at-launch.md) | Android joins the initial plugin-platform launch through explicit opt-in | Accepted |
 | [0048](0048-compatible-managed-sync.md) | Managed sync uses operation truth with an optional shared Markdown projection | Superseded by 0049 |
 | [0049](0049-oplog-first-sparse-storage.md) | Oplog-first sparse storage uses catalog and stable home-page shards | Accepted — implementation/LocalActive gated |
+| [0050](0050-private-enrollment-checkpoint-authority.md) | Private enrollment authority authenticates bounded immutable checkpoints | Accepted |
