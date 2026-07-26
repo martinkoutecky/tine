@@ -20,6 +20,7 @@ pub(crate) const SOURCE_BLOB_SCHEMA_VERSION: u32 = 1;
 pub(crate) const SOURCE_SPAN_SCHEMA_VERSION: u32 = 1;
 pub(crate) const OPERATION_ROOT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const PAYLOAD_OBJECT_ROOT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const FULL_OBJECT_ROOT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const ARCHIVE_FRONTIER_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) const MAX_OPERATIONS_PER_BOOTSTRAP_PART: u32 = 4096;
@@ -38,6 +39,12 @@ pub(crate) const MAX_SOURCE_BLOB_CHUNKS: u32 = 65_536;
 pub(crate) const MAX_SOURCE_LOCATOR_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_SELECTED_PEERS: u32 = 64;
 pub(crate) const MAX_CANONICAL_NESTING_DEPTH: u8 = 4;
+/// Complete descriptor sets include payload objects, the evidence object, and
+/// manifest-defined non-payload objects.  This is deliberately a separately
+/// profiled bound from the payload-object cap.
+pub(crate) const MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART: u32 = 8_192;
+pub(crate) const MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART: u64 =
+    MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART + 2 * 768 * 1024;
 
 const EVIDENCE_MAGIC: &[u8; 8] = b"TINBPE1\0";
 const MANIFEST_MAGIC: &[u8; 8] = b"TINBAM1\0";
@@ -117,10 +124,17 @@ pub(crate) struct PayloadObjectRootV1 {
     total_bytes: u64,
 }
 
-/// The aggregate schema calls this the full object root.  It is the same
-/// canonical payload-object root defined for evidence; no second hash contract
-/// is introduced for the same object set.
-pub(crate) type FullObjectRootV1 = PayloadObjectRootV1;
+/// The complete object root is intentionally distinct from the payload root.
+/// Its domain covers the canonically ordered complete descriptor set: every
+/// payload object, the encoded part-evidence object, then every
+/// manifest-defined non-payload object.  Evidence never carries this root, so
+/// including the evidence object here cannot form a self-hash cycle.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct FullObjectRootV1 {
+    digest: [u8; 32],
+    object_count: u32,
+    total_bytes: u64,
+}
 
 macro_rules! root_debug {
     ($name:ident, $count:ident) => {
@@ -161,6 +175,16 @@ impl fmt::Debug for OperationRootV1 {
 impl fmt::Debug for PayloadObjectRootV1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayloadObjectRootV1")
+            .field("digest", &hex(&self.digest))
+            .field("object_count", &self.object_count)
+            .field("total_bytes", &self.total_bytes)
+            .finish()
+    }
+}
+
+impl fmt::Debug for FullObjectRootV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FullObjectRootV1")
             .field("digest", &hex(&self.digest))
             .field("object_count", &self.object_count)
             .field("total_bytes", &self.total_bytes)
@@ -226,11 +250,19 @@ impl SourceInventoryRootV1 {
 }
 
 impl SourceBlobChunkRootV1 {
+    /// The empty root is the blob commitment for an empty source inventory.
+    /// Inventories containing only zero-length sources produce the same
+    /// descriptor root, but remain unambiguous through their separate source
+    /// inventory commitment.
     pub(crate) fn empty() -> Self {
-        SourceBlobChunkRootBuilderV1::new().finish()
+        SourceBlobChunkRootBuilderV1::new(&[])
+            .expect("empty source inventory is valid")
+            .finish()
+            .expect("empty blob root is continuous")
     }
 
     pub(crate) fn from_descriptors(
+        source_leaves: &[SourceLeafV1],
         descriptors: &[SourceBlobChunkDescriptorV1],
     ) -> Result<Self, BootstrapImportError> {
         checked_count(
@@ -240,11 +272,11 @@ impl SourceBlobChunkRootV1 {
         )?;
         let mut ordered = descriptors.iter().collect::<Vec<_>>();
         ordered.sort_unstable();
-        let mut builder = SourceBlobChunkRootBuilderV1::new();
+        let mut builder = SourceBlobChunkRootBuilderV1::new(source_leaves)?;
         for descriptor in ordered {
             builder.push(*descriptor)?;
         }
-        Ok(builder.finish())
+        builder.finish()
     }
 
     pub(crate) const fn digest(&self) -> &[u8; 32] {
@@ -483,9 +515,169 @@ impl PayloadObjectRootV1 {
     }
 }
 
-/// The fixed v1 partition profile.  The digest binds every byte/count cap and
-/// every schema/policy version above, so a receiver never infers a profile from
-/// ambient configuration.
+impl FullObjectRootV1 {
+    pub(crate) fn empty() -> Self {
+        FullObjectRootBuilderV1::new()
+            .finish()
+            .expect("empty complete-object root is valid")
+    }
+
+    pub(crate) fn from_descriptors(
+        descriptors: &[FullObjectDescriptorV1],
+    ) -> Result<Self, BootstrapImportError> {
+        checked_count(
+            descriptors.len(),
+            MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART,
+            "full objects",
+        )?;
+        let mut ordered = descriptors.iter().copied().collect::<Vec<_>>();
+        ordered.sort_unstable();
+        let mut builder = FullObjectRootBuilderV1::new();
+        for descriptor in ordered {
+            builder.push(descriptor)?;
+        }
+        builder.finish()
+    }
+
+    /// Construct the post-evidence root.  The inclusion boundary is exact:
+    /// payload descriptors must reproduce `evidence.payload_object_root()`,
+    /// the encoded evidence object is inserted once, and `manifest_objects`
+    /// must all be manifest-defined non-payload descriptors.  The caller may
+    /// then persist this independent root in the aggregate descriptor.
+    fn for_part(
+        evidence: BootstrapImportPartEvidenceV1,
+        payload_objects: &[PayloadObjectDescriptorV1],
+        manifest_objects: &[FullObjectDescriptorV1],
+    ) -> Result<Self, BootstrapImportError> {
+        if PayloadObjectRootV1::from_objects(payload_objects)? != evidence.payload_object_root() {
+            return Err(BootstrapImportError::FullObjectRootMismatch);
+        }
+        let evidence_bytes = evidence.encode()?;
+        let mut descriptors = Vec::with_capacity(
+            payload_objects
+                .len()
+                .checked_add(manifest_objects.len())
+                .and_then(|count| count.checked_add(1))
+                .ok_or(BootstrapImportError::LengthOverflow)?,
+        );
+        descriptors.extend(payload_objects.iter().map(FullObjectDescriptorV1::payload));
+        descriptors.push(FullObjectDescriptorV1::part_evidence(
+            evidence.evidence_digest(),
+            u64::try_from(evidence_bytes.len())
+                .map_err(|_| BootstrapImportError::LengthOverflow)?,
+        )?);
+        for object in manifest_objects {
+            if object.kind != FullObjectKindV1::ManifestDefined {
+                return Err(BootstrapImportError::InvalidFullObjectKind);
+            }
+            descriptors.push(*object);
+        }
+        Self::from_descriptors(&descriptors)
+    }
+
+    pub(crate) const fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    pub(crate) const fn object_count(self) -> u32 {
+        self.object_count
+    }
+
+    pub(crate) const fn total_bytes(self) -> u64 {
+        self.total_bytes
+    }
+
+    fn validate(self) -> Result<(), BootstrapImportError> {
+        if self.object_count > MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART {
+            return Err(BootstrapImportError::CountLimit("full objects"));
+        }
+        if self.total_bytes > MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART {
+            return Err(BootstrapImportError::ByteLimit("full object"));
+        }
+        Ok(())
+    }
+
+    fn encode_into(self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.digest);
+        bytes.extend_from_slice(&self.object_count.to_be_bytes());
+        bytes.extend_from_slice(&self.total_bytes.to_be_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, BootstrapImportError> {
+        if bytes.len() != 44 {
+            return Err(BootstrapImportError::InvalidFieldLength);
+        }
+        let value = Self {
+            digest: array_32(&bytes[..32])?,
+            object_count: read_u32(&bytes[32..36])?,
+            total_bytes: read_u64(&bytes[36..])?,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+}
+
+/// The fixed v1 profile input.  The discriminant is included before every
+/// big-endian value, so a width change cannot collide with a reordered value.
+/// Keep every v1 acceptance-affecting version and bound in this one list.
+#[derive(Clone, Copy)]
+enum ProfileConstantV1 {
+    U8(u8),
+    U32(u32),
+    U64(u64),
+}
+
+const PROFILE_CONSTANTS_V1: &[ProfileConstantV1] = &[
+    ProfileConstantV1::U32(BOOTSTRAP_IMPORT_SCHEMA_VERSION),
+    ProfileConstantV1::U32(BOOTSTRAP_PARTITION_POLICY_VERSION),
+    ProfileConstantV1::U32(SOURCE_LEAF_SCHEMA_VERSION),
+    ProfileConstantV1::U32(SOURCE_BLOB_SCHEMA_VERSION),
+    ProfileConstantV1::U32(SOURCE_SPAN_SCHEMA_VERSION),
+    ProfileConstantV1::U32(OPERATION_ROOT_SCHEMA_VERSION),
+    ProfileConstantV1::U32(PAYLOAD_OBJECT_ROOT_SCHEMA_VERSION),
+    ProfileConstantV1::U32(FULL_OBJECT_ROOT_SCHEMA_VERSION),
+    ProfileConstantV1::U32(ARCHIVE_FRONTIER_SCHEMA_VERSION),
+    ProfileConstantV1::U32(MAX_BOOTSTRAP_PARTS),
+    ProfileConstantV1::U32(MAX_OPERATIONS_PER_BOOTSTRAP_PART),
+    ProfileConstantV1::U32(MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART),
+    ProfileConstantV1::U64(MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART),
+    ProfileConstantV1::U64(MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART),
+    ProfileConstantV1::U64(MAX_BOOTSTRAP_PART_EVIDENCE_BYTES as u64),
+    ProfileConstantV1::U64(MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64),
+    ProfileConstantV1::U32(MAX_SOURCE_BLOB_CHUNK_BYTES),
+    ProfileConstantV1::U32(MAX_SOURCE_INVENTORY_LEAVES),
+    ProfileConstantV1::U32(MAX_SOURCE_BLOB_CHUNKS),
+    ProfileConstantV1::U64(MAX_SOURCE_LOCATOR_BYTES as u64),
+    ProfileConstantV1::U32(MAX_SELECTED_PEERS),
+    ProfileConstantV1::U8(MAX_CANONICAL_NESTING_DEPTH),
+    ProfileConstantV1::U32(MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART),
+    ProfileConstantV1::U64(MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART),
+];
+
+fn profile_digest_from_constants(constants: &[ProfileConstantV1]) -> BootstrapProfileDigestV1 {
+    let mut bytes = Vec::with_capacity(constants.len() * 9);
+    for constant in constants {
+        match constant {
+            ProfileConstantV1::U8(value) => {
+                bytes.push(1);
+                bytes.push(*value);
+            }
+            ProfileConstantV1::U32(value) => {
+                bytes.push(4);
+                bytes.extend_from_slice(&value.to_be_bytes());
+            }
+            ProfileConstantV1::U64(value) => {
+                bytes.push(8);
+                bytes.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+    }
+    BootstrapProfileDigestV1::digest(b"tine/bootstrap-import/partition-profile/v1\0", &[&bytes])
+}
+
+/// The fixed v1 partition profile.  Its digest binds every acceptance-affecting
+/// byte/count cap and schema/policy version above, so a receiver never infers a
+/// profile from ambient configuration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct BootstrapPartitionProfileV1 {
     digest: BootstrapProfileDigestV1,
@@ -493,35 +685,8 @@ pub(crate) struct BootstrapPartitionProfileV1 {
 
 impl BootstrapPartitionProfileV1 {
     pub(crate) fn v1() -> Self {
-        let mut bytes = Vec::with_capacity(16 * 8);
-        for value in [
-            BOOTSTRAP_IMPORT_SCHEMA_VERSION,
-            BOOTSTRAP_PARTITION_POLICY_VERSION,
-            SOURCE_LEAF_SCHEMA_VERSION,
-            SOURCE_BLOB_SCHEMA_VERSION,
-            SOURCE_SPAN_SCHEMA_VERSION,
-            OPERATION_ROOT_SCHEMA_VERSION,
-            PAYLOAD_OBJECT_ROOT_SCHEMA_VERSION,
-            ARCHIVE_FRONTIER_SCHEMA_VERSION,
-            MAX_OPERATIONS_PER_BOOTSTRAP_PART,
-            MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART,
-            MAX_SOURCE_BLOB_CHUNK_BYTES,
-        ] {
-            bytes.extend_from_slice(&value.to_be_bytes());
-        }
-        for value in [
-            MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART,
-            MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART,
-            MAX_BOOTSTRAP_PART_EVIDENCE_BYTES as u64,
-            MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64,
-        ] {
-            bytes.extend_from_slice(&value.to_be_bytes());
-        }
         Self {
-            digest: BootstrapProfileDigestV1::digest(
-                b"tine/bootstrap-import/partition-profile/v1\0",
-                &[&bytes],
-            ),
+            digest: profile_digest_from_constants(PROFILE_CONSTANTS_V1),
         }
     }
 
@@ -613,7 +778,7 @@ impl SourceBlobChunkDescriptorV1 {
         byte_length: u32,
         content_digest: SourceBlobChunkDigestV1,
     ) -> Result<Self, BootstrapImportError> {
-        if count == 0 || ordinal >= count {
+        if count == 0 || count > MAX_SOURCE_BLOB_CHUNKS || ordinal >= count {
             return Err(BootstrapImportError::InvalidOrdinal);
         }
         if byte_length == 0 || byte_length > MAX_SOURCE_BLOB_CHUNK_BYTES {
@@ -745,6 +910,82 @@ pub(crate) struct PayloadObjectDescriptorV1 {
     byte_length: u64,
 }
 
+/// Kinds in the full-object root.  Payload identity remains a separate root;
+/// these tags make the post-evidence aggregate set domain explicit.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(u8)]
+pub(crate) enum FullObjectKindV1 {
+    Payload = 1,
+    PartEvidence = 2,
+    ManifestDefined = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct FullObjectDescriptorV1 {
+    kind: FullObjectKindV1,
+    content_digest: [u8; 32],
+    byte_length: u64,
+}
+
+impl FullObjectDescriptorV1 {
+    pub(crate) fn manifest_defined(
+        content_digest: [u8; 32],
+        byte_length: u64,
+    ) -> Result<Self, BootstrapImportError> {
+        Self::new(
+            FullObjectKindV1::ManifestDefined,
+            content_digest,
+            byte_length,
+        )
+    }
+
+    fn payload(payload: &PayloadObjectDescriptorV1) -> Self {
+        Self {
+            kind: FullObjectKindV1::Payload,
+            content_digest: *payload.content_digest.as_bytes(),
+            byte_length: payload.byte_length,
+        }
+    }
+
+    fn part_evidence(
+        evidence_digest: BootstrapEvidenceDigestV1,
+        byte_length: u64,
+    ) -> Result<Self, BootstrapImportError> {
+        Self::new(
+            FullObjectKindV1::PartEvidence,
+            *evidence_digest.as_bytes(),
+            byte_length,
+        )
+    }
+
+    fn new(
+        kind: FullObjectKindV1,
+        content_digest: [u8; 32],
+        byte_length: u64,
+    ) -> Result<Self, BootstrapImportError> {
+        if byte_length == 0 || byte_length > MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART {
+            return Err(BootstrapImportError::ByteLimit("full object"));
+        }
+        Ok(Self {
+            kind,
+            content_digest,
+            byte_length,
+        })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        canonical_encode(
+            b"tine/bootstrap-import/full-object/v1\0",
+            &[
+                &FULL_OBJECT_ROOT_SCHEMA_VERSION.to_be_bytes(),
+                &[self.kind as u8],
+                &self.content_digest,
+                &self.byte_length.to_be_bytes(),
+            ],
+        )
+    }
+}
+
 impl PayloadObjectDescriptorV1 {
     pub(crate) fn new(
         content_digest: PayloadObjectDigestV1,
@@ -820,6 +1061,15 @@ impl SourceInventoryRootBuilderV1 {
 
     pub(crate) fn push(&mut self, leaf: &SourceLeafV1) -> Result<(), BootstrapImportError> {
         if let Some(last) = &self.last {
+            if last.locator == leaf.locator {
+                return if last == leaf {
+                    Err(BootstrapImportError::DuplicateCanonicalItem)
+                } else {
+                    Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "source locator",
+                    ))
+                };
+            }
             match last.canonical_cmp(leaf) {
                 Ordering::Less => {}
                 Ordering::Equal => return Err(BootstrapImportError::DuplicateCanonicalItem),
@@ -849,15 +1099,38 @@ pub(crate) struct SourceBlobChunkRootBuilderV1 {
     root: RootHasherV1,
     last: Option<SourceBlobChunkDescriptorV1>,
     total_bytes: u64,
+    expected_sources: Vec<(SourceLeafDigestV1, u64)>,
+    expected_source_index: usize,
 }
 
 impl SourceBlobChunkRootBuilderV1 {
-    pub(crate) fn new() -> Self {
-        Self {
+    /// Construct a blob root against the authoritative source leaves whose
+    /// digests commit their byte lengths.  A zero-length source has exactly
+    /// zero descriptors; every non-empty source must have one or more.
+    pub(crate) fn new(source_leaves: &[SourceLeafV1]) -> Result<Self, BootstrapImportError> {
+        SourceInventoryRootV1::from_leaves(source_leaves)?;
+        let mut expected_sources = source_leaves
+            .iter()
+            .map(|leaf| (leaf.digest(), leaf.byte_length))
+            .collect::<Vec<_>>();
+        expected_sources.sort_unstable_by_key(|source| source.0);
+        if expected_sources
+            .windows(2)
+            .any(|pair| pair[0].0 == pair[1].0)
+        {
+            return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "source leaf digest",
+            ));
+        }
+        let mut value = Self {
             root: RootHasherV1::new(b"tine/bootstrap-import/source-blob-root/v1\0"),
             last: None,
             total_bytes: 0,
-        }
+            expected_sources,
+            expected_source_index: 0,
+        };
+        value.skip_zero_length_sources();
+        Ok(value)
     }
 
     pub(crate) fn push(
@@ -871,6 +1144,34 @@ impl SourceBlobChunkRootBuilderV1 {
             if descriptor < last {
                 return Err(BootstrapImportError::NonCanonicalOrder);
             }
+            if descriptor.source_leaf == last.source_leaf {
+                if descriptor.ordinal == last.ordinal {
+                    return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "source blob chunk ordinal",
+                    ));
+                }
+                if descriptor.count != last.count {
+                    return Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "source blob chunk count",
+                    ));
+                }
+                let expected_ordinal = last
+                    .ordinal
+                    .checked_add(1)
+                    .ok_or(BootstrapImportError::LengthOverflow)?;
+                let expected_offset = last
+                    .offset
+                    .checked_add(u64::from(last.byte_length))
+                    .ok_or(BootstrapImportError::LengthOverflow)?;
+                if descriptor.ordinal != expected_ordinal || descriptor.offset != expected_offset {
+                    return Err(BootstrapImportError::BlobContinuityMismatch);
+                }
+            } else {
+                self.finish_current_source(last)?;
+                self.validate_first_descriptor(descriptor)?;
+            }
+        } else {
+            self.validate_first_descriptor(descriptor)?;
         }
         let encoded = descriptor.encode();
         self.root
@@ -883,12 +1184,79 @@ impl SourceBlobChunkRootBuilderV1 {
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> SourceBlobChunkRootV1 {
+    pub(crate) fn finish(mut self) -> Result<SourceBlobChunkRootV1, BootstrapImportError> {
+        if let Some(last) = self.last {
+            self.finish_current_source(last)?;
+        }
+        self.skip_zero_length_sources();
+        if self.expected_source_index != self.expected_sources.len() {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        }
         let count = self.root.count;
-        SourceBlobChunkRootV1 {
+        Ok(SourceBlobChunkRootV1 {
             digest: self.root.finish(),
             chunk_count: count,
             total_bytes: self.total_bytes,
+        })
+    }
+
+    fn validate_first_descriptor(
+        &self,
+        descriptor: SourceBlobChunkDescriptorV1,
+    ) -> Result<(), BootstrapImportError> {
+        let Some((source_leaf, _)) = self
+            .expected_sources
+            .get(self.expected_source_index)
+            .copied()
+        else {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        };
+        if descriptor.source_leaf != source_leaf
+            || descriptor.ordinal != 0
+            || descriptor.offset != 0
+        {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        }
+        Ok(())
+    }
+
+    fn finish_current_source(
+        &mut self,
+        last: SourceBlobChunkDescriptorV1,
+    ) -> Result<(), BootstrapImportError> {
+        let Some((source_leaf, byte_length)) = self
+            .expected_sources
+            .get(self.expected_source_index)
+            .copied()
+        else {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        };
+        let received = last
+            .ordinal
+            .checked_add(1)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        let terminal_offset = last
+            .offset
+            .checked_add(u64::from(last.byte_length))
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if last.source_leaf != source_leaf
+            || received != last.count
+            || terminal_offset != byte_length
+        {
+            return Err(BootstrapImportError::BlobContinuityMismatch);
+        }
+        self.expected_source_index += 1;
+        self.skip_zero_length_sources();
+        Ok(())
+    }
+
+    fn skip_zero_length_sources(&mut self) {
+        while self
+            .expected_sources
+            .get(self.expected_source_index)
+            .is_some_and(|source| source.1 == 0)
+        {
+            self.expected_source_index += 1;
         }
     }
 }
@@ -951,6 +1319,15 @@ impl OperationRootBuilderV1 {
 
     pub(crate) fn push(&mut self, operation: OperationLeafV1) -> Result<(), BootstrapImportError> {
         if let Some(last) = self.last {
+            if operation.operation_digest == last.operation_digest {
+                return if operation == last {
+                    Err(BootstrapImportError::DuplicateCanonicalItem)
+                } else {
+                    Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "operation digest",
+                    ))
+                };
+            }
             if operation == last {
                 return Err(BootstrapImportError::DuplicateCanonicalItem);
             }
@@ -988,6 +1365,68 @@ pub(crate) struct PayloadObjectRootBuilderV1 {
     total_bytes: u64,
 }
 
+pub(crate) struct FullObjectRootBuilderV1 {
+    root: RootHasherV1,
+    last: Option<FullObjectDescriptorV1>,
+    total_bytes: u64,
+}
+
+impl FullObjectRootBuilderV1 {
+    pub(crate) fn new() -> Self {
+        Self {
+            root: RootHasherV1::new(b"tine/bootstrap-import/full-object-root/v1\0"),
+            last: None,
+            total_bytes: 0,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        object: FullObjectDescriptorV1,
+    ) -> Result<(), BootstrapImportError> {
+        if let Some(last) = self.last {
+            if object.content_digest == last.content_digest {
+                return if object == last {
+                    Err(BootstrapImportError::DuplicateCanonicalItem)
+                } else {
+                    Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "full object digest",
+                    ))
+                };
+            }
+            if object == last {
+                return Err(BootstrapImportError::DuplicateCanonicalItem);
+            }
+            if object < last {
+                return Err(BootstrapImportError::NonCanonicalOrder);
+            }
+        }
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(object.byte_length)
+            .ok_or(BootstrapImportError::LengthOverflow)?;
+        if self.total_bytes > MAX_FULL_OBJECT_BYTES_PER_BOOTSTRAP_PART {
+            return Err(BootstrapImportError::ByteLimit("full object"));
+        }
+        self.root.push(
+            &object.encode(),
+            MAX_FULL_OBJECTS_PER_BOOTSTRAP_PART,
+            "full objects",
+        )?;
+        self.last = Some(object);
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Result<FullObjectRootV1, BootstrapImportError> {
+        let count = self.root.count;
+        Ok(FullObjectRootV1 {
+            digest: self.root.finish(),
+            object_count: count,
+            total_bytes: self.total_bytes,
+        })
+    }
+}
+
 impl PayloadObjectRootBuilderV1 {
     pub(crate) fn new() -> Self {
         Self {
@@ -1002,6 +1441,15 @@ impl PayloadObjectRootBuilderV1 {
         object: PayloadObjectDescriptorV1,
     ) -> Result<(), BootstrapImportError> {
         if let Some(last) = self.last {
+            if object.content_digest == last.content_digest {
+                return if object == last {
+                    Err(BootstrapImportError::DuplicateCanonicalItem)
+                } else {
+                    Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "payload object digest",
+                    ))
+                };
+            }
             if object == last {
                 return Err(BootstrapImportError::DuplicateCanonicalItem);
             }
@@ -1307,8 +1755,16 @@ impl BootstrapPeerProbeV1 {
     ) -> Result<Self, BootstrapImportError> {
         checked_count(entries.len(), MAX_SELECTED_PEERS, "selected peers")?;
         entries.sort_unstable();
-        if entries.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(BootstrapImportError::DuplicateCanonicalItem);
+        for pair in entries.windows(2) {
+            if pair[0].peer_identity == pair[1].peer_identity {
+                return if pair[0] == pair[1] {
+                    Err(BootstrapImportError::DuplicateCanonicalItem)
+                } else {
+                    Err(BootstrapImportError::ConflictingProtocolIdentity(
+                        "peer identity",
+                    ))
+                };
+            }
         }
         Ok(Self { entries })
     }
@@ -1385,6 +1841,8 @@ impl BootstrapPartDescriptorV1 {
     pub(crate) fn accepted(
         evidence: BootstrapImportPartEvidenceV1,
         manifest_fingerprint: BootstrapManifestFingerprintV1,
+        payload_objects: &[PayloadObjectDescriptorV1],
+        manifest_objects: &[FullObjectDescriptorV1],
         prior_frontier: ArchiveLocalFrontierBindingV1,
     ) -> Result<Self, BootstrapImportError> {
         let acceptance_sequence = prior_frontier
@@ -1393,7 +1851,8 @@ impl BootstrapPartDescriptorV1 {
             .ok_or(BootstrapImportError::LengthOverflow)?;
         let part_id = evidence.part_id();
         let evidence_digest = evidence.evidence_digest();
-        let full_object_root = evidence.payload_object_root();
+        let full_object_root =
+            FullObjectRootV1::for_part(evidence, payload_objects, manifest_objects)?;
         let accepted_event = accepted_event_binding(
             part_id,
             evidence_digest,
@@ -1421,9 +1880,6 @@ impl BootstrapPartDescriptorV1 {
         prior_frontier: ArchiveLocalFrontierBindingV1,
         post_frontier: ArchiveLocalFrontierBindingV1,
     ) -> Result<Self, BootstrapImportError> {
-        if full_object_root != evidence.payload_object_root() {
-            return Err(BootstrapImportError::FullObjectRootMismatch);
-        }
         let part_id = evidence.part_id();
         let evidence_digest = evidence.evidence_digest();
         let accepted_event = accepted_event_binding(
@@ -1476,9 +1932,7 @@ impl BootstrapPartDescriptorV1 {
         if self.evidence_digest != self.evidence.evidence_digest() {
             return Err(BootstrapImportError::EvidenceDigestMismatch);
         }
-        if self.full_object_root != self.evidence.payload_object_root() {
-            return Err(BootstrapImportError::FullObjectRootMismatch);
-        }
+        self.full_object_root.validate()?;
         if self.accepted_event
             != accepted_event_binding(
                 self.part_id,
@@ -1535,7 +1989,7 @@ impl BootstrapPartDescriptorV1 {
         let predecessor = decode_part_id_option(cursor.take(33)?)?;
         let evidence_digest = BootstrapEvidenceDigestV1::from_bytes(cursor.array_32()?);
         let manifest_fingerprint = BootstrapManifestFingerprintV1::from_bytes(cursor.array_32()?);
-        let full_object_root = PayloadObjectRootV1::decode(cursor.take(44)?)?;
+        let full_object_root = FullObjectRootV1::decode(cursor.take(44)?)?;
         let accepted_event = BootstrapAcceptedEventBindingV1::from_bytes(cursor.array_32()?);
         let acceptance_sequence = cursor.u32()?;
         let prior_frontier = decode_archive_frontier(cursor.take(69)?)?;
@@ -1945,6 +2399,12 @@ impl RootEncodeV1 for PayloadObjectRootV1 {
     }
 }
 
+impl RootEncodeV1 for FullObjectRootV1 {
+    fn encode_root(self, bytes: &mut Vec<u8>) {
+        self.encode_into(bytes);
+    }
+}
+
 fn root_bytes<T: RootEncodeV1>(root: T) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(44);
     root.encode_root(&mut bytes);
@@ -2205,8 +2665,10 @@ pub(crate) enum BootstrapImportError {
     AcceptedEventBindingMismatch,
     AcceptanceSequenceMismatch,
     BatchIdMismatch,
+    BlobContinuityMismatch,
     ByteLimit(&'static str),
     CountLimit(&'static str),
+    ConflictingProtocolIdentity(&'static str),
     DepthLimit,
     DuplicateCanonicalItem,
     DuplicateField(u8),
@@ -2222,6 +2684,7 @@ pub(crate) enum BootstrapImportError {
     InvalidArchiveFrontier,
     InvalidFieldLength,
     InvalidMagic,
+    InvalidFullObjectKind,
     InvalidOrdinal,
     InvalidPartCount,
     LengthOverflow,
@@ -2362,8 +2825,8 @@ mod tests {
         // The legacy external-observation batch derivation remains a singleton
         // and its bytes are deliberately not altered by this packet.
         assert_eq!(
-            BatchId::for_import(import_id()),
-            BatchId::for_import(import_id())
+            BatchId::for_import(import_id()).to_string(),
+            "3f7d7a8e-2e70-8edd-9304-5a6e11671c7f"
         );
     }
 
@@ -2472,12 +2935,18 @@ mod tests {
         }
         assert_eq!(streaming_objects.finish(), materialized_objects);
 
+        let chunked_leaf = SourceLeafV1::new(
+            b"pages/chunked.md".to_vec(),
+            SourceContentDigestV1::from_bytes([9; 32]),
+            u64::from(MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART),
+        )
+        .unwrap();
         let chunks = (0..MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART)
             .map(|index| {
                 let mut digest = [0; 32];
                 digest[28..].copy_from_slice(&index.to_be_bytes());
                 SourceBlobChunkDescriptorV1::new(
-                    SourceLeafDigestV1::from_bytes([9; 32]),
+                    chunked_leaf.digest(),
                     index,
                     MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART,
                     u64::from(index),
@@ -2487,12 +2956,15 @@ mod tests {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        let materialized_chunks = SourceBlobChunkRootV1::from_descriptors(&chunks).unwrap();
-        let mut streaming_chunks = SourceBlobChunkRootBuilderV1::new();
+        let materialized_chunks =
+            SourceBlobChunkRootV1::from_descriptors(std::slice::from_ref(&chunked_leaf), &chunks)
+                .unwrap();
+        let mut streaming_chunks =
+            SourceBlobChunkRootBuilderV1::new(std::slice::from_ref(&chunked_leaf)).unwrap();
         for chunk in &chunks {
             streaming_chunks.push(*chunk).unwrap();
         }
-        assert_eq!(streaming_chunks.finish(), materialized_chunks);
+        assert_eq!(streaming_chunks.finish().unwrap(), materialized_chunks);
         assert_eq!(SourceBlobChunkRootV1::empty().chunk_count(), 0);
     }
 
@@ -2571,12 +3043,19 @@ mod tests {
         ));
 
         let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
-        let first =
-            BootstrapPartDescriptorV1::accepted(evidence(0, 2, None), fingerprint(1), initial)
-                .unwrap();
+        let first = BootstrapPartDescriptorV1::accepted(
+            evidence(0, 2, None),
+            fingerprint(1),
+            &[payload(1)],
+            &[],
+            initial,
+        )
+        .unwrap();
         let second = BootstrapPartDescriptorV1::accepted(
             evidence(1, 2, Some(first.part_id())),
             fingerprint(2),
+            &[payload(2)],
+            &[],
             first.post_frontier,
         )
         .unwrap();
@@ -2585,6 +3064,8 @@ mod tests {
         let wrong_predecessor = BootstrapPartDescriptorV1::accepted(
             evidence(1, 2, Some(BootstrapPartId::from_digest([7; 32]))),
             fingerprint(2),
+            &[payload(2)],
+            &[],
             first.post_frontier,
         )
         .unwrap();
@@ -2592,6 +3073,8 @@ mod tests {
         let substituted = BootstrapPartDescriptorV1::accepted(
             evidence(1, 2, Some(first.part_id())),
             fingerprint(9),
+            &[payload(2)],
+            &[],
             first.post_frontier,
         )
         .unwrap();
@@ -2643,9 +3126,14 @@ mod tests {
         );
 
         let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
-        let one =
-            BootstrapPartDescriptorV1::accepted(evidence(0, 1, None), fingerprint(1), initial)
-                .unwrap();
+        let one = BootstrapPartDescriptorV1::accepted(
+            evidence(0, 1, None),
+            fingerprint(1),
+            &[payload(1)],
+            &[],
+            initial,
+        )
+        .unwrap();
         let aggregate = aggregate(vec![one]).unwrap();
         assert!(BootstrapAggregateManifestV1::decode(&aggregate.encode().unwrap()).is_ok());
         let mut wrong_archive = aggregate.clone();
@@ -2673,6 +3161,437 @@ mod tests {
             ]),
             Err(BootstrapImportError::EncodedSizeLimit("aggregate manifest"))
         ));
+        let bytes = empty.encode().unwrap();
+        assert!(matches!(
+            BootstrapAggregateManifestV1::decode(&bytes[..bytes.len() - 1]),
+            Err(BootstrapImportError::Truncated)
+        ));
+        let mut future = bytes.clone();
+        future[16] = 2;
+        assert!(matches!(
+            BootstrapAggregateManifestV1::decode(&future),
+            Err(BootstrapImportError::UnsupportedVersion(2))
+        ));
+        let mut unknown = bytes.clone();
+        unknown.extend_from_slice(&[15, 0, 0, 0, 0]);
+        assert!(matches!(
+            BootstrapAggregateManifestV1::decode(&unknown),
+            Err(BootstrapImportError::UnknownField(15))
+        ));
+        let mut duplicate = bytes;
+        duplicate.extend_from_slice(&[14, 0, 0, 0, 0]);
+        assert!(matches!(
+            BootstrapAggregateManifestV1::decode(&duplicate),
+            Err(BootstrapImportError::DuplicateField(14))
+        ));
+    }
+
+    #[test]
+    fn full_root_is_post_evidence_independent_and_cycle_free() {
+        let evidence = evidence(0, 1, None);
+        let payloads = [payload(1)];
+        let manifest = [FullObjectDescriptorV1::manifest_defined([0x55; 32], 7).unwrap()];
+        let full = FullObjectRootV1::for_part(evidence, &payloads, &manifest).unwrap();
+        let reordered = FullObjectRootV1::for_part(evidence, &[payloads[0]], &manifest).unwrap();
+        assert_eq!(
+            full, reordered,
+            "complete descriptors are canonically ordered"
+        );
+        assert_ne!(
+            full.digest(),
+            evidence.payload_object_root().digest(),
+            "the post-evidence root has its own domain and inclusion set"
+        );
+        assert_eq!(full.object_count(), 3);
+        let evidence_bytes = evidence.encode().unwrap();
+        assert!(
+            !evidence_bytes
+                .windows(32)
+                .any(|window| window == full.digest()),
+            "evidence cannot carry its own later full-root commitment"
+        );
+
+        let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
+        let accepted = BootstrapPartDescriptorV1::accepted(
+            evidence,
+            fingerprint(1),
+            &payloads,
+            &manifest,
+            initial,
+        )
+        .unwrap();
+        let mut substituted = accepted;
+        substituted.full_object_root = FullObjectRootV1::empty();
+        assert!(matches!(
+            aggregate(vec![substituted]),
+            Err(BootstrapImportError::AcceptedEventBindingMismatch)
+        ));
+    }
+
+    #[test]
+    fn protocol_identities_and_blob_continuity_reject_conflicts() {
+        let leaf = SourceLeafV1::new(
+            b"pages/a.md".to_vec(),
+            SourceContentDigestV1::from_bytes([1; 32]),
+            2,
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceInventoryRootV1::from_leaves(&[leaf.clone(), leaf.clone()]),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        let conflicting_leaf = SourceLeafV1::new(
+            b"pages/a.md".to_vec(),
+            SourceContentDigestV1::from_bytes([2; 32]),
+            2,
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceInventoryRootV1::from_leaves(&[leaf.clone(), conflicting_leaf]),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "source locator"
+            ))
+        ));
+
+        let operation_a = operation(1);
+        let operation_conflict = OperationLeafV1::new(
+            OperationDigestV1::from_bytes(*operation_a.operation_digest.as_bytes()),
+            2,
+        )
+        .unwrap();
+        assert!(matches!(
+            OperationRootV1::from_operations(&[operation_a, operation_a]),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        assert!(matches!(
+            OperationRootV1::from_operations(&[operation_a, operation_conflict]),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "operation digest"
+            ))
+        ));
+
+        let object_a = payload(1);
+        let object_conflict = PayloadObjectDescriptorV1::new(
+            PayloadObjectDigestV1::from_bytes(*object_a.content_digest.as_bytes()),
+            17,
+        )
+        .unwrap();
+        assert!(matches!(
+            PayloadObjectRootV1::from_objects(&[object_a, object_a]),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        assert!(matches!(
+            PayloadObjectRootV1::from_objects(&[object_a, object_conflict]),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "payload object digest"
+            ))
+        ));
+
+        let peer = BootstrapPeerProbeEntryV1::new([1; 32], [2; 32]);
+        assert!(matches!(
+            BootstrapPeerProbeV1::new(vec![peer, peer]),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        assert!(matches!(
+            BootstrapPeerProbeV1::new(vec![peer, BootstrapPeerProbeEntryV1::new([1; 32], [3; 32])]),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "peer identity"
+            ))
+        ));
+
+        let source_leaf = SourceLeafV1::new(
+            b"pages/blob.md".to_vec(),
+            SourceContentDigestV1::from_bytes([9; 32]),
+            7,
+        )
+        .unwrap();
+        let source = source_leaf.digest();
+        let first = SourceBlobChunkDescriptorV1::new(
+            source,
+            0,
+            2,
+            0,
+            3,
+            SourceBlobChunkDigestV1::from_bytes([1; 32]),
+        )
+        .unwrap();
+        let second = SourceBlobChunkDescriptorV1::new(
+            source,
+            1,
+            2,
+            3,
+            4,
+            SourceBlobChunkDigestV1::from_bytes([2; 32]),
+        )
+        .unwrap();
+        assert!(SourceBlobChunkRootV1::from_descriptors(
+            std::slice::from_ref(&source_leaf),
+            &[first, second]
+        )
+        .is_ok());
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&source_leaf),
+                &[first, first]
+            ),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        let conflict = SourceBlobChunkDescriptorV1::new(
+            source,
+            0,
+            2,
+            0,
+            3,
+            SourceBlobChunkDigestV1::from_bytes([8; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&source_leaf),
+                &[first, conflict]
+            ),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "source blob chunk ordinal"
+            ))
+        ));
+        let gap = SourceBlobChunkDescriptorV1::new(
+            source,
+            1,
+            3,
+            3,
+            4,
+            SourceBlobChunkDigestV1::from_bytes([3; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&source_leaf),
+                &[first, gap]
+            ),
+            Err(BootstrapImportError::ConflictingProtocolIdentity(
+                "source blob chunk count"
+            ))
+        ));
+        let offset_gap = SourceBlobChunkDescriptorV1::new(
+            source,
+            1,
+            2,
+            4,
+            4,
+            SourceBlobChunkDigestV1::from_bytes([3; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&source_leaf),
+                &[first, offset_gap]
+            ),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+        assert!(matches!(
+            SourceBlobChunkDescriptorV1::new(
+                source,
+                0,
+                MAX_SOURCE_BLOB_CHUNKS + 1,
+                0,
+                1,
+                SourceBlobChunkDigestV1::from_bytes([0; 32])
+            ),
+            Err(BootstrapImportError::InvalidOrdinal)
+        ));
+    }
+
+    #[test]
+    fn source_blob_roots_require_exact_inventory_committed_coverage() {
+        let empty = SourceLeafV1::new(
+            b"pages/empty.md".to_vec(),
+            SourceContentDigestV1::from_bytes([1; 32]),
+            0,
+        )
+        .unwrap();
+        let nonempty = SourceLeafV1::new(
+            b"pages/nonempty.md".to_vec(),
+            SourceContentDigestV1::from_bytes([2; 32]),
+            7,
+        )
+        .unwrap();
+        let second_nonempty = SourceLeafV1::new(
+            b"pages/second.md".to_vec(),
+            SourceContentDigestV1::from_bytes([8; 32]),
+            2,
+        )
+        .unwrap();
+        let source = nonempty.digest();
+        let exact = [
+            SourceBlobChunkDescriptorV1::new(
+                source,
+                0,
+                2,
+                0,
+                3,
+                SourceBlobChunkDigestV1::from_bytes([3; 32]),
+            )
+            .unwrap(),
+            SourceBlobChunkDescriptorV1::new(
+                source,
+                1,
+                2,
+                3,
+                4,
+                SourceBlobChunkDigestV1::from_bytes([4; 32]),
+            )
+            .unwrap(),
+        ];
+        let second_exact = SourceBlobChunkDescriptorV1::new(
+            second_nonempty.digest(),
+            0,
+            1,
+            0,
+            2,
+            SourceBlobChunkDigestV1::from_bytes([9; 32]),
+        )
+        .unwrap();
+
+        assert!(SourceBlobChunkRootV1::from_descriptors(std::slice::from_ref(&empty), &[]).is_ok());
+        assert!(SourceBlobChunkRootV1::from_descriptors(
+            &[empty.clone(), nonempty.clone()],
+            &exact
+        )
+        .is_ok());
+        assert!(SourceBlobChunkRootV1::from_descriptors(
+            &[empty.clone(), nonempty.clone(), second_nonempty],
+            &[exact[1], second_exact, exact[0]]
+        )
+        .is_ok());
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(std::slice::from_ref(&nonempty), &[]),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+
+        let missing_zero = SourceBlobChunkDescriptorV1::new(
+            source,
+            1,
+            2,
+            3,
+            4,
+            SourceBlobChunkDigestV1::from_bytes([4; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&nonempty),
+                &[missing_zero]
+            ),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+
+        let initial_offset = SourceBlobChunkDescriptorV1::new(
+            source,
+            0,
+            1,
+            1,
+            6,
+            SourceBlobChunkDigestV1::from_bytes([5; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&nonempty),
+                &[initial_offset]
+            ),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+
+        let short_terminal = SourceBlobChunkDescriptorV1::new(
+            source,
+            0,
+            1,
+            0,
+            6,
+            SourceBlobChunkDigestV1::from_bytes([6; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&nonempty),
+                &[short_terminal]
+            ),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+
+        let empty_chunk = SourceBlobChunkDescriptorV1::new(
+            empty.digest(),
+            0,
+            1,
+            0,
+            1,
+            SourceBlobChunkDigestV1::from_bytes([7; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            SourceBlobChunkRootV1::from_descriptors(std::slice::from_ref(&empty), &[empty_chunk]),
+            Err(BootstrapImportError::BlobContinuityMismatch)
+        ));
+    }
+
+    #[test]
+    fn profile_constants_are_all_digest_sensitive_and_boundaries_stream() {
+        let baseline = profile();
+        for index in 0..PROFILE_CONSTANTS_V1.len() {
+            let mut changed = PROFILE_CONSTANTS_V1.to_vec();
+            changed[index] = match changed[index] {
+                ProfileConstantV1::U8(value) => ProfileConstantV1::U8(value.wrapping_add(1)),
+                ProfileConstantV1::U32(value) => ProfileConstantV1::U32(value.wrapping_add(1)),
+                ProfileConstantV1::U64(value) => ProfileConstantV1::U64(value.wrapping_add(1)),
+            };
+            assert_ne!(baseline, profile_digest_from_constants(&changed));
+        }
+
+        let blob_source = SourceLeafV1::new(
+            b"pages/boundary.md".to_vec(),
+            SourceContentDigestV1::from_bytes([7; 32]),
+            u64::from(MAX_SOURCE_BLOB_CHUNKS),
+        )
+        .unwrap();
+        let mut blobs =
+            SourceBlobChunkRootBuilderV1::new(std::slice::from_ref(&blob_source)).unwrap();
+        for index in 0..MAX_SOURCE_BLOB_CHUNKS {
+            blobs
+                .push(
+                    SourceBlobChunkDescriptorV1::new(
+                        blob_source.digest(),
+                        index,
+                        MAX_SOURCE_BLOB_CHUNKS,
+                        u64::from(index),
+                        1,
+                        SourceBlobChunkDigestV1::from_bytes([7; 32]),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            blobs.finish().unwrap().chunk_count(),
+            MAX_SOURCE_BLOB_CHUNKS
+        );
+        assert!(matches!(
+            decode_parts(
+                &(MAX_BOOTSTRAP_PARTS + 1).to_be_bytes(),
+                import_id(),
+                profile()
+            ),
+            Err(BootstrapImportError::CountLimit("bootstrap parts"))
+        ));
+        let mut frontier = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
+        for ordinal in 0..MAX_BOOTSTRAP_PARTS {
+            frontier = frontier
+                .advance(
+                    BootstrapPartId::from_digest([ordinal as u8; 32]),
+                    BootstrapAcceptedEventBindingV1::from_bytes([ordinal as u8; 32]),
+                )
+                .unwrap();
+        }
+        assert_eq!(frontier.accepted_count, MAX_BOOTSTRAP_PARTS);
     }
 
     #[test]
@@ -2690,19 +3609,89 @@ mod tests {
         );
         assert_eq!(
             hex(profile().as_bytes()),
-            "4357f4cb61fcef70fe698d6faac1efe30dc96f835093aa63698ee0a078237d27"
+            "383c99407d45f200358c08b96726c59a38d35f323df4753ff93daedf2dbdd846"
         );
         assert_eq!(
             hex(evidence.part_id().as_bytes()),
-            "34958ad99352ca3f58f02f89630bac0402a9d10e6f4843034ff00c1d95cc68db"
+            "0ebca968d536f4208bb8d91a722a10b686afde2baa436d9b6624d3eb4b0e7df0"
         );
         assert_eq!(
             evidence.batch_id().to_string(),
-            "04300487-fcb6-8b36-847c-0566e189a0ab"
+            "e3bc7e41-489b-8e39-a9a0-dd72d811de52"
         );
         assert_eq!(
             hex(evidence.evidence_digest().as_bytes()),
-            "125850d29272b7ed55b863d3f24648e6cd9b783af94e54fba2dc6af2885c69b5"
+            "ed0f569159028f69646ba0ab4b5e3a929270ff403dc50abb98a4befa09ca2368"
         );
+        let inventory = SourceInventoryRootV1::from_leaves(std::slice::from_ref(&leaf)).unwrap();
+        let blob = SourceBlobChunkRootV1::from_descriptors(
+            std::slice::from_ref(&leaf),
+            &[SourceBlobChunkDescriptorV1::new(
+                leaf.digest(),
+                0,
+                1,
+                0,
+                9,
+                SourceBlobChunkDigestV1::from_bytes([0x77; 32]),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let full = FullObjectRootV1::for_part(evidence, &[payload(1)], &[]).unwrap();
+        let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
+        let descriptor = BootstrapPartDescriptorV1::accepted(
+            evidence,
+            fingerprint(1),
+            &[payload(1)],
+            &[],
+            initial,
+        )
+        .unwrap();
+        let one = aggregate(vec![descriptor]).unwrap();
+        let vectors = [
+            (
+                hex(SourceInventoryRootV1::empty().digest()),
+                "b93d88da32b9a0735d6d1cea8f750c4a1e6b69fe8eeb6e67021cf6ec0b63c3ae",
+            ),
+            (
+                hex(inventory.digest()),
+                "50565a1c46c9a37616f4aa37a6fdcd051437915e7bcf41cf8e8342243edb5460",
+            ),
+            (
+                hex(SourceBlobChunkRootV1::empty().digest()),
+                "15056936d86d369e0b6f4cdc562975f6da307f057ceda80f809de026514ba5d2",
+            ),
+            (
+                hex(blob.digest()),
+                "6cbff217ae778f0b5eacb2abbdb94719dc2bdecc5c6a02215f3fe39c8d01f22c",
+            ),
+            (
+                hex(SourceSpanRootV1::empty().digest()),
+                "9eb4a914f4fde27bdda4c58fc59ed3280cf7ec92acaab37706ef568141393885",
+            ),
+            (
+                hex(OperationRootV1::empty().digest()),
+                "49503ba2b620298413c86c6480f711fda91c482afb2e1a9dff279193dd49bb85",
+            ),
+            (
+                hex(PayloadObjectRootV1::empty().digest()),
+                "440fc926d57fad672510ef5d28efe0e540c0a8a71db4190eeb0edd46c8b184a6",
+            ),
+            (
+                hex(full.digest()),
+                "ab6237ff713776c31d345ed99322f3002b07e6f433085b6c76b04d5b0bcda0fc",
+            ),
+            (
+                hex(descriptor.accepted_event.as_bytes()),
+                "4cd6668b601cc7b0ddbb3f8e3c0eed3da20f7786ac78cc0e40b3b2ce51e2a364",
+            ),
+            (
+                hex(one.aggregate_digest().as_bytes()),
+                "890c0a0ac5c572a6fb2f638f244483d69b93c0d2efa0bef33e6e5a0308492968",
+            ),
+        ];
+        for (actual, expected) in vectors {
+            assert_eq!(actual, expected);
+        }
     }
 }
