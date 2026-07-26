@@ -32,9 +32,13 @@ const ACCEPTED_SEQUENCE_SCHEMA_VERSION: u32 = 1;
 const ACCEPTED_SEQUENCE_LEAF_CAPACITY: usize = 1;
 const ACCEPTED_SEQUENCE_NODE_FANOUT: usize = 32;
 const AUTHENTICATED_MAP_SCHEMA_VERSION: u32 = 1;
+const AUTHENTICATED_CATALOG_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_POINT_MAP_SCHEMA_VERSION: u32 = 1;
 const CAUSAL_ACCUMULATOR_SCHEMA_VERSION: u32 = 1;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
+const MAX_AUTHENTICATED_CATALOG_VALUE_BYTES: usize = 8 * 1024;
+#[cfg(test)]
+pub(crate) const AUTHENTICATED_CATALOG_MAX_DEPTH: usize = MAX_AUTHENTICATED_MAP_DEPTH;
 pub(crate) const AUTHENTICATED_POINT_MAX_DEPTH: usize = 256;
 pub(crate) const AUTHENTICATED_POINT_MAX_KEY_BYTES: usize = 64;
 pub(crate) const AUTHENTICATED_POINT_MAX_VALUE_BYTES: usize = MAX_PAGE_BYTES - 4096;
@@ -237,6 +241,7 @@ pub(crate) enum ScratchPageKind {
     DependencyUnresolved = 24,
     CausalClockLength = 25,
     CausalAccumulator = 26,
+    CurrentPathCatalog = 27,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -369,6 +374,43 @@ pub(crate) struct ScratchAuthenticatedMapRoot {
     root: Option<ScratchPageRef>,
 }
 
+/// Constant-size authenticated root for the accepted current-page catalog.
+///
+/// Unlike the digest-only accepted-document map, catalog nodes retain their
+/// bounded semantic row value so reconstruction and paging never need a second
+/// graph-sized heap mirror.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScratchAuthenticatedCatalogRoot {
+    schema_version: u32,
+    count: u64,
+    root_key: Option<[u8; 16]>,
+    root_digest: ContentDigest,
+    root: Option<ScratchPageRef>,
+}
+
+impl Default for ScratchAuthenticatedCatalogRoot {
+    fn default() -> Self {
+        Self {
+            schema_version: AUTHENTICATED_CATALOG_SCHEMA_VERSION,
+            count: 0,
+            root_key: None,
+            root_digest: authenticated_catalog_empty_digest(),
+            root: None,
+        }
+    }
+}
+
+impl ScratchAuthenticatedCatalogRoot {
+    pub(crate) const fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub(crate) const fn root_digest(&self) -> ContentDigest {
+        self.root_digest
+    }
+}
+
 /// Root of the point-keyed authenticated map used only by bounded operational
 /// staging, dependency fanout, and their causal control records.
 ///
@@ -479,6 +521,80 @@ struct AuthenticatedMapNode {
     value_digest: ContentDigest,
     left: Option<AuthenticatedMapChild>,
     right: Option<AuthenticatedMapChild>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedCatalogNode {
+    schema_version: u32,
+    key: [u8; 16],
+    priority: ContentDigest,
+    value: Vec<u8>,
+    left: Option<AuthenticatedMapChild>,
+    right: Option<AuthenticatedMapChild>,
+}
+
+/// Bounded in-order traversal over one pinned authenticated catalog root.
+pub(crate) struct ScratchAuthenticatedCatalogCursor<'a> {
+    store: &'a ScratchStore,
+    stack: Vec<AuthenticatedCatalogNode>,
+    current: Option<AuthenticatedMapChild>,
+    after: Option<[u8; 16]>,
+    initialized: bool,
+    visited: usize,
+}
+
+impl ScratchAuthenticatedCatalogCursor<'_> {
+    pub(crate) fn next_entry(&mut self) -> Result<Option<([u8; 16], Vec<u8>)>, ScratchError> {
+        if !self.initialized {
+            self.seek_after()?;
+            self.initialized = true;
+        } else {
+            self.descend_left()?;
+        }
+        let Some(node) = self.stack.pop() else {
+            return Ok(None);
+        };
+        self.current = node.right.clone();
+        self.visited = self
+            .visited
+            .checked_add(1)
+            .ok_or(ScratchError::IndexCapacity)?;
+        Ok(Some((node.key, node.value)))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn visited(&self) -> usize {
+        self.visited
+    }
+
+    fn seek_after(&mut self) -> Result<(), ScratchError> {
+        while let Some(child) = self.current.take() {
+            if self.stack.len() > MAX_AUTHENTICATED_MAP_DEPTH {
+                return Err(ScratchError::IndexCapacity);
+            }
+            let node = self.store.read_authenticated_catalog_node(&child)?;
+            if self.after.is_some_and(|after| node.key <= after) {
+                self.current = node.right;
+            } else {
+                self.current = node.left.clone();
+                self.stack.push(node);
+            }
+        }
+        Ok(())
+    }
+
+    fn descend_left(&mut self) -> Result<(), ScratchError> {
+        while let Some(child) = self.current.take() {
+            if self.stack.len() > MAX_AUTHENTICATED_MAP_DEPTH {
+                return Err(ScratchError::IndexCapacity);
+            }
+            let node = self.store.read_authenticated_catalog_node(&child)?;
+            self.current = node.left.clone();
+            self.stack.push(node);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -678,6 +794,19 @@ impl ScratchStore {
             .seek(SeekFrom::Start(offset))
             .expect("seek scratch page");
         pages.write_all(&byte).expect("tamper scratch page byte");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tamper_authenticated_catalog_root_for_test(
+        &self,
+        root: &ScratchAuthenticatedCatalogRoot,
+    ) {
+        let offset = root
+            .root
+            .as_ref()
+            .expect("nonempty authenticated catalog root")
+            .offset;
+        self.tamper_page_byte_for_test(offset);
     }
 
     #[cfg(test)]
@@ -1372,6 +1501,279 @@ impl ScratchStore {
             key,
             value_digest,
         )
+    }
+
+    pub(crate) fn authenticated_catalog_cursor<'a>(
+        &'a self,
+        root: &ScratchAuthenticatedCatalogRoot,
+        after: Option<[u8; 16]>,
+    ) -> Result<ScratchAuthenticatedCatalogCursor<'a>, ScratchError> {
+        validate_authenticated_catalog_root(root)?;
+        self.counters.range_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(ScratchAuthenticatedCatalogCursor {
+            store: self,
+            stack: Vec::new(),
+            current: root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+                key: root.root_key.expect("validated nonempty catalog root"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            after,
+            initialized: false,
+            visited: 0,
+        })
+    }
+
+    pub(crate) fn authenticated_catalog_lookup(
+        &self,
+        root: &ScratchAuthenticatedCatalogRoot,
+        key: [u8; 16],
+    ) -> Result<Option<Vec<u8>>, ScratchError> {
+        validate_authenticated_catalog_root(root)?;
+        self.counters.point_reads.fetch_add(1, Ordering::Relaxed);
+        let mut current = root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+            key: root.root_key.expect("validated nonempty catalog root"),
+            digest: root.root_digest,
+            page_ref: page_ref.clone(),
+        });
+        for _ in 0..=MAX_AUTHENTICATED_MAP_DEPTH {
+            let Some(child) = current else {
+                return Ok(None);
+            };
+            let node = self.read_authenticated_catalog_node(&child)?;
+            match key.cmp(&node.key) {
+                std::cmp::Ordering::Equal => return Ok(Some(node.value)),
+                std::cmp::Ordering::Less => current = node.left,
+                std::cmp::Ordering::Greater => current = node.right,
+            }
+        }
+        Err(ScratchError::IndexCapacity)
+    }
+
+    pub(crate) fn authenticated_catalog_upsert(
+        &self,
+        root: &ScratchAuthenticatedCatalogRoot,
+        key: [u8; 16],
+        value: &[u8],
+    ) -> Result<ScratchAuthenticatedCatalogRoot, ScratchError> {
+        validate_authenticated_catalog_root(root)?;
+        if value.is_empty() || value.len() > MAX_AUTHENTICATED_CATALOG_VALUE_BYTES {
+            return Err(ScratchError::MalformedPage);
+        }
+        let (child, inserted) = self.authenticated_catalog_upsert_child(
+            root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+                key: root.root_key.expect("validated nonempty catalog root"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key,
+            value,
+            0,
+        )?;
+        let next = ScratchAuthenticatedCatalogRoot {
+            schema_version: AUTHENTICATED_CATALOG_SCHEMA_VERSION,
+            count: if inserted {
+                root.count
+                    .checked_add(1)
+                    .ok_or(ScratchError::IndexCapacity)?
+            } else {
+                root.count
+            },
+            root_key: Some(child.key),
+            root_digest: child.digest,
+            root: Some(child.page_ref),
+        };
+        validate_authenticated_catalog_root(&next)?;
+        Ok(next)
+    }
+
+    fn authenticated_catalog_upsert_child(
+        &self,
+        current: Option<AuthenticatedMapChild>,
+        key: [u8; 16],
+        value: &[u8],
+        depth: usize,
+    ) -> Result<(AuthenticatedMapChild, bool), ScratchError> {
+        if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            let node = AuthenticatedCatalogNode {
+                schema_version: AUTHENTICATED_CATALOG_SCHEMA_VERSION,
+                key,
+                priority: authenticated_map_priority(key),
+                value: value.to_vec(),
+                left: None,
+                right: None,
+            };
+            return Ok((self.write_authenticated_catalog_node(&node)?, true));
+        };
+        let mut node = self.read_authenticated_catalog_node(&current)?;
+        let inserted;
+        match key.cmp(&node.key) {
+            std::cmp::Ordering::Equal => {
+                node.value = value.to_vec();
+                inserted = false;
+            }
+            std::cmp::Ordering::Less => {
+                let (left, was_inserted) = self.authenticated_catalog_upsert_child(
+                    node.left.take(),
+                    key,
+                    value,
+                    depth + 1,
+                )?;
+                node.left = Some(left);
+                inserted = was_inserted;
+                if node.left.as_ref().is_some_and(|left| {
+                    authenticated_map_priority_order(left.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_catalog_right(node)?, inserted));
+                }
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, was_inserted) = self.authenticated_catalog_upsert_child(
+                    node.right.take(),
+                    key,
+                    value,
+                    depth + 1,
+                )?;
+                node.right = Some(right);
+                inserted = was_inserted;
+                if node.right.as_ref().is_some_and(|right| {
+                    authenticated_map_priority_order(right.key, node.key).is_lt()
+                }) {
+                    return Ok((self.rotate_authenticated_catalog_left(node)?, inserted));
+                }
+            }
+        }
+        Ok((self.write_authenticated_catalog_node(&node)?, inserted))
+    }
+
+    fn rotate_authenticated_catalog_right(
+        &self,
+        mut node: AuthenticatedCatalogNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let left = node.left.take().ok_or(ScratchError::MalformedPage)?;
+        let mut left_node = self.read_authenticated_catalog_node(&left)?;
+        node.left = left_node.right.take();
+        left_node.right = Some(self.write_authenticated_catalog_node(&node)?);
+        self.write_authenticated_catalog_node(&left_node)
+    }
+
+    fn rotate_authenticated_catalog_left(
+        &self,
+        mut node: AuthenticatedCatalogNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        let right = node.right.take().ok_or(ScratchError::MalformedPage)?;
+        let mut right_node = self.read_authenticated_catalog_node(&right)?;
+        node.right = right_node.left.take();
+        right_node.left = Some(self.write_authenticated_catalog_node(&node)?);
+        self.write_authenticated_catalog_node(&right_node)
+    }
+
+    pub(crate) fn authenticated_catalog_remove(
+        &self,
+        root: &ScratchAuthenticatedCatalogRoot,
+        key: [u8; 16],
+    ) -> Result<ScratchAuthenticatedCatalogRoot, ScratchError> {
+        validate_authenticated_catalog_root(root)?;
+        let (child, removed) = self.authenticated_catalog_remove_child(
+            root.root.as_ref().map(|page_ref| AuthenticatedMapChild {
+                key: root.root_key.expect("validated nonempty catalog root"),
+                digest: root.root_digest,
+                page_ref: page_ref.clone(),
+            }),
+            key,
+            0,
+        )?;
+        if !removed {
+            return Ok(root.clone());
+        }
+        let count = root
+            .count
+            .checked_sub(1)
+            .ok_or(ScratchError::MalformedPage)?;
+        let next = match child {
+            Some(child) => ScratchAuthenticatedCatalogRoot {
+                schema_version: AUTHENTICATED_CATALOG_SCHEMA_VERSION,
+                count,
+                root_key: Some(child.key),
+                root_digest: child.digest,
+                root: Some(child.page_ref),
+            },
+            None if count == 0 => ScratchAuthenticatedCatalogRoot::default(),
+            None => return Err(ScratchError::MalformedPage),
+        };
+        validate_authenticated_catalog_root(&next)?;
+        Ok(next)
+    }
+
+    fn authenticated_catalog_remove_child(
+        &self,
+        current: Option<AuthenticatedMapChild>,
+        key: [u8; 16],
+        depth: usize,
+    ) -> Result<(Option<AuthenticatedMapChild>, bool), ScratchError> {
+        if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let Some(current) = current else {
+            return Ok((None, false));
+        };
+        let mut node = self.read_authenticated_catalog_node(&current)?;
+        match key.cmp(&node.key) {
+            std::cmp::Ordering::Equal => Ok((
+                self.merge_authenticated_catalog_children(node.left, node.right, depth + 1)?,
+                true,
+            )),
+            std::cmp::Ordering::Less => {
+                let (left, removed) =
+                    self.authenticated_catalog_remove_child(node.left.take(), key, depth + 1)?;
+                if !removed {
+                    return Ok((Some(current), false));
+                }
+                node.left = left;
+                Ok((Some(self.write_authenticated_catalog_node(&node)?), true))
+            }
+            std::cmp::Ordering::Greater => {
+                let (right, removed) =
+                    self.authenticated_catalog_remove_child(node.right.take(), key, depth + 1)?;
+                if !removed {
+                    return Ok((Some(current), false));
+                }
+                node.right = right;
+                Ok((Some(self.write_authenticated_catalog_node(&node)?), true))
+            }
+        }
+    }
+
+    fn merge_authenticated_catalog_children(
+        &self,
+        left: Option<AuthenticatedMapChild>,
+        right: Option<AuthenticatedMapChild>,
+        depth: usize,
+    ) -> Result<Option<AuthenticatedMapChild>, ScratchError> {
+        if depth > MAX_AUTHENTICATED_MAP_DEPTH {
+            return Err(ScratchError::IndexCapacity);
+        }
+        let (left, right) = match (left, right) {
+            (Some(left), Some(right)) => (left, right),
+            (left, right) => return Ok(left.or(right)),
+        };
+        if authenticated_map_priority_order(left.key, right.key).is_lt() {
+            let mut node = self.read_authenticated_catalog_node(&left)?;
+            node.right = self.merge_authenticated_catalog_children(
+                node.right.take(),
+                Some(right),
+                depth + 1,
+            )?;
+            Ok(Some(self.write_authenticated_catalog_node(&node)?))
+        } else {
+            let mut node = self.read_authenticated_catalog_node(&right)?;
+            node.left =
+                self.merge_authenticated_catalog_children(Some(left), node.left.take(), depth + 1)?;
+            Ok(Some(self.write_authenticated_catalog_node(&node)?))
+        }
     }
 
     fn authenticated_map_upsert_for_kind(
@@ -2076,6 +2478,39 @@ impl ScratchStore {
         Ok(node)
     }
 
+    fn write_authenticated_catalog_node(
+        &self,
+        node: &AuthenticatedCatalogNode,
+    ) -> Result<AuthenticatedMapChild, ScratchError> {
+        validate_authenticated_catalog_node(node)?;
+        let digest = authenticated_catalog_node_digest(node);
+        let key = node.key.to_vec();
+        let page_ref =
+            self.append_page(ScratchPageKind::CurrentPathCatalog, key.clone(), key, node)?;
+        Ok(AuthenticatedMapChild {
+            key: node.key,
+            digest,
+            page_ref,
+        })
+    }
+
+    fn read_authenticated_catalog_node(
+        &self,
+        child: &AuthenticatedMapChild,
+    ) -> Result<AuthenticatedCatalogNode, ScratchError> {
+        let node: AuthenticatedCatalogNode =
+            self.read_page(&child.page_ref, ScratchPageKind::CurrentPathCatalog)?;
+        validate_authenticated_catalog_node(&node)?;
+        if node.key != child.key
+            || child.page_ref.key_min != child.key
+            || child.page_ref.key_max != child.key
+            || authenticated_catalog_node_digest(&node) != child.digest
+        {
+            return Err(ScratchError::PageBindingMismatch);
+        }
+        Ok(node)
+    }
+
     fn write_authenticated_point_node(
         &self,
         kind: ScratchPageKind,
@@ -2451,6 +2886,27 @@ pub(crate) fn authenticated_map_node_digest(
     ContentDigest::of(&bytes)
 }
 
+fn authenticated_catalog_empty_digest() -> ContentDigest {
+    ContentDigest::of(b"tine/oplog/authenticated-current-path-catalog/v1/empty")
+}
+
+fn authenticated_catalog_node_digest(node: &AuthenticatedCatalogNode) -> ContentDigest {
+    let mut bytes = b"tine/oplog/authenticated-current-path-catalog/v1/node\0".to_vec();
+    bytes.extend_from_slice(&node.key);
+    bytes.extend_from_slice(ContentDigest::of(&node.value).as_bytes());
+    for child in [&node.left, &node.right] {
+        match child {
+            Some(child) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&child.key);
+                bytes.extend_from_slice(child.digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+    }
+    ContentDigest::of(&bytes)
+}
+
 pub(crate) fn authenticated_map_priority_order(
     left: [u8; 16],
     right: [u8; 16],
@@ -2554,6 +3010,21 @@ fn validate_authenticated_map_root(root: &ScratchAuthenticatedMapRoot) -> Result
     Ok(())
 }
 
+fn validate_authenticated_catalog_root(
+    root: &ScratchAuthenticatedCatalogRoot,
+) -> Result<(), ScratchError> {
+    if root.schema_version != AUTHENTICATED_CATALOG_SCHEMA_VERSION
+        || (root.count == 0)
+            != (root.root.is_none()
+                && root.root_key.is_none()
+                && root.root_digest == authenticated_catalog_empty_digest())
+        || (root.count > 0 && (root.root.is_none() || root.root_key.is_none()))
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
 fn validate_authenticated_point_key(logical_key: &[u8]) -> Result<(), ScratchError> {
     if logical_key.is_empty() || logical_key.len() > AUTHENTICATED_POINT_MAX_KEY_BYTES {
         return Err(ScratchError::MalformedPage);
@@ -2616,6 +3087,25 @@ fn validate_causal_accumulator_root(
 
 fn validate_authenticated_map_node(node: &AuthenticatedMapNode) -> Result<(), ScratchError> {
     if node.schema_version != AUTHENTICATED_MAP_SCHEMA_VERSION
+        || node.priority != authenticated_map_priority(node.key)
+        || node.left.as_ref().is_some_and(|left| {
+            left.key >= node.key || !authenticated_map_priority_order(node.key, left.key).is_lt()
+        })
+        || node.right.as_ref().is_some_and(|right| {
+            right.key <= node.key || !authenticated_map_priority_order(node.key, right.key).is_lt()
+        })
+    {
+        return Err(ScratchError::MalformedPage);
+    }
+    Ok(())
+}
+
+fn validate_authenticated_catalog_node(
+    node: &AuthenticatedCatalogNode,
+) -> Result<(), ScratchError> {
+    if node.schema_version != AUTHENTICATED_CATALOG_SCHEMA_VERSION
+        || node.value.is_empty()
+        || node.value.len() > MAX_AUTHENTICATED_CATALOG_VALUE_BYTES
         || node.priority != authenticated_map_priority(node.key)
         || node.left.as_ref().is_some_and(|left| {
             left.key >= node.key || !authenticated_map_priority_order(node.key, left.key).is_lt()
