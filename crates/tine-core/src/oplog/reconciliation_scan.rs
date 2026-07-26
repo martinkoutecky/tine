@@ -243,18 +243,25 @@ impl PendingReconciliation {
                 paths: mem::take(&mut self.precondition_paths),
             });
         }
-        if self.has_full_scan() {
-            let reasons = ReconciliationFullScanReasons {
-                reasons: mem::take(&mut self.full_scan_reasons),
-                omitted_reasons: mem::replace(&mut self.omitted_full_scan_reasons, false),
-            };
-            return Some(ReconciliationWork::FullScan(reasons));
+        if let Some(work) = self.take_full_scan_work() {
+            return Some(work);
         }
         if !self.watcher_paths.is_empty() {
             self.watcher_path_bytes = 0;
             return Some(ReconciliationWork::WatcherPaths {
                 paths: mem::take(&mut self.watcher_paths),
             });
+        }
+        None
+    }
+
+    fn take_full_scan_work(&mut self) -> Option<ReconciliationWork> {
+        if self.has_full_scan() {
+            let reasons = ReconciliationFullScanReasons {
+                reasons: mem::take(&mut self.full_scan_reasons),
+                omitted_reasons: mem::replace(&mut self.omitted_full_scan_reasons, false),
+            };
+            return Some(ReconciliationWork::FullScan(reasons));
         }
         None
     }
@@ -373,12 +380,34 @@ impl ReconciliationScheduler {
         Some(ReconciliationJob { lease, work })
     }
 
-    /// Finish exactly the currently active lease. Stale, duplicate, and
-    /// foreign leases fail without mutating pending work or status.
-    pub(crate) fn complete(
+    /// Retain another full scan under the exact active logical lease without
+    /// publishing an intermediate terminal completion.
+    pub(crate) fn continue_active_with_full_scan(
         &mut self,
         lease: ReconciliationLease,
-        outcome: ReconciliationCompletionOutcome,
+        reason: ReconciliationFullScanReason,
+    ) -> Result<(), ReconciliationCompletionError> {
+        self.require_active(lease)?;
+        self.pending.request_full_scan(reason, self.limits);
+        Ok(())
+    }
+
+    /// Obtain retained full work for the exact active logical lease. Ordinary
+    /// queued preconditions and watcher paths remain coalesced for later.
+    pub(crate) fn next_full_scan_for_active(
+        &mut self,
+        lease: ReconciliationLease,
+    ) -> Result<Option<ReconciliationJob>, ReconciliationCompletionError> {
+        self.require_active(lease)?;
+        Ok(self
+            .pending
+            .take_full_scan_work()
+            .map(|work| ReconciliationJob { lease, work }))
+    }
+
+    fn require_active(
+        &self,
+        lease: ReconciliationLease,
     ) -> Result<(), ReconciliationCompletionError> {
         let Some(active) = self.active else {
             return Err(ReconciliationCompletionError::NoActiveJob);
@@ -386,6 +415,17 @@ impl ReconciliationScheduler {
         if active != lease {
             return Err(ReconciliationCompletionError::StaleOrForeignLease);
         }
+        Ok(())
+    }
+
+    /// Finish exactly the currently active lease. Stale, duplicate, and
+    /// foreign leases fail without mutating pending work or status.
+    pub(crate) fn complete(
+        &mut self,
+        lease: ReconciliationLease,
+        outcome: ReconciliationCompletionOutcome,
+    ) -> Result<(), ReconciliationCompletionError> {
+        self.require_active(lease)?;
         self.active = None;
         self.last_completion = Some(outcome);
         match outcome {
@@ -3793,6 +3833,53 @@ mod tests {
             &ReconciliationWork::WatcherPaths {
                 paths: scheduler_paths(&["pages/second.md"]),
             }
+        );
+    }
+
+    #[test]
+    fn reconciliation_scheduler_continues_full_scan_under_exact_active_lease() {
+        let mut scheduler = ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        let mut foreign_scheduler =
+            ReconciliationScheduler::new(ReconciliationSchedulerLimits::default());
+        scheduler.trigger(ReconciliationTrigger::Explicit);
+        foreign_scheduler.trigger(ReconciliationTrigger::Explicit);
+        let initial = scheduler.next().unwrap();
+        let foreign = foreign_scheduler.next().unwrap();
+
+        assert_eq!(
+            scheduler.continue_active_with_full_scan(
+                foreign.lease(),
+                ReconciliationFullScanReason::PostDrain,
+            ),
+            Err(ReconciliationCompletionError::StaleOrForeignLease)
+        );
+        assert!(!scheduler.status().pending);
+        scheduler
+            .continue_active_with_full_scan(
+                initial.lease(),
+                ReconciliationFullScanReason::PostDrain,
+            )
+            .unwrap();
+        assert!(scheduler.status().active);
+        assert!(scheduler.status().pending);
+        assert_eq!(scheduler.status().last_completion, None);
+
+        let continuation = scheduler
+            .next_full_scan_for_active(initial.lease())
+            .unwrap()
+            .unwrap();
+        assert_eq!(continuation.lease(), initial.lease());
+        assert!(full_scan_reasons(&continuation)
+            .reasons
+            .contains(&ReconciliationFullScanReason::PostDrain));
+        assert!(scheduler.status().active);
+        assert_eq!(scheduler.status().last_completion, None);
+        scheduler
+            .complete(continuation.lease(), ReconciliationCompletionOutcome::Noop)
+            .unwrap();
+        assert_eq!(
+            scheduler.next_full_scan_for_active(initial.lease()),
+            Err(ReconciliationCompletionError::NoActiveJob)
         );
     }
 
