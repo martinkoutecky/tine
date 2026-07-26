@@ -445,14 +445,14 @@ impl EnrollmentAuthorityMaterial {
         generation: u64,
         newer_digest: ContentDigest,
     ) -> ContentDigest {
-        let mut message = Vec::with_capacity(32 * 4 + 8 + 48);
-        message.extend_from_slice(b"tine/enrollment-audit-cursor/v1\0");
-        message.extend_from_slice(self.claim.authority_id.as_bytes());
-        message.extend_from_slice(self.resource_id.as_bytes());
-        message.extend_from_slice(head.as_bytes());
-        message.extend_from_slice(digest.as_bytes());
-        message.extend_from_slice(&generation.to_be_bytes());
-        message.extend_from_slice(newer_digest.as_bytes());
+        let message = audit_cursor_message_bytes(
+            self.claim.authority_id,
+            self.resource_id,
+            head,
+            digest,
+            generation,
+            newer_digest,
+        );
         ContentDigest::from_bytes(
             hmac::sign(&self.key, &message)
                 .as_ref()
@@ -460,6 +460,38 @@ impl EnrollmentAuthorityMaterial {
                 .expect("SHA-256 tag"),
         )
     }
+
+    fn verify_audit_cursor(&self, cursor: &EnrollmentAuditCursor) -> Result<(), EnrollmentError> {
+        let message = audit_cursor_message_bytes(
+            self.claim.authority_id,
+            self.resource_id,
+            cursor.head,
+            cursor.digest,
+            cursor.generation,
+            cursor.newer_digest,
+        );
+        hmac::verify(&self.key, &message, cursor.authentication_tag.as_bytes())
+            .map_err(|_| EnrollmentError::InvalidAuditCursor)
+    }
+}
+
+fn audit_cursor_message_bytes(
+    authority_id: Uuid,
+    authority_resource_id: ContentDigest,
+    head: ContentDigest,
+    digest: ContentDigest,
+    generation: u64,
+    newer_digest: ContentDigest,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(32 * 4 + 8 + 48);
+    message.extend_from_slice(b"tine/enrollment-audit-cursor/v1\0");
+    message.extend_from_slice(authority_id.as_bytes());
+    message.extend_from_slice(authority_resource_id.as_bytes());
+    message.extend_from_slice(head.as_bytes());
+    message.extend_from_slice(digest.as_bytes());
+    message.extend_from_slice(&generation.to_be_bytes());
+    message.extend_from_slice(newer_digest.as_bytes());
+    message
 }
 
 struct EnrollmentAuthority {
@@ -1106,17 +1138,10 @@ impl EnrollmentReader {
         self.authority.validate_current()?;
         let (mut next, mut expected_generation, mut newer) = match start {
             Some(cursor) => {
-                if cursor.head != self.current.digest
-                    || cursor.authentication_tag
-                        != self.authority.material.audit_cursor_tag(
-                            cursor.head,
-                            cursor.digest,
-                            cursor.generation,
-                            cursor.newer_digest,
-                        )
-                {
+                if cursor.head != self.current.digest {
                     return Err(EnrollmentError::InvalidAuditCursor);
                 }
+                self.authority.material.verify_audit_cursor(&cursor)?;
                 let newer_record = read_record(&self.directories.records, cursor.newer_digest)?;
                 validate_record_authority(
                     &newer_record,
@@ -2095,8 +2120,12 @@ fn validate_namespaces(directories: &EnrollmentDirectories) -> Result<(), Enroll
         let accepted = match name.as_str() {
             RECORDS_DIRECTORY => entry.file_type()?.is_dir(),
             HEAD_FILE | LEASE_FILE | AUTHORITY_FILE => regular_entry(&entry)?,
-            _ if name.starts_with(HEAD_TEMP_PREFIX) || name.starts_with(AUTHORITY_TEMP_PREFIX) => {
-                regular_entry(&entry)?
+            _ if name.starts_with(HEAD_TEMP_PREFIX) => regular_entry(&entry)?,
+            _ if name.starts_with(AUTHORITY_TEMP_PREFIX) => {
+                if !regular_entry(&entry)? {
+                    return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+                }
+                true
             }
             _ => false,
         };
@@ -2299,7 +2328,7 @@ fn provision_or_resume_enrollment_authority(
         }
         Ok(_) => {
             let authority =
-                open_enrollment_authority_allow_link_gap(directories, binding, lease.resource_id)?;
+                open_enrollment_authority_for_recovery(directories, binding, lease.resource_id)?;
             authority.material.claim.validate_initial_intent(shadow)?;
             recover_authority_temps(directories, lease, binding, shadow, Some(&authority))?;
             drop(authority);
@@ -2351,11 +2380,12 @@ fn recover_authority_temps(
     shadow: &ShadowImportV1,
     installed: Option<&EnrollmentAuthority>,
 ) -> Result<Option<String>, EnrollmentError> {
-    let installed_bytes = installed
-        .map(|authority| canonical_authority_claim_bytes(&authority.material.claim))
-        .transpose()?;
+    if let Some(authority) = installed {
+        recover_installed_authority_temp(directories, lease, authority)?;
+        return Ok(None);
+    }
+
     let mut resumable = None;
-    let mut removable = Vec::new();
     for entry in directories.enrollment.entries()? {
         let entry = entry?;
         let name = entry
@@ -2375,13 +2405,6 @@ fn recover_authority_temps(
             "enrollment authority temporary file",
             true,
         )?;
-        if let Some(expected) = &installed_bytes {
-            if bytes.is_empty() || bytes == *expected {
-                removable.push(name);
-                continue;
-            }
-            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
-        }
         let claim = decode_authority_claim(&bytes)?;
         claim.validate_initial_intent(shadow)?;
         let resource_id = authority_resource_id(&identity);
@@ -2390,18 +2413,91 @@ fn recover_authority_temps(
             return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
         }
     }
-    if installed.is_some() {
-        let removed = !removable.is_empty();
-        for name in removable {
-            lease.validate_current()?;
-            directories.enrollment.remove_file(&name)?;
-        }
-        if removed {
-            sync_dir_required(&directories.enrollment)
-                .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
-        }
-    }
     Ok(resumable)
+}
+
+fn recover_installed_authority_temp(
+    directories: &EnrollmentDirectories,
+    lease: &EnrollmentLease,
+    installed: &EnrollmentAuthority,
+) -> Result<(), EnrollmentError> {
+    let expected_bytes = canonical_authority_claim_bytes(&installed.material.claim)?;
+    let mut temps = Vec::new();
+    for entry in directories.enrollment.entries()? {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| EnrollmentError::AmbiguousAuthorityProvisioning)?;
+        if !name.starts_with(AUTHORITY_TEMP_PREFIX) {
+            continue;
+        }
+        if !regular_entry(&entry)? {
+            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+        }
+        let state = read_bounded_authoritative_file_for_recovery(
+            &directories.enrollment,
+            &name,
+            MAX_ENROLLMENT_AUTHORITY_BYTES,
+            "enrollment authority temporary file",
+        )
+        .map_err(|_| EnrollmentError::AmbiguousAuthorityProvisioning)?;
+        temps.push((name, state));
+    }
+
+    if temps.is_empty() {
+        if authoritative_file_link_count(&installed.file)? != 1 {
+            return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+        }
+        return Ok(());
+    }
+    if !authority_publication_uses_link_unlink() || temps.len() != 1 {
+        return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+    }
+
+    let (temp_name, (temp_bytes, temp_identity, temp_links)) = temps.pop().expect("one temp");
+    if temp_bytes.is_empty()
+        || temp_bytes != expected_bytes
+        || temp_identity != installed.identity
+        || temp_links != 2
+    {
+        return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+    }
+
+    lease.validate_current()?;
+    let (target_bytes, target_identity, target_links) =
+        read_bounded_authoritative_file_for_recovery(
+            &directories.enrollment,
+            AUTHORITY_FILE,
+            MAX_ENROLLMENT_AUTHORITY_BYTES,
+            "enrollment authority claim",
+        )
+        .map_err(|_| EnrollmentError::AmbiguousAuthorityProvisioning)?;
+    let (temp_bytes, temp_identity, temp_links) = read_bounded_authoritative_file_for_recovery(
+        &directories.enrollment,
+        &temp_name,
+        MAX_ENROLLMENT_AUTHORITY_BYTES,
+        "enrollment authority temporary file",
+    )
+    .map_err(|_| EnrollmentError::AmbiguousAuthorityProvisioning)?;
+    if target_bytes != expected_bytes
+        || target_identity != installed.identity
+        || target_links != 2
+        || temp_bytes.is_empty()
+        || temp_bytes != expected_bytes
+        || temp_identity != installed.identity
+        || temp_links != 2
+    {
+        return Err(EnrollmentError::AmbiguousAuthorityProvisioning);
+    }
+
+    directories.enrollment.remove_file(&temp_name)?;
+    sync_dir_required(&directories.enrollment)
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))
+}
+
+const fn authority_publication_uses_link_unlink() -> bool {
+    cfg!(windows)
 }
 
 fn open_enrollment_authority(
@@ -2409,35 +2505,55 @@ fn open_enrollment_authority(
     binding: &EnrollmentBindingV1,
     lease_resource_id: ContentDigest,
 ) -> Result<EnrollmentAuthority, EnrollmentError> {
-    let authority =
-        open_enrollment_authority_internal(directories, binding, lease_resource_id, false)?;
+    let authority = open_enrollment_authority_internal(directories, binding, lease_resource_id)?;
     authority.validate_current()?;
     Ok(authority)
 }
 
-fn open_enrollment_authority_allow_link_gap(
+fn open_enrollment_authority_for_recovery(
     directories: &EnrollmentDirectories,
     binding: &EnrollmentBindingV1,
     lease_resource_id: ContentDigest,
 ) -> Result<EnrollmentAuthority, EnrollmentError> {
-    open_enrollment_authority_internal(directories, binding, lease_resource_id, true)
+    let (bytes, identity, _) = read_bounded_authoritative_file_for_recovery(
+        &directories.enrollment,
+        AUTHORITY_FILE,
+        MAX_ENROLLMENT_AUTHORITY_BYTES,
+        "enrollment authority claim",
+    )?;
+    let file = open_regular_readonly(&directories.enrollment, AUTHORITY_FILE)?;
+    validate_authoritative_file_without_link_count(&file, "enrollment authority claim")?;
+    if authoritative_file_identity(&file)? != identity {
+        return Err(EnrollmentError::AuthorityMismatch);
+    }
+    let material = EnrollmentAuthorityMaterial::from_claim(
+        decode_authority_claim(&bytes)?,
+        authority_resource_id(&identity),
+        binding,
+        lease_resource_id,
+    )?;
+    Ok(EnrollmentAuthority {
+        material,
+        file,
+        directory: directories.enrollment.try_clone()?,
+        identity,
+    })
 }
 
 fn open_enrollment_authority_internal(
     directories: &EnrollmentDirectories,
     binding: &EnrollmentBindingV1,
     lease_resource_id: ContentDigest,
-    allow_link_gap: bool,
 ) -> Result<EnrollmentAuthority, EnrollmentError> {
     let (bytes, identity) = read_bounded_authoritative_file(
         &directories.enrollment,
         AUTHORITY_FILE,
         MAX_ENROLLMENT_AUTHORITY_BYTES,
         "enrollment authority claim",
-        allow_link_gap,
+        false,
     )?;
     let file = open_regular_readonly(&directories.enrollment, AUTHORITY_FILE)?;
-    validate_authoritative_file_with_link_gap(&file, "enrollment authority claim", allow_link_gap)?;
+    validate_authoritative_file(&file, "enrollment authority claim")?;
     if authoritative_file_identity(&file)? != identity {
         return Err(EnrollmentError::AuthorityMismatch);
     }
@@ -2505,6 +2621,32 @@ fn read_bounded_authoritative_file(
     Ok((bytes, identity))
 }
 
+fn read_bounded_authoritative_file_for_recovery(
+    directory: &Dir,
+    name: &str,
+    maximum: usize,
+    description: &str,
+) -> Result<(Vec<u8>, AuthoritativeFileIdentity, u64), EnrollmentError> {
+    let metadata = directory.symlink_metadata(name)?;
+    if !cap_metadata_is_authoritative_file(&metadata) || metadata.len() > maximum as u64 {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "{description} is not a bounded regular no-follow file"
+        )));
+    }
+    let file = open_regular_readonly(directory, name)?;
+    validate_authoritative_file_without_link_count(&file, description)?;
+    let identity = authoritative_file_identity(&file)?;
+    let link_count = authoritative_file_link_count(&file)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take((maximum + 1) as u64).read_to_end(&mut bytes)?;
+    if bytes.len() > maximum {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "{description} exceeds its byte bound"
+        )));
+    }
+    Ok((bytes, identity, link_count))
+}
+
 fn validate_authoritative_file(file: &File, name: &str) -> Result<(), EnrollmentError> {
     validate_authoritative_file_with_link_gap(file, name, false)
 }
@@ -2513,6 +2655,20 @@ fn validate_authoritative_file_with_link_gap(
     file: &File,
     name: &str,
     allow_link_gap: bool,
+) -> Result<(), EnrollmentError> {
+    validate_authoritative_file_without_link_count(file, name)?;
+    let link_count = authoritative_file_link_count(file)?;
+    if link_count != 1 && !(allow_link_gap && link_count == 2) {
+        return Err(EnrollmentError::UnsafeNamespace(format!(
+            "opened {name} has unsafe ownership or links"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_authoritative_file_without_link_count(
+    file: &File,
+    name: &str,
 ) -> Result<(), EnrollmentError> {
     let metadata = file.metadata()?;
     if !authoritative_file_kind_allowed(
@@ -2529,12 +2685,6 @@ fn validate_authoritative_file_with_link_gap(
         // SAFETY: geteuid has no arguments or memory-safety preconditions.
         unsafe { libc::geteuid() }
     {
-        return Err(EnrollmentError::UnsafeNamespace(format!(
-            "opened {name} has unsafe ownership or links"
-        )));
-    }
-    let link_count = authoritative_file_link_count(file)?;
-    if link_count != 1 && !(allow_link_gap && link_count == 2) {
         return Err(EnrollmentError::UnsafeNamespace(format!(
             "opened {name} has unsafe ownership or links"
         )));
@@ -4580,6 +4730,115 @@ mod tests {
     }
 
     #[test]
+    fn installed_authority_temp_recovery_rejects_copied_empty_and_multiple_temps() {
+        let binding = test_binding();
+
+        let copied_root = TestRoot::new("authority-installed-copied-temp");
+        let writer =
+            EnrollmentWriter::create(&copied_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let copied_enrollment = enrollment_directory(&copied_root, &binding);
+        let copied_authority = copied_enrollment.join(AUTHORITY_FILE);
+        let copied_temp = copied_enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}copied"));
+        let authority_bytes = fs::read(&copied_authority).unwrap();
+        fs::copy(&copied_authority, &copied_temp).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&copied_root.app(), binding.clone(), shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousAuthorityProvisioning
+        );
+        assert_eq!(fs::read(&copied_authority).unwrap(), authority_bytes);
+        assert_eq!(fs::read(&copied_temp).unwrap(), authority_bytes);
+
+        let empty_root = TestRoot::new("authority-installed-empty-temp");
+        let writer =
+            EnrollmentWriter::create(&empty_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let empty_enrollment = enrollment_directory(&empty_root, &binding);
+        let empty_temp = empty_enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}empty"));
+        fs::write(&empty_temp, b"").unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&empty_root.app(), binding.clone(), shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousAuthorityProvisioning
+        );
+        assert_eq!(fs::read(&empty_temp).unwrap(), b"");
+
+        let multiple_root = TestRoot::new("authority-installed-multiple-temps");
+        let writer =
+            EnrollmentWriter::create(&multiple_root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let multiple_enrollment = enrollment_directory(&multiple_root, &binding);
+        let multiple_authority = multiple_enrollment.join(AUTHORITY_FILE);
+        let first_temp = multiple_enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}first"));
+        let second_temp = multiple_enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}second"));
+        fs::copy(&multiple_authority, &first_temp).unwrap();
+        fs::copy(&multiple_authority, &second_temp).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&multiple_root.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousAuthorityProvisioning
+        );
+        assert!(first_temp.exists());
+        assert!(second_temp.exists());
+    }
+
+    #[test]
+    fn installed_authority_temp_recovery_rejects_foreign_link_state() {
+        let root = TestRoot::new("authority-installed-foreign-link");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let enrollment = enrollment_directory(&root, &binding);
+        let authority = enrollment.join(AUTHORITY_FILE);
+        let temp = enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}link-gap"));
+        let foreign = root.path.join("foreign-authority-link");
+        fs::hard_link(&authority, &temp).unwrap();
+        fs::hard_link(&authority, &foreign).unwrap();
+
+        assert_eq!(
+            EnrollmentWriter::create(&root.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousAuthorityProvisioning
+        );
+        assert!(temp.exists());
+        assert!(foreign.exists());
+    }
+
+    #[test]
+    fn installed_authority_temp_recovers_only_the_platform_link_unlink_gap() {
+        let root = TestRoot::new("authority-installed-link-gap");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+        drop(writer);
+        let enrollment = enrollment_directory(&root, &binding);
+        let authority = enrollment.join(AUTHORITY_FILE);
+        let temp = enrollment.join(format!("{AUTHORITY_TEMP_PREFIX}link-gap"));
+        fs::hard_link(&authority, &temp).unwrap();
+
+        #[cfg(windows)]
+        {
+            let resumed = EnrollmentWriter::create(&root.app(), binding, shadow()).unwrap();
+            assert_eq!(resumed.current().generation(), 1);
+            assert!(!temp.exists());
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                EnrollmentWriter::create(&root.app(), binding, shadow())
+                    .err()
+                    .unwrap(),
+                EnrollmentError::AmbiguousAuthorityProvisioning
+            );
+            assert!(temp.exists());
+        }
+    }
+
+    #[test]
     fn missing_substituted_and_incompatible_authority_fail_closed_and_are_preserved() {
         let binding = test_binding();
 
@@ -4934,7 +5193,7 @@ mod tests {
     }
 
     #[test]
-    fn audit_cursor_rejects_stale_foreign_and_substituted_state() {
+    fn audit_cursor_rejects_wrong_tag_key_message_stale_and_foreign_state() {
         let first_root = TestRoot::new("audit-cursor-first");
         let binding = test_binding();
         let mut first =
@@ -4949,10 +5208,41 @@ mod tests {
             .unwrap();
         let cursor = first.audit_chain_page(None, 1).unwrap().next.unwrap();
 
-        let mut substituted = cursor;
-        substituted.generation = substituted.generation.saturating_sub(1);
+        let mut wrong_tag = cursor;
+        wrong_tag.authentication_tag = ContentDigest::from_bytes([0; 32]);
         assert_eq!(
-            first.audit_chain_page(Some(substituted), 1).err().unwrap(),
+            first.audit_chain_page(Some(wrong_tag), 1).err().unwrap(),
+            EnrollmentError::InvalidAuditCursor
+        );
+
+        let mut wrong_key = cursor;
+        let message = audit_cursor_message_bytes(
+            first.reader.authority.material.claim.authority_id,
+            first.reader.authority.material.resource_id,
+            wrong_key.head,
+            wrong_key.digest,
+            wrong_key.generation,
+            wrong_key.newer_digest,
+        );
+        let forged_key = hmac::Key::new(hmac::HMAC_SHA256, &[0xa5; ENROLLMENT_AUTHORITY_KEY_BYTES]);
+        wrong_key.authentication_tag = ContentDigest::from_bytes(
+            hmac::sign(&forged_key, &message)
+                .as_ref()
+                .try_into()
+                .expect("SHA-256 tag"),
+        );
+        assert_eq!(
+            first.audit_chain_page(Some(wrong_key), 1).err().unwrap(),
+            EnrollmentError::InvalidAuditCursor
+        );
+
+        let mut wrong_message = cursor;
+        wrong_message.generation = wrong_message.generation.saturating_sub(1);
+        assert_eq!(
+            first
+                .audit_chain_page(Some(wrong_message), 1)
+                .err()
+                .unwrap(),
             EnrollmentError::InvalidAuditCursor
         );
 
