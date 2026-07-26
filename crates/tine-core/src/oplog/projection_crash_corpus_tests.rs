@@ -1019,22 +1019,8 @@ fn corpus_manifested_deletion_fixture(
         binding,
     )
     .unwrap();
-    let initial_dir = CorpusDir::new(&format!("{label}-initial"));
-    let (initial, page_id) = corpus_authorized_engine(
-        &initial_dir,
-        &deleted_page.path,
-        &deleted_content,
-        Some((&graph, &receipts)),
-    );
-    let initial_write =
-        crate::oplog::write_projection_exact(&graph, &receipts, &initial, page_id, None).unwrap();
-    assert_eq!(initial_write.plan.target(), deleted_page.bytes.as_bytes());
-    let prior_intent = initial_write.plan.intent().clone();
-    drop(initial);
-
-    let (archive_seed, archive_page_id) =
+    let (archive_seed, page_id) =
         corpus_authorized_engine(&dir, &deleted_page.path, &deleted_content, None);
-    assert_eq!(archive_page_id, page_id);
     drop(archive_seed);
 
     let archive_path = dir.path().join("archive");
@@ -1054,6 +1040,9 @@ fn corpus_manifested_deletion_fixture(
             .disposition(),
         BatchDisposition::Accepted { .. }
     ));
+    let initial_write =
+        crate::oplog::write_projection_exact(&graph, &receipts, &engine, page_id, None).unwrap();
+    assert_eq!(initial_write.plan.target(), deleted_page.bytes.as_bytes());
     let batch_id = BatchId::from_uuid(corpus_uuid(70_010));
     let draft = engine
         .draft_author_transaction(
@@ -1068,18 +1057,7 @@ fn corpus_manifested_deletion_fixture(
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse(&deleted_page.path).unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(

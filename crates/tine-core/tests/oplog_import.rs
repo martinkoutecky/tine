@@ -289,18 +289,9 @@ impl AuthorityFixture {
                 .unwrap(),
             )
             .unwrap();
-        let input = self
-            .receipts
-            .capture_projection_input(
-                &self.graph,
-                endpoint,
-                ManagedPath::parse(&authority.path).unwrap(),
-                Some(&authority.intent),
-            )
-            .unwrap();
         let prepared = self
             .engine
-            .finalize_author_transaction(draft, endpoint, vec![input])
+            .finalize_author_transaction(draft, &self.graph, &self.receipts, endpoint)
             .unwrap();
         let writer = ObjectStore::open(&self.archive_path, workspace()).unwrap();
         writer.publish_prepared(&prepared).unwrap();

@@ -56,7 +56,7 @@ use super::{
     ProjectionWorkIndex, ProjectionWorkTarget, SemanticEffect, SemanticEffectDigest, SemanticError,
     SessionId, ValidatedBatch, WorkspaceId,
 };
-use crate::Graph;
+use crate::{Graph, GraphTextScopeBinding};
 
 const CATALOG_PAGES: &str = "pages";
 const SHARD_META: &str = "shard_meta";
@@ -70,6 +70,9 @@ const SHARD_PAGE_PREAMBLE: &str = "page_preamble";
 const SHARD_PAGE_PREAMBLE_VALUE: &str = "value";
 const TOMBSTONE: &str = "tombstone";
 pub(crate) const MAX_TRANSACTION_OPERATIONS: usize = 100_000;
+const MAX_PREAUTHORING_CAPTURE_PATHS: usize = MAX_TRANSACTION_OPERATIONS * 2;
+const MAX_PREAUTHORING_CAPTURE_PATH_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_PREAUTHORING_CAPTURE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_DOCUMENT_ENTRIES: usize = 1_000_000;
 const MAX_HOT_NON_CATALOG_DOCUMENTS: usize = 64;
 const CRDT_UPDATE_PAYLOAD_SCHEMA_VERSION: u32 = 7;
@@ -1487,6 +1490,7 @@ pub struct CapabilityCapturedProjectionInput {
     state: CapabilityCapturedProjectionState,
     material: CapabilityCapturedProjectionMaterial,
     draft_completed_path: Option<Vec<super::ProjectionCompletedReceipt>>,
+    draft_completed_receipts: Option<Vec<(ProjectionIntent, ProjectionCompletion)>>,
 }
 
 impl CapabilityCapturedProjectionInput {
@@ -1521,6 +1525,7 @@ impl CapabilityCapturedProjectionInput {
             state,
             material,
             draft_completed_path: None,
+            draft_completed_receipts: None,
         }
     }
 
@@ -1556,6 +1561,7 @@ impl CapabilityCapturedProjectionInput {
             state,
             material,
             draft_completed_path: None,
+            draft_completed_receipts: None,
         }
     }
 
@@ -1587,153 +1593,40 @@ pub struct AuthorTransactionDraft {
     external_observation: Option<ExternalImportObservationMaterial>,
 }
 
+/// Complete exact-path evidence required before retrying a local semantic
+/// mutation. Construction is private so callers cannot supply path authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReconciliationNeeded {
+    paths: Vec<ManagedPath>,
+}
+
+impl ReconciliationNeeded {
+    pub(crate) fn paths(&self) -> &[ManagedPath] {
+        &self.paths
+    }
+}
+
+/// Result of consuming a local author draft at the exact-path capture gate.
+pub(crate) enum LocalAuthorCapture {
+    Captured(CapturedAuthorTransaction),
+    ReconciliationNeeded(ReconciliationNeeded),
+}
+
+/// Single-use proof that one exact draft was captured against its enrolled
+/// graph and completed-path authority. It deliberately owns the draft and is
+/// neither cloneable nor constructible outside this module.
+pub(crate) struct CapturedAuthorTransaction {
+    draft: AuthorTransactionDraft,
+    source: ProjectionEndpointBinding,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+    graph_scope: GraphTextScopeBinding,
+    requirement_digest: ContentDigest,
+    captured_inputs: Vec<CapabilityCapturedProjectionInput>,
+}
+
 impl AuthorTransactionDraft {
     pub fn requirements(&self) -> &[ProjectionRequirement] {
         &self.requirements
-    }
-
-    /// Freshly capture the exact graph bytes and authenticated completed-path
-    /// authority owned by this draft. The caller never reconstructs which
-    /// rename bases or prior receipts are required.
-    pub(crate) fn capture_projection_inputs(
-        &self,
-        engine: &ShardedHotEngine,
-        graph: &Graph,
-        receipts: &ProjectionReceiptStore,
-        endpoint: ProjectionEndpointBinding,
-    ) -> Result<Vec<CapabilityCapturedProjectionInput>, EngineError> {
-        if self.generation != engine.history_generation
-            || self.root_token != engine.author_generation_root()?
-        {
-            return Err(EngineError::AuthorDraftStale);
-        }
-        let (_, work_index) = engine.enrolled_projection_runtime()?;
-        if receipts.workspace_id() != engine.workspace_id
-            || receipts.endpoint_binding() != Some(endpoint)
-            || receipts.store_id() != work_index.receipt_store_id()
-        {
-            return Err(EngineError::ProjectionManifest(
-                "draft capture is not bound to the enrolled projection runtime".into(),
-            ));
-        }
-        let external_observation = self.external_observation.as_ref().ok_or_else(|| {
-            EngineError::ProjectionManifest(
-                "external reconciliation draft has no sealed observation".into(),
-            )
-        })?;
-        for entry in external_observation.entries() {
-            let current = graph
-                .read_projection_input(entry.path())
-                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-            if current.as_deref() != entry.state().bytes() {
-                return Err(EngineError::ProjectionManifest(format!(
-                    "draft observation for {} is stale",
-                    entry.path()
-                )));
-            }
-        }
-        let paths = self
-            .requirements
-            .iter()
-            .flat_map(|requirement| {
-                std::iter::once(requirement.path.clone())
-                    .chain(requirement.render_base_path.iter().cloned())
-            })
-            .collect::<BTreeSet<_>>();
-        let mut captured = Vec::with_capacity(paths.len());
-        for path in paths {
-            let observed = external_observation
-                .entries()
-                .iter()
-                .find(|entry| entry.path() == &path)
-                .ok_or_else(|| {
-                    EngineError::ProjectionManifest(format!(
-                        "draft path {path} has no exact fresh external observation"
-                    ))
-                })?;
-            let completed = work_index
-                .completed_receipts_for_path(&path)
-                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
-            let prior_requirement = self.requirements.iter().find(|requirement| {
-                self.pages[&requirement.page_id]
-                    .before
-                    .as_ref()
-                    .is_some_and(|before| before.page.path == path)
-            });
-            let prior = if let Some(requirement) = prior_requirement {
-                let authority = match completed.as_slice() {
-                    [authority]
-                        if matches!(authority.target(), ProjectionWorkTarget::Present(_)) =>
-                    {
-                        authority
-                    }
-                    _ => {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "draft path {path} has no unique completed present authority"
-                        )));
-                    }
-                };
-                let (intent, completion) = receipts
-                    .load_completed_receipt(authority)
-                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                let before = self.pages[&requirement.page_id]
-                    .before
-                    .as_ref()
-                    .ok_or_else(|| {
-                        EngineError::ProjectionManifest(format!(
-                            "draft path {path} has completion authority without semantic pre-state"
-                        ))
-                    })?;
-                let base = receipts
-                    .load_base(&intent)
-                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                let replay = super::projection::plan_projection(
-                    engine.workspace_id,
-                    before,
-                    base.as_ref().map(super::BaseBlob::bytes),
-                )
-                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                if replay.intent() != &intent {
-                    return Err(EngineError::ProjectionManifest(format!(
-                        "draft path {path} completion cannot reproduce its exact rendered bytes"
-                    )));
-                }
-                Some(CapabilityCapturedPriorProjection {
-                    bytes: replay.target().to_vec(),
-                    intent,
-                    completion,
-                })
-            } else {
-                if !completed.is_empty() {
-                    return Err(EngineError::ProjectionManifest(format!(
-                        "draft path {path} has completion authority unrelated to its semantic predecessor"
-                    )));
-                }
-                None
-            };
-            let state = match observed.state() {
-                super::external_import::ExternalImportObservationState::Absent => {
-                    CapabilityCapturedProjectionMaterial::Absent { prior }
-                }
-                super::external_import::ExternalImportObservationState::Present {
-                    bytes,
-                    annotations,
-                } => CapabilityCapturedProjectionMaterial::Present {
-                    bytes: bytes.clone(),
-                    annotations: annotations.clone(),
-                    prior,
-                },
-            };
-            let mut input = CapabilityCapturedProjectionInput::from_draft_capability(
-                path,
-                endpoint,
-                receipts.store_id(),
-                state,
-            );
-            input.draft_completed_path = Some(completed);
-            captured.push(input);
-        }
-        Ok(captured)
     }
 }
 
@@ -6503,13 +6396,335 @@ impl ShardedHotEngine {
         })
     }
 
+    /// Inactive session-facing gate for local semantic authoring. The draft is
+    /// consumed whether capture succeeds or reconciliation is required.
+    pub(crate) fn capture_local_author_transaction(
+        &self,
+        draft: AuthorTransactionDraft,
+        graph: &Graph,
+        receipts: &ProjectionReceiptStore,
+        source: ProjectionEndpointBinding,
+    ) -> Result<LocalAuthorCapture, EngineError> {
+        if draft.origin != BatchOrigin::LocalMutation || draft.external_observation.is_some() {
+            return Err(EngineError::ProjectionManifest(
+                "local author capture requires an unobserved LocalMutation draft".into(),
+            ));
+        }
+        match self.capture_author_transaction(draft, graph, receipts, source, false)? {
+            Ok(captured) => Ok(LocalAuthorCapture::Captured(captured)),
+            Err(reconciliation) => Ok(LocalAuthorCapture::ReconciliationNeeded(reconciliation)),
+        }
+    }
+
+    pub(crate) fn capture_external_author_transaction(
+        &self,
+        draft: AuthorTransactionDraft,
+        graph: &Graph,
+        receipts: &ProjectionReceiptStore,
+        source: ProjectionEndpointBinding,
+    ) -> Result<CapturedAuthorTransaction, EngineError> {
+        if !matches!(draft.origin, BatchOrigin::ExternalReconciliation { .. })
+            || draft.external_observation.is_none()
+        {
+            return Err(EngineError::ProjectionManifest(
+                "external author capture requires a sealed reconciliation draft".into(),
+            ));
+        }
+        self.capture_author_transaction(draft, graph, receipts, source, true)?
+            .map_err(|_| {
+                EngineError::ProjectionManifest(
+                    "external author capture unexpectedly requested local reconciliation".into(),
+                )
+            })
+    }
+
+    fn capture_author_transaction(
+        &self,
+        draft: AuthorTransactionDraft,
+        graph: &Graph,
+        receipts: &ProjectionReceiptStore,
+        source: ProjectionEndpointBinding,
+        external: bool,
+    ) -> Result<Result<CapturedAuthorTransaction, ReconciliationNeeded>, EngineError> {
+        self.ensure_not_blocked()?;
+        if source.device_id != draft.author.author_device_id {
+            return Err(EngineError::ProjectionManifest(
+                "source endpoint device does not match batch author".into(),
+            ));
+        }
+        if draft.generation != self.history_generation
+            || draft.root_token != self.author_generation_root()?
+        {
+            return Err(EngineError::AuthorDraftStale);
+        }
+        let (_, work_index) = self.enrolled_projection_runtime()?;
+        if receipts.workspace_id() != self.workspace_id
+            || receipts.endpoint_binding() != Some(source)
+            || receipts.store_id() != work_index.receipt_store_id()
+        {
+            return Err(EngineError::ProjectionManifest(
+                "draft capture is not bound to the enrolled projection runtime".into(),
+            ));
+        }
+        let graph_resource_id = graph
+            .canonical_resource_id()
+            .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+        if graph_resource_id != source.graph_resource_id {
+            return Err(EngineError::ProjectionManifest(
+                "draft capture graph resource does not match its enrolled endpoint".into(),
+            ));
+        }
+
+        let graph_scope = graph
+            .graph_text_scope_binding()
+            .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+        if graph_scope.graph_resource_id() != source.graph_resource_id {
+            return Err(EngineError::ProjectionManifest(
+                "draft capture graph-text scope is not bound to its enrolled endpoint".into(),
+            ));
+        }
+        let paths = exact_author_requirement_paths(&draft)?;
+        let requirement_digest =
+            author_requirement_digest(&draft, source, receipts.store_id(), graph_scope)?;
+        let external_observation = if external {
+            let observation = draft.external_observation.as_ref().ok_or_else(|| {
+                EngineError::ProjectionManifest(
+                    "external reconciliation draft has no sealed observation".into(),
+                )
+            })?;
+            for entry in observation.entries() {
+                let current = graph
+                    .read_projection_input(entry.path())
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                if current.as_deref() != entry.state().bytes() {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "draft observation for {} is stale",
+                        entry.path()
+                    )));
+                }
+            }
+            Some(observation)
+        } else {
+            None
+        };
+
+        let mut retained_bytes = 0_u64;
+        let mut captured_inputs = Vec::with_capacity(paths.len());
+        let mut mismatches = Vec::new();
+        for path in paths {
+            let current = graph
+                .read_projection_input(&path)
+                .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+            if let Some(bytes) = &current {
+                charge_preauthoring_capture_bytes(
+                    &mut retained_bytes,
+                    bytes.len(),
+                    "current graph bytes",
+                )?;
+            }
+            let completed = work_index
+                .completed_receipts_for_path(&path)
+                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+            let prior_requirement = draft.requirements.iter().find(|requirement| {
+                draft.pages[&requirement.page_id]
+                    .before
+                    .as_ref()
+                    .is_some_and(|before| before.page.path == path)
+            });
+            let mut authority_matches = true;
+            let prior = if let Some(requirement) = prior_requirement {
+                let authority = match completed.as_slice() {
+                    [authority]
+                        if matches!(authority.target(), ProjectionWorkTarget::Present(_)) =>
+                    {
+                        Some(authority)
+                    }
+                    _ => {
+                        authority_matches = false;
+                        None
+                    }
+                };
+                if let Some(authority) = authority {
+                    let (intent, completion) = receipts
+                        .load_completed_receipt(authority)
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                    charge_preauthoring_receipt_bytes(
+                        &mut retained_bytes,
+                        &intent,
+                        &completion,
+                        "semantic predecessor receipt",
+                    )?;
+                    let before = draft.pages[&requirement.page_id]
+                        .before
+                        .as_ref()
+                        .expect("prior requirement was selected from a semantic pre-state");
+                    let base = receipts
+                        .load_base(&intent)
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                    let replay = super::projection::plan_projection(
+                        self.workspace_id,
+                        before,
+                        base.as_ref().map(super::BaseBlob::bytes),
+                    )
+                    .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+                    if replay.intent() != &intent {
+                        authority_matches = false;
+                        None
+                    } else {
+                        charge_preauthoring_capture_bytes(
+                            &mut retained_bytes,
+                            replay.target().len(),
+                            "authenticated prior projection bytes",
+                        )?;
+                        Some(CapabilityCapturedPriorProjection {
+                            bytes: replay.target().to_vec(),
+                            intent,
+                            completion,
+                        })
+                    }
+                } else {
+                    None
+                }
+            } else {
+                authority_matches = match completed.as_slice() {
+                    [] => true,
+                    [authority] => matches!(authority.target(), ProjectionWorkTarget::Absent),
+                    _ => false,
+                };
+                None
+            };
+
+            let material = if let Some(observation) = external_observation {
+                let observed = observation
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path() == &path)
+                    .ok_or_else(|| {
+                        EngineError::ProjectionManifest(format!(
+                            "draft path {path} has no exact fresh external observation"
+                        ))
+                    })?;
+                if current.as_deref() != observed.state().bytes() || !authority_matches {
+                    return Err(EngineError::ProjectionManifest(format!(
+                        "draft path {path} changed after external observation"
+                    )));
+                }
+                match observed.state() {
+                    super::external_import::ExternalImportObservationState::Absent => {
+                        CapabilityCapturedProjectionMaterial::Absent { prior }
+                    }
+                    super::external_import::ExternalImportObservationState::Present {
+                        bytes,
+                        annotations,
+                    } => CapabilityCapturedProjectionMaterial::Present {
+                        bytes: bytes.clone(),
+                        annotations: annotations.clone(),
+                        prior,
+                    },
+                }
+            } else {
+                match (current, prior) {
+                    (None, None) if authority_matches => {
+                        CapabilityCapturedProjectionMaterial::Absent { prior: None }
+                    }
+                    (Some(bytes), Some(prior)) if authority_matches && bytes == prior.bytes => {
+                        CapabilityCapturedProjectionMaterial::Present {
+                            bytes,
+                            annotations: prior.intent.annotations().to_vec(),
+                            prior: Some(prior),
+                        }
+                    }
+                    _ => {
+                        mismatches.push(path);
+                        continue;
+                    }
+                }
+            };
+            let mut input = CapabilityCapturedProjectionInput::from_draft_capability(
+                path,
+                source,
+                receipts.store_id(),
+                material,
+            );
+            let captured_receipts = completed
+                .iter()
+                .map(|authority| {
+                    receipts
+                        .load_completed_receipt(authority)
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for (intent, completion) in &captured_receipts {
+                charge_preauthoring_receipt_bytes(
+                    &mut retained_bytes,
+                    intent,
+                    completion,
+                    "captured completion receipt",
+                )?;
+            }
+            input.draft_completed_path = Some(completed);
+            input.draft_completed_receipts = Some(captured_receipts);
+            captured_inputs.push(input);
+        }
+
+        if !mismatches.is_empty() {
+            debug_assert!(mismatches.windows(2).all(|pair| pair[0] < pair[1]));
+            return Ok(Err(ReconciliationNeeded { paths: mismatches }));
+        }
+        Ok(Ok(CapturedAuthorTransaction {
+            draft,
+            source,
+            receipt_store_id: receipts.store_id(),
+            graph_scope,
+            requirement_digest,
+            captured_inputs,
+        }))
+    }
+
+    /// Compatibility entry point for existing headless callers. It no longer
+    /// accepts raw captured inputs: the exact local gate always runs first.
     pub fn finalize_author_transaction(
         &self,
         draft: AuthorTransactionDraft,
+        graph: &Graph,
+        receipts: &ProjectionReceiptStore,
         source: ProjectionEndpointBinding,
-        mut captured_inputs: Vec<CapabilityCapturedProjectionInput>,
     ) -> Result<PreparedBatch, EngineError> {
+        match self.capture_local_author_transaction(draft, graph, receipts, source)? {
+            LocalAuthorCapture::Captured(captured) => {
+                self.finalize_captured_author_transaction(captured, receipts)
+            }
+            LocalAuthorCapture::ReconciliationNeeded(reconciliation) => {
+                Err(EngineError::ProjectionManifest(format!(
+                    "local authoring requires reconciliation for {} exact managed paths",
+                    reconciliation.paths().len()
+                )))
+            }
+        }
+    }
+
+    pub(crate) fn finalize_captured_author_transaction(
+        &self,
+        captured: CapturedAuthorTransaction,
+        receipts: &ProjectionReceiptStore,
+    ) -> Result<PreparedBatch, EngineError> {
+        let CapturedAuthorTransaction {
+            draft,
+            source,
+            receipt_store_id,
+            graph_scope,
+            requirement_digest,
+            mut captured_inputs,
+        } = captured;
         self.ensure_not_blocked()?;
+        if receipt_store_id != receipts.store_id()
+            || receipts.workspace_id() != self.workspace_id
+            || receipts.endpoint_binding() != Some(source)
+        {
+            return Err(EngineError::ProjectionManifest(
+                "captured author token is not bound to the finalizer receipt authority".into(),
+            ));
+        }
         if source.device_id != draft.author.author_device_id {
             return Err(EngineError::ProjectionManifest(
                 "source endpoint device does not match batch author".into(),
@@ -6533,24 +6748,44 @@ impl ShardedHotEngine {
                 "captured projection input is not bound to the enrolled receipt store".into(),
             ));
         }
-        if matches!(draft.origin, BatchOrigin::ExternalReconciliation { .. }) {
-            let (_, work_index) = self.enrolled_projection_runtime()?;
-            for input in &captured_inputs {
-                let expected = work_index
-                    .completed_receipts_for_path(&input.path)
-                    .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
-                if input.draft_completed_path.as_ref() != Some(&expected) {
-                    return Err(EngineError::ProjectionManifest(format!(
-                        "captured path {} no longer has its draft-owned completion authority",
-                        input.path
-                    )));
-                }
-            }
-        }
         if draft.generation != self.history_generation
             || draft.root_token != self.author_generation_root()?
         {
             return Err(EngineError::AuthorDraftStale);
+        }
+        if graph_scope.graph_resource_id() != source.graph_resource_id
+            || requirement_digest
+                != author_requirement_digest(&draft, source, receipt_store_id, graph_scope)?
+        {
+            return Err(EngineError::ProjectionManifest(
+                "captured author token requirement binding changed".into(),
+            ));
+        }
+        let (_, work_index) = self.enrolled_projection_runtime()?;
+        for input in &captured_inputs {
+            let expected = work_index
+                .completed_receipts_for_path(&input.path)
+                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
+            if input.draft_completed_path.as_ref() != Some(&expected) {
+                return Err(EngineError::ProjectionManifest(format!(
+                    "captured path {} no longer has its draft-owned completion authority",
+                    input.path
+                )));
+            }
+            let current_receipts = expected
+                .iter()
+                .map(|authority| {
+                    receipts
+                        .load_completed_receipt(authority)
+                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if input.draft_completed_receipts.as_ref() != Some(&current_receipts) {
+                return Err(EngineError::ProjectionManifest(format!(
+                    "captured path {} receipt bytes changed after draft capture",
+                    input.path
+                )));
+            }
         }
         captured_inputs.sort_unstable_by(|left, right| left.path.cmp(&right.path));
         if !captured_inputs
@@ -6858,65 +7093,6 @@ impl ShardedHotEngine {
         }
         let _ = draft.semantic_effect;
         Ok(prepared)
-    }
-
-    pub(crate) fn finalize_external_import_transaction(
-        &self,
-        draft: AuthorTransactionDraft,
-        source: ProjectionEndpointBinding,
-        captured_inputs: Vec<CapabilityCapturedProjectionInput>,
-        receipts: &ProjectionReceiptStore,
-    ) -> Result<PreparedBatch, EngineError> {
-        if !matches!(draft.origin, BatchOrigin::ExternalReconciliation { .. }) {
-            return Err(EngineError::ProjectionManifest(
-                "external finalizer requires an external reconciliation draft".into(),
-            ));
-        }
-        let (_, work_index) = self.enrolled_projection_runtime()?;
-        if receipts.workspace_id() != self.workspace_id
-            || receipts.endpoint_binding() != Some(source)
-            || receipts.store_id() != work_index.receipt_store_id()
-        {
-            return Err(EngineError::ProjectionManifest(
-                "external finalizer receipt authority is not enrolled".into(),
-            ));
-        }
-        for input in &captured_inputs {
-            let expected = work_index
-                .completed_receipts_for_path(&input.path)
-                .map_err(|error| EngineError::ProjectionWork(error.to_string()))?;
-            if input.draft_completed_path.as_ref() != Some(&expected) {
-                return Err(EngineError::ProjectionManifest(format!(
-                    "captured path {} no longer has its draft-owned completion authority",
-                    input.path
-                )));
-            }
-            let prior = match &input.material {
-                CapabilityCapturedProjectionMaterial::Absent { prior }
-                | CapabilityCapturedProjectionMaterial::Present { prior, .. } => prior.as_ref(),
-            };
-            match (expected.as_slice(), prior) {
-                ([], None) => {}
-                ([authority], Some(prior)) => {
-                    let (intent, completion) = receipts
-                        .load_completed_receipt(authority)
-                        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
-                    if intent != prior.intent || completion != prior.completion {
-                        return Err(EngineError::ProjectionManifest(format!(
-                            "captured path {} receipt bytes changed after draft capture",
-                            input.path
-                        )));
-                    }
-                }
-                _ => {
-                    return Err(EngineError::ProjectionManifest(format!(
-                        "captured path {} prior completion authority changed shape",
-                        input.path
-                    )));
-                }
-            }
-        }
-        self.finalize_author_transaction(draft, source, captured_inputs)
     }
 
     fn prepare_transaction_core(
@@ -14315,6 +14491,160 @@ fn projection_requirements(
     Ok(requirements)
 }
 
+fn exact_author_requirement_paths(
+    draft: &AuthorTransactionDraft,
+) -> Result<Vec<ManagedPath>, EngineError> {
+    let paths = draft
+        .requirements
+        .iter()
+        .flat_map(|requirement| {
+            std::iter::once(requirement.path.clone())
+                .chain(requirement.render_base_path.iter().cloned())
+        })
+        .collect::<BTreeSet<_>>();
+    let path_bytes = paths.iter().try_fold(0_u64, |total, path| {
+        let bytes = u64::try_from(path.as_str().len()).map_err(|_| {
+            EngineError::ProjectionManifest(
+                "pre-authoring exact path length does not fit its bounded counter".into(),
+            )
+        })?;
+        total.checked_add(bytes).ok_or_else(|| {
+            EngineError::ProjectionManifest(
+                "pre-authoring aggregate exact path bytes overflowed".into(),
+            )
+        })
+    })?;
+    enforce_preauthoring_path_bounds(paths.len(), path_bytes)?;
+    Ok(paths.into_iter().collect())
+}
+
+fn enforce_preauthoring_path_bounds(path_count: usize, path_bytes: u64) -> Result<(), EngineError> {
+    if path_count > MAX_PREAUTHORING_CAPTURE_PATHS {
+        return Err(EngineError::ProjectionManifest(format!(
+            "pre-authoring exact path count {} exceeds bound {MAX_PREAUTHORING_CAPTURE_PATHS}",
+            path_count
+        )));
+    }
+    if path_bytes > MAX_PREAUTHORING_CAPTURE_PATH_BYTES {
+        return Err(EngineError::ProjectionManifest(format!(
+            "pre-authoring aggregate exact path bytes {path_bytes} exceed bound \
+            {MAX_PREAUTHORING_CAPTURE_PATH_BYTES}"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct RuntimeAuthorRequirementBinding<'a> {
+    page_id: PageId,
+    path: &'a ManagedPath,
+    precondition: u8,
+    target: u8,
+    render_base_path: Option<&'a ManagedPath>,
+    accepted_frontier: Option<&'a FrontierV2>,
+    post_frontier: &'a FrontierV2,
+}
+
+#[derive(Serialize)]
+struct RuntimeAuthorCaptureBinding<'a> {
+    workspace_id: WorkspaceId,
+    batch_id: BatchId,
+    generation: u64,
+    root_token: ContentDigest,
+    semantic_effect_digest: SemanticEffectDigest,
+    endpoint_id: ProjectionEndpointId,
+    device_id: DeviceId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+    graph_scope: GraphTextScopeBinding,
+    requirements: Vec<RuntimeAuthorRequirementBinding<'a>>,
+}
+
+fn author_requirement_digest(
+    draft: &AuthorTransactionDraft,
+    source: ProjectionEndpointBinding,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+    graph_scope: GraphTextScopeBinding,
+) -> Result<ContentDigest, EngineError> {
+    let requirements = draft
+        .requirements
+        .iter()
+        .map(|requirement| {
+            let page = &draft.pages[&requirement.page_id];
+            RuntimeAuthorRequirementBinding {
+                page_id: requirement.page_id,
+                path: &requirement.path,
+                precondition: match requirement.precondition {
+                    ProjectionRequirementState::Absent => 0,
+                    ProjectionRequirementState::Present => 1,
+                },
+                target: match requirement.target {
+                    ProjectionRequirementState::Absent => 0,
+                    ProjectionRequirementState::Present => 1,
+                },
+                render_base_path: requirement.render_base_path.as_ref(),
+                accepted_frontier: page.before.as_ref().map(|before| &before.frontier),
+                post_frontier: &page.post_frontier,
+            }
+        })
+        .collect();
+    let binding = RuntimeAuthorCaptureBinding {
+        workspace_id: draft.prepared_core.manifest().workspace_id(),
+        batch_id: draft.author.batch_id,
+        generation: draft.generation,
+        root_token: draft.root_token,
+        semantic_effect_digest: draft.prepared_core.manifest().semantic_effect_digest(),
+        endpoint_id: source.endpoint_id,
+        device_id: source.device_id,
+        graph_resource_id: source.graph_resource_id,
+        receipt_store_id,
+        graph_scope,
+        requirements,
+    };
+    let bytes = postcard::to_allocvec(&binding)
+        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+    Ok(ContentDigest::of(&bytes))
+}
+
+fn charge_preauthoring_capture_bytes(
+    retained: &mut u64,
+    bytes: usize,
+    label: &str,
+) -> Result<(), EngineError> {
+    let bytes = u64::try_from(bytes).map_err(|_| {
+        EngineError::ProjectionManifest(format!(
+            "pre-authoring {label} length does not fit its bounded counter"
+        ))
+    })?;
+    let next = retained.checked_add(bytes).ok_or_else(|| {
+        EngineError::ProjectionManifest(format!("pre-authoring aggregate {label} bytes overflowed"))
+    })?;
+    if next > MAX_PREAUTHORING_CAPTURE_BYTES {
+        return Err(EngineError::ProjectionManifest(format!(
+            "pre-authoring retained capture bytes {next} exceed bound \
+             {MAX_PREAUTHORING_CAPTURE_BYTES}"
+        )));
+    }
+    *retained = next;
+    Ok(())
+}
+
+fn charge_preauthoring_receipt_bytes(
+    retained: &mut u64,
+    intent: &ProjectionIntent,
+    completion: &ProjectionCompletion,
+    label: &str,
+) -> Result<(), EngineError> {
+    let intent_bytes = intent
+        .encode()
+        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+    charge_preauthoring_capture_bytes(retained, intent_bytes.len(), label)?;
+    let completion_bytes = completion
+        .encode()
+        .map_err(|error| EngineError::ProjectionManifest(error.to_string()))?;
+    charge_preauthoring_capture_bytes(retained, completion_bytes.len(), label)
+}
+
 fn validate_intent_directions(
     effect: &SemanticEffect,
     page_id: PageId,
@@ -17863,6 +18193,439 @@ mod validation_tests {
             },
         ])
         .unwrap()
+    }
+
+    struct PreauthorGateFixture {
+        root: std::path::PathBuf,
+        writer: ObjectStore,
+        graph: Graph,
+        receipts: ProjectionReceiptStore,
+        engine: ShardedHotEngine,
+        endpoint: ProjectionEndpointBinding,
+        pages: [(PageId, DocumentId, BlockId, ManagedPath); 3],
+    }
+
+    impl PreauthorGateFixture {
+        fn draft_edits(&self, seed: u128, edits: &[(usize, &str)]) -> AuthorTransactionDraft {
+            let operations = edits
+                .iter()
+                .map(|(index, content)| {
+                    let (_, home_document_id, block_id, _) = &self.pages[*index];
+                    SemanticOperation::EditBlockContent {
+                        block: BlockLocation {
+                            block_id: *block_id,
+                            home_document_id: *home_document_id,
+                        },
+                        content: (*content).into(),
+                    }
+                })
+                .collect();
+            self.engine
+                .draft_author_transaction(
+                    AuthorBatch {
+                        batch_id: BatchId::from_uuid(Uuid::from_u128(seed)),
+                        author_device_id: self.endpoint.device_id,
+                        author_session_id: SessionId::from_uuid(Uuid::from_u128(seed + 1)),
+                        crdt_peer_id: CrdtPeerId::from_u64(seed as u64 + 2),
+                    },
+                    BatchOrigin::LocalMutation,
+                    &OperationTransaction::new(operations).unwrap(),
+                )
+                .unwrap()
+        }
+
+        fn graph_path(&self, path: &ManagedPath) -> std::path::PathBuf {
+            self.root.join("graph").join(path.as_str())
+        }
+    }
+
+    fn preauthor_gate_fixture(seed: u128) -> PreauthorGateFixture {
+        let lineage = LineageDigest::of(format!("preauthor-gate-{seed}").as_bytes());
+        let (root, writer, mut engine, _) = enrolled_test_engine(seed, lineage);
+        std::fs::create_dir_all(root.join("graph/pages")).unwrap();
+        let graph = Graph::open(&root.join("graph"));
+        let endpoint = engine.projection_endpoint_binding().unwrap();
+        let receipts = ProjectionReceiptStore::open_for_endpoint(
+            &root.join("receipts"),
+            writer.workspace_id(),
+            endpoint,
+        )
+        .unwrap();
+        let pages = [
+            (
+                PageId::from_uuid(Uuid::from_u128(seed + 10)),
+                DocumentId::from_uuid(Uuid::from_u128(seed + 11)),
+                BlockId::from_uuid(Uuid::from_u128(seed + 12)),
+                ManagedPath::parse("pages/gate-a.md").unwrap(),
+            ),
+            (
+                PageId::from_uuid(Uuid::from_u128(seed + 20)),
+                DocumentId::from_uuid(Uuid::from_u128(seed + 21)),
+                BlockId::from_uuid(Uuid::from_u128(seed + 22)),
+                ManagedPath::parse("pages/gate-b.md").unwrap(),
+            ),
+            (
+                PageId::from_uuid(Uuid::from_u128(seed + 30)),
+                DocumentId::from_uuid(Uuid::from_u128(seed + 31)),
+                BlockId::from_uuid(Uuid::from_u128(seed + 32)),
+                ManagedPath::parse("pages/gate-c.md").unwrap(),
+            ),
+        ];
+        let mut operations = Vec::new();
+        for (index, (page_id, home_document_id, block_id, path)) in pages.iter().enumerate() {
+            operations.extend(
+                create_page_with_block(
+                    *page_id,
+                    *home_document_id,
+                    *block_id,
+                    &format!("Gate {index}"),
+                    path.as_str(),
+                )
+                .operations,
+            );
+        }
+        let bootstrap_id = BatchId::from_uuid(Uuid::from_u128(seed + 40));
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                AuthorBatch {
+                    batch_id: bootstrap_id,
+                    author_device_id: endpoint.device_id,
+                    author_session_id: SessionId::from_uuid(Uuid::from_u128(seed + 41)),
+                    crdt_peer_id: CrdtPeerId::from_u64(seed as u64 + 42),
+                },
+                &OperationTransaction::new(operations).unwrap(),
+            )
+            .unwrap();
+        writer.publish_prepared(&prepared).unwrap();
+        engine.stage_archive_batch(bootstrap_id).unwrap();
+        for (page_id, _, _, _) in &pages {
+            crate::oplog::write_projection_exact(&graph, &receipts, &engine, *page_id, None)
+                .unwrap();
+        }
+        PreauthorGateFixture {
+            root,
+            writer,
+            graph,
+            receipts,
+            engine,
+            endpoint,
+            pages,
+        }
+    }
+
+    fn finish_preauthor_gate_fixture(fixture: PreauthorGateFixture) {
+        let root = fixture.root.clone();
+        drop(fixture);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preauthor_gate_same_page_external_edit_returns_reconciliation_without_batch() {
+        let fixture = preauthor_gate_fixture(90_000);
+        let draft = fixture.draft_edits(90_100, &[(0, "local")]);
+        std::fs::write(
+            fixture.graph_path(&fixture.pages[0].3),
+            b"- unseen external\n",
+        )
+        .unwrap();
+        let committed_before = fixture.writer.committed_manifests().unwrap();
+        let reconciliation = match fixture
+            .engine
+            .capture_local_author_transaction(
+                draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(_) => panic!("unseen exact bytes passed capture"),
+            LocalAuthorCapture::ReconciliationNeeded(reconciliation) => reconciliation,
+        };
+        assert_eq!(reconciliation.paths(), &[fixture.pages[0].3.clone()]);
+        assert_eq!(
+            fixture.writer.committed_manifests().unwrap(),
+            committed_before
+        );
+        finish_preauthor_gate_fixture(fixture);
+    }
+
+    #[test]
+    fn preauthor_gate_exact_match_returns_finalizable_sealed_token() {
+        let fixture = preauthor_gate_fixture(90_500);
+        let batch_id = BatchId::from_uuid(Uuid::from_u128(90_600));
+        let draft = fixture.draft_edits(90_600, &[(0, "accepted local")]);
+        let captured = match fixture
+            .engine
+            .capture_local_author_transaction(
+                draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("exact base did not pass"),
+        };
+        let prepared = fixture
+            .engine
+            .finalize_captured_author_transaction(captured, &fixture.receipts)
+            .unwrap();
+        assert_eq!(prepared.manifest().batch_id(), batch_id);
+        assert_eq!(prepared.manifest().origin(), BatchOrigin::LocalMutation);
+        assert_eq!(
+            prepared
+                .objects()
+                .iter()
+                .filter(|object| object.kind() == ObjectKind::ProjectionIntent)
+                .count(),
+            1
+        );
+        finish_preauthor_gate_fixture(fixture);
+    }
+
+    #[test]
+    fn preauthor_gate_returns_complete_sorted_exact_set_and_ignores_unrelated_page() {
+        let fixture = preauthor_gate_fixture(91_000);
+        let draft = fixture.draft_edits(91_100, &[(0, "local a"), (1, "local b")]);
+        std::fs::write(fixture.graph_path(&fixture.pages[1].3), b"- external b\n").unwrap();
+        std::fs::write(fixture.graph_path(&fixture.pages[0].3), b"- external a\n").unwrap();
+        std::fs::write(
+            fixture.graph_path(&fixture.pages[2].3),
+            b"- unrelated external c\n",
+        )
+        .unwrap();
+        let reconciliation = match fixture
+            .engine
+            .capture_local_author_transaction(
+                draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(_) => panic!("two stale paths passed capture"),
+            LocalAuthorCapture::ReconciliationNeeded(reconciliation) => reconciliation,
+        };
+        assert_eq!(
+            reconciliation.paths(),
+            &[fixture.pages[0].3.clone(), fixture.pages[1].3.clone()]
+        );
+        finish_preauthor_gate_fixture(fixture);
+    }
+
+    #[test]
+    fn preauthor_gate_rename_includes_old_new_and_render_base_requirements() {
+        let fixture = preauthor_gate_fixture(92_000);
+        let new_path = ManagedPath::parse("pages/gate-renamed.md").unwrap();
+        let draft = fixture
+            .engine
+            .draft_author_transaction(
+                AuthorBatch {
+                    batch_id: BatchId::from_uuid(Uuid::from_u128(92_100)),
+                    author_device_id: fixture.endpoint.device_id,
+                    author_session_id: SessionId::from_uuid(Uuid::from_u128(92_101)),
+                    crdt_peer_id: CrdtPeerId::from_u64(92_102),
+                },
+                BatchOrigin::LocalMutation,
+                &OperationTransaction::new(vec![SemanticOperation::EditPagePath {
+                    page_id: fixture.pages[0].0,
+                    path: new_path.clone(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(draft.requirements.len(), 2);
+        assert!(draft
+            .requirements
+            .iter()
+            .any(|requirement| requirement.render_base_path() == Some(&fixture.pages[0].3)));
+        std::fs::write(fixture.graph_path(&fixture.pages[0].3), b"- changed old\n").unwrap();
+        std::fs::write(fixture.graph_path(&new_path), b"- occupied new\n").unwrap();
+        let reconciliation = match fixture
+            .engine
+            .capture_local_author_transaction(
+                draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(_) => panic!("stale rename paths passed capture"),
+            LocalAuthorCapture::ReconciliationNeeded(reconciliation) => reconciliation,
+        };
+        assert_eq!(
+            reconciliation.paths(),
+            &[fixture.pages[0].3.clone(), new_path]
+        );
+        finish_preauthor_gate_fixture(fixture);
+    }
+
+    #[test]
+    fn preauthor_gate_token_is_single_use_and_rejects_forgery_cross_draft_and_staleness() {
+        let mut fixture = preauthor_gate_fixture(93_000);
+        let forged_draft = fixture.draft_edits(93_100, &[(0, "forged")]);
+        let mut forged = match fixture
+            .engine
+            .capture_local_author_transaction(
+                forged_draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("fresh fixture was stale"),
+        };
+        forged.requirement_digest = ContentDigest::of(b"forged");
+        assert!(matches!(
+            fixture
+                .engine
+                .finalize_captured_author_transaction(forged, &fixture.receipts),
+            Err(EngineError::ProjectionManifest(message))
+                if message.contains("requirement binding")
+        ));
+
+        let first_draft = fixture.draft_edits(93_200, &[(0, "first")]);
+        let mut cross_draft = match fixture
+            .engine
+            .capture_local_author_transaction(
+                first_draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("fresh fixture was stale"),
+        };
+        cross_draft.draft = fixture.draft_edits(93_300, &[(1, "other draft")]);
+        assert!(matches!(
+            fixture
+                .engine
+                .finalize_captured_author_transaction(cross_draft, &fixture.receipts),
+            Err(EngineError::ProjectionManifest(message))
+                if message.contains("requirement binding")
+        ));
+
+        let stale_draft = fixture.draft_edits(93_400, &[(0, "eventually stale")]);
+        let stale = match fixture
+            .engine
+            .capture_local_author_transaction(
+                stale_draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("fresh fixture was stale"),
+        };
+        let advancing_draft = fixture.draft_edits(93_500, &[(1, "advance")]);
+        let advancing = match fixture
+            .engine
+            .capture_local_author_transaction(
+                advancing_draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("fresh fixture was stale"),
+        };
+        let advancing = fixture
+            .engine
+            .finalize_captured_author_transaction(advancing, &fixture.receipts)
+            .unwrap();
+        let advancing_batch = advancing.manifest().batch_id();
+        fixture.writer.publish_prepared(&advancing).unwrap();
+        fixture.engine.stage_archive_batch(advancing_batch).unwrap();
+        assert!(matches!(
+            fixture
+                .engine
+                .finalize_captured_author_transaction(stale, &fixture.receipts),
+            Err(EngineError::AuthorDraftStale)
+        ));
+        finish_preauthor_gate_fixture(fixture);
+    }
+
+    #[test]
+    fn preauthor_gate_capture_bounds_block_before_retention_overflow() {
+        assert!(matches!(
+            enforce_preauthoring_path_bounds(MAX_PREAUTHORING_CAPTURE_PATHS + 1, 0),
+            Err(EngineError::ProjectionManifest(message))
+                if message.contains("path count")
+        ));
+        assert!(matches!(
+            enforce_preauthoring_path_bounds(1, MAX_PREAUTHORING_CAPTURE_PATH_BYTES + 1),
+            Err(EngineError::ProjectionManifest(message))
+                if message.contains("path bytes")
+        ));
+        let mut retained = MAX_PREAUTHORING_CAPTURE_BYTES - 1;
+        charge_preauthoring_capture_bytes(&mut retained, 1, "test bytes").unwrap();
+        assert_eq!(retained, MAX_PREAUTHORING_CAPTURE_BYTES);
+        assert!(matches!(
+            charge_preauthoring_capture_bytes(&mut retained, 1, "test bytes"),
+            Err(EngineError::ProjectionManifest(message))
+                if message.contains("exceed bound")
+        ));
+    }
+
+    #[test]
+    fn post_capture_graph_race_is_still_blocked_by_projection_precondition() {
+        let mut fixture = preauthor_gate_fixture(94_000);
+        let draft = fixture.draft_edits(94_100, &[(0, "local after capture")]);
+        let captured = match fixture
+            .engine
+            .capture_local_author_transaction(
+                draft,
+                &fixture.graph,
+                &fixture.receipts,
+                fixture.endpoint,
+            )
+            .unwrap()
+        {
+            LocalAuthorCapture::Captured(captured) => captured,
+            LocalAuthorCapture::ReconciliationNeeded(_) => panic!("fresh fixture was stale"),
+        };
+        let external = b"- post-capture external\n";
+        std::fs::write(fixture.graph_path(&fixture.pages[0].3), external).unwrap();
+        let prepared = fixture
+            .engine
+            .finalize_captured_author_transaction(captured, &fixture.receipts)
+            .unwrap();
+        let batch_id = prepared.manifest().batch_id();
+        fixture.writer.publish_prepared(&prepared).unwrap();
+        fixture.engine.stage_archive_batch(batch_id).unwrap();
+        let work = fixture
+            .engine
+            .projection_work_index()
+            .unwrap()
+            .pending_for_path(&fixture.pages[0].3)
+            .unwrap()
+            .into_iter()
+            .find(|work| work.batch_id() == batch_id)
+            .unwrap();
+        assert!(crate::oplog::execute_manifested_projection_work(
+            &fixture.graph,
+            &fixture.receipts,
+            &mut fixture.engine,
+            &work,
+        )
+        .is_err());
+        assert_eq!(
+            std::fs::read(fixture.graph_path(&fixture.pages[0].3)).unwrap(),
+            external
+        );
+        finish_preauthor_gate_fixture(fixture);
     }
 
     fn dependencies_for(
@@ -22988,15 +23751,11 @@ mod validation_tests {
                 .unwrap(),
             )
             .unwrap();
-        let captured = receipts
-            .capture_projection_input(&graph, endpoint, path, None)
-            .unwrap();
-
         engine.prepare_operational_recovery_replay().unwrap();
         assert_eq!(engine.history_generation, 0);
         assert!(engine.authenticated_history_replay);
         assert!(matches!(
-            engine.finalize_author_transaction(draft, endpoint, vec![captured]),
+            engine.finalize_author_transaction(draft, &graph, &receipts, endpoint),
             Err(EngineError::ReferenceCatalog(_))
         ));
         assert!(engine.authenticated_history_replay);
