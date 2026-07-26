@@ -1297,6 +1297,13 @@ pub struct Graph {
     /// Sole versioned eligibility policy for normal graph text discovery and
     /// exact existing-file access. It grants no creation/projection authority.
     graph_text_scope: GraphTextScope,
+    /// Exact bytes from which this test-only scan instance derived its scope and
+    /// managed roots. A scan must require a fresh Graph when the case-insensitive
+    /// on-disk config path no longer has this description.
+    #[cfg(test)]
+    reconciliation_scan_open_config_description: Option<BlobDescription>,
+    #[cfg(test)]
+    reconciliation_scan_open_config_utf8: bool,
     /// Private, process-local graph-text completeness capability. This state is
     /// neither serialized nor consulted by durable import/projection paths in
     /// this packet.
@@ -3755,6 +3762,30 @@ pub struct GraphMeta {
     pub guide_announced: bool,
 }
 
+#[cfg(test)]
+fn reconciliation_scan_config_path_at_open(root: &Path) -> PathBuf {
+    let exact = root.join("logseq").join("config.edn");
+    let matching = |directory: &Path, expected: &str| -> Option<PathBuf> {
+        let mut found = None;
+        for entry in fs::read_dir(directory).ok()? {
+            let entry = entry.ok()?;
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if name.eq_ignore_ascii_case(expected) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(entry.path());
+            }
+        }
+        found
+    };
+    let Some(logseq) = matching(root, "logseq") else {
+        return exact;
+    };
+    matching(&logseq, "config.edn").unwrap_or(exact)
+}
+
 impl Graph {
     /// Open a graph for use by the application, rejecting any configured page or
     /// journal directory that can escape the selected graph. `Graph::open` stays
@@ -3877,9 +3908,15 @@ impl Graph {
         let projection_root = open_projection_root_nofollow(&root).ok();
         let managed_write_binding =
             managed_text_write_binding_for_resource(&root, projection_root.as_ref());
-        let config = fs::read_to_string(root.join("logseq").join("config.edn"))
-            .map(|s| Config::parse(&s))
-            .unwrap_or_default();
+        #[cfg(test)]
+        let config_path = reconciliation_scan_config_path_at_open(&root);
+        #[cfg(not(test))]
+        let config_path = root.join("logseq").join("config.edn");
+        let config_bytes = fs::read(config_path).ok();
+        let config_text = config_bytes
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok());
+        let config = config_text.map(Config::parse).unwrap_or_default();
         let journal_format = JournalFormat::new(
             config.journal_file_name_format.as_deref(),
             config.journal_page_title_format.as_deref(),
@@ -3893,6 +3930,12 @@ impl Graph {
             root,
             config,
             graph_text_scope,
+            #[cfg(test)]
+            reconciliation_scan_open_config_description: config_bytes
+                .as_deref()
+                .map(BlobDescription::of),
+            #[cfg(test)]
+            reconciliation_scan_open_config_utf8: config_bytes.is_none() || config_text.is_some(),
             graph_text_admission: Arc::new(GraphTextAdmissionControl {
                 state: RwLock::new(GraphTextAdmissionState::Unbuilt),
             }),
@@ -21036,6 +21079,31 @@ fn collect_reconciliation_scan_pass(
             )
         })?
         .try_clone()?;
+    let mut instrumentation = GraphTextScanPassInstrumentation {
+        directories: 1,
+        peak_read_buffers: 1,
+        peak_read_buffer_bytes: limits.read_buffer_bytes as u64,
+        ..GraphTextScanPassInstrumentation::default()
+    };
+    let mut aggregate_hashed_bytes = 0_u64;
+    if !graph.reconciliation_scan_open_config_utf8 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "reconciliation scan config refresh required: Graph opened from non-UTF-8 config",
+        ));
+    }
+    let current_config_description = reconciliation_scan_current_config_description(
+        &root,
+        &mut aggregate_hashed_bytes,
+        &mut instrumentation,
+        limits,
+    )?;
+    if current_config_description != graph.reconciliation_scan_open_config_description {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "reconciliation scan config refresh required: on-disk description changed since Graph open",
+        ));
+    }
     let root_directory_resource = canonical_projection_directory_resource_id(&root)?;
     let mut directories_by_exact_relative = std::collections::BTreeMap::new();
     directories_by_exact_relative.insert(String::new(), root_directory_resource);
@@ -21049,15 +21117,10 @@ fn collect_reconciliation_scan_pass(
         relative: String::new(),
         depth: 0,
     }];
-    let mut instrumentation = GraphTextScanPassInstrumentation {
-        directories: 1,
-        peak_read_buffers: 1,
-        peak_read_buffer_bytes: limits.read_buffer_bytes as u64,
-        ..GraphTextScanPassInstrumentation::default()
-    };
-    let mut retained_bytes = 1024_u64;
+    let mut retained_bytes = 1024_u64
+        .checked_add(limits.read_buffer_bytes as u64)
+        .ok_or_else(allocation_overflow)?;
     let mut aggregate_path_bytes = 0_u64;
-    let mut aggregate_hashed_bytes = 0_u64;
     reconciliation_scan_update_peak(
         &mut instrumentation,
         directories_by_exact_relative.len(),
@@ -21215,7 +21278,7 @@ fn collect_reconciliation_scan_pass(
             } else {
                 None
             };
-            let is_configuration = child_relative == "logseq/config.edn";
+            let is_configuration = child_relative.eq_ignore_ascii_case("logseq/config.edn");
             let is_conflict = page_like && path_is_sync_conflict(Path::new(&child_relative));
             let eligible = graph.graph_text_scope.is_eligible(&child_relative);
             let (class, portable_key) = if is_configuration {
@@ -21320,6 +21383,25 @@ fn collect_reconciliation_scan_pass(
             "scan scope binding changed during capture",
         ));
     }
+    let ending_config_description = reconciliation_scan_current_config_description(
+        graph.projection_root.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?,
+        &mut aggregate_hashed_bytes,
+        &mut instrumentation,
+        limits,
+    )?;
+    if ending_config_description != graph.reconciliation_scan_open_config_description {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "reconciliation scan config refresh required: on-disk description changed during capture",
+        ));
+    }
+    instrumentation.retained_rows = instrumentation.peak_retained_rows;
+    instrumentation.retained_bytes = instrumentation.peak_retained_bytes;
     Ok(GraphTextScanPass {
         graph_resource,
         scope_binding,
@@ -21327,6 +21409,99 @@ fn collect_reconciliation_scan_pass(
         files,
         instrumentation,
     })
+}
+
+#[cfg(test)]
+fn reconciliation_scan_current_config_description(
+    root: &Dir,
+    aggregate_hashed_bytes: &mut u64,
+    instrumentation: &mut crate::oplog::reconciliation_scan::GraphTextScanPassInstrumentation,
+    limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+) -> io::Result<Option<BlobDescription>> {
+    let mut logseq_name = None;
+    let mut inspected = 0_usize;
+    for entry in root.entries()? {
+        inspected = inspected
+            .checked_add(1)
+            .ok_or_else(|| reconciliation_scan_limit_error("config lookup entry count"))?;
+        if inspected > limits.all_entries {
+            return Err(reconciliation_scan_limit_error("config lookup entry count"));
+        }
+        let entry = entry?;
+        let entry_name = entry.file_name();
+        let Some(name) = entry_name.to_str() else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("logseq") {
+            continue;
+        }
+        if logseq_name.replace(name.to_owned()).is_some() {
+            return Err(reconciliation_scan_unsafe_error(
+                "scan config path is ambiguous under case-insensitive comparison",
+            ));
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() || !file_type.is_dir() {
+            return Err(reconciliation_scan_unsafe_error(
+                "scan config parent is not a retained regular directory",
+            ));
+        }
+    }
+    let Some(logseq_name) = logseq_name else {
+        return Ok(None);
+    };
+    projection_real_directory(root, &logseq_name)?;
+    let logseq = open_projection_dir_nofollow(root, &logseq_name)?;
+    let mut config_name = None;
+    inspected = 0;
+    for entry in logseq.entries()? {
+        inspected = inspected
+            .checked_add(1)
+            .ok_or_else(|| reconciliation_scan_limit_error("config lookup entry count"))?;
+        if inspected > limits.all_entries {
+            return Err(reconciliation_scan_limit_error("config lookup entry count"));
+        }
+        let entry = entry?;
+        let entry_name = entry.file_name();
+        let Some(name) = entry_name.to_str() else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("config.edn") {
+            continue;
+        }
+        if config_name.replace(name.to_owned()).is_some() {
+            return Err(reconciliation_scan_unsafe_error(
+                "scan config path is ambiguous under case-insensitive comparison",
+            ));
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() || !file_type.is_file() {
+            return Err(reconciliation_scan_unsafe_error(
+                "scan config path is not a retained regular file",
+            ));
+        }
+    }
+    let Some(config_name) = config_name else {
+        return Ok(None);
+    };
+    let mut file = open_projection_file_nofollow(&logseq, &config_name)?;
+    let resource = canonical_projection_file_resource_id(&file)?;
+    let link_count = projection_file_link_count(&file)?;
+    if link_count != 1 {
+        return Err(reconciliation_scan_unsafe_error(format!(
+            "scan config has ambiguous link count {link_count}"
+        )));
+    }
+    reconciliation_scan_hash_file(
+        &mut file,
+        &format!("{logseq_name}/{config_name}"),
+        resource,
+        link_count,
+        aggregate_hashed_bytes,
+        instrumentation,
+        limits,
+    )
+    .map(Some)
 }
 
 #[cfg(test)]

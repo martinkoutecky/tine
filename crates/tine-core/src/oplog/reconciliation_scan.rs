@@ -11,12 +11,15 @@ use super::{
 use crate::graph_text_scope::GraphTextScopeBinding;
 use crate::model::Graph;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
+use std::mem;
 use std::time::{Duration, Instant};
 
 pub(crate) const GRAPH_TEXT_SCAN_READ_BUFFER_BYTES: usize = 64 * 1024;
+pub(crate) const GRAPH_TEXT_EXPECTED_PAGE_ROWS: usize = 256;
+pub(crate) const GRAPH_TEXT_EXPECTED_PAGE_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_RETAINED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SCAN_EXPECTED_PATHS: usize = 1_000_000;
 const MAX_SCAN_EXACT_PATH_BYTES: usize = 4096;
@@ -33,6 +36,9 @@ pub(crate) struct GraphTextScanLimits {
     pub(crate) retained_rows: usize,
     pub(crate) retained_bytes: u64,
     pub(crate) expected_paths: usize,
+    pub(crate) aggregate_expected_path_bytes: u64,
+    pub(crate) expected_page_rows: usize,
+    pub(crate) expected_page_bytes: u64,
     pub(crate) exact_path_bytes: usize,
     pub(crate) read_buffer_bytes: usize,
 }
@@ -50,6 +56,9 @@ impl Default for GraphTextScanLimits {
             retained_rows: 2_000_000,
             retained_bytes: MAX_SCAN_RETAINED_BYTES,
             expected_paths: MAX_SCAN_EXPECTED_PATHS,
+            aggregate_expected_path_bytes: 512 * 1024 * 1024,
+            expected_page_rows: GRAPH_TEXT_EXPECTED_PAGE_ROWS,
+            expected_page_bytes: GRAPH_TEXT_EXPECTED_PAGE_BYTES,
             exact_path_bytes: MAX_SCAN_EXACT_PATH_BYTES,
             read_buffer_bytes: GRAPH_TEXT_SCAN_READ_BUFFER_BYTES,
         }
@@ -74,16 +83,6 @@ impl GraphTextScanPathClass {
             Self::ProviderConflictCopy => 3,
             Self::Configuration => 4,
             Self::RetainedNonText => 5,
-        }
-    }
-
-    fn managed_kind(self) -> Option<ManagedTextKind> {
-        match self {
-            Self::EligibleManaged(kind) => Some(kind),
-            Self::EligibleUnmanaged
-            | Self::ProviderConflictCopy
-            | Self::Configuration
-            | Self::RetainedNonText => None,
         }
     }
 
@@ -114,6 +113,8 @@ pub(crate) struct GraphTextScanPassInstrumentation {
     pub(crate) peak_retained_bytes: u64,
     pub(crate) peak_read_buffers: u64,
     pub(crate) peak_read_buffer_bytes: u64,
+    pub(crate) retained_rows: u64,
+    pub(crate) retained_bytes: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -152,26 +153,42 @@ pub(crate) struct AuthenticatedExpectedPath {
     pub(crate) owner_binding: ContentDigest,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct AuthenticatedExpectedPathSnapshot {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AuthenticatedExpectedPathStreamHeader {
     pub(crate) binding: ExpectedPathBinding,
-    pub(crate) rows: Vec<AuthenticatedExpectedPath>,
+    pub(crate) total_rows: usize,
     pub(crate) rows_commitment: ContentDigest,
+    /// Live scan-owned cursor state. A joined engine/projection adapter reports
+    /// only its cursor token and bounded page state here, never its engine's
+    /// independently retained authenticated indexes.
+    pub(crate) cursor_retained_rows: usize,
+    pub(crate) cursor_retained_bytes: u64,
 }
 
-impl AuthenticatedExpectedPathSnapshot {
-    pub(crate) fn new(
-        binding: ExpectedPathBinding,
-        mut rows: Vec<AuthenticatedExpectedPath>,
-    ) -> Self {
-        rows.sort_unstable_by(|left, right| left.path.cmp(&right.path));
-        let rows_commitment = expected_rows_commitment(binding, &rows);
-        Self {
-            binding,
-            rows,
-            rows_commitment,
-        }
-    }
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExpectedPathStreamLimits {
+    pub(crate) maximum_rows: usize,
+    pub(crate) maximum_path_bytes: usize,
+    pub(crate) maximum_aggregate_path_bytes: u64,
+    pub(crate) maximum_page_rows: usize,
+    pub(crate) maximum_page_bytes: u64,
+    pub(crate) maximum_retained_rows: usize,
+    pub(crate) maximum_retained_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExpectedPathPageRequest {
+    pub(crate) maximum_rows: usize,
+    pub(crate) maximum_path_bytes: usize,
+    pub(crate) maximum_aggregate_path_bytes: u64,
+    pub(crate) maximum_retained_rows: usize,
+    pub(crate) maximum_retained_bytes: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AuthenticatedExpectedPathPage {
+    pub(crate) rows: Vec<AuthenticatedExpectedPath>,
+    pub(crate) done: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +197,7 @@ pub(crate) enum ExpectedPathSourceFailure {
     Corrupt,
     Ambiguous,
     Unavailable,
+    BoundExceeded,
 }
 
 impl fmt::Display for ExpectedPathSourceFailure {
@@ -189,20 +207,34 @@ impl fmt::Display for ExpectedPathSourceFailure {
             Self::Corrupt => "authenticated expected-path authority is corrupt",
             Self::Ambiguous => "authenticated expected-path authority is ambiguous",
             Self::Unavailable => "authenticated expected-path authority is unavailable",
+            Self::BoundExceeded => "authenticated expected-path page bound exceeded",
         })
     }
 }
 
-/// Test fixture boundary for the later authenticated paged engine cursor.
+/// Test fixture boundary for the later joined authenticated engine/projection
+/// cursor.
 ///
-/// Implementations must return a complete current live-path set rooted at the
-/// supplied binding. The scan validates the compact row commitment, exact and
-/// portable uniqueness, count bounds, and the binding before/after both passes.
+/// Each open returns a small cursor over one exact-path-sorted live set. Pages
+/// must be allocated causally within the supplied row/path/retained limits.
+/// Implementations must fail with `Ambiguous` before opening when exact or
+/// portable path ownership is not unique. They must not rematerialize the
+/// complete catalog in a cursor or page. The scan independently checks ordering,
+/// row/path bounds, total count, the authenticated commitment, and the binding
+/// before/after both filesystem passes and both stream traversals.
 pub(crate) trait AuthenticatedExpectedPathSource {
-    fn capture_expected_paths(
+    type Cursor;
+
+    fn open_expected_paths(
         &self,
-        maximum_rows: usize,
-    ) -> Result<AuthenticatedExpectedPathSnapshot, ExpectedPathSourceFailure>;
+        limits: ExpectedPathStreamLimits,
+    ) -> Result<(AuthenticatedExpectedPathStreamHeader, Self::Cursor), ExpectedPathSourceFailure>;
+
+    fn read_expected_path_page(
+        &self,
+        cursor: &mut Self::Cursor,
+        request: ExpectedPathPageRequest,
+    ) -> Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure>;
 
     fn current_binding(&self) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure>;
 }
@@ -226,7 +258,9 @@ pub(crate) struct GraphTextCandidateBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GraphTextScanCandidate {
     pub(crate) path: ManagedPath,
-    pub(crate) managed_kind: ManagedTextKind,
+    /// Expected rows retain their authenticated semantic kind. Disk-only
+    /// creations deliberately defer kind to point recapture and parsing.
+    pub(crate) managed_kind: Option<ManagedTextKind>,
     pub(crate) change: GraphTextCandidateKind,
     pub(crate) expected_description: Option<BlobDescription>,
     pub(crate) expected_owner_binding: Option<ContentDigest>,
@@ -239,7 +273,6 @@ pub(crate) struct GraphTextScanCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GraphTextScanDiagnosticKind {
     ProviderConflictCopy,
-    EligibleOutsideCreationRoots,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -264,12 +297,20 @@ pub(crate) struct GraphTextScanInstrumentation {
     pub(crate) peak_read_buffers: u64,
     pub(crate) peak_read_buffer_bytes: u64,
     pub(crate) expected_rows: u64,
+    pub(crate) expected_pages: u64,
+    pub(crate) expected_path_bytes: u64,
     pub(crate) candidates: u64,
+    pub(crate) diagnostics: u64,
     pub(crate) parser_invocations: u64,
 }
 
 impl GraphTextScanInstrumentation {
-    fn add_pass(&mut self, pass: GraphTextScanPassInstrumentation) {
+    fn add_pass(
+        &mut self,
+        pass: GraphTextScanPassInstrumentation,
+        live_rows: u64,
+        live_bytes: u64,
+    ) {
         self.passes = self.passes.saturating_add(1);
         self.directory_entries = self
             .directory_entries
@@ -281,10 +322,10 @@ impl GraphTextScanInstrumentation {
         self.bytes_hashed = self.bytes_hashed.saturating_add(pass.bytes_hashed);
         self.peak_retained_rows = self
             .peak_retained_rows
-            .max(pass.peak_retained_rows.saturating_mul(2));
+            .max(live_rows.saturating_add(pass.peak_retained_rows));
         self.peak_retained_bytes = self
             .peak_retained_bytes
-            .max(pass.peak_retained_bytes.saturating_mul(2));
+            .max(live_bytes.saturating_add(pass.peak_retained_bytes));
         self.peak_read_buffers = self.peak_read_buffers.max(pass.peak_read_buffers);
         self.peak_read_buffer_bytes = self.peak_read_buffer_bytes.max(pass.peak_read_buffer_bytes);
     }
@@ -313,6 +354,7 @@ pub(crate) enum GraphTextScanFailureReason {
     ExpectedAuthorityCorrupt,
     ExpectedAuthorityAmbiguous,
     ExpectedAuthorityUnavailable,
+    ConfigRefreshRequired,
     UnsafeFilesystem,
     BoundExceeded,
 }
@@ -354,50 +396,64 @@ where
 {
     let started = Instant::now();
     let mut instrumentation = GraphTextScanInstrumentation::default();
-    let expected = source
-        .capture_expected_paths(limits.expected_paths)
-        .map_err(|failure| {
-            expected_source_failure(started, instrumentation, failure, failure.to_string())
-        })?;
-    validate_expected_snapshot(&expected, limits.expected_paths).map_err(|failure| {
-        expected_source_failure(started, instrumentation, failure, failure.to_string())
-    })?;
-    instrumentation.expected_rows = expected.rows.len() as u64;
-    require_expected_binding(source, expected.binding, started, instrumentation)?;
-
-    let first = graph
-        .capture_reconciliation_scan_pass(limits)
-        .map_err(|error| scan_io_failure(started, instrumentation, error))?;
-    instrumentation.add_pass(first.instrumentation);
-    require_expected_binding(source, expected.binding, started, instrumentation)?;
-
-    between_passes().map_err(|error| scan_io_failure(started, instrumentation, error))?;
-
-    let second = graph
-        .capture_reconciliation_scan_pass(limits)
-        .map_err(|error| scan_io_failure(started, instrumentation, error))?;
-    instrumentation.add_pass(second.instrumentation);
-    require_expected_binding(source, expected.binding, started, instrumentation)?;
-    let combined_retained_rows = first
-        .instrumentation
-        .peak_retained_rows
-        .checked_add(second.instrumentation.peak_retained_rows);
-    let combined_retained_bytes = first
-        .instrumentation
-        .peak_retained_bytes
-        .checked_add(second.instrumentation.peak_retained_bytes);
-    if combined_retained_rows.is_none_or(|rows| rows > limits.retained_rows as u64)
-        || combined_retained_bytes.is_none_or(|bytes| bytes > limits.retained_bytes)
-    {
+    if limits.expected_page_rows == 0 || limits.expected_page_bytes == 0 {
         return Err(scan_io_failure(
             started,
             instrumentation,
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "reconciliation scan simultaneous two-pass scratch bound exceeded",
+                "reconciliation scan expected page bound exceeded",
             ),
         ));
     }
+    let expected_binding = source.current_binding().map_err(|failure| {
+        expected_source_failure(started, instrumentation, failure, failure.to_string())
+    })?;
+
+    let first = graph
+        .capture_reconciliation_scan_pass(limits)
+        .map_err(|error| scan_io_failure(started, instrumentation, error))?;
+    instrumentation.add_pass(first.instrumentation, 0, 0);
+    require_expected_binding(source, expected_binding, started, instrumentation)?;
+
+    between_passes().map_err(|error| scan_io_failure(started, instrumentation, error))?;
+
+    let mut second_limits = limits;
+    second_limits.retained_rows = limits
+        .retained_rows
+        .checked_sub(first.instrumentation.peak_retained_rows as usize)
+        .ok_or_else(|| {
+            scan_io_failure(
+                started,
+                instrumentation,
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "reconciliation scan simultaneous two-pass retained row bound exceeded",
+                ),
+            )
+        })?;
+    second_limits.retained_bytes = limits
+        .retained_bytes
+        .checked_sub(first.instrumentation.peak_retained_bytes)
+        .ok_or_else(|| {
+            scan_io_failure(
+                started,
+                instrumentation,
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "reconciliation scan simultaneous two-pass retained byte bound exceeded",
+                ),
+            )
+        })?;
+    let second = graph
+        .capture_reconciliation_scan_pass(second_limits)
+        .map_err(|error| scan_io_failure(started, instrumentation, error))?;
+    instrumentation.add_pass(
+        second.instrumentation,
+        first.instrumentation.peak_retained_rows,
+        first.instrumentation.peak_retained_bytes,
+    );
+    require_expected_binding(source, expected_binding, started, instrumentation)?;
 
     if !first.evidence_eq(&second) {
         return Err(GraphTextScanFailure {
@@ -408,17 +464,54 @@ where
             wall_time: started.elapsed(),
         });
     }
+    drop(first);
 
-    let scan_epoch_digest = scan_epoch_digest(&second, &expected);
+    let (expected_header, plan) = plan_candidate_merge(
+        source,
+        &second,
+        expected_binding,
+        limits,
+        started,
+        &mut instrumentation,
+    )?;
+    let scan_epoch_digest = scan_epoch_digest(&second, expected_header);
     let binding = GraphTextCandidateBinding {
         graph_resource: second.graph_resource,
         scope_binding: second.scope_binding.clone(),
-        expected_binding: expected.binding,
-        expected_rows_commitment: expected.rows_commitment,
+        expected_binding,
+        expected_rows_commitment: expected_header.rows_commitment,
         scan_epoch_digest,
     };
-    let (candidates, diagnostics) = derive_candidates(&second, &expected, &binding);
+    let output_rows = plan
+        .candidate_count
+        .checked_add(plan.diagnostic_count)
+        .ok_or_else(|| scan_bound_failure(started, instrumentation, "candidate row"))?;
+    let output_bytes = plan
+        .candidate_bytes()
+        .and_then(|bytes| bytes.checked_add(plan.diagnostic_bytes()))
+        .ok_or_else(|| scan_bound_failure(started, instrumentation, "candidate byte"))?;
+    observe_live_memory(
+        &mut instrumentation,
+        second.instrumentation.peak_retained_rows,
+        second.instrumentation.peak_retained_bytes,
+        output_rows as u64,
+        output_bytes,
+        limits,
+        started,
+    )?;
+    let (candidates, diagnostics) = derive_candidates(
+        source,
+        &second,
+        expected_header,
+        &plan,
+        &binding,
+        limits,
+        started,
+        &mut instrumentation,
+    )?;
+    require_expected_binding(source, expected_binding, started, instrumentation)?;
     instrumentation.candidates = candidates.len() as u64;
+    instrumentation.diagnostics = diagnostics.len() as u64;
     Ok(StableGraphTextScan {
         candidates,
         diagnostics,
@@ -464,6 +557,7 @@ fn expected_source_failure(
         ExpectedPathSourceFailure::Unavailable => {
             GraphTextScanFailureReason::ExpectedAuthorityUnavailable
         }
+        ExpectedPathSourceFailure::BoundExceeded => GraphTextScanFailureReason::BoundExceeded,
     };
     GraphTextScanFailure {
         class: GraphTextScanFailureClass::Blocked,
@@ -487,13 +581,16 @@ fn scan_io_failure(
                 || detail.contains("identity")
                 || detail.contains("replaced")));
     let bounded = detail.contains("bound exceeded");
+    let refresh_required = detail.contains("config") && detail.contains("refresh required");
     GraphTextScanFailure {
         class: if unstable {
             GraphTextScanFailureClass::UnstableEpoch
         } else {
             GraphTextScanFailureClass::Blocked
         },
-        reason: if unstable {
+        reason: if refresh_required {
+            GraphTextScanFailureReason::ConfigRefreshRequired
+        } else if unstable {
             GraphTextScanFailureReason::FilesystemEvidenceChanged
         } else if bounded {
             GraphTextScanFailureReason::BoundExceeded
@@ -506,50 +603,39 @@ fn scan_io_failure(
     }
 }
 
-fn validate_expected_snapshot(
-    expected: &AuthenticatedExpectedPathSnapshot,
-    maximum_rows: usize,
-) -> Result<(), ExpectedPathSourceFailure> {
-    if expected.rows.len() > maximum_rows {
-        return Err(ExpectedPathSourceFailure::Unavailable);
-    }
-    if expected.rows_commitment != expected_rows_commitment(expected.binding, &expected.rows) {
-        return Err(ExpectedPathSourceFailure::Corrupt);
-    }
-    let mut exact = BTreeSet::new();
-    let mut portable = BTreeSet::new();
-    for row in &expected.rows {
-        if !exact.insert(row.path.as_str()) || !portable.insert(row.path.portable_key()) {
-            return Err(ExpectedPathSourceFailure::Ambiguous);
-        }
-    }
-    Ok(())
-}
-
 fn expected_rows_commitment(
     binding: ExpectedPathBinding,
     rows: &[AuthenticatedExpectedPath],
 ) -> ContentDigest {
-    let mut hasher = Sha256::new();
-    hasher.update(b"tine/test-only/reconciliation-expected-paths/v1\0");
-    hasher.update(binding.accepted_frontier.as_bytes());
-    hasher.update(binding.projection_generation.to_be_bytes());
-    hasher.update((rows.len() as u64).to_be_bytes());
+    let mut hasher = expected_rows_hasher(binding, rows.len());
     for row in rows {
-        hash_len_bytes(&mut hasher, row.path.as_str().as_bytes());
-        hasher.update(match row.kind {
-            ManagedTextKind::Page => [0],
-            ManagedTextKind::Journal => [1],
-        });
-        hash_description(&mut hasher, row.description);
-        hasher.update(row.owner_binding.as_bytes());
+        hash_expected_row(&mut hasher, row);
     }
     ContentDigest::from_bytes(hasher.finalize().into())
 }
 
+fn expected_rows_hasher(binding: ExpectedPathBinding, total_rows: usize) -> Sha256 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/test-only/reconciliation-expected-paths/v1\0");
+    hasher.update(binding.accepted_frontier.as_bytes());
+    hasher.update(binding.projection_generation.to_be_bytes());
+    hasher.update((total_rows as u64).to_be_bytes());
+    hasher
+}
+
+fn hash_expected_row(hasher: &mut Sha256, row: &AuthenticatedExpectedPath) {
+    hash_len_bytes(hasher, row.path.as_str().as_bytes());
+    hasher.update(match row.kind {
+        ManagedTextKind::Page => [0],
+        ManagedTextKind::Journal => [1],
+    });
+    hash_description(hasher, row.description);
+    hasher.update(row.owner_binding.as_bytes());
+}
+
 fn scan_epoch_digest(
     pass: &GraphTextScanPass,
-    expected: &AuthenticatedExpectedPathSnapshot,
+    expected: AuthenticatedExpectedPathStreamHeader,
 ) -> ContentDigest {
     let mut hasher = Sha256::new();
     hasher.update(b"tine/test-only/reconciliation-scan-epoch/v1\0");
@@ -579,106 +665,552 @@ fn scan_epoch_digest(
     ContentDigest::from_bytes(hasher.finalize().into())
 }
 
-fn derive_candidates(
-    pass: &GraphTextScanPass,
-    expected: &AuthenticatedExpectedPathSnapshot,
-    binding: &GraphTextCandidateBinding,
-) -> (Vec<GraphTextScanCandidate>, Vec<GraphTextScanDiagnostic>) {
-    let disk = pass
-        .files
-        .iter()
-        .filter_map(|file| {
-            file.class
-                .is_eligible()
-                .then(|| (file.exact_relative.as_str(), file))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let expected_by_path = expected
-        .rows
-        .iter()
-        .map(|row| (row.path.as_str(), row))
-        .collect::<BTreeMap<_, _>>();
-    let mut candidates = Vec::new();
-    for row in &expected.rows {
-        match disk.get(row.path.as_str()) {
-            None => candidates.push(GraphTextScanCandidate {
-                path: row.path.clone(),
-                managed_kind: row.kind,
-                change: GraphTextCandidateKind::Absence,
-                expected_description: Some(row.description),
-                expected_owner_binding: Some(row.owner_binding),
-                observed_description: None,
-                observed_file_resource_id: None,
-                observed_link_count: None,
-                binding: binding.clone(),
-            }),
-            Some(file) if file.description != Some(row.description) => {
-                candidates.push(GraphTextScanCandidate {
-                    path: row.path.clone(),
-                    managed_kind: row.kind,
-                    change: GraphTextCandidateKind::Edit,
-                    expected_description: Some(row.description),
-                    expected_owner_binding: Some(row.owner_binding),
-                    observed_description: file.description,
-                    observed_file_resource_id: Some(file.file_resource_id),
-                    observed_link_count: Some(file.link_count),
-                    binding: binding.clone(),
-                });
-            }
-            Some(_) => {}
-        }
-    }
-    for file in &pass.files {
-        let Some(kind) = file.class.managed_kind() else {
-            continue;
-        };
-        if expected_by_path.contains_key(file.exact_relative.as_str()) {
-            continue;
-        }
-        let path = ManagedPath::parse(file.exact_relative.clone())
-            .expect("eligible scan rows retain validated managed paths");
-        candidates.push(GraphTextScanCandidate {
-            path,
-            managed_kind: kind,
-            change: GraphTextCandidateKind::Creation,
-            expected_description: None,
-            expected_owner_binding: None,
-            observed_description: file.description,
-            observed_file_resource_id: Some(file.file_resource_id),
-            observed_link_count: Some(file.link_count),
-            binding: binding.clone(),
-        });
-    }
-    candidates.sort_unstable_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then(left.change.cmp(&right.change))
-    });
+#[derive(Clone, Copy, Debug, Default)]
+struct CandidateMergePlan {
+    candidate_count: usize,
+    candidate_path_bytes: u64,
+    diagnostic_count: usize,
+    diagnostic_path_bytes: u64,
+}
 
-    let diagnostics = pass
-        .files
-        .iter()
-        .filter_map(|file| {
-            let kind = match file.class {
-                GraphTextScanPathClass::ProviderConflictCopy => {
-                    GraphTextScanDiagnosticKind::ProviderConflictCopy
+impl CandidateMergePlan {
+    fn add_candidate_path(&mut self, path: &str) -> io::Result<()> {
+        self.candidate_count = self
+            .candidate_count
+            .checked_add(1)
+            .ok_or_else(expected_allocation_overflow)?;
+        self.candidate_path_bytes = self
+            .candidate_path_bytes
+            .checked_add(path.len() as u64)
+            .ok_or_else(expected_allocation_overflow)?;
+        Ok(())
+    }
+
+    fn candidate_bytes(self) -> Option<u64> {
+        (self.candidate_count as u64)
+            .checked_mul(mem::size_of::<GraphTextScanCandidate>() as u64)
+            .and_then(|bytes| bytes.checked_add(self.candidate_path_bytes))
+    }
+
+    fn diagnostic_bytes(self) -> u64 {
+        (self.diagnostic_count as u64)
+            .saturating_mul(mem::size_of::<GraphTextScanDiagnostic>() as u64)
+            .saturating_add(self.diagnostic_path_bytes)
+    }
+}
+
+fn plan_candidate_merge<S: AuthenticatedExpectedPathSource>(
+    source: &S,
+    pass: &GraphTextScanPass,
+    expected_binding: ExpectedPathBinding,
+    limits: GraphTextScanLimits,
+    started: Instant,
+    instrumentation: &mut GraphTextScanInstrumentation,
+) -> Result<(AuthenticatedExpectedPathStreamHeader, CandidateMergePlan), GraphTextScanFailure> {
+    let mut plan = CandidateMergePlan::default();
+    for file in &pass.files {
+        if file.class == GraphTextScanPathClass::ProviderConflictCopy {
+            plan.diagnostic_count = plan
+                .diagnostic_count
+                .checked_add(1)
+                .ok_or_else(|| scan_bound_failure(started, *instrumentation, "diagnostic row"))?;
+            plan.diagnostic_path_bytes = plan
+                .diagnostic_path_bytes
+                .checked_add(file.exact_relative.len() as u64)
+                .ok_or_else(|| scan_bound_failure(started, *instrumentation, "diagnostic byte"))?;
+        }
+    }
+    let mut disk_index = 0;
+    let header = walk_expected_stream(
+        source,
+        expected_binding,
+        None,
+        pass,
+        limits,
+        0,
+        0,
+        started,
+        instrumentation,
+        |row| {
+            while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
+                match file.exact_relative.as_str().cmp(row.path.as_str()) {
+                    std::cmp::Ordering::Less => {
+                        plan.add_candidate_path(&file.exact_relative)?;
+                        disk_index += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if file.description != Some(row.description) {
+                            plan.add_candidate_path(row.path.as_str())?;
+                        }
+                        disk_index += 1;
+                        return Ok(());
+                    }
+                    std::cmp::Ordering::Greater => break,
                 }
-                GraphTextScanPathClass::EligibleUnmanaged => {
-                    GraphTextScanDiagnosticKind::EligibleOutsideCreationRoots
-                }
-                GraphTextScanPathClass::EligibleManaged(_)
-                | GraphTextScanPathClass::Configuration
-                | GraphTextScanPathClass::RetainedNonText => return None,
-            };
-            Some(GraphTextScanDiagnostic {
+            }
+            plan.add_candidate_path(row.path.as_str())
+        },
+    )?;
+    while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
+        plan.add_candidate_path(&file.exact_relative)
+            .map_err(|error| scan_io_failure(started, *instrumentation, error))?;
+        disk_index += 1;
+    }
+    Ok((header, plan))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_candidates<S: AuthenticatedExpectedPathSource>(
+    source: &S,
+    pass: &GraphTextScanPass,
+    expected_header: AuthenticatedExpectedPathStreamHeader,
+    plan: &CandidateMergePlan,
+    binding: &GraphTextCandidateBinding,
+    limits: GraphTextScanLimits,
+    started: Instant,
+    instrumentation: &mut GraphTextScanInstrumentation,
+) -> Result<(Vec<GraphTextScanCandidate>, Vec<GraphTextScanDiagnostic>), GraphTextScanFailure> {
+    let mut candidates = Vec::with_capacity(plan.candidate_count);
+    let mut diagnostics = Vec::with_capacity(plan.diagnostic_count);
+    for file in &pass.files {
+        if file.class == GraphTextScanPathClass::ProviderConflictCopy {
+            diagnostics.push(GraphTextScanDiagnostic {
                 path: file.exact_relative.clone(),
-                kind,
+                kind: GraphTextScanDiagnosticKind::ProviderConflictCopy,
                 file_resource_id: file.file_resource_id,
                 link_count: file.link_count,
-            })
-        })
-        .collect();
-    (candidates, diagnostics)
+            });
+        }
+    }
+    let output_rows = plan.candidate_count + plan.diagnostic_count;
+    let output_bytes = plan
+        .candidate_bytes()
+        .and_then(|bytes| bytes.checked_add(plan.diagnostic_bytes()))
+        .ok_or_else(|| scan_bound_failure(started, *instrumentation, "candidate byte"))?;
+    let mut disk_index = 0;
+    walk_expected_stream(
+        source,
+        expected_header.binding,
+        Some(expected_header),
+        pass,
+        limits,
+        output_rows,
+        output_bytes,
+        started,
+        instrumentation,
+        |row| {
+            while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
+                match file.exact_relative.as_str().cmp(row.path.as_str()) {
+                    std::cmp::Ordering::Less => {
+                        candidates.push(creation_candidate(file, binding));
+                        disk_index += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if file.description != Some(row.description) {
+                            candidates.push(expected_candidate(
+                                row,
+                                Some(file),
+                                GraphTextCandidateKind::Edit,
+                                binding,
+                            ));
+                        }
+                        disk_index += 1;
+                        return Ok(());
+                    }
+                    std::cmp::Ordering::Greater => break,
+                }
+            }
+            candidates.push(expected_candidate(
+                row,
+                None,
+                GraphTextCandidateKind::Absence,
+                binding,
+            ));
+            Ok(())
+        },
+    )?;
+    while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
+        candidates.push(creation_candidate(file, binding));
+        disk_index += 1;
+    }
+    debug_assert_eq!(candidates.len(), plan.candidate_count);
+    debug_assert_eq!(diagnostics.len(), plan.diagnostic_count);
+    Ok((candidates, diagnostics))
+}
+
+fn next_eligible_file<'a>(
+    files: &'a [GraphTextScanFileFingerprint],
+    index: &mut usize,
+) -> Option<&'a GraphTextScanFileFingerprint> {
+    while let Some(file) = files.get(*index) {
+        if file.class.is_eligible() {
+            return Some(file);
+        }
+        *index += 1;
+    }
+    None
+}
+
+fn creation_candidate(
+    file: &GraphTextScanFileFingerprint,
+    binding: &GraphTextCandidateBinding,
+) -> GraphTextScanCandidate {
+    GraphTextScanCandidate {
+        path: ManagedPath::parse(file.exact_relative.clone())
+            .expect("eligible scan rows retain validated managed paths"),
+        managed_kind: None,
+        change: GraphTextCandidateKind::Creation,
+        expected_description: None,
+        expected_owner_binding: None,
+        observed_description: file.description,
+        observed_file_resource_id: Some(file.file_resource_id),
+        observed_link_count: Some(file.link_count),
+        binding: binding.clone(),
+    }
+}
+
+fn expected_candidate(
+    row: &AuthenticatedExpectedPath,
+    observed: Option<&GraphTextScanFileFingerprint>,
+    change: GraphTextCandidateKind,
+    binding: &GraphTextCandidateBinding,
+) -> GraphTextScanCandidate {
+    GraphTextScanCandidate {
+        path: row.path.clone(),
+        managed_kind: Some(row.kind),
+        change,
+        expected_description: Some(row.description),
+        expected_owner_binding: Some(row.owner_binding),
+        observed_description: observed.and_then(|file| file.description),
+        observed_file_resource_id: observed.map(|file| file.file_resource_id),
+        observed_link_count: observed.map(|file| file.link_count),
+        binding: binding.clone(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_expected_stream<S, F>(
+    source: &S,
+    expected_binding: ExpectedPathBinding,
+    required_header: Option<AuthenticatedExpectedPathStreamHeader>,
+    pass: &GraphTextScanPass,
+    limits: GraphTextScanLimits,
+    output_rows: usize,
+    output_bytes: u64,
+    started: Instant,
+    instrumentation: &mut GraphTextScanInstrumentation,
+    mut visit: F,
+) -> Result<AuthenticatedExpectedPathStreamHeader, GraphTextScanFailure>
+where
+    S: AuthenticatedExpectedPathSource,
+    F: FnMut(&AuthenticatedExpectedPath) -> io::Result<()>,
+{
+    let base_rows = pass
+        .instrumentation
+        .peak_retained_rows
+        .checked_add(output_rows as u64)
+        .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained row"))?;
+    let base_bytes = pass
+        .instrumentation
+        .peak_retained_bytes
+        .checked_add(output_bytes)
+        .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained byte"))?;
+    let stream_limits = ExpectedPathStreamLimits {
+        maximum_rows: limits.expected_paths,
+        maximum_path_bytes: limits.exact_path_bytes,
+        maximum_aggregate_path_bytes: limits.aggregate_expected_path_bytes,
+        maximum_page_rows: limits.expected_page_rows,
+        maximum_page_bytes: limits.expected_page_bytes,
+        maximum_retained_rows: limits
+            .retained_rows
+            .checked_sub(base_rows as usize)
+            .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained row"))?,
+        maximum_retained_bytes: limits
+            .retained_bytes
+            .checked_sub(base_bytes)
+            .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained byte"))?,
+    };
+    let (header, mut cursor) = source
+        .open_expected_paths(stream_limits)
+        .map_err(|failure| {
+            expected_source_failure(started, *instrumentation, failure, failure.to_string())
+        })?;
+    if header.binding != expected_binding {
+        return Err(GraphTextScanFailure {
+            class: GraphTextScanFailureClass::UnstableEpoch,
+            reason: GraphTextScanFailureReason::ExpectedBindingChanged,
+            detail: "expected stream opened at a different authority binding".to_owned(),
+            instrumentation: *instrumentation,
+            wall_time: started.elapsed(),
+        });
+    }
+    if required_header.is_some_and(|required| {
+        required.binding != header.binding
+            || required.total_rows != header.total_rows
+            || required.rows_commitment != header.rows_commitment
+    }) {
+        return Err(expected_source_failure(
+            started,
+            *instrumentation,
+            ExpectedPathSourceFailure::Corrupt,
+            "reopened expected stream changed its authenticated header".to_owned(),
+        ));
+    }
+    if header.total_rows > limits.expected_paths {
+        return Err(scan_bound_failure(
+            started,
+            *instrumentation,
+            "expected row",
+        ));
+    }
+    if header.cursor_retained_rows > stream_limits.maximum_retained_rows
+        || header.cursor_retained_bytes > stream_limits.maximum_retained_bytes
+    {
+        return Err(expected_source_failure(
+            started,
+            *instrumentation,
+            ExpectedPathSourceFailure::Corrupt,
+            "expected source cursor exceeded its causal retained-memory grant".to_owned(),
+        ));
+    }
+    instrumentation.expected_rows = header.total_rows as u64;
+    let cursor_rows = header.cursor_retained_rows as u64;
+    let cursor_bytes = header.cursor_retained_bytes;
+    observe_live_memory(
+        instrumentation,
+        base_rows,
+        base_bytes,
+        cursor_rows,
+        cursor_bytes,
+        limits,
+        started,
+    )?;
+
+    let mut hasher = expected_rows_hasher(header.binding, header.total_rows);
+    let mut seen_rows = 0_usize;
+    let mut aggregate_path_bytes = 0_u64;
+    let mut previous_exact: Option<String> = None;
+    let mut previous_portable: Option<PortablePathKey> = None;
+    loop {
+        let validation_rows =
+            u64::from(previous_exact.is_some()) + u64::from(previous_portable.is_some());
+        let validation_bytes = previous_exact
+            .as_ref()
+            .map_or(0_u64, |path| path.capacity() as u64)
+            .saturating_add(
+                previous_portable
+                    .as_ref()
+                    .map_or(0_u64, |key| key.as_bytes().len() as u64),
+            )
+            .saturating_add(validation_rows.saturating_mul(mem::size_of::<String>() as u64));
+        let live_rows = base_rows
+            .saturating_add(cursor_rows)
+            .saturating_add(validation_rows);
+        let live_bytes = base_bytes
+            .saturating_add(cursor_bytes)
+            .saturating_add(validation_bytes);
+        let request = ExpectedPathPageRequest {
+            maximum_rows: limits
+                .expected_page_rows
+                .min(limits.retained_rows.saturating_sub(live_rows as usize)),
+            maximum_path_bytes: limits.exact_path_bytes,
+            maximum_aggregate_path_bytes: limits
+                .aggregate_expected_path_bytes
+                .saturating_sub(aggregate_path_bytes),
+            maximum_retained_rows: limits.retained_rows.saturating_sub(live_rows as usize),
+            maximum_retained_bytes: limits
+                .expected_page_bytes
+                .min(limits.retained_bytes.saturating_sub(live_bytes)),
+        };
+        if request.maximum_rows == 0 || request.maximum_retained_bytes == 0 {
+            return Err(scan_bound_failure(
+                started,
+                *instrumentation,
+                "expected page retained memory",
+            ));
+        }
+        let page = source
+            .read_expected_path_page(&mut cursor, request)
+            .map_err(|failure| {
+                expected_source_failure(started, *instrumentation, failure, failure.to_string())
+            })?;
+        instrumentation.expected_pages = instrumentation.expected_pages.saturating_add(1);
+        if page.rows.is_empty() && !page.done {
+            return Err(expected_source_failure(
+                started,
+                *instrumentation,
+                ExpectedPathSourceFailure::Corrupt,
+                "expected source returned an empty non-terminal page".to_owned(),
+            ));
+        }
+        let page_bytes = expected_page_retained_bytes(&page);
+        if page.rows.len() > request.maximum_rows
+            || page.rows.len() > request.maximum_retained_rows
+            || page_bytes > request.maximum_retained_bytes
+        {
+            return Err(expected_source_failure(
+                started,
+                *instrumentation,
+                ExpectedPathSourceFailure::Corrupt,
+                "expected source page exceeded its causal retained-memory grant".to_owned(),
+            ));
+        }
+        observe_live_memory(
+            instrumentation,
+            live_rows,
+            live_bytes,
+            page.rows.len() as u64,
+            page_bytes,
+            limits,
+            started,
+        )?;
+        for row in &page.rows {
+            let path = row.path.as_str();
+            if path.len() > limits.exact_path_bytes {
+                return Err(scan_bound_failure(
+                    started,
+                    *instrumentation,
+                    "expected exact path byte",
+                ));
+            }
+            aggregate_path_bytes = aggregate_path_bytes
+                .checked_add(path.len() as u64)
+                .ok_or_else(|| {
+                    scan_bound_failure(started, *instrumentation, "expected aggregate path byte")
+                })?;
+            if aggregate_path_bytes > limits.aggregate_expected_path_bytes {
+                return Err(scan_bound_failure(
+                    started,
+                    *instrumentation,
+                    "expected aggregate path byte",
+                ));
+            }
+            if let Some(previous) = previous_exact.as_deref() {
+                match previous.cmp(path) {
+                    std::cmp::Ordering::Less => {}
+                    std::cmp::Ordering::Equal => {
+                        return Err(expected_source_failure(
+                            started,
+                            *instrumentation,
+                            ExpectedPathSourceFailure::Ambiguous,
+                            "expected source contains duplicate exact paths".to_owned(),
+                        ));
+                    }
+                    std::cmp::Ordering::Greater => {
+                        return Err(expected_source_failure(
+                            started,
+                            *instrumentation,
+                            ExpectedPathSourceFailure::Corrupt,
+                            "expected source is not strictly exact-path sorted".to_owned(),
+                        ));
+                    }
+                }
+            }
+            let portable = row.path.portable_key();
+            if previous_portable.as_ref() == Some(&portable) {
+                return Err(expected_source_failure(
+                    started,
+                    *instrumentation,
+                    ExpectedPathSourceFailure::Ambiguous,
+                    "expected source contains portable path aliases".to_owned(),
+                ));
+            }
+            hash_expected_row(&mut hasher, row);
+            visit(row).map_err(|error| scan_io_failure(started, *instrumentation, error))?;
+            previous_exact = Some(path.to_owned());
+            previous_portable = Some(portable);
+            seen_rows = seen_rows
+                .checked_add(1)
+                .ok_or_else(|| scan_bound_failure(started, *instrumentation, "expected row"))?;
+            if seen_rows > header.total_rows {
+                return Err(expected_source_failure(
+                    started,
+                    *instrumentation,
+                    ExpectedPathSourceFailure::Corrupt,
+                    "expected source returned more rows than its authenticated header".to_owned(),
+                ));
+            }
+        }
+        if page.done {
+            break;
+        }
+    }
+    if seen_rows != header.total_rows
+        || ContentDigest::from_bytes(hasher.finalize().into()) != header.rows_commitment
+    {
+        return Err(expected_source_failure(
+            started,
+            *instrumentation,
+            ExpectedPathSourceFailure::Corrupt,
+            "expected source row count or authenticated commitment mismatched".to_owned(),
+        ));
+    }
+    instrumentation.expected_path_bytes = instrumentation
+        .expected_path_bytes
+        .saturating_add(aggregate_path_bytes);
+    require_expected_binding(source, expected_binding, started, *instrumentation)?;
+    Ok(header)
+}
+
+fn expected_page_retained_bytes(page: &AuthenticatedExpectedPathPage) -> u64 {
+    (page.rows.capacity() as u64)
+        .saturating_mul(mem::size_of::<AuthenticatedExpectedPath>() as u64)
+        .saturating_add(
+            page.rows
+                .iter()
+                .map(|row| row.path.as_str().len() as u64)
+                .sum::<u64>(),
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_live_memory(
+    instrumentation: &mut GraphTextScanInstrumentation,
+    base_rows: u64,
+    base_bytes: u64,
+    additional_rows: u64,
+    additional_bytes: u64,
+    limits: GraphTextScanLimits,
+    started: Instant,
+) -> Result<(), GraphTextScanFailure> {
+    let rows = base_rows
+        .checked_add(additional_rows)
+        .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained row"))?;
+    let bytes = base_bytes
+        .checked_add(additional_bytes)
+        .ok_or_else(|| scan_bound_failure(started, *instrumentation, "retained byte"))?;
+    if rows > limits.retained_rows as u64 || bytes > limits.retained_bytes {
+        return Err(scan_bound_failure(
+            started,
+            *instrumentation,
+            "retained memory",
+        ));
+    }
+    instrumentation.peak_retained_rows = instrumentation.peak_retained_rows.max(rows);
+    instrumentation.peak_retained_bytes = instrumentation.peak_retained_bytes.max(bytes);
+    Ok(())
+}
+
+fn scan_bound_failure(
+    started: Instant,
+    instrumentation: GraphTextScanInstrumentation,
+    resource: &'static str,
+) -> GraphTextScanFailure {
+    scan_io_failure(
+        started,
+        instrumentation,
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("reconciliation scan {resource} bound exceeded"),
+        ),
+    )
+}
+
+fn expected_allocation_overflow() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "reconciliation scan expected allocation bound exceeded",
+    )
 }
 
 fn hash_description(hasher: &mut Sha256, description: BlobDescription) {
@@ -737,45 +1269,160 @@ mod tests {
 
     #[derive(Clone)]
     struct FixtureExpectedSource {
-        snapshot: Result<AuthenticatedExpectedPathSnapshot, ExpectedPathSourceFailure>,
+        rows: Vec<AuthenticatedExpectedPath>,
+        failure: Option<ExpectedPathSourceFailure>,
+        ambiguous: bool,
+        rows_commitment: Cell<ContentDigest>,
         binding: Cell<ExpectedPathBinding>,
+        open_calls: Cell<u64>,
+        maximum_page_rows_seen: Cell<usize>,
+        maximum_page_bytes_seen: Cell<u64>,
+    }
+
+    struct FixtureExpectedCursor {
+        next: usize,
     }
 
     impl FixtureExpectedSource {
         fn empty() -> Self {
-            let binding = expected_binding(1);
-            Self {
-                snapshot: Ok(AuthenticatedExpectedPathSnapshot::new(binding, Vec::new())),
-                binding: Cell::new(binding),
-            }
+            Self::with_rows(Vec::new())
         }
 
-        fn with_rows(rows: Vec<AuthenticatedExpectedPath>) -> Self {
+        fn with_rows(mut rows: Vec<AuthenticatedExpectedPath>) -> Self {
             let binding = expected_binding(1);
+            rows.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+            let ambiguous = rows
+                .windows(2)
+                .any(|window| window[0].path == window[1].path)
+                || {
+                    let mut portable = std::collections::BTreeSet::new();
+                    rows.iter()
+                        .any(|row| !portable.insert(row.path.portable_key()))
+                };
             Self {
-                snapshot: Ok(AuthenticatedExpectedPathSnapshot::new(binding, rows)),
+                rows_commitment: Cell::new(expected_rows_commitment(binding, &rows)),
+                rows,
+                failure: None,
+                ambiguous,
                 binding: Cell::new(binding),
+                open_calls: Cell::new(0),
+                maximum_page_rows_seen: Cell::new(0),
+                maximum_page_bytes_seen: Cell::new(0),
             }
         }
 
         fn failure(failure: ExpectedPathSourceFailure) -> Self {
+            let binding = expected_binding(1);
             Self {
-                snapshot: Err(failure),
-                binding: Cell::new(expected_binding(1)),
+                rows: Vec::new(),
+                failure: Some(failure),
+                ambiguous: false,
+                rows_commitment: Cell::new(expected_rows_commitment(binding, &[])),
+                binding: Cell::new(binding),
+                open_calls: Cell::new(0),
+                maximum_page_rows_seen: Cell::new(0),
+                maximum_page_bytes_seen: Cell::new(0),
             }
         }
     }
 
     impl AuthenticatedExpectedPathSource for FixtureExpectedSource {
-        fn capture_expected_paths(
+        type Cursor = FixtureExpectedCursor;
+
+        fn open_expected_paths(
             &self,
-            maximum_rows: usize,
-        ) -> Result<AuthenticatedExpectedPathSnapshot, ExpectedPathSourceFailure> {
-            let snapshot = self.snapshot.clone()?;
-            if snapshot.rows.len() > maximum_rows {
-                return Err(ExpectedPathSourceFailure::Unavailable);
+            limits: ExpectedPathStreamLimits,
+        ) -> Result<(AuthenticatedExpectedPathStreamHeader, Self::Cursor), ExpectedPathSourceFailure>
+        {
+            if let Some(failure) = self.failure {
+                return Err(failure);
             }
-            Ok(snapshot)
+            if self.ambiguous {
+                return Err(ExpectedPathSourceFailure::Ambiguous);
+            }
+            self.open_calls.set(self.open_calls.get() + 1);
+            if self.rows.len() > limits.maximum_rows
+                || limits.maximum_page_rows == 0
+                || limits.maximum_page_bytes == 0
+                || limits.maximum_retained_rows == 0
+                || limits.maximum_retained_bytes == 0
+            {
+                return Err(ExpectedPathSourceFailure::BoundExceeded);
+            }
+            let mut aggregate = 0_u64;
+            for row in &self.rows {
+                aggregate = aggregate
+                    .checked_add(row.path.as_str().len() as u64)
+                    .ok_or(ExpectedPathSourceFailure::Unavailable)?;
+                if row.path.as_str().len() > limits.maximum_path_bytes
+                    || aggregate > limits.maximum_aggregate_path_bytes
+                {
+                    return Err(ExpectedPathSourceFailure::BoundExceeded);
+                }
+            }
+            Ok((
+                AuthenticatedExpectedPathStreamHeader {
+                    binding: self.binding.get(),
+                    total_rows: self.rows.len(),
+                    rows_commitment: self.rows_commitment.get(),
+                    cursor_retained_rows: 0,
+                    cursor_retained_bytes: 0,
+                },
+                FixtureExpectedCursor { next: 0 },
+            ))
+        }
+
+        fn read_expected_path_page(
+            &self,
+            cursor: &mut Self::Cursor,
+            request: ExpectedPathPageRequest,
+        ) -> Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure> {
+            let mut count = 0_usize;
+            let mut path_bytes = 0_u64;
+            let mut retained_bytes = 0_u64;
+            while let Some(row) = self.rows.get(cursor.next + count) {
+                let next_path_bytes = path_bytes
+                    .checked_add(row.path.as_str().len() as u64)
+                    .ok_or(ExpectedPathSourceFailure::Unavailable)?;
+                let next_retained = retained_bytes
+                    .checked_add(mem::size_of::<AuthenticatedExpectedPath>() as u64)
+                    .and_then(|bytes| bytes.checked_add(row.path.as_str().len() as u64))
+                    .ok_or(ExpectedPathSourceFailure::Unavailable)?;
+                if count == request.maximum_rows
+                    || count == request.maximum_retained_rows
+                    || next_path_bytes > request.maximum_aggregate_path_bytes
+                    || next_retained > request.maximum_retained_bytes
+                {
+                    break;
+                }
+                if row.path.as_str().len() > request.maximum_path_bytes {
+                    return Err(ExpectedPathSourceFailure::BoundExceeded);
+                }
+                count += 1;
+                path_bytes = next_path_bytes;
+                retained_bytes = next_retained;
+            }
+            if count == 0 && cursor.next < self.rows.len() {
+                return Err(ExpectedPathSourceFailure::BoundExceeded);
+            }
+            let end = cursor.next + count;
+            let rows = self.rows[cursor.next..end].to_vec();
+            self.maximum_page_rows_seen
+                .set(self.maximum_page_rows_seen.get().max(rows.len()));
+            let page_bytes = (rows.capacity() as u64)
+                .saturating_mul(mem::size_of::<AuthenticatedExpectedPath>() as u64)
+                .saturating_add(
+                    rows.iter()
+                        .map(|row| row.path.as_str().len() as u64)
+                        .sum::<u64>(),
+                );
+            self.maximum_page_bytes_seen
+                .set(self.maximum_page_bytes_seen.get().max(page_bytes));
+            cursor.next = end;
+            Ok(AuthenticatedExpectedPathPage {
+                rows,
+                done: cursor.next == self.rows.len(),
+            })
         }
 
         fn current_binding(&self) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
@@ -801,7 +1448,7 @@ mod tests {
 
     fn candidate_signature(
         scan: &StableGraphTextScan,
-    ) -> Vec<(String, GraphTextCandidateKind, ManagedTextKind)> {
+    ) -> Vec<(String, GraphTextCandidateKind, Option<ManagedTextKind>)> {
         scan.candidates
             .iter()
             .map(|candidate| {
@@ -850,32 +1497,32 @@ mod tests {
                 (
                     "pages/copy.md".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
                 (
                     "pages/create.md".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
                 (
                     "pages/delete.md".into(),
                     GraphTextCandidateKind::Absence,
-                    ManagedTextKind::Page
+                    Some(ManagedTextKind::Page)
                 ),
                 (
                     "pages/edit.md".into(),
                     GraphTextCandidateKind::Edit,
-                    ManagedTextKind::Page
+                    Some(ManagedTextKind::Page)
                 ),
                 (
                     "pages/rename-new.md".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
                 (
                     "pages/rename-old.md".into(),
                     GraphTextCandidateKind::Absence,
-                    ManagedTextKind::Page
+                    Some(ManagedTextKind::Page)
                 ),
             ]
         );
@@ -922,6 +1569,56 @@ mod tests {
             result,
             GraphTextScanFailureClass::UnstableEpoch,
             GraphTextScanFailureReason::ExpectedBindingChanged,
+        );
+    }
+
+    #[test]
+    fn reconciliation_scan_stable_prepass_config_change_requires_graph_refresh() {
+        let temp = TempGraph::new(Some(
+            "{:pages-directory \"pages\" :journals-directory \"journals\"}\n",
+        ));
+        temp.write("new-pages/page.md", b"page");
+        let graph = temp.graph();
+        fs::write(
+            temp.root.join("logseq/config.edn"),
+            "{:pages-directory \"new-pages\" :journals-directory \"new-journals\"}\n",
+        )
+        .unwrap();
+
+        assert_failure(
+            scan_graph_text(
+                &graph,
+                &FixtureExpectedSource::empty(),
+                GraphTextScanLimits::default(),
+            ),
+            GraphTextScanFailureClass::Blocked,
+            GraphTextScanFailureReason::ConfigRefreshRequired,
+        );
+    }
+
+    #[test]
+    fn reconciliation_scan_binds_case_insensitive_config_path_at_graph_open() {
+        let temp = TempGraph::new(None);
+        temp.write(
+            "LoGsEq/CoNfIg.EdN",
+            b"{:pages-directory \"content\" :journals-directory \"daily\" :hidden [\"private\"]}\n",
+        );
+        temp.write("content/Page.MARKDOWN", b"page");
+        temp.write("private/hidden.org", b"hidden");
+        let scan = scan_graph_text(
+            &temp.graph(),
+            &FixtureExpectedSource::empty(),
+            GraphTextScanLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            candidate_signature(&scan),
+            vec![(
+                "content/Page.MARKDOWN".to_owned(),
+                GraphTextCandidateKind::Creation,
+                None,
+            )]
         );
     }
 
@@ -1091,30 +1788,30 @@ mod tests {
         assert_eq!(
             candidate_signature(&scan),
             vec![
+                ("Root.MD".into(), GraphTextCandidateKind::Creation, None),
+                (
+                    "archive/nested.Markdown".into(),
+                    GraphTextCandidateKind::Creation,
+                    None
+                ),
                 (
                     "managed/text/Another.MARKDOWN".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
                 (
                     "managed/text/Page.mD".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
                 (
                     "managed/text/daily/2026-07-26.ORG".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Journal
+                    None
                 ),
             ]
         );
-        assert_eq!(
-            scan.diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.path.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Root.MD", "archive/nested.Markdown"]
-        );
+        assert!(scan.diagnostics.is_empty());
     }
 
     #[test]
@@ -1237,6 +1934,142 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reconciliation_scan_expected_cursor_is_paged_and_never_rematerialized() {
+        let temp = TempGraph::new(None);
+        let source = FixtureExpectedSource::with_rows(
+            (0..600)
+                .map(|index| {
+                    expected_row(
+                        &format!("archive/{index:04}.md"),
+                        ManagedTextKind::Page,
+                        b"expected",
+                    )
+                })
+                .collect(),
+        );
+        let limits = GraphTextScanLimits {
+            expected_page_rows: 17,
+            expected_page_bytes: 4096,
+            ..GraphTextScanLimits::default()
+        };
+        let scan = scan_graph_text(&temp.graph(), &source, limits).unwrap();
+
+        assert_eq!(scan.candidates.len(), 600);
+        assert_eq!(source.open_calls.get(), 2);
+        assert!(source.maximum_page_rows_seen.get() <= 17);
+        assert!(source.maximum_page_bytes_seen.get() <= 4096);
+        assert!(scan.instrumentation.expected_pages > 2);
+        assert_eq!(scan.instrumentation.expected_rows, 600);
+        assert!(scan.instrumentation.expected_path_bytes > 600);
+    }
+
+    #[test]
+    fn reconciliation_scan_expected_path_and_page_byte_bounds_are_causal() {
+        let temp = TempGraph::new(None);
+        let graph = temp.graph();
+        let source = FixtureExpectedSource::with_rows(vec![expected_row(
+            "archive/a-very-long-expected-path.md",
+            ManagedTextKind::Page,
+            b"expected",
+        )]);
+        for limits in [
+            GraphTextScanLimits {
+                exact_path_bytes: 8,
+                ..GraphTextScanLimits::default()
+            },
+            GraphTextScanLimits {
+                aggregate_expected_path_bytes: 8,
+                ..GraphTextScanLimits::default()
+            },
+            GraphTextScanLimits {
+                expected_page_bytes: 1,
+                ..GraphTextScanLimits::default()
+            },
+        ] {
+            assert_failure(
+                scan_graph_text(&graph, &source, limits),
+                GraphTextScanFailureClass::Blocked,
+                GraphTextScanFailureReason::BoundExceeded,
+            );
+        }
+    }
+
+    #[test]
+    fn reconciliation_scan_pass_b_and_output_memory_never_cross_the_live_limit() {
+        let temp = TempGraph::new(None);
+        temp.write("Root.md", b"root");
+        temp.write(
+            "pages/page.sync-conflict-20260726-120000-ABCDEF.md",
+            b"provider",
+        );
+        let graph = temp.graph();
+        let source = FixtureExpectedSource::with_rows(
+            (0..1_000)
+                .map(|index| {
+                    expected_row(
+                        &format!("archive/missing-{index:04}.md"),
+                        ManagedTextKind::Page,
+                        b"missing",
+                    )
+                })
+                .collect(),
+        );
+        let test_limits = GraphTextScanLimits {
+            expected_page_rows: 1,
+            ..GraphTextScanLimits::default()
+        };
+        let success = scan_graph_text(&graph, &source, test_limits).unwrap();
+        assert_eq!(success.candidates.len(), 1_001);
+        assert_eq!(success.diagnostics.len(), 1);
+
+        let one_pass = graph
+            .capture_reconciliation_scan_pass(GraphTextScanLimits::default())
+            .unwrap()
+            .instrumentation;
+        assert!(
+            success.instrumentation.peak_retained_bytes
+                > one_pass.peak_retained_bytes.saturating_mul(2)
+        );
+        let causal_limit = one_pass
+            .peak_retained_bytes
+            .saturating_mul(2)
+            .saturating_sub(1);
+        let hook_ran = Cell::new(false);
+        let failure = scan_graph_text_with_hook(
+            &graph,
+            &source,
+            GraphTextScanLimits {
+                retained_bytes: causal_limit,
+                ..test_limits
+            },
+            || {
+                hook_ran.set(true);
+                Ok(())
+            },
+        )
+        .expect_err("Pass B must receive only Pass A's remaining retained budget");
+        assert!(hook_ran.get());
+        assert_eq!(failure.reason, GraphTextScanFailureReason::BoundExceeded);
+        assert!(failure.instrumentation.peak_retained_bytes <= causal_limit);
+
+        let output_limit = success.instrumentation.peak_retained_bytes - 1;
+        let output_failure = scan_graph_text(
+            &graph,
+            &source,
+            GraphTextScanLimits {
+                retained_bytes: output_limit,
+                ..test_limits
+            },
+        )
+        .expect_err("candidate, diagnostic, validation, and page memory must be charged");
+        assert_eq!(
+            output_failure.reason,
+            GraphTextScanFailureReason::BoundExceeded
+        );
+        assert!(output_failure.instrumentation.peak_retained_bytes <= output_limit);
+    }
+
     #[cfg(unix)]
     #[test]
     fn reconciliation_scan_rejects_non_utf8_and_nonportable_physical_paths() {
@@ -1286,7 +2119,7 @@ mod tests {
             vec![(
                 "pages/new.md".into(),
                 GraphTextCandidateKind::Creation,
-                ManagedTextKind::Page
+                None
             )]
         );
 
@@ -1306,12 +2139,12 @@ mod tests {
                 (
                     "pages/missing.md".into(),
                     GraphTextCandidateKind::Absence,
-                    ManagedTextKind::Page
+                    Some(ManagedTextKind::Page)
                 ),
                 (
                     "pages/new.md".into(),
                     GraphTextCandidateKind::Creation,
-                    ManagedTextKind::Page
+                    None
                 ),
             ]
         );
@@ -1347,8 +2180,8 @@ mod tests {
             );
         }
 
-        let mut corrupt = FixtureExpectedSource::empty();
-        corrupt.snapshot.as_mut().unwrap().rows_commitment = ContentDigest::of(b"forged");
+        let corrupt = FixtureExpectedSource::empty();
+        corrupt.rows_commitment.set(ContentDigest::of(b"forged"));
         assert_failure(
             scan_graph_text(&graph, &corrupt, GraphTextScanLimits::default()),
             GraphTextScanFailureClass::Blocked,
