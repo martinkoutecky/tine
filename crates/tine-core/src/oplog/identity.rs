@@ -5,6 +5,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle as _;
+
 macro_rules! opaque_uuid_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -255,6 +260,121 @@ impl Serialize for CanonicalGraphResourceId {
 }
 
 impl<'de> Deserialize<'de> for CanonicalGraphResourceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Stable identity of one canonical device-local archive directory.
+///
+/// The digest is derived only from a retained no-follow directory capability
+/// and is domain-separated from graph and receipt resources. Ambient path
+/// strings never enter the identity. This value is local enrollment evidence;
+/// it does not change any oplog or object-envelope format.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CanonicalArchiveResourceId([u8; 32]);
+
+impl CanonicalArchiveResourceId {
+    pub(crate) fn from_capability_identity(platform: &[u8], identity: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/canonical-archive-resource/v1\0");
+        hasher.update((platform.len() as u64).to_be_bytes());
+        hasher.update(platform);
+        hasher.update((identity.len() as u64).to_be_bytes());
+        hasher.update(identity);
+        Self(hasher.finalize().into())
+    }
+
+    /// Derive the persistable identity from the exact retained archive
+    /// directory capability.
+    #[cfg(unix)]
+    pub(crate) fn from_retained_directory(directory: &cap_std::fs::Dir) -> std::io::Result<Self> {
+        let metadata = directory.try_clone()?.into_std_file().metadata()?;
+        let mut identity = [0_u8; 16];
+        identity[..8].copy_from_slice(&metadata.dev().to_be_bytes());
+        identity[8..].copy_from_slice(&metadata.ino().to_be_bytes());
+        Ok(Self::from_capability_identity(b"unix-dev-inode", &identity))
+    }
+
+    /// Derive the persistable identity from the exact retained archive
+    /// directory capability.
+    #[cfg(windows)]
+    pub(crate) fn from_retained_directory(directory: &cap_std::fs::Dir) -> std::io::Result<Self> {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+        };
+
+        let file = directory.try_clone()?.into_std_file();
+        let mut information = FILE_ID_INFO::default();
+        // SAFETY: `file` remains live for the call and `information` is a
+        // correctly sized writable FILE_ID_INFO value.
+        let result = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&mut information as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if result == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut identity = [0_u8; 24];
+        identity[..8].copy_from_slice(&information.VolumeSerialNumber.to_be_bytes());
+        identity[8..].copy_from_slice(&information.FileId.Identifier);
+        Ok(Self::from_capability_identity(
+            b"windows-volume-file-id",
+            &identity,
+        ))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub(crate) fn from_retained_directory(_directory: &cap_std::fs::Dir) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "canonical archive directory identity is unavailable on this platform",
+        ))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CanonicalArchiveResourceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CanonicalArchiveResourceId({self})")
+    }
+}
+
+impl fmt::Display for CanonicalArchiveResourceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(&self.0, f)
+    }
+}
+
+impl FromStr for CanonicalArchiveResourceId {
+    type Err = DigestParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_digest(value).map(Self)
+    }
+}
+
+impl Serialize for CanonicalArchiveResourceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for CanonicalArchiveResourceId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -584,5 +704,38 @@ mod tests {
             "54588e2e-938c-8f75-bc5c-f9ddbcf4ddb7"
         );
         assert_eq!(peer.as_u64(), 2_725_213_283_319_468_303);
+    }
+
+    #[test]
+    fn canonical_archive_resource_identity_is_persistable_and_domain_separated() {
+        let archive = CanonicalArchiveResourceId::from_capability_identity(
+            b"test-platform",
+            b"same-retained-directory-identity",
+        );
+        let graph = CanonicalGraphResourceId::from_capability_identity(
+            b"test-platform",
+            b"same-retained-directory-identity",
+        );
+        let receipt = ProjectionReceiptStoreId::from_capability_identity(
+            b"test-platform",
+            b"same-retained-directory-identity",
+        );
+
+        assert_ne!(archive.as_bytes(), graph.as_bytes());
+        assert_ne!(archive.as_bytes(), receipt.as_bytes());
+        assert_eq!(
+            archive
+                .to_string()
+                .parse::<CanonicalArchiveResourceId>()
+                .unwrap(),
+            archive
+        );
+        assert_eq!(
+            serde_json::from_slice::<CanonicalArchiveResourceId>(
+                &serde_json::to_vec(&archive).unwrap()
+            )
+            .unwrap(),
+            archive
+        );
     }
 }

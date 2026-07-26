@@ -11,6 +11,8 @@ pub mod batch;
 pub(crate) mod causal_index;
 pub(crate) mod dependency_queue;
 pub(crate) mod document_state;
+#[allow(dead_code)]
+pub(crate) mod enrollment;
 pub(crate) mod evidence_index;
 pub(crate) mod external_import;
 pub mod hot_engine;
@@ -70,8 +72,9 @@ pub use hot_engine::{
     SemanticOperation, ShardedHotEngine, StageOutcome, WorkspaceStatus,
 };
 pub use identity::{
-    BatchId, BlockId, CanonicalGraphResourceId, CrdtPeerId, DeviceId, DocumentId, ImportId,
-    LogseqUuid, PageId, ProjectionEndpointId, ProjectionReceiptStoreId, SessionId, WorkspaceId,
+    BatchId, BlockId, CanonicalArchiveResourceId, CanonicalGraphResourceId, CrdtPeerId, DeviceId,
+    DocumentId, ImportId, LogseqUuid, PageId, ProjectionEndpointId, ProjectionReceiptStoreId,
+    SessionId, WorkspaceId,
 };
 pub use import::{
     classify_conflict_copy, inventory_affected, inventory_initial_shadow, plan_affected_import,
