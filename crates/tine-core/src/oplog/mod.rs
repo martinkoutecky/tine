@@ -28,6 +28,9 @@ pub mod projection_manifest;
 pub mod projection_store;
 pub mod projection_work_index;
 pub mod receipt;
+// P2N4I installs a device-local disposable substrate without activating scans.
+#[allow(dead_code)]
+pub(crate) mod reconciliation_baseline;
 #[cfg(test)]
 pub(crate) mod reconciliation_scan;
 pub mod reference_catalog;
