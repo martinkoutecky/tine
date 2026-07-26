@@ -55,6 +55,12 @@ const MAX_PREFLIGHT_NODES: usize = 2_000_000;
 const MAX_PREFLIGHT_RECORDS: usize = 2_000_000;
 const MAX_PREFLIGHT_ROOTS: usize = 2_000_000;
 const MAX_PREFLIGHT_BYTES: usize = 512 * 1024 * 1024;
+// The bounded joined read keeps the encoded input live while postcard decodes
+// heap-backed fields and re-encodes once to prove canonicality. For the
+// projection records used on that path, decoded heap payload is no larger than
+// its encoded representation; postcard's growing output Vec has capacity less
+// than twice the final canonical length.
+const BOUNDED_CANONICAL_DECODE_ALLOCATION_FACTOR: u64 = 3;
 const CLAIM_FILE: &str = "projection-work.claim";
 const HEAD_FILE: &str = "projection-work.head";
 const PREPARED_SUFFIX: &str = ".prepared";
@@ -269,6 +275,193 @@ pub(crate) struct ProjectionCompletedReceipt {
     target: ProjectionWorkTarget,
     intent_id: ProjectionIntentId,
     logical_completion_id: LogicalCompletionId,
+}
+
+/// One immutable authenticated projection-work head pinned for reconciliation.
+///
+/// This is a run-local read capability, not a persistent format. Point reads
+/// reload the named immutable root and verify every identity and authority
+/// field before consulting its completed-path tree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionExpectedPathHead {
+    head_digest: ContentDigest,
+    workspace_id: WorkspaceId,
+    endpoint_id: ProjectionEndpointId,
+    graph_resource_id: super::CanonicalGraphResourceId,
+    receipt_store_id: super::ProjectionReceiptStoreId,
+    generation: u64,
+    engine_history_generation: u64,
+    engine_history_root: ContentDigest,
+    completed_paths_root: ContentDigest,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProjectionExpectedPathReadBudget {
+    granted_bytes: u64,
+    remaining_bytes: u64,
+    #[cfg(test)]
+    read_trace: [Option<ProjectionExpectedPathBudgetRead>; 32],
+    #[cfg(test)]
+    read_trace_len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionExpectedPathBudgetReadKind {
+    Head,
+    PinnedRoot,
+    CompletedPathNode,
+    StateNode,
+    AcceptedWitnessNode,
+    PendingSourceRoot,
+    PendingActivationNode,
+    PreparedBatch,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionExpectedPathBudgetRead {
+    pub(crate) kind: ProjectionExpectedPathBudgetReadKind,
+    pub(crate) consumed_before: u64,
+    pub(crate) retained_bytes: u64,
+}
+
+impl ProjectionExpectedPathReadBudget {
+    pub(crate) const fn new(granted_bytes: u64) -> Self {
+        Self {
+            granted_bytes,
+            remaining_bytes: granted_bytes,
+            #[cfg(test)]
+            read_trace: [None; 32],
+            #[cfg(test)]
+            read_trace_len: 0,
+        }
+    }
+
+    pub(crate) fn reserve(&mut self, bytes: u64) -> Result<(), ProjectionWorkError> {
+        self.remaining_bytes = self
+            .remaining_bytes
+            .checked_sub(bytes)
+            .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?;
+        Ok(())
+    }
+
+    pub(crate) fn reserve_usize(&mut self, bytes: usize) -> Result<(), ProjectionWorkError> {
+        self.reserve(
+            u64::try_from(bytes).map_err(|_| ProjectionWorkError::RetainedMemoryLimitExceeded)?,
+        )
+    }
+
+    pub(crate) fn reset_with_retained(
+        &mut self,
+        retained_bytes: u64,
+    ) -> Result<(), ProjectionWorkError> {
+        self.remaining_bytes = self
+            .granted_bytes
+            .checked_sub(retained_bytes)
+            .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?;
+        Ok(())
+    }
+
+    fn reserve_canonical_decode(
+        &mut self,
+        encoded_bytes: usize,
+    ) -> Result<(), ProjectionWorkError> {
+        let encoded_bytes = u64::try_from(encoded_bytes)
+            .map_err(|_| ProjectionWorkError::RetainedMemoryLimitExceeded)?;
+        self.reserve(
+            encoded_bytes
+                .checked_mul(BOUNDED_CANONICAL_DECODE_ALLOCATION_FACTOR)
+                .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?,
+        )
+    }
+
+    fn take_read_grant(&mut self) -> Result<u64, ProjectionWorkError> {
+        if self.remaining_bytes == 0 {
+            return Err(ProjectionWorkError::RetainedMemoryLimitExceeded);
+        }
+        Ok(std::mem::take(&mut self.remaining_bytes))
+    }
+
+    fn settle_read(
+        &mut self,
+        kind: ProjectionExpectedPathBudgetReadKind,
+        granted_bytes: u64,
+        retained_bytes: usize,
+    ) -> Result<(), ProjectionWorkError> {
+        #[cfg(not(test))]
+        let _ = kind;
+        let retained_bytes = u64::try_from(retained_bytes)
+            .map_err(|_| ProjectionWorkError::RetainedMemoryLimitExceeded)?;
+        #[cfg(test)]
+        {
+            let trace = ProjectionExpectedPathBudgetRead {
+                kind,
+                consumed_before: self
+                    .granted_bytes
+                    .checked_sub(granted_bytes)
+                    .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?,
+                retained_bytes,
+            };
+            if let Some(slot) = self.read_trace.get_mut(self.read_trace_len) {
+                *slot = Some(trace);
+                self.read_trace_len += 1;
+            }
+        }
+        self.remaining_bytes = granted_bytes
+            .checked_sub(retained_bytes)
+            .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?;
+        Ok(())
+    }
+
+    fn cancel_read(&mut self, granted_bytes: u64) {
+        self.remaining_bytes = granted_bytes;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_trace(&self) -> Vec<ProjectionExpectedPathBudgetRead> {
+        self.read_trace[..self.read_trace_len]
+            .iter()
+            .map(|entry| entry.expect("bounded read trace entries are contiguous"))
+            .collect()
+    }
+}
+
+impl ProjectionExpectedPathHead {
+    pub(crate) const fn head_digest(self) -> ContentDigest {
+        self.head_digest
+    }
+
+    pub(crate) const fn workspace_id(self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn endpoint_id(self) -> ProjectionEndpointId {
+        self.endpoint_id
+    }
+
+    pub(crate) const fn graph_resource_id(self) -> super::CanonicalGraphResourceId {
+        self.graph_resource_id
+    }
+
+    pub(crate) const fn receipt_store_id(self) -> super::ProjectionReceiptStoreId {
+        self.receipt_store_id
+    }
+
+    pub(crate) const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) const fn engine_history_generation(self) -> u64 {
+        self.engine_history_generation
+    }
+
+    pub(crate) const fn engine_history_root(self) -> ContentDigest {
+        self.engine_history_root
+    }
+
+    pub(crate) const fn completed_paths_root(self) -> ContentDigest {
+        self.completed_paths_root
+    }
 }
 
 impl ProjectionCompletedReceipt {
@@ -1220,7 +1413,7 @@ impl ProjectionWorkIndex {
     }
 
     #[cfg(test)]
-    fn accept_batch_at_history_for_test(
+    pub(crate) fn accept_batch_at_history_for_test(
         &self,
         batch_id: BatchId,
         manifest_fingerprint: ContentDigest,
@@ -1576,6 +1769,182 @@ impl ProjectionWorkIndex {
                 Err(ProjectionWorkError::AmbiguousCompletedPath)
             }
         }
+    }
+
+    /// Pin one authenticated head for a bounded reconciliation join.
+    pub(crate) fn pin_expected_path_head(
+        &self,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<ProjectionExpectedPathHead, ProjectionWorkError> {
+        let (head_digest, root) = self.load_head_root_bounded(budget)?;
+        Ok(ProjectionExpectedPathHead {
+            head_digest,
+            workspace_id: root.workspace_id,
+            endpoint_id: root.endpoint_id,
+            graph_resource_id: root.graph_resource_id,
+            receipt_store_id: root.receipt_store_id,
+            generation: root.generation,
+            engine_history_generation: root.engine_history_generation,
+            engine_history_root: root.engine_history_root,
+            completed_paths_root: root.completed_paths_root,
+        })
+    }
+
+    /// Require that a previously pinned head is still the enrolled live head.
+    pub(crate) fn require_expected_path_head_current(
+        &self,
+        head: ProjectionExpectedPathHead,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(), ProjectionWorkError> {
+        let current = self.pin_expected_path_head(budget)?;
+        if current != head {
+            return Err(ProjectionWorkError::ConcurrentRootTransition);
+        }
+        Ok(())
+    }
+
+    /// Read one exact completion from the immutable tree named by `head`.
+    ///
+    /// Missing rows return `None`; ambiguous, absent-source, corrupt, stale, or
+    /// cross-index evidence fails closed.
+    pub(crate) fn completed_receipt_at_expected_path_head(
+        &self,
+        head: ProjectionExpectedPathHead,
+        path: &ManagedPath,
+        maximum_retained_bytes: u64,
+    ) -> Result<Option<ProjectionCompletedReceipt>, ProjectionWorkError> {
+        let mut budget = ProjectionExpectedPathReadBudget::new(maximum_retained_bytes);
+        self.completed_receipt_at_expected_path_head_bounded(head, path, &mut budget)
+    }
+
+    pub(crate) fn completed_receipt_at_expected_path_head_bounded(
+        &self,
+        head: ProjectionExpectedPathHead,
+        path: &ManagedPath,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<Option<ProjectionCompletedReceipt>, ProjectionWorkError> {
+        if head.workspace_id != self.workspace_id
+            || head.endpoint_id != self.endpoint_id
+            || head.graph_resource_id != self.graph_resource_id
+            || head.receipt_store_id != self.receipt_store_id
+        {
+            return Err(ProjectionWorkError::BindingMismatch);
+        }
+        let root = self.load_root_bounded(
+            head.head_digest,
+            ProjectionExpectedPathBudgetReadKind::PinnedRoot,
+            budget,
+        )?;
+        let actual = ProjectionExpectedPathHead {
+            head_digest: head.head_digest,
+            workspace_id: root.workspace_id,
+            endpoint_id: root.endpoint_id,
+            graph_resource_id: root.graph_resource_id,
+            receipt_store_id: root.receipt_store_id,
+            generation: root.generation,
+            engine_history_generation: root.engine_history_generation,
+            engine_history_root: root.engine_history_root,
+            completed_paths_root: root.completed_paths_root,
+        };
+        if actual != head {
+            return Err(ProjectionWorkError::BindingMismatch);
+        }
+        budget.reserve(32)?;
+        let key = path_key(path);
+        let Some(bytes) = self.tree_lookup_bounded(
+            head.completed_paths_root,
+            &key,
+            ProjectionExpectedPathBudgetReadKind::CompletedPathNode,
+            budget,
+        )?
+        else {
+            return Ok(None);
+        };
+        match decode_completed_path_row_bounded(&key, &bytes, budget)? {
+            ProjectionCompletedPathRow::Current(current) => {
+                self.require_current_completed_path_source_bounded(&root, &current, budget)?;
+                Ok(Some(current.receipt))
+            }
+            ProjectionCompletedPathRow::Ambiguous { .. } => {
+                Err(ProjectionWorkError::AmbiguousCompletedPath)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn completed_receipt_budget_trace_for_test(
+        &self,
+        head: ProjectionExpectedPathHead,
+        path: &ManagedPath,
+        maximum_retained_bytes: u64,
+    ) -> Result<
+        (
+            Option<ProjectionCompletedReceipt>,
+            Vec<ProjectionExpectedPathBudgetRead>,
+        ),
+        ProjectionWorkError,
+    > {
+        let mut budget = ProjectionExpectedPathReadBudget::new(maximum_retained_bytes);
+        let receipt =
+            self.completed_receipt_at_expected_path_head_bounded(head, path, &mut budget)?;
+        Ok((receipt, budget.read_trace()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_expected_completion_for_test(
+        &self,
+        page_id: PageId,
+        path: ManagedPath,
+        target: ProjectionWorkTarget,
+        seed: u128,
+    ) -> Result<(), ProjectionWorkError> {
+        let (_, root) = self.load_head_root()?;
+        let encoded = format!("\"{seed:032x}{seed:032x}\"");
+        let intent_id: ProjectionIntentId =
+            serde_json::from_str(&encoded).map_err(|_| ProjectionWorkError::NonCanonical)?;
+        let logical_completion_id: LogicalCompletionId =
+            serde_json::from_str(&encoded).map_err(|_| ProjectionWorkError::NonCanonical)?;
+        self.mark_direct_completed(ProjectionDirectCompletionAuthority {
+            workspace_id: self.workspace_id,
+            endpoint_id: self.endpoint_id,
+            graph_resource_id: self.graph_resource_id,
+            receipt_store_id: self.receipt_store_id,
+            engine_history_generation: root.engine_history_generation,
+            engine_history_root: root.engine_history_root,
+            receipt: ProjectionCompletedReceipt {
+                page_id,
+                path,
+                frontier: FrontierV2::default(),
+                target,
+                intent_id,
+                logical_completion_id,
+            },
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_manifested_work_for_test(
+        &self,
+        work: &ProjectionWork,
+        seed: u128,
+    ) -> Result<(), ProjectionWorkError> {
+        let encoded = format!("\"{seed:032x}{seed:032x}\"");
+        let intent_id: ProjectionIntentId =
+            serde_json::from_str(&encoded).map_err(|_| ProjectionWorkError::NonCanonical)?;
+        let logical_completion_id: LogicalCompletionId =
+            serde_json::from_str(&encoded).map_err(|_| ProjectionWorkError::NonCanonical)?;
+        self.mark_completed(ProjectionWorkCompletionAuthority {
+            workspace_id: self.workspace_id,
+            endpoint_id: self.endpoint_id,
+            graph_resource_id: self.graph_resource_id,
+            receipt_store_id: self.receipt_store_id,
+            work_id: work.work_id(),
+            page_id: work.page_id(),
+            path: work.path().clone(),
+            target: work.target(),
+            intent_id,
+            logical_completion_id,
+        })
     }
 
     pub(crate) fn require_accepted_ready(
@@ -1964,13 +2333,66 @@ impl ProjectionWorkIndex {
         }
     }
 
+    fn load_head_root_bounded(
+        &self,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(ContentDigest, ProjectionRoot), ProjectionWorkError> {
+        let sealed = self
+            .authoritative_head
+            .lock()
+            .map_err(|_| ProjectionWorkError::Poisoned)?
+            .to_owned();
+        let (live, root) = self.read_live_head_root_bounded(budget)?;
+        if sealed.is_some_and(|expected| live != expected) {
+            return Err(ProjectionWorkError::ConcurrentRootTransition);
+        }
+        Ok((live, root))
+    }
+
     fn read_live_head_root(&self) -> Result<(ContentDigest, ProjectionRoot), ProjectionWorkError> {
         let digest = self.read_head_digest()?;
         Ok((digest, self.load_root(digest)?))
     }
 
+    fn read_live_head_root_bounded(
+        &self,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(ContentDigest, ProjectionRoot), ProjectionWorkError> {
+        let digest = self.read_head_digest_bounded(budget)?;
+        Ok((
+            digest,
+            self.load_root_bounded(
+                digest,
+                ProjectionExpectedPathBudgetReadKind::PinnedRoot,
+                budget,
+            )?,
+        ))
+    }
+
     fn read_head_digest(&self) -> Result<ContentDigest, ProjectionWorkError> {
         let bytes = read_optional_regular(&self.control, HEAD_FILE, 64, None)?
+            .ok_or(ProjectionWorkError::MissingHead)?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| ProjectionWorkError::NonCanonical)?;
+        let digest = parse_digest(text)
+            .map(ContentDigest::from_bytes)
+            .map_err(|_| ProjectionWorkError::NonCanonical)?;
+        if digest.to_string().as_bytes() != bytes {
+            return Err(ProjectionWorkError::NonCanonical);
+        }
+        Ok(digest)
+    }
+
+    fn read_head_digest_bounded(
+        &self,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<ContentDigest, ProjectionWorkError> {
+        let bytes = self
+            .read_optional_regular_bounded(
+                &self.control,
+                HEAD_FILE,
+                ProjectionExpectedPathBudgetReadKind::Head,
+                budget,
+            )?
             .ok_or(ProjectionWorkError::MissingHead)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| ProjectionWorkError::NonCanonical)?;
         let digest = parse_digest(text)
@@ -2007,6 +2429,26 @@ impl ProjectionWorkIndex {
             return Err(ProjectionWorkError::RootDigestMismatch(digest));
         }
         let root: ProjectionRoot = decode_canonical(&bytes)?;
+        self.require_root_binding(&root)?;
+        self.counters.root_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(root)
+    }
+
+    fn load_root_bounded(
+        &self,
+        digest: ContentDigest,
+        kind: ProjectionExpectedPathBudgetReadKind,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<ProjectionRoot, ProjectionWorkError> {
+        budget.reserve_usize(64 + ROOT_SUFFIX.len())?;
+        let filename = root_filename(digest);
+        let bytes = self
+            .read_optional_regular_bounded(&self.roots, &filename, kind, budget)?
+            .ok_or(ProjectionWorkError::MissingRoot(digest))?;
+        if ContentDigest::of(&bytes) != digest {
+            return Err(ProjectionWorkError::RootDigestMismatch(digest));
+        }
+        let root: ProjectionRoot = decode_canonical_bounded(&bytes, budget)?;
         self.require_root_binding(&root)?;
         self.counters.root_reads.fetch_add(1, Ordering::Relaxed);
         Ok(root)
@@ -2050,6 +2492,42 @@ impl ProjectionWorkIndex {
         Ok(prepared)
     }
 
+    fn load_prepared_bounded(
+        &self,
+        batch_id: BatchId,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(PreparedBatch, usize), ProjectionWorkError> {
+        budget.reserve_usize(36 + PREPARED_SUFFIX.len())?;
+        let filename = prepared_filename(batch_id);
+        let bytes = self
+            .read_optional_regular_bounded(
+                &self.prepared,
+                &filename,
+                ProjectionExpectedPathBudgetReadKind::PreparedBatch,
+                budget,
+            )?
+            .ok_or(ProjectionWorkError::MissingPreparedBatch(batch_id))?;
+        let encoded_bytes = bytes.len();
+        let prepared: PreparedBatch = decode_canonical_bounded(&bytes, budget)?;
+        if prepared.schema_version != INDEX_SCHEMA_VERSION
+            || prepared.workspace_id != self.workspace_id
+            || prepared.endpoint_id != self.endpoint_id
+            || prepared.batch_id != batch_id
+            || !strictly_sorted_by(&prepared.work, ProjectionWork::work_id)
+            || !strictly_sorted(&prepared.superseded)
+        {
+            return Err(ProjectionWorkError::BindingMismatch);
+        }
+        for work in &prepared.work {
+            self.require_binding(work)?;
+            if work.batch_id() != batch_id {
+                return Err(ProjectionWorkError::BindingMismatch);
+            }
+        }
+        self.counters.prepared_reads.fetch_add(1, Ordering::Relaxed);
+        Ok((prepared, encoded_bytes))
+    }
+
     fn load_state(
         &self,
         root: &ProjectionRoot,
@@ -2065,6 +2543,30 @@ impl ProjectionWorkIndex {
                 Ok(state)
             })
             .transpose()
+    }
+
+    fn load_state_bounded(
+        &self,
+        root: &ProjectionRoot,
+        work_id: ProjectionWorkId,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<Option<StoredWork>, ProjectionWorkError> {
+        budget.reserve(32)?;
+        self.tree_lookup_bounded(
+            root.rows_root,
+            &work_key(work_id),
+            ProjectionExpectedPathBudgetReadKind::StateNode,
+            budget,
+        )?
+        .map(|bytes| {
+            let state: StoredWork = decode_canonical_bounded(&bytes, budget)?;
+            if state.schema_version != INDEX_SCHEMA_VERSION || state.work.work_id() != work_id {
+                return Err(ProjectionWorkError::BindingMismatch);
+            }
+            self.require_binding(&state.work)?;
+            Ok(state)
+        })
+        .transpose()
     }
 
     fn require_current_completed_path_source(
@@ -2125,6 +2627,91 @@ impl ProjectionWorkIndex {
                 // at the mutation boundary. Inductively, any retained direct
                 // source is on the current lineage; accepted path work removes
                 // the row before publishing its replacement.
+                if engine_history_generation == 0
+                    || engine_history_generation > root.engine_history_generation
+                    || engine_history_root == super::object_store::EngineHistoryStore::empty_root()
+                    || (engine_history_generation == root.engine_history_generation
+                        && engine_history_root != root.engine_history_root)
+                {
+                    return Err(ProjectionWorkError::HistoryBindingMismatch);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn require_current_completed_path_source_bounded(
+        &self,
+        root: &ProjectionRoot,
+        current: &ProjectionCurrentCompletedPath,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(), ProjectionWorkError> {
+        match current.source {
+            ProjectionCompletedPathSource::Manifested { work_id } => {
+                let state = self
+                    .load_state_bounded(root, work_id, budget)?
+                    .ok_or(ProjectionWorkError::MissingWork(work_id))?;
+                if state.work.page_id() != current.receipt.page_id()
+                    || state.work.path() != current.receipt.path()
+                    || state.work.post_frontier() != current.receipt.frontier()
+                    || state.work.target() != current.receipt.target()
+                    || state.status
+                        != (StoredWorkStatus::Completed {
+                            intent_id: current.receipt.intent_id(),
+                            logical_completion_id: current.receipt.logical_completion_id(),
+                        })
+                {
+                    return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+                }
+                budget.reserve(16)?;
+                let bytes = self
+                    .tree_lookup_bounded(
+                        root.accepted_root,
+                        &batch_key(state.work.batch_id()),
+                        ProjectionExpectedPathBudgetReadKind::AcceptedWitnessNode,
+                        budget,
+                    )?
+                    .ok_or(ProjectionWorkError::AcceptedWitnessMissing)?;
+                let witness: AcceptedBatchWitness = decode_canonical_bounded(&bytes, budget)?;
+                if witness.schema_version != INDEX_SCHEMA_VERSION
+                    || witness.workspace_id != self.workspace_id
+                    || witness.endpoint_id != self.endpoint_id
+                    || witness.batch_id != state.work.batch_id()
+                    || witness.work_ids.binary_search(&work_id).is_err()
+                    || !strictly_sorted(&witness.work_ids)
+                {
+                    return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+                }
+                let source_root = self.load_root_bounded(
+                    witness.pending_root_digest,
+                    ProjectionExpectedPathBudgetReadKind::PendingSourceRoot,
+                    budget,
+                )?;
+                budget.reserve(16)?;
+                let pending = self
+                    .tree_lookup_bounded(
+                        source_root.pending_root,
+                        &batch_key(witness.batch_id),
+                        ProjectionExpectedPathBudgetReadKind::PendingActivationNode,
+                        budget,
+                    )?
+                    .ok_or(ProjectionWorkError::PendingActivationMissing)?;
+                let pending: ProjectionPendingActivation =
+                    decode_canonical_bounded(&pending, budget)?;
+                self.require_pending_binding(&pending)?;
+                self.require_pending_prepared_bounded(&pending, budget)?;
+                if pending.batch_id != witness.batch_id
+                    || pending.manifest_fingerprint != witness.manifest_fingerprint
+                    || pending.prepared_digest != witness.prepared_digest
+                    || pending.work_ids != witness.work_ids
+                {
+                    return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+                }
+            }
+            ProjectionCompletedPathSource::Direct {
+                engine_history_generation,
+                engine_history_root,
+            } => {
                 if engine_history_generation == 0
                     || engine_history_generation > root.engine_history_generation
                     || engine_history_root == super::object_store::EngineHistoryStore::empty_root()
@@ -2285,6 +2872,32 @@ impl ProjectionWorkIndex {
         Ok(prepared)
     }
 
+    fn require_pending_prepared_bounded(
+        &self,
+        pending: &ProjectionPendingActivation,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(), ProjectionWorkError> {
+        let (prepared, encoded_bytes) = self.load_prepared_bounded(pending.batch_id, budget)?;
+        budget.reserve(
+            u64::try_from(encoded_bytes)
+                .map_err(|_| ProjectionWorkError::RetainedMemoryLimitExceeded)?
+                .checked_mul(2)
+                .ok_or(ProjectionWorkError::RetainedMemoryLimitExceeded)?,
+        )?;
+        let bytes = encode_canonical(&prepared)?;
+        if prepared.manifest_fingerprint != pending.manifest_fingerprint
+            || ContentDigest::of(&bytes) != pending.prepared_digest
+            || !prepared
+                .work
+                .iter()
+                .map(ProjectionWork::work_id)
+                .eq(pending.work_ids.iter().copied())
+        {
+            return Err(ProjectionWorkError::PendingActivationMismatch);
+        }
+        Ok(())
+    }
+
     fn require_accepted_witness(
         &self,
         witness: &AcceptedBatchWitness,
@@ -2344,6 +2957,70 @@ impl ProjectionWorkIndex {
                         left
                     };
                 }
+            }
+        }
+    }
+
+    fn tree_lookup_bounded(
+        &self,
+        root: ContentDigest,
+        key: &[u8],
+        kind: ProjectionExpectedPathBudgetReadKind,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<Option<Vec<u8>>, ProjectionWorkError> {
+        validate_key(key)?;
+        if root == empty_tree_root() {
+            return Ok(None);
+        }
+        let mut digest = root;
+        loop {
+            match self.read_node_bounded(digest, kind, budget)? {
+                IndexNode::Leaf {
+                    key: found, value, ..
+                } => return Ok((found == key).then_some(value)),
+                IndexNode::Branch {
+                    prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    if !prefix_matches(key, &prefix, prefix_bit_len as usize) {
+                        return Ok(None);
+                    }
+                    digest = if key_bit(key, prefix_bit_len as usize)? {
+                        right
+                    } else {
+                        left
+                    };
+                }
+            }
+        }
+    }
+
+    fn read_optional_regular_bounded(
+        &self,
+        dir: &Dir,
+        path: &str,
+        kind: ProjectionExpectedPathBudgetReadKind,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<Option<Vec<u8>>, ProjectionWorkError> {
+        // Reserve the complete caller remainder before the storage helper can
+        // allocate. Once the exact admitted length is known, release the
+        // unused portion while retaining the bytes actually returned.
+        let granted_bytes = budget.take_read_grant()?;
+        match read_optional_regular(dir, path, granted_bytes, None) {
+            Ok(Some(bytes)) => {
+                budget.settle_read(kind, granted_bytes, bytes.len())?;
+                Ok(Some(bytes))
+            }
+            Ok(None) => {
+                budget.cancel_read(granted_bytes);
+                Ok(None)
+            }
+            Err(error) => {
+                budget.cancel_read(granted_bytes);
+                Err(error.into())
             }
         }
     }
@@ -2580,6 +3257,26 @@ impl ProjectionWorkIndex {
             return Err(ProjectionWorkError::NodeDigestMismatch(digest));
         }
         let node: IndexNode = decode_canonical(&bytes)?;
+        validate_node(&node)?;
+        self.counters.node_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(node)
+    }
+
+    fn read_node_bounded(
+        &self,
+        digest: ContentDigest,
+        kind: ProjectionExpectedPathBudgetReadKind,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<IndexNode, ProjectionWorkError> {
+        budget.reserve_usize(64 + NODE_SUFFIX.len())?;
+        let filename = node_filename(digest);
+        let bytes = self
+            .read_optional_regular_bounded(&self.nodes, &filename, kind, budget)?
+            .ok_or(ProjectionWorkError::MissingNode(digest))?;
+        if ContentDigest::of(&bytes) != digest {
+            return Err(ProjectionWorkError::NodeDigestMismatch(digest));
+        }
+        let node: IndexNode = decode_canonical_bounded(&bytes, budget)?;
         validate_node(&node)?;
         self.counters.node_reads.fetch_add(1, Ordering::Relaxed);
         Ok(node)
@@ -2920,6 +3617,17 @@ where
     Ok(value)
 }
 
+fn decode_canonical_bounded<T>(
+    bytes: &[u8],
+    budget: &mut ProjectionExpectedPathReadBudget,
+) -> Result<T, ProjectionWorkError>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    budget.reserve_canonical_decode(bytes.len())?;
+    decode_canonical(bytes)
+}
+
 fn work_id(
     endpoint_id: ProjectionEndpointId,
     graph_resource_id: super::CanonicalGraphResourceId,
@@ -3006,6 +3714,42 @@ fn decode_completed_path_row(
         return Err(ProjectionWorkError::TooLarge(bytes.len()));
     }
     let row: ProjectionCompletedPathRow = decode_canonical(bytes)?;
+    if key != path_key(row.path()) {
+        return Err(ProjectionWorkError::BindingMismatch);
+    }
+    match &row {
+        ProjectionCompletedPathRow::Current(ProjectionCurrentCompletedPath {
+            source:
+                ProjectionCompletedPathSource::Direct {
+                    engine_history_generation,
+                    engine_history_root,
+                },
+            ..
+        })
+        | ProjectionCompletedPathRow::Ambiguous {
+            engine_history_generation,
+            engine_history_root,
+            ..
+        } if *engine_history_generation == 0
+            || *engine_history_root == super::object_store::EngineHistoryStore::empty_root() =>
+        {
+            return Err(ProjectionWorkError::BindingMismatch);
+        }
+        ProjectionCompletedPathRow::Current(_) | ProjectionCompletedPathRow::Ambiguous { .. } => {}
+    }
+    Ok(row)
+}
+
+fn decode_completed_path_row_bounded(
+    key: &[u8],
+    bytes: &[u8],
+    budget: &mut ProjectionExpectedPathReadBudget,
+) -> Result<ProjectionCompletedPathRow, ProjectionWorkError> {
+    if bytes.len() > MAX_COMPLETED_PATH_ROW_BYTES {
+        return Err(ProjectionWorkError::TooLarge(bytes.len()));
+    }
+    let row: ProjectionCompletedPathRow = decode_canonical_bounded(bytes, budget)?;
+    budget.reserve(32)?;
     if key != path_key(row.path()) {
         return Err(ProjectionWorkError::BindingMismatch);
     }
@@ -3175,6 +3919,7 @@ pub enum ProjectionWorkError {
     ConcurrentRootTransition,
     InvalidPageLimit(usize),
     PreflightLimitExceeded,
+    RetainedMemoryLimitExceeded,
     Poisoned,
 }
 
@@ -3240,6 +3985,9 @@ impl fmt::Display for ProjectionWorkError {
             }
             Self::PreflightLimitExceeded => {
                 f.write_str("projection work reachable preflight limit exceeded")
+            }
+            Self::RetainedMemoryLimitExceeded => {
+                f.write_str("projection expected-path retained-memory limit exceeded")
             }
             Self::Poisoned => f.write_str("projection work transition lock is poisoned"),
         }
@@ -3935,6 +4683,74 @@ mod tests {
             .unwrap()
             .open_projection_work_index(fixture.binding())
             .is_err());
+    }
+
+    #[test]
+    fn expected_path_head_point_reads_stay_pinned_and_reject_misbinding() {
+        let fixture = Fixture::new("expected-path-pinned-head");
+        let history = fixture.work(1, "pages/history.md");
+        let fingerprint = fixture.prepare(&history);
+        fixture
+            .index
+            .accept_batch(history.batch_id(), fingerprint)
+            .unwrap();
+        let page_id = PageId::from_uuid(Uuid::from_u128(80_000));
+        let path = ManagedPath::parse("pages/pinned.md").unwrap();
+        fixture
+            .index
+            .record_expected_completion_for_test(
+                page_id,
+                path.clone(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"first")),
+                80_001,
+            )
+            .unwrap();
+        let mut pin_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+        let pinned = fixture
+            .index
+            .pin_expected_path_head(&mut pin_budget)
+            .unwrap();
+        let first = fixture
+            .index
+            .completed_receipt_at_expected_path_head(pinned, &path, 1024 * 1024)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first.target(),
+            ProjectionWorkTarget::Present(BlobDescription::of(b"first"))
+        );
+
+        fixture
+            .index
+            .record_expected_completion_for_test(
+                PageId::from_uuid(Uuid::from_u128(80_003)),
+                ManagedPath::parse("pages/unrelated.md").unwrap(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"unrelated")),
+                80_002,
+            )
+            .unwrap();
+        let mut current_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+        assert!(matches!(
+            fixture
+                .index
+                .require_expected_path_head_current(pinned, &mut current_budget),
+            Err(ProjectionWorkError::ConcurrentRootTransition)
+        ));
+        let still_first = fixture
+            .index
+            .completed_receipt_at_expected_path_head(pinned, &path, 1024 * 1024)
+            .unwrap()
+            .unwrap();
+        assert_eq!(still_first, first);
+
+        let mut misbound = pinned;
+        misbound.completed_paths_root = ContentDigest::of(b"misbound-completed-root");
+        assert!(matches!(
+            fixture
+                .index
+                .completed_receipt_at_expected_path_head(misbound, &path, 1024 * 1024),
+            Err(ProjectionWorkError::BindingMismatch)
+        ));
     }
 
     #[test]

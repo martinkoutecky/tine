@@ -5,8 +5,16 @@
 //! epoch is only a bounded candidate set for a later point-revalidated packet.
 
 use super::{
-    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath, ManagedTextKind,
-    PortablePathKey,
+    hot_engine::{
+        CurrentPathCatalogBinding, CurrentPathCatalogCursor, CurrentPathCatalogRow,
+        ShardedHotEngine, MAX_CURRENT_PATH_CURSOR_PAGE_ROWS,
+    },
+    projection_work_index::{
+        ProjectionExpectedPathHead, ProjectionExpectedPathReadBudget, ProjectionWorkError,
+        ProjectionWorkIndex,
+    },
+    BlobDescription, CanonicalGraphResourceId, ContentDigest, ManagedPath, ManagedTextKind, PageId,
+    PortablePathKey, ProjectionWorkTarget,
 };
 use crate::graph_text_scope::GraphTextScopeBinding;
 use crate::model::Graph;
@@ -147,6 +155,7 @@ pub(crate) struct ExpectedPathBinding {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AuthenticatedExpectedPath {
+    pub(crate) page_id: PageId,
     pub(crate) path: ManagedPath,
     pub(crate) kind: ManagedTextKind,
     pub(crate) description: BlobDescription,
@@ -157,7 +166,10 @@ pub(crate) struct AuthenticatedExpectedPath {
 pub(crate) struct AuthenticatedExpectedPathStreamHeader {
     pub(crate) binding: ExpectedPathBinding,
     pub(crate) total_rows: usize,
-    pub(crate) rows_commitment: ContentDigest,
+    /// Constant-size commitment to the authenticated source roots and all
+    /// joined identities. The scan separately hashes the streamed rows and
+    /// requires the same row commitment from both opens.
+    pub(crate) source_commitment: ContentDigest,
     /// Live scan-owned cursor state. A joined engine/projection adapter reports
     /// only its cursor token and bounded page state here, never its engine's
     /// independently retained authenticated indexes.
@@ -181,6 +193,13 @@ pub(crate) struct ExpectedPathPageRequest {
     pub(crate) maximum_rows: usize,
     pub(crate) maximum_path_bytes: usize,
     pub(crate) maximum_aggregate_path_bytes: u64,
+    pub(crate) maximum_retained_rows: usize,
+    pub(crate) maximum_retained_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExpectedPathPointRequest {
+    pub(crate) maximum_path_bytes: usize,
     pub(crate) maximum_retained_rows: usize,
     pub(crate) maximum_retained_bytes: u64,
 }
@@ -215,13 +234,14 @@ impl fmt::Display for ExpectedPathSourceFailure {
 /// Test fixture boundary for the later joined authenticated engine/projection
 /// cursor.
 ///
-/// Each open returns a small cursor over one exact-path-sorted live set. Pages
+/// Each open returns a small cursor over one PageId-sorted live set. Pages
 /// must be allocated causally within the supplied row/path/retained limits.
 /// Implementations must fail with `Ambiguous` before opening when exact or
 /// portable path ownership is not unique. They must not rematerialize the
-/// complete catalog in a cursor or page. The scan independently checks ordering,
-/// row/path bounds, total count, the authenticated commitment, and the binding
-/// before/after both filesystem passes and both stream traversals.
+/// complete catalog in a cursor, page, or exact-path point lookup. The scan
+/// independently checks PageId ordering, row/path bounds, total count, both
+/// streamed-row commitments, the authenticated source-root commitment, and the
+/// binding before/after both filesystem passes and both stream traversals.
 pub(crate) trait AuthenticatedExpectedPathSource {
     type Cursor;
 
@@ -236,7 +256,511 @@ pub(crate) trait AuthenticatedExpectedPathSource {
         request: ExpectedPathPageRequest,
     ) -> Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure>;
 
-    fn current_binding(&self) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure>;
+    fn expected_path_at(
+        &self,
+        path: &ManagedPath,
+        request: ExpectedPathPointRequest,
+    ) -> Result<Option<AuthenticatedExpectedPath>, ExpectedPathSourceFailure>;
+
+    fn current_binding(
+        &self,
+        maximum_retained_bytes: u64,
+    ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure>;
+}
+
+/// Test-only joined semantic/projection expected-state source.
+pub(crate) struct JoinedAuthenticatedExpectedPathSource<'a> {
+    engine: &'a ShardedHotEngine,
+    projection: &'a ProjectionWorkIndex,
+}
+
+impl<'a> JoinedAuthenticatedExpectedPathSource<'a> {
+    pub(crate) const fn new(
+        engine: &'a ShardedHotEngine,
+        projection: &'a ProjectionWorkIndex,
+    ) -> Self {
+        Self { engine, projection }
+    }
+
+    fn pin_join(
+        &self,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<
+        (
+            CurrentPathCatalogBinding,
+            ProjectionExpectedPathHead,
+            ExpectedPathBinding,
+            ContentDigest,
+        ),
+        ExpectedPathSourceFailure,
+    > {
+        let engine = self
+            .engine
+            .current_path_catalog_binding()
+            .map_err(map_engine_expected_failure)?;
+        let projection = self
+            .projection
+            .pin_expected_path_head(budget)
+            .map_err(map_projection_expected_failure)?;
+        let endpoint = self
+            .engine
+            .projection_endpoint_binding()
+            .ok_or(ExpectedPathSourceFailure::Missing)?;
+        let receipt_store_id = self
+            .engine
+            .projection_receipt_store_id()
+            .ok_or(ExpectedPathSourceFailure::Missing)?;
+        if engine.workspace_id() != projection.workspace_id()
+            || endpoint.endpoint_id() != projection.endpoint_id()
+            || endpoint.graph_resource_id() != projection.graph_resource_id()
+            || receipt_store_id != projection.receipt_store_id()
+            || engine.history_generation() != projection.engine_history_generation()
+            || engine.history_root() != projection.engine_history_root()
+        {
+            return Err(ExpectedPathSourceFailure::Corrupt);
+        }
+        let binding = ExpectedPathBinding {
+            accepted_frontier: engine.accepted_frontier(),
+            projection_generation: projection.generation(),
+        };
+        let source_commitment = joined_source_commitment(engine, projection, endpoint.device_id());
+        Ok((engine, projection, binding, source_commitment))
+    }
+
+    fn require_join_current(
+        &self,
+        engine: CurrentPathCatalogBinding,
+        projection: ProjectionExpectedPathHead,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<(), ExpectedPathSourceFailure> {
+        let (current_engine, current_projection, _, _) = self.pin_join(budget)?;
+        if current_engine != engine || current_projection != projection {
+            return Err(ExpectedPathSourceFailure::Unavailable);
+        }
+        self.projection
+            .require_expected_path_head_current(projection, budget)
+            .map_err(map_projection_expected_failure)
+    }
+
+    fn join_row(
+        &self,
+        head: ProjectionExpectedPathHead,
+        source_commitment: ContentDigest,
+        row: CurrentPathCatalogRow,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<AuthenticatedExpectedPath, ExpectedPathSourceFailure> {
+        let receipt = self
+            .projection
+            .completed_receipt_at_expected_path_head_bounded(head, row.path(), budget)
+            .map_err(map_projection_expected_failure)?
+            .ok_or(ExpectedPathSourceFailure::Missing)?;
+        if receipt.page_id() != row.page_id() || receipt.path() != row.path() {
+            return Err(ExpectedPathSourceFailure::Corrupt);
+        }
+        let ProjectionWorkTarget::Present(description) = receipt.target() else {
+            return Err(ExpectedPathSourceFailure::Missing);
+        };
+        Ok(AuthenticatedExpectedPath {
+            page_id: row.page_id(),
+            path: row.path().clone(),
+            kind: row.kind(),
+            description,
+            owner_binding: joined_owner_binding(source_commitment, row.page_id(), row.path()),
+        })
+    }
+
+    fn read_expected_path_page_bounded(
+        &self,
+        cursor: &mut JoinedAuthenticatedExpectedPathCursor<'a>,
+        request: ExpectedPathPageRequest,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure> {
+        if cursor.binding.accepted_frontier != cursor.engine_binding.accepted_frontier()
+            || cursor.binding.projection_generation != cursor.projection_head.generation()
+        {
+            return Err(ExpectedPathSourceFailure::Corrupt);
+        }
+        if request.maximum_rows > cursor.limits.maximum_page_rows
+            || request.maximum_path_bytes > cursor.limits.maximum_path_bytes
+            || request.maximum_aggregate_path_bytes > cursor.limits.maximum_aggregate_path_bytes
+            || request.maximum_retained_rows > cursor.limits.maximum_retained_rows
+            || request.maximum_retained_bytes > cursor.limits.maximum_retained_bytes
+            || request.maximum_retained_bytes > cursor.limits.maximum_page_bytes
+        {
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        self.require_join_current(cursor.engine_binding, cursor.projection_head, budget)?;
+        let token = cursor
+            .token
+            .take()
+            .ok_or(ExpectedPathSourceFailure::Corrupt)?;
+        let worst_row_bytes = mem::size_of::<CurrentPathCatalogRow>()
+            .saturating_add(mem::size_of::<AuthenticatedExpectedPath>())
+            .saturating_add(request.maximum_path_bytes.saturating_mul(2));
+        let page_budget = request.maximum_retained_bytes / 2;
+        let rows_by_bytes = usize::try_from(
+            page_budget
+                / u64::try_from(worst_row_bytes.max(1))
+                    .map_err(|_| ExpectedPathSourceFailure::BoundExceeded)?,
+        )
+        .map_err(|_| ExpectedPathSourceFailure::BoundExceeded)?;
+        let limit = request
+            .maximum_rows
+            .min(request.maximum_retained_rows)
+            .min(rows_by_bytes)
+            .min(MAX_CURRENT_PATH_CURSOR_PAGE_ROWS);
+        if limit == 0 {
+            let _ = self.engine.cancel_current_path_cursor(token);
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        let page = self
+            .engine
+            .current_path_cursor_page(token, limit)
+            .map_err(map_engine_expected_failure)?;
+        let (semantic_rows, next) = page.into_parts();
+        cursor.token = next;
+        let semantic_retained_bytes = (semantic_rows.capacity() as u64)
+            .saturating_mul(mem::size_of::<CurrentPathCatalogRow>() as u64)
+            .saturating_add(
+                semantic_rows
+                    .iter()
+                    .map(|row| row.path().as_str().len() as u64)
+                    .sum::<u64>(),
+            );
+        if semantic_retained_bytes > page_budget {
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        budget
+            .reset_with_retained(semantic_retained_bytes)
+            .map_err(map_projection_expected_failure)?;
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(semantic_rows.len())
+            .map_err(|_| ExpectedPathSourceFailure::BoundExceeded)?;
+        let output_capacity_bytes = (rows.capacity() as u64)
+            .checked_mul(mem::size_of::<AuthenticatedExpectedPath>() as u64)
+            .ok_or(ExpectedPathSourceFailure::BoundExceeded)?;
+        let mut aggregate_path_bytes = 0_u64;
+        for semantic in semantic_rows {
+            let path_bytes = semantic.path().as_str().len();
+            if path_bytes > request.maximum_path_bytes {
+                return Err(ExpectedPathSourceFailure::BoundExceeded);
+            }
+            aggregate_path_bytes = aggregate_path_bytes
+                .checked_add(path_bytes as u64)
+                .ok_or(ExpectedPathSourceFailure::BoundExceeded)?;
+            if aggregate_path_bytes > request.maximum_aggregate_path_bytes {
+                return Err(ExpectedPathSourceFailure::BoundExceeded);
+            }
+            budget
+                .reset_with_retained(
+                    semantic_retained_bytes
+                        .checked_add(output_capacity_bytes)
+                        .and_then(|retained| retained.checked_add(aggregate_path_bytes))
+                        .ok_or(ExpectedPathSourceFailure::BoundExceeded)?,
+                )
+                .map_err(map_projection_expected_failure)?;
+            rows.push(self.join_row(
+                cursor.projection_head,
+                cursor.source_commitment,
+                semantic,
+                budget,
+            )?);
+        }
+        self.require_join_current(cursor.engine_binding, cursor.projection_head, budget)?;
+        Ok(AuthenticatedExpectedPathPage {
+            rows,
+            done: cursor.token.is_none(),
+        })
+    }
+
+    fn expected_path_at_bounded(
+        &self,
+        path: &ManagedPath,
+        request: ExpectedPathPointRequest,
+        budget: &mut ProjectionExpectedPathReadBudget,
+    ) -> Result<Option<AuthenticatedExpectedPath>, ExpectedPathSourceFailure> {
+        let point_bytes = mem::size_of::<CurrentPathCatalogRow>()
+            .saturating_add(mem::size_of::<AuthenticatedExpectedPath>())
+            .saturating_add(path.as_str().len().saturating_mul(2));
+        if request.maximum_retained_rows < 2
+            || path.as_str().len() > request.maximum_path_bytes
+            || point_bytes as u64 > request.maximum_retained_bytes
+        {
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        let (engine, projection, _, source_commitment) = self.pin_join(budget)?;
+        let row = self
+            .engine
+            .current_path_catalog_row_at_path(path)
+            .map_err(map_engine_expected_failure)?;
+        budget
+            .reset_with_retained(if row.is_some() { point_bytes as u64 } else { 0 })
+            .map_err(map_projection_expected_failure)?;
+        let joined = row
+            .map(|row| self.join_row(projection, source_commitment, row, budget))
+            .transpose()?;
+        self.require_join_current(engine, projection, budget)?;
+        Ok(joined)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_expected_path_page_budget_trace_for_test(
+        &self,
+        cursor: &mut JoinedAuthenticatedExpectedPathCursor<'a>,
+        request: ExpectedPathPageRequest,
+    ) -> (
+        Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure>,
+        Vec<super::projection_work_index::ProjectionExpectedPathBudgetRead>,
+    ) {
+        let mut budget = ProjectionExpectedPathReadBudget::new(request.maximum_retained_bytes);
+        let result = self.read_expected_path_page_bounded(cursor, request, &mut budget);
+        (result, budget.read_trace())
+    }
+}
+
+pub(crate) struct JoinedAuthenticatedExpectedPathCursor<'a> {
+    engine: &'a ShardedHotEngine,
+    token: Option<CurrentPathCatalogCursor>,
+    engine_binding: CurrentPathCatalogBinding,
+    projection_head: ProjectionExpectedPathHead,
+    binding: ExpectedPathBinding,
+    source_commitment: ContentDigest,
+    limits: ExpectedPathStreamLimits,
+}
+
+#[cfg(test)]
+pub(crate) struct DetachedJoinedExpectedPathCursor {
+    token: CurrentPathCatalogCursor,
+    engine_binding: CurrentPathCatalogBinding,
+    projection_head: ProjectionExpectedPathHead,
+    binding: ExpectedPathBinding,
+    source_commitment: ContentDigest,
+    limits: ExpectedPathStreamLimits,
+}
+
+#[cfg(test)]
+impl<'a> JoinedAuthenticatedExpectedPathSource<'a> {
+    pub(crate) fn open_detached_for_test(
+        &self,
+        limits: ExpectedPathStreamLimits,
+    ) -> Result<
+        (
+            AuthenticatedExpectedPathStreamHeader,
+            DetachedJoinedExpectedPathCursor,
+        ),
+        ExpectedPathSourceFailure,
+    > {
+        let mut budget = ProjectionExpectedPathReadBudget::new(limits.maximum_retained_bytes);
+        let (engine_binding, projection_head, binding, source_commitment) =
+            self.pin_join(&mut budget)?;
+        let total_rows = usize::try_from(engine_binding.catalog_rows())
+            .map_err(|_| ExpectedPathSourceFailure::BoundExceeded)?;
+        if total_rows > limits.maximum_rows {
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        budget
+            .reset_with_retained(mem::size_of::<DetachedJoinedExpectedPathCursor>() as u64)
+            .map_err(map_projection_expected_failure)?;
+        let token = self
+            .engine
+            .begin_current_path_cursor()
+            .map_err(map_engine_expected_failure)?;
+        Ok((
+            AuthenticatedExpectedPathStreamHeader {
+                binding,
+                total_rows,
+                source_commitment,
+                cursor_retained_rows: 1,
+                cursor_retained_bytes: mem::size_of::<JoinedAuthenticatedExpectedPathCursor<'_>>()
+                    as u64,
+            },
+            DetachedJoinedExpectedPathCursor {
+                token,
+                engine_binding,
+                projection_head,
+                binding,
+                source_commitment,
+                limits,
+            },
+        ))
+    }
+
+    pub(crate) fn attach_detached_for_test(
+        &self,
+        detached: DetachedJoinedExpectedPathCursor,
+    ) -> JoinedAuthenticatedExpectedPathCursor<'a> {
+        JoinedAuthenticatedExpectedPathCursor {
+            engine: self.engine,
+            token: Some(detached.token),
+            engine_binding: detached.engine_binding,
+            projection_head: detached.projection_head,
+            binding: detached.binding,
+            source_commitment: detached.source_commitment,
+            limits: detached.limits,
+        }
+    }
+}
+
+impl Drop for JoinedAuthenticatedExpectedPathCursor<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            let _ = self.engine.cancel_current_path_cursor(token);
+        }
+    }
+}
+
+impl<'a> AuthenticatedExpectedPathSource for JoinedAuthenticatedExpectedPathSource<'a> {
+    type Cursor = JoinedAuthenticatedExpectedPathCursor<'a>;
+
+    fn open_expected_paths(
+        &self,
+        limits: ExpectedPathStreamLimits,
+    ) -> Result<(AuthenticatedExpectedPathStreamHeader, Self::Cursor), ExpectedPathSourceFailure>
+    {
+        let mut budget = ProjectionExpectedPathReadBudget::new(limits.maximum_retained_bytes);
+        let (engine_binding, projection_head, binding, source_commitment) =
+            self.pin_join(&mut budget)?;
+        let total_rows = usize::try_from(engine_binding.catalog_rows())
+            .map_err(|_| ExpectedPathSourceFailure::BoundExceeded)?;
+        if total_rows > limits.maximum_rows
+            || limits.maximum_page_rows == 0
+            || limits.maximum_path_bytes == 0
+            || limits.maximum_retained_rows == 0
+            || limits.maximum_retained_bytes
+                < mem::size_of::<JoinedAuthenticatedExpectedPathCursor<'_>>() as u64
+        {
+            return Err(ExpectedPathSourceFailure::BoundExceeded);
+        }
+        let cursor_retained_bytes =
+            mem::size_of::<JoinedAuthenticatedExpectedPathCursor<'_>>() as u64;
+        budget
+            .reset_with_retained(cursor_retained_bytes)
+            .map_err(map_projection_expected_failure)?;
+        let token = self
+            .engine
+            .begin_current_path_cursor()
+            .map_err(map_engine_expected_failure)?;
+        Ok((
+            AuthenticatedExpectedPathStreamHeader {
+                binding,
+                total_rows,
+                source_commitment,
+                cursor_retained_rows: 1,
+                cursor_retained_bytes,
+            },
+            JoinedAuthenticatedExpectedPathCursor {
+                engine: self.engine,
+                token: Some(token),
+                engine_binding,
+                projection_head,
+                binding,
+                source_commitment,
+                limits,
+            },
+        ))
+    }
+
+    fn read_expected_path_page(
+        &self,
+        cursor: &mut Self::Cursor,
+        request: ExpectedPathPageRequest,
+    ) -> Result<AuthenticatedExpectedPathPage, ExpectedPathSourceFailure> {
+        let mut budget = ProjectionExpectedPathReadBudget::new(request.maximum_retained_bytes);
+        self.read_expected_path_page_bounded(cursor, request, &mut budget)
+    }
+
+    fn expected_path_at(
+        &self,
+        path: &ManagedPath,
+        request: ExpectedPathPointRequest,
+    ) -> Result<Option<AuthenticatedExpectedPath>, ExpectedPathSourceFailure> {
+        let mut budget = ProjectionExpectedPathReadBudget::new(request.maximum_retained_bytes);
+        self.expected_path_at_bounded(path, request, &mut budget)
+    }
+
+    fn current_binding(
+        &self,
+        maximum_retained_bytes: u64,
+    ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
+        let mut budget = ProjectionExpectedPathReadBudget::new(maximum_retained_bytes);
+        self.pin_join(&mut budget).map(|(_, _, binding, _)| binding)
+    }
+}
+
+fn joined_source_commitment(
+    engine: CurrentPathCatalogBinding,
+    projection: ProjectionExpectedPathHead,
+    device_id: super::DeviceId,
+) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/test-only/joined-expected-path-source/v1\0");
+    hasher.update(engine.workspace_id().as_uuid().as_bytes());
+    hasher.update(engine.lineage_digest().as_bytes());
+    hasher.update(engine.accepted_frontier().as_bytes());
+    hasher.update(engine.history_generation().to_be_bytes());
+    hasher.update(engine.history_root().as_bytes());
+    hasher.update(engine.catalog_root().as_bytes());
+    hasher.update(engine.catalog_rows().to_be_bytes());
+    hasher.update(projection.head_digest().as_bytes());
+    hasher.update(projection.endpoint_id().as_uuid().as_bytes());
+    hasher.update(device_id.as_uuid().as_bytes());
+    hasher.update(projection.graph_resource_id().as_bytes());
+    hasher.update(projection.receipt_store_id().as_bytes());
+    hasher.update(projection.generation().to_be_bytes());
+    hasher.update(projection.engine_history_generation().to_be_bytes());
+    hasher.update(projection.engine_history_root().as_bytes());
+    hasher.update(projection.completed_paths_root().as_bytes());
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn joined_owner_binding(
+    source_commitment: ContentDigest,
+    page_id: PageId,
+    path: &ManagedPath,
+) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/test-only/joined-expected-path-owner/v1\0");
+    hasher.update(source_commitment.as_bytes());
+    hasher.update(page_id.as_uuid().as_bytes());
+    hash_len_bytes(&mut hasher, path.as_str().as_bytes());
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn map_engine_expected_failure(error: super::EngineError) -> ExpectedPathSourceFailure {
+    let detail = error.to_string();
+    if detail.contains("ambiguity") || detail.contains("collision") {
+        ExpectedPathSourceFailure::Ambiguous
+    } else if detail.contains("unavailable") {
+        ExpectedPathSourceFailure::Unavailable
+    } else if detail.contains("missing") {
+        ExpectedPathSourceFailure::Missing
+    } else if detail.contains("bound") || detail.contains("limit") {
+        ExpectedPathSourceFailure::BoundExceeded
+    } else {
+        ExpectedPathSourceFailure::Corrupt
+    }
+}
+
+fn map_projection_expected_failure(error: ProjectionWorkError) -> ExpectedPathSourceFailure {
+    if error.to_string().contains("too large") {
+        return ExpectedPathSourceFailure::BoundExceeded;
+    }
+    match error {
+        ProjectionWorkError::MissingHead
+        | ProjectionWorkError::MissingRoot(_)
+        | ProjectionWorkError::MissingNode(_) => ExpectedPathSourceFailure::Missing,
+        ProjectionWorkError::AmbiguousCompletedPath => ExpectedPathSourceFailure::Ambiguous,
+        ProjectionWorkError::ConcurrentRootTransition => ExpectedPathSourceFailure::Unavailable,
+        ProjectionWorkError::Store(super::object_store::StoreError::StoredFileTooLarge {
+            ..
+        })
+        | ProjectionWorkError::TooLarge(_)
+        | ProjectionWorkError::PreflightLimitExceeded
+        | ProjectionWorkError::RetainedMemoryLimitExceeded => {
+            ExpectedPathSourceFailure::BoundExceeded
+        }
+        _ => ExpectedPathSourceFailure::Corrupt,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -251,6 +775,7 @@ pub(crate) struct GraphTextCandidateBinding {
     pub(crate) graph_resource: CanonicalGraphResourceId,
     pub(crate) scope_binding: GraphTextScopeBinding,
     pub(crate) expected_binding: ExpectedPathBinding,
+    pub(crate) expected_source_commitment: ContentDigest,
     pub(crate) expected_rows_commitment: ContentDigest,
     pub(crate) scan_epoch_digest: ContentDigest,
 }
@@ -406,15 +931,25 @@ where
             ),
         ));
     }
-    let expected_binding = source.current_binding().map_err(|failure| {
-        expected_source_failure(started, instrumentation, failure, failure.to_string())
-    })?;
+    let expected_binding = source
+        .current_binding(limits.retained_bytes)
+        .map_err(|failure| {
+            expected_source_failure(started, instrumentation, failure, failure.to_string())
+        })?;
 
     let first = graph
         .capture_reconciliation_scan_pass(limits)
         .map_err(|error| scan_io_failure(started, instrumentation, error))?;
     instrumentation.add_pass(first.instrumentation, 0, 0);
-    require_expected_binding(source, expected_binding, started, instrumentation)?;
+    require_expected_binding(
+        source,
+        expected_binding,
+        limits
+            .retained_bytes
+            .saturating_sub(first.instrumentation.peak_retained_bytes),
+        started,
+        instrumentation,
+    )?;
 
     between_passes().map_err(|error| scan_io_failure(started, instrumentation, error))?;
 
@@ -453,7 +988,15 @@ where
         first.instrumentation.peak_retained_rows,
         first.instrumentation.peak_retained_bytes,
     );
-    require_expected_binding(source, expected_binding, started, instrumentation)?;
+    require_expected_binding(
+        source,
+        expected_binding,
+        limits
+            .retained_bytes
+            .saturating_sub(instrumentation.peak_retained_bytes),
+        started,
+        instrumentation,
+    )?;
 
     if !first.evidence_eq(&second) {
         return Err(GraphTextScanFailure {
@@ -466,7 +1009,7 @@ where
     }
     drop(first);
 
-    let (expected_header, plan) = plan_candidate_merge(
+    let (expected_stream, plan) = plan_candidate_merge(
         source,
         &second,
         expected_binding,
@@ -474,12 +1017,13 @@ where
         started,
         &mut instrumentation,
     )?;
-    let scan_epoch_digest = scan_epoch_digest(&second, expected_header);
+    let scan_epoch_digest = scan_epoch_digest(&second, expected_stream);
     let binding = GraphTextCandidateBinding {
         graph_resource: second.graph_resource,
         scope_binding: second.scope_binding.clone(),
         expected_binding,
-        expected_rows_commitment: expected_header.rows_commitment,
+        expected_source_commitment: expected_stream.header.source_commitment,
+        expected_rows_commitment: expected_stream.rows_commitment,
         scan_epoch_digest,
     };
     let output_rows = plan
@@ -502,14 +1046,22 @@ where
     let (candidates, diagnostics) = derive_candidates(
         source,
         &second,
-        expected_header,
+        expected_stream,
         &plan,
         &binding,
         limits,
         started,
         &mut instrumentation,
     )?;
-    require_expected_binding(source, expected_binding, started, instrumentation)?;
+    require_expected_binding(
+        source,
+        expected_binding,
+        limits
+            .retained_bytes
+            .saturating_sub(instrumentation.peak_retained_bytes),
+        started,
+        instrumentation,
+    )?;
     instrumentation.candidates = candidates.len() as u64;
     instrumentation.diagnostics = diagnostics.len() as u64;
     Ok(StableGraphTextScan {
@@ -524,12 +1076,15 @@ where
 fn require_expected_binding<S: AuthenticatedExpectedPathSource>(
     source: &S,
     expected: ExpectedPathBinding,
+    maximum_retained_bytes: u64,
     started: Instant,
     instrumentation: GraphTextScanInstrumentation,
 ) -> Result<(), GraphTextScanFailure> {
-    let current = source.current_binding().map_err(|failure| {
-        expected_source_failure(started, instrumentation, failure, failure.to_string())
-    })?;
+    let current = source
+        .current_binding(maximum_retained_bytes)
+        .map_err(|failure| {
+            expected_source_failure(started, instrumentation, failure, failure.to_string())
+        })?;
     if current != expected {
         return Err(GraphTextScanFailure {
             class: GraphTextScanFailureClass::UnstableEpoch,
@@ -624,6 +1179,7 @@ fn expected_rows_hasher(binding: ExpectedPathBinding, total_rows: usize) -> Sha2
 }
 
 fn hash_expected_row(hasher: &mut Sha256, row: &AuthenticatedExpectedPath) {
+    hasher.update(row.page_id.as_uuid().as_bytes());
     hash_len_bytes(hasher, row.path.as_str().as_bytes());
     hasher.update(match row.kind {
         ManagedTextKind::Page => [0],
@@ -635,14 +1191,15 @@ fn hash_expected_row(hasher: &mut Sha256, row: &AuthenticatedExpectedPath) {
 
 fn scan_epoch_digest(
     pass: &GraphTextScanPass,
-    expected: AuthenticatedExpectedPathStreamHeader,
+    expected: WalkedExpectedPathStream,
 ) -> ContentDigest {
     let mut hasher = Sha256::new();
     hasher.update(b"tine/test-only/reconciliation-scan-epoch/v1\0");
     hasher.update(pass.graph_resource.as_bytes());
     hasher.update(pass.scope_binding.canonical_bytes());
-    hasher.update(expected.binding.accepted_frontier.as_bytes());
-    hasher.update(expected.binding.projection_generation.to_be_bytes());
+    hasher.update(expected.header.binding.accepted_frontier.as_bytes());
+    hasher.update(expected.header.binding.projection_generation.to_be_bytes());
+    hasher.update(expected.header.source_commitment.as_bytes());
     hasher.update(expected.rows_commitment.as_bytes());
     hasher.update((pass.directories_by_exact_relative.len() as u64).to_be_bytes());
     for (path, resource) in &pass.directories_by_exact_relative {
@@ -699,6 +1256,12 @@ impl CandidateMergePlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WalkedExpectedPathStream {
+    header: AuthenticatedExpectedPathStreamHeader,
+    rows_commitment: ContentDigest,
+}
+
 fn plan_candidate_merge<S: AuthenticatedExpectedPathSource>(
     source: &S,
     pass: &GraphTextScanPass,
@@ -706,7 +1269,7 @@ fn plan_candidate_merge<S: AuthenticatedExpectedPathSource>(
     limits: GraphTextScanLimits,
     started: Instant,
     instrumentation: &mut GraphTextScanInstrumentation,
-) -> Result<(AuthenticatedExpectedPathStreamHeader, CandidateMergePlan), GraphTextScanFailure> {
+) -> Result<(WalkedExpectedPathStream, CandidateMergePlan), GraphTextScanFailure> {
     let mut plan = CandidateMergePlan::default();
     for file in &pass.files {
         if file.class == GraphTextScanPathClass::ProviderConflictCopy {
@@ -720,8 +1283,7 @@ fn plan_candidate_merge<S: AuthenticatedExpectedPathSource>(
                 .ok_or_else(|| scan_bound_failure(started, *instrumentation, "diagnostic byte"))?;
         }
     }
-    let mut disk_index = 0;
-    let header = walk_expected_stream(
+    let stream = walk_expected_stream(
         source,
         expected_binding,
         None,
@@ -731,39 +1293,51 @@ fn plan_candidate_merge<S: AuthenticatedExpectedPathSource>(
         0,
         started,
         instrumentation,
-        |row| {
-            while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
-                match file.exact_relative.as_str().cmp(row.path.as_str()) {
-                    std::cmp::Ordering::Less => {
-                        plan.add_candidate_path(&file.exact_relative)?;
-                        disk_index += 1;
-                    }
-                    std::cmp::Ordering::Equal => {
-                        if file.description != Some(row.description) {
-                            plan.add_candidate_path(row.path.as_str())?;
-                        }
-                        disk_index += 1;
-                        return Ok(());
-                    }
-                    std::cmp::Ordering::Greater => break,
-                }
-            }
-            plan.add_candidate_path(row.path.as_str())
+        |row| match eligible_file_at_path(&pass.files, row.path.as_str()) {
+            Some(file) if file.description == Some(row.description) => Ok(()),
+            Some(_) | None => plan.add_candidate_path(row.path.as_str()),
         },
     )?;
-    while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
-        plan.add_candidate_path(&file.exact_relative)
-            .map_err(|error| scan_io_failure(started, *instrumentation, error))?;
-        disk_index += 1;
+    for file in pass.files.iter().filter(|file| file.class.is_eligible()) {
+        let path = ManagedPath::parse(file.exact_relative.clone())
+            .expect("eligible scan rows retain validated managed paths");
+        let point_bytes = expected_point_retained_bytes(&path);
+        observe_live_memory(
+            instrumentation,
+            pass.instrumentation.peak_retained_rows,
+            pass.instrumentation.peak_retained_bytes,
+            2,
+            point_bytes,
+            limits,
+            started,
+        )?;
+        let expected = source
+            .expected_path_at(
+                &path,
+                expected_point_request(
+                    pass.instrumentation.peak_retained_rows,
+                    pass.instrumentation.peak_retained_bytes,
+                    limits,
+                    started,
+                    *instrumentation,
+                )?,
+            )
+            .map_err(|failure| {
+                expected_source_failure(started, *instrumentation, failure, failure.to_string())
+            })?;
+        if expected.is_none() {
+            plan.add_candidate_path(&file.exact_relative)
+                .map_err(|error| scan_io_failure(started, *instrumentation, error))?;
+        }
     }
-    Ok((header, plan))
+    Ok((stream, plan))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn derive_candidates<S: AuthenticatedExpectedPathSource>(
     source: &S,
     pass: &GraphTextScanPass,
-    expected_header: AuthenticatedExpectedPathStreamHeader,
+    expected_stream: WalkedExpectedPathStream,
     plan: &CandidateMergePlan,
     binding: &GraphTextCandidateBinding,
     limits: GraphTextScanLimits,
@@ -787,11 +1361,10 @@ fn derive_candidates<S: AuthenticatedExpectedPathSource>(
         .candidate_bytes()
         .and_then(|bytes| bytes.checked_add(plan.diagnostic_bytes()))
         .ok_or_else(|| scan_bound_failure(started, *instrumentation, "candidate byte"))?;
-    let mut disk_index = 0;
-    walk_expected_stream(
+    let walked = walk_expected_stream(
         source,
-        expected_header.binding,
-        Some(expected_header),
+        expected_stream.header.binding,
+        Some(expected_stream),
         pass,
         limits,
         output_rows,
@@ -799,56 +1372,107 @@ fn derive_candidates<S: AuthenticatedExpectedPathSource>(
         started,
         instrumentation,
         |row| {
-            while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
-                match file.exact_relative.as_str().cmp(row.path.as_str()) {
-                    std::cmp::Ordering::Less => {
-                        candidates.push(creation_candidate(file, binding));
-                        disk_index += 1;
-                    }
-                    std::cmp::Ordering::Equal => {
-                        if file.description != Some(row.description) {
-                            candidates.push(expected_candidate(
-                                row,
-                                Some(file),
-                                GraphTextCandidateKind::Edit,
-                                binding,
-                            ));
-                        }
-                        disk_index += 1;
-                        return Ok(());
-                    }
-                    std::cmp::Ordering::Greater => break,
-                }
+            let observed = eligible_file_at_path(&pass.files, row.path.as_str());
+            if observed.is_some_and(|file| file.description == Some(row.description)) {
+                return Ok(());
             }
             candidates.push(expected_candidate(
                 row,
-                None,
-                GraphTextCandidateKind::Absence,
+                observed,
+                if observed.is_some() {
+                    GraphTextCandidateKind::Edit
+                } else {
+                    GraphTextCandidateKind::Absence
+                },
                 binding,
             ));
             Ok(())
         },
     )?;
-    while let Some(file) = next_eligible_file(&pass.files, &mut disk_index) {
-        candidates.push(creation_candidate(file, binding));
-        disk_index += 1;
+    if walked != expected_stream {
+        return Err(expected_source_failure(
+            started,
+            *instrumentation,
+            ExpectedPathSourceFailure::Corrupt,
+            "reopened expected stream changed its joined rows".to_owned(),
+        ));
     }
+    for file in pass.files.iter().filter(|file| file.class.is_eligible()) {
+        let path = ManagedPath::parse(file.exact_relative.clone())
+            .expect("eligible scan rows retain validated managed paths");
+        let base_rows = pass
+            .instrumentation
+            .peak_retained_rows
+            .saturating_add(output_rows as u64);
+        let base_bytes = pass
+            .instrumentation
+            .peak_retained_bytes
+            .saturating_add(output_bytes);
+        let point_bytes = expected_point_retained_bytes(&path);
+        observe_live_memory(
+            instrumentation,
+            base_rows,
+            base_bytes,
+            2,
+            point_bytes,
+            limits,
+            started,
+        )?;
+        let expected = source
+            .expected_path_at(
+                &path,
+                expected_point_request(base_rows, base_bytes, limits, started, *instrumentation)?,
+            )
+            .map_err(|failure| {
+                expected_source_failure(started, *instrumentation, failure, failure.to_string())
+            })?;
+        if expected.is_none() {
+            candidates.push(creation_candidate(file, binding));
+        }
+    }
+    candidates.sort_unstable_by(|left, right| {
+        (left.path.as_str(), left.change).cmp(&(right.path.as_str(), right.change))
+    });
     debug_assert_eq!(candidates.len(), plan.candidate_count);
     debug_assert_eq!(diagnostics.len(), plan.diagnostic_count);
     Ok((candidates, diagnostics))
 }
 
-fn next_eligible_file<'a>(
+fn expected_point_retained_bytes(path: &ManagedPath) -> u64 {
+    (mem::size_of::<CurrentPathCatalogRow>() as u64)
+        .saturating_add(mem::size_of::<AuthenticatedExpectedPath>() as u64)
+        .saturating_add((path.as_str().len() as u64).saturating_mul(2))
+}
+
+fn expected_point_request(
+    base_rows: u64,
+    base_bytes: u64,
+    limits: GraphTextScanLimits,
+    started: Instant,
+    instrumentation: GraphTextScanInstrumentation,
+) -> Result<ExpectedPathPointRequest, GraphTextScanFailure> {
+    Ok(ExpectedPathPointRequest {
+        maximum_path_bytes: limits.exact_path_bytes,
+        maximum_retained_rows: limits
+            .retained_rows
+            .checked_sub(base_rows as usize)
+            .ok_or_else(|| scan_bound_failure(started, instrumentation, "retained row"))?,
+        maximum_retained_bytes: limits
+            .retained_bytes
+            .checked_sub(base_bytes)
+            .ok_or_else(|| scan_bound_failure(started, instrumentation, "retained byte"))?,
+    })
+}
+
+fn eligible_file_at_path<'a>(
     files: &'a [GraphTextScanFileFingerprint],
-    index: &mut usize,
+    path: &str,
 ) -> Option<&'a GraphTextScanFileFingerprint> {
-    while let Some(file) = files.get(*index) {
-        if file.class.is_eligible() {
-            return Some(file);
-        }
-        *index += 1;
-    }
-    None
+    files
+        .binary_search_by(|file| file.exact_relative.as_str().cmp(path))
+        .ok()
+        .and_then(|index| files.get(index))
+        .filter(|file| file.class.is_eligible())
 }
 
 fn creation_candidate(
@@ -892,7 +1516,7 @@ fn expected_candidate(
 fn walk_expected_stream<S, F>(
     source: &S,
     expected_binding: ExpectedPathBinding,
-    required_header: Option<AuthenticatedExpectedPathStreamHeader>,
+    required_stream: Option<WalkedExpectedPathStream>,
     pass: &GraphTextScanPass,
     limits: GraphTextScanLimits,
     output_rows: usize,
@@ -900,7 +1524,7 @@ fn walk_expected_stream<S, F>(
     started: Instant,
     instrumentation: &mut GraphTextScanInstrumentation,
     mut visit: F,
-) -> Result<AuthenticatedExpectedPathStreamHeader, GraphTextScanFailure>
+) -> Result<WalkedExpectedPathStream, GraphTextScanFailure>
 where
     S: AuthenticatedExpectedPathSource,
     F: FnMut(&AuthenticatedExpectedPath) -> io::Result<()>,
@@ -944,10 +1568,10 @@ where
             wall_time: started.elapsed(),
         });
     }
-    if required_header.is_some_and(|required| {
-        required.binding != header.binding
-            || required.total_rows != header.total_rows
-            || required.rows_commitment != header.rows_commitment
+    if required_stream.is_some_and(|required| {
+        required.header.binding != header.binding
+            || required.header.total_rows != header.total_rows
+            || required.header.source_commitment != header.source_commitment
     }) {
         return Err(expected_source_failure(
             started,
@@ -989,20 +1613,10 @@ where
     let mut hasher = expected_rows_hasher(header.binding, header.total_rows);
     let mut seen_rows = 0_usize;
     let mut aggregate_path_bytes = 0_u64;
-    let mut previous_exact: Option<String> = None;
-    let mut previous_portable: Option<PortablePathKey> = None;
+    let mut previous_page_id: Option<PageId> = None;
     loop {
-        let validation_rows =
-            u64::from(previous_exact.is_some()) + u64::from(previous_portable.is_some());
-        let validation_bytes = previous_exact
-            .as_ref()
-            .map_or(0_u64, |path| path.capacity() as u64)
-            .saturating_add(
-                previous_portable
-                    .as_ref()
-                    .map_or(0_u64, |key| key.as_bytes().len() as u64),
-            )
-            .saturating_add(validation_rows.saturating_mul(mem::size_of::<String>() as u64));
+        let validation_rows = u64::from(previous_page_id.is_some());
+        let validation_bytes = validation_rows.saturating_mul(mem::size_of::<PageId>() as u64);
         let live_rows = base_rows
             .saturating_add(cursor_rows)
             .saturating_add(validation_rows);
@@ -1085,15 +1699,15 @@ where
                     "expected aggregate path byte",
                 ));
             }
-            if let Some(previous) = previous_exact.as_deref() {
-                match previous.cmp(path) {
+            if let Some(previous) = previous_page_id {
+                match previous.cmp(&row.page_id) {
                     std::cmp::Ordering::Less => {}
                     std::cmp::Ordering::Equal => {
                         return Err(expected_source_failure(
                             started,
                             *instrumentation,
                             ExpectedPathSourceFailure::Ambiguous,
-                            "expected source contains duplicate exact paths".to_owned(),
+                            "expected source contains duplicate PageId owners".to_owned(),
                         ));
                     }
                     std::cmp::Ordering::Greater => {
@@ -1101,24 +1715,14 @@ where
                             started,
                             *instrumentation,
                             ExpectedPathSourceFailure::Corrupt,
-                            "expected source is not strictly exact-path sorted".to_owned(),
+                            "expected source is not strictly PageId sorted".to_owned(),
                         ));
                     }
                 }
             }
-            let portable = row.path.portable_key();
-            if previous_portable.as_ref() == Some(&portable) {
-                return Err(expected_source_failure(
-                    started,
-                    *instrumentation,
-                    ExpectedPathSourceFailure::Ambiguous,
-                    "expected source contains portable path aliases".to_owned(),
-                ));
-            }
             hash_expected_row(&mut hasher, row);
             visit(row).map_err(|error| scan_io_failure(started, *instrumentation, error))?;
-            previous_exact = Some(path.to_owned());
-            previous_portable = Some(portable);
+            previous_page_id = Some(row.page_id);
             seen_rows = seen_rows
                 .checked_add(1)
                 .ok_or_else(|| scan_bound_failure(started, *instrumentation, "expected row"))?;
@@ -1135,8 +1739,9 @@ where
             break;
         }
     }
+    let rows_commitment = ContentDigest::from_bytes(hasher.finalize().into());
     if seen_rows != header.total_rows
-        || ContentDigest::from_bytes(hasher.finalize().into()) != header.rows_commitment
+        || required_stream.is_some_and(|required| required.rows_commitment != rows_commitment)
     {
         return Err(expected_source_failure(
             started,
@@ -1148,8 +1753,17 @@ where
     instrumentation.expected_path_bytes = instrumentation
         .expected_path_bytes
         .saturating_add(aggregate_path_bytes);
-    require_expected_binding(source, expected_binding, started, *instrumentation)?;
-    Ok(header)
+    require_expected_binding(
+        source,
+        expected_binding,
+        limits.retained_bytes.saturating_sub(base_bytes),
+        started,
+        *instrumentation,
+    )?;
+    Ok(WalkedExpectedPathStream {
+        header,
+        rows_commitment,
+    })
 }
 
 fn expected_page_retained_bytes(page: &AuthenticatedExpectedPathPage) -> u64 {
@@ -1290,15 +1904,12 @@ mod tests {
 
         fn with_rows(mut rows: Vec<AuthenticatedExpectedPath>) -> Self {
             let binding = expected_binding(1);
-            rows.sort_unstable_by(|left, right| left.path.cmp(&right.path));
-            let ambiguous = rows
-                .windows(2)
-                .any(|window| window[0].path == window[1].path)
-                || {
-                    let mut portable = std::collections::BTreeSet::new();
-                    rows.iter()
-                        .any(|row| !portable.insert(row.path.portable_key()))
-                };
+            rows.sort_unstable_by_key(|row| row.page_id);
+            let mut exact = std::collections::BTreeSet::new();
+            let mut portable = std::collections::BTreeSet::new();
+            let ambiguous = rows.iter().any(|row| {
+                !exact.insert(row.path.clone()) || !portable.insert(row.path.portable_key())
+            });
             Self {
                 rows_commitment: Cell::new(expected_rows_commitment(binding, &rows)),
                 rows,
@@ -1340,6 +1951,11 @@ mod tests {
             if self.ambiguous {
                 return Err(ExpectedPathSourceFailure::Ambiguous);
             }
+            if self.rows_commitment.get()
+                != expected_rows_commitment(self.binding.get(), &self.rows)
+            {
+                return Err(ExpectedPathSourceFailure::Corrupt);
+            }
             self.open_calls.set(self.open_calls.get() + 1);
             if self.rows.len() > limits.maximum_rows
                 || limits.maximum_page_rows == 0
@@ -1364,7 +1980,7 @@ mod tests {
                 AuthenticatedExpectedPathStreamHeader {
                     binding: self.binding.get(),
                     total_rows: self.rows.len(),
-                    rows_commitment: self.rows_commitment.get(),
+                    source_commitment: self.rows_commitment.get(),
                     cursor_retained_rows: 0,
                     cursor_retained_bytes: 0,
                 },
@@ -1425,8 +2041,33 @@ mod tests {
             })
         }
 
-        fn current_binding(&self) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
+        fn current_binding(
+            &self,
+            _maximum_retained_bytes: u64,
+        ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
             Ok(self.binding.get())
+        }
+
+        fn expected_path_at(
+            &self,
+            path: &ManagedPath,
+            request: ExpectedPathPointRequest,
+        ) -> Result<Option<AuthenticatedExpectedPath>, ExpectedPathSourceFailure> {
+            if let Some(failure) = self.failure {
+                return Err(failure);
+            }
+            if self.ambiguous {
+                return Err(ExpectedPathSourceFailure::Ambiguous);
+            }
+            if path.as_str().len() > request.maximum_path_bytes
+                || request.maximum_retained_rows == 0
+                || request.maximum_retained_bytes
+                    < mem::size_of::<AuthenticatedExpectedPath>() as u64
+                        + path.as_str().len() as u64
+            {
+                return Err(ExpectedPathSourceFailure::BoundExceeded);
+            }
+            Ok(self.rows.iter().find(|row| row.path == *path).cloned())
         }
     }
 
@@ -1438,7 +2079,10 @@ mod tests {
     }
 
     fn expected_row(path: &str, kind: ManagedTextKind, bytes: &[u8]) -> AuthenticatedExpectedPath {
+        let path_digest = ContentDigest::of(path.as_bytes());
+        let page_bytes: [u8; 16] = path_digest.as_bytes()[..16].try_into().unwrap();
         AuthenticatedExpectedPath {
+            page_id: PageId::from_uuid(Uuid::from_bytes(page_bytes)),
             path: ManagedPath::parse(path).unwrap(),
             kind,
             description: BlobDescription::of(bytes),

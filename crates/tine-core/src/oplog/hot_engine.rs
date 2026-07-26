@@ -139,6 +139,48 @@ pub(crate) struct CurrentPathCatalogCursor {
     nonce: u64,
 }
 
+/// Constant-size authenticated binding for one current-path cursor epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CurrentPathCatalogBinding {
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    accepted_frontier: ContentDigest,
+    history_generation: u64,
+    history_root: ContentDigest,
+    catalog_root: ContentDigest,
+    catalog_rows: u64,
+}
+
+impl CurrentPathCatalogBinding {
+    pub(crate) const fn workspace_id(self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn lineage_digest(self) -> LineageDigest {
+        self.lineage_digest
+    }
+
+    pub(crate) const fn accepted_frontier(self) -> ContentDigest {
+        self.accepted_frontier
+    }
+
+    pub(crate) const fn history_generation(self) -> u64 {
+        self.history_generation
+    }
+
+    pub(crate) const fn history_root(self) -> ContentDigest {
+        self.history_root
+    }
+
+    pub(crate) const fn catalog_root(self) -> ContentDigest {
+        self.catalog_root
+    }
+
+    pub(crate) const fn catalog_rows(self) -> u64 {
+        self.catalog_rows
+    }
+}
+
 /// One bounded page from [`CurrentPathCatalogCursor`].
 #[allow(dead_code)]
 pub(crate) struct CurrentPathCatalogPage {
@@ -158,6 +200,12 @@ impl CurrentPathCatalogPage {
 
     pub(crate) fn into_next(self) -> Option<CurrentPathCatalogCursor> {
         self.next
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (Vec<CurrentPathCatalogRow>, Option<CurrentPathCatalogCursor>) {
+        (self.rows, self.next)
     }
 }
 
@@ -3755,6 +3803,100 @@ impl ShardedHotEngine {
         self.begin_point_operation();
         let binding = self.current_path_cursor_binding()?;
         self.mint_current_path_cursor(binding, None)
+    }
+
+    pub(crate) fn current_path_catalog_binding(
+        &self,
+    ) -> Result<CurrentPathCatalogBinding, EngineError> {
+        let binding = self.current_path_cursor_binding()?;
+        Ok(CurrentPathCatalogBinding {
+            workspace_id: binding.workspace_id,
+            lineage_digest: binding.lineage_digest,
+            accepted_frontier: binding.accepted_frontier_root.state_digest(),
+            history_generation: binding.history_generation,
+            history_root: binding.history_root,
+            catalog_root: binding.catalog_root_digest,
+            catalog_rows: binding.catalog_row_count,
+        })
+    }
+
+    /// Cancel one abandoned opaque cursor slot.
+    pub(crate) fn cancel_current_path_cursor(
+        &self,
+        cursor: CurrentPathCatalogCursor,
+    ) -> Result<(), EngineError> {
+        if !self.runtime_authority.matches(&cursor.runtime_authority) {
+            return Err(EngineError::Archive(
+                "current-path cursor belongs to another engine instance".into(),
+            ));
+        }
+        let mut book = self.current_path_cursor_book.borrow_mut();
+        let Some(state) = book.active.get(&cursor.cursor_id) else {
+            return Err(EngineError::Archive(
+                "current-path cursor is stale or consumed".into(),
+            ));
+        };
+        if state.nonce != cursor.nonce || state.binding != cursor.binding {
+            return Err(EngineError::Archive(
+                "current-path cursor token authentication failed".into(),
+            ));
+        }
+        book.active.remove(&cursor.cursor_id);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_path_active_cursor_count_for_test(&self) -> usize {
+        self.current_path_cursor_book.borrow().active.len()
+    }
+
+    /// Authenticated exact-path point lookup against the same current catalog
+    /// used by the paged cursor.
+    pub(crate) fn current_path_catalog_row_at_path(
+        &self,
+        path: &ManagedPath,
+    ) -> Result<Option<CurrentPathCatalogRow>, EngineError> {
+        self.current_path_cursor_binding()?;
+        let owner = match self.current_page_at_path(path)? {
+            CurrentPageAtPath::ExactOwner(owner) => owner,
+            CurrentPageAtPath::Unowned | CurrentPageAtPath::Released(_) => return Ok(None),
+            CurrentPageAtPath::PortableCollision(_)
+            | CurrentPageAtPath::ReleasedPortableCollision(_) => {
+                return Err(EngineError::Archive(
+                    "current-path point lookup has portable path ambiguity".into(),
+                ));
+            }
+        };
+        let page_id = owner.page_id();
+        let Some(store) = self.scratch.as_ref() else {
+            return Err(EngineError::Archive(
+                "current-path catalog has no authenticated scratch capability".into(),
+            ));
+        };
+        let encoded = store
+            .authenticated_catalog_lookup(
+                &self.current_path_catalog.root,
+                page_id.as_uuid().into_bytes(),
+            )
+            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .ok_or_else(|| {
+                EngineError::Archive(
+                    "current-path owner is missing from authenticated catalog".into(),
+                )
+            })?;
+        let stored = decode_current_path_catalog_row(&encoded)?;
+        let row = CurrentPathCatalogRow {
+            page_id,
+            path: stored.path,
+            kind: stored.kind,
+        };
+        self.validate_current_path_catalog_row(&row)?;
+        if row.path != *path {
+            return Err(EngineError::Archive(
+                "current-path point row is misbound to its exact path".into(),
+            ));
+        }
+        Ok(Some(row))
     }
 
     /// Consume one opaque cursor and return the next bounded page. Each token
@@ -17366,6 +17508,14 @@ mod validation_tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::oplog::projection_work_index::ProjectionExpectedPathReadBudget;
+    use crate::oplog::reconciliation_scan::{
+        scan_graph_text, AuthenticatedExpectedPath, AuthenticatedExpectedPathSource,
+        ExpectedPathPageRequest, ExpectedPathPointRequest, ExpectedPathSourceFailure,
+        ExpectedPathStreamLimits, GraphTextCandidateKind, GraphTextScanLimits,
+        JoinedAuthenticatedExpectedPathSource,
+    };
+    use crate::oplog::{BlobDescription, ProjectionReceiptStoreId};
 
     fn validated_transition(
         engine: &ShardedHotEngine,
@@ -17826,6 +17976,665 @@ mod validation_tests {
             cursor = page.into_next();
         }
         rows
+    }
+
+    fn joined_page_limits(rows: usize) -> ExpectedPathStreamLimits {
+        ExpectedPathStreamLimits {
+            maximum_rows: rows.max(1),
+            maximum_path_bytes: MAX_CURRENT_PATH_CURSOR_PATH_BYTES,
+            maximum_aggregate_path_bytes: 4 * 1024 * 1024,
+            maximum_page_rows: rows.clamp(1, MAX_CURRENT_PATH_CURSOR_PAGE_ROWS),
+            maximum_page_bytes: 1024 * 1024,
+            maximum_retained_rows: rows.max(1).saturating_add(8),
+            maximum_retained_bytes: 8 * 1024 * 1024,
+        }
+    }
+
+    fn joined_page_request(rows: usize) -> ExpectedPathPageRequest {
+        ExpectedPathPageRequest {
+            maximum_rows: rows.max(1),
+            maximum_path_bytes: MAX_CURRENT_PATH_CURSOR_PATH_BYTES,
+            maximum_aggregate_path_bytes: 1024 * 1024,
+            maximum_retained_rows: rows.max(1).saturating_add(4),
+            maximum_retained_bytes: 1024 * 1024,
+        }
+    }
+
+    fn joined_point_request() -> ExpectedPathPointRequest {
+        ExpectedPathPointRequest {
+            maximum_path_bytes: MAX_CURRENT_PATH_CURSOR_PATH_BYTES,
+            maximum_retained_rows: 8,
+            maximum_retained_bytes: 1024 * 1024,
+        }
+    }
+
+    fn joined_tight_page_request(
+        path: &ManagedPath,
+        validation_budget: u64,
+    ) -> ExpectedPathPageRequest {
+        let path_bytes = path.as_str().len();
+        let retained_page_bytes = std::mem::size_of::<CurrentPathCatalogRow>()
+            .saturating_add(std::mem::size_of::<AuthenticatedExpectedPath>())
+            .saturating_add(path_bytes.saturating_mul(2));
+        ExpectedPathPageRequest {
+            maximum_rows: 1,
+            maximum_path_bytes: path_bytes,
+            maximum_aggregate_path_bytes: path_bytes as u64,
+            maximum_retained_rows: 4,
+            maximum_retained_bytes: (retained_page_bytes as u64)
+                .checked_add(validation_budget)
+                .unwrap(),
+        }
+    }
+
+    fn record_joined_present_rows(
+        engine: &ShardedHotEngine,
+        seed: u128,
+    ) -> Vec<(CurrentPathCatalogRow, Vec<u8>)> {
+        let projection = engine.projection_work_index.as_ref().unwrap();
+        collect_cursor_rows(engine, 17)
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let bytes =
+                    format!("joined:{}:{}", row.page_id(), row.path().as_str()).into_bytes();
+                projection
+                    .record_expected_completion_for_test(
+                        row.page_id(),
+                        row.path().clone(),
+                        ProjectionWorkTarget::Present(BlobDescription::of(&bytes)),
+                        seed.saturating_add(index as u128),
+                    )
+                    .unwrap();
+                (row, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn joined_expected_source_drives_real_scan_pagination_and_semantic_transitions() {
+        let lineage = LineageDigest::of(b"joined-scan-semantic-transitions");
+        let (root, writer, mut engine, _) = enrolled_test_engine(316_100, lineage);
+        let ids = stage_cursor_pages(&mut engine, 316_110, 316_200, 5);
+        stage_cursor_transaction(
+            &mut engine,
+            316_120,
+            OperationTransaction::new(vec![
+                SemanticOperation::RenamePagesAndRewriteReferrers {
+                    page_changes: vec![PageRename {
+                        page_id: ids[0],
+                        new_name: LogicalPageName::parse("Joined Journal").unwrap(),
+                        new_path: ManagedPath::parse("journals/2026_07_26.org").unwrap(),
+                    }],
+                    block_rewrites: Vec::new(),
+                    page_preamble_rewrites: Vec::new(),
+                },
+                SemanticOperation::SetPageKind {
+                    page_id: ids[0],
+                    kind: ManagedTextKind::Journal,
+                },
+                SemanticOperation::DeletePage { page_id: ids[1] },
+            ])
+            .unwrap(),
+        );
+        let rows = record_joined_present_rows(&engine, 316_300);
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().any(|(row, _)| {
+            row.path().as_str() == "journals/2026_07_26.org"
+                && row.kind() == ManagedTextKind::Journal
+        }));
+
+        let graph_root = root.join("graph");
+        for (index, (row, bytes)) in rows.iter().enumerate() {
+            if index == 1 {
+                continue;
+            }
+            let path = graph_root.join(row.path().as_str());
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let content: &[u8] = if index == 2 {
+                b"external edit"
+            } else {
+                bytes.as_slice()
+            };
+            std::fs::write(path, content).unwrap();
+        }
+        std::fs::write(graph_root.join("root-created.MARKDOWN"), b"created").unwrap();
+        let graph = Graph::open(&graph_root);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        let scan = scan_graph_text(
+            &graph,
+            &source,
+            GraphTextScanLimits {
+                expected_page_rows: 2,
+                ..GraphTextScanLimits::default()
+            },
+        )
+        .unwrap();
+
+        assert!(scan.instrumentation.expected_pages >= 4);
+        assert_eq!(scan.candidates.len(), 3);
+        assert!(scan.candidates.iter().any(|candidate| {
+            candidate.change == GraphTextCandidateKind::Creation
+                && candidate.path.as_str() == "root-created.MARKDOWN"
+                && candidate.managed_kind.is_none()
+        }));
+        assert!(scan.candidates.iter().any(|candidate| {
+            candidate.change == GraphTextCandidateKind::Absence && candidate.path == rows[1].0.path
+        }));
+        assert!(scan.candidates.iter().any(|candidate| {
+            candidate.change == GraphTextCandidateKind::Edit && candidate.path == rows[2].0.path
+        }));
+        assert!(scan
+            .candidates
+            .windows(2)
+            .all(|pair| pair[0].path <= pair[1].path));
+
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_manifested_completion_obeys_one_causal_budget() {
+        use super::super::projection_work_index::ProjectionExpectedPathBudgetReadKind;
+
+        let lineage = LineageDigest::of(b"joined-manifested-retained-budget");
+        let (root, writer, mut engine, _) = enrolled_test_engine(316_350, lineage);
+        stage_cursor_pages(&mut engine, 316_351, 316_360, 1);
+        let row = collect_cursor_rows(&engine, 1).pop().unwrap();
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let endpoint = engine.projection_endpoint_binding().unwrap();
+        let batch_id = BatchId::from_uuid(Uuid::from_u128(316_365));
+        let descriptor = crate::oplog::ObjectDescriptor::new(
+            DocumentId::from_uuid(Uuid::from_u128(316_366)),
+            ObjectKind::ProjectionIntent,
+            ContentDigest::of(b"joined manifested budget intent"),
+            1,
+        )
+        .unwrap();
+        let work = ProjectionWork::new(
+            engine.workspace_id(),
+            endpoint.endpoint_id(),
+            endpoint.graph_resource_id(),
+            batch_id,
+            row.page_id(),
+            row.path().clone(),
+            PortablePathIndexRoot::empty(),
+            ManifestObjectRef::from_descriptor(&descriptor),
+            FrontierV2::default(),
+            ProjectionWorkTarget::Present(BlobDescription::of(b"manifested joined target")),
+        );
+        let manifest_fingerprint = ContentDigest::of(b"joined manifested budget manifest");
+        projection
+            .prepare_batch(
+                batch_id,
+                manifest_fingerprint,
+                std::slice::from_ref(&work),
+                &[],
+            )
+            .unwrap();
+        projection
+            .accept_batch_at_history_for_test(
+                batch_id,
+                manifest_fingerprint,
+                engine.history_generation,
+                engine.history_root,
+            )
+            .unwrap();
+        projection
+            .complete_manifested_work_for_test(&work, 316_370)
+            .unwrap();
+
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        let mut root_trace_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+        projection
+            .pin_expected_path_head(&mut root_trace_budget)
+            .unwrap();
+        let initial_root_read = root_trace_budget
+            .read_trace()
+            .into_iter()
+            .find(|read| read.kind == ProjectionExpectedPathBudgetReadKind::PinnedRoot)
+            .unwrap();
+        let initial_root_one_byte_short = initial_root_read
+            .consumed_before
+            .checked_add(initial_root_read.retained_bytes)
+            .and_then(|required| required.checked_sub(1))
+            .unwrap();
+        let mut initial_limits = joined_page_limits(1);
+        initial_limits.maximum_retained_bytes = initial_root_one_byte_short;
+        assert!(matches!(
+            source.open_expected_paths(initial_limits),
+            Err(ExpectedPathSourceFailure::BoundExceeded)
+        ));
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        let joined = source
+            .expected_path_at(row.path(), joined_point_request())
+            .unwrap()
+            .unwrap();
+        assert_eq!(joined.page_id, row.page_id());
+        assert_eq!(joined.path, *row.path());
+        let ProjectionWorkTarget::Present(expected_description) = work.target() else {
+            panic!("cursor fixture work must project a present target");
+        };
+        assert_eq!(joined.description, expected_description);
+
+        let mut pin_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+        let pinned = projection.pin_expected_path_head(&mut pin_budget).unwrap();
+        let (_, trace) = projection
+            .completed_receipt_budget_trace_for_test(pinned, row.path(), 1024 * 1024)
+            .unwrap();
+        let one_byte_short = |kind| {
+            let read = trace.iter().find(|read| read.kind == kind).unwrap();
+            read.consumed_before
+                .checked_add(read.retained_bytes)
+                .and_then(|required| required.checked_sub(1))
+                .unwrap()
+        };
+        let node_budget = one_byte_short(ProjectionExpectedPathBudgetReadKind::StateNode);
+        let prepared_budget = one_byte_short(ProjectionExpectedPathBudgetReadKind::PreparedBatch);
+        assert!(prepared_budget > node_budget);
+
+        let (_, mut trace_cursor) = source.open_expected_paths(joined_page_limits(1)).unwrap();
+        let trace_request = joined_page_request(1);
+        let (traced_page, joined_trace) =
+            source.read_expected_path_page_budget_trace_for_test(&mut trace_cursor, trace_request);
+        assert_eq!(traced_page.unwrap().rows.len(), 1);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+        let post_join_root_reads = joined_trace
+            .iter()
+            .filter(|read| read.kind == ProjectionExpectedPathBudgetReadKind::PinnedRoot)
+            .count();
+        let post_join_root = joined_trace
+            .iter()
+            .rev()
+            .find(|read| read.kind == ProjectionExpectedPathBudgetReadKind::PinnedRoot)
+            .unwrap();
+        let post_join_root_one_byte_short = post_join_root
+            .consumed_before
+            .checked_add(post_join_root.retained_bytes)
+            .and_then(|required| required.checked_sub(1))
+            .unwrap();
+        let (_, mut post_join_cursor) = source.open_expected_paths(joined_page_limits(1)).unwrap();
+        let mut post_join_request = trace_request;
+        post_join_request.maximum_retained_bytes = post_join_root_one_byte_short;
+        let (post_join_result, short_trace) = source.read_expected_path_page_budget_trace_for_test(
+            &mut post_join_cursor,
+            post_join_request,
+        );
+        assert!(matches!(
+            post_join_result,
+            Err(ExpectedPathSourceFailure::BoundExceeded)
+        ));
+        assert_eq!(
+            short_trace
+                .iter()
+                .filter(|read| read.kind == ProjectionExpectedPathBudgetReadKind::PinnedRoot)
+                .count(),
+            post_join_root_reads - 1
+        );
+        assert_eq!(
+            short_trace.last().map(|read| read.kind),
+            Some(ProjectionExpectedPathBudgetReadKind::Head)
+        );
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+        drop(trace_cursor);
+        drop(post_join_cursor);
+
+        let mut stable_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+        let stable_head = projection
+            .pin_expected_path_head(&mut stable_budget)
+            .unwrap();
+        for budget in [node_budget, prepared_budget] {
+            let (_, mut cursor) = source.open_expected_paths(joined_page_limits(1)).unwrap();
+            let result = source.read_expected_path_page(
+                &mut cursor,
+                joined_tight_page_request(row.path(), budget),
+            );
+            assert!(
+                matches!(result, Err(ExpectedPathSourceFailure::BoundExceeded)),
+                "one-byte-short validation budget {budget} returned {result:?}"
+            );
+            let mut current_budget = ProjectionExpectedPathReadBudget::new(1024 * 1024);
+            assert_eq!(
+                projection
+                    .pin_expected_path_head(&mut current_budget)
+                    .unwrap(),
+                stable_head
+            );
+            assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+        }
+
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_rejects_missing_ambiguous_absent_and_misbound_completion() {
+        let lineage = LineageDigest::of(b"joined-scan-completion-failures");
+        let (root, writer, engine, _) = enrolled_test_engine(316_400, lineage);
+        let mut engine = engine;
+        stage_cursor_pages(&mut engine, 316_410, 316_500, 4);
+        let rows = collect_cursor_rows(&engine, 4);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+
+        assert_eq!(
+            source.expected_path_at(rows[0].path(), joined_point_request()),
+            Err(ExpectedPathSourceFailure::Missing)
+        );
+        projection
+            .record_expected_completion_for_test(
+                rows[1].page_id(),
+                rows[1].path().clone(),
+                ProjectionWorkTarget::Absent,
+                316_600,
+            )
+            .unwrap();
+        assert_eq!(
+            source.expected_path_at(rows[1].path(), joined_point_request()),
+            Err(ExpectedPathSourceFailure::Missing)
+        );
+        projection
+            .record_expected_completion_for_test(
+                rows[2].page_id(),
+                rows[2].path().clone(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"first")),
+                316_601,
+            )
+            .unwrap();
+        projection
+            .record_expected_completion_for_test(
+                rows[2].page_id(),
+                rows[2].path().clone(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"second")),
+                316_602,
+            )
+            .unwrap();
+        assert_eq!(
+            source.expected_path_at(rows[2].path(), joined_point_request()),
+            Err(ExpectedPathSourceFailure::Ambiguous)
+        );
+        projection
+            .record_expected_completion_for_test(
+                PageId::from_uuid(Uuid::from_u128(999_999)),
+                rows[3].path().clone(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"wrong page")),
+                316_603,
+            )
+            .unwrap();
+        assert_eq!(
+            source.expected_path_at(rows[3].path(), joined_point_request()),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        );
+
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_rejects_projection_changes_between_pages_and_opens() {
+        let lineage = LineageDigest::of(b"joined-scan-projection-staleness");
+        let (root, writer, mut engine, _) = enrolled_test_engine(316_700, lineage);
+        stage_cursor_pages(&mut engine, 316_710, 316_800, 3);
+        let rows = record_joined_present_rows(&engine, 316_900);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        let (first_header, mut cursor) = source.open_expected_paths(joined_page_limits(3)).unwrap();
+        let first = source
+            .read_expected_path_page(&mut cursor, joined_page_request(1))
+            .unwrap();
+        assert_eq!(first.rows.len(), 1);
+        assert!(!first.done);
+        projection
+            .record_expected_completion_for_test(
+                PageId::from_uuid(Uuid::from_u128(316_999)),
+                ManagedPath::parse("pages/unrelated-projection-head.md").unwrap(),
+                ProjectionWorkTarget::Present(BlobDescription::of(b"unrelated")),
+                316_999,
+            )
+            .unwrap();
+        assert!(matches!(
+            source.read_expected_path_page(&mut cursor, joined_page_request(1)),
+            Err(ExpectedPathSourceFailure::Unavailable)
+        ));
+        drop(cursor);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        let (second_header, second_cursor) =
+            source.open_expected_paths(joined_page_limits(3)).unwrap();
+        assert_ne!(first_header.binding, second_header.binding);
+        assert_ne!(
+            first_header.source_commitment,
+            second_header.source_commitment
+        );
+        drop(second_cursor);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+        assert_eq!(rows.len(), 3);
+
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_rejects_stale_engine_frontier_and_history_cursor() {
+        let lineage = LineageDigest::of(b"joined-scan-engine-staleness");
+        let (root, writer, mut engine, _) = enrolled_test_engine(316_950, lineage);
+        stage_cursor_pages(&mut engine, 316_951, 316_960, 2);
+        record_joined_present_rows(&engine, 316_970);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let (stale_header, detached) = {
+            let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+            source
+                .open_detached_for_test(joined_page_limits(2))
+                .unwrap()
+        };
+
+        stage_cursor_pages(&mut engine, 316_980, 316_990, 1);
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        let current = source.current_binding(1024 * 1024).unwrap();
+        assert_ne!(
+            stale_header.binding.accepted_frontier,
+            current.accepted_frontier
+        );
+        let mut cursor = source.attach_detached_for_test(detached);
+        assert!(matches!(
+            source.read_expected_path_page(&mut cursor, joined_page_request(1)),
+            Err(ExpectedPathSourceFailure::Unavailable)
+        ));
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        drop(cursor);
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_cancels_abandoned_slots_and_rejects_authenticated_tamper() {
+        let lineage = LineageDigest::of(b"joined-scan-cancel-tamper");
+        let (root, writer, mut engine, _) = enrolled_test_engine(317_000, lineage);
+        stage_cursor_pages(&mut engine, 317_010, 317_100, 2);
+        record_joined_present_rows(&engine, 317_200);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        let mut too_few_rows = joined_page_limits(2);
+        too_few_rows.maximum_rows = 1;
+        assert!(matches!(
+            source.open_expected_paths(too_few_rows),
+            Err(ExpectedPathSourceFailure::BoundExceeded)
+        ));
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        let (_, abandoned) = source.open_expected_paths(joined_page_limits(2)).unwrap();
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 1);
+        drop(abandoned);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        let (_, mut over_requested) = source.open_expected_paths(joined_page_limits(2)).unwrap();
+        let mut oversized_request = joined_page_request(1);
+        oversized_request.maximum_rows = 3;
+        assert!(matches!(
+            source.read_expected_path_page(&mut over_requested, oversized_request),
+            Err(ExpectedPathSourceFailure::BoundExceeded)
+        ));
+        drop(over_requested);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        let first_path = collect_cursor_rows(&engine, 2)[0].path.clone();
+        let mut tiny_point = joined_point_request();
+        tiny_point.maximum_retained_bytes = 1;
+        assert!(matches!(
+            source.expected_path_at(&first_path, tiny_point),
+            Err(ExpectedPathSourceFailure::BoundExceeded)
+        ));
+
+        let (_, mut cursor) = source.open_expected_paths(joined_page_limits(2)).unwrap();
+        engine
+            .scratch
+            .as_ref()
+            .unwrap()
+            .tamper_authenticated_catalog_root_for_test(&engine.current_path_catalog.root);
+        assert!(matches!(
+            source.read_expected_path_page(&mut cursor, joined_page_request(1)),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        ));
+
+        drop(cursor);
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_rejects_stale_history_and_cross_identity_indexes() {
+        let lineage = LineageDigest::of(b"joined-scan-cross-identity");
+        let (root, writer, mut engine, _) = enrolled_test_engine(317_250, lineage);
+        stage_cursor_pages(&mut engine, 317_260, 317_270, 1);
+        let endpoint = engine.projection_endpoint_binding().unwrap();
+        let receipt_store_id = engine.projection_receipt_store_id().unwrap();
+
+        let open_index = |name: &str,
+                          workspace_id: WorkspaceId,
+                          endpoint_id: ProjectionEndpointId,
+                          receipt_store_id: ProjectionReceiptStoreId| {
+            let store = ObjectStore::open(&root.join(name), workspace_id).unwrap();
+            store
+                .open_projection_work_index(ProjectionStorageBinding {
+                    endpoint: ProjectionEndpointBinding {
+                        endpoint_id,
+                        device_id: endpoint.device_id(),
+                        graph_resource_id: endpoint.graph_resource_id(),
+                    },
+                    receipt_store_id,
+                })
+                .unwrap()
+        };
+
+        let stale_history = open_index(
+            "stale-history-index",
+            engine.workspace_id(),
+            endpoint.endpoint_id(),
+            receipt_store_id,
+        );
+        assert_eq!(
+            JoinedAuthenticatedExpectedPathSource::new(&engine, &stale_history)
+                .current_binding(1024 * 1024),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        );
+
+        let cross_workspace = open_index(
+            "cross-workspace-index",
+            WorkspaceId::from_uuid(Uuid::from_u128(317_280)),
+            endpoint.endpoint_id(),
+            receipt_store_id,
+        );
+        assert_eq!(
+            JoinedAuthenticatedExpectedPathSource::new(&engine, &cross_workspace)
+                .current_binding(1024 * 1024),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        );
+
+        let cross_endpoint = open_index(
+            "cross-endpoint-index",
+            engine.workspace_id(),
+            ProjectionEndpointId::from_uuid(Uuid::from_u128(317_281)),
+            receipt_store_id,
+        );
+        assert_eq!(
+            JoinedAuthenticatedExpectedPathSource::new(&engine, &cross_endpoint)
+                .current_binding(1024 * 1024),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        );
+
+        let cross_receipt = open_index(
+            "cross-receipt-index",
+            engine.workspace_id(),
+            endpoint.endpoint_id(),
+            ProjectionReceiptStoreId::from_capability_identity(b"test", b"cross-receipt"),
+        );
+        assert_eq!(
+            JoinedAuthenticatedExpectedPathSource::new(&engine, &cross_receipt)
+                .current_binding(1024 * 1024),
+            Err(ExpectedPathSourceFailure::Corrupt)
+        );
+
+        drop(cross_receipt);
+        drop(cross_endpoint);
+        drop(cross_workspace);
+        drop(stale_history);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_expected_source_large_catalog_reads_bounded_pages() {
+        let lineage = LineageDigest::of(b"joined-scan-large-catalog");
+        let (root, writer, mut engine, _) = enrolled_test_engine(317_300, lineage);
+        stage_cursor_pages(&mut engine, 317_310, 317_400, 128);
+        record_joined_present_rows(&engine, 317_600);
+        let projection = engine.projection_work_index.as_ref().unwrap().clone();
+        let source = JoinedAuthenticatedExpectedPathSource::new(&engine, projection.as_ref());
+        engine.current_path_cursor_rows_visited.set(0);
+        let (_, mut cursor) = source.open_expected_paths(joined_page_limits(128)).unwrap();
+        let mut total = 0;
+        loop {
+            let page = source
+                .read_expected_path_page(&mut cursor, joined_page_request(7))
+                .unwrap();
+            assert!(page.rows.len() <= 7);
+            total += page.rows.len();
+            if page.done {
+                break;
+            }
+        }
+        assert_eq!(total, 128);
+        assert!(engine.current_path_cursor_rows_visited.get() <= 128 + 19);
+        assert_eq!(engine.current_path_active_cursor_count_for_test(), 0);
+
+        drop(cursor);
+        drop(source);
+        drop(projection);
+        drop(engine);
+        drop(writer);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
