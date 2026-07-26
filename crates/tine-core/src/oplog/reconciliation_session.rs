@@ -24,9 +24,10 @@ use super::{
     },
     reconciliation_scan::{
         scan_graph_text, GraphTextScanFailureClass, GraphTextScanLimits,
-        JoinedAuthenticatedExpectedPathSource, ReconciliationCompletionOutcome, ReconciliationJob,
-        ReconciliationLease, ReconciliationScheduler, ReconciliationSchedulerLimits,
-        ReconciliationSchedulerStatus, ReconciliationTrigger, ReconciliationWork,
+        JoinedAuthenticatedExpectedPathSource, ReconciliationCompletionOutcome,
+        ReconciliationFullScanReason, ReconciliationJob, ReconciliationLease,
+        ReconciliationScheduler, ReconciliationSchedulerLimits, ReconciliationSchedulerStatus,
+        ReconciliationTrigger, ReconciliationWork,
     },
     ContentDigest, ManagedPath, ProjectionReceiptStore, ShardedHotEngine, SqliteFrontier,
     TailOverlay,
@@ -55,6 +56,7 @@ pub(crate) struct ReconciliationSessionDependencies<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ReconciliationPendingContinuation {
     lease: ReconciliationLease,
+    sequence: u64,
 }
 
 /// Observable result of exactly one selected reconciliation job.
@@ -92,6 +94,8 @@ pub(crate) struct ReconciliationSession<
 > {
     scheduler: ReconciliationScheduler,
     pending: Option<PendingContinuation<C, B>>,
+    confirmation_lease: Option<ReconciliationLease>,
+    next_continuation_sequence: u64,
 }
 
 impl<C, B> ReconciliationSession<C, B> {
@@ -99,6 +103,8 @@ impl<C, B> ReconciliationSession<C, B> {
         Self {
             scheduler: ReconciliationScheduler::new(limits),
             pending: None,
+            confirmation_lease: None,
+            next_continuation_sequence: 0,
         }
     }
 
@@ -124,8 +130,16 @@ impl<C, B> ReconciliationSession<C, B> {
                 pending.token,
             ));
         }
-        let Some(job) = self.scheduler.next() else {
-            return Ok(ReconciliationSessionStep::Idle);
+        let job = if let Some(lease) = self.confirmation_lease {
+            self.scheduler
+                .next_full_scan_for_active(lease)
+                .expect("session owns the active post-drain reconciliation lease")
+                .expect("an active post-drain lease must retain full-scan work")
+        } else {
+            let Some(job) = self.scheduler.next() else {
+                return Ok(ReconciliationSessionStep::Idle);
+            };
+            job
         };
         let outcome = {
             let mut arrive = |trigger| self.scheduler.trigger(trigger);
@@ -167,12 +181,7 @@ impl<C, B> ReconciliationSession<C, B> {
     {
         match result.outcome {
             ReconciliationSessionDispatchOutcome::FailedClosed(continuation) => {
-                let token = ReconciliationPendingContinuation { lease: job.lease() };
-                self.pending = Some(PendingContinuation {
-                    token,
-                    continuation,
-                    baseline: result.baseline,
-                });
+                let token = self.retain_continuation(job.lease(), continuation, result.baseline);
                 Ok(ReconciliationSessionStep::Pending(token))
             }
             outcome => self.finish_baseline_and_settle_lease(
@@ -196,17 +205,35 @@ impl<C, B> ReconciliationSession<C, B> {
     {
         match outcome {
             ReconciliationSessionDispatchOutcome::FailedClosed(continuation) => {
-                self.pending = Some(PendingContinuation {
-                    token,
-                    continuation,
-                    baseline,
-                });
-                Ok(ReconciliationSessionStep::Pending(token))
+                let next = self.retain_continuation(token.lease, continuation, baseline);
+                Ok(ReconciliationSessionStep::Pending(next))
             }
             outcome => {
                 self.finish_baseline_and_settle_lease(token.lease, baseline, outcome, dispatch)
             }
         }
+    }
+
+    fn retain_continuation(
+        &mut self,
+        lease: ReconciliationLease,
+        continuation: C,
+        baseline: Option<B>,
+    ) -> ReconciliationPendingContinuation {
+        self.next_continuation_sequence = self
+            .next_continuation_sequence
+            .checked_add(1)
+            .expect("reconciliation continuation sequence exhausted");
+        let token = ReconciliationPendingContinuation {
+            lease,
+            sequence: self.next_continuation_sequence,
+        };
+        self.pending = Some(PendingContinuation {
+            token,
+            continuation,
+            baseline,
+        });
+        token
     }
 
     fn finish_baseline_and_settle_lease<D>(
@@ -231,7 +258,11 @@ impl<C, B> ReconciliationSession<C, B> {
             ReconciliationSessionBaselineFinish::Clean
             | ReconciliationSessionBaselineFinish::DiagnosticOnly => {}
             ReconciliationSessionBaselineFinish::NeedPostDrainFullScan => {
-                self.scheduler.trigger(ReconciliationTrigger::PostDrain);
+                self.confirmation_lease = Some(lease);
+                self.scheduler
+                    .continue_active_with_full_scan(lease, ReconciliationFullScanReason::PostDrain)
+                    .expect("session owns the active reconciliation lease");
+                return Ok(Self::step_for_intermediate_outcome(outcome));
             }
             ReconciliationSessionBaselineFinish::Unavailable => {
                 outcome =
@@ -241,7 +272,55 @@ impl<C, B> ReconciliationSession<C, B> {
                     ));
             }
         }
+        if self.confirmation_lease == Some(lease) {
+            match (&outcome, baseline_finish) {
+                (
+                    ReconciliationSessionDispatchOutcome::Noop,
+                    ReconciliationSessionBaselineFinish::Clean,
+                ) => {}
+                (
+                    ReconciliationSessionDispatchOutcome::RetryFull,
+                    ReconciliationSessionBaselineFinish::DiagnosticOnly,
+                ) => {
+                    self.scheduler
+                        .continue_active_with_full_scan(lease, ReconciliationFullScanReason::Retry)
+                        .expect("session owns the active reconciliation lease");
+                    return Ok(ReconciliationSessionStep::RetryFull);
+                }
+                (ReconciliationSessionDispatchOutcome::Blocked(_), _)
+                | (
+                    ReconciliationSessionDispatchOutcome::Noop
+                    | ReconciliationSessionDispatchOutcome::Complete
+                    | ReconciliationSessionDispatchOutcome::RetryFull,
+                    _,
+                ) => {
+                    outcome = ReconciliationSessionDispatchOutcome::Blocked(
+                        BaselineBlockedObservation::new(
+                            BaselineBlockedReason::ReconciliationFailed,
+                            "post-drain reconciliation did not produce a clean no-op",
+                        ),
+                    );
+                }
+                (ReconciliationSessionDispatchOutcome::FailedClosed(_), _) => {
+                    unreachable!("failed-closed continuations are retained before baseline finish")
+                }
+            }
+        }
         self.settle_lease(lease, outcome)
+    }
+
+    fn step_for_intermediate_outcome(
+        outcome: ReconciliationSessionDispatchOutcome<C>,
+    ) -> ReconciliationSessionStep {
+        match outcome {
+            ReconciliationSessionDispatchOutcome::Noop => ReconciliationSessionStep::Noop,
+            ReconciliationSessionDispatchOutcome::Complete => ReconciliationSessionStep::Complete,
+            ReconciliationSessionDispatchOutcome::Blocked(_) => ReconciliationSessionStep::Blocked,
+            ReconciliationSessionDispatchOutcome::RetryFull => ReconciliationSessionStep::RetryFull,
+            ReconciliationSessionDispatchOutcome::FailedClosed(_) => {
+                unreachable!("failed-closed continuations are retained before baseline finish")
+            }
+        }
     }
 
     fn settle_lease(
@@ -275,6 +354,9 @@ impl<C, B> ReconciliationSession<C, B> {
         self.scheduler
             .complete(lease, completion)
             .expect("session owns the exact active reconciliation lease");
+        if self.confirmation_lease == Some(lease) {
+            self.confirmation_lease = None;
+        }
         Ok(step)
     }
 }
@@ -1016,7 +1098,10 @@ mod tests {
             session.step(fixture.dependencies()),
             Ok(ReconciliationSessionStep::Complete)
         );
+        assert!(session.status().active);
         assert!(session.status().pending);
+        assert_eq!(session.status().last_completion, None);
+        assert!(fixture.baseline.head().is_err());
         assert_eq!(
             session.step(fixture.dependencies()),
             Ok(ReconciliationSessionStep::Noop)
@@ -1409,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn session_failed_closed_holds_lease_without_replanning_and_resumes_same_identity() {
+    fn session_failed_closed_holds_lease_and_advances_bound_continuation_identity() {
         let mut session = session();
         session.trigger(ReconciliationTrigger::WatcherPaths(paths(&[
             "pages/published.md",
@@ -1433,14 +1518,20 @@ mod tests {
             Err(ReconciliationSessionError::PendingContinuation(token))
         );
         assert_eq!(dispatch.calls.len(), 1);
+        let Ok(ReconciliationSessionStep::Pending(next_token)) =
+            session.resume_with(token, &mut dispatch)
+        else {
+            panic!("failed resume must publish a newly bound continuation token");
+        };
+        assert_ne!(next_token, token);
         assert_eq!(
             session.resume_with(token, &mut dispatch),
-            Ok(ReconciliationSessionStep::Pending(token))
+            Err(ReconciliationSessionError::StaleOrForeignContinuation)
         );
         assert!(session.status().active);
         assert_eq!(dispatch.resumed, vec![41]);
         assert_eq!(
-            session.resume_with(token, &mut dispatch),
+            session.resume_with(next_token, &mut dispatch),
             Ok(ReconciliationSessionStep::Complete)
         );
         assert_eq!(dispatch.resumed, vec![41, 41]);
@@ -1485,13 +1576,22 @@ mod tests {
             .resume_results
             .extend([FakeResumeResult::FailedClosed(41); 2]);
 
-        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+        let Ok(ReconciliationSessionStep::Pending(mut token)) = session.step_with(&mut dispatch)
+        else {
             panic!("expected retained full-scan continuation");
         };
         for _ in 0..2 {
+            let previous = token;
+            let Ok(ReconciliationSessionStep::Pending(next)) =
+                session.resume_with(previous, &mut dispatch)
+            else {
+                panic!("failed resume must retain a newly bound continuation");
+            };
+            token = next;
+            assert_ne!(token, previous);
             assert_eq!(
-                session.resume_with(token, &mut dispatch),
-                Ok(ReconciliationSessionStep::Pending(token))
+                session.resume_with(previous, &mut dispatch),
+                Err(ReconciliationSessionError::StaleOrForeignContinuation)
             );
             let pending = session
                 .pending
@@ -1506,20 +1606,23 @@ mod tests {
     }
 
     #[test]
-    fn successful_resume_finishes_epoch_and_schedules_post_drain_before_settlement() {
+    fn successful_resume_keeps_lease_active_until_post_drain_confirmation() {
         let mut session = session();
         session.trigger(ReconciliationTrigger::Explicit);
-        let mut dispatch =
-            FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosedWithBaseline {
+        let mut dispatch = FakeDispatch::with_dispatch([
+            FakeDispatchResult::FailedClosedWithBaseline {
                 continuation: 41,
                 baseline: 701,
-            }]);
+            },
+            FakeDispatchResult::NoopWithBaseline(702),
+        ]);
         dispatch
             .resume_results
             .push_back(FakeResumeResult::Complete);
-        dispatch
-            .baseline_finish_results
-            .push_back(FakeBaselineFinishResult::NeedPostDrainFullScan);
+        dispatch.baseline_finish_results.extend([
+            FakeBaselineFinishResult::NeedPostDrainFullScan,
+            FakeBaselineFinishResult::Clean,
+        ]);
 
         let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
             panic!("expected retained full-scan continuation");
@@ -1532,27 +1635,37 @@ mod tests {
             dispatch.finished_baselines,
             vec![(701, FakeBaselineTerminal::Complete)]
         );
-        assert!(!session.status().active);
+        assert!(session.status().active);
         assert!(session.status().pending);
-        assert_eq!(
-            session.status().last_completion,
-            Some(ReconciliationCompletionOutcome::Complete)
-        );
+        assert_eq!(session.status().last_completion, None);
 
-        let post_drain = session
-            .scheduler
-            .next()
-            .expect("candidate completion must retain a post-drain full scan");
-        let ReconciliationWork::FullScan(reasons) = post_drain.work() else {
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::Noop)
+        );
+        let ReconciliationWork::FullScan(reasons) = &dispatch.calls[1] else {
             panic!("post-drain work must be a full scan");
         };
         assert!(reasons
             .reasons
             .contains(&ReconciliationFullScanReason::PostDrain));
-        session
-            .scheduler
-            .complete(post_drain.lease(), ReconciliationCompletionOutcome::Blocked)
-            .unwrap();
+        assert_eq!(
+            dispatch.finished_baselines,
+            vec![
+                (701, FakeBaselineTerminal::Complete),
+                (702, FakeBaselineTerminal::Noop),
+            ]
+        );
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Noop)
+        );
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::Idle)
+        );
     }
 
     #[test]
@@ -1613,6 +1726,116 @@ mod tests {
     }
 
     #[test]
+    fn post_drain_blocked_settles_blocked_without_false_complete() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch = FakeDispatch::with_dispatch([
+            FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 41,
+                baseline: 701,
+            },
+            FakeDispatchResult::BlockedWithBaseline(702),
+        ]);
+        dispatch
+            .resume_results
+            .push_back(FakeResumeResult::Complete);
+        dispatch.baseline_finish_results.extend([
+            FakeBaselineFinishResult::NeedPostDrainFullScan,
+            FakeBaselineFinishResult::DiagnosticOnly,
+        ]);
+
+        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+            panic!("expected retained full-scan continuation");
+        };
+        assert_eq!(
+            session.resume_with(token, &mut dispatch),
+            Ok(ReconciliationSessionStep::Complete)
+        );
+        assert!(session.status().active);
+        assert_eq!(session.status().last_completion, None);
+
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::Blocked)
+        );
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Blocked)
+        );
+        assert_eq!(
+            dispatch.finished_baselines,
+            vec![
+                (701, FakeBaselineTerminal::Complete),
+                (702, FakeBaselineTerminal::Blocked),
+            ]
+        );
+    }
+
+    #[test]
+    fn post_drain_retry_remains_active_and_coalesced_until_clean_noop() {
+        let mut session = session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch = FakeDispatch::with_dispatch([
+            FakeDispatchResult::FailedClosedWithBaseline {
+                continuation: 41,
+                baseline: 701,
+            },
+            FakeDispatchResult::RetryFullWithBaseline(702),
+            FakeDispatchResult::NoopWithBaseline(703),
+        ]);
+        dispatch
+            .resume_results
+            .push_back(FakeResumeResult::Complete);
+        dispatch.baseline_finish_results.extend([
+            FakeBaselineFinishResult::NeedPostDrainFullScan,
+            FakeBaselineFinishResult::DiagnosticOnly,
+            FakeBaselineFinishResult::Clean,
+        ]);
+
+        let Ok(ReconciliationSessionStep::Pending(token)) = session.step_with(&mut dispatch) else {
+            panic!("expected retained full-scan continuation");
+        };
+        assert_eq!(
+            session.resume_with(token, &mut dispatch),
+            Ok(ReconciliationSessionStep::Complete)
+        );
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::RetryFull)
+        );
+        assert!(session.status().active);
+        assert!(session.status().pending);
+        assert_eq!(session.status().last_completion, None);
+
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::Noop)
+        );
+        let ReconciliationWork::FullScan(reasons) = &dispatch.calls[2] else {
+            panic!("retry work must remain a full scan");
+        };
+        assert!(reasons
+            .reasons
+            .contains(&ReconciliationFullScanReason::Retry));
+        assert_eq!(
+            dispatch.finished_baselines,
+            vec![
+                (701, FakeBaselineTerminal::Complete),
+                (702, FakeBaselineTerminal::Retry),
+                (703, FakeBaselineTerminal::Noop),
+            ]
+        );
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Noop)
+        );
+    }
+
+    #[test]
     fn session_rejects_stale_foreign_and_double_resume_tokens() {
         let mut first = session();
         let mut second = session();
@@ -1626,9 +1849,13 @@ mod tests {
         first_dispatch
             .resume_results
             .push_back(FakeResumeResult::Complete);
+        first_dispatch.baseline_finish_results.extend([
+            FakeBaselineFinishResult::NeedPostDrainFullScan,
+            FakeBaselineFinishResult::Clean,
+        ]);
         first_dispatch
-            .baseline_finish_results
-            .push_back(FakeBaselineFinishResult::DiagnosticOnly);
+            .dispatch_results
+            .push_back(FakeDispatchResult::NoopWithBaseline(902));
         let mut second_dispatch =
             FakeDispatch::with_dispatch([FakeDispatchResult::FailedClosed(2)]);
 
@@ -1655,13 +1882,23 @@ mod tests {
             first.resume_with(first_token, &mut first_dispatch),
             Ok(ReconciliationSessionStep::Complete)
         );
+        assert!(first.status().active);
+        assert_eq!(first.status().last_completion, None);
         assert_eq!(
             first.resume_with(first_token, &mut first_dispatch),
             Err(ReconciliationSessionError::StaleOrForeignContinuation)
         );
+        assert!(first.status().active);
+        assert_eq!(
+            first.step_with(&mut first_dispatch),
+            Ok(ReconciliationSessionStep::Noop)
+        );
         assert_eq!(
             first_dispatch.finished_baselines,
-            vec![(901, FakeBaselineTerminal::Complete)]
+            vec![
+                (901, FakeBaselineTerminal::Complete),
+                (902, FakeBaselineTerminal::Noop),
+            ]
         );
     }
 
