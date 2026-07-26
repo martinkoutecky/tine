@@ -28,6 +28,8 @@ pub mod projection_manifest;
 pub mod projection_store;
 pub mod projection_work_index;
 pub mod receipt;
+#[cfg(test)]
+pub(crate) mod reconciliation_scan;
 pub mod reference_catalog;
 pub(crate) mod scratch_store;
 pub mod semantic;

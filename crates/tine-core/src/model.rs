@@ -1840,7 +1840,7 @@ struct GraphTextAdmissionFeedBinding {
 ///
 /// This lease is deliberately opaque, non-cloneable, and non-serializable.
 /// Dropping it terminally withdraws admission authority from its Graph.
-pub struct GraphTextExactFeedLease {
+pub(crate) struct GraphTextExactFeedLease {
     control: Arc<GraphTextAdmissionControl>,
     binding: GraphTextAdmissionFeedBinding,
     terminal: AtomicBool,
@@ -1862,7 +1862,7 @@ impl GraphTextExactFeedLease {
     ///
     /// Any malformed range/path set is terminal because the platform can no
     /// longer prove an unambiguous normalized callback drain.
-    pub fn batch(
+    pub(crate) fn batch(
         &self,
         first_sequence: u64,
         last_sequence: u64,
@@ -1915,7 +1915,7 @@ impl Drop for GraphTextExactFeedLease {
 /// Terminal reason supplied by a platform exact-feed adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum GraphTextExactFeedFailure {
+pub(crate) enum GraphTextExactFeedFailure {
     BackendError,
     OverflowOrQueueLoss,
     SequenceDiscontinuity,
@@ -1931,7 +1931,7 @@ pub enum GraphTextExactFeedFailure {
 /// Core classification for one exact graph-relative platform event path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum GraphTextExactFeedPathClass {
+pub(crate) enum GraphTextExactFeedPathClass {
     /// The path is wholly within a fixed or configured excluded subtree.
     Excluded,
     /// The exact path may affect retained file/resource evidence.
@@ -1946,7 +1946,7 @@ pub enum GraphTextExactFeedPathClass {
 /// rejects duplicates, and enforces count and aggregate-byte bounds before
 /// retaining the owned set.
 #[derive(Debug)]
-pub struct GraphTextExactFeedBatch {
+pub(crate) struct GraphTextExactFeedBatch {
     instance: Arc<GraphTextAdmissionInstance>,
     first_sequence: u64,
     last_sequence: u64,
@@ -1954,10 +1954,10 @@ pub struct GraphTextExactFeedBatch {
 }
 
 impl GraphTextExactFeedBatch {
-    pub const MAX_TOUCHED_PATHS: usize = 256;
-    pub const MAX_EXACT_RELATIVE_BYTES: usize = 4096;
-    pub const MAX_PATH_COMPONENTS: usize = MAX_INITIAL_SHADOW_DIRECTORY_DEPTH + 1;
-    pub const MAX_AGGREGATE_PATH_BYTES: usize = 64 * 1024;
+    pub(crate) const MAX_TOUCHED_PATHS: usize = 256;
+    pub(crate) const MAX_EXACT_RELATIVE_BYTES: usize = 4096;
+    pub(crate) const MAX_PATH_COMPONENTS: usize = MAX_INITIAL_SHADOW_DIRECTORY_DEPTH + 1;
+    pub(crate) const MAX_AGGREGATE_PATH_BYTES: usize = 64 * 1024;
 
     fn bounded(
         instance: Arc<GraphTextAdmissionInstance>,
@@ -3053,6 +3053,16 @@ fn reset_graph_text_admission_test_counters() {
 #[cfg(test)]
 fn graph_text_admission_test_counters() -> GraphTextAdmissionTestCounters {
     GRAPH_TEXT_ADMISSION_TEST_COUNTERS.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_graph_text_parser_counter_for_scan_test() {
+    reset_graph_text_admission_test_counters();
+}
+
+#[cfg(test)]
+pub(crate) fn graph_text_parser_invocations_for_scan_test() -> usize {
+    graph_text_admission_test_counters().parser_invocations
 }
 
 #[cfg(test)]
@@ -5838,6 +5848,19 @@ impl Graph {
         Ok((first, combined_capture_bytes))
     }
 
+    /// One complete streaming fingerprint pass for the test-only scan
+    /// substrate. The returned rows contain no file bytes and grant no import,
+    /// projection, watcher, or continuing filesystem authority.
+    #[cfg(test)]
+    pub(crate) fn capture_reconciliation_scan_pass(
+        &self,
+        limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+    ) -> io::Result<crate::oplog::reconciliation_scan::GraphTextScanPass> {
+        require_projection_platform()?;
+        let permit = self.admit_retained_managed_text_writer()?;
+        collect_reconciliation_scan_pass(self, &permit, limits)
+    }
+
     fn begin_graph_text_admission_build(
         &self,
     ) -> io::Result<Option<GraphTextAdmissionFeedBinding>> {
@@ -5965,8 +5988,9 @@ impl Graph {
         };
     }
 
-    /// Arm one exact ordered feed before the sole bounded admission build.
-    pub fn arm_graph_text_exact_feed(
+    /// Inert crate-private legacy test seam. No platform adapter may activate
+    /// this process-local feed as continuing filesystem authority.
+    pub(crate) fn arm_graph_text_exact_feed(
         &self,
         last_sequence: u64,
     ) -> io::Result<GraphTextExactFeedLease> {
@@ -6024,17 +6048,20 @@ impl Graph {
         }
     }
 
-    /// Build the bounded graph-wide admission snapshot for an armed exact feed.
+    /// Build the bounded graph-wide admission snapshot for an inert test feed.
     ///
     /// Success publishes `CatchingUp`; it never creates complete authority.
-    pub fn build_graph_text_exact_feed(&self, lease: &GraphTextExactFeedLease) -> io::Result<()> {
+    pub(crate) fn build_graph_text_exact_feed(
+        &self,
+        lease: &GraphTextExactFeedLease,
+    ) -> io::Result<()> {
         self.ensure_graph_text_exact_feed_lease(lease)?;
         self.build_graph_text_admission_with_limits(INITIAL_SHADOW_LIMITS)
             .map(drop)
     }
 
-    /// Classify one exact platform path without duplicating the scope policy.
-    pub fn classify_graph_text_exact_feed_path(
+    /// Classify one exact inert-feed test path without duplicating scope policy.
+    pub(crate) fn classify_graph_text_exact_feed_path(
         &self,
         relative: &str,
     ) -> io::Result<GraphTextExactFeedPathClass> {
@@ -6056,8 +6083,8 @@ impl Graph {
         Ok(GraphTextExactFeedPathClass::RetainedFile)
     }
 
-    /// Apply one bounded contiguous final-state batch while catching up or live.
-    pub fn apply_graph_text_exact_feed_batch(
+    /// Exercise one bounded atomic final-state batch in crate-private tests.
+    pub(crate) fn apply_graph_text_exact_feed_batch(
         &self,
         lease: &GraphTextExactFeedLease,
         batch: GraphTextExactFeedBatch,
@@ -6326,8 +6353,8 @@ impl Graph {
         Ok(())
     }
 
-    /// Publish complete point authority only at the exact clean queue fence.
-    pub fn publish_graph_text_exact_feed_caught_up(
+    /// Seal the inert test index at its exact synthetic queue fence.
+    pub(crate) fn publish_graph_text_exact_feed_caught_up(
         &self,
         lease: &GraphTextExactFeedLease,
         last_sequence: u64,
@@ -6371,8 +6398,8 @@ impl Graph {
         Ok(())
     }
 
-    /// Terminally poison/disconnect this exact feed with a typed bounded cause.
-    pub fn poison_graph_text_exact_feed(
+    /// Terminally poison/disconnect the inert crate-private test feed.
+    pub(crate) fn poison_graph_text_exact_feed(
         &self,
         lease: &GraphTextExactFeedLease,
         reason: GraphTextExactFeedFailure,
@@ -20956,6 +20983,467 @@ struct InitialShadowCapture {
         std::collections::BTreeMap<ContentDigest, std::collections::BTreeSet<String>>,
     file_link_count_by_exact_relative: std::collections::BTreeMap<String, u64>,
     peak_build_charge: u64,
+}
+
+#[cfg(test)]
+fn collect_reconciliation_scan_pass(
+    graph: &Graph,
+    _permit: &ManagedTextWritePermit,
+    limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+) -> io::Result<crate::oplog::reconciliation_scan::GraphTextScanPass> {
+    use crate::oplog::reconciliation_scan::{
+        GraphTextScanFileFingerprint, GraphTextScanPass, GraphTextScanPassInstrumentation,
+        GraphTextScanPathClass, GRAPH_TEXT_SCAN_READ_BUFFER_BYTES,
+    };
+
+    struct PendingDirectory {
+        directory: Dir,
+        relative: String,
+        depth: usize,
+    }
+
+    if limits.read_buffer_bytes == 0 || limits.read_buffer_bytes > GRAPH_TEXT_SCAN_READ_BUFFER_BYTES
+    {
+        return Err(reconciliation_scan_limit_error("read buffer"));
+    }
+    let page_root = managed_root_components(&graph.config.pages_dir)
+        .ok_or_else(|| reconciliation_scan_unsafe_error("configured pages root is malformed"))?;
+    let journal_root = managed_root_components(&graph.config.journals_dir)
+        .ok_or_else(|| reconciliation_scan_unsafe_error("configured journals root is malformed"))?;
+    let page_root_key = PortablePathKey::from_graph_text_path(&page_root.join("/"));
+    let journal_root_key = PortablePathKey::from_graph_text_path(&journal_root.join("/"));
+    if page_root_key == journal_root_key {
+        return Err(reconciliation_scan_unsafe_error(
+            "configured managed roots are equal or portable aliases",
+        ));
+    }
+
+    graph.ensure_projection_root_binding()?;
+    let graph_resource = graph.canonical_resource_id()?;
+    let scope_binding = graph.graph_text_scope_binding()?;
+    if scope_binding.graph_resource_id() != graph_resource {
+        return Err(reconciliation_scan_unsafe_error(
+            "scope binding does not match the retained graph root",
+        ));
+    }
+    let root = graph
+        .projection_root
+        .as_ref()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?
+        .try_clone()?;
+    let root_directory_resource = canonical_projection_directory_resource_id(&root)?;
+    let mut directories_by_exact_relative = std::collections::BTreeMap::new();
+    directories_by_exact_relative.insert(String::new(), root_directory_resource);
+    let mut directory_resources = std::collections::BTreeMap::new();
+    directory_resources.insert(root_directory_resource, String::new());
+    let mut file_resources = std::collections::BTreeMap::new();
+    let mut portable_paths = std::collections::BTreeMap::new();
+    let mut files = Vec::new();
+    let mut pending = vec![PendingDirectory {
+        directory: root,
+        relative: String::new(),
+        depth: 0,
+    }];
+    let mut instrumentation = GraphTextScanPassInstrumentation {
+        directories: 1,
+        peak_read_buffers: 1,
+        peak_read_buffer_bytes: limits.read_buffer_bytes as u64,
+        ..GraphTextScanPassInstrumentation::default()
+    };
+    let mut retained_bytes = 1024_u64;
+    let mut aggregate_path_bytes = 0_u64;
+    let mut aggregate_hashed_bytes = 0_u64;
+    reconciliation_scan_update_peak(
+        &mut instrumentation,
+        directories_by_exact_relative.len(),
+        files.len(),
+        pending.len(),
+        retained_bytes,
+        limits,
+    )?;
+
+    while let Some(PendingDirectory {
+        directory,
+        relative,
+        depth,
+    }) = pending.pop()
+    {
+        for entry in directory.entries()? {
+            instrumentation.directory_entries = instrumentation
+                .directory_entries
+                .checked_add(1)
+                .ok_or_else(|| reconciliation_scan_limit_error("directory entry count"))?;
+            if instrumentation.directory_entries > limits.all_entries as u64 {
+                return Err(reconciliation_scan_limit_error("directory entry count"));
+            }
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "scan entry name is not exact UTF-8",
+                )
+            })?;
+            let relative_len = relative
+                .len()
+                .checked_add(usize::from(!relative.is_empty()))
+                .and_then(|length| length.checked_add(name.len()))
+                .ok_or_else(allocation_overflow)?;
+            if relative_len > limits.exact_path_bytes {
+                return Err(reconciliation_scan_limit_error("exact path bytes"));
+            }
+            aggregate_path_bytes = aggregate_path_bytes
+                .checked_add(usize_to_u64(relative_len)?)
+                .ok_or_else(|| reconciliation_scan_limit_error("aggregate path bytes"))?;
+            if aggregate_path_bytes > limits.aggregate_path_bytes {
+                return Err(reconciliation_scan_limit_error("aggregate path bytes"));
+            }
+            let child_relative = if relative.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{relative}/{name}")
+            };
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                if !graph.graph_text_scope.should_descend(&child_relative)
+                    && !graph.graph_text_scope.is_eligible(&child_relative)
+                {
+                    continue;
+                }
+                return Err(reconciliation_scan_unsafe_error(format!(
+                    "scan entry is a symlink or reparse point: {child_relative}"
+                )));
+            }
+            if file_type.is_dir() {
+                if !graph.graph_text_scope.should_descend(&child_relative) {
+                    continue;
+                }
+                let child_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| reconciliation_scan_limit_error("directory depth"))?;
+                if child_depth > limits.directory_depth {
+                    return Err(reconciliation_scan_limit_error("directory depth"));
+                }
+                if directories_by_exact_relative.len() == limits.directories {
+                    return Err(reconciliation_scan_limit_error("directory count"));
+                }
+                projection_real_directory(&directory, name)?;
+                let child = open_projection_dir_nofollow(&directory, name)?;
+                let resource = canonical_projection_directory_resource_id(&child)?;
+                if let Some(first) = directory_resources.insert(resource, child_relative.clone()) {
+                    return Err(reconciliation_scan_unsafe_error(format!(
+                        "scan directories alias one resource: {first} and {child_relative}"
+                    )));
+                }
+                if directories_by_exact_relative
+                    .insert(child_relative.clone(), resource)
+                    .is_some()
+                {
+                    return Err(reconciliation_scan_unsafe_error(
+                        "scan contains a duplicate exact directory path",
+                    ));
+                }
+                let rebound = open_projection_dir_nofollow(&directory, name)?;
+                if projection_dir_identity(&child)? != projection_dir_identity(&rebound)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        format!("scan directory changed during capture: {child_relative}"),
+                    ));
+                }
+                if pending.len() == limits.pending_directories {
+                    return Err(reconciliation_scan_limit_error("pending directory count"));
+                }
+                pending.push(PendingDirectory {
+                    directory: child,
+                    relative: child_relative,
+                    depth: child_depth,
+                });
+                instrumentation.directories = instrumentation
+                    .directories
+                    .checked_add(1)
+                    .ok_or_else(|| reconciliation_scan_limit_error("directory count"))?;
+                retained_bytes = reconciliation_scan_add_retained_bytes(
+                    retained_bytes,
+                    usize_to_u64(relative_len)?
+                        .checked_mul(2)
+                        .and_then(|bytes| bytes.checked_add(1024))
+                        .ok_or_else(allocation_overflow)?,
+                    limits,
+                )?;
+                reconciliation_scan_update_peak(
+                    &mut instrumentation,
+                    directories_by_exact_relative.len(),
+                    files.len(),
+                    pending.len(),
+                    retained_bytes,
+                    limits,
+                )?;
+                continue;
+            }
+            if !file_type.is_file() {
+                return Err(reconciliation_scan_unsafe_error(format!(
+                    "scan entry is not a regular file: {child_relative}"
+                )));
+            }
+
+            let mut file = open_projection_file_nofollow(&directory, name)?;
+            let file_resource_id = canonical_projection_file_resource_id(&file)?;
+            let link_count = projection_file_link_count(&file)?;
+            if link_count != 1 {
+                return Err(reconciliation_scan_unsafe_error(format!(
+                    "scan regular file has ambiguous link count {link_count}: {child_relative}"
+                )));
+            }
+            if let Some(first) = file_resources.insert(file_resource_id, child_relative.clone()) {
+                return Err(reconciliation_scan_unsafe_error(format!(
+                    "scan regular files alias one resource: {first} and {child_relative}"
+                )));
+            }
+
+            let page_like = is_page_file(Path::new(&child_relative));
+            let lexically_managed = if page_like {
+                Some(ManagedPath::parse(child_relative.clone()).map_err(|error| {
+                    reconciliation_scan_unsafe_error(format!(
+                        "graph-text-like path is not portable: {error}"
+                    ))
+                })?)
+            } else {
+                None
+            };
+            let is_configuration = child_relative == "logseq/config.edn";
+            let is_conflict = page_like && path_is_sync_conflict(Path::new(&child_relative));
+            let eligible = graph.graph_text_scope.is_eligible(&child_relative);
+            let (class, portable_key) = if is_configuration {
+                (GraphTextScanPathClass::Configuration, None)
+            } else if is_conflict {
+                (GraphTextScanPathClass::ProviderConflictCopy, None)
+            } else if eligible {
+                let path = lexically_managed
+                    .expect("eligible graph-text files have recognized text extensions");
+                let portable_key = path.portable_key();
+                if let Some(first) =
+                    portable_paths.insert(portable_key.clone(), child_relative.clone())
+                {
+                    return Err(reconciliation_scan_unsafe_error(format!(
+                        "scan graph-text paths collide portably: {first} and {child_relative}"
+                    )));
+                }
+                let class = match graph.classify_managed_text_path(&path) {
+                    Ok(kind) => GraphTextScanPathClass::EligibleManaged(kind),
+                    Err(_) => GraphTextScanPathClass::EligibleUnmanaged,
+                };
+                (class, Some(portable_key))
+            } else {
+                (GraphTextScanPathClass::RetainedNonText, None)
+            };
+            let description = if eligible || is_configuration {
+                Some(reconciliation_scan_hash_file(
+                    &mut file,
+                    &child_relative,
+                    file_resource_id,
+                    link_count,
+                    &mut aggregate_hashed_bytes,
+                    &mut instrumentation,
+                    limits,
+                )?)
+            } else {
+                None
+            };
+            instrumentation.regular_files = instrumentation
+                .regular_files
+                .checked_add(1)
+                .ok_or_else(|| reconciliation_scan_limit_error("regular file count"))?;
+            if eligible {
+                instrumentation.eligible_files = instrumentation
+                    .eligible_files
+                    .checked_add(1)
+                    .ok_or_else(|| reconciliation_scan_limit_error("eligible file count"))?;
+                if instrumentation.eligible_files > limits.eligible_files as u64 {
+                    return Err(reconciliation_scan_limit_error("eligible file count"));
+                }
+            }
+            let portable_bytes = portable_key
+                .as_ref()
+                .map_or(0_u64, |key| key.as_bytes().len() as u64);
+            retained_bytes = reconciliation_scan_add_retained_bytes(
+                retained_bytes,
+                usize_to_u64(relative_len)?
+                    .checked_mul(2)
+                    .and_then(|bytes| bytes.checked_add(portable_bytes.saturating_mul(2)))
+                    .and_then(|bytes| bytes.checked_add(1024))
+                    .ok_or_else(allocation_overflow)?,
+                limits,
+            )?;
+            files.push(GraphTextScanFileFingerprint {
+                exact_relative: child_relative,
+                class,
+                portable_key,
+                description,
+                file_resource_id,
+                link_count,
+            });
+            reconciliation_scan_update_peak(
+                &mut instrumentation,
+                directories_by_exact_relative.len(),
+                files.len(),
+                pending.len(),
+                retained_bytes,
+                limits,
+            )?;
+        }
+    }
+
+    files.sort_unstable_by(|left, right| left.exact_relative.cmp(&right.exact_relative));
+    if files
+        .windows(2)
+        .any(|window| window[0].exact_relative == window[1].exact_relative)
+    {
+        return Err(reconciliation_scan_unsafe_error(
+            "scan contains duplicate exact regular-file paths",
+        ));
+    }
+    graph.ensure_projection_root_binding().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::Interrupted,
+            format!("scan root binding changed: {error}"),
+        )
+    })?;
+    let ending_scope = graph.graph_text_scope_binding()?;
+    if ending_scope != scope_binding {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "scan scope binding changed during capture",
+        ));
+    }
+    Ok(GraphTextScanPass {
+        graph_resource,
+        scope_binding,
+        directories_by_exact_relative,
+        files,
+        instrumentation,
+    })
+}
+
+#[cfg(test)]
+fn reconciliation_scan_hash_file(
+    file: &mut fs::File,
+    relative: &str,
+    expected_resource: ContentDigest,
+    expected_link_count: u64,
+    aggregate_hashed_bytes: &mut u64,
+    instrumentation: &mut crate::oplog::reconciliation_scan::GraphTextScanPassInstrumentation,
+    limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+) -> io::Result<BlobDescription> {
+    let advertised_len = file.metadata()?.len();
+    if advertised_len
+        > limits
+            .aggregate_hashed_bytes
+            .saturating_sub(*aggregate_hashed_bytes)
+    {
+        return Err(reconciliation_scan_limit_error("aggregate hashed bytes"));
+    }
+    let mut buffer = vec![0_u8; limits.read_buffer_bytes];
+    let mut hasher = Sha256::new();
+    let mut byte_length = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        byte_length = byte_length
+            .checked_add(read as u64)
+            .ok_or_else(|| reconciliation_scan_limit_error("aggregate hashed bytes"))?;
+        let next_aggregate = aggregate_hashed_bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| reconciliation_scan_limit_error("aggregate hashed bytes"))?;
+        if next_aggregate > limits.aggregate_hashed_bytes {
+            return Err(reconciliation_scan_limit_error("aggregate hashed bytes"));
+        }
+        *aggregate_hashed_bytes = next_aggregate;
+        instrumentation.bytes_read = instrumentation
+            .bytes_read
+            .checked_add(read as u64)
+            .ok_or_else(|| reconciliation_scan_limit_error("aggregate hashed bytes"))?;
+        instrumentation.bytes_hashed = instrumentation
+            .bytes_hashed
+            .checked_add(read as u64)
+            .ok_or_else(|| reconciliation_scan_limit_error("aggregate hashed bytes"))?;
+        hasher.update(&buffer[..read]);
+    }
+    if byte_length != advertised_len {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            format!("scan file length changed while hashing: {relative}"),
+        ));
+    }
+    if canonical_projection_file_resource_id(file)? != expected_resource
+        || projection_file_link_count(file)? != expected_link_count
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            format!("scan file resource or link count changed while hashing: {relative}"),
+        ));
+    }
+    Ok(BlobDescription::from_parts(
+        hasher.finalize().into(),
+        byte_length,
+    ))
+}
+
+#[cfg(test)]
+fn reconciliation_scan_update_peak(
+    instrumentation: &mut crate::oplog::reconciliation_scan::GraphTextScanPassInstrumentation,
+    directories: usize,
+    files: usize,
+    pending: usize,
+    retained_bytes: u64,
+    limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+) -> io::Result<()> {
+    let rows = directories
+        .checked_add(files)
+        .and_then(|rows| rows.checked_add(pending))
+        .ok_or_else(|| reconciliation_scan_limit_error("retained fingerprint rows"))?;
+    if rows > limits.retained_rows {
+        return Err(reconciliation_scan_limit_error("retained fingerprint rows"));
+    }
+    instrumentation.peak_retained_rows = instrumentation.peak_retained_rows.max(rows as u64);
+    instrumentation.peak_retained_bytes = instrumentation.peak_retained_bytes.max(retained_bytes);
+    Ok(())
+}
+
+#[cfg(test)]
+fn reconciliation_scan_add_retained_bytes(
+    current: u64,
+    growth: u64,
+    limits: crate::oplog::reconciliation_scan::GraphTextScanLimits,
+) -> io::Result<u64> {
+    let next = current
+        .checked_add(growth)
+        .ok_or_else(|| reconciliation_scan_limit_error("retained fingerprint bytes"))?;
+    if next > limits.retained_bytes {
+        return Err(reconciliation_scan_limit_error(
+            "retained fingerprint bytes",
+        ));
+    }
+    Ok(next)
+}
+
+#[cfg(test)]
+fn reconciliation_scan_limit_error(resource: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("reconciliation scan {resource} bound exceeded"),
+    )
+}
+
+#[cfg(test)]
+fn reconciliation_scan_unsafe_error(detail: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, detail.into())
 }
 
 #[cfg(test)]
