@@ -684,6 +684,11 @@ pub(crate) trait AuthenticatedExpectedPathSource {
         &self,
         maximum_retained_bytes: u64,
     ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure>;
+
+    fn current_scan_identity(
+        &self,
+        maximum_retained_bytes: u64,
+    ) -> Result<(ExpectedPathBinding, ContentDigest), ExpectedPathSourceFailure>;
 }
 
 /// Joined semantic/projection expected-state source.
@@ -1112,6 +1117,13 @@ impl<'a> AuthenticatedExpectedPathSource for JoinedAuthenticatedExpectedPathSour
         let mut budget = ProjectionExpectedPathReadBudget::new(maximum_retained_bytes);
         self.pin_join(&mut budget).map(|(_, _, binding, _)| binding)
     }
+
+    fn current_scan_identity(
+        &self,
+        maximum_retained_bytes: u64,
+    ) -> Result<(ExpectedPathBinding, ContentDigest), ExpectedPathSourceFailure> {
+        JoinedAuthenticatedExpectedPathSource::current_scan_identity(self, maximum_retained_bytes)
+    }
 }
 
 fn joined_source_commitment(
@@ -1299,30 +1311,131 @@ pub(crate) struct StableGraphTextScan {
 /// baseline adapter. The adapter iterates these collections in bounded pages;
 /// this accessor never clones or rematerializes the graph.
 pub(crate) struct StableGraphTextBaselineEvidence<'a> {
-    pub(crate) graph_resource: CanonicalGraphResourceId,
-    pub(crate) scope_binding: &'a GraphTextScopeBinding,
     pub(crate) directories: &'a BTreeMap<String, ContentDigest>,
     pub(crate) files: &'a [GraphTextScanFileFingerprint],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StableGraphTextBaselineIdentity {
+    pub(crate) graph_resource: CanonicalGraphResourceId,
+    pub(crate) scope_binding: GraphTextScopeBinding,
+    pub(crate) expected_binding: ExpectedPathBinding,
+    pub(crate) expected_source_commitment: ContentDigest,
+    pub(crate) expected_rows_commitment: ContentDigest,
+    pub(crate) scan_epoch_digest: ContentDigest,
     pub(crate) pass_a_digest: ContentDigest,
     pub(crate) pass_b_digest: ContentDigest,
     pub(crate) candidate_digest: ContentDigest,
+    pub(crate) candidate_count: usize,
+    pub(crate) diagnostic_digest: ContentDigest,
+    pub(crate) diagnostic_count: usize,
+    pub(crate) instrumentation: GraphTextScanInstrumentation,
+    pub(crate) wall_time_millis: u64,
+    commitment: ContentDigest,
+}
+
+impl StableGraphTextBaselineIdentity {
+    pub(crate) fn is_sealed(&self) -> bool {
+        self.commitment == stable_graph_text_baseline_identity_digest(self)
+    }
+
+    pub(crate) const fn commitment(&self) -> ContentDigest {
+        self.commitment
+    }
 }
 
 impl StableGraphTextScan {
     pub(crate) fn baseline_evidence(&self) -> StableGraphTextBaselineEvidence<'_> {
         StableGraphTextBaselineEvidence {
-            graph_resource: self.baseline_pass.graph_resource,
-            scope_binding: &self.baseline_pass.scope_binding,
             directories: &self.baseline_pass.directories_by_exact_relative,
             files: &self.baseline_pass.files,
-            pass_a_digest: self.pass_a_digest,
-            pass_b_digest: self.pass_b_digest,
-            candidate_digest: self.binding.scan_epoch_digest,
         }
     }
 
-    pub(crate) fn baseline_revalidation_retained_bytes(&self) -> u64 {
+    pub(crate) const fn baseline_revalidation_retained_bytes() -> u64 {
         MAX_SCAN_RETAINED_BYTES
+    }
+
+    pub(crate) fn validated_baseline_identity(
+        &self,
+    ) -> Result<StableGraphTextBaselineIdentity, &'static str> {
+        let recomputed_pass_digest = graph_text_scan_pass_digest(&self.baseline_pass);
+        if self.pass_a_digest != self.pass_b_digest || self.pass_a_digest != recomputed_pass_digest
+        {
+            return Err("retained stable pass does not match both pass commitments");
+        }
+        if self.baseline_pass.graph_resource != self.binding.graph_resource
+            || self.baseline_pass.scope_binding != self.binding.scope_binding
+        {
+            return Err("retained stable pass does not match the scan graph and scope binding");
+        }
+        let recomputed_epoch_digest = scan_epoch_digest_from_commitments(
+            &self.baseline_pass,
+            self.binding.expected_binding,
+            self.binding.expected_source_commitment,
+            self.binding.expected_rows_commitment,
+        );
+        if recomputed_epoch_digest != self.binding.scan_epoch_digest {
+            return Err("stable scan epoch commitment does not match its retained evidence");
+        }
+        if self.instrumentation.passes != 2
+            || self.instrumentation.candidates != self.candidates.len() as u64
+            || self.instrumentation.diagnostics != self.diagnostics.len() as u64
+        {
+            return Err("stable scan instrumentation does not match its retained output");
+        }
+        let mut previous_candidate = None;
+        for candidate in &self.candidates {
+            if candidate.binding != self.binding {
+                return Err("stable scan candidate carries a different scan binding");
+            }
+            if previous_candidate.is_some_and(|previous: &ManagedPath| previous >= &candidate.path)
+            {
+                return Err("stable scan candidates are not in strict exact-path order");
+            }
+            previous_candidate = Some(&candidate.path);
+        }
+        let mut diagnostics = self.diagnostics.iter();
+        for file in self
+            .baseline_pass
+            .files
+            .iter()
+            .filter(|file| file.class == GraphTextScanPathClass::ProviderConflictCopy)
+        {
+            let Some(diagnostic) = diagnostics.next() else {
+                return Err("retained provider-conflict evidence lacks its scan diagnostic");
+            };
+            if diagnostic.path != file.exact_relative
+                || diagnostic.kind != GraphTextScanDiagnosticKind::ProviderConflictCopy
+                || diagnostic.file_resource_id != file.file_resource_id
+                || diagnostic.link_count != file.link_count
+            {
+                return Err("scan diagnostic does not match retained provider-conflict evidence");
+            }
+        }
+        if diagnostics.next().is_some() {
+            return Err("scan diagnostics contain evidence absent from the retained pass");
+        }
+
+        let mut identity = StableGraphTextBaselineIdentity {
+            graph_resource: self.binding.graph_resource,
+            scope_binding: self.binding.scope_binding,
+            expected_binding: self.binding.expected_binding,
+            expected_source_commitment: self.binding.expected_source_commitment,
+            expected_rows_commitment: self.binding.expected_rows_commitment,
+            scan_epoch_digest: self.binding.scan_epoch_digest,
+            pass_a_digest: self.pass_a_digest,
+            pass_b_digest: self.pass_b_digest,
+            candidate_digest: stable_graph_text_candidate_digest(&self.candidates),
+            candidate_count: self.candidates.len(),
+            diagnostic_digest: stable_graph_text_diagnostic_digest(&self.diagnostics),
+            diagnostic_count: self.diagnostics.len(),
+            instrumentation: self.instrumentation,
+            wall_time_millis: u64::try_from(self.wall_time.as_millis()).unwrap_or(u64::MAX),
+            commitment: ContentDigest::of(b"unsealed stable scan identity"),
+        };
+        identity.commitment = stable_graph_text_baseline_identity_digest(&identity);
+        Ok(identity)
     }
 }
 
@@ -1680,14 +1793,28 @@ fn scan_epoch_digest(
     pass: &GraphTextScanPass,
     expected: WalkedExpectedPathStream,
 ) -> ContentDigest {
+    scan_epoch_digest_from_commitments(
+        pass,
+        expected.header.binding,
+        expected.header.source_commitment,
+        expected.rows_commitment,
+    )
+}
+
+pub(crate) fn scan_epoch_digest_from_commitments(
+    pass: &GraphTextScanPass,
+    expected_binding: ExpectedPathBinding,
+    expected_source_commitment: ContentDigest,
+    expected_rows_commitment: ContentDigest,
+) -> ContentDigest {
     let mut hasher = Sha256::new();
     hasher.update(b"tine/test-only/reconciliation-scan-epoch/v1\0");
     hasher.update(pass.graph_resource.as_bytes());
     hasher.update(pass.scope_binding.canonical_bytes());
-    hasher.update(expected.header.binding.accepted_frontier.as_bytes());
-    hasher.update(expected.header.binding.projection_generation.to_be_bytes());
-    hasher.update(expected.header.source_commitment.as_bytes());
-    hasher.update(expected.rows_commitment.as_bytes());
+    hasher.update(expected_binding.accepted_frontier.as_bytes());
+    hasher.update(expected_binding.projection_generation.to_be_bytes());
+    hasher.update(expected_source_commitment.as_bytes());
+    hasher.update(expected_rows_commitment.as_bytes());
     hasher.update((pass.directories_by_exact_relative.len() as u64).to_be_bytes());
     for (path, resource) in &pass.directories_by_exact_relative {
         hash_len_bytes(&mut hasher, path.as_bytes());
@@ -1707,6 +1834,121 @@ fn scan_epoch_digest(
         }
     }
     ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn stable_graph_text_candidate_digest(candidates: &[GraphTextScanCandidate]) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/reconciliation/stable-graph-text-candidates/v1\0");
+    hasher.update((candidates.len() as u64).to_be_bytes());
+    for candidate in candidates {
+        hash_len_bytes(&mut hasher, candidate.path.as_str().as_bytes());
+        hasher.update([match candidate.managed_kind {
+            None => 0,
+            Some(ManagedTextKind::Page) => 1,
+            Some(ManagedTextKind::Journal) => 2,
+        }]);
+        hasher.update([match candidate.change {
+            GraphTextCandidateKind::Absence => 1,
+            GraphTextCandidateKind::Edit => 2,
+            GraphTextCandidateKind::Creation => 3,
+        }]);
+        hash_optional_description(&mut hasher, candidate.expected_description);
+        hash_optional_digest(&mut hasher, candidate.expected_owner_binding);
+        hash_optional_description(&mut hasher, candidate.observed_description);
+        hash_optional_digest(&mut hasher, candidate.observed_file_resource_id);
+        hash_optional_u64(&mut hasher, candidate.observed_link_count);
+    }
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn stable_graph_text_diagnostic_digest(diagnostics: &[GraphTextScanDiagnostic]) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/reconciliation/stable-graph-text-diagnostics/v1\0");
+    hasher.update((diagnostics.len() as u64).to_be_bytes());
+    for diagnostic in diagnostics {
+        hash_len_bytes(&mut hasher, diagnostic.path.as_bytes());
+        hasher.update([match diagnostic.kind {
+            GraphTextScanDiagnosticKind::ProviderConflictCopy => 1,
+        }]);
+        hasher.update(diagnostic.file_resource_id.as_bytes());
+        hasher.update(diagnostic.link_count.to_be_bytes());
+    }
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn stable_graph_text_baseline_identity_digest(
+    identity: &StableGraphTextBaselineIdentity,
+) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/reconciliation/stable-graph-text-baseline-identity/v1\0");
+    hasher.update(identity.graph_resource.as_bytes());
+    hasher.update(identity.scope_binding.canonical_bytes());
+    hasher.update(identity.expected_binding.accepted_frontier.as_bytes());
+    hasher.update(
+        identity
+            .expected_binding
+            .projection_generation
+            .to_be_bytes(),
+    );
+    hasher.update(identity.expected_source_commitment.as_bytes());
+    hasher.update(identity.expected_rows_commitment.as_bytes());
+    hasher.update(identity.scan_epoch_digest.as_bytes());
+    hasher.update(identity.pass_a_digest.as_bytes());
+    hasher.update(identity.pass_b_digest.as_bytes());
+    hasher.update(identity.candidate_digest.as_bytes());
+    hasher.update((identity.candidate_count as u64).to_be_bytes());
+    hasher.update(identity.diagnostic_digest.as_bytes());
+    hasher.update((identity.diagnostic_count as u64).to_be_bytes());
+    for metric in [
+        identity.instrumentation.passes,
+        identity.instrumentation.directory_entries,
+        identity.instrumentation.directories,
+        identity.instrumentation.regular_files,
+        identity.instrumentation.eligible_files,
+        identity.instrumentation.bytes_read,
+        identity.instrumentation.bytes_hashed,
+        identity.instrumentation.peak_retained_rows,
+        identity.instrumentation.peak_retained_bytes,
+        identity.instrumentation.peak_read_buffers,
+        identity.instrumentation.peak_read_buffer_bytes,
+        identity.instrumentation.expected_rows,
+        identity.instrumentation.expected_pages,
+        identity.instrumentation.expected_path_bytes,
+        identity.instrumentation.candidates,
+        identity.instrumentation.diagnostics,
+        identity.instrumentation.parser_invocations,
+        identity.wall_time_millis,
+    ] {
+        hasher.update(metric.to_be_bytes());
+    }
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
+fn hash_optional_description(hasher: &mut Sha256, value: Option<BlobDescription>) {
+    if let Some(value) = value {
+        hasher.update([1]);
+        hash_description(hasher, value);
+    } else {
+        hasher.update([0]);
+    }
+}
+
+fn hash_optional_digest(hasher: &mut Sha256, value: Option<ContentDigest>) {
+    if let Some(value) = value {
+        hasher.update([1]);
+        hasher.update(value.as_bytes());
+    } else {
+        hasher.update([0]);
+    }
+}
+
+fn hash_optional_u64(hasher: &mut Sha256, value: Option<u64>) {
+    if let Some(value) = value {
+        hasher.update([1]);
+        hasher.update(value.to_be_bytes());
+    } else {
+        hasher.update([0]);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2533,6 +2775,13 @@ mod tests {
             _maximum_retained_bytes: u64,
         ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
             Ok(self.binding.get())
+        }
+
+        fn current_scan_identity(
+            &self,
+            _maximum_retained_bytes: u64,
+        ) -> Result<(ExpectedPathBinding, ContentDigest), ExpectedPathSourceFailure> {
+            Ok((self.binding.get(), self.rows_commitment.get()))
         }
 
         fn expected_path_at(
