@@ -12,17 +12,13 @@ use crate::model::Graph;
 use super::{
     operational_coordinator::{
         FailedClosedOperationalCoordinator, OperationalCoordinator, OperationalCoordinatorState,
-        OperationalPhase,
     },
-    reconciliation_import::{
-        execute_stable_scan_import, ReconciliationImportBlockReason, ReconciliationImportBlocked,
-        ReconciliationImportOutcome,
-    },
+    reconciliation_import::{execute_stable_scan_import, ReconciliationImportOutcome},
     reconciliation_scan::{
-        scan_graph_text, GraphTextScanLimits, JoinedAuthenticatedExpectedPathSource,
-        ReconciliationCompletionOutcome, ReconciliationJob, ReconciliationLease,
-        ReconciliationScheduler, ReconciliationSchedulerLimits, ReconciliationSchedulerStatus,
-        ReconciliationTrigger, ReconciliationWork,
+        scan_graph_text, GraphTextScanFailureClass, GraphTextScanLimits,
+        JoinedAuthenticatedExpectedPathSource, ReconciliationCompletionOutcome, ReconciliationJob,
+        ReconciliationLease, ReconciliationScheduler, ReconciliationSchedulerLimits,
+        ReconciliationSchedulerStatus, ReconciliationTrigger, ReconciliationWork,
     },
     ManagedPath, ProjectionReceiptStore, ShardedHotEngine, SqliteFrontier, TailOverlay,
 };
@@ -221,7 +217,13 @@ impl ReconciliationSession<FailedClosedOperationalCoordinator> {
         &mut self,
         dependencies: ReconciliationSessionDependencies<'_>,
     ) -> Result<ReconciliationSessionStep, ReconciliationSessionError> {
-        let mut dispatch = LiveReconciliationSessionDispatch { dependencies };
+        let mut dispatch = LiveReconciliationSessionDispatch {
+            dependencies,
+            #[cfg(test)]
+            before_second_scan_pass: None,
+            #[cfg(test)]
+            arrival_before_dispatch: None,
+        };
         self.step_with(&mut dispatch)
     }
 
@@ -231,7 +233,13 @@ impl ReconciliationSession<FailedClosedOperationalCoordinator> {
         continuation: ReconciliationPendingContinuation,
         dependencies: ReconciliationSessionDependencies<'_>,
     ) -> Result<ReconciliationSessionStep, ReconciliationSessionError> {
-        let mut dispatch = LiveReconciliationSessionDispatch { dependencies };
+        let mut dispatch = LiveReconciliationSessionDispatch {
+            dependencies,
+            #[cfg(test)]
+            before_second_scan_pass: None,
+            #[cfg(test)]
+            arrival_before_dispatch: None,
+        };
         self.resume_with(continuation, &mut dispatch)
     }
 }
@@ -264,6 +272,10 @@ trait ReconciliationSessionDispatch {
 
 struct LiveReconciliationSessionDispatch<'a> {
     dependencies: ReconciliationSessionDependencies<'a>,
+    #[cfg(test)]
+    before_second_scan_pass: Option<Box<dyn FnMut() + 'a>>,
+    #[cfg(test)]
+    arrival_before_dispatch: Option<ReconciliationTrigger>,
 }
 
 impl LiveReconciliationSessionDispatch<'_> {
@@ -294,9 +306,6 @@ impl LiveReconciliationSessionDispatch<'_> {
             Ok(OperationalCoordinatorState::Blocked(_)) => {
                 ReconciliationSessionDispatchOutcome::Blocked
             }
-            Err(error) if error.phase() == OperationalPhase::Bindings => {
-                ReconciliationSessionDispatchOutcome::RetryFull
-            }
             Err(_) => ReconciliationSessionDispatchOutcome::Blocked,
             Ok(OperationalCoordinatorState::FailedClosed(continuation)) => {
                 ReconciliationSessionDispatchOutcome::FailedClosed(continuation)
@@ -311,16 +320,43 @@ impl LiveReconciliationSessionDispatch<'_> {
             let ReconciliationSessionDependencies { graph, engine, .. } = &mut self.dependencies;
             let projection = match engine.projection_work_index() {
                 Ok(projection) => projection,
-                // An unavailable baseline/expected source is never a clean
-                // outcome. It asks the bounded scheduler for a fresh full scan.
-                Err(_) => return ReconciliationSessionDispatchOutcome::RetryFull,
+                // A projection work index error is an authoritative failure,
+                // not evidence that rerunning the same scan can make progress.
+                Err(_) => return ReconciliationSessionDispatchOutcome::Blocked,
             };
             let source = JoinedAuthenticatedExpectedPathSource::new(engine, projection);
-            match scan_graph_text(graph, &source, GraphTextScanLimits::default()) {
+            #[cfg(test)]
+            let result = if let Some(hook) = self.before_second_scan_pass.as_mut() {
+                super::reconciliation_scan::scan_graph_text_with_hook(
+                    graph,
+                    &source,
+                    GraphTextScanLimits::default(),
+                    || {
+                        hook();
+                        Ok(())
+                    },
+                )
+            } else {
+                scan_graph_text(graph, &source, GraphTextScanLimits::default())
+            };
+            #[cfg(not(test))]
+            let result = scan_graph_text(graph, &source, GraphTextScanLimits::default());
+            match result {
                 Ok(scan) => scan,
-                // A stable scan failure (including uncertainty) has no
-                // authority to infer exact operations; retry the full work.
-                Err(_) => return ReconciliationSessionDispatchOutcome::RetryFull,
+                Err(error) => {
+                    return match error.class {
+                        // The two-pass scanner established that its observed
+                        // epoch moved. One coalesced fresh scan is meaningful.
+                        GraphTextScanFailureClass::UnstableEpoch => {
+                            ReconciliationSessionDispatchOutcome::RetryFull
+                        }
+                        // Bounds, unsafe filesystems, and unavailable/corrupt
+                        // expected authority are terminal for this lease.
+                        GraphTextScanFailureClass::Blocked => {
+                            ReconciliationSessionDispatchOutcome::Blocked
+                        }
+                    };
+                }
             }
         };
         let ReconciliationSessionDependencies {
@@ -334,18 +370,6 @@ impl LiveReconciliationSessionDispatch<'_> {
             ReconciliationImportOutcome::Noop => ReconciliationSessionDispatchOutcome::Noop,
             ReconciliationImportOutcome::Complete(_) => {
                 ReconciliationSessionDispatchOutcome::Complete
-            }
-            ReconciliationImportOutcome::Blocked(ReconciliationImportBlocked::Discovery(
-                discovery,
-            )) if discovery.reason
-                == ReconciliationImportBlockReason::ExpectedAuthorityUnavailable =>
-            {
-                ReconciliationSessionDispatchOutcome::RetryFull
-            }
-            ReconciliationImportOutcome::Blocked(
-                ReconciliationImportBlocked::CoordinatorError(error),
-            ) if error.phase() == OperationalPhase::Bindings => {
-                ReconciliationSessionDispatchOutcome::RetryFull
             }
             ReconciliationImportOutcome::Blocked(_) => {
                 ReconciliationSessionDispatchOutcome::Blocked
@@ -366,8 +390,12 @@ impl ReconciliationSessionDispatch for LiveReconciliationSessionDispatch<'_> {
     fn dispatch(
         &mut self,
         work: &ReconciliationWork,
-        _arrive: &mut dyn FnMut(ReconciliationTrigger),
+        arrive: &mut dyn FnMut(ReconciliationTrigger),
     ) -> ReconciliationSessionDispatchOutcome<Self::Continuation> {
+        #[cfg(test)]
+        if let Some(trigger) = self.arrival_before_dispatch.take() {
+            arrive(trigger);
+        }
         match work {
             ReconciliationWork::ProjectionPreconditionMismatch { paths }
             | ReconciliationWork::WatcherPaths { paths } => self.execute_targeted(paths),
@@ -404,9 +432,339 @@ impl ReconciliationSessionDispatch for LiveReconciliationSessionDispatch<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, VecDeque};
+    use std::{
+        collections::{BTreeSet, VecDeque},
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
+    use crate::{
+        model::Graph,
+        oplog::{
+            write_projection_exact, ApplicationRuntimeRoot, AuthorBatch, BatchId, CrdtPeerId,
+            DeviceId, DocumentId, LineageDigest, LogicalPageName, ManagedTextKind, ObjectStore,
+            OperationTransaction, PageId, ProjectionClaim, ProjectionEndpointBinding,
+            ProjectionEndpointId, RebuildSource, SemanticOperation, SessionId, WorkspaceId,
+        },
+    };
+    use uuid::Uuid;
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "tine-reconciliation-session-{label}-{}",
+                Uuid::new_v4()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct LiveFixture {
+        _root: TestRoot,
+        graph_root: PathBuf,
+        graph: Graph,
+        receipts: ProjectionReceiptStore,
+        engine: ShardedHotEngine,
+        database: SqliteFrontier,
+        tail: TailOverlay,
+        path: String,
+    }
+
+    impl LiveFixture {
+        fn new(label: &str, complete_projection: bool) -> Self {
+            let root = TestRoot::new(label);
+            let graph_root = root.path().join("graph");
+            fs::create_dir_all(&graph_root).unwrap();
+            let graph = Graph::open(&graph_root);
+            let workspace_id = WorkspaceId::from_uuid(Uuid::from_u128(101));
+            let endpoint = ProjectionEndpointBinding::enroll_graph(
+                &graph,
+                ProjectionEndpointId::from_uuid(Uuid::from_u128(102)),
+                DeviceId::from_uuid(Uuid::from_u128(103)),
+            )
+            .unwrap();
+            let receipts = ProjectionReceiptStore::open_for_endpoint(
+                &root.path().join("receipts"),
+                workspace_id,
+                endpoint,
+            )
+            .unwrap();
+            let lineage = LineageDigest::of(label.as_bytes());
+            let catalog = DocumentId::from_uuid(Uuid::from_u128(104));
+            let page_id = PageId::from_uuid(Uuid::from_u128(105));
+            let path = "pages/live.md".to_owned();
+            let transaction = OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                page_id,
+                home_document_id: DocumentId::from_uuid(Uuid::from_u128(106)),
+                name: LogicalPageName::parse("Live Session").unwrap(),
+                path: ManagedPath::parse(&path).unwrap(),
+                kind: ManagedTextKind::Page,
+            }])
+            .unwrap();
+            let author = ShardedHotEngine::new(workspace_id, lineage, catalog);
+            let bootstrap = author
+                .prepare_bootstrap_transaction(
+                    AuthorBatch {
+                        batch_id: BatchId::from_uuid(Uuid::from_u128(107)),
+                        author_device_id: DeviceId::from_uuid(Uuid::from_u128(108)),
+                        author_session_id: SessionId::from_uuid(Uuid::from_u128(109)),
+                        crdt_peer_id: CrdtPeerId::from_u64(110),
+                    },
+                    &transaction,
+                )
+                .unwrap();
+            let archive_root = root.path().join("archive");
+            ObjectStore::open(&archive_root, workspace_id)
+                .unwrap()
+                .publish_prepared(&bootstrap)
+                .unwrap();
+            let mut engine = ShardedHotEngine::with_enrolled_projection(
+                ObjectStore::open(&archive_root, workspace_id).unwrap(),
+                lineage,
+                catalog,
+                &graph,
+                &receipts,
+            );
+            engine
+                .stage_archive_batch(bootstrap.manifest().batch_id())
+                .unwrap();
+            if complete_projection {
+                write_projection_exact(&graph, &receipts, &engine, page_id, None).unwrap();
+            }
+            let archive = ObjectStore::open(&archive_root, workspace_id).unwrap();
+            let runtime =
+                ApplicationRuntimeRoot::open_for_test(&root.path().join("runtime")).unwrap();
+            let database_path = root.path().join("sqlite/materialized.sqlite3");
+            let source = RebuildSource::new(&engine, &archive).unwrap();
+            let database = SqliteFrontier::open_or_rebuild(
+                &database_path,
+                &runtime,
+                ProjectionClaim::current(workspace_id, lineage),
+                source,
+            )
+            .unwrap()
+            .database;
+            let source = RebuildSource::new(&engine, &archive).unwrap();
+            let tail = TailOverlay::from_durable(&database, &source).unwrap();
+            Self {
+                _root: root,
+                graph_root,
+                graph,
+                receipts,
+                engine,
+                database,
+                tail,
+                path,
+            }
+        }
+
+        fn dependencies(&mut self) -> ReconciliationSessionDependencies<'_> {
+            ReconciliationSessionDependencies {
+                graph: &self.graph,
+                receipts: &self.receipts,
+                engine: &mut self.engine,
+                database: &mut self.database,
+                tail: &mut self.tail,
+            }
+        }
+    }
+
+    fn live_session() -> ReconciliationSession {
+        ReconciliationSession::new(ReconciliationSchedulerLimits::default())
+    }
+
+    fn assert_blocked_and_idle(session: &mut ReconciliationSession, fixture: &mut LiveFixture) {
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Blocked)
+        );
+        assert!(session.status().blocked.is_some());
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Idle)
+        );
+    }
+
+    #[test]
+    fn live_full_scan_missing_expected_authority_blocks_without_retry() {
+        let mut fixture = LiveFixture::new("missing-expected-authority", false);
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Blocked)
+        );
+        assert_blocked_and_idle(&mut session, &mut fixture);
+    }
+
+    #[test]
+    fn live_full_scan_unenrolled_projection_index_blocks_without_retry() {
+        let mut fixture = LiveFixture::new("unenrolled-projection-index", true);
+        let mut unenrolled = ShardedHotEngine::new(
+            WorkspaceId::from_uuid(Uuid::from_u128(201)),
+            LineageDigest::of(b"unenrolled-projection-index"),
+            DocumentId::from_uuid(Uuid::from_u128(202)),
+        );
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+
+        assert_eq!(
+            session.step(ReconciliationSessionDependencies {
+                graph: &fixture.graph,
+                receipts: &fixture.receipts,
+                engine: &mut unenrolled,
+                database: &mut fixture.database,
+                tail: &mut fixture.tail,
+            }),
+            Ok(ReconciliationSessionStep::Blocked)
+        );
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Blocked)
+        );
+        assert!(session.status().blocked.is_some());
+        assert!(!session.status().active);
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.step(ReconciliationSessionDependencies {
+                graph: &fixture.graph,
+                receipts: &fixture.receipts,
+                engine: &mut unenrolled,
+                database: &mut fixture.database,
+                tail: &mut fixture.tail,
+            }),
+            Ok(ReconciliationSessionStep::Idle)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_full_scan_unsafe_filesystem_blocks_without_retry() {
+        use std::os::unix::fs::symlink;
+
+        let mut fixture = LiveFixture::new("unsafe-filesystem", true);
+        symlink(
+            fixture.graph_root.join(&fixture.path),
+            fixture.graph_root.join("pages/unsafe-link.md"),
+        )
+        .unwrap();
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Blocked)
+        );
+        assert_blocked_and_idle(&mut session, &mut fixture);
+    }
+
+    #[test]
+    fn live_unstable_scan_race_queues_one_full_retry() {
+        let mut fixture = LiveFixture::new("unstable-scan-race", true);
+        let mutation = fixture.graph_root.join(&fixture.path);
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch = LiveReconciliationSessionDispatch {
+            dependencies: fixture.dependencies(),
+            before_second_scan_pass: Some(Box::new(move || {
+                fs::write(&mutation, b"- changed during scan\n").unwrap();
+            })),
+            arrival_before_dispatch: None,
+        };
+
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::RetryFull)
+        );
+        drop(dispatch);
+        assert_eq!(
+            session.status().last_completion,
+            Some(ReconciliationCompletionOutcome::Retry)
+        );
+        assert!(!session.status().active);
+        assert!(session.status().pending);
+
+        assert!(matches!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Complete)
+                | Ok(ReconciliationSessionStep::Noop)
+                | Ok(ReconciliationSessionStep::Blocked)
+        ));
+        assert!(!session.status().pending);
+        assert_eq!(
+            session.step(fixture.dependencies()),
+            Ok(ReconciliationSessionStep::Idle)
+        );
+    }
+
+    #[test]
+    fn live_failure_keeps_queued_precondition_ahead_of_full_retry() {
+        let mut fixture = LiveFixture::new("queued-precondition", true);
+        let mutation = fixture.graph_root.join(&fixture.path);
+        let precondition = paths(&[&fixture.path]);
+        let mut session = live_session();
+        session.trigger(ReconciliationTrigger::Explicit);
+        let mut dispatch = LiveReconciliationSessionDispatch {
+            dependencies: fixture.dependencies(),
+            before_second_scan_pass: Some(Box::new(move || {
+                fs::write(&mutation, b"- changed during scan\n").unwrap();
+            })),
+            arrival_before_dispatch: Some(ReconciliationTrigger::ProjectionPreconditionMismatch(
+                precondition.clone(),
+            )),
+        };
+
+        assert_eq!(
+            session.step_with(&mut dispatch),
+            Ok(ReconciliationSessionStep::RetryFull)
+        );
+        drop(dispatch);
+        assert!(session.status().pending);
+
+        let precondition_job = session
+            .scheduler
+            .next()
+            .expect("queued projection precondition must remain pending");
+        assert_eq!(
+            precondition_job.work(),
+            &ReconciliationWork::ProjectionPreconditionMismatch {
+                paths: precondition
+            }
+        );
+        session
+            .scheduler
+            .complete(
+                precondition_job.lease(),
+                ReconciliationCompletionOutcome::Blocked,
+            )
+            .unwrap();
+        let retry_job = session
+            .scheduler
+            .next()
+            .expect("unstable scan retry must remain after the urgent precondition");
+        assert!(matches!(retry_job.work(), ReconciliationWork::FullScan(_)));
+        session
+            .scheduler
+            .complete(retry_job.lease(), ReconciliationCompletionOutcome::Blocked)
+            .unwrap();
+    }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     struct FakeContinuation(u64);

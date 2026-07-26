@@ -1595,7 +1595,14 @@ fn expected_source_failure(
         ExpectedPathSourceFailure::BoundExceeded => GraphTextScanFailureReason::BoundExceeded,
     };
     GraphTextScanFailure {
-        class: GraphTextScanFailureClass::Blocked,
+        // A joined source transition is a freshness race: a complete scan at
+        // the new source binding may safely resolve it. Every other source
+        // failure is permanent evidence for the current lease.
+        class: if failure == ExpectedPathSourceFailure::Unavailable {
+            GraphTextScanFailureClass::UnstableEpoch
+        } else {
+            GraphTextScanFailureClass::Blocked
+        },
         reason,
         detail,
         instrumentation,
