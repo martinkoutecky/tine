@@ -936,6 +936,32 @@ impl ReconciliationBaseline {
         Ok(head)
     }
 
+    /// Finish an adapter epoch as retained diagnostics only. This narrow seam
+    /// makes it impossible for candidate-bearing coordinator outcomes to
+    /// switch the clean head accidentally.
+    pub(crate) fn finish_diagnostic_epoch(
+        &mut self,
+        epoch: BaselineEpochId,
+        finish: FinishBaselineEpoch,
+    ) -> Result<(), ReconciliationBaselineError> {
+        if matches!(
+            finish.outcome,
+            BaselineEpochOutcome::Noop | BaselineEpochOutcome::Complete
+        ) {
+            return Err(unavailable(
+                "diagnostic adapter finish cannot request clean-head promotion",
+            ));
+        }
+        let head = self.finish_epoch(epoch, finish)?;
+        if head.is_some() {
+            return Err(rebuild(
+                &self.path,
+                "diagnostic adapter finish unexpectedly changed the clean head",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_tine_completion(
         &mut self,
         completion: &DurablyPublishedProjectionCompletion,

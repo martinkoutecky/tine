@@ -31,6 +31,10 @@ pub mod receipt;
 // P2N4I installs a device-local disposable substrate without activating scans.
 #[allow(dead_code)]
 pub(crate) mod reconciliation_baseline;
+// P2N4K persists stable-scan evidence into the disposable baseline without
+// activating scanning, scheduling, importing, or session execution.
+#[allow(dead_code)]
+pub(crate) mod reconciliation_baseline_adapter;
 // P2N4J bridges stable discovery evidence to the existing point-revalidated
 // coordinator without activating a scanner or scheduler.
 #[allow(dead_code)]

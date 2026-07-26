@@ -528,6 +528,40 @@ impl GraphTextScanPass {
     }
 }
 
+pub(crate) fn graph_text_scan_pass_digest(pass: &GraphTextScanPass) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/reconciliation/stable-graph-text-pass/v1\0");
+    hasher.update(pass.graph_resource.as_bytes());
+    hasher.update(pass.scope_binding.canonical_bytes());
+    hasher.update((pass.directories_by_exact_relative.len() as u64).to_be_bytes());
+    for (path, resource) in &pass.directories_by_exact_relative {
+        hash_len_bytes(&mut hasher, path.as_bytes());
+        hasher.update(resource.as_bytes());
+    }
+    hasher.update((pass.files.len() as u64).to_be_bytes());
+    for file in &pass.files {
+        hash_len_bytes(&mut hasher, file.exact_relative.as_bytes());
+        hasher.update([file.class.tag()]);
+        match &file.portable_key {
+            Some(key) => {
+                hasher.update([1]);
+                hash_len_bytes(&mut hasher, key.as_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        match file.description {
+            Some(description) => {
+                hasher.update([1]);
+                hash_description(&mut hasher, description);
+            }
+            None => hasher.update([0]),
+        }
+        hasher.update(file.file_resource_id.as_bytes());
+        hasher.update(file.link_count.to_be_bytes());
+    }
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
 /// Binding supplied by the future authenticated engine cursor.
 ///
 /// It intentionally contains only roots which must stay pinned across both
@@ -1256,6 +1290,40 @@ pub(crate) struct StableGraphTextScan {
     pub(crate) binding: GraphTextCandidateBinding,
     pub(crate) instrumentation: GraphTextScanInstrumentation,
     pub(crate) wall_time: Duration,
+    pub(crate) baseline_pass: GraphTextScanPass,
+    pub(crate) pass_a_digest: ContentDigest,
+    pub(crate) pass_b_digest: ContentDigest,
+}
+
+/// Borrowed, non-authoritative stable-scan evidence for the disposable
+/// baseline adapter. The adapter iterates these collections in bounded pages;
+/// this accessor never clones or rematerializes the graph.
+pub(crate) struct StableGraphTextBaselineEvidence<'a> {
+    pub(crate) graph_resource: CanonicalGraphResourceId,
+    pub(crate) scope_binding: &'a GraphTextScopeBinding,
+    pub(crate) directories: &'a BTreeMap<String, ContentDigest>,
+    pub(crate) files: &'a [GraphTextScanFileFingerprint],
+    pub(crate) pass_a_digest: ContentDigest,
+    pub(crate) pass_b_digest: ContentDigest,
+    pub(crate) candidate_digest: ContentDigest,
+}
+
+impl StableGraphTextScan {
+    pub(crate) fn baseline_evidence(&self) -> StableGraphTextBaselineEvidence<'_> {
+        StableGraphTextBaselineEvidence {
+            graph_resource: self.baseline_pass.graph_resource,
+            scope_binding: &self.baseline_pass.scope_binding,
+            directories: &self.baseline_pass.directories_by_exact_relative,
+            files: &self.baseline_pass.files,
+            pass_a_digest: self.pass_a_digest,
+            pass_b_digest: self.pass_b_digest,
+            candidate_digest: self.binding.scan_epoch_digest,
+        }
+    }
+
+    pub(crate) fn baseline_revalidation_retained_bytes(&self) -> u64 {
+        MAX_SCAN_RETAINED_BYTES
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1390,6 +1458,8 @@ where
     let second = graph
         .capture_reconciliation_scan_pass(second_limits)
         .map_err(|error| scan_io_failure(started, instrumentation, error))?;
+    let pass_a_digest = graph_text_scan_pass_digest(&first);
+    let pass_b_digest = graph_text_scan_pass_digest(&second);
     instrumentation.add_pass(
         second.instrumentation,
         first.instrumentation.peak_retained_rows,
@@ -1477,6 +1547,9 @@ where
         binding,
         instrumentation,
         wall_time: started.elapsed(),
+        baseline_pass: second,
+        pass_a_digest,
+        pass_b_digest,
     })
 }
 

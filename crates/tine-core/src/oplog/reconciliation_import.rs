@@ -753,12 +753,27 @@ mod tests {
         candidates: Vec<GraphTextScanCandidate>,
         diagnostics: Vec<GraphTextScanDiagnostic>,
     ) -> StableGraphTextScan {
+        let baseline_pass = super::super::reconciliation_scan::GraphTextScanPass {
+            graph_resource: binding.graph_resource,
+            scope_binding: binding.scope_binding.clone(),
+            directories_by_exact_relative: BTreeMap::new(),
+            files: Vec::new(),
+            instrumentation:
+                super::super::reconciliation_scan::GraphTextScanPassInstrumentation::default(),
+        };
         StableGraphTextScan {
             candidates,
             diagnostics,
             binding,
             instrumentation: GraphTextScanInstrumentation::default(),
             wall_time: Duration::ZERO,
+            pass_a_digest: super::super::reconciliation_scan::graph_text_scan_pass_digest(
+                &baseline_pass,
+            ),
+            pass_b_digest: super::super::reconciliation_scan::graph_text_scan_pass_digest(
+                &baseline_pass,
+            ),
+            baseline_pass,
         }
     }
 
