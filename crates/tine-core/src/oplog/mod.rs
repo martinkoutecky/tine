@@ -31,7 +31,8 @@ pub mod receipt;
 // P2N4I installs a device-local disposable substrate without activating scans.
 #[allow(dead_code)]
 pub(crate) mod reconciliation_baseline;
-#[cfg(test)]
+// P2N4I keeps the scheduler/scan boundary crate-private and inactive.
+#[allow(dead_code)]
 pub(crate) mod reconciliation_scan;
 pub mod reference_catalog;
 pub(crate) mod scratch_store;
