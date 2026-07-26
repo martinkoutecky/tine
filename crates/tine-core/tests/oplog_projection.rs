@@ -315,20 +315,8 @@ fn manifested_fixture(
         binding,
     )
     .unwrap();
-    let initial_dir = TestDir::new(&format!("{label}-initial-authority"));
-    let (initial, page_id) = authorized_engine(
-        &initial_dir,
-        relative_path,
-        content,
-        Some((&graph, &receipts)),
-    );
-    let (archive_seed, archive_page_id) = authorized_engine(&dir, relative_path, content, None);
-    assert_eq!(archive_page_id, page_id);
+    let (archive_seed, page_id) = authorized_engine(&dir, relative_path, content, None);
     drop(archive_seed);
-    let initial_write = write_projection_exact(&graph, &receipts, &initial, page_id, None).unwrap();
-    let prior_intent = initial_write.plan.intent().clone();
-    let base = initial_write.plan.target().to_vec();
-    drop(initial);
 
     let archive_path = dir.path().join("archive");
     let writer = ObjectStore::open(&archive_path, workspace(1)).unwrap();
@@ -343,6 +331,9 @@ fn manifested_fixture(
     engine
         .stage_archive_batch(BatchId::from_uuid(uuid(704)))
         .unwrap();
+    let initial_write = write_projection_exact(&graph, &receipts, &engine, page_id, None).unwrap();
+    let prior_intent = initial_write.plan.intent().clone();
+    let base = initial_write.plan.target().to_vec();
     (
         dir,
         graph,
@@ -1275,18 +1266,10 @@ fn r2_captured_author_input_cannot_finalize_an_r1_enrolled_transaction() {
             .unwrap(),
         )
         .unwrap();
-    let captured = r2
-        .capture_projection_input(
-            &graph,
-            binding,
-            ManagedPath::parse("pages/author-capture.md").unwrap(),
-            Some(&prior_intent),
-        )
-        .unwrap();
     assert!(matches!(
-        engine.finalize_author_transaction(draft, binding, vec![captured]),
+        engine.finalize_author_transaction(draft, &graph, &r2, binding),
         Err(EngineError::ProjectionManifest(message))
-            if message.contains("enrolled receipt store")
+            if message.contains("enrolled projection runtime")
     ));
 }
 
@@ -1956,7 +1939,7 @@ fn forged_dense_intent_wire_fails_closed_before_persistence_recovery() {
 
 #[test]
 fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority() {
-    let (dir, graph, receipts, writer, mut engine, binding, _page_id, prior_intent, _) =
+    let (dir, graph, receipts, writer, mut engine, binding, page_id, _prior_intent, _) =
         manifested_fixture(
             "crafted-dense-looking-target",
             "pages/crafted-target.md",
@@ -1984,18 +1967,7 @@ fn transport_ready_dense_looking_manifested_target_is_rejected_before_authority(
         )
         .unwrap();
     let finalized = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/crafted-target.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     let original_intent_object = finalized
         .objects()
@@ -2361,7 +2333,7 @@ fn completion_namespace_replacement_blocks_recovery_of_exact_target() {
 fn manifested_present_target_recovers_across_completion_and_status_publication_cuts() {
     use std::os::unix::fs::PermissionsExt;
 
-    let (dir, graph, receipts, writer, mut engine, binding, page_id, prior_intent, base) =
+    let (dir, graph, receipts, writer, mut engine, binding, page_id, _prior_intent, base) =
         manifested_fixture(
             "manifested-present-publication-cuts",
             "pages/cuts.md",
@@ -2389,18 +2361,7 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/cuts.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(
@@ -2473,7 +2434,7 @@ fn manifested_present_target_recovers_across_completion_and_status_publication_c
 fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts() {
     use std::os::unix::fs::PermissionsExt;
 
-    let (dir, graph, receipts, writer, mut engine, binding, page_id, prior_intent, _) =
+    let (dir, graph, receipts, writer, mut engine, binding, page_id, _prior_intent, _) =
         manifested_fixture(
             "manifested-absence-publication-cuts",
             "pages/delete-cuts.md",
@@ -2494,18 +2455,7 @@ fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts()
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/delete-cuts.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(
@@ -2561,7 +2511,7 @@ fn manifested_absence_recovers_from_retained_base_across_both_publication_cuts()
 
 #[test]
 fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_reuse() {
-    let (dir, graph, receipts, writer, mut engine, binding, page_a, prior_intent, bytes) =
+    let (dir, graph, receipts, writer, mut engine, binding, page_a, _prior_intent, bytes) =
         manifested_fixture(
             "stale-delete-identical-reuse",
             "pages/reused.md",
@@ -2584,13 +2534,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         )
         .unwrap();
     let delete = engine
-        .finalize_author_transaction(
-            delete,
-            binding,
-            vec![receipts
-                .capture_projection_input(&graph, binding, path.clone(), Some(&prior_intent))
-                .unwrap()],
-        )
+        .finalize_author_transaction(delete, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&delete).unwrap();
     assert!(matches!(
@@ -2650,13 +2594,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
         )
         .unwrap();
     let create = engine
-        .finalize_author_transaction(
-            create,
-            binding,
-            vec![receipts
-                .capture_projection_input(&graph, binding, path.clone(), None)
-                .unwrap()],
-        )
+        .finalize_author_transaction(create, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&create).unwrap();
     assert!(matches!(
@@ -2693,7 +2631,7 @@ fn rolled_back_work_head_cannot_resurrect_deletion_after_causal_identical_path_r
 
 #[test]
 fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
-    let (dir, graph, receipts, writer, mut engine, binding, page_id, mut prior_intent, _) =
+    let (dir, graph, receipts, writer, mut engine, binding, _page_id, _prior_intent, _) =
         manifested_fixture(
             "stale-present-overwrite",
             "pages/stale-present.md",
@@ -2705,7 +2643,6 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
     let mut stale_work = None;
     for (sequence, content) in [(0_u128, "stale"), (1, "newest")] {
         let batch_id = BatchId::from_uuid(uuid(73_010 + sequence));
-        let current_bytes = fs::read(dir.path().join("graph/pages/stale-present.md")).unwrap();
         let draft = engine
             .draft_author_transaction(
                 AuthorBatch {
@@ -2726,13 +2663,7 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
             )
             .unwrap();
         let prepared = engine
-            .finalize_author_transaction(
-                draft,
-                binding,
-                vec![receipts
-                    .capture_projection_input(&graph, binding, path.clone(), Some(&prior_intent))
-                    .unwrap()],
-            )
+            .finalize_author_transaction(draft, &graph, &receipts, binding)
             .unwrap();
         writer.publish_prepared(&prepared).unwrap();
         assert!(matches!(
@@ -2757,11 +2688,6 @@ fn rolled_back_work_head_cannot_replay_stale_present_over_newer_projection() {
             stale_work = Some(work.clone());
         }
         execute_manifested_projection_work(&graph, &receipts, &mut engine, &work).unwrap();
-        let state = engine.materialize_page_for_projection(page_id).unwrap();
-        prior_intent = plan_projection(workspace(1), &state, Some(&current_bytes))
-            .unwrap()
-            .intent()
-            .clone();
     }
     let newest = fs::read(dir.path().join("graph/pages/stale-present.md")).unwrap();
     let work_head = dir
@@ -2863,7 +2789,7 @@ fn capability_capture_rejects_forged_cross_scope_and_byte_mismatched_predecessor
 
 #[test]
 fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_root() {
-    let (dir, graph, receipts, writer, mut engine, binding, _page_id, prior_intent, base) =
+    let (dir, graph, receipts, writer, mut engine, binding, _page_id, _prior_intent, base) =
         manifested_fixture(
             "wrong-graph-execution",
             "pages/root-bound.md",
@@ -2891,18 +2817,7 @@ fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_ro
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/root-bound.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(
@@ -2956,7 +2871,7 @@ fn manifested_work_for_one_enrolled_graph_cannot_mutate_same_bytes_on_another_ro
 
 #[test]
 fn manifested_guarded_conflict_is_the_proof_bearing_block_path() {
-    let (dir, graph, receipts, writer, mut engine, binding, _page_id, prior_intent, _) =
+    let (dir, graph, receipts, writer, mut engine, binding, _page_id, _prior_intent, _) =
         manifested_fixture(
             "manifested-guarded-block",
             "pages/blocked.md",
@@ -2984,18 +2899,7 @@ fn manifested_guarded_conflict_is_the_proof_bearing_block_path() {
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/blocked.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(
@@ -3040,7 +2944,7 @@ fn manifested_guarded_conflict_is_the_proof_bearing_block_path() {
 fn graph_resource_identity_survives_move_but_rejects_symlink_and_path_substitution() {
     use std::os::unix::fs::symlink;
 
-    let (dir, graph, receipts, writer, mut engine, binding, _page_id, prior_intent, base) =
+    let (dir, graph, receipts, writer, mut engine, binding, _page_id, _prior_intent, base) =
         manifested_fixture("graph-resource-move", "pages/moved.md", "before", 76_000);
     let original_root = dir.path().join("graph");
     let moved_root = dir.path().join("moved-graph");
@@ -3088,18 +2992,7 @@ fn graph_resource_identity_survives_move_but_rejects_symlink_and_path_substituti
         )
         .unwrap();
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/moved.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     writer.publish_prepared(&prepared).unwrap();
     assert!(matches!(
@@ -3146,27 +3039,16 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
     let receipts_root = dir.path().join("manifested-receipts");
     let receipts =
         ProjectionReceiptStore::open_for_endpoint(&receipts_root, workspace_id, binding).unwrap();
-    let initial_dir = TestDir::new("manifested-author-work-initial-authority");
-    let (initial, page_id) = authorized_engine(
-        &initial_dir,
-        "pages/manifested.md",
-        "before",
-        Some((&graph, &receipts)),
-    );
-    let (archive_seed, archive_page_id) =
-        authorized_engine(&dir, "pages/manifested.md", "before", None);
-    assert_eq!(archive_page_id, page_id);
+    let (archive_seed, page_id) = authorized_engine(&dir, "pages/manifested.md", "before", None);
     drop(archive_seed);
-    let initial_write = write_projection_exact(&graph, &receipts, &initial, page_id, None).unwrap();
-    let mut prior_intent = initial_write.plan.intent().clone();
-    let mut current_projection_bytes = initial_write.plan.target().to_vec();
-    drop(initial);
     let reader = ObjectStore::open(&archive_path, workspace_id).unwrap();
     let mut engine =
         ShardedHotEngine::with_enrolled_projection(reader, lineage, catalog, &graph, &receipts);
     engine
         .stage_archive_batch(BatchId::from_uuid(uuid(704)))
         .unwrap();
+    let initial_write = write_projection_exact(&graph, &receipts, &engine, page_id, None).unwrap();
+    let mut current_projection_bytes = initial_write.plan.target().to_vec();
 
     // Accumulate retired prepared files and authenticated roots first. Startup
     // recovery below must still touch only the one current pending activation.
@@ -3192,18 +3074,7 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
             )
             .unwrap();
         let historical = engine
-            .finalize_author_transaction(
-                draft,
-                binding,
-                vec![receipts
-                    .capture_projection_input(
-                        &graph,
-                        binding,
-                        ManagedPath::parse("pages/manifested.md").unwrap(),
-                        Some(&prior_intent),
-                    )
-                    .unwrap()],
-            )
+            .finalize_author_transaction(draft, &graph, &receipts, binding)
             .unwrap();
         let writer = ObjectStore::open(&archive_path, workspace_id).unwrap();
         writer.publish_prepared(&historical).unwrap();
@@ -3231,7 +3102,6 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
             Some(&current_projection_bytes),
         )
         .unwrap();
-        prior_intent = historical_plan.intent().clone();
         current_projection_bytes = historical_plan.target().to_vec();
     }
 
@@ -3257,18 +3127,7 @@ fn fail_before_projection_crash_windows_recover_without_unauthorized_execution()
         .unwrap();
     assert_eq!(draft.requirements().len(), 1);
     let prepared = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![receipts
-                .capture_projection_input(
-                    &graph,
-                    binding,
-                    ManagedPath::parse("pages/manifested.md").unwrap(),
-                    Some(&prior_intent),
-                )
-                .unwrap()],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     assert_eq!(prepared.manifest().origin(), BatchOrigin::LocalMutation);
     assert_eq!(
@@ -3630,25 +3489,15 @@ fn manifested_rename_has_old_removal_and_new_target_using_old_render_base() {
         binding,
     )
     .unwrap();
-    let initial_dir = TestDir::new("manifested-rename-initial-authority");
-    let (initial, page_id) = authorized_engine(
-        &initial_dir,
-        "pages/old-name.md",
-        "rename me",
-        Some((&graph, &receipts)),
-    );
-    let (archive_seed, archive_page_id) =
-        authorized_engine(&dir, "pages/old-name.md", "rename me", None);
-    assert_eq!(archive_page_id, page_id);
+    let (archive_seed, page_id) = authorized_engine(&dir, "pages/old-name.md", "rename me", None);
     drop(archive_seed);
-    let base_write = write_projection_exact(&graph, &receipts, &initial, page_id, None).unwrap();
-    drop(initial);
     let reader = ObjectStore::open(&archive_path, workspace_id).unwrap();
     let mut engine =
         ShardedHotEngine::with_enrolled_projection(reader, lineage, catalog, &graph, &receipts);
     engine
         .stage_archive_batch(BatchId::from_uuid(uuid(704)))
         .unwrap();
+    write_projection_exact(&graph, &receipts, &engine, page_id, None).unwrap();
     let draft = engine
         .draft_author_transaction(
             AuthorBatch {
@@ -3667,28 +3516,7 @@ fn manifested_rename_has_old_removal_and_new_target_using_old_render_base() {
         .unwrap();
     assert_eq!(draft.requirements().len(), 2);
     let finalized = engine
-        .finalize_author_transaction(
-            draft,
-            binding,
-            vec![
-                receipts
-                    .capture_projection_input(
-                        &graph,
-                        binding,
-                        ManagedPath::parse("pages/old-name.md").unwrap(),
-                        Some(base_write.plan.intent()),
-                    )
-                    .unwrap(),
-                receipts
-                    .capture_projection_input(
-                        &graph,
-                        binding,
-                        ManagedPath::parse("pages/new-name.md").unwrap(),
-                        None,
-                    )
-                    .unwrap(),
-            ],
-        )
+        .finalize_author_transaction(draft, &graph, &receipts, binding)
         .unwrap();
     let intents = finalized
         .objects()

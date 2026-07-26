@@ -454,14 +454,14 @@ impl OperationalCoordinator {
                 CrdtPeerId::external_import_candidate(engine.workspace_id(), import_id, attempt)
             })?;
         fault(OperationalFaultPoint::AfterDraft)?;
-        let captured = draft
-            .capture_projection_inputs(engine, graph, receipts, endpoint)
+        let captured = engine
+            .capture_external_author_transaction(draft, graph, receipts, endpoint)
             .map_err(|error| {
                 OperationalCoordinatorError::new(OperationalPhase::Capture, error.to_string())
             })?;
         fault(OperationalFaultPoint::AfterCapture)?;
         let prepared = engine
-            .finalize_external_import_transaction(draft, endpoint, captured, receipts)
+            .finalize_captured_author_transaction(captured, receipts)
             .map_err(|error| {
                 OperationalCoordinatorError::new(OperationalPhase::Finalize, error.to_string())
             })?;
