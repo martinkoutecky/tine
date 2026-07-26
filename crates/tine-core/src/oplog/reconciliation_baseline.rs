@@ -23,6 +23,7 @@ use rusqlite::{
     params, Connection, Error as SqlError, ErrorCode, OpenFlags, OptionalExtension as _,
     Transaction, TransactionBehavior,
 };
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::ErrorKind;
@@ -351,6 +352,135 @@ pub(crate) struct BaselineScanPath {
 pub(crate) struct BaselineScanDirectory {
     pub(crate) path: BaselineDirectoryPath,
     pub(crate) resource: ContentDigest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BaselineScanRowsIdentity {
+    directory_digest: ContentDigest,
+    directory_count: u64,
+    present_path_digest: ContentDigest,
+    present_path_count: u64,
+    absent_path_digest: ContentDigest,
+    absent_path_count: u64,
+}
+
+impl BaselineScanRowsIdentity {
+    pub(crate) fn commitment(&self) -> ContentDigest {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tine/reconciliation/baseline-scan-rows/v1\0");
+        hasher.update(self.directory_digest.as_bytes());
+        hasher.update(self.directory_count.to_be_bytes());
+        hasher.update(self.present_path_digest.as_bytes());
+        hasher.update(self.present_path_count.to_be_bytes());
+        hasher.update(self.absent_path_digest.as_bytes());
+        hasher.update(self.absent_path_count.to_be_bytes());
+        ContentDigest::from_bytes(hasher.finalize().into())
+    }
+}
+
+pub(crate) struct BaselineScanRowsIdentityBuilder {
+    directories: Sha256,
+    directory_count: u64,
+    present_paths: Sha256,
+    present_path_count: u64,
+    absent_paths: Sha256,
+    absent_path_count: u64,
+}
+
+impl BaselineScanRowsIdentityBuilder {
+    pub(crate) fn new() -> Self {
+        let mut directories = Sha256::new();
+        directories.update(b"tine/reconciliation/baseline-scan-directories/v1\0");
+        let mut present_paths = Sha256::new();
+        present_paths.update(b"tine/reconciliation/baseline-scan-present-paths/v1\0");
+        let mut absent_paths = Sha256::new();
+        absent_paths.update(b"tine/reconciliation/baseline-scan-absent-paths/v1\0");
+        Self {
+            directories,
+            directory_count: 0,
+            present_paths,
+            present_path_count: 0,
+            absent_paths,
+            absent_path_count: 0,
+        }
+    }
+
+    pub(crate) fn observe_directory(&mut self, row: &BaselineScanDirectory) {
+        baseline_hash_len_bytes(&mut self.directories, row.path.as_str().as_bytes());
+        self.directories.update(row.resource.as_bytes());
+        self.directory_count = self.directory_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_path(&mut self, row: &BaselineScanPath) {
+        match row.state {
+            BaselineObservedState::Present {
+                description,
+                file_resource,
+                link_count,
+            } => {
+                baseline_hash_path_prefix(&mut self.present_paths, &row.path, row.managed_kind);
+                self.present_paths.update(description.sha256());
+                self.present_paths
+                    .update(description.byte_length().to_be_bytes());
+                self.present_paths.update(file_resource.as_bytes());
+                self.present_paths.update(link_count.to_be_bytes());
+                self.present_path_count = self.present_path_count.saturating_add(1);
+            }
+            BaselineObservedState::Absent => {
+                baseline_hash_path_prefix(&mut self.absent_paths, &row.path, row.managed_kind);
+                self.absent_path_count = self.absent_path_count.saturating_add(1);
+            }
+        }
+    }
+
+    fn observe_record(
+        &mut self,
+        row: &BaselinePathRecord,
+    ) -> Result<(), ReconciliationBaselineError> {
+        if row.source != BaselinePathSource::StableScan {
+            return Err(unavailable(
+                "sealed stable-scan epoch contains a non-scan path row",
+            ));
+        }
+        match row.state {
+            BaselineRecordedState::Present(description) => {
+                let file_resource = row
+                    .file_resource
+                    .ok_or_else(|| unavailable("stable-scan identity row lacks file resource"))?;
+                let link_count = row
+                    .link_count
+                    .ok_or_else(|| unavailable("stable-scan identity row lacks link count"))?;
+                self.observe_path(&BaselineScanPath {
+                    path: row.path.clone(),
+                    managed_kind: row.managed_kind,
+                    state: BaselineObservedState::Present {
+                        description,
+                        file_resource,
+                        link_count,
+                    },
+                });
+            }
+            BaselineRecordedState::ExpectedAbsent => {
+                self.observe_path(&BaselineScanPath {
+                    path: row.path.clone(),
+                    managed_kind: row.managed_kind,
+                    state: BaselineObservedState::Absent,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> BaselineScanRowsIdentity {
+        BaselineScanRowsIdentity {
+            directory_digest: ContentDigest::from_bytes(self.directories.finalize().into()),
+            directory_count: self.directory_count,
+            present_path_digest: ContentDigest::from_bytes(self.present_paths.finalize().into()),
+            present_path_count: self.present_path_count,
+            absent_path_digest: ContentDigest::from_bytes(self.absent_paths.finalize().into()),
+            absent_path_count: self.absent_path_count,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -795,6 +925,24 @@ impl ReconciliationBaseline {
         epoch: BaselineEpochId,
         finish: FinishBaselineEpoch,
     ) -> Result<Option<BaselineHead>, ReconciliationBaselineError> {
+        self.finish_epoch_inner(epoch, finish, None)
+    }
+
+    pub(crate) fn finish_sealed_scan_epoch(
+        &mut self,
+        epoch: BaselineEpochId,
+        finish: FinishBaselineEpoch,
+        rows_identity: BaselineScanRowsIdentity,
+    ) -> Result<Option<BaselineHead>, ReconciliationBaselineError> {
+        self.finish_epoch_inner(epoch, finish, Some(rows_identity))
+    }
+
+    fn finish_epoch_inner(
+        &mut self,
+        epoch: BaselineEpochId,
+        finish: FinishBaselineEpoch,
+        rows_identity: Option<BaselineScanRowsIdentity>,
+    ) -> Result<Option<BaselineHead>, ReconciliationBaselineError> {
         if finish.candidate_count > MAX_BASELINE_PATHS_PER_EPOCH {
             return Err(unavailable("baseline candidate count bound exceeded"));
         }
@@ -827,6 +975,9 @@ impl ReconciliationBaseline {
             ));
         }
         require_epoch_counters_match(&transaction, &path, epoch, &epoch_row)?;
+        if let Some(rows_identity) = rows_identity {
+            require_epoch_scan_rows_identity(&transaction, &path, epoch, rows_identity)?;
+        }
         if clean {
             require_epoch_root_binding(&transaction, &path, epoch, &self.binding)?;
         }
@@ -944,6 +1095,24 @@ impl ReconciliationBaseline {
         epoch: BaselineEpochId,
         finish: FinishBaselineEpoch,
     ) -> Result<(), ReconciliationBaselineError> {
+        self.finish_diagnostic_epoch_inner(epoch, finish, None)
+    }
+
+    pub(crate) fn finish_sealed_diagnostic_epoch(
+        &mut self,
+        epoch: BaselineEpochId,
+        finish: FinishBaselineEpoch,
+        rows_identity: BaselineScanRowsIdentity,
+    ) -> Result<(), ReconciliationBaselineError> {
+        self.finish_diagnostic_epoch_inner(epoch, finish, Some(rows_identity))
+    }
+
+    fn finish_diagnostic_epoch_inner(
+        &mut self,
+        epoch: BaselineEpochId,
+        finish: FinishBaselineEpoch,
+        rows_identity: Option<BaselineScanRowsIdentity>,
+    ) -> Result<(), ReconciliationBaselineError> {
         if matches!(
             finish.outcome,
             BaselineEpochOutcome::Noop | BaselineEpochOutcome::Complete
@@ -952,7 +1121,7 @@ impl ReconciliationBaseline {
                 "diagnostic adapter finish cannot request clean-head promotion",
             ));
         }
-        let head = self.finish_epoch(epoch, finish)?;
+        let head = self.finish_epoch_inner(epoch, finish, rows_identity)?;
         if head.is_some() {
             return Err(rebuild(
                 &self.path,
@@ -2277,6 +2446,72 @@ fn require_epoch_counters_match(
     Ok(())
 }
 
+fn require_epoch_scan_rows_identity(
+    transaction: &Transaction<'_>,
+    path: &Path,
+    epoch: BaselineEpochId,
+    expected: BaselineScanRowsIdentity,
+) -> Result<(), ReconciliationBaselineError> {
+    let mut identity = BaselineScanRowsIdentityBuilder::new();
+    {
+        let mut statement = transaction
+            .prepare(
+                "SELECT exact_path, resource
+                 FROM directories WHERE epoch_id = ?1 ORDER BY exact_path",
+            )
+            .map_err(|error| {
+                classify_sql_error(path, error, "preparing sealed directory validation")
+            })?;
+        let mut rows = statement.query([epoch.as_i64()]).map_err(|error| {
+            classify_sql_error(path, error, "querying sealed directory validation")
+        })?;
+        while let Some(row) = rows.next().map_err(|error| {
+            classify_sql_error(path, error, "reading sealed directory validation")
+        })? {
+            let exact: String = row.get(0).map_err(|error| {
+                classify_sql_error(path, error, "decoding sealed directory path")
+            })?;
+            let resource: Vec<u8> = row.get(1).map_err(|error| {
+                classify_sql_error(path, error, "decoding sealed directory resource")
+            })?;
+            identity.observe_directory(&BaselineScanDirectory {
+                path: BaselineDirectoryPath::parse(exact)
+                    .map_err(|error| rebuild(path, error.to_string()))?,
+                resource: ContentDigest::from_bytes(decode_fixed_32(
+                    &resource,
+                    path,
+                    "sealed directory resource",
+                )?),
+            });
+        }
+    }
+    {
+        let mut statement = transaction
+            .prepare(
+                "SELECT exact_path, managed_kind, state, content_digest, byte_len,
+                        file_resource, link_count, source, completion_identity,
+                        completion_frontier
+                 FROM paths WHERE epoch_id = ?1 ORDER BY exact_path",
+            )
+            .map_err(|error| classify_sql_error(path, error, "preparing sealed path validation"))?;
+        let mut rows = statement
+            .query([epoch.as_i64()])
+            .map_err(|error| classify_sql_error(path, error, "querying sealed path validation"))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|error| classify_sql_error(path, error, "reading sealed path validation"))?
+        {
+            identity.observe_record(&decode_path_row(row, path)?)?;
+        }
+    }
+    if identity.finish() != expected {
+        return Err(unavailable(
+            "sealed stable-scan row commitment does not match persisted evidence",
+        ));
+    }
+    Ok(())
+}
+
 fn require_epoch_root_binding(
     transaction: &Transaction<'_>,
     path: &Path,
@@ -2864,6 +3099,24 @@ fn decode_fixed_32(
     bytes
         .try_into()
         .map_err(|_| rebuild(path, format!("malformed {resource} length")))
+}
+
+fn baseline_hash_path_prefix(
+    hasher: &mut Sha256,
+    path: &ManagedPath,
+    managed_kind: Option<ManagedTextKind>,
+) {
+    baseline_hash_len_bytes(hasher, path.as_str().as_bytes());
+    hasher.update([match managed_kind {
+        None => 0,
+        Some(ManagedTextKind::Page) => 1,
+        Some(ManagedTextKind::Journal) => 2,
+    }]);
+}
+
+fn baseline_hash_len_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
 }
 
 const fn managed_kind_tag(kind: ManagedTextKind) -> i64 {

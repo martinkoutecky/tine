@@ -12,13 +12,14 @@ use super::{
     reconciliation_baseline::{
         BaselineBlockedReason, BaselineDirectoryPath, BaselineEpochId, BaselineEpochOutcome,
         BaselineHead, BaselineObservedState, BaselineScanDirectory, BaselineScanInstrumentation,
-        BaselineScanPath, BaselineTimestamp, BeginBaselineEpoch, FinishBaselineEpoch,
-        ReconciliationBaseline, ReconciliationBaselineError, MAX_BASELINE_WRITE_ROWS,
+        BaselineScanPath, BaselineScanRowsIdentity, BaselineScanRowsIdentityBuilder,
+        BaselineTimestamp, BeginBaselineEpoch, FinishBaselineEpoch, ReconciliationBaseline,
+        ReconciliationBaselineError, MAX_BASELINE_WRITE_ROWS,
     },
     reconciliation_scan::{
-        AuthenticatedExpectedPathSource, ExpectedPathBinding, ExpectedPathSourceFailure,
-        GraphTextCandidateKind, GraphTextScanDiagnostic, GraphTextScanFileFingerprint,
-        GraphTextScanPathClass, StableGraphTextScan,
+        AuthenticatedExpectedPathSource, ExpectedPathSourceFailure, GraphTextCandidateKind,
+        GraphTextScanDiagnostic, GraphTextScanFileFingerprint, GraphTextScanPathClass,
+        StableGraphTextBaselineIdentity, StableGraphTextScan,
     },
     ContentDigest, ManagedPath,
 };
@@ -69,15 +70,15 @@ impl From<ReconciliationBaselineError> for BaselineUnavailable {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BaselineCoordinatorDisposition {
+pub(crate) enum BaselineTerminalOutcome<'a> {
     Noop,
     Complete,
-    Blocked,
+    Blocked(BaselineBlockedRegistration<'a>),
     FailedClosed,
     Retry,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BaselineBlockedRegistration<'a> {
     pub(crate) observation_digest: ContentDigest,
     pub(crate) reason: BaselineBlockedReason,
@@ -96,14 +97,11 @@ pub(crate) struct BaselineAdapterInstrumentation {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingStableScanBaseline {
     epoch: BaselineEpochId,
-    expected_binding: ExpectedPathBinding,
-    pass_a_digest: ContentDigest,
-    pass_b_digest: ContentDigest,
-    candidate_digest: ContentDigest,
-    candidate_count: usize,
-    diagnostic_count: usize,
+    scan_identity: StableGraphTextBaselineIdentity,
+    rows_identity: BaselineScanRowsIdentity,
     scan_instrumentation: BaselineScanInstrumentation,
     adapter_instrumentation: BaselineAdapterInstrumentation,
+    commitment: ContentDigest,
 }
 
 impl PendingStableScanBaseline {
@@ -140,8 +138,11 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
     source: &S,
     started_at: BaselineTimestamp,
 ) -> Result<PendingStableScanBaseline, BaselineUnavailable> {
-    require_exact_baseline_binding(baseline, scan)?;
-    require_current_scan_binding(scan, source, false)?;
+    let scan_identity = scan
+        .validated_baseline_identity()
+        .map_err(invalid_evidence)?;
+    require_exact_baseline_binding(baseline, &scan_identity)?;
+    require_current_scan_binding(&scan_identity, source, false)?;
 
     let evidence = scan.baseline_evidence();
     let epoch = baseline.begin_epoch(BeginBaselineEpoch {
@@ -150,6 +151,7 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
         projection_generation: scan.binding.expected_binding.projection_generation,
     })?;
     let mut instrumentation = BaselineAdapterInstrumentation::default();
+    let mut rows_identity = BaselineScanRowsIdentityBuilder::new();
 
     let mut directory_page = Vec::with_capacity(MAX_BASELINE_WRITE_ROWS);
     let mut directory_page_path_bytes = 0_usize;
@@ -163,10 +165,12 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
             mem::size_of::<BaselineScanDirectory>(),
         );
         directory_page_path_bytes = directory_page_path_bytes.saturating_add(path.as_str().len());
-        directory_page.push(BaselineScanDirectory {
+        let row = BaselineScanDirectory {
             path,
             resource: *resource,
-        });
+        };
+        rows_identity.observe_directory(&row);
+        directory_page.push(row);
         if directory_page.len() == MAX_BASELINE_WRITE_ROWS {
             flush_directories(baseline, epoch, &mut directory_page, &mut instrumentation)?;
             directory_page_path_bytes = 0;
@@ -181,6 +185,7 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
         let Some(row) = scan_file_row(file)? else {
             continue;
         };
+        rows_identity.observe_path(&row);
         observe_page_row(
             &mut instrumentation,
             &path_page,
@@ -204,6 +209,7 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
             managed_kind: candidate.managed_kind,
             state: BaselineObservedState::Absent,
         };
+        rows_identity.observe_path(&row);
         observe_page_row(
             &mut instrumentation,
             &path_page,
@@ -229,76 +235,71 @@ pub(crate) fn append_stable_scan_to_baseline<S: AuthenticatedExpectedPathSource>
         )?;
     }
 
-    Ok(PendingStableScanBaseline {
+    let mut pending = PendingStableScanBaseline {
         epoch,
-        expected_binding: scan.binding.expected_binding,
-        pass_a_digest: evidence.pass_a_digest,
-        pass_b_digest: evidence.pass_b_digest,
-        candidate_digest: evidence.candidate_digest,
-        candidate_count: scan.candidates.len(),
-        diagnostic_count: scan.diagnostics.len(),
+        scan_identity,
+        rows_identity: rows_identity.finish(),
         scan_instrumentation: baseline_scan_instrumentation(scan),
         adapter_instrumentation: instrumentation,
-    })
+        commitment: ContentDigest::of(b"unsealed pending stable scan baseline"),
+    };
+    pending.commitment = pending_stable_scan_baseline_commitment(&pending);
+    Ok(pending)
 }
 
 /// Finish one appended epoch. Candidate-bearing completion is deliberately
 /// retained as incomplete diagnostics and requests a fresh post-drain scan.
 pub(crate) fn finish_stable_scan_baseline<S: AuthenticatedExpectedPathSource>(
     baseline: &mut ReconciliationBaseline,
-    scan: &StableGraphTextScan,
     source: &S,
     pending: PendingStableScanBaseline,
-    disposition: BaselineCoordinatorDisposition,
-    blocked: Option<BaselineBlockedRegistration<'_>>,
+    terminal: BaselineTerminalOutcome<'_>,
     completed_at: BaselineTimestamp,
 ) -> Result<BaselineAdapterStatus, BaselineUnavailable> {
-    require_exact_baseline_binding(baseline, scan)?;
-    if pending.expected_binding != scan.binding.expected_binding
-        || pending.candidate_count != scan.candidates.len()
-        || pending.diagnostic_count != scan.diagnostics.len()
+    if !pending.scan_identity.is_sealed()
+        || pending.commitment != pending_stable_scan_baseline_commitment(&pending)
     {
         return Err(invalid_evidence(
-            "pending epoch does not belong to this stable scan",
+            "pending stable-scan baseline identity seal does not match",
         ));
     }
-    require_current_scan_binding(scan, source, true)?;
+    require_exact_baseline_binding(baseline, &pending.scan_identity)?;
+    require_current_scan_binding(&pending.scan_identity, source, true)?;
 
-    if let Some(blocked) = blocked {
-        baseline.record_blocked(
-            blocked.observation_digest,
-            blocked.reason,
-            blocked.detail,
-            completed_at,
-        )?;
-    }
-
-    let can_promote = pending.candidate_count == 0
-        && pending.diagnostic_count == 0
-        && disposition == BaselineCoordinatorDisposition::Noop;
-    let outcome = if can_promote {
-        BaselineEpochOutcome::Noop
-    } else {
-        match disposition {
-            BaselineCoordinatorDisposition::Blocked
-            | BaselineCoordinatorDisposition::FailedClosed => BaselineEpochOutcome::Blocked,
-            BaselineCoordinatorDisposition::Noop
-            | BaselineCoordinatorDisposition::Complete
-            | BaselineCoordinatorDisposition::Retry => BaselineEpochOutcome::Incomplete,
+    let candidate_count = pending.scan_identity.candidate_count;
+    let diagnostic_count = pending.scan_identity.diagnostic_count;
+    let can_promote =
+        candidate_count == 0 && diagnostic_count == 0 && terminal == BaselineTerminalOutcome::Noop;
+    let (outcome, complete_with_candidates) = match terminal {
+        BaselineTerminalOutcome::Noop if can_promote => (BaselineEpochOutcome::Noop, false),
+        BaselineTerminalOutcome::Noop => (BaselineEpochOutcome::Incomplete, false),
+        BaselineTerminalOutcome::Complete => {
+            (BaselineEpochOutcome::Incomplete, candidate_count != 0)
         }
+        BaselineTerminalOutcome::Blocked(blocked) => {
+            baseline.record_blocked(
+                blocked.observation_digest,
+                blocked.reason,
+                blocked.detail,
+                completed_at,
+            )?;
+            (BaselineEpochOutcome::Blocked, false)
+        }
+        BaselineTerminalOutcome::FailedClosed => (BaselineEpochOutcome::Blocked, false),
+        BaselineTerminalOutcome::Retry => (BaselineEpochOutcome::Incomplete, false),
     };
     let finish = FinishBaselineEpoch {
         completed_at,
-        pass_a_digest: pending.pass_a_digest,
-        pass_b_digest: pending.pass_b_digest,
-        candidate_digest: pending.candidate_digest,
-        candidate_count: pending.candidate_count,
+        pass_a_digest: pending.scan_identity.pass_a_digest,
+        pass_b_digest: pending.scan_identity.pass_b_digest,
+        candidate_digest: pending.scan_identity.candidate_digest,
+        candidate_count,
         outcome,
         instrumentation: pending.scan_instrumentation,
     };
     if can_promote {
         let head = baseline
-            .finish_epoch(pending.epoch, finish)?
+            .finish_sealed_scan_epoch(pending.epoch, finish, pending.rows_identity)?
             .ok_or_else(|| invalid_evidence("clean Noop did not install a baseline head"))?;
         return Ok(BaselineAdapterStatus::Clean {
             head,
@@ -306,8 +307,8 @@ pub(crate) fn finish_stable_scan_baseline<S: AuthenticatedExpectedPathSource>(
         });
     }
 
-    baseline.finish_diagnostic_epoch(pending.epoch, finish)?;
-    if pending.candidate_count != 0 && disposition == BaselineCoordinatorDisposition::Complete {
+    baseline.finish_sealed_diagnostic_epoch(pending.epoch, finish, pending.rows_identity)?;
+    if complete_with_candidates {
         Ok(BaselineAdapterStatus::NeedPostDrainFullScan {
             instrumentation: pending.adapter_instrumentation,
         })
@@ -320,13 +321,10 @@ pub(crate) fn finish_stable_scan_baseline<S: AuthenticatedExpectedPathSource>(
 
 fn require_exact_baseline_binding(
     baseline: &ReconciliationBaseline,
-    scan: &StableGraphTextScan,
+    identity: &StableGraphTextBaselineIdentity,
 ) -> Result<(), BaselineUnavailable> {
-    let evidence = scan.baseline_evidence();
-    if baseline.binding().graph_resource() != evidence.graph_resource
-        || baseline.binding().scope_binding() != *evidence.scope_binding
-        || scan.binding.graph_resource != evidence.graph_resource
-        || scan.binding.scope_binding != *evidence.scope_binding
+    if baseline.binding().graph_resource() != identity.graph_resource
+        || baseline.binding().scope_binding() != identity.scope_binding
     {
         return Err(BaselineUnavailable {
             cause: BaselineUnavailableCause::StableScanBindingMismatch,
@@ -336,16 +334,18 @@ fn require_exact_baseline_binding(
 }
 
 fn require_current_scan_binding<S: AuthenticatedExpectedPathSource>(
-    scan: &StableGraphTextScan,
+    identity: &StableGraphTextBaselineIdentity,
     source: &S,
     finishing: bool,
 ) -> Result<(), BaselineUnavailable> {
-    let current = source
-        .current_binding(scan.baseline_revalidation_retained_bytes())
+    let (current, source_commitment) = source
+        .current_scan_identity(StableGraphTextScan::baseline_revalidation_retained_bytes())
         .map_err(|error| BaselineUnavailable {
             cause: BaselineUnavailableCause::ExpectedAuthority(error),
         })?;
-    if current != scan.binding.expected_binding {
+    if current != identity.expected_binding
+        || source_commitment != identity.expected_source_commitment
+    {
         return Err(BaselineUnavailable {
             cause: if finishing {
                 BaselineUnavailableCause::StableScanBindingChanged
@@ -437,6 +437,36 @@ fn observe_page_row<T>(
         instrumentation.peak_added_retained_bytes.max(retained);
 }
 
+fn pending_stable_scan_baseline_commitment(pending: &PendingStableScanBaseline) -> ContentDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/reconciliation/pending-stable-scan-baseline/v1\0");
+    hasher.update(pending.epoch.as_i64().to_be_bytes());
+    hasher.update(pending.scan_identity.commitment().as_bytes());
+    hasher.update(pending.rows_identity.commitment().as_bytes());
+    for metric in [
+        pending.scan_instrumentation.passes,
+        pending.scan_instrumentation.directory_entries,
+        pending.scan_instrumentation.directories,
+        pending.scan_instrumentation.regular_files,
+        pending.scan_instrumentation.eligible_files,
+        pending.scan_instrumentation.bytes_read,
+        pending.scan_instrumentation.bytes_hashed,
+        pending.scan_instrumentation.peak_retained_rows,
+        pending.scan_instrumentation.peak_retained_bytes,
+        pending.scan_instrumentation.candidates,
+        pending.scan_instrumentation.diagnostics,
+        pending.scan_instrumentation.wall_time_millis,
+        pending.adapter_instrumentation.path_rows,
+        pending.adapter_instrumentation.directory_rows,
+        pending.adapter_instrumentation.write_batches,
+        pending.adapter_instrumentation.peak_added_retained_rows,
+        pending.adapter_instrumentation.peak_added_retained_bytes,
+    ] {
+        hasher.update(metric.to_be_bytes());
+    }
+    ContentDigest::from_bytes(hasher.finalize().into())
+}
+
 fn baseline_scan_instrumentation(scan: &StableGraphTextScan) -> BaselineScanInstrumentation {
     BaselineScanInstrumentation {
         passes: scan.instrumentation.passes,
@@ -482,8 +512,9 @@ mod tests {
             ReconciliationBaselineBinding, TrustedPrivateApplicationRuntimeRoot,
         },
         reconciliation_scan::{
-            graph_text_scan_pass_digest, AuthenticatedExpectedPath, AuthenticatedExpectedPathPage,
-            AuthenticatedExpectedPathStreamHeader, ExpectedPathPageRequest,
+            graph_text_scan_pass_digest, scan_epoch_digest_from_commitments,
+            AuthenticatedExpectedPath, AuthenticatedExpectedPathPage,
+            AuthenticatedExpectedPathStreamHeader, ExpectedPathBinding, ExpectedPathPageRequest,
             ExpectedPathPointRequest, ExpectedPathStreamLimits, GraphTextCandidateBinding,
             GraphTextScanCandidate, GraphTextScanDiagnosticKind, GraphTextScanInstrumentation,
             GraphTextScanPass, GraphTextScanPassInstrumentation,
@@ -560,15 +591,25 @@ mod tests {
         }
     }
 
-    struct CurrentBinding(Cell<ExpectedPathBinding>);
+    struct CurrentBinding {
+        binding: Cell<ExpectedPathBinding>,
+        source_commitment: Cell<ContentDigest>,
+    }
 
     impl CurrentBinding {
-        fn new(binding: ExpectedPathBinding) -> Self {
-            Self(Cell::new(binding))
+        fn new(binding: &GraphTextCandidateBinding) -> Self {
+            Self {
+                binding: Cell::new(binding.expected_binding),
+                source_commitment: Cell::new(binding.expected_source_commitment),
+            }
         }
 
         fn set(&self, binding: ExpectedPathBinding) {
-            self.0.set(binding);
+            self.binding.set(binding);
+        }
+
+        fn set_source_commitment(&self, source_commitment: ContentDigest) {
+            self.source_commitment.set(source_commitment);
         }
     }
 
@@ -603,7 +644,14 @@ mod tests {
             &self,
             _maximum_retained_bytes: u64,
         ) -> Result<ExpectedPathBinding, ExpectedPathSourceFailure> {
-            Ok(self.0.get())
+            Ok(self.binding.get())
+        }
+
+        fn current_scan_identity(
+            &self,
+            _maximum_retained_bytes: u64,
+        ) -> Result<(ExpectedPathBinding, ContentDigest), ExpectedPathSourceFailure> {
+            Ok((self.binding.get(), self.source_commitment.get()))
         }
     }
 
@@ -669,13 +717,20 @@ mod tests {
             files,
         };
         let pass_digest = graph_text_scan_pass_digest(&baseline_pass);
+        let expected_source_commitment = ContentDigest::of(b"source");
+        let expected_rows_commitment = ContentDigest::of(b"expected-rows");
         let candidate_binding = GraphTextCandidateBinding {
             graph_resource: binding.graph_resource(),
             scope_binding: binding.scope_binding(),
             expected_binding,
-            expected_source_commitment: ContentDigest::of(b"source"),
-            expected_rows_commitment: ContentDigest::of(b"expected-rows"),
-            scan_epoch_digest: ContentDigest::of(format!("scan-epoch-{generation}").as_bytes()),
+            expected_source_commitment,
+            expected_rows_commitment,
+            scan_epoch_digest: scan_epoch_digest_from_commitments(
+                &baseline_pass,
+                expected_binding,
+                expected_source_commitment,
+                expected_rows_commitment,
+            ),
         };
         let candidates = candidate
             .then(|| {
@@ -745,7 +800,7 @@ mod tests {
         scan: &StableGraphTextScan,
         timestamp: u64,
     ) -> (CurrentBinding, PendingStableScanBaseline) {
-        let source = CurrentBinding::new(scan.binding.expected_binding);
+        let source = CurrentBinding::new(&scan.binding);
         let pending = append_stable_scan_to_baseline(
             &mut fixture.baseline,
             scan,
@@ -761,11 +816,9 @@ mod tests {
         let (source, pending) = append(fixture, &scan, generation * 10);
         match finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
+            BaselineTerminalOutcome::Noop,
             BaselineTimestamp::from_millis(generation * 10 + 1).unwrap(),
         )
         .unwrap()
@@ -782,11 +835,9 @@ mod tests {
         let (source, pending) = append(&mut fixture, &scan, 10);
         let status = finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
+            BaselineTerminalOutcome::Noop,
             BaselineTimestamp::from_millis(11).unwrap(),
         )
         .unwrap();
@@ -810,11 +861,9 @@ mod tests {
         assert!(matches!(
             finish_stable_scan_baseline(
                 &mut fixture.baseline,
-                &scan,
                 &source,
                 pending,
-                BaselineCoordinatorDisposition::Complete,
-                None,
+                BaselineTerminalOutcome::Complete,
                 BaselineTimestamp::from_millis(11).unwrap(),
             )
             .unwrap(),
@@ -827,21 +876,26 @@ mod tests {
     fn blocked_failed_closed_and_retry_never_replace_clean_head() {
         let mut fixture = Fixture::new("negative-outcomes");
         let clean = install_clean(&mut fixture, 1);
-        for (generation, disposition) in [
-            (2, BaselineCoordinatorDisposition::Blocked),
-            (3, BaselineCoordinatorDisposition::FailedClosed),
-            (4, BaselineCoordinatorDisposition::Retry),
+        for (generation, terminal) in [
+            (
+                2,
+                BaselineTerminalOutcome::Blocked(BaselineBlockedRegistration {
+                    observation_digest: ContentDigest::of(b"blocked-negative-outcome"),
+                    reason: BaselineBlockedReason::ReconciliationFailed,
+                    detail: "blocked negative outcome",
+                }),
+            ),
+            (3, BaselineTerminalOutcome::FailedClosed),
+            (4, BaselineTerminalOutcome::Retry),
         ] {
             let scan = one_path_scan(&fixture, generation, true);
             let (source, pending) = append(&mut fixture, &scan, generation * 10);
             assert!(matches!(
                 finish_stable_scan_baseline(
                     &mut fixture.baseline,
-                    &scan,
                     &source,
                     pending,
-                    disposition,
-                    None,
+                    terminal,
                     BaselineTimestamp::from_millis(generation * 10 + 1).unwrap(),
                 )
                 .unwrap(),
@@ -863,6 +917,171 @@ mod tests {
     }
 
     #[test]
+    fn pending_handle_finishes_exact_appended_scan_without_replaceable_scan_parameter() {
+        let mut fixture = Fixture::new("scan-swap");
+        let clean = install_clean(&mut fixture, 1);
+        let scan_a = scan(
+            &fixture.binding,
+            2,
+            [(
+                "pages/scan-a.md".to_owned(),
+                GraphTextScanPathClass::EligibleManaged(ManagedTextKind::Page),
+            )],
+            ["pages".to_owned()],
+            false,
+            false,
+        );
+        let (source, pending) = append(&mut fixture, &scan_a, 20);
+        let status = finish_stable_scan_baseline(
+            &mut fixture.baseline,
+            &source,
+            pending,
+            BaselineTerminalOutcome::Noop,
+            BaselineTimestamp::from_millis(21).unwrap(),
+        )
+        .unwrap();
+        let BaselineAdapterStatus::Clean { head, .. } = status else {
+            panic!("sealed pending scan did not promote");
+        };
+        assert_ne!(head, clean);
+        let page = fixture.baseline.read_head_paths_page(None, 8).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].path.as_str(), "pages/scan-a.md");
+    }
+
+    #[test]
+    fn noop_terminal_outcome_has_no_blocked_registration() {
+        let mut fixture = Fixture::new("noop-blocked");
+        install_clean(&mut fixture, 1);
+        let scan = one_path_scan(&fixture, 2, false);
+        let (source, pending) = append(&mut fixture, &scan, 20);
+        let impossible_blocked_digest = ContentDigest::of(b"contradictory-blocked-observation");
+        assert!(matches!(
+            finish_stable_scan_baseline(
+                &mut fixture.baseline,
+                &source,
+                pending,
+                BaselineTerminalOutcome::Noop,
+                BaselineTimestamp::from_millis(21).unwrap(),
+            )
+            .unwrap(),
+            BaselineAdapterStatus::Clean { .. }
+        ));
+        assert!(fixture
+            .baseline
+            .blocked_signature(impossible_blocked_digest)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn tampered_pending_row_commitment_fails_closed_and_preserves_old_head() {
+        let mut fixture = Fixture::new("tampered-pending-rows");
+        let clean = install_clean(&mut fixture, 1);
+        let scan = one_path_scan(&fixture, 2, false);
+        let (source, mut pending) = append(&mut fixture, &scan, 20);
+        pending.rows_identity = BaselineScanRowsIdentityBuilder::new().finish();
+        pending.commitment = pending_stable_scan_baseline_commitment(&pending);
+        let error = finish_stable_scan_baseline(
+            &mut fixture.baseline,
+            &source,
+            pending,
+            BaselineTerminalOutcome::Noop,
+            BaselineTimestamp::from_millis(21).unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.cause,
+            BaselineUnavailableCause::Store(
+                ReconciliationBaselineError::BaselineUnavailable { .. }
+            )
+        ));
+        assert_eq!(fixture.baseline.head().unwrap(), clean);
+    }
+
+    #[test]
+    fn candidate_and_diagnostic_commitment_swap_fails_closed_and_preserves_old_head() {
+        let mut fixture = Fixture::new("candidate-diagnostic-swap");
+        let clean = install_clean(&mut fixture, 1);
+        let scan = scan(
+            &fixture.binding,
+            2,
+            [(
+                "pages/provider-conflict.md".to_owned(),
+                GraphTextScanPathClass::ProviderConflictCopy,
+            )],
+            ["pages".to_owned()],
+            true,
+            true,
+        );
+        let (source, mut pending) = append(&mut fixture, &scan, 20);
+        let candidate_digest = pending.scan_identity.candidate_digest;
+        pending.scan_identity.candidate_digest = pending.scan_identity.diagnostic_digest;
+        pending.scan_identity.diagnostic_digest = candidate_digest;
+        let error = finish_stable_scan_baseline(
+            &mut fixture.baseline,
+            &source,
+            pending,
+            BaselineTerminalOutcome::Noop,
+            BaselineTimestamp::from_millis(21).unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.cause,
+            BaselineUnavailableCause::InvalidStableScanEvidence(_)
+        ));
+        assert_eq!(fixture.baseline.head().unwrap(), clean);
+    }
+
+    #[test]
+    fn tampered_pass_commitment_is_rejected_before_append() {
+        let mut fixture = Fixture::new("tampered-pass-commitment");
+        let mut scan = one_path_scan(&fixture, 1, false);
+        scan.pass_b_digest = ContentDigest::of(b"tampered-pass-b");
+        let source = CurrentBinding::new(&scan.binding);
+        append_stable_scan_to_baseline(
+            &mut fixture.baseline,
+            &scan,
+            &source,
+            BaselineTimestamp::from_millis(10).unwrap(),
+        )
+        .unwrap_err();
+        assert!(fixture.baseline.head().is_err());
+    }
+
+    #[test]
+    fn tampered_expected_rows_commitment_is_rejected_before_append() {
+        let mut fixture = Fixture::new("tampered-expected-rows");
+        let mut scan = one_path_scan(&fixture, 1, false);
+        scan.binding.expected_rows_commitment = ContentDigest::of(b"tampered-expected-rows");
+        let source = CurrentBinding::new(&scan.binding);
+        append_stable_scan_to_baseline(
+            &mut fixture.baseline,
+            &scan,
+            &source,
+            BaselineTimestamp::from_millis(10).unwrap(),
+        )
+        .unwrap_err();
+        assert!(fixture.baseline.head().is_err());
+    }
+
+    #[test]
+    fn retained_evidence_row_digest_mismatch_is_rejected_before_append() {
+        let mut fixture = Fixture::new("tampered-pass-row");
+        let mut scan = one_path_scan(&fixture, 1, false);
+        scan.baseline_pass.files[0].file_resource_id = ContentDigest::of(b"tampered-file-resource");
+        let source = CurrentBinding::new(&scan.binding);
+        append_stable_scan_to_baseline(
+            &mut fixture.baseline,
+            &scan,
+            &source,
+            BaselineTimestamp::from_millis(10).unwrap(),
+        )
+        .unwrap_err();
+        assert!(fixture.baseline.head().is_err());
+    }
+
+    #[test]
     fn corruption_between_append_and_finish_is_typed_unavailable_and_preserved() {
         let mut fixture = Fixture::new("finish-corruption");
         let scan = one_path_scan(&fixture, 1, false);
@@ -876,11 +1095,9 @@ mod tests {
         drop(external);
         let error = finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
+            BaselineTerminalOutcome::Noop,
             BaselineTimestamp::from_millis(11).unwrap(),
         )
         .unwrap_err();
@@ -907,11 +1124,9 @@ mod tests {
         let (source, pending) = append(&mut fixture, &scan, 10);
         finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
+            BaselineTerminalOutcome::Noop,
             BaselineTimestamp::from_millis(11).unwrap(),
         )
         .unwrap();
@@ -924,24 +1139,45 @@ mod tests {
     #[test]
     fn stale_expected_binding_before_finish_leaves_epoch_non_authoritative() {
         let mut fixture = Fixture::new("stale-finish");
-        let scan = one_path_scan(&fixture, 1, false);
-        let (source, pending) = append(&mut fixture, &scan, 10);
-        source.set(expected_binding(2));
+        let clean = install_clean(&mut fixture, 1);
+        let scan = one_path_scan(&fixture, 2, false);
+        let (source, pending) = append(&mut fixture, &scan, 20);
+        source.set(expected_binding(3));
         let error = finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
-            BaselineTimestamp::from_millis(11).unwrap(),
+            BaselineTerminalOutcome::Noop,
+            BaselineTimestamp::from_millis(21).unwrap(),
         )
         .unwrap_err();
         assert!(matches!(
             error.cause,
             BaselineUnavailableCause::StableScanBindingChanged
         ));
-        assert!(fixture.baseline.head().is_err());
+        assert_eq!(fixture.baseline.head().unwrap(), clean);
+    }
+
+    #[test]
+    fn stale_expected_source_commitment_before_finish_preserves_old_head() {
+        let mut fixture = Fixture::new("stale-source-commitment");
+        let clean = install_clean(&mut fixture, 1);
+        let scan = one_path_scan(&fixture, 2, false);
+        let (source, pending) = append(&mut fixture, &scan, 20);
+        source.set_source_commitment(ContentDigest::of(b"moved-source-commitment"));
+        let error = finish_stable_scan_baseline(
+            &mut fixture.baseline,
+            &source,
+            pending,
+            BaselineTerminalOutcome::Noop,
+            BaselineTimestamp::from_millis(21).unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.cause,
+            BaselineUnavailableCause::StableScanBindingChanged
+        ));
+        assert_eq!(fixture.baseline.head().unwrap(), clean);
     }
 
     #[test]
@@ -954,11 +1190,9 @@ mod tests {
             let (source, pending) = append(&mut fixture, &scan, generation * 10);
             finish_stable_scan_baseline(
                 &mut fixture.baseline,
-                &scan,
                 &source,
                 pending,
-                BaselineCoordinatorDisposition::Blocked,
-                Some(BaselineBlockedRegistration {
+                BaselineTerminalOutcome::Blocked(BaselineBlockedRegistration {
                     observation_digest: digest,
                     reason: BaselineBlockedReason::ReconciliationFailed,
                     detail: "same failed reconciliation",
@@ -993,11 +1227,9 @@ mod tests {
         assert!(matches!(
             finish_stable_scan_baseline(
                 &mut fixture.baseline,
-                &scan,
                 &source,
                 pending,
-                BaselineCoordinatorDisposition::Noop,
-                None,
+                BaselineTerminalOutcome::Noop,
                 BaselineTimestamp::from_millis(21).unwrap(),
             )
             .unwrap(),
@@ -1030,7 +1262,7 @@ mod tests {
             false,
             false,
         );
-        let source = CurrentBinding::new(scan.binding.expected_binding);
+        let source = CurrentBinding::new(&scan.binding);
         let started = Instant::now();
         let pending = append_stable_scan_to_baseline(
             &mut fixture.baseline,
@@ -1042,11 +1274,9 @@ mod tests {
         let instrumentation = pending.instrumentation();
         finish_stable_scan_baseline(
             &mut fixture.baseline,
-            &scan,
             &source,
             pending,
-            BaselineCoordinatorDisposition::Noop,
-            None,
+            BaselineTerminalOutcome::Noop,
             BaselineTimestamp::from_millis(11).unwrap(),
         )
         .unwrap();
