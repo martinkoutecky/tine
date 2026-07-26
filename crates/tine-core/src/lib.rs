@@ -31,4 +31,8 @@ pub use lsdoc;
 pub use config::{Config, Workflow};
 pub use date::JournalDate;
 pub use doc::{DocBlock, Document};
+pub use graph_text_scope::{
+    GraphTextScopeBinding, GraphTextScopeBindingError, GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION,
+    GRAPH_TEXT_SCOPE_VERSION,
+};
 pub use model::{BlockDto, BlockPreview, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};

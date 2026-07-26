@@ -171,10 +171,10 @@ impl fmt::Display for ReceiptError {
 
 impl std::error::Error for ReceiptError {}
 
-/// A canonical graph-relative Markdown/Org path.
+/// A lexically safe graph-relative Markdown/Org text path.
 ///
-/// This type establishes portable lexical safety only. Whether the path belongs
-/// to a configured managed root is authorized by the graph capability.
+/// This type establishes portable lexical safety only. Whether an existing path
+/// is admitted is authorized by the graph capability and its graph-text scope.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ManagedPath(String);
 
@@ -190,6 +190,44 @@ impl ManagedPath {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn file_name(&self) -> &str {
+        self.0
+            .rsplit('/')
+            .next()
+            .expect("validated managed paths are nonempty")
+    }
+
+    pub fn parent_relative(&self) -> Option<&str> {
+        self.0.rsplit_once('/').map(|(parent, _)| parent)
+    }
+
+    /// Form a graph-relative sibling without granting filesystem authority.
+    pub fn join_sibling(&self, name: &str) -> Result<String, ReceiptError> {
+        if name.contains('/') || !managed_component_is_portable(name) {
+            return Err(ReceiptError::UnsafeManagedPath(name.to_owned()));
+        }
+        Ok(match self.parent_relative() {
+            Some(parent) => format!("{parent}/{name}"),
+            None => name.to_owned(),
+        })
+    }
+
+    pub fn extension(&self) -> &str {
+        self.file_name()
+            .rsplit_once('.')
+            .map(|(_, extension)| extension)
+            .expect("validated managed paths have a text extension")
+    }
+
+    pub fn is_markdown(&self) -> bool {
+        self.extension().eq_ignore_ascii_case("md")
+            || self.extension().eq_ignore_ascii_case("markdown")
+    }
+
+    pub fn is_org(&self) -> bool {
+        self.extension().eq_ignore_ascii_case("org")
     }
 
     /// Compute the versioned portable comparison key without changing the
@@ -213,9 +251,7 @@ impl PortablePathKey {
     }
 
     /// Apply the canonical versioned fold to an already-validated graph text
-    /// path. Graph text includes root-level and `.markdown` documents that are
-    /// deliberately outside sparse [`ManagedPath`] syntax, but must use exactly
-    /// the same component fold rather than a second approximation.
+    /// path without introducing a second approximation of the component fold.
     pub(crate) fn from_graph_text_path(path: &str) -> Self {
         Self::from_components(path)
     }
@@ -298,21 +334,22 @@ fn is_managed_path(value: &str) -> bool {
         return false;
     }
     let segments: Vec<_> = value.split('/').collect();
-    if segments.len() < 2
-        || segments
-            .iter()
-            .any(|part| !managed_component_is_portable(part))
+    if segments
+        .iter()
+        .any(|part| !managed_component_is_portable(part))
     {
         return false;
     }
-    matches!(
-        segments
-            .last()
-            .and_then(|name| name.rsplit_once('.'))
-            .filter(|(stem, _)| !stem.is_empty())
-            .map(|(_, extension)| extension),
-        Some("md" | "org"),
-    )
+    segments
+        .last()
+        .and_then(|name| name.rsplit_once('.'))
+        .filter(|(stem, _)| !stem.is_empty())
+        .map(|(_, extension)| {
+            extension.eq_ignore_ascii_case("md")
+                || extension.eq_ignore_ascii_case("markdown")
+                || extension.eq_ignore_ascii_case("org")
+        })
+        .unwrap_or(false)
 }
 
 pub(crate) fn managed_component_is_portable(component: &str) -> bool {
@@ -1770,5 +1807,65 @@ mod tests {
             ImportId::derive(workspace(), &[], &[], DIFF_SCHEMA_VERSION - 1),
             Err(ReceiptError::UnknownDiffSchema(DIFF_SCHEMA_VERSION - 1))
         );
+    }
+
+    #[test]
+    fn managed_path_accepts_graph_relative_text_formats_and_preserves_spelling() {
+        for path in [
+            "Root.md",
+            "Root.MD",
+            "Mixed.MarkDown",
+            "Outline.ORG",
+            "nested/Page.md",
+            "deep/nested/Page.markdown",
+            "deep/nested/Page.Org",
+        ] {
+            assert_eq!(ManagedPath::parse(path).unwrap().as_str(), path);
+        }
+    }
+
+    #[test]
+    fn managed_path_rejects_unsafe_components_extensions_and_empty_stems() {
+        for path in [
+            "",
+            ".md",
+            ".MARKDOWN",
+            ".org",
+            "root.txt",
+            "root.md ",
+            "/root.md",
+            "../root.md",
+            "nested/../root.md",
+            "nested//root.md",
+            "nested/root.",
+            "nested/CON.md",
+        ] {
+            assert!(ManagedPath::parse(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn managed_path_root_safe_helpers_and_portable_key_v1_are_stable() {
+        let root = ManagedPath::parse("Root.MarkDown").unwrap();
+        assert_eq!(root.file_name(), "Root.MarkDown");
+        assert_eq!(root.parent_relative(), None);
+        assert_eq!(
+            root.join_sibling(".Root.MarkDown.recovery").unwrap(),
+            ".Root.MarkDown.recovery"
+        );
+
+        let nested = ManagedPath::parse("Pages/Cafe\u{301}.MD").unwrap();
+        assert_eq!(nested.file_name(), "Cafe\u{301}.MD");
+        assert_eq!(nested.parent_relative(), Some("Pages"));
+        assert_eq!(
+            nested.join_sibling(".Cafe\u{301}.MD.recovery").unwrap(),
+            "Pages/.Cafe\u{301}.MD.recovery"
+        );
+        assert_eq!(nested.portable_key().as_str(), "pages/café.md");
+        assert_eq!(nested.portable_key().as_bytes(), "pages/café.md".as_bytes());
+
+        for unsafe_name in ["", ".", "..", "nested/name", r"nested\name", "CON"] {
+            assert!(root.join_sibling(unsafe_name).is_err(), "{unsafe_name}");
+        }
     }
 }

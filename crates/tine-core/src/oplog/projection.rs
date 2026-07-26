@@ -1140,12 +1140,14 @@ fn is_org_planning_line(line: &str) -> bool {
 }
 
 fn format_for_page(page: &MaterializedPage) -> Result<ProjectionFormat, ProjectionError> {
-    match page.path.as_str().rsplit_once('.') {
-        Some((_, "md")) => Ok(ProjectionFormat::Markdown),
-        Some((_, "org")) => Ok(ProjectionFormat::Org),
-        _ => Err(ProjectionError::UnsupportedFormat(
+    if page.path.is_markdown() {
+        Ok(ProjectionFormat::Markdown)
+    } else if page.path.is_org() {
+        Ok(ProjectionFormat::Org)
+    } else {
+        Err(ProjectionError::UnsupportedFormat(
             page.path.as_str().into(),
-        )),
+        ))
     }
 }
 
@@ -1557,5 +1559,59 @@ mod tests {
         assert!(std::str::from_utf8(&dense)
             .unwrap()
             .contains(&format!("id:: {user_authored_id}")));
+    }
+
+    #[test]
+    fn projection_format_accepts_mixed_case_markdown_and_org_without_output_changes() {
+        fn page(path: &str) -> MaterializedPage {
+            MaterializedPage {
+                page_id: PageId::from_uuid(Uuid::from_u128(11)),
+                home_document_id: DocumentId::from_uuid(Uuid::from_u128(12)),
+                name: crate::oplog::LogicalPageName::parse("Format").unwrap(),
+                path: ManagedPath::parse(path).unwrap(),
+                kind: crate::oplog::ManagedTextKind::Page,
+                preamble: Some("title:: Format".into()),
+                blocks: vec![MaterializedBlock {
+                    block_id: BlockId::from_uuid(Uuid::from_u128(13)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(12)),
+                    parent: None,
+                    order: "a".into(),
+                    logseq_uuid: None,
+                    logseq_identity_origin: None,
+                    content: "content".into(),
+                }],
+                stats: MaterializationStats::default(),
+            }
+        }
+
+        let markdown = ProjectionPageState {
+            page: page("Root.md"),
+            frontier: FrontierV2::default(),
+            claim_evidence: Vec::new(),
+        };
+        let mixed_markdown = ProjectionPageState {
+            page: page("Root.MaRkDoWn"),
+            frontier: FrontierV2::default(),
+            claim_evidence: Vec::new(),
+        };
+        assert_eq!(
+            render_projection(&markdown, None).unwrap().target,
+            render_projection(&mixed_markdown, None).unwrap().target
+        );
+
+        let org = ProjectionPageState {
+            page: page("Root.org"),
+            frontier: FrontierV2::default(),
+            claim_evidence: Vec::new(),
+        };
+        let mixed_org = ProjectionPageState {
+            page: page("Root.OrG"),
+            frontier: FrontierV2::default(),
+            claim_evidence: Vec::new(),
+        };
+        assert_eq!(
+            render_projection(&org, None).unwrap().target,
+            render_projection(&mixed_org, None).unwrap().target
+        );
     }
 }

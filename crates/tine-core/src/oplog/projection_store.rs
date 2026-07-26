@@ -347,12 +347,7 @@ impl ProjectionAttemptReservation {
     #[cfg(test)]
     pub(crate) fn for_test(target_path: &str) -> Self {
         let target_path = ManagedPath::parse(target_path).expect("valid test projection path");
-        let target_filename = target_path
-            .as_str()
-            .rsplit_once('/')
-            .expect("managed paths contain a parent")
-            .1
-            .to_owned();
+        let target_filename = target_path.file_name().to_owned();
         let attempt_id = Uuid::new_v4();
         Self {
             schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
@@ -367,12 +362,7 @@ impl ProjectionAttemptReservation {
     }
 
     fn new(intent: &ProjectionIntent, attempt_id: Uuid) -> Result<Self, ProjectionStoreError> {
-        let target_filename = intent
-            .path()
-            .as_str()
-            .rsplit_once('/')
-            .expect("managed paths contain a parent")
-            .1;
+        let target_filename = intent.path().file_name();
         let reservation = Self {
             schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
             intent_id: intent.id()?,
@@ -403,12 +393,7 @@ impl ProjectionAttemptReservation {
         intent: &ProjectionIntent,
         attempt_id: Uuid,
     ) -> Result<Self, ProjectionStoreError> {
-        let target_filename = intent
-            .path()
-            .as_str()
-            .rsplit_once('/')
-            .expect("managed paths contain a parent")
-            .1;
+        let target_filename = intent.path().file_name();
         Ok(Self {
             schema_version: LOCAL_ATTEMPT_SCHEMA_VERSION,
             intent_id: intent.id()?,
@@ -1745,14 +1730,12 @@ impl ProjectionReceiptStore {
             record.observed.byte_length(),
             MAX_PROJECTION_EVIDENCE_BYTES,
         )?;
-        let parent = intent
+        let expected_relative_path = intent
             .path()
-            .as_str()
-            .rsplit_once('/')
-            .expect("managed paths contain a parent")
-            .0;
+            .join_sibling(&record.recovery_filename)
+            .map_err(|_| ProjectionStoreError::ForensicBindingMismatch)?;
         if reservation.recovery_filename() != record.recovery_filename
-            || record.recovery_relative_path != format!("{parent}/{}", record.recovery_filename)
+            || record.recovery_relative_path != expected_relative_path
         {
             return Err(ProjectionStoreError::ForensicBindingMismatch);
         }
@@ -3243,6 +3226,108 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn root_attempt_reservation_uses_the_target_filename_without_panicking() {
+        let fixture = Fixture::new_at("root-attempt-reservation", "Root.md");
+        let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+
+        assert_eq!(
+            reservation.recovery_filename(),
+            format!(
+                ".Root.md.{}.projection.recovery",
+                reservation.attempt_id().simple()
+            )
+        );
+    }
+
+    #[test]
+    fn root_and_nested_forensic_paths_validate_exactly_and_forgery_fails_closed() {
+        for (label, target_path, expected_parent) in [
+            ("root-forensic-path", "Root.md", None),
+            (
+                "nested-forensic-path",
+                "pages/deep/Target.md",
+                Some("pages/deep"),
+            ),
+        ] {
+            let fixture = Fixture::new_at(label, target_path);
+            let reservation = fixture.store.reserve_attempt(&fixture.intent).unwrap();
+            let expected_filename = format!(
+                ".{}.{}.projection.recovery",
+                fixture.intent.path().file_name(),
+                reservation.attempt_id().simple()
+            );
+            assert_eq!(reservation.recovery_filename(), expected_filename);
+
+            let expected_relative_path = match expected_parent {
+                Some(parent) => format!("{parent}/{expected_filename}"),
+                None => expected_filename.clone(),
+            };
+            let record = LocalProjectionEvidenceRecord {
+                schema_version: LOCAL_FORENSIC_SCHEMA_VERSION,
+                intent_id: fixture.intent.id().unwrap(),
+                attempt_id: reservation.attempt_id(),
+                target_path: fixture.intent.path().clone(),
+                recovery_relative_path: expected_relative_path.clone(),
+                recovery_filename: expected_filename.clone(),
+                observed: BlobDescription::of(b"- displaced\n"),
+            };
+            fixture
+                .store
+                .validate_forensic_record_with_reservation(&fixture.intent, &record, &reservation)
+                .unwrap();
+            assert_eq!(
+                record.recovery_relative_path(),
+                expected_relative_path.as_str()
+            );
+
+            if expected_parent.is_none() {
+                let mut leading_slash = record.clone();
+                leading_slash.recovery_relative_path =
+                    format!("/{}", leading_slash.recovery_relative_path);
+                assert!(matches!(
+                    fixture.store.validate_forensic_record_with_reservation(
+                        &fixture.intent,
+                        &leading_slash,
+                        &reservation,
+                    ),
+                    Err(ProjectionStoreError::ForensicBindingMismatch)
+                ));
+
+                let mut wrong_parent = record.clone();
+                wrong_parent.recovery_relative_path =
+                    format!("pages/{}", wrong_parent.recovery_filename);
+                assert!(matches!(
+                    fixture.store.validate_forensic_record_with_reservation(
+                        &fixture.intent,
+                        &wrong_parent,
+                        &reservation,
+                    ),
+                    Err(ProjectionStoreError::ForensicBindingMismatch)
+                ));
+
+                let mut wrong_filename = record.clone();
+                wrong_filename.recovery_filename = format!(
+                    ".Wrong.md.{}.projection.recovery",
+                    reservation.attempt_id().simple()
+                );
+                wrong_filename.recovery_relative_path = fixture
+                    .intent
+                    .path()
+                    .join_sibling(&wrong_filename.recovery_filename)
+                    .unwrap();
+                assert!(matches!(
+                    fixture.store.validate_forensic_record_with_reservation(
+                        &fixture.intent,
+                        &wrong_filename,
+                        &reservation,
+                    ),
+                    Err(ProjectionStoreError::ForensicBindingMismatch)
+                ));
+            }
         }
     }
 

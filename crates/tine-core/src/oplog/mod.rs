@@ -36,6 +36,10 @@ pub mod sqlite;
 pub mod sqlite_materialization;
 pub(crate) mod uuid_claim_index;
 
+pub use crate::graph_text_scope::{
+    GraphTextScopeBinding, GraphTextScopeBindingError, GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION,
+    GRAPH_TEXT_SCOPE_VERSION,
+};
 pub use batch::{
     BatchCausalDot, BatchError, BatchOrigin, CausalPeerId, ContentDigest, LineageDigest,
     ObjectDescriptor, ObjectKind, OperationBatch, OperationObject, PreparedBatch,

@@ -14,7 +14,7 @@ use crate::crdt::{
 };
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
-use crate::graph_text_scope::GraphTextScope;
+use crate::graph_text_scope::{GraphTextScope, GraphTextScopeBinding};
 use crate::oplog::projection_store::{ProjectionMutationAuthority, MAX_PROJECTION_EVIDENCE_BYTES};
 use crate::oplog::{
     managed_component_is_portable, BlobDescription, CanonicalGraphResourceId, ContentDigest,
@@ -160,18 +160,24 @@ pub(crate) struct ProjectionRecoveryEvidence {
     len: u64,
 }
 
+fn projection_recovery_relative_path(
+    target_relative_path: &str,
+    filename: &str,
+) -> io::Result<String> {
+    ManagedPath::parse(target_relative_path.to_owned())
+        .and_then(|target| target.join_sibling(filename))
+        .map_err(|_| bad_path())
+}
+
 impl ProjectionRecoveryEvidence {
-    fn new(target_relative_path: &str, filename: String, bytes: &[u8]) -> Self {
-        let parent = target_relative_path
-            .rsplit_once('/')
-            .expect("projection paths always include a configured root")
-            .0;
-        Self {
-            relative_path: format!("{parent}/{filename}"),
+    fn new(target_relative_path: &str, filename: String, bytes: &[u8]) -> io::Result<Self> {
+        let relative_path = projection_recovery_relative_path(target_relative_path, &filename)?;
+        Ok(Self {
+            relative_path,
             filename,
             digest: Sha256::digest(bytes).into(),
             len: bytes.len() as u64,
-        }
+        })
     }
 
     pub(crate) fn path(&self) -> &str {
@@ -2881,6 +2887,14 @@ impl Graph {
         self.graph_text_scope.version()
     }
 
+    /// Bind the precomputed effective graph-text policy to the exact retained
+    /// graph-root capability without walking or hashing graph contents.
+    pub fn graph_text_scope_binding(&self) -> io::Result<GraphTextScopeBinding> {
+        Ok(self
+            .graph_text_scope
+            .bind_graph_resource(self.canonical_resource_id()?))
+    }
+
     /// Seal this exact Graph instance for a future external-reconciliation
     /// publisher. The workspace and endpoint become immutable evidence on the
     /// capability; this method never exposes the underlying reservation.
@@ -3571,10 +3585,7 @@ impl Graph {
             ManagedTextKind::Page => PageKind::Page,
             ManagedTextKind::Journal => PageKind::Journal,
         };
-        let filename = Path::new(path.as_str())
-            .file_name()
-            .and_then(|filename| filename.to_str())
-            .ok_or_else(|| ReceiptError::UnsafeManagedPath(path.as_str().to_owned()))?;
+        let filename = path.file_name();
         let stem = filename
             .strip_suffix(".md")
             .or_else(|| filename.strip_suffix(".org"))
@@ -11356,12 +11367,8 @@ impl Graph {
     ) -> io::Result<Vec<u8>> {
         require_projection_platform()?;
         let target = self.projection_page_target(target_relative_path)?;
-        let parent_relative = target
-            .relative_path
-            .rsplit_once('/')
-            .expect("projection paths always include a configured root")
-            .0;
-        let expected_evidence_path = format!("{parent_relative}/{}", evidence.filename);
+        let expected_evidence_path =
+            projection_recovery_relative_path(&target.relative_path, &evidence.filename)?;
         let expected_prefix = format!(".{}.", target.filename);
         if evidence.relative_path != expected_evidence_path
             || !evidence.filename.starts_with(&expected_prefix)
@@ -11405,7 +11412,7 @@ impl Graph {
                 &target.relative_path,
                 filename.to_owned(),
                 &bytes,
-            ));
+            )?);
         }
         preflight_projection_chain(&parent.chain)?;
         self.ensure_projection_parent_binding(parent, target)?;
@@ -11440,7 +11447,7 @@ impl Graph {
                     Err(error) => return Err(error),
                 };
                 let retained =
-                    ProjectionRecoveryEvidence::new(&target.relative_path, filename, &bytes);
+                    ProjectionRecoveryEvidence::new(&target.relative_path, filename, &bytes)?;
                 if retained.len != expected_len || retained.digest != expected_digest {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -24898,6 +24905,84 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn root_projection_admission_returns_an_error_without_panicking() {
+        let dir = scratch("projection-root-admission");
+        let graph = Graph::open(&dir);
+
+        let error = graph
+            .write_projection_exact("Root.md", None, b"- target\n")
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!dir.join("Root.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn projection_recovery_evidence_paths_are_root_safe_and_forgery_fails_closed() {
+        let root_filename =
+            ".Root.md.00000000000000000000000000000001.projection.recovery".to_owned();
+        let root =
+            ProjectionRecoveryEvidence::new("Root.md", root_filename.clone(), b"- root\n").unwrap();
+        assert_eq!(root.path(), root_filename);
+
+        let nested_filename =
+            ".Target.md.00000000000000000000000000000002.projection.recovery".to_owned();
+        let nested = ProjectionRecoveryEvidence::new(
+            "pages/deep/Target.md",
+            nested_filename.clone(),
+            b"- nested\n",
+        )
+        .unwrap();
+        assert_eq!(nested.path(), format!("pages/deep/{nested_filename}"));
+
+        for invalid_target in ["/Root.md", "pages//Target.md", "Target.txt"] {
+            let error = ProjectionRecoveryEvidence::new(
+                invalid_target,
+                ".Target.md.00000000000000000000000000000003.projection.recovery".to_owned(),
+                b"- invalid\n",
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+
+        let dir = scratch("projection-recovery-evidence-forgery");
+        let graph = Graph::open(&dir);
+        let valid_filename =
+            ".Target.md.00000000000000000000000000000004.projection.recovery".to_owned();
+        let forgeries = [
+            ProjectionRecoveryEvidence {
+                relative_path: format!("/pages/{valid_filename}"),
+                filename: valid_filename.clone(),
+                digest: [0; 32],
+                len: 0,
+            },
+            ProjectionRecoveryEvidence {
+                relative_path: format!("journals/{valid_filename}"),
+                filename: valid_filename.clone(),
+                digest: [0; 32],
+                len: 0,
+            },
+            ProjectionRecoveryEvidence {
+                relative_path:
+                    "pages/.Wrong.md.00000000000000000000000000000004.projection.recovery"
+                        .to_owned(),
+                filename: ".Wrong.md.00000000000000000000000000000004.projection.recovery"
+                    .to_owned(),
+                digest: [0; 32],
+                len: 0,
+            },
+        ];
+        for evidence in &forgeries {
+            let error = graph
+                .read_projection_recovery_evidence("pages/Target.md", evidence)
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn projection_replacement_retains_and_records_late_stale_handle_writes() {
@@ -30346,5 +30431,48 @@ mod tests {
         assert!(!dir.join("pages").join("retained-capability.md").exists());
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&moved);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn graph_text_scope_binding_tracks_policy_and_retained_resource_across_move() {
+        let dir = scratch("graph-text-scope-binding");
+        let moved = dir.with_file_name("tine-graph-text-scope-binding-moved");
+        let copied = dir.with_file_name("tine-graph-text-scope-binding-copy");
+        let _ = fs::remove_dir_all(&moved);
+        let _ = fs::remove_dir_all(&copied);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            r#"{:hidden ["archive/" "scratch" "archive"]}"#,
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        let original = graph.graph_text_scope_binding().unwrap();
+
+        fs::write(dir.join("logseq/config.edn"), r#"{:hidden ["different"]}"#).unwrap();
+        let changed_policy = Graph::open(&dir);
+        assert_eq!(
+            graph.canonical_resource_id().unwrap(),
+            changed_policy.canonical_resource_id().unwrap()
+        );
+        assert_ne!(original, changed_policy.graph_text_scope_binding().unwrap());
+
+        fs::rename(&dir, &moved).unwrap();
+        assert_eq!(original, graph.graph_text_scope_binding().unwrap());
+
+        fs::create_dir_all(copied.join("pages")).unwrap();
+        fs::create_dir_all(copied.join("journals")).unwrap();
+        fs::create_dir_all(copied.join("logseq")).unwrap();
+        fs::write(
+            copied.join("logseq/config.edn"),
+            r#"{:hidden ["archive" "scratch"]}"#,
+        )
+        .unwrap();
+        let copied_graph = Graph::open(&copied);
+        assert_ne!(original, copied_graph.graph_text_scope_binding().unwrap());
+
+        let _ = fs::remove_dir_all(&moved);
+        let _ = fs::remove_dir_all(&copied);
     }
 }

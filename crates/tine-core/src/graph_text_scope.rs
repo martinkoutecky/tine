@@ -4,25 +4,299 @@
 //! the readable/indexable text scope. It deliberately grants no creation,
 //! projection, enrollment, rename, or deletion authority.
 
-use crate::oplog::{managed_component_is_portable, PortablePathKey};
+use crate::oplog::{
+    managed_component_is_portable, CanonicalGraphResourceId, PortablePathKey,
+    PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION, PORTABLE_PATH_KEY_VERSION,
+    PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION,
+};
+use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Write as _;
+use std::str::FromStr;
 
 /// Version bound by later watcher, enrollment, backup, and restore packets.
 pub const GRAPH_TEXT_SCOPE_VERSION: u32 = 1;
+pub const GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION: u32 = 1;
 pub(crate) const MAX_HIDDEN_EDN_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_HIDDEN_EDN_ENTRIES: usize = 1024;
 pub(crate) const MAX_HIDDEN_EDN_DEPTH: usize = 64;
 pub(crate) const MAX_HIDDEN_EDN_FORMS: usize = 4096;
 
+const BINDING_SCHEMA_OFFSET: usize = 0;
+const POLICY_VERSION_OFFSET: usize = 4;
+const PORTABLE_PATH_KEY_VERSION_OFFSET: usize = 8;
+const NORMALIZATION_UNICODE_VERSION_OFFSET: usize = 12;
+const CASE_FOLD_UNICODE_VERSION_OFFSET: usize = 36;
+const GRAPH_RESOURCE_ID_OFFSET: usize = 60;
+const EFFECTIVE_POLICY_DIGEST_OFFSET: usize = 92;
+const WITNESS_OFFSET: usize = 124;
+const GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES: usize = 156;
+
 #[derive(Debug, Clone)]
 pub struct GraphTextScope {
     hidden_prefixes: HiddenPrefixTrie,
     hide_all: bool,
+    canonical_hidden_prefixes: Vec<Vec<u8>>,
+    effective_policy_digest: [u8; 32],
+}
+
+/// Opaque identity of one effective graph-text policy installed for one
+/// retained graph-root resource.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GraphTextScopeBinding {
+    binding_schema_version: u32,
+    policy_version: u32,
+    portable_path_key_version: u32,
+    normalization_unicode_version: (u64, u64, u64),
+    case_fold_unicode_version: (u64, u64, u64),
+    graph_resource_id: CanonicalGraphResourceId,
+    effective_policy_digest: [u8; 32],
+    witness: [u8; 32],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GraphTextScopeBindingWire {
+    binding_schema_version: u32,
+    policy_version: u32,
+    portable_path_key_version: u32,
+    normalization_unicode_version: (u64, u64, u64),
+    case_fold_unicode_version: (u64, u64, u64),
+    graph_resource_id: CanonicalGraphResourceId,
+    effective_policy_digest: [u8; 32],
+    witness: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphTextScopeBindingError {
+    InvalidCanonicalLength(usize),
+    UnknownBindingSchemaVersion(u32),
+    UnknownPolicyVersion(u32),
+    UnknownPortablePathKeyVersion(u32),
+    UnknownNormalizationUnicodeVersion((u64, u64, u64)),
+    UnknownCaseFoldUnicodeVersion((u64, u64, u64)),
+    WitnessMismatch,
+}
+
+impl fmt::Display for GraphTextScopeBindingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidCanonicalLength(found) => write!(
+                formatter,
+                "graph-text scope binding has {found} canonical bytes; expected {GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES}"
+            ),
+            Self::UnknownBindingSchemaVersion(found) => write!(
+                formatter,
+                "unknown graph-text scope binding schema {found}; expected {GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION}"
+            ),
+            Self::UnknownPolicyVersion(found) => write!(
+                formatter,
+                "unknown graph-text scope policy {found}; expected {GRAPH_TEXT_SCOPE_VERSION}"
+            ),
+            Self::UnknownPortablePathKeyVersion(found) => write!(
+                formatter,
+                "unknown portable path key version {found}; expected {PORTABLE_PATH_KEY_VERSION}"
+            ),
+            Self::UnknownNormalizationUnicodeVersion(found) => write!(
+                formatter,
+                "unknown portable path normalization Unicode version {found:?}; expected {:?}",
+                widened_normalization_unicode_version()
+            ),
+            Self::UnknownCaseFoldUnicodeVersion(found) => write!(
+                formatter,
+                "unknown portable path case-fold Unicode version {found:?}; expected {PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION:?}"
+            ),
+            Self::WitnessMismatch => {
+                formatter.write_str("graph-text scope binding witness mismatch")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GraphTextScopeBindingError {}
+
+impl<'de> Deserialize<'de> for GraphTextScopeBinding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = GraphTextScopeBindingWire::deserialize(deserializer)?;
+        Self::from_fields(
+            wire.binding_schema_version,
+            wire.policy_version,
+            wire.portable_path_key_version,
+            wire.normalization_unicode_version,
+            wire.case_fold_unicode_version,
+            wire.graph_resource_id,
+            wire.effective_policy_digest,
+            wire.witness,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+impl GraphTextScopeBinding {
+    pub const CANONICAL_BYTES_LENGTH: usize = GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES;
+
+    pub const fn binding_schema_version(&self) -> u32 {
+        self.binding_schema_version
+    }
+
+    pub const fn policy_version(&self) -> u32 {
+        self.policy_version
+    }
+
+    pub const fn portable_path_key_version(&self) -> u32 {
+        self.portable_path_key_version
+    }
+
+    pub const fn normalization_unicode_version(&self) -> (u64, u64, u64) {
+        self.normalization_unicode_version
+    }
+
+    pub const fn case_fold_unicode_version(&self) -> (u64, u64, u64) {
+        self.case_fold_unicode_version
+    }
+
+    pub const fn graph_resource_id(&self) -> CanonicalGraphResourceId {
+        self.graph_resource_id
+    }
+
+    pub const fn effective_policy_digest(&self) -> &[u8; 32] {
+        &self.effective_policy_digest
+    }
+
+    pub const fn witness(&self) -> &[u8; 32] {
+        &self.witness
+    }
+
+    pub fn canonical_bytes(&self) -> [u8; GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES] {
+        let mut bytes = [0; GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES];
+        write_u32(
+            &mut bytes,
+            BINDING_SCHEMA_OFFSET,
+            self.binding_schema_version,
+        );
+        write_u32(&mut bytes, POLICY_VERSION_OFFSET, self.policy_version);
+        write_u32(
+            &mut bytes,
+            PORTABLE_PATH_KEY_VERSION_OFFSET,
+            self.portable_path_key_version,
+        );
+        write_unicode_version(
+            &mut bytes,
+            NORMALIZATION_UNICODE_VERSION_OFFSET,
+            self.normalization_unicode_version,
+        );
+        write_unicode_version(
+            &mut bytes,
+            CASE_FOLD_UNICODE_VERSION_OFFSET,
+            self.case_fold_unicode_version,
+        );
+        bytes[GRAPH_RESOURCE_ID_OFFSET..EFFECTIVE_POLICY_DIGEST_OFFSET]
+            .copy_from_slice(self.graph_resource_id.as_bytes());
+        bytes[EFFECTIVE_POLICY_DIGEST_OFFSET..WITNESS_OFFSET]
+            .copy_from_slice(&self.effective_policy_digest);
+        bytes[WITNESS_OFFSET..].copy_from_slice(&self.witness);
+        bytes
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, GraphTextScopeBindingError> {
+        if bytes.len() != GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES {
+            return Err(GraphTextScopeBindingError::InvalidCanonicalLength(
+                bytes.len(),
+            ));
+        }
+        let resource_id = canonical_graph_resource_id_from_bytes(
+            bytes[GRAPH_RESOURCE_ID_OFFSET..EFFECTIVE_POLICY_DIGEST_OFFSET]
+                .try_into()
+                .expect("binding length was checked"),
+        );
+        Self::from_fields(
+            read_u32(bytes, BINDING_SCHEMA_OFFSET),
+            read_u32(bytes, POLICY_VERSION_OFFSET),
+            read_u32(bytes, PORTABLE_PATH_KEY_VERSION_OFFSET),
+            read_unicode_version(bytes, NORMALIZATION_UNICODE_VERSION_OFFSET),
+            read_unicode_version(bytes, CASE_FOLD_UNICODE_VERSION_OFFSET),
+            resource_id,
+            bytes[EFFECTIVE_POLICY_DIGEST_OFFSET..WITNESS_OFFSET]
+                .try_into()
+                .expect("binding length was checked"),
+            bytes[WITNESS_OFFSET..]
+                .try_into()
+                .expect("binding length was checked"),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_fields(
+        binding_schema_version: u32,
+        policy_version: u32,
+        portable_path_key_version: u32,
+        normalization_unicode_version: (u64, u64, u64),
+        case_fold_unicode_version: (u64, u64, u64),
+        graph_resource_id: CanonicalGraphResourceId,
+        effective_policy_digest: [u8; 32],
+        witness: [u8; 32],
+    ) -> Result<Self, GraphTextScopeBindingError> {
+        if binding_schema_version != GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION {
+            return Err(GraphTextScopeBindingError::UnknownBindingSchemaVersion(
+                binding_schema_version,
+            ));
+        }
+        if policy_version != GRAPH_TEXT_SCOPE_VERSION {
+            return Err(GraphTextScopeBindingError::UnknownPolicyVersion(
+                policy_version,
+            ));
+        }
+        if portable_path_key_version != PORTABLE_PATH_KEY_VERSION {
+            return Err(GraphTextScopeBindingError::UnknownPortablePathKeyVersion(
+                portable_path_key_version,
+            ));
+        }
+        if normalization_unicode_version != widened_normalization_unicode_version() {
+            return Err(
+                GraphTextScopeBindingError::UnknownNormalizationUnicodeVersion(
+                    normalization_unicode_version,
+                ),
+            );
+        }
+        if case_fold_unicode_version != PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION {
+            return Err(GraphTextScopeBindingError::UnknownCaseFoldUnicodeVersion(
+                case_fold_unicode_version,
+            ));
+        }
+        let expected_witness = binding_witness(
+            binding_schema_version,
+            policy_version,
+            portable_path_key_version,
+            normalization_unicode_version,
+            case_fold_unicode_version,
+            graph_resource_id,
+            effective_policy_digest,
+        );
+        if witness != expected_witness {
+            return Err(GraphTextScopeBindingError::WitnessMismatch);
+        }
+        Ok(Self {
+            binding_schema_version,
+            policy_version,
+            portable_path_key_version,
+            normalization_unicode_version,
+            case_fold_unicode_version,
+            graph_resource_id,
+            effective_policy_digest,
+            witness,
+        })
+    }
 }
 
 impl GraphTextScope {
     pub fn new(configured_hidden: &[String], hidden_parse_failed_closed: bool) -> Self {
         let mut hidden_prefixes = HiddenPrefixTrie::default();
+        let mut canonical_hidden_prefixes = Vec::new();
         let mut hide_all = hidden_parse_failed_closed;
         let mut retained_bytes = 0usize;
         if configured_hidden.len() > MAX_HIDDEN_EDN_ENTRIES {
@@ -59,15 +333,56 @@ impl GraphTextScope {
                 }
             };
             hidden_prefixes.insert(configured.as_bytes());
+            canonical_hidden_prefixes.push(configured.as_bytes().to_vec());
         }
+        if hide_all {
+            canonical_hidden_prefixes.clear();
+        } else {
+            canonical_hidden_prefixes.sort_unstable();
+            canonical_hidden_prefixes.dedup();
+        }
+        let effective_policy_digest = effective_policy_digest(hide_all, &canonical_hidden_prefixes);
         Self {
             hidden_prefixes,
             hide_all,
+            canonical_hidden_prefixes,
+            effective_policy_digest,
         }
     }
 
     pub const fn version(&self) -> u32 {
         GRAPH_TEXT_SCOPE_VERSION
+    }
+
+    pub(crate) fn bind_graph_resource(
+        &self,
+        graph_resource_id: CanonicalGraphResourceId,
+    ) -> GraphTextScopeBinding {
+        debug_assert!(self.hide_all || self.canonical_hidden_prefixes.is_sorted());
+        let binding_schema_version = GRAPH_TEXT_SCOPE_BINDING_SCHEMA_VERSION;
+        let policy_version = GRAPH_TEXT_SCOPE_VERSION;
+        let portable_path_key_version = PORTABLE_PATH_KEY_VERSION;
+        let normalization_unicode_version = widened_normalization_unicode_version();
+        let case_fold_unicode_version = PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION;
+        let witness = binding_witness(
+            binding_schema_version,
+            policy_version,
+            portable_path_key_version,
+            normalization_unicode_version,
+            case_fold_unicode_version,
+            graph_resource_id,
+            self.effective_policy_digest,
+        );
+        GraphTextScopeBinding {
+            binding_schema_version,
+            policy_version,
+            portable_path_key_version,
+            normalization_unicode_version,
+            case_fold_unicode_version,
+            graph_resource_id,
+            effective_policy_digest: self.effective_policy_digest,
+            witness,
+        }
     }
 
     /// True when a directory may contain eligible descendants.
@@ -125,6 +440,106 @@ impl GraphTextScope {
     fn hidden(&self, relative: &str) -> bool {
         self.hidden_prefixes.matches(relative.as_bytes())
     }
+}
+
+const fn widened_normalization_unicode_version() -> (u64, u64, u64) {
+    let (major, minor, patch) = PORTABLE_PATH_NORMALIZATION_UNICODE_VERSION;
+    (major as u64, minor as u64, patch as u64)
+}
+
+fn hash_unicode_version(hasher: &mut Sha256, version: (u64, u64, u64)) {
+    hasher.update(version.0.to_be_bytes());
+    hasher.update(version.1.to_be_bytes());
+    hasher.update(version.2.to_be_bytes());
+}
+
+fn effective_policy_digest(hide_all: bool, canonical_prefixes: &[Vec<u8>]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/graph-text-scope/effective-policy/v1\0");
+    hasher.update(GRAPH_TEXT_SCOPE_VERSION.to_be_bytes());
+    hasher.update(PORTABLE_PATH_KEY_VERSION.to_be_bytes());
+    hash_unicode_version(&mut hasher, widened_normalization_unicode_version());
+    hash_unicode_version(&mut hasher, PORTABLE_PATH_CASE_FOLD_UNICODE_VERSION);
+    hasher.update([u8::from(hide_all)]);
+    hasher.update((canonical_prefixes.len() as u64).to_be_bytes());
+    for prefix in canonical_prefixes {
+        hasher.update((prefix.len() as u64).to_be_bytes());
+        hasher.update(prefix);
+    }
+    hasher.finalize().into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn binding_witness(
+    binding_schema_version: u32,
+    policy_version: u32,
+    portable_path_key_version: u32,
+    normalization_unicode_version: (u64, u64, u64),
+    case_fold_unicode_version: (u64, u64, u64),
+    graph_resource_id: CanonicalGraphResourceId,
+    effective_policy_digest: [u8; 32],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/graph-text-scope-binding/v1\0");
+    hasher.update(binding_schema_version.to_be_bytes());
+    hasher.update(policy_version.to_be_bytes());
+    hasher.update(portable_path_key_version.to_be_bytes());
+    hash_unicode_version(&mut hasher, normalization_unicode_version);
+    hash_unicode_version(&mut hasher, case_fold_unicode_version);
+    hasher.update(graph_resource_id.as_bytes());
+    hasher.update(effective_policy_digest);
+    hasher.finalize().into()
+}
+
+fn write_u32(
+    bytes: &mut [u8; GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES],
+    offset: usize,
+    value: u32,
+) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_unicode_version(
+    bytes: &mut [u8; GRAPH_TEXT_SCOPE_BINDING_CANONICAL_BYTES],
+    offset: usize,
+    version: (u64, u64, u64),
+) {
+    bytes[offset..offset + 8].copy_from_slice(&version.0.to_be_bytes());
+    bytes[offset + 8..offset + 16].copy_from_slice(&version.1.to_be_bytes());
+    bytes[offset + 16..offset + 24].copy_from_slice(&version.2.to_be_bytes());
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("binding length was checked"),
+    )
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_be_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("binding length was checked"),
+    )
+}
+
+fn read_unicode_version(bytes: &[u8], offset: usize) -> (u64, u64, u64) {
+    (
+        read_u64(bytes, offset),
+        read_u64(bytes, offset + 8),
+        read_u64(bytes, offset + 16),
+    )
+}
+
+fn canonical_graph_resource_id_from_bytes(bytes: &[u8; 32]) -> CanonicalGraphResourceId {
+    let mut encoded = String::with_capacity(64);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    CanonicalGraphResourceId::from_str(&encoded)
+        .expect("all fixed-size byte strings have a canonical digest encoding")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -366,5 +781,80 @@ mod tests {
         let over_limit = vec!["x".to_owned(); MAX_HIDDEN_EDN_ENTRIES + 1];
         let bounded = GraphTextScope::new(&over_limit, false);
         assert!(!bounded.is_eligible("pages/page.md"));
+    }
+
+    #[test]
+    fn binding_canonicalizes_effective_hidden_policy_and_graph_resource() {
+        let resource =
+            CanonicalGraphResourceId::from_capability_identity(b"test", b"same-resource");
+        let reordered = GraphTextScope::new(
+            &[
+                "scratch".into(),
+                "/inert".into(),
+                "archive/".into(),
+                "archive".into(),
+                "bad\\windows".into(),
+            ],
+            false,
+        )
+        .bind_graph_resource(resource);
+        let canonical = GraphTextScope::new(&["archive".into(), "scratch".into()], false)
+            .bind_graph_resource(resource);
+        assert_eq!(reordered, canonical);
+
+        let hide_all_from_empty = GraphTextScope::new(&["".into(), "archive".into()], false)
+            .bind_graph_resource(resource);
+        let hide_all_from_parse_failure =
+            GraphTextScope::new(&["different".into()], true).bind_graph_resource(resource);
+        assert_eq!(hide_all_from_empty, hide_all_from_parse_failure);
+
+        let changed =
+            GraphTextScope::new(&["elsewhere".into()], false).bind_graph_resource(resource);
+        assert_ne!(canonical, changed);
+        let copied_resource = CanonicalGraphResourceId::from_capability_identity(
+            b"test",
+            b"copied-directory-resource",
+        );
+        assert_ne!(
+            canonical,
+            GraphTextScope::new(&["archive".into(), "scratch".into()], false)
+                .bind_graph_resource(copied_resource)
+        );
+    }
+
+    #[test]
+    fn binding_canonical_bytes_and_serde_round_trip_but_reject_forgery() {
+        let resource =
+            CanonicalGraphResourceId::from_capability_identity(b"test", b"round-trip-resource");
+        let binding =
+            GraphTextScope::new(&["archive/".into()], false).bind_graph_resource(resource);
+        let bytes = binding.canonical_bytes();
+        assert_eq!(bytes.len(), GraphTextScopeBinding::CANONICAL_BYTES_LENGTH);
+        assert_eq!(
+            GraphTextScopeBinding::from_canonical_bytes(&bytes).unwrap(),
+            binding
+        );
+        let json = serde_json::to_vec(&binding).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<GraphTextScopeBinding>(&json).unwrap(),
+            binding
+        );
+
+        for index in [
+            BINDING_SCHEMA_OFFSET,
+            POLICY_VERSION_OFFSET,
+            PORTABLE_PATH_KEY_VERSION_OFFSET,
+            NORMALIZATION_UNICODE_VERSION_OFFSET,
+            CASE_FOLD_UNICODE_VERSION_OFFSET,
+            EFFECTIVE_POLICY_DIGEST_OFFSET,
+            WITNESS_OFFSET,
+        ] {
+            let mut forged = bytes;
+            forged[index] ^= 1;
+            assert!(GraphTextScopeBinding::from_canonical_bytes(&forged).is_err());
+        }
+        let mut trailing = bytes.to_vec();
+        trailing.push(0);
+        assert!(GraphTextScopeBinding::from_canonical_bytes(&trailing).is_err());
     }
 }
