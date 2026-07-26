@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::ops::Bound;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -81,6 +82,135 @@ const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 5;
 const MAX_EPHEMERAL_BLOCK_CLAIMS: usize = 4_096;
 const MAX_EPHEMERAL_LOGSEQ_CLAIMS: usize = 4_096;
 const MAX_EPHEMERAL_PORTABLE_PATHS: usize = 4_096;
+
+// This is a run-local, authenticated view over the accepted catalog. It is
+// deliberately not an object-store, receipt, or projection format.
+#[allow(dead_code)]
+const CURRENT_PATH_CURSOR_SCHEMA_VERSION: u32 = 1;
+#[allow(dead_code)]
+pub(crate) const MAX_CURRENT_PATH_CURSOR_PAGE_ROWS: usize = 1_024;
+#[allow(dead_code)]
+pub(crate) const MAX_CURRENT_PATH_CURSOR_PATH_BYTES: usize = 4 * 1024;
+#[allow(dead_code)]
+pub(crate) const MAX_CURRENT_PATH_CURSOR_PAGE_BYTES: usize = 256 * 1024;
+#[allow(dead_code)]
+pub(crate) const MAX_CURRENT_PATH_CURSORS: usize = 32;
+
+/// One exact current page path supplied by the authenticated cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct CurrentPathCatalogRow {
+    page_id: PageId,
+    path: ManagedPath,
+}
+
+#[allow(dead_code)]
+impl CurrentPathCatalogRow {
+    pub(crate) const fn page_id(&self) -> PageId {
+        self.page_id
+    }
+
+    pub(crate) fn path(&self) -> &ManagedPath {
+        &self.path
+    }
+}
+
+/// Opaque, single-use continuation for an authenticated current-path page.
+///
+/// The engine-private authority capability makes this intentionally
+/// non-serializable and non-forgeable by callers. A cursor dies when its exact
+/// accepted frontier changes or when it has been consumed once.
+#[allow(dead_code)]
+pub(crate) struct CurrentPathCatalogCursor {
+    runtime_authority: EngineAuthority,
+    binding: CurrentPathCursorBinding,
+    cursor_id: u64,
+    nonce: u64,
+}
+
+/// One bounded page from [`CurrentPathCatalogCursor`].
+#[allow(dead_code)]
+pub(crate) struct CurrentPathCatalogPage {
+    rows: Vec<CurrentPathCatalogRow>,
+    next: Option<CurrentPathCatalogCursor>,
+}
+
+#[allow(dead_code)]
+impl CurrentPathCatalogPage {
+    pub(crate) fn rows(&self) -> &[CurrentPathCatalogRow] {
+        &self.rows
+    }
+
+    pub(crate) fn has_more(&self) -> bool {
+        self.next.is_some()
+    }
+
+    pub(crate) fn into_next(self) -> Option<CurrentPathCatalogCursor> {
+        self.next
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CurrentPathCursorBinding {
+    schema_version: u32,
+    catalog_page_state_schema_version: u32,
+    engine_history_schema_version: u32,
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    accepted_frontier_root: AcceptedFrontierRoot,
+    history_generation: u64,
+    history_root: ContentDigest,
+}
+
+struct CurrentPathCursorState {
+    binding: CurrentPathCursorBinding,
+    after: Option<PageId>,
+    nonce: u64,
+}
+
+struct CurrentPathCursorBook {
+    next_cursor_id: u64,
+    next_nonce: u64,
+    active: BTreeMap<u64, CurrentPathCursorState>,
+}
+
+impl Default for CurrentPathCursorBook {
+    fn default() -> Self {
+        Self {
+            next_cursor_id: 1,
+            next_nonce: 1,
+            active: BTreeMap::new(),
+        }
+    }
+}
+
+struct CurrentPathCatalog {
+    rows: BTreeMap<PageId, ManagedPath>,
+    exact_paths: BTreeMap<ManagedPath, PageId>,
+    portable_paths: BTreeMap<PortablePathKeyDigest, PageId>,
+    row_count: usize,
+    path_bytes: usize,
+    accepted_frontier_root: AcceptedFrontierRoot,
+}
+
+impl Default for CurrentPathCatalog {
+    fn default() -> Self {
+        Self {
+            rows: BTreeMap::new(),
+            exact_paths: BTreeMap::new(),
+            portable_paths: BTreeMap::new(),
+            row_count: 0,
+            path_bytes: 0,
+            accepted_frontier_root: AcceptedFrontierRoot::empty(),
+        }
+    }
+}
+
+struct CurrentPathCatalogTransition {
+    changes: Vec<(PageId, Option<ManagedPath>)>,
+    row_count: usize,
+    path_bytes: usize,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct CrdtUpdatePayload {
@@ -2568,6 +2698,13 @@ pub struct ShardedHotEngine {
     accepted_frontier_root: AcceptedFrontierRoot,
     accepted_sequence: BTreeMap<u64, BatchId>,
     next_acceptance_sequence: u64,
+    // Derived only from already authenticated accepted semantic effects. This
+    // avoids catalog/receipt namespace scans when a scan epoch asks for the
+    // current live PageId -> exact ManagedPath set.
+    current_path_catalog: CurrentPathCatalog,
+    current_path_cursor_book: RefCell<CurrentPathCursorBook>,
+    #[cfg(test)]
+    current_path_cursor_rows_visited: Cell<usize>,
     #[cfg(test)]
     validation_phase_nanos: [u128; 10],
     #[cfg(test)]
@@ -2671,6 +2808,10 @@ impl ShardedHotEngine {
             accepted_frontier_root: empty_accepted_frontier_root(),
             accepted_sequence: BTreeMap::new(),
             next_acceptance_sequence: 0,
+            current_path_catalog: CurrentPathCatalog::default(),
+            current_path_cursor_book: RefCell::new(CurrentPathCursorBook::default()),
+            #[cfg(test)]
+            current_path_cursor_rows_visited: Cell::new(0),
             #[cfg(test)]
             validation_phase_nanos: [0; 10],
             #[cfg(test)]
@@ -3588,6 +3729,270 @@ impl ShardedHotEngine {
         Ok(self.accepted_frontier_root.clone())
     }
 
+    /// Start an opaque, bounded cursor over the current accepted live page
+    /// paths. The cursor is run-local: it binds this exact engine capability,
+    /// workspace, history identity, schema, and accepted frontier.
+    #[allow(dead_code)]
+    pub(crate) fn begin_current_path_cursor(
+        &self,
+    ) -> Result<CurrentPathCatalogCursor, EngineError> {
+        self.begin_point_operation();
+        let binding = self.current_path_cursor_binding()?;
+        self.mint_current_path_cursor(binding, None)
+    }
+
+    /// Consume one opaque cursor and return the next bounded page. Each token
+    /// is single-use, so an exact final page terminates without re-reading any
+    /// previously returned row.
+    #[allow(dead_code)]
+    pub(crate) fn current_path_cursor_page(
+        &self,
+        cursor: CurrentPathCatalogCursor,
+        limit: usize,
+    ) -> Result<CurrentPathCatalogPage, EngineError> {
+        if limit == 0 || limit > MAX_CURRENT_PATH_CURSOR_PAGE_ROWS {
+            return Err(EngineError::Archive(format!(
+                "current-path cursor page limit {limit} is outside 1..={MAX_CURRENT_PATH_CURSOR_PAGE_ROWS}"
+            )));
+        }
+        self.validate_current_path_cursor_binding(&cursor)?;
+        let continuation = self.take_current_path_cursor(cursor)?;
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(limit).map_err(|error| {
+            EngineError::Archive(format!(
+                "current-path cursor page allocation failed before use: {error}"
+            ))
+        })?;
+        let bounds = match continuation.after {
+            Some(after) => (Bound::Excluded(after), Bound::Unbounded),
+            None => (Bound::Unbounded, Bound::Unbounded),
+        };
+        let mut range = self.current_path_catalog.rows.range::<PageId, _>(bounds);
+        let mut page_bytes = 0_usize;
+        let mut last = None;
+        while rows.len() < limit {
+            let Some((&page_id, path)) = range.next() else {
+                break;
+            };
+            #[cfg(test)]
+            self.current_path_cursor_rows_visited.set(
+                self.current_path_cursor_rows_visited
+                    .get()
+                    .saturating_add(1),
+            );
+            self.validate_current_path_catalog_row(page_id, path)?;
+            let path_bytes = path.as_str().len();
+            if path_bytes > MAX_CURRENT_PATH_CURSOR_PATH_BYTES {
+                return Err(EngineError::Archive(format!(
+                    "current-path cursor path for {page_id} is {path_bytes} bytes, bound {MAX_CURRENT_PATH_CURSOR_PATH_BYTES}"
+                )));
+            }
+            page_bytes = page_bytes.checked_add(path_bytes).ok_or_else(|| {
+                EngineError::Archive("current-path cursor page-byte counter overflow".into())
+            })?;
+            if page_bytes > MAX_CURRENT_PATH_CURSOR_PAGE_BYTES {
+                return Err(EngineError::Archive(format!(
+                    "current-path cursor page bytes {page_bytes} exceed bound {MAX_CURRENT_PATH_CURSOR_PAGE_BYTES}"
+                )));
+            }
+            rows.push(CurrentPathCatalogRow {
+                page_id,
+                path: path.clone(),
+            });
+            last = Some(page_id);
+        }
+        let has_more = match range.next() {
+            Some((&page_id, path)) => {
+                #[cfg(test)]
+                self.current_path_cursor_rows_visited.set(
+                    self.current_path_cursor_rows_visited
+                        .get()
+                        .saturating_add(1),
+                );
+                self.validate_current_path_catalog_row(page_id, path)?;
+                true
+            }
+            None => false,
+        };
+        let next = has_more
+            .then(|| {
+                self.mint_current_path_cursor(
+                    continuation.binding,
+                    Some(last.expect("a nonempty bounded page has a continuation key")),
+                )
+            })
+            .transpose()?;
+        Ok(CurrentPathCatalogPage { rows, next })
+    }
+
+    fn current_path_cursor_binding(&self) -> Result<CurrentPathCursorBinding, EngineError> {
+        self.ensure_not_blocked()?;
+        if self.authenticated_history_replay {
+            return Err(EngineError::Archive(
+                "current-path cursor is unavailable during authenticated history replay".into(),
+            ));
+        }
+        validate_accepted_frontier_root(&self.accepted_frontier_root)?;
+        if self.current_path_catalog.accepted_frontier_root != self.accepted_frontier_root {
+            return Err(EngineError::Archive(
+                "current-path catalog is not bound to the current accepted frontier".into(),
+            ));
+        }
+        if self.current_path_catalog.rows.len() > MAX_DOCUMENT_ENTRIES {
+            return Err(EngineError::Archive(
+                "current-path catalog entry bound exceeded".into(),
+            ));
+        }
+        if self.current_path_catalog.rows.len() != self.current_path_catalog.row_count
+            || self.current_path_catalog.exact_paths.len() != self.current_path_catalog.row_count
+            || self.current_path_catalog.portable_paths.len() != self.current_path_catalog.row_count
+        {
+            return Err(EngineError::Archive(
+                "current-path catalog has missing or duplicate path authority".into(),
+            ));
+        }
+        Ok(CurrentPathCursorBinding {
+            schema_version: CURRENT_PATH_CURSOR_SCHEMA_VERSION,
+            catalog_page_state_schema_version: super::CATALOG_PAGE_STATE_SCHEMA_VERSION,
+            engine_history_schema_version: ENGINE_HISTORY_SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            lineage_digest: self.lineage_digest,
+            accepted_frontier_root: self.accepted_frontier_root.clone(),
+            history_generation: self.history_generation,
+            history_root: self.history_root,
+        })
+    }
+
+    fn validate_current_path_cursor_binding(
+        &self,
+        cursor: &CurrentPathCatalogCursor,
+    ) -> Result<(), EngineError> {
+        if cursor.binding.schema_version != CURRENT_PATH_CURSOR_SCHEMA_VERSION
+            || cursor.binding.catalog_page_state_schema_version
+                != super::CATALOG_PAGE_STATE_SCHEMA_VERSION
+            || cursor.binding.engine_history_schema_version != ENGINE_HISTORY_SCHEMA_VERSION
+        {
+            return Err(EngineError::Archive(
+                "current-path cursor schema binding is unsupported".into(),
+            ));
+        }
+        if cursor.binding.workspace_id != self.workspace_id {
+            return Err(EngineError::WorkspaceMismatch {
+                expected: self.workspace_id,
+                found: cursor.binding.workspace_id,
+            });
+        }
+        if cursor.binding.lineage_digest != self.lineage_digest {
+            return Err(EngineError::LineageMismatch {
+                expected: self.lineage_digest,
+                found: cursor.binding.lineage_digest,
+            });
+        }
+        if !self.runtime_authority.matches(&cursor.runtime_authority) {
+            return Err(EngineError::Archive(
+                "current-path cursor belongs to another engine instance".into(),
+            ));
+        }
+        let current = self.current_path_cursor_binding()?;
+        if cursor.binding.accepted_frontier_root != current.accepted_frontier_root {
+            return Err(EngineError::Archive(
+                "current-path cursor accepted frontier is stale".into(),
+            ));
+        }
+        if cursor.binding.history_generation != current.history_generation
+            || cursor.binding.history_root != current.history_root
+        {
+            return Err(EngineError::Archive(
+                "current-path cursor durable history identity is stale".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn mint_current_path_cursor(
+        &self,
+        binding: CurrentPathCursorBinding,
+        after: Option<PageId>,
+    ) -> Result<CurrentPathCatalogCursor, EngineError> {
+        let mut book = self.current_path_cursor_book.borrow_mut();
+        if book.active.len() >= MAX_CURRENT_PATH_CURSORS {
+            return Err(EngineError::Archive(format!(
+                "current-path cursor count exceeds bound {MAX_CURRENT_PATH_CURSORS}"
+            )));
+        }
+        let cursor_id = book.next_cursor_id;
+        book.next_cursor_id = book.next_cursor_id.checked_add(1).ok_or_else(|| {
+            EngineError::Archive("current-path cursor identifier overflow".into())
+        })?;
+        let nonce = book.next_nonce;
+        book.next_nonce = book
+            .next_nonce
+            .checked_add(1)
+            .ok_or_else(|| EngineError::Archive("current-path cursor nonce overflow".into()))?;
+        book.active.insert(
+            cursor_id,
+            CurrentPathCursorState {
+                binding: binding.clone(),
+                after,
+                nonce,
+            },
+        );
+        Ok(CurrentPathCatalogCursor {
+            runtime_authority: self.runtime_authority.clone(),
+            binding,
+            cursor_id,
+            nonce,
+        })
+    }
+
+    fn take_current_path_cursor(
+        &self,
+        cursor: CurrentPathCatalogCursor,
+    ) -> Result<CurrentPathCursorState, EngineError> {
+        let state = self
+            .current_path_cursor_book
+            .borrow_mut()
+            .active
+            .remove(&cursor.cursor_id)
+            .ok_or_else(|| {
+                EngineError::Archive("current-path cursor is stale or consumed".into())
+            })?;
+        if state.nonce != cursor.nonce || state.binding != cursor.binding {
+            return Err(EngineError::Archive(
+                "current-path cursor token authentication failed".into(),
+            ));
+        }
+        Ok(state)
+    }
+
+    fn validate_current_path_catalog_row(
+        &self,
+        page_id: PageId,
+        path: &ManagedPath,
+    ) -> Result<(), EngineError> {
+        if self.current_path_catalog.rows.get(&page_id) != Some(path) {
+            return Err(EngineError::Archive(
+                "current-path catalog row has missing or corrupt path authority".into(),
+            ));
+        }
+        if self.current_path_catalog.exact_paths.get(path) != Some(&page_id) {
+            return Err(EngineError::Archive(
+                "current-path catalog has a duplicate or missing exact path authority".into(),
+            ));
+        }
+        if self
+            .current_path_catalog
+            .portable_paths
+            .get(&path.portable_key().digest())
+            != Some(&page_id)
+        {
+            return Err(EngineError::Archive(
+                "current-path catalog has a portable-path collision or missing authority".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn accepted_batch_count(&self) -> Result<u64, EngineError> {
         self.ensure_not_blocked()?;
         Ok(self.next_acceptance_sequence)
@@ -4063,6 +4468,185 @@ impl ShardedHotEngine {
             self.accepted_sequence
                 .insert(evidence.acceptance_sequence, evidence.batch_id);
         }
+    }
+
+    /// Preflight the small, run-local current-path index before durable
+    /// acceptance publication. Its inputs are the semantic effect that was
+    /// already checked against the authenticated catalog transition; it never
+    /// reads receipts, projections, or graph files.
+    fn prepare_current_path_catalog_transition(
+        &self,
+        effect: &SemanticEffect,
+    ) -> Result<CurrentPathCatalogTransition, EngineError> {
+        if effect.pages().len() > MAX_TRANSACTION_OPERATIONS {
+            return Err(EngineError::Archive(
+                "current-path catalog delta exceeds the transaction bound".into(),
+            ));
+        }
+        let mut desired = BTreeMap::<PageId, Option<&ManagedPath>>::new();
+        let mut next_row_count = self.current_path_catalog.row_count;
+        let mut next_path_bytes = self.current_path_catalog.path_bytes;
+        for delta in effect.pages() {
+            let before = delta.before.as_ref().and_then(PageState::path);
+            let after = delta.after.as_ref().and_then(PageState::path);
+            if desired.insert(delta.page_id, after).is_some() {
+                return Err(EngineError::Archive(
+                    "current-path catalog delta contains a duplicate page".into(),
+                ));
+            }
+            if self.current_path_catalog.rows.get(&delta.page_id) != before {
+                return Err(EngineError::Archive(
+                    "current-path catalog is missing or corrupt before-path authority".into(),
+                ));
+            }
+            if let Some(before) = before {
+                self.validate_current_path_catalog_row(delta.page_id, before)?;
+                next_row_count = next_row_count.checked_sub(1).ok_or_else(|| {
+                    EngineError::Archive("current-path catalog row authority underflowed".into())
+                })?;
+                next_path_bytes = next_path_bytes
+                    .checked_sub(before.as_str().len())
+                    .ok_or_else(|| {
+                        EngineError::Archive(
+                            "current-path catalog aggregate byte authority underflowed".into(),
+                        )
+                    })?;
+            }
+            if let Some(after) = after {
+                next_row_count = next_row_count.checked_add(1).ok_or_else(|| {
+                    EngineError::Archive("current-path catalog row authority overflowed".into())
+                })?;
+                next_path_bytes = next_path_bytes
+                    .checked_add(after.as_str().len())
+                    .ok_or_else(|| {
+                        EngineError::Archive(
+                            "current-path catalog aggregate byte authority overflowed".into(),
+                        )
+                    })?;
+            }
+        }
+
+        let mut exact_acquisitions = BTreeMap::<&ManagedPath, PageId>::new();
+        let mut portable_acquisitions = BTreeMap::<PortablePathKeyDigest, PageId>::new();
+        for (&page_id, desired_path) in &desired {
+            let Some(path) = desired_path.as_ref().copied() else {
+                continue;
+            };
+            if let Some(existing) = exact_acquisitions.insert(path, page_id) {
+                if existing != page_id {
+                    return Err(EngineError::Archive(
+                        "current-path catalog delta has an exact-path collision".into(),
+                    ));
+                }
+            }
+            let portable_key = path.portable_key().digest();
+            if let Some(existing) = portable_acquisitions.insert(portable_key, page_id) {
+                if existing != page_id {
+                    return Err(EngineError::Archive(
+                        "current-path catalog delta has a portable-path collision".into(),
+                    ));
+                }
+            }
+
+            if let Some(existing_owner) = self.current_path_catalog.exact_paths.get(path) {
+                if *existing_owner != page_id {
+                    let releases_path = desired
+                        .get(existing_owner)
+                        .map(|owner_after| owner_after.as_ref().copied() != Some(path))
+                        .unwrap_or(false);
+                    if !releases_path {
+                        return Err(EngineError::Archive(
+                            "current-path catalog exact-path authority collides with a live page"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+            if let Some(existing_owner) =
+                self.current_path_catalog.portable_paths.get(&portable_key)
+            {
+                if *existing_owner != page_id {
+                    let releases_portable = desired
+                        .get(existing_owner)
+                        .map(|owner_after| {
+                            owner_after.as_ref().is_none_or(|owner_path| {
+                                owner_path.portable_key().digest() != portable_key
+                            })
+                        })
+                        .unwrap_or(false);
+                    if !releases_portable {
+                        return Err(EngineError::Archive(
+                            "current-path catalog portable-path authority collides with a live page"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut changes = Vec::new();
+        changes.try_reserve_exact(desired.len()).map_err(|error| {
+            EngineError::Archive(format!(
+                "current-path catalog transition allocation failed before use: {error}"
+            ))
+        })?;
+        for (page_id, path) in desired {
+            changes.push((page_id, path.cloned()));
+        }
+        Ok(CurrentPathCatalogTransition {
+            changes,
+            row_count: next_row_count,
+            path_bytes: next_path_bytes,
+        })
+    }
+
+    fn commit_current_path_catalog_transition(
+        &mut self,
+        transition: CurrentPathCatalogTransition,
+        accepted_frontier_root: AcceptedFrontierRoot,
+    ) {
+        for (page_id, _) in &transition.changes {
+            let Some(previous) = self.current_path_catalog.rows.remove(page_id) else {
+                continue;
+            };
+            debug_assert_eq!(
+                self.current_path_catalog.exact_paths.remove(&previous),
+                Some(*page_id)
+            );
+            debug_assert_eq!(
+                self.current_path_catalog
+                    .portable_paths
+                    .remove(&previous.portable_key().digest()),
+                Some(*page_id)
+            );
+        }
+        for (page_id, path) in transition.changes {
+            let Some(path) = path else {
+                continue;
+            };
+            debug_assert!(self
+                .current_path_catalog
+                .rows
+                .insert(page_id, path.clone())
+                .is_none());
+            debug_assert!(self
+                .current_path_catalog
+                .exact_paths
+                .insert(path.clone(), page_id)
+                .is_none());
+            debug_assert!(self
+                .current_path_catalog
+                .portable_paths
+                .insert(path.portable_key().digest(), page_id)
+                .is_none());
+        }
+        self.current_path_catalog.row_count = transition.row_count;
+        self.current_path_catalog.path_bytes = transition.path_bytes;
+        self.current_path_catalog.accepted_frontier_root = accepted_frontier_root;
+        // An accepted frontier transition makes every outstanding continuation
+        // stale. Dropping them also prevents abandoned cursors from consuming
+        // the bounded cursor table.
+        self.current_path_cursor_book.borrow_mut().active.clear();
     }
 
     fn derive_ephemeral_causal_clock(
@@ -10418,6 +11002,9 @@ impl ShardedHotEngine {
                     .expect("visible batch prepared reference catalog")
                     .delta(),
             )?;
+        let current_path_catalog_transition =
+            self.prepare_current_path_catalog_transition(&declared_effect)?;
+        let current_path_catalog_root = accepted_evidence.post_frontier_root.clone();
         let status_evidence = accepted_evidence.clone();
         let page_name_binding = self.page_name_durable_candidate(page_names.as_ref(), None)?;
         let catalog_heads = self.prospective_catalog_heads(batch_id, &updates);
@@ -10468,6 +11055,10 @@ impl ShardedHotEngine {
             reference_catalog.expect("visible batch prepared reference catalog"),
         );
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
+        self.commit_current_path_catalog_transition(
+            current_path_catalog_transition,
+            current_path_catalog_root,
+        );
         let bulk_hot_documents = self.scratch.as_ref().and_then(|_| {
             let non_catalog = replacements
                 .keys()
@@ -11585,6 +12176,9 @@ impl ShardedHotEngine {
                 &identity.scratch_roots,
                 reference_catalog.delta(),
             )?;
+        let current_path_catalog_transition =
+            self.prepare_current_path_catalog_transition(&declared_effect)?;
+        let current_path_catalog_root = accepted_evidence.post_frontier_root.clone();
         let status_evidence = accepted_evidence.clone();
         let page_name_binding = self.page_name_durable_candidate(page_names.as_ref(), None)?;
         let catalog_heads = self.prospective_catalog_heads(batch_id, updates);
@@ -11615,6 +12209,10 @@ impl ShardedHotEngine {
         self.commit_page_name_updates(page_names);
         self.commit_reference_catalog_updates(reference_catalog);
         self.commit_acceptance_evidence(post_documents, accepted_evidence, candidate_roots);
+        self.commit_current_path_catalog_transition(
+            current_path_catalog_transition,
+            current_path_catalog_root,
+        );
 
         let mut work = self.history_work.get();
         work.stage_structural_buffer_reuses = work
@@ -17157,6 +17755,347 @@ mod validation_tests {
             home_document_id,
             kind: ManagedTextKind::Page,
         }
+    }
+
+    fn stage_cursor_pages(
+        engine: &mut ShardedHotEngine,
+        author_seed: u128,
+        first_page_seed: u128,
+        count: usize,
+    ) -> Vec<PageId> {
+        let mut operations = Vec::new();
+        let mut page_ids = Vec::new();
+        for index in 0..count {
+            let page_id = PageId::from_uuid(Uuid::from_u128(
+                first_page_seed.saturating_add((count - index) as u128),
+            ));
+            page_ids.push(page_id);
+            operations.push(SemanticOperation::CreatePage {
+                page_id,
+                home_document_id: DocumentId::from_uuid(Uuid::from_u128(
+                    first_page_seed
+                        .saturating_add(1_000_000)
+                        .saturating_add(index as u128),
+                )),
+                name: LogicalPageName::parse(format!("Cursor {first_page_seed} {index}")).unwrap(),
+                path: ManagedPath::parse(format!("pages/cursor-{first_page_seed}-{index:04}.md"))
+                    .unwrap(),
+                kind: ManagedTextKind::Page,
+            });
+        }
+        let transaction = OperationTransaction::new(operations).unwrap();
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                test_author(author_seed, author_seed as u64),
+                &transaction,
+            )
+            .unwrap();
+        assert!(matches!(
+            engine
+                .stage_ready(ValidatedBatch::new(prepared))
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+        page_ids
+    }
+
+    fn cursor_fixture(seed: u128, count: usize) -> (ShardedHotEngine, Vec<PageId>) {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(seed));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(seed + 1));
+        let mut engine =
+            ShardedHotEngine::new(workspace, LineageDigest::of(&seed.to_be_bytes()), catalog);
+        let page_ids = stage_cursor_pages(&mut engine, seed + 10, seed + 100, count);
+        (engine, page_ids)
+    }
+
+    fn collect_cursor_rows(engine: &ShardedHotEngine, limit: usize) -> Vec<CurrentPathCatalogRow> {
+        let mut cursor = Some(engine.begin_current_path_cursor().unwrap());
+        let mut rows = Vec::new();
+        while let Some(token) = cursor.take() {
+            let page = engine.current_path_cursor_page(token, limit).unwrap();
+            rows.extend(page.rows().iter().cloned());
+            cursor = page.into_next();
+        }
+        rows
+    }
+
+    #[test]
+    fn current_path_cursor_paginates_in_deterministic_page_path_order() {
+        let (engine, _) = cursor_fixture(310_000, 5);
+        let first = engine
+            .current_path_cursor_page(engine.begin_current_path_cursor().unwrap(), 2)
+            .unwrap();
+        assert_eq!(first.rows().len(), 2);
+        assert!(first.has_more());
+        let second = engine
+            .current_path_cursor_page(first.into_next().unwrap(), 2)
+            .unwrap();
+        assert_eq!(second.rows().len(), 2);
+        assert!(second.has_more());
+        let final_page = engine
+            .current_path_cursor_page(second.into_next().unwrap(), 2)
+            .unwrap();
+        assert_eq!(final_page.rows().len(), 1);
+        assert!(!final_page.has_more());
+
+        let first_replay = collect_cursor_rows(&engine, 2);
+        let second_replay = collect_cursor_rows(&engine, 3);
+        assert_eq!(first_replay, second_replay);
+        assert!(first_replay
+            .windows(2)
+            .all(|pair| (pair[0].page_id(), pair[0].path()) < (pair[1].page_id(), pair[1].path())));
+    }
+
+    #[test]
+    fn current_path_cursor_handles_empty_and_exact_final_pages() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(311_000));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(311_001));
+        let empty = ShardedHotEngine::new(workspace, LineageDigest::of(b"cursor-empty"), catalog);
+        let empty_page = empty
+            .current_path_cursor_page(empty.begin_current_path_cursor().unwrap(), 1)
+            .unwrap();
+        assert!(empty_page.rows().is_empty());
+        assert!(!empty_page.has_more());
+
+        let (engine, _) = cursor_fixture(311_100, 2);
+        let exact_page = engine
+            .current_path_cursor_page(engine.begin_current_path_cursor().unwrap(), 2)
+            .unwrap();
+        assert_eq!(exact_page.rows().len(), 2);
+        assert!(!exact_page.has_more());
+    }
+
+    #[test]
+    fn current_path_cursor_rejects_stale_frontier_and_cross_engine_tokens() {
+        let (mut engine, _) = cursor_fixture(312_000, 1);
+        let stale = engine.begin_current_path_cursor().unwrap();
+        stage_cursor_pages(&mut engine, 312_020, 312_200, 1);
+        assert!(matches!(
+            engine.current_path_cursor_page(stale, 1),
+            Err(EngineError::Archive(message)) if message.contains("frontier is stale")
+        ));
+
+        let (first, _) = cursor_fixture(312_200, 1);
+        let foreign_workspace = ShardedHotEngine::new(
+            WorkspaceId::from_uuid(Uuid::from_u128(312_201)),
+            first.lineage_digest(),
+            first.catalog_document_id(),
+        );
+        assert!(matches!(
+            foreign_workspace
+                .current_path_cursor_page(first.begin_current_path_cursor().unwrap(), 1),
+            Err(EngineError::WorkspaceMismatch { .. })
+        ));
+
+        let same_workspace_other_engine = ShardedHotEngine::new(
+            first.workspace_id(),
+            first.lineage_digest(),
+            first.catalog_document_id(),
+        );
+        assert!(matches!(
+            same_workspace_other_engine
+                .current_path_cursor_page(first.begin_current_path_cursor().unwrap(), 1),
+            Err(EngineError::Archive(message)) if message.contains("another engine")
+        ));
+    }
+
+    #[test]
+    fn current_path_cursor_rejects_tampering_and_consumed_tokens() {
+        let (engine, _) = cursor_fixture(313_000, 1);
+        let mut tampered = engine.begin_current_path_cursor().unwrap();
+        tampered.binding.schema_version = tampered.binding.schema_version.saturating_add(1);
+        assert!(matches!(
+            engine.current_path_cursor_page(tampered, 1),
+            Err(EngineError::Archive(message)) if message.contains("schema binding")
+        ));
+
+        let mut stale_history = engine.begin_current_path_cursor().unwrap();
+        stale_history.binding.history_generation =
+            stale_history.binding.history_generation.saturating_add(1);
+        assert!(matches!(
+            engine.current_path_cursor_page(stale_history, 1),
+            Err(EngineError::Archive(message)) if message.contains("history identity")
+        ));
+
+        let token = engine.begin_current_path_cursor().unwrap();
+        let duplicate = CurrentPathCatalogCursor {
+            runtime_authority: token.runtime_authority.clone(),
+            binding: token.binding.clone(),
+            cursor_id: token.cursor_id,
+            nonce: token.nonce,
+        };
+        let page = engine.current_path_cursor_page(token, 1).unwrap();
+        assert!(!page.has_more());
+        assert!(matches!(
+            engine.current_path_cursor_page(duplicate, 1),
+            Err(EngineError::Archive(message)) if message.contains("stale or consumed")
+        ));
+    }
+
+    #[test]
+    fn current_path_cursor_rejects_missing_duplicate_and_portable_path_authority() {
+        let (mut missing, ids) = cursor_fixture(314_000, 2);
+        let first = *ids.iter().min().unwrap();
+        missing.current_path_catalog.rows.remove(&first);
+        assert!(matches!(
+            missing.begin_current_path_cursor(),
+            Err(EngineError::Archive(message)) if message.contains("missing or duplicate")
+        ));
+
+        let (mut duplicate, ids) = cursor_fixture(314_100, 2);
+        let first = *ids.iter().min().unwrap();
+        let second = *ids.iter().max().unwrap();
+        let first_path = duplicate.current_path_catalog.rows[&first].clone();
+        duplicate
+            .current_path_catalog
+            .rows
+            .insert(second, first_path.clone());
+        let duplicate_cursor = duplicate.begin_current_path_cursor().unwrap();
+        assert!(matches!(
+            duplicate.current_path_cursor_page(duplicate_cursor, 2),
+            Err(EngineError::Archive(message)) if message.contains("exact path authority")
+        ));
+
+        let (mut portable, ids) = cursor_fixture(314_200, 2);
+        let first = *ids.iter().min().unwrap();
+        let second = *ids.iter().max().unwrap();
+        let first_path = portable.current_path_catalog.rows[&first].clone();
+        portable
+            .current_path_catalog
+            .portable_paths
+            .insert(first_path.portable_key().digest(), second);
+        let portable_cursor = portable.begin_current_path_cursor().unwrap();
+        assert!(matches!(
+            portable.current_path_cursor_page(portable_cursor, 1),
+            Err(EngineError::Archive(message)) if message.contains("portable-path collision")
+        ));
+
+        assert!(first_path.as_str().ends_with(".md"));
+    }
+
+    #[test]
+    fn current_path_cursor_enforces_limits_before_allocation_and_return() {
+        let (engine, _) = cursor_fixture(315_000, 1);
+        let token = engine.begin_current_path_cursor().unwrap();
+        assert!(engine.current_path_cursor_page(token, 0).is_err());
+        assert!(engine
+            .current_path_cursor_page(
+                engine.begin_current_path_cursor().unwrap(),
+                MAX_CURRENT_PATH_CURSOR_PAGE_ROWS + 1
+            )
+            .is_err());
+
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(315_100));
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(315_101));
+        let cursors =
+            ShardedHotEngine::new(workspace, LineageDigest::of(b"cursor-count-bound"), catalog);
+        let mut active = Vec::new();
+        for _ in 0..MAX_CURRENT_PATH_CURSORS {
+            active.push(cursors.begin_current_path_cursor().unwrap());
+        }
+        assert!(matches!(
+            cursors.begin_current_path_cursor(),
+            Err(EngineError::Archive(message)) if message.contains("count exceeds")
+        ));
+        assert_eq!(active.len(), MAX_CURRENT_PATH_CURSORS);
+
+        let (mut long_path_engine, _) = cursor_fixture(315_200, 1);
+        let page_id = *long_path_engine
+            .current_path_catalog
+            .rows
+            .keys()
+            .next()
+            .unwrap();
+        let long_path = ManagedPath::parse(format!(
+            "pages/{}.md",
+            "x".repeat(MAX_CURRENT_PATH_CURSOR_PATH_BYTES)
+        ))
+        .unwrap();
+        let old_path = long_path_engine
+            .current_path_catalog
+            .rows
+            .insert(page_id, long_path.clone())
+            .unwrap();
+        long_path_engine
+            .current_path_catalog
+            .exact_paths
+            .remove(&old_path);
+        long_path_engine
+            .current_path_catalog
+            .exact_paths
+            .insert(long_path.clone(), page_id);
+        long_path_engine
+            .current_path_catalog
+            .portable_paths
+            .remove(&old_path.portable_key().digest());
+        long_path_engine
+            .current_path_catalog
+            .portable_paths
+            .insert(long_path.portable_key().digest(), page_id);
+        long_path_engine.current_path_catalog.path_bytes = long_path.as_str().len();
+        let long_cursor = long_path_engine.begin_current_path_cursor().unwrap();
+        assert!(matches!(
+            long_path_engine.current_path_cursor_page(long_cursor, 1),
+            Err(EngineError::Archive(message)) if message.contains("path for")
+        ));
+
+        let (mut aggregate_engine, aggregate_ids) = cursor_fixture(315_300, 65);
+        aggregate_engine.current_path_catalog.rows.clear();
+        aggregate_engine.current_path_catalog.exact_paths.clear();
+        aggregate_engine.current_path_catalog.portable_paths.clear();
+        aggregate_engine.current_path_catalog.path_bytes = 0;
+        for page_id in aggregate_ids {
+            let prefix = format!("pages/{page_id}-");
+            let suffix = ".md";
+            let path = ManagedPath::parse(format!(
+                "{prefix}{}{}",
+                "x".repeat(
+                    MAX_CURRENT_PATH_CURSOR_PATH_BYTES
+                        .checked_sub(prefix.len() + suffix.len())
+                        .unwrap()
+                ),
+                suffix
+            ))
+            .unwrap();
+            aggregate_engine.current_path_catalog.path_bytes += path.as_str().len();
+            assert!(aggregate_engine
+                .current_path_catalog
+                .rows
+                .insert(page_id, path.clone())
+                .is_none());
+            assert!(aggregate_engine
+                .current_path_catalog
+                .exact_paths
+                .insert(path.clone(), page_id)
+                .is_none());
+            assert!(aggregate_engine
+                .current_path_catalog
+                .portable_paths
+                .insert(path.portable_key().digest(), page_id)
+                .is_none());
+        }
+        let aggregate_cursor = aggregate_engine.begin_current_path_cursor().unwrap();
+        assert!(matches!(
+            aggregate_engine.current_path_cursor_page(aggregate_cursor, 65),
+            Err(EngineError::Archive(message)) if message.contains("page bytes")
+        ));
+    }
+
+    #[test]
+    fn current_path_cursor_large_catalog_reads_only_the_page_and_lookahead() {
+        let (engine, _) = cursor_fixture(316_000, 1_024);
+        engine.current_path_cursor_rows_visited.set(0);
+        let first = engine
+            .current_path_cursor_page(engine.begin_current_path_cursor().unwrap(), 7)
+            .unwrap();
+        assert_eq!(first.rows().len(), 7);
+        assert!(first.has_more());
+        assert_eq!(engine.current_path_cursor_rows_visited.get(), 8);
+        let second = engine
+            .current_path_cursor_page(first.into_next().unwrap(), 7)
+            .unwrap();
+        assert_eq!(second.rows().len(), 7);
+        assert_eq!(engine.current_path_cursor_rows_visited.get(), 16);
     }
 
     fn block_state(
