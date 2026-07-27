@@ -21694,6 +21694,7 @@ const BOOTSTRAP_SOURCE_MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const BOOTSTRAP_SOURCE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const BOOTSTRAP_SOURCE_MAX_FILES: u64 = 1_000_000;
 const BOOTSTRAP_SOURCE_MAX_PARSER_NODES: u64 = 1_000_000;
+const BOOTSTRAP_SOURCE_MAX_LOGICAL_NAME_BYTES: u64 = MAX_GRAPH_TEXT_SEMANTIC_NAME_BYTES;
 const BOOTSTRAP_SOURCE_MAX_ALL_ENTRIES: u64 = 2_000_000;
 const BOOTSTRAP_SOURCE_MAX_DIRECTORIES: u64 = 1_000_000;
 const BOOTSTRAP_SOURCE_MAX_DIRECTORY_DEPTH: usize = 256;
@@ -21789,6 +21790,7 @@ impl BootstrapSourceCapture {
 pub(crate) struct BootstrapSourceEntry {
     path: ManagedPath,
     kind: ManagedTextKind,
+    logical_name: String,
     description: BlobDescription,
     file_resource: ContentDigest,
     link_count: u64,
@@ -21802,6 +21804,12 @@ impl BootstrapSourceEntry {
 
     pub(crate) fn kind(&self) -> ManagedTextKind {
         self.kind
+    }
+
+    /// The effective parser-derived page name, including content-title overrides
+    /// and configured filename and journal-title decoding.
+    pub(crate) fn logical_name(&self) -> &str {
+        &self.logical_name
     }
 
     pub(crate) fn description(&self) -> BlobDescription {
@@ -22556,7 +22564,7 @@ fn walk_bootstrap_source_directory(
             source_path.is_some() && graph.graph_text_scope.is_eligible(&child_relative);
         if is_source {
             let path = source_path.expect("source path was just checked");
-            let (kind, description, chunk_count) = capture_bootstrap_source_file(
+            let (logical_name, kind, description, chunk_count) = capture_bootstrap_source_file(
                 graph,
                 file,
                 &path,
@@ -22580,6 +22588,7 @@ fn walk_bootstrap_source_directory(
                 &BootstrapSourceEntry {
                     path: path.clone(),
                     kind,
+                    logical_name,
                     description,
                     file_resource: resource,
                     link_count,
@@ -22618,7 +22627,7 @@ fn capture_bootstrap_source_file(
     state: &mut BootstrapSourceWalkState,
     chunks_directory: &Path,
     seal_chunks: bool,
-) -> io::Result<(ManagedTextKind, BlobDescription, u32)> {
+) -> io::Result<(String, ManagedTextKind, BlobDescription, u32)> {
     let advertised_len = file.metadata()?.len();
     if advertised_len > BOOTSTRAP_SOURCE_MAX_FILE_BYTES {
         return Err(bootstrap_source_capture_error(format!(
@@ -22712,6 +22721,12 @@ fn capture_bootstrap_source_file(
         PageKind::Page => ManagedTextKind::Page,
         PageKind::Journal => ManagedTextKind::Journal,
     };
+    let logical_name = semantic.name;
+    validate_bootstrap_source_logical_name(&logical_name)?;
+    let logical_name_allocation =
+        owned_string_len_upper_bound(u64::try_from(logical_name.capacity()).map_err(|_| {
+            bootstrap_source_capture_error("logical source name allocation overflow")
+        })?)?;
     state.source_files += 1;
     state.total_source_bytes = next_total;
     state.instrumentation.files += 1;
@@ -22728,12 +22743,17 @@ fn capture_bootstrap_source_file(
     state.instrumentation.peak_owned_buffer_bytes =
         state.instrumentation.peak_owned_buffer_bytes.max(
             live_bytes
+                .checked_add(logical_name_allocation)
+                .ok_or_else(|| {
+                    bootstrap_source_capture_error("source working-byte counter overflow")
+                })?
                 .checked_add(BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES as u64)
                 .ok_or_else(|| {
                     bootstrap_source_capture_error("source working-byte counter overflow")
                 })?,
         );
     Ok((
+        logical_name,
         kind,
         BlobDescription::from_parts(hasher.finalize().into(), actual_len),
         chunk_count,
@@ -22814,9 +22834,11 @@ fn write_bootstrap_source_entry(
     entry: &BootstrapSourceEntry,
     instrumentation: &mut BootstrapSourceCaptureInstrumentation,
 ) -> io::Result<()> {
+    validate_bootstrap_source_logical_name(&entry.logical_name)?;
     let mut frame = BootstrapSourceEncoder::new(3);
     frame.string(entry.path.as_str())?;
     frame.u8(managed_text_kind_tag(entry.kind));
+    frame.string(&entry.logical_name)?;
     frame.description(entry.description);
     frame.digest(entry.file_resource);
     frame.u64(entry.link_count);
@@ -23024,12 +23046,25 @@ fn decode_managed_text_kind(tag: u8) -> io::Result<ManagedTextKind> {
     }
 }
 
+fn validate_bootstrap_source_logical_name(logical_name: &str) -> io::Result<()> {
+    let length = u64::try_from(logical_name.len())
+        .map_err(|_| bootstrap_source_capture_error("logical source name length overflow"))?;
+    if length > BOOTSTRAP_SOURCE_MAX_LOGICAL_NAME_BYTES {
+        return Err(bootstrap_source_capture_error(
+            "source logical name exceeds parser-established byte cap",
+        ));
+    }
+    Ok(())
+}
+
 fn decode_bootstrap_source_entry(frame: &[u8]) -> io::Result<BootstrapSourceEntry> {
     let mut decoder = BootstrapSourceDecoder::new(frame, 3)?;
     let path = ManagedPath::parse(decoder.string()?.to_owned()).map_err(|error| {
         bootstrap_source_capture_error(format!("invalid source entry path: {error}"))
     })?;
     let kind = decode_managed_text_kind(decoder.u8()?)?;
+    let logical_name = decoder.string()?.to_owned();
+    validate_bootstrap_source_logical_name(&logical_name)?;
     let description = decoder.description()?;
     let file_resource = decoder.digest()?;
     let link_count = decoder.u64()?;
@@ -23043,6 +23078,7 @@ fn decode_bootstrap_source_entry(frame: &[u8]) -> io::Result<BootstrapSourceEntr
     Ok(BootstrapSourceEntry {
         path,
         kind,
+        logical_name,
         description,
         file_resource,
         link_count,
@@ -23370,6 +23406,8 @@ fn bootstrap_source_entry_key(frame: &[u8]) -> io::Result<&str> {
     let mut decoder = BootstrapSourceDecoder::new(frame, 3)?;
     let path = decoder.string()?;
     let _ = decoder.u8()?;
+    let logical_name = decoder.string()?;
+    validate_bootstrap_source_logical_name(logical_name)?;
     let _ = decoder.description()?;
     let _ = decoder.digest()?;
     let _ = decoder.u64()?;
@@ -40547,6 +40585,10 @@ mod tests {
         entries
     }
 
+    fn bootstrap_capture_entry_spool(capture: &BootstrapSourceCapture) -> Vec<u8> {
+        fs::read(capture.sealed_directory.join(BOOTSTRAP_SOURCE_ENTRIES)).unwrap()
+    }
+
     fn bootstrap_capture_chunks(capture: &BootstrapSourceCapture) -> Vec<BootstrapSourceChunk> {
         let mut cursor = capture.chunks_cursor().unwrap();
         let mut chunks = Vec::new();
@@ -40562,22 +40604,37 @@ mod tests {
         fs::create_dir_all(root.join("logseq")).unwrap();
         fs::write(
             root.join("logseq/config.edn"),
-            r#"{:pages-directory "notes" :journals-directory "diary"}"#,
+            r#"{:pages-directory "notes"
+                :journals-directory "diary"
+                :file/name-format :triple-lowbar
+                :journal/file-name-format "dd-MM-yyyy"
+                :journal/page-title-format "yyyy-MM-dd"}"#,
         )
         .unwrap();
+        fs::create_dir_all(root.join("notes/arbitrary/nested")).unwrap();
         fs::create_dir_all(root.join("notes/深い")).unwrap();
         fs::create_dir_all(root.join("diary/nested")).unwrap();
-        fs::write(root.join("Root.md"), "- root\n").unwrap();
         fs::write(
-            root.join("notes/深い/e\u{301}.markdown"),
-            "title:: Jul 24th, 2026\n\n- semantic journal\n",
+            root.join("Root.md"),
+            "title:: Root logical name\n\n- root\n",
         )
         .unwrap();
         fs::write(
-            root.join("diary/nested/Plain.org"),
-            "#+TITLE: Plain Org\n\n* body\n",
+            root.join("notes/arbitrary/nested/Markdown.md"),
+            "title:: Markdown title ☕\n\n- semantic page\n",
         )
         .unwrap();
+        fs::write(
+            root.join("notes/深い/Déjà___計画.markdown"),
+            "- filename-derived page\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("diary/nested/25-07-2026.org"),
+            "#+TITLE: Org title ��\n\n* semantic journal\n",
+        )
+        .unwrap();
+        fs::write(root.join("diary/nested/26-07-2026.md"), "- journal\n").unwrap();
         let graph = Graph::open(&root);
         let capture_scratch = bootstrap_capture_scratch("paths");
         let capture = graph
@@ -40587,14 +40644,39 @@ mod tests {
         assert_eq!(
             entries
                 .iter()
-                .map(|entry| (entry.path().as_str().to_owned(), entry.kind()))
+                .map(|entry| {
+                    (
+                        entry.path().as_str().to_owned(),
+                        entry.kind(),
+                        entry.logical_name().to_owned(),
+                    )
+                })
                 .collect::<Vec<_>>(),
             vec![
-                ("Root.md".to_owned(), ManagedTextKind::Page),
-                ("diary/nested/Plain.org".to_owned(), ManagedTextKind::Page),
                 (
-                    "notes/深い/e\u{301}.markdown".to_owned(),
-                    ManagedTextKind::Journal
+                    "Root.md".to_owned(),
+                    ManagedTextKind::Page,
+                    "Root logical name".to_owned(),
+                ),
+                (
+                    "diary/nested/25-07-2026.org".to_owned(),
+                    ManagedTextKind::Page,
+                    "Org title ��".to_owned(),
+                ),
+                (
+                    "diary/nested/26-07-2026.md".to_owned(),
+                    ManagedTextKind::Journal,
+                    "2026-07-26".to_owned(),
+                ),
+                (
+                    "notes/arbitrary/nested/Markdown.md".to_owned(),
+                    ManagedTextKind::Page,
+                    "Markdown title ☕".to_owned(),
+                ),
+                (
+                    "notes/深い/Déjà___計画.markdown".to_owned(),
+                    ManagedTextKind::Page,
+                    "Déjà/計画".to_owned(),
                 ),
             ]
         );
@@ -40614,13 +40696,23 @@ mod tests {
         many.extend(std::iter::repeat_n(b'x', BOOTSTRAP_SOURCE_CHUNK_BYTES * 2));
         many.extend_from_slice(b"\n");
         fs::write(root.join("pages/many.org"), many).unwrap();
-        let scratch = bootstrap_capture_scratch("chunks");
+        let first_scratch = bootstrap_capture_scratch("chunks-first");
+        let second_scratch = bootstrap_capture_scratch("chunks-second");
         let graph = Graph::open(&root);
-        let first = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
-        let second = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        let first = graph
+            .capture_inactive_bootstrap_sources(&first_scratch)
+            .unwrap();
+        let second = graph
+            .capture_inactive_bootstrap_sources(&second_scratch)
+            .unwrap();
         assert_eq!(
             bootstrap_capture_entries(&first),
             bootstrap_capture_entries(&second)
+        );
+        assert_eq!(first.entries, second.entries);
+        assert_eq!(
+            bootstrap_capture_entry_spool(&first),
+            bootstrap_capture_entry_spool(&second)
         );
         assert_eq!(
             bootstrap_capture_chunks(&first),
@@ -40635,20 +40727,21 @@ mod tests {
         first.open_chunk(&chunk).unwrap().finish().unwrap();
         assert!(first.instrumentation().peak_owned_rows < 20_000);
         let _ = fs::remove_dir_all(&root);
-        let _ = fs::remove_dir_all(&scratch);
+        let _ = fs::remove_dir_all(&first_scratch);
+        let _ = fs::remove_dir_all(&second_scratch);
     }
 
     #[test]
     fn inactive_bootstrap_capture_rejects_between_pass_and_before_final_proof_mutations() {
         let root = scratch("bootstrap-source-mutation");
         let source = root.join("pages/one.md");
-        fs::write(&source, b"- before\n").unwrap();
+        fs::write(&source, b"title:: Before\n\n- body\n").unwrap();
         let scratch = bootstrap_capture_scratch("mutation");
         let graph = Graph::open(&root);
         BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES.with(|hook| {
             *hook.borrow_mut() = Some(Box::new({
                 let source = source.clone();
-                move || fs::write(source, b"- after\n")
+                move || fs::write(source, b"title:: After\n\n- body\n")
             }));
         });
         assert!(graph.capture_inactive_bootstrap_sources(&scratch).is_err());
@@ -40656,14 +40749,12 @@ mod tests {
         BOOTSTRAP_SOURCE_CAPTURE_BEFORE_FINAL_PROOF.with(|hook| {
             *hook.borrow_mut() = Some(Box::new({
                 let source = source.clone();
-                let renamed = source.with_file_name("renamed.md");
-                move || fs::rename(source, renamed)
+                move || fs::write(source, b"title:: Changed before C\n\n- body\n")
             }));
         });
         assert!(capture
             .verify_before_inactive_bootstrap_authoring(&graph)
             .is_err());
-        fs::rename(root.join("pages/renamed.md"), &source).unwrap();
         BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES.with(|hook| {
             *hook.borrow_mut() = Some(Box::new({
                 let source = source.clone();
@@ -40673,6 +40764,31 @@ mod tests {
         assert!(graph.capture_inactive_bootstrap_sources(&scratch).is_err());
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_rejects_bad_logical_name_frames() {
+        let mut truncated = BootstrapSourceEncoder::new(3);
+        truncated.string("pages/logical.md").unwrap();
+        truncated.u8(managed_text_kind_tag(ManagedTextKind::Page));
+        truncated.u32(4);
+        truncated.bytes.extend_from_slice(b"na");
+        assert!(decode_bootstrap_source_entry(&truncated.finish()).is_err());
+
+        let mut non_utf8 = BootstrapSourceEncoder::new(3);
+        non_utf8.string("pages/logical.md").unwrap();
+        non_utf8.u8(managed_text_kind_tag(ManagedTextKind::Page));
+        non_utf8.u32(1);
+        non_utf8.bytes.push(0xff);
+        assert!(decode_bootstrap_source_entry(&non_utf8.finish()).is_err());
+
+        let mut oversized = BootstrapSourceEncoder::new(3);
+        oversized.string("pages/logical.md").unwrap();
+        oversized.u8(managed_text_kind_tag(ManagedTextKind::Page));
+        oversized
+            .string(&"x".repeat(BOOTSTRAP_SOURCE_MAX_LOGICAL_NAME_BYTES as usize + 1))
+            .unwrap();
+        assert!(decode_bootstrap_source_entry(&oversized.finish()).is_err());
     }
 
     #[test]
@@ -40799,6 +40915,7 @@ mod tests {
                 &BootstrapSourceEntry {
                     path,
                     kind: ManagedTextKind::Page,
+                    logical_name: format!("Synthetic logical name {index:08}"),
                     description: BlobDescription::from_parts([0; 32], 0),
                     file_resource: ContentDigest::from_bytes([1; 32]),
                     link_count: 1,
