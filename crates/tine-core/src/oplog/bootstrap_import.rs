@@ -2765,6 +2765,27 @@ impl BootstrapPartDescriptorV1 {
         self.acceptance_sequence
     }
 
+    /// Verify the directly loaded replay artifacts against this aggregate-bound
+    /// part descriptor without exposing either committed value or its canonical
+    /// full-object encoding.
+    pub(crate) fn validate_loaded_artifacts(
+        self,
+        manifest_fingerprint: BootstrapManifestFingerprintV1,
+        payload_objects: &[PayloadObjectDescriptorV1],
+        manifest_objects: &[FullObjectDescriptorV1],
+    ) -> Result<(), BootstrapImportError> {
+        self.validate_self()?;
+        if manifest_fingerprint != self.manifest_fingerprint {
+            return Err(BootstrapImportError::FullObjectRootMismatch);
+        }
+        if FullObjectRootV1::for_part(self.evidence, payload_objects, manifest_objects)?
+            != self.full_object_root
+        {
+            return Err(BootstrapImportError::FullObjectRootMismatch);
+        }
+        Ok(())
+    }
+
     fn validate_self(self) -> Result<(), BootstrapImportError> {
         self.evidence.validate()?;
         if self.part_id != self.evidence.part_id() {
@@ -3935,6 +3956,15 @@ mod tests {
         count: u32,
         predecessor: Option<BootstrapPartId>,
     ) -> BootstrapImportPartEvidenceV1 {
+        evidence_with_payloads(ordinal, count, predecessor, &[payload(ordinal + 1)])
+    }
+
+    fn evidence_with_payloads(
+        ordinal: u32,
+        count: u32,
+        predecessor: Option<BootstrapPartId>,
+        payload_objects: &[PayloadObjectDescriptorV1],
+    ) -> BootstrapImportPartEvidenceV1 {
         BootstrapImportPartEvidenceV1::new(
             import_id(),
             profile(),
@@ -3942,7 +3972,7 @@ mod tests {
             count,
             SourceSpanRootV1::from_spans(&[source_span(ordinal)]).unwrap(),
             OperationRootV1::from_operations(&[operation(ordinal + 1)]).unwrap(),
-            PayloadObjectRootV1::from_objects(&[payload(ordinal + 1)]).unwrap(),
+            PayloadObjectRootV1::from_objects(payload_objects).unwrap(),
             predecessor,
         )
         .unwrap()
@@ -4429,6 +4459,67 @@ mod tests {
         assert!(matches!(
             aggregate(vec![substituted]),
             Err(BootstrapImportError::AcceptedEventBindingMismatch)
+        ));
+    }
+
+    #[test]
+    fn loaded_artifacts_must_match_part_commitments() {
+        let payloads = [payload(1), payload(2)];
+        let manifest = [FullObjectDescriptorV1::manifest_defined([0x55; 32], 7).unwrap()];
+        let descriptor = BootstrapPartDescriptorV1::accepted(
+            evidence_with_payloads(0, 1, None, &payloads),
+            fingerprint(1),
+            &payloads,
+            &manifest,
+            ArchiveLocalFrontierBindingV1::initial(import_id(), profile()),
+        )
+        .unwrap();
+
+        assert!(descriptor
+            .validate_loaded_artifacts(fingerprint(1), &payloads, &manifest)
+            .is_ok());
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(fingerprint(2), &payloads, &manifest),
+            Err(BootstrapImportError::FullObjectRootMismatch)
+        ));
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(fingerprint(1), &payloads[..1], &manifest),
+            Err(BootstrapImportError::FullObjectRootMismatch)
+        ));
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(
+                fingerprint(1),
+                &[payloads[0], payloads[1], payload(3)],
+                &manifest,
+            ),
+            Err(BootstrapImportError::FullObjectRootMismatch)
+        ));
+        assert!(descriptor
+            .validate_loaded_artifacts(fingerprint(1), &[payloads[1], payloads[0]], &manifest)
+            .is_ok());
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(
+                fingerprint(1),
+                &[payloads[0], payloads[0]],
+                &manifest,
+            ),
+            Err(BootstrapImportError::DuplicateCanonicalItem)
+        ));
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(
+                fingerprint(1),
+                &[payloads[0], payload(3)],
+                &manifest,
+            ),
+            Err(BootstrapImportError::FullObjectRootMismatch)
+        ));
+        assert!(matches!(
+            descriptor.validate_loaded_artifacts(
+                fingerprint(1),
+                &payloads,
+                &[FullObjectDescriptorV1::manifest_defined([0x56; 32], 7).unwrap()],
+            ),
+            Err(BootstrapImportError::FullObjectRootMismatch)
         ));
     }
 
