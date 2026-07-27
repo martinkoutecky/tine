@@ -5,25 +5,50 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
+use super::bootstrap_import::{
+    ArchiveLocalFrontierBindingV1, BootstrapAggregateCommitV1, BootstrapAggregateManifestV1,
+    BootstrapImportError, BootstrapImportPartEvidenceV1, BootstrapManifestFingerprintV1,
+    BootstrapPartDescriptorV1, BootstrapPartSpanIndexV1, BootstrapPartitionProfileV1,
+    FullObjectDescriptorV1, OperationDigestV1, OperationLeafV1, OperationRootV1,
+    PayloadObjectDescriptorV1, PayloadObjectRootV1, SourceBlobChunkDescriptorV1,
+    SourceBlobChunkDigestV1, SourceBlobChunkRootBuilderV1, SourceBlobChunkRootV1,
+    SourceBlobIndexBuilderV1, SourceContentDigestV1, SourceInventoryIndexBuilderV1,
+    SourceInventoryRootBuilderV1, SourceInventoryRootV1, SourceLeafDigestV1, SourceLeafV1,
+    SourceSpanRootV1, SourceSpanV1, MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART, MAX_BOOTSTRAP_PARTS,
+    MAX_OPERATIONS_PER_BOOTSTRAP_PART, MAX_PARSED_NODES_PER_SOURCE_FILE,
+    MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART, MAX_SOURCE_FILE_BYTES, MAX_SOURCE_INDEX_PAGES,
+    MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART, MAX_TOTAL_SOURCE_BYTES,
+};
 use super::external_import::{
     ExternalImportObservationEntry, ExternalImportObservationMaterial,
     ExternalImportObservationMaterialError, ExternalImportObservationState,
 };
-use super::hot_engine::{AcceptedFrontierRoot, MAX_TRANSACTION_OPERATIONS};
+use super::hot_engine::{
+    AcceptedFrontierRoot, AuthorBatch, DetachedBootstrapAcceptedEngineMaterial,
+    DetachedBootstrapAuthoringSession, DetachedBootstrapCandidate, MAX_TRANSACTION_OPERATIONS,
+};
+use super::receipt::ImportIdDerivation;
 use super::{
     plan_projection, AnnotatedIdentity, BatchId, BatchOrigin, BlobDescription, BlockId,
-    BlockLocation, ContentDigest, CurrentPageAtPath, DocumentId, ImportId, ImportInventoryEntry,
-    ImportInventoryState, ImportLocator, LogicalCompletionId, LogicalPageName,
-    LogseqIdentityMutation, LogseqUuid, ManagedPath, ManagedTextKind, OperationTransaction, PageId,
-    ProjectionCompletedReceipt, ProjectionCompletion, ProjectionIntent, ProjectionReceiptStore,
-    ProjectionStoreError, SemanticOperation, ShardedHotEngine, StructuralLocator, StructuralSpan,
-    WorkspaceId, DIFF_SCHEMA_VERSION,
+    BlockLocation, ContentDigest, CrdtPeerId, CurrentPageAtPath, DeviceId, DocumentId, ImportId,
+    ImportInventoryEntry, ImportInventoryState, ImportLocator, LineageDigest, LogicalCompletionId,
+    LogicalPageName, LogseqIdentityMutation, LogseqUuid, ManagedPath, ManagedTextKind, ObjectKind,
+    OperationTransaction, PageId, ProjectionCompletedReceipt, ProjectionCompletion,
+    ProjectionIntent, ProjectionReceiptStore, ProjectionStoreError, ReferenceCatalogPolicyV1,
+    SemanticOperation, SessionId, ShardedHotEngine, StructuralLocator, StructuralSpan, WorkspaceId,
+    DIFF_SCHEMA_VERSION,
 };
-use crate::model::{path_is_sync_conflict, Graph, PageKind};
+use crate::model::{
+    path_is_sync_conflict, BootstrapSourceCapture, BootstrapSourceCaptureInstrumentation,
+    BootstrapSourceChunk, BootstrapSourceEntry, Graph, PageKind,
+};
 
 #[cfg(test)]
 thread_local! {
@@ -47,6 +72,2180 @@ pub const MAX_IMPORT_REPLAY_ENTRIES: usize = 1_000_000;
 pub const MAX_IMPORT_REPLAY_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_IMPORT_RENDERED_TARGET_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_IMPORT_STRUCTURAL_KEY_WORK: usize = 64_000_000;
+
+const BOOTSTRAP_STREAM_SORT_BUFFER_BYTES: usize = 1024 * 1024;
+const BOOTSTRAP_STREAM_SORT_FAN_IN: usize = 4;
+const BOOTSTRAP_STREAM_MAX_SORT_RUNS: usize = 4096;
+const BOOTSTRAP_STREAM_FRAME_BYTES: usize = 64 * 1024 * 1024 + 1024 * 1024;
+const BOOTSTRAP_STREAM_DIRECTORY: &str = "inactive-bootstrap-publication-v1";
+const BOOTSTRAP_STREAM_SEAL: &str = "sealed.commit";
+const BOOTSTRAP_STREAM_AGGREGATE: &str = "aggregate.bin";
+const BOOTSTRAP_STREAM_COMMIT: &str = "commit.bin";
+const BOOTSTRAP_STREAM_INVENTORY_PAGES: &str = "source-inventory-pages";
+const BOOTSTRAP_STREAM_BLOB_PAGES: &str = "source-blob-pages";
+const BOOTSTRAP_STREAM_PARTS: &str = "parts";
+const BOOTSTRAP_STREAM_PART_MANIFEST: &str = "manifest.bin";
+const BOOTSTRAP_STREAM_PART_EVIDENCE: &str = "evidence.bin";
+const BOOTSTRAP_STREAM_PART_SPANS: &str = "spans.bin";
+const BOOTSTRAP_STREAM_PART_OBJECTS: &str = "objects.frames";
+const BOOTSTRAP_STREAM_OPERATION_SPOOL: &str = "operations.sorted";
+const BOOTSTRAP_STREAM_BOUNDARY_SPOOL: &str = "part-boundaries.frames";
+const BOOTSTRAP_STREAM_MAX_MANIFEST_BYTES: usize = 768 * 1024;
+/// Fixed per-operation allowance for the before/after and membership fields
+/// added by the existing semantic-effect encoder. The operation's own
+/// canonical bytes are charged separately. Exact prepared bytes are still
+/// checked before the authoritative detached pass.
+const BOOTSTRAP_STREAM_SEMANTIC_EFFECT_OVERHEAD: u64 = 1024;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BootstrapStreamingImportInstrumentation {
+    pub(crate) source_files: u64,
+    pub(crate) source_chunks: u64,
+    pub(crate) source_bytes: u64,
+    pub(crate) source_bytes_read: u64,
+    pub(crate) parser_nodes: u64,
+    pub(crate) operations: u64,
+    pub(crate) source_spans: u64,
+    pub(crate) parts: u32,
+    pub(crate) operation_spool_bytes: u64,
+    pub(crate) prepared_bytes: u64,
+    pub(crate) external_sort_runs: u64,
+    pub(crate) capture_passes: u64,
+    pub(crate) peak_owned_source_bytes: u64,
+    pub(crate) peak_owned_parser_nodes: u64,
+    pub(crate) peak_owned_part_operations: u64,
+    pub(crate) peak_owned_part_bytes: u64,
+    pub(crate) peak_owned_sort_buffer_bytes: u64,
+}
+
+#[derive(Debug)]
+pub(crate) enum BootstrapStreamingImportError {
+    Io(io::Error),
+    Protocol(BootstrapImportError),
+    InvalidSource(String),
+    InvalidOperation(String),
+    ResourceLimit {
+        resource: &'static str,
+        observed: u64,
+        limit: u64,
+    },
+    SingletonOverLimit(&'static str),
+    ConflictingSeal,
+}
+
+impl fmt::Display for BootstrapStreamingImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => error.fmt(formatter),
+            Self::Protocol(error) => error.fmt(formatter),
+            Self::InvalidSource(detail) | Self::InvalidOperation(detail) => {
+                formatter.write_str(detail)
+            }
+            Self::ResourceLimit {
+                resource,
+                observed,
+                limit,
+            } => write!(
+                formatter,
+                "{resource} limit exceeded: observed {observed}, limit {limit}"
+            ),
+            Self::SingletonOverLimit(resource) => {
+                write!(
+                    formatter,
+                    "one bootstrap operation cannot fit the {resource} limit"
+                )
+            }
+            Self::ConflictingSeal => {
+                formatter.write_str("conflicting sealed bootstrap preparation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BootstrapStreamingImportError {}
+
+impl From<io::Error> for BootstrapStreamingImportError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<BootstrapImportError> for BootstrapStreamingImportError {
+    fn from(error: BootstrapImportError) -> Self {
+        Self::Protocol(error)
+    }
+}
+
+/// Inactive ownership of a complete, sealed bootstrap preparation. It carries
+/// no object-store, history, graph-writer, projection, SQLite, enrollment, or
+/// runtime capability.
+#[allow(dead_code)]
+pub(crate) struct InactiveBootstrapPreparedPublication {
+    source_capture: BootstrapSourceCapture,
+    sealed_directory: PathBuf,
+    aggregate: BootstrapAggregateManifestV1,
+    commit: BootstrapAggregateCommitV1,
+    candidate: Box<DetachedBootstrapCandidate>,
+    engine_materials: Vec<DetachedBootstrapAcceptedEngineMaterial>,
+    instrumentation: BootstrapStreamingImportInstrumentation,
+}
+
+#[allow(dead_code)]
+impl InactiveBootstrapPreparedPublication {
+    pub(crate) const fn aggregate(&self) -> &BootstrapAggregateManifestV1 {
+        &self.aggregate
+    }
+
+    pub(crate) const fn commit(&self) -> BootstrapAggregateCommitV1 {
+        self.commit
+    }
+
+    pub(crate) const fn candidate(&self) -> &DetachedBootstrapCandidate {
+        &self.candidate
+    }
+
+    pub(crate) fn engine_materials(&self) -> &[DetachedBootstrapAcceptedEngineMaterial] {
+        &self.engine_materials
+    }
+
+    pub(crate) const fn instrumentation(&self) -> &BootstrapStreamingImportInstrumentation {
+        &self.instrumentation
+    }
+
+    pub(crate) const fn source_capture(&self) -> &BootstrapSourceCapture {
+        &self.source_capture
+    }
+
+    pub(crate) fn aggregate_bytes(&self) -> Result<Vec<u8>, BootstrapStreamingImportError> {
+        Ok(read_bounded_file(
+            &self.sealed_directory.join(BOOTSTRAP_STREAM_AGGREGATE),
+            super::bootstrap_import::MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES,
+        )?)
+    }
+
+    pub(crate) fn commit_bytes(&self) -> Result<Vec<u8>, BootstrapStreamingImportError> {
+        Ok(read_bounded_file(
+            &self.sealed_directory.join(BOOTSTRAP_STREAM_COMMIT),
+            super::bootstrap_import::MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES,
+        )?)
+    }
+
+    pub(crate) fn source_inventory_page(
+        &self,
+        ordinal: u32,
+    ) -> Result<super::bootstrap_import::SourceInventoryIndexPageV1, BootstrapStreamingImportError>
+    {
+        let bytes = read_bounded_file(
+            &numbered_path(
+                &self.sealed_directory.join(BOOTSTRAP_STREAM_INVENTORY_PAGES),
+                ordinal,
+            ),
+            super::bootstrap_import::MAX_SOURCE_INDEX_PAGE_BYTES,
+        )?;
+        super::bootstrap_import::SourceInventoryIndexPageV1::decode(&bytes).map_err(Into::into)
+    }
+
+    pub(crate) fn source_blob_page(
+        &self,
+        ordinal: u32,
+    ) -> Result<super::bootstrap_import::SourceBlobIndexPageV1, BootstrapStreamingImportError> {
+        let bytes = read_bounded_file(
+            &numbered_path(
+                &self.sealed_directory.join(BOOTSTRAP_STREAM_BLOB_PAGES),
+                ordinal,
+            ),
+            super::bootstrap_import::MAX_SOURCE_INDEX_PAGE_BYTES,
+        )?;
+        super::bootstrap_import::SourceBlobIndexPageV1::decode(&bytes).map_err(Into::into)
+    }
+
+    pub(crate) fn open_part(
+        &self,
+        ordinal: u32,
+    ) -> Result<InactiveBootstrapPreparedPartCursor, BootstrapStreamingImportError> {
+        if ordinal >= self.aggregate.parts().len() as u32 {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "bootstrap part ordinal is outside the sealed aggregate".into(),
+            ));
+        }
+        let directory = self
+            .sealed_directory
+            .join(BOOTSTRAP_STREAM_PARTS)
+            .join(format!("{ordinal:08}"));
+        let manifest = read_bounded_file(
+            &directory.join(BOOTSTRAP_STREAM_PART_MANIFEST),
+            BOOTSTRAP_STREAM_MAX_MANIFEST_BYTES,
+        )?;
+        let evidence = read_bounded_file(
+            &directory.join(BOOTSTRAP_STREAM_PART_EVIDENCE),
+            super::bootstrap_import::MAX_BOOTSTRAP_PART_EVIDENCE_BYTES,
+        )?;
+        let spans = read_bounded_file(
+            &directory.join(BOOTSTRAP_STREAM_PART_SPANS),
+            super::bootstrap_import::MAX_PART_SPAN_INDEX_BYTES,
+        )?;
+        Ok(InactiveBootstrapPreparedPartCursor {
+            ordinal,
+            manifest,
+            evidence,
+            spans,
+            objects: FrameReader::open(
+                &directory.join(BOOTSTRAP_STREAM_PART_OBJECTS),
+                super::batch::MAX_OBJECT_BYTES,
+            )?,
+        })
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct InactiveBootstrapPreparedPartCursor {
+    ordinal: u32,
+    manifest: Vec<u8>,
+    evidence: Vec<u8>,
+    spans: Vec<u8>,
+    objects: FrameReader,
+}
+
+#[allow(dead_code)]
+impl InactiveBootstrapPreparedPartCursor {
+    pub(crate) const fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    pub(crate) fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest
+    }
+
+    pub(crate) fn evidence(
+        &self,
+    ) -> Result<BootstrapImportPartEvidenceV1, BootstrapStreamingImportError> {
+        BootstrapImportPartEvidenceV1::decode(&self.evidence).map_err(Into::into)
+    }
+
+    pub(crate) fn span_index(
+        &self,
+    ) -> Result<BootstrapPartSpanIndexV1, BootstrapStreamingImportError> {
+        BootstrapPartSpanIndexV1::decode(&self.spans).map_err(Into::into)
+    }
+
+    pub(crate) fn next_object_bytes(
+        &mut self,
+    ) -> Result<Option<Vec<u8>>, BootstrapStreamingImportError> {
+        self.objects.next().map_err(Into::into)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SortRecord {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+struct ExternalSort {
+    directory: PathBuf,
+    label: String,
+    buffer: Vec<SortRecord>,
+    buffer_bytes: usize,
+    runs: Vec<PathBuf>,
+    next_run: usize,
+    total_bytes: u64,
+    total_runs: u64,
+    peak_buffer_bytes: u64,
+}
+
+impl ExternalSort {
+    fn new(directory: &Path, label: &str) -> Result<Self, BootstrapStreamingImportError> {
+        let directory = directory.join(format!("{label}-sort"));
+        create_private_directory(&directory)?;
+        Ok(Self {
+            directory,
+            label: label.to_owned(),
+            buffer: Vec::new(),
+            buffer_bytes: 0,
+            runs: Vec::new(),
+            next_run: 0,
+            total_bytes: 0,
+            total_runs: 0,
+            peak_buffer_bytes: 0,
+        })
+    }
+
+    fn push(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), BootstrapStreamingImportError> {
+        let bytes = key
+            .len()
+            .checked_add(value.len())
+            .and_then(|bytes| bytes.checked_add(8))
+            .ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidOperation(
+                    "external-sort record length overflow".into(),
+                )
+            })?;
+        if bytes > BOOTSTRAP_STREAM_FRAME_BYTES {
+            return Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "external-sort record bytes",
+                observed: bytes as u64,
+                limit: BOOTSTRAP_STREAM_FRAME_BYTES as u64,
+            });
+        }
+        if !self.buffer.is_empty()
+            && self.buffer_bytes.saturating_add(bytes) > BOOTSTRAP_STREAM_SORT_BUFFER_BYTES
+        {
+            self.flush()?;
+        }
+        self.buffer.push(SortRecord { key, value });
+        self.buffer_bytes = self.buffer_bytes.saturating_add(bytes);
+        self.peak_buffer_bytes = self.peak_buffer_bytes.max(self.buffer_bytes as u64);
+        if self.buffer_bytes >= BOOTSTRAP_STREAM_SORT_BUFFER_BYTES {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        destination: &Path,
+    ) -> Result<ExternalSortReceipt, BootstrapStreamingImportError> {
+        self.flush()?;
+        if self.runs.is_empty() {
+            write_exact_new(destination, &[])?;
+        } else {
+            while self.runs.len() > 1 {
+                let current = std::mem::take(&mut self.runs);
+                for group in current.chunks(BOOTSTRAP_STREAM_SORT_FAN_IN) {
+                    let output = self.next_run_path("merge");
+                    merge_sort_runs(group, &output)?;
+                    self.total_runs = self.total_runs.saturating_add(1);
+                    if self.total_runs as usize > BOOTSTRAP_STREAM_MAX_SORT_RUNS {
+                        return Err(BootstrapStreamingImportError::ResourceLimit {
+                            resource: "external-sort runs",
+                            observed: self.total_runs,
+                            limit: BOOTSTRAP_STREAM_MAX_SORT_RUNS as u64,
+                        });
+                    }
+                    self.runs.push(output);
+                }
+                for path in current {
+                    fs::remove_file(path)?;
+                }
+            }
+            fs::rename(&self.runs[0], destination)?;
+            sync_parent(destination)?;
+        }
+        Ok(ExternalSortReceipt {
+            bytes: self.total_bytes,
+            runs: self.total_runs,
+            peak_buffer_bytes: self.peak_buffer_bytes,
+        })
+    }
+
+    fn flush(&mut self) -> Result<(), BootstrapStreamingImportError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        self.buffer.sort_unstable_by(|left, right| {
+            (&left.key, &left.value).cmp(&(&right.key, &right.value))
+        });
+        let path = self.next_run_path("run");
+        let mut writer = BufWriter::new(create_new_file(&path)?);
+        for record in self.buffer.drain(..) {
+            self.total_bytes = self
+                .total_bytes
+                .checked_add(write_sort_record(&mut writer, &record)?)
+                .ok_or_else(|| {
+                    BootstrapStreamingImportError::InvalidOperation(
+                        "external-sort byte count overflow".into(),
+                    )
+                })?;
+        }
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        self.runs.push(path);
+        self.total_runs = self.total_runs.saturating_add(1);
+        if self.total_runs as usize > BOOTSTRAP_STREAM_MAX_SORT_RUNS {
+            return Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "external-sort runs",
+                observed: self.total_runs,
+                limit: BOOTSTRAP_STREAM_MAX_SORT_RUNS as u64,
+            });
+        }
+        self.buffer_bytes = 0;
+        Ok(())
+    }
+
+    fn next_run_path(&mut self, kind: &str) -> PathBuf {
+        let path = self
+            .directory
+            .join(format!("{}-{kind}-{:08}", self.label, self.next_run));
+        self.next_run += 1;
+        path
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ExternalSortReceipt {
+    bytes: u64,
+    runs: u64,
+    peak_buffer_bytes: u64,
+}
+
+struct SortRecordReader {
+    reader: BufReader<File>,
+}
+
+impl SortRecordReader {
+    fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self {
+            reader: BufReader::with_capacity(64 * 1024, File::open(path)?),
+        })
+    }
+
+    fn next(&mut self) -> io::Result<Option<SortRecord>> {
+        let Some(key_length) = read_optional_u32(&mut self.reader)? else {
+            return Ok(None);
+        };
+        let value_length = read_u32_io(&mut self.reader)?;
+        let total = usize::try_from(key_length)
+            .ok()
+            .and_then(|key| {
+                usize::try_from(value_length)
+                    .ok()
+                    .and_then(|value| key.checked_add(value))
+            })
+            .ok_or_else(|| invalid_bootstrap_data("external-sort record length overflow"))?;
+        if total > BOOTSTRAP_STREAM_FRAME_BYTES {
+            return Err(invalid_bootstrap_data(
+                "external-sort record exceeds its bounded frame",
+            ));
+        }
+        let mut key = vec![0; key_length as usize];
+        let mut value = vec![0; value_length as usize];
+        self.reader.read_exact(&mut key)?;
+        self.reader.read_exact(&mut value)?;
+        Ok(Some(SortRecord { key, value }))
+    }
+}
+
+fn merge_sort_runs(inputs: &[PathBuf], output: &Path) -> Result<(), BootstrapStreamingImportError> {
+    let mut readers = inputs
+        .iter()
+        .map(|path| SortRecordReader::open(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut heads = readers
+        .iter_mut()
+        .map(SortRecordReader::next)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut writer = BufWriter::new(create_new_file(output)?);
+    loop {
+        let next = heads
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| record.as_ref().map(|record| (index, record)))
+            .min_by(|(_, left), (_, right)| {
+                (&left.key, &left.value).cmp(&(&right.key, &right.value))
+            })
+            .map(|(index, _)| index);
+        let Some(index) = next else {
+            break;
+        };
+        let record = heads[index]
+            .take()
+            .expect("selected external-sort input has a record");
+        write_sort_record(&mut writer, &record)?;
+        heads[index] = readers[index].next()?;
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(())
+}
+
+fn write_sort_record(
+    writer: &mut impl Write,
+    record: &SortRecord,
+) -> Result<u64, BootstrapStreamingImportError> {
+    let key_length = u32::try_from(record.key.len()).map_err(|_| {
+        BootstrapStreamingImportError::InvalidOperation(
+            "external-sort key length cannot be represented".into(),
+        )
+    })?;
+    let value_length = u32::try_from(record.value.len()).map_err(|_| {
+        BootstrapStreamingImportError::InvalidOperation(
+            "external-sort value length cannot be represented".into(),
+        )
+    })?;
+    writer.write_all(&key_length.to_be_bytes())?;
+    writer.write_all(&value_length.to_be_bytes())?;
+    writer.write_all(&record.key)?;
+    writer.write_all(&record.value)?;
+    Ok(8 + u64::from(key_length) + u64::from(value_length))
+}
+
+pub(crate) struct FrameReader {
+    reader: BufReader<File>,
+    max_frame: usize,
+}
+
+impl FrameReader {
+    fn open(path: &Path, max_frame: usize) -> io::Result<Self> {
+        Ok(Self {
+            reader: BufReader::with_capacity(64 * 1024, File::open(path)?),
+            max_frame,
+        })
+    }
+
+    fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
+        let Some(length) = read_optional_u32(&mut self.reader)? else {
+            return Ok(None);
+        };
+        let length = length as usize;
+        if length > self.max_frame {
+            return Err(invalid_bootstrap_data(
+                "sealed bootstrap frame exceeds its declared bound",
+            ));
+        }
+        let mut bytes = vec![0; length];
+        self.reader.read_exact(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+}
+
+fn write_frame(writer: &mut impl Write, bytes: &[u8]) -> io::Result<u64> {
+    let length = u32::try_from(bytes.len())
+        .map_err(|_| invalid_bootstrap_data("bootstrap frame length cannot be represented"))?;
+    writer.write_all(&length.to_be_bytes())?;
+    writer.write_all(bytes)?;
+    Ok(4 + u64::from(length))
+}
+
+fn read_optional_u32(reader: &mut impl Read) -> io::Result<Option<u32>> {
+    let mut bytes = [0; 4];
+    let mut read = 0;
+    while read != bytes.len() {
+        let current = reader.read(&mut bytes[read..])?;
+        if current == 0 {
+            return if read == 0 {
+                Ok(None)
+            } else {
+                Err(invalid_bootstrap_data("truncated bootstrap frame length"))
+            };
+        }
+        read += current;
+    }
+    Ok(Some(u32::from_be_bytes(bytes)))
+}
+
+fn read_u32_io(reader: &mut impl Read) -> io::Result<u32> {
+    let mut bytes = [0; 4];
+    reader.read_exact(&mut bytes)?;
+    Ok(u32::from_be_bytes(bytes))
+}
+
+fn invalid_bootstrap_data(detail: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, detail.into())
+}
+
+fn create_private_directory(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(invalid_bootstrap_data(
+            "bootstrap scratch path is not a real directory",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(path)?;
+            sync_parent(path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn create_new_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+fn write_exact_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = create_new_file(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    sync_parent(path)
+}
+
+fn publish_exact_file(path: &Path, bytes: &[u8]) -> Result<(), BootstrapStreamingImportError> {
+    match create_new_file(path) {
+        Ok(mut file) => {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            sync_parent(path)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if read_bounded_file(path, bytes.len())? == bytes {
+                Ok(())
+            } else {
+                Err(BootstrapStreamingImportError::ConflictingSeal)
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn read_bounded_file(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(invalid_bootstrap_data(
+            "bootstrap artifact is not a regular no-follow file",
+        ));
+    }
+    let length = usize::try_from(metadata.len())
+        .map_err(|_| invalid_bootstrap_data("bootstrap artifact length cannot be represented"))?;
+    if length > max_bytes {
+        return Err(invalid_bootstrap_data(
+            "bootstrap artifact exceeds its bounded length",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(length);
+    File::open(path)?.read_to_end(&mut bytes)?;
+    if bytes.len() != length {
+        return Err(invalid_bootstrap_data(
+            "bootstrap artifact changed while it was read",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn sync_parent(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid_bootstrap_data("bootstrap path has no parent"))?;
+    File::open(parent)?.sync_all()
+}
+
+fn numbered_path(directory: &Path, ordinal: u32) -> PathBuf {
+    directory.join(format!("{ordinal:08}.bin"))
+}
+
+struct BootstrapSourceReader<'a> {
+    capture: &'a BootstrapSourceCapture,
+    chunks: crate::model::BootstrapSourceChunkCursor,
+    next_chunk: Option<BootstrapSourceChunk>,
+}
+
+impl<'a> BootstrapSourceReader<'a> {
+    fn new(capture: &'a BootstrapSourceCapture) -> io::Result<Self> {
+        let mut chunks = capture.chunks_cursor()?;
+        let next_chunk = chunks.next()?;
+        Ok(Self {
+            capture,
+            chunks,
+            next_chunk,
+        })
+    }
+
+    fn read_entry(
+        &mut self,
+        entry: &BootstrapSourceEntry,
+        instrumentation: &mut BootstrapStreamingImportInstrumentation,
+    ) -> Result<Vec<u8>, BootstrapStreamingImportError> {
+        let declared = entry.description().byte_length();
+        if declared > MAX_SOURCE_FILE_BYTES {
+            return Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "source file bytes",
+                observed: declared,
+                limit: MAX_SOURCE_FILE_BYTES,
+            });
+        }
+        let capacity = usize::try_from(declared).map_err(|_| {
+            BootstrapStreamingImportError::InvalidSource(
+                "source file length cannot be represented".into(),
+            )
+        })?;
+        let mut bytes = Vec::with_capacity(capacity);
+        for ordinal in 0..entry.chunk_count() {
+            let chunk = self.next_chunk.take().ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource(format!(
+                    "sealed source {} is missing chunk {ordinal}",
+                    entry.path()
+                ))
+            })?;
+            if chunk.path() != entry.path() || chunk.ordinal() != ordinal {
+                return Err(BootstrapStreamingImportError::InvalidSource(format!(
+                    "sealed source chunk order differs for {}",
+                    entry.path()
+                )));
+            }
+            let mut reader = self.capture.open_chunk(&chunk)?;
+            reader.read_to_end(&mut bytes)?;
+            reader.finish()?;
+            self.next_chunk = self.chunks.next()?;
+        }
+        if bytes.len() as u64 != declared || BlobDescription::of(&bytes) != entry.description() {
+            return Err(BootstrapStreamingImportError::InvalidSource(format!(
+                "sealed source bytes differ for {}",
+                entry.path()
+            )));
+        }
+        instrumentation.source_bytes_read = instrumentation
+            .source_bytes_read
+            .checked_add(declared)
+            .ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource(
+                    "source byte instrumentation overflow".into(),
+                )
+            })?;
+        instrumentation.peak_owned_source_bytes =
+            instrumentation.peak_owned_source_bytes.max(declared);
+        Ok(bytes)
+    }
+
+    fn finish(self) -> Result<(), BootstrapStreamingImportError> {
+        if self.next_chunk.is_some() {
+            return Err(BootstrapStreamingImportError::InvalidSource(
+                "sealed source capture has trailing chunks".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+struct BootstrapSourceProtocolPreparation {
+    import_id: ImportId,
+    inventory_root: SourceInventoryRootV1,
+    inventory_page_count: u32,
+    blob_root: SourceBlobChunkRootV1,
+    blob_page_count: u32,
+    source_count: u32,
+}
+
+fn prepare_bootstrap_source_protocol(
+    workspace_id: WorkspaceId,
+    capture: &BootstrapSourceCapture,
+    working: &Path,
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<BootstrapSourceProtocolPreparation, BootstrapStreamingImportError> {
+    let source_count = u32::try_from(capture.source_file_count()).map_err(|_| {
+        BootstrapStreamingImportError::ResourceLimit {
+            resource: "source files",
+            observed: capture.source_file_count(),
+            limit: super::bootstrap_import::MAX_SOURCE_INVENTORY_LEAVES as u64,
+        }
+    })?;
+    if source_count > super::bootstrap_import::MAX_SOURCE_INVENTORY_LEAVES {
+        return Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "source files",
+            observed: u64::from(source_count),
+            limit: super::bootstrap_import::MAX_SOURCE_INVENTORY_LEAVES as u64,
+        });
+    }
+    if capture.source_chunk_count() > u64::from(super::bootstrap_import::MAX_SOURCE_BLOB_CHUNKS) {
+        return Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "source chunks",
+            observed: capture.source_chunk_count(),
+            limit: super::bootstrap_import::MAX_SOURCE_BLOB_CHUNKS as u64,
+        });
+    }
+
+    let blob_sorted = working.join("source-blob-records.sorted");
+    let names_sorted = working.join("logical-page-names.sorted");
+    let mut blob_sort = ExternalSort::new(working, "source-blobs")?;
+    let mut names_sort = ExternalSort::new(working, "logical-names")?;
+    let mut inventory_root = SourceInventoryRootBuilderV1::new();
+    let mut derivation =
+        ImportIdDerivation::new(workspace_id, 0, source_count as usize, DIFF_SCHEMA_VERSION)
+            .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+    derivation
+        .begin_inventory()
+        .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+
+    let mut entries = capture.entries_cursor()?;
+    let mut chunks = capture.chunks_cursor()?;
+    let mut next_chunk = chunks.next()?;
+    let mut observed_sources = 0_u32;
+    let mut total_source_bytes = 0_u64;
+    while let Some(entry) = entries.next()? {
+        observed_sources = observed_sources.checked_add(1).ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidSource("source count overflow".into())
+        })?;
+        let description = entry.description();
+        total_source_bytes = total_source_bytes
+            .checked_add(description.byte_length())
+            .ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource("total source bytes overflow".into())
+            })?;
+        if total_source_bytes > MAX_TOTAL_SOURCE_BYTES {
+            return Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "total source bytes",
+                observed: total_source_bytes,
+                limit: MAX_TOTAL_SOURCE_BYTES,
+            });
+        }
+        let leaf = SourceLeafV1::new(
+            entry.kind(),
+            entry.path().clone(),
+            SourceContentDigestV1::from_bytes(*description.sha256()),
+            description.byte_length(),
+        )?;
+        inventory_root.push(&leaf)?;
+        derivation
+            .push_inventory(&ImportInventoryEntry::with_kind(
+                entry.kind(),
+                entry.path().clone(),
+                ImportInventoryState::Present(description),
+            ))
+            .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+
+        let logical_name = LogicalPageName::parse(entry.logical_name().to_owned())
+            .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+        names_sort.push(
+            logical_name.key_digest().as_bytes().to_vec(),
+            entry.path().as_str().as_bytes().to_vec(),
+        )?;
+
+        let leaf_digest = leaf.digest();
+        let mut marker_key = leaf_digest.as_bytes().to_vec();
+        marker_key.push(0);
+        blob_sort.push(marker_key, leaf.encode())?;
+        let mut offset = 0_u64;
+        for ordinal in 0..entry.chunk_count() {
+            let chunk = next_chunk.take().ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource(format!(
+                    "sealed source {} is missing chunk {ordinal}",
+                    entry.path()
+                ))
+            })?;
+            if chunk.path() != entry.path() || chunk.ordinal() != ordinal {
+                return Err(BootstrapStreamingImportError::InvalidSource(format!(
+                    "sealed chunk order differs for {}",
+                    entry.path()
+                )));
+            }
+            let byte_length = u32::try_from(chunk.description().byte_length()).map_err(|_| {
+                BootstrapStreamingImportError::InvalidSource(
+                    "source chunk length cannot be represented".into(),
+                )
+            })?;
+            let descriptor = SourceBlobChunkDescriptorV1::new(
+                leaf_digest,
+                ordinal,
+                entry.chunk_count(),
+                offset,
+                byte_length,
+                SourceBlobChunkDigestV1::from_bytes(*chunk.description().sha256()),
+            )?;
+            let mut descriptor_key = leaf_digest.as_bytes().to_vec();
+            descriptor_key.push(1);
+            descriptor_key.extend_from_slice(&ordinal.to_be_bytes());
+            blob_sort.push(descriptor_key, descriptor.encode())?;
+            offset = offset.checked_add(u64::from(byte_length)).ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource("source chunk offset overflow".into())
+            })?;
+            next_chunk = chunks.next()?;
+        }
+        if offset != description.byte_length() {
+            return Err(BootstrapStreamingImportError::InvalidSource(format!(
+                "sealed chunk lengths do not cover {}",
+                entry.path()
+            )));
+        }
+    }
+    if observed_sources != source_count || next_chunk.is_some() {
+        return Err(BootstrapStreamingImportError::InvalidSource(
+            "sealed source entry/chunk counts differ from the capture".into(),
+        ));
+    }
+    let inventory_root = inventory_root.finish();
+    let import_id = derivation
+        .finish()
+        .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+    let blob_receipt = blob_sort.finish(&blob_sorted)?;
+    let name_receipt = names_sort.finish(&names_sorted)?;
+    record_sort_receipt(instrumentation, blob_receipt);
+    record_sort_receipt(instrumentation, name_receipt);
+    validate_unique_logical_names(&names_sorted)?;
+
+    let blob_root = build_source_blob_root(&blob_sorted)?;
+    let inventory_pages = working.join(BOOTSTRAP_STREAM_INVENTORY_PAGES);
+    let blob_pages = working.join(BOOTSTRAP_STREAM_BLOB_PAGES);
+    create_private_directory(&inventory_pages)?;
+    create_private_directory(&blob_pages)?;
+    let inventory_page_count =
+        write_source_inventory_pages(capture, inventory_root, &inventory_pages)?;
+    let blob_page_count = write_source_blob_pages(&blob_sorted, blob_root, &blob_pages)?;
+    instrumentation.source_files = u64::from(source_count);
+    instrumentation.source_chunks = capture.source_chunk_count();
+    instrumentation.source_bytes = total_source_bytes;
+    Ok(BootstrapSourceProtocolPreparation {
+        import_id,
+        inventory_root,
+        inventory_page_count,
+        blob_root,
+        blob_page_count,
+        source_count,
+    })
+}
+
+fn record_sort_receipt(
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+    receipt: ExternalSortReceipt,
+) {
+    instrumentation.operation_spool_bytes = instrumentation
+        .operation_spool_bytes
+        .saturating_add(receipt.bytes);
+    instrumentation.external_sort_runs = instrumentation
+        .external_sort_runs
+        .saturating_add(receipt.runs);
+    instrumentation.peak_owned_sort_buffer_bytes = instrumentation
+        .peak_owned_sort_buffer_bytes
+        .max(receipt.peak_buffer_bytes);
+}
+
+fn validate_unique_logical_names(path: &Path) -> Result<(), BootstrapStreamingImportError> {
+    let mut reader = SortRecordReader::open(path)?;
+    let mut previous: Option<(Vec<u8>, Vec<u8>)> = None;
+    while let Some(record) = reader.next()? {
+        if let Some((key, first_path)) = &previous {
+            if *key == record.key {
+                return Err(BootstrapStreamingImportError::InvalidSource(format!(
+                    "captured paths {:?} and {:?} decode to the same logical page name",
+                    String::from_utf8_lossy(first_path),
+                    String::from_utf8_lossy(&record.value)
+                )));
+            }
+        }
+        previous = Some((record.key, record.value));
+    }
+    Ok(())
+}
+
+fn build_source_blob_root(
+    sorted: &Path,
+) -> Result<SourceBlobChunkRootV1, BootstrapStreamingImportError> {
+    let mut reader = SortRecordReader::open(sorted)?;
+    let mut builder = SourceBlobChunkRootBuilderV1::new();
+    while let Some(record) = reader.next()? {
+        match record.key.get(32).copied() {
+            Some(0) => builder.begin_source(&SourceLeafV1::decode(&record.value)?)?,
+            Some(1) => builder.push(SourceBlobChunkDescriptorV1::decode(&record.value)?)?,
+            _ => {
+                return Err(BootstrapStreamingImportError::InvalidSource(
+                    "invalid source-blob sort record".into(),
+                ))
+            }
+        }
+    }
+    builder.finish().map_err(Into::into)
+}
+
+fn write_source_inventory_pages(
+    capture: &BootstrapSourceCapture,
+    root: SourceInventoryRootV1,
+    directory: &Path,
+) -> Result<u32, BootstrapStreamingImportError> {
+    let mut builder = SourceInventoryIndexBuilderV1::new(root);
+    let mut entries = capture.entries_cursor()?;
+    let mut pages = 0_u32;
+    while let Some(entry) = entries.next()? {
+        let leaf = SourceLeafV1::new(
+            entry.kind(),
+            entry.path().clone(),
+            SourceContentDigestV1::from_bytes(*entry.description().sha256()),
+            entry.description().byte_length(),
+        )?;
+        if let Some(page) = builder.push(leaf)? {
+            write_exact_new(
+                &numbered_path(directory, page.page_ordinal()),
+                &page.encode()?,
+            )?;
+            pages += 1;
+        }
+    }
+    if let Some(page) = builder.finish()? {
+        write_exact_new(
+            &numbered_path(directory, page.page_ordinal()),
+            &page.encode()?,
+        )?;
+        pages += 1;
+    }
+    if pages > MAX_SOURCE_INDEX_PAGES {
+        return Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "source inventory index pages",
+            observed: u64::from(pages),
+            limit: u64::from(MAX_SOURCE_INDEX_PAGES),
+        });
+    }
+    Ok(pages)
+}
+
+fn write_source_blob_pages(
+    sorted: &Path,
+    root: SourceBlobChunkRootV1,
+    directory: &Path,
+) -> Result<u32, BootstrapStreamingImportError> {
+    let mut reader = SortRecordReader::open(sorted)?;
+    let mut builder = SourceBlobIndexBuilderV1::new(root);
+    let mut pages = 0_u32;
+    while let Some(record) = reader.next()? {
+        if record.key.get(32) != Some(&1) {
+            continue;
+        }
+        if let Some(page) = builder.push(SourceBlobChunkDescriptorV1::decode(&record.value)?)? {
+            write_exact_new(
+                &numbered_path(directory, page.page_ordinal()),
+                &page.encode()?,
+            )?;
+            pages += 1;
+        }
+    }
+    if let Some(page) = builder.finish()? {
+        write_exact_new(
+            &numbered_path(directory, page.page_ordinal()),
+            &page.encode()?,
+        )?;
+        pages += 1;
+    }
+    if pages > MAX_SOURCE_INDEX_PAGES {
+        return Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "source blob index pages",
+            observed: u64::from(pages),
+            limit: u64::from(MAX_SOURCE_INDEX_PAGES),
+        });
+    }
+    Ok(pages)
+}
+
+#[derive(Clone)]
+struct BootstrapOperationRecord {
+    operation: SemanticOperation,
+    source_leaf: SourceLeafDigestV1,
+    source_offset: u64,
+    source_length: u64,
+    canonical_bytes: Vec<u8>,
+}
+
+impl BootstrapOperationRecord {
+    fn new(
+        operation: SemanticOperation,
+        source_leaf: SourceLeafDigestV1,
+        source_span: Option<StructuralSpan>,
+    ) -> Result<Self, BootstrapStreamingImportError> {
+        let canonical_bytes = postcard::to_allocvec(&operation).map_err(|error| {
+            BootstrapStreamingImportError::InvalidOperation(format!(
+                "cannot encode bootstrap semantic operation: {error}"
+            ))
+        })?;
+        if canonical_bytes.len() > BOOTSTRAP_STREAM_FRAME_BYTES {
+            return Err(BootstrapStreamingImportError::SingletonOverLimit(
+                "operation record bytes",
+            ));
+        }
+        let (source_offset, source_length) = source_span
+            .map(|span| (span.start(), span.end().saturating_sub(span.start())))
+            .unwrap_or((0, 0));
+        Ok(Self {
+            operation,
+            source_leaf,
+            source_offset,
+            source_length,
+            canonical_bytes,
+        })
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, BootstrapStreamingImportError> {
+        let operation_length = u32::try_from(self.canonical_bytes.len()).map_err(|_| {
+            BootstrapStreamingImportError::InvalidOperation(
+                "operation record length cannot be represented".into(),
+            )
+        })?;
+        let mut bytes = Vec::with_capacity(52 + self.canonical_bytes.len());
+        bytes.extend_from_slice(self.source_leaf.as_bytes());
+        bytes.extend_from_slice(&self.source_offset.to_be_bytes());
+        bytes.extend_from_slice(&self.source_length.to_be_bytes());
+        bytes.extend_from_slice(&operation_length.to_be_bytes());
+        bytes.extend_from_slice(&self.canonical_bytes);
+        Ok(bytes)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, BootstrapStreamingImportError> {
+        if bytes.len() < 52 {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "truncated operation spool record".into(),
+            ));
+        }
+        let source_leaf = SourceLeafDigestV1::from_bytes(
+            bytes[..32]
+                .try_into()
+                .expect("checked operation record digest length"),
+        );
+        let source_offset = u64::from_be_bytes(
+            bytes[32..40]
+                .try_into()
+                .expect("checked operation record offset length"),
+        );
+        let source_length = u64::from_be_bytes(
+            bytes[40..48]
+                .try_into()
+                .expect("checked operation record span length"),
+        );
+        let operation_length = u32::from_be_bytes(
+            bytes[48..52]
+                .try_into()
+                .expect("checked operation record payload length"),
+        ) as usize;
+        if operation_length != bytes.len() - 52 {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "operation spool record length differs".into(),
+            ));
+        }
+        source_offset.checked_add(source_length).ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidOperation(
+                "operation source span overflows".into(),
+            )
+        })?;
+        let canonical_bytes = bytes[52..].to_vec();
+        let operation = postcard::from_bytes(&canonical_bytes).map_err(|error| {
+            BootstrapStreamingImportError::InvalidOperation(format!(
+                "cannot decode bootstrap semantic operation: {error}"
+            ))
+        })?;
+        if postcard::to_allocvec(&operation)
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?
+            != canonical_bytes
+        {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "operation spool record is not canonical".into(),
+            ));
+        }
+        Ok(Self {
+            operation,
+            source_leaf,
+            source_offset,
+            source_length,
+            canonical_bytes,
+        })
+    }
+
+    fn operation_leaf(&self) -> Result<OperationLeafV1, BootstrapStreamingImportError> {
+        OperationLeafV1::new(
+            OperationDigestV1::from_bytes(*ContentDigest::of(&self.canonical_bytes).as_bytes()),
+            self.canonical_bytes.len() as u64,
+        )
+        .map_err(Into::into)
+    }
+
+    fn source_span(&self) -> Result<Option<SourceSpanV1>, BootstrapStreamingImportError> {
+        if self.source_length == 0 {
+            Ok(None)
+        } else {
+            SourceSpanV1::new(self.source_leaf, self.source_offset, self.source_length)
+                .map(Some)
+                .map_err(Into::into)
+        }
+    }
+}
+
+struct BootstrapOperationSpool {
+    path: PathBuf,
+    operation_count: u64,
+}
+
+fn spool_bootstrap_operations(
+    capture: &BootstrapSourceCapture,
+    import_id: ImportId,
+    workspace_id: WorkspaceId,
+    working: &Path,
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<BootstrapOperationSpool, BootstrapStreamingImportError> {
+    let page_path = working.join("phase-page.sorted");
+    let block_path = working.join("phase-block.sorted");
+    let identity_candidates_path = working.join("identity-candidates.sorted");
+    let identity_path = working.join("phase-identity.sorted");
+    let preamble_path = working.join("phase-preamble.sorted");
+    let mut page_sort = ExternalSort::new(working, "phase-page")?;
+    let mut block_sort = ExternalSort::new(working, "phase-block")?;
+    let mut identity_candidates = ExternalSort::new(working, "identity-candidates")?;
+    let mut preamble_sort = ExternalSort::new(working, "phase-preamble")?;
+    let mut source_reader = BootstrapSourceReader::new(capture)?;
+    let mut entries = capture.entries_cursor()?;
+    let mut operation_count = 0_u64;
+
+    while let Some(entry) = entries.next()? {
+        let bytes = source_reader.read_entry(&entry, instrumentation)?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            BootstrapStreamingImportError::InvalidSource(format!(
+                "captured source {} is not UTF-8",
+                entry.path()
+            ))
+        })?;
+        let logical_name = LogicalPageName::parse(entry.logical_name().to_owned())
+            .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+        let leaf = SourceLeafV1::new(
+            entry.kind(),
+            entry.path().clone(),
+            SourceContentDigestV1::from_bytes(*entry.description().sha256()),
+            entry.description().byte_length(),
+        )?;
+        let source_leaf = leaf.digest();
+        let page_id = import_id.unmatched_page_id(&ImportLocator::page(entry.path().clone()));
+        let home_document_id =
+            DocumentId::for_unmatched_import_page(workspace_id, entry.path().as_str().as_bytes());
+        let full_span = (!bytes.is_empty())
+            .then(|| StructuralSpan::new(0, bytes.len() as u64))
+            .transpose()
+            .map_err(|error| BootstrapStreamingImportError::InvalidSource(error.to_string()))?;
+        let page_operation = BootstrapOperationRecord::new(
+            SemanticOperation::CreatePage {
+                page_id,
+                home_document_id,
+                name: logical_name,
+                path: entry.path().clone(),
+                kind: entry.kind(),
+            },
+            source_leaf,
+            full_span,
+        )?;
+        page_sort.push(
+            entry.path().as_str().as_bytes().to_vec(),
+            page_operation.encode()?,
+        )?;
+        operation_count = checked_bootstrap_operation_count(operation_count)?;
+
+        let mut parser_instrumentation = ImportInstrumentation::default();
+        let tree = parse_nodes(entry.path(), bytes.as_slice(), &mut parser_instrumentation)
+            .map_err(|block| BootstrapStreamingImportError::InvalidSource(block.detail))?;
+        if tree.nodes.len() as u32 > MAX_PARSED_NODES_PER_SOURCE_FILE {
+            return Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "parser nodes per source file",
+                observed: tree.nodes.len() as u64,
+                limit: u64::from(MAX_PARSED_NODES_PER_SOURCE_FILE),
+            });
+        }
+        instrumentation.parser_nodes = instrumentation
+            .parser_nodes
+            .checked_add(tree.nodes.len() as u64)
+            .ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidSource(
+                    "parser-node instrumentation overflow".into(),
+                )
+            })?;
+        instrumentation.peak_owned_parser_nodes = instrumentation
+            .peak_owned_parser_nodes
+            .max(tree.nodes.len() as u64);
+        let mut node_ids = Vec::with_capacity(tree.nodes.len());
+        for index in 0..tree.nodes.len() {
+            let locator = materialize_locator(&tree, index, &mut parser_instrumentation)
+                .map_err(|block| BootstrapStreamingImportError::InvalidSource(block.detail))?;
+            let block_id =
+                import_id.unmatched_block_id(&ImportLocator::block(entry.path().clone(), locator));
+            let parent = tree.nodes[index].parent.map(|parent| node_ids[parent]);
+            node_ids.push(block_id);
+            let span = Some(tree.nodes[index].span);
+            let operation = BootstrapOperationRecord::new(
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id,
+                        home_document_id,
+                    },
+                    page_id,
+                    parent,
+                    order: imported_order(tree.nodes[index].sibling_position),
+                    content: tree.nodes[index].raw.clone(),
+                },
+                source_leaf,
+                span,
+            )?;
+            let mut key = (tree.nodes[index].depth as u32).to_be_bytes().to_vec();
+            key.extend_from_slice(block_id.as_uuid().as_bytes());
+            block_sort.push(key, operation.encode()?)?;
+            operation_count = checked_bootstrap_operation_count(operation_count)?;
+
+            if tree.nodes[index].raw_ids.len() == 1 {
+                if let Ok(logseq_uuid) = LogseqUuid::parse(tree.nodes[index].raw_ids[0].trim()) {
+                    let identity = BootstrapOperationRecord::new(
+                        SemanticOperation::MutateBlockLogseqIdentity {
+                            block: BlockLocation {
+                                block_id,
+                                home_document_id,
+                            },
+                            mutation: LogseqIdentityMutation::AssignExternal { logseq_uuid },
+                        },
+                        source_leaf,
+                        span,
+                    )?;
+                    let mut value = block_id.as_uuid().as_bytes().to_vec();
+                    value.extend_from_slice(&identity.encode()?);
+                    identity_candidates.push(logseq_uuid.as_uuid().as_bytes().to_vec(), value)?;
+                }
+            }
+        }
+        if tree.preamble.is_some() {
+            let preamble = BootstrapOperationRecord::new(
+                SemanticOperation::SetPagePreamble {
+                    page_id,
+                    preamble: tree.preamble,
+                },
+                source_leaf,
+                full_span,
+            )?;
+            preamble_sort.push(
+                entry.path().as_str().as_bytes().to_vec(),
+                preamble.encode()?,
+            )?;
+            operation_count = checked_bootstrap_operation_count(operation_count)?;
+        }
+        let _ = text;
+    }
+    source_reader.finish()?;
+
+    for (sort, destination) in [
+        (page_sort, &page_path),
+        (block_sort, &block_path),
+        (identity_candidates, &identity_candidates_path),
+        (preamble_sort, &preamble_path),
+    ] {
+        let receipt = sort.finish(destination)?;
+        record_sort_receipt(instrumentation, receipt);
+    }
+    let identity_count = collapse_unique_identity_candidates(
+        &identity_candidates_path,
+        &identity_path,
+        working,
+        instrumentation,
+    )?;
+    operation_count = operation_count.checked_add(identity_count).ok_or_else(|| {
+        BootstrapStreamingImportError::InvalidOperation("bootstrap operation count overflow".into())
+    })?;
+    require_bootstrap_operation_limit(operation_count)?;
+
+    let operation_path = working.join(BOOTSTRAP_STREAM_OPERATION_SPOOL);
+    let mut output = BufWriter::new(create_new_file(&operation_path)?);
+    for phase in [&page_path, &block_path, &identity_path, &preamble_path] {
+        let mut input = File::open(phase)?;
+        io::copy(&mut input, &mut output)?;
+    }
+    output.flush()?;
+    output.get_ref().sync_all()?;
+    sync_parent(&operation_path)?;
+    instrumentation.operations = operation_count;
+    instrumentation.operation_spool_bytes = instrumentation
+        .operation_spool_bytes
+        .saturating_add(operation_path.metadata()?.len());
+    Ok(BootstrapOperationSpool {
+        path: operation_path,
+        operation_count,
+    })
+}
+
+fn collapse_unique_identity_candidates(
+    candidates: &Path,
+    destination: &Path,
+    working: &Path,
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<u64, BootstrapStreamingImportError> {
+    let mut reader = SortRecordReader::open(candidates)?;
+    let mut output_sort = ExternalSort::new(working, "phase-identity")?;
+    let mut pending: Option<SortRecord> = None;
+    let mut duplicate = false;
+    let mut count = 0_u64;
+    while let Some(record) = reader.next()? {
+        match &pending {
+            Some(previous) if previous.key == record.key => {
+                duplicate = true;
+            }
+            Some(_) => {
+                if !duplicate {
+                    let unique = pending.take().expect("pending identity exists");
+                    if unique.value.len() < 16 {
+                        return Err(BootstrapStreamingImportError::InvalidOperation(
+                            "truncated identity candidate".into(),
+                        ));
+                    }
+                    output_sort.push(unique.value[..16].to_vec(), unique.value[16..].to_vec())?;
+                    count = count.saturating_add(1);
+                }
+                pending = Some(record);
+                duplicate = false;
+            }
+            None => pending = Some(record),
+        }
+    }
+    if let Some(unique) = pending {
+        if !duplicate {
+            if unique.value.len() < 16 {
+                return Err(BootstrapStreamingImportError::InvalidOperation(
+                    "truncated identity candidate".into(),
+                ));
+            }
+            output_sort.push(unique.value[..16].to_vec(), unique.value[16..].to_vec())?;
+            count = count.saturating_add(1);
+        }
+    }
+    let receipt = output_sort.finish(destination)?;
+    record_sort_receipt(instrumentation, receipt);
+    Ok(count)
+}
+
+fn checked_bootstrap_operation_count(current: u64) -> Result<u64, BootstrapStreamingImportError> {
+    let observed = current.checked_add(1).ok_or_else(|| {
+        BootstrapStreamingImportError::InvalidOperation("bootstrap operation count overflow".into())
+    })?;
+    require_bootstrap_operation_limit(observed)?;
+    Ok(observed)
+}
+
+fn require_bootstrap_operation_limit(count: u64) -> Result<(), BootstrapStreamingImportError> {
+    let limit = u64::from(MAX_BOOTSTRAP_PARTS) * u64::from(MAX_OPERATIONS_PER_BOOTSTRAP_PART);
+    if count > limit {
+        Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "bootstrap operations",
+            observed: count,
+            limit,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+struct BootstrapOperationSpoolReader {
+    records: SortRecordReader,
+}
+
+impl BootstrapOperationSpoolReader {
+    fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self {
+            records: SortRecordReader::open(path)?,
+        })
+    }
+
+    fn next(&mut self) -> Result<Option<BootstrapOperationRecord>, BootstrapStreamingImportError> {
+        self.records
+            .next()?
+            .map(|record| BootstrapOperationRecord::decode(&record.value))
+            .transpose()
+    }
+}
+
+fn partition_bootstrap_operation_spool(
+    operations: &BootstrapOperationSpool,
+    working: &Path,
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<u32, BootstrapStreamingImportError> {
+    let path = working.join(BOOTSTRAP_STREAM_BOUNDARY_SPOOL);
+    let mut writer = BufWriter::new(create_new_file(&path)?);
+    let mut reader = BootstrapOperationSpoolReader::open(&operations.path)?;
+    let mut part_operations = 0_u32;
+    let mut part_semantic_bytes = 0_u64;
+    let mut part_spans = BTreeSet::new();
+    let mut part_count = 0_u32;
+    let mut observed_operations = 0_u64;
+    while let Some(operation) = reader.next()? {
+        let semantic_bytes = operation.canonical_bytes.len() as u64;
+        let partition_bytes = semantic_bytes
+            .checked_add(BOOTSTRAP_STREAM_SEMANTIC_EFFECT_OVERHEAD)
+            .ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidOperation(
+                    "semantic-effect partition charge overflow".into(),
+                )
+            })?;
+        if partition_bytes > MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART {
+            return Err(BootstrapStreamingImportError::SingletonOverLimit(
+                "semantic-effect bytes",
+            ));
+        }
+        let source_span = operation.source_span()?;
+        let adds_span = source_span.is_some_and(|span| !part_spans.contains(&span));
+        let exceeds = part_operations == MAX_OPERATIONS_PER_BOOTSTRAP_PART
+            || part_semantic_bytes.saturating_add(partition_bytes)
+                > MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART
+            || (adds_span && part_spans.len() as u32 == MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART);
+        if exceeds {
+            if part_operations == 0 {
+                return Err(BootstrapStreamingImportError::SingletonOverLimit(
+                    "bootstrap part",
+                ));
+            }
+            write_frame(&mut writer, &part_operations.to_be_bytes())?;
+            part_count = part_count.checked_add(1).ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidOperation(
+                    "bootstrap part count overflow".into(),
+                )
+            })?;
+            if part_count > MAX_BOOTSTRAP_PARTS {
+                return Err(BootstrapStreamingImportError::ResourceLimit {
+                    resource: "bootstrap parts",
+                    observed: u64::from(part_count),
+                    limit: u64::from(MAX_BOOTSTRAP_PARTS),
+                });
+            }
+            instrumentation.source_spans = instrumentation
+                .source_spans
+                .saturating_add(part_spans.len() as u64);
+            part_operations = 0;
+            part_semantic_bytes = 0;
+            part_spans.clear();
+        }
+        part_operations += 1;
+        part_semantic_bytes += partition_bytes;
+        if let Some(span) = source_span {
+            part_spans.insert(span);
+        }
+        observed_operations += 1;
+    }
+    if part_operations != 0 {
+        write_frame(&mut writer, &part_operations.to_be_bytes())?;
+        part_count = part_count.checked_add(1).ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidOperation("bootstrap part count overflow".into())
+        })?;
+        instrumentation.source_spans = instrumentation
+            .source_spans
+            .saturating_add(part_spans.len() as u64);
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    sync_parent(&path)?;
+    if observed_operations != operations.operation_count {
+        return Err(BootstrapStreamingImportError::InvalidOperation(
+            "operation spool count differs during partitioning".into(),
+        ));
+    }
+    if part_count > MAX_BOOTSTRAP_PARTS {
+        return Err(BootstrapStreamingImportError::ResourceLimit {
+            resource: "bootstrap parts",
+            observed: u64::from(part_count),
+            limit: u64::from(MAX_BOOTSTRAP_PARTS),
+        });
+    }
+    instrumentation.parts = part_count;
+    Ok(part_count)
+}
+
+struct AuthoredBootstrapParts {
+    descriptors: Vec<BootstrapPartDescriptorV1>,
+    candidate: Box<DetachedBootstrapCandidate>,
+    engine_materials: Vec<DetachedBootstrapAcceptedEngineMaterial>,
+    final_frontier: ArchiveLocalFrontierBindingV1,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn author_bootstrap_parts(
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    catalog_document_id: DocumentId,
+    reference_catalog_policy: ReferenceCatalogPolicyV1,
+    import_id: ImportId,
+    operation_spool: &BootstrapOperationSpool,
+    part_count: u32,
+    working: &Path,
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<AuthoredBootstrapParts, BootstrapStreamingImportError> {
+    let profile_digest = BootstrapPartitionProfileV1::v1().digest();
+    let mut preview = boxed_detached_bootstrap_session(
+        workspace_id,
+        lineage_digest,
+        catalog_document_id,
+        reference_catalog_policy.clone(),
+    )?;
+    let mut authoring = boxed_detached_bootstrap_session(
+        workspace_id,
+        lineage_digest,
+        catalog_document_id,
+        reference_catalog_policy,
+    )?;
+    let author_device_id = DeviceId::for_external_import_author(workspace_id);
+    let author_session_id = SessionId::for_external_import_author(workspace_id, import_id);
+    let crdt_peer_id = (0..=1024)
+        .map(|attempt| CrdtPeerId::external_import_candidate(workspace_id, import_id, attempt))
+        .find(|peer| peer.as_u64() != 0)
+        .ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidOperation(
+                "no nonzero deterministic bootstrap CRDT peer".into(),
+            )
+        })?;
+
+    let parts_directory = working.join(BOOTSTRAP_STREAM_PARTS);
+    create_private_directory(&parts_directory)?;
+    let mut boundaries = FrameReader::open(
+        &working.join(BOOTSTRAP_STREAM_BOUNDARY_SPOOL),
+        std::mem::size_of::<u32>(),
+    )?;
+    let mut operations = BootstrapOperationSpoolReader::open(&operation_spool.path)?;
+    let mut predecessor = None;
+    let mut archive_frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile_digest);
+    let mut descriptors = Vec::with_capacity(part_count as usize);
+    let mut engine_materials = Vec::with_capacity(part_count as usize);
+    let mut authored_operations = 0_u64;
+
+    for ordinal in 0..part_count {
+        let boundary = boundaries.next()?.ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidOperation(
+                "part-boundary spool ended early".into(),
+            )
+        })?;
+        if boundary.len() != 4 {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "invalid part-boundary frame".into(),
+            ));
+        }
+        let operation_count = u32::from_be_bytes(
+            boundary
+                .try_into()
+                .expect("checked part-boundary frame length"),
+        );
+        let mut records = Vec::with_capacity(operation_count as usize);
+        let mut transaction_operations = Vec::with_capacity(operation_count as usize);
+        let mut operation_leaves = Vec::with_capacity(operation_count as usize);
+        let mut source_spans = BTreeSet::new();
+        for _ in 0..operation_count {
+            let record = operations.next()?.ok_or_else(|| {
+                BootstrapStreamingImportError::InvalidOperation(
+                    "operation spool ended before its part boundary".into(),
+                )
+            })?;
+            transaction_operations.push(record.operation.clone());
+            operation_leaves.push(record.operation_leaf()?);
+            if let Some(span) = record.source_span()? {
+                source_spans.insert(span);
+            }
+            records.push(record);
+        }
+        authored_operations += u64::from(operation_count);
+        let transaction = OperationTransaction::new(transaction_operations)
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        let source_spans = source_spans.into_iter().collect::<Vec<_>>();
+        let source_span_root = SourceSpanRootV1::from_spans(&source_spans)?;
+        let operation_root = OperationRootV1::from_operations(&operation_leaves)?;
+        let provisional_evidence = BootstrapImportPartEvidenceV1::new(
+            import_id,
+            profile_digest,
+            ordinal,
+            part_count,
+            source_span_root,
+            operation_root,
+            PayloadObjectRootV1::empty(),
+            predecessor,
+        )?;
+        let author = AuthorBatch {
+            batch_id: provisional_evidence.batch_id(),
+            author_device_id,
+            author_session_id,
+            crdt_peer_id,
+        };
+        let preview_part = preview
+            .author_part(author, &transaction, provisional_evidence)
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        let (preview_prepared, preview_engine_material) = preview_part.into_parts();
+        drop(preview_engine_material);
+        let preview_manifest_bytes = preview_prepared
+            .manifest()
+            .encode()
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        let payload_descriptors = prepared_payload_descriptors(&preview_prepared)?;
+        let payload_root = PayloadObjectRootV1::from_objects(&payload_descriptors)?;
+        validate_prepared_part_limits(&preview_prepared, operation_count)?;
+        drop(preview_prepared);
+        let evidence = BootstrapImportPartEvidenceV1::new(
+            import_id,
+            profile_digest,
+            ordinal,
+            part_count,
+            source_span_root,
+            operation_root,
+            payload_root,
+            predecessor,
+        )?;
+        if evidence.part_id() != provisional_evidence.part_id()
+            || evidence.batch_id() != provisional_evidence.batch_id()
+        {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "payload commitment changed bootstrap part identity".into(),
+            ));
+        }
+        let authored = authoring
+            .author_part(author, &transaction, evidence)
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        let (prepared, engine_material) = authored.into_parts();
+        let manifest_bytes = prepared
+            .manifest()
+            .encode()
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        let actual_payload_descriptors = prepared_payload_descriptors(&prepared)?;
+        if manifest_bytes != preview_manifest_bytes
+            || actual_payload_descriptors != payload_descriptors
+        {
+            return Err(BootstrapStreamingImportError::InvalidOperation(
+                "exact-evidence authoring differs from its bounded preview".into(),
+            ));
+        }
+        let manifest_digest = ContentDigest::of(&manifest_bytes);
+        let manifest_fingerprint =
+            BootstrapManifestFingerprintV1::from_bytes(*manifest_digest.as_bytes());
+        let manifest_objects = [FullObjectDescriptorV1::manifest_defined(
+            *manifest_digest.as_bytes(),
+            manifest_bytes.len() as u64,
+        )?];
+        let descriptor = BootstrapPartDescriptorV1::accepted(
+            evidence,
+            manifest_fingerprint,
+            &payload_descriptors,
+            &manifest_objects,
+            archive_frontier,
+        )?;
+        archive_frontier = descriptor.post_frontier();
+        write_prepared_bootstrap_part(
+            &parts_directory,
+            ordinal,
+            evidence,
+            &source_spans,
+            &manifest_bytes,
+            prepared.objects(),
+            instrumentation,
+        )?;
+        instrumentation.peak_owned_part_operations = instrumentation
+            .peak_owned_part_operations
+            .max(u64::from(operation_count));
+        descriptors.push(descriptor);
+        engine_materials.push(engine_material);
+        predecessor = Some(evidence.part_id());
+        drop(records);
+    }
+    if boundaries.next()?.is_some() || operations.next()?.is_some() {
+        return Err(BootstrapStreamingImportError::InvalidOperation(
+            "sealed part boundaries do not consume the exact operation spool".into(),
+        ));
+    }
+    if authored_operations != operation_spool.operation_count {
+        return Err(BootstrapStreamingImportError::InvalidOperation(
+            "authored operation count differs from the sealed spool".into(),
+        ));
+    }
+    let preview_candidate = finish_boxed_detached_bootstrap_session(preview)?;
+    let preview_frontier = preview_candidate
+        .accepted_frontier_root()
+        .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+    drop(preview_candidate);
+    let candidate = finish_boxed_detached_bootstrap_session(authoring)?;
+    if preview_frontier
+        != candidate
+            .accepted_frontier_root()
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?
+    {
+        return Err(BootstrapStreamingImportError::InvalidOperation(
+            "preview and exact-evidence detached frontiers differ".into(),
+        ));
+    }
+    Ok(AuthoredBootstrapParts {
+        descriptors,
+        candidate,
+        engine_materials,
+        final_frontier: archive_frontier,
+    })
+}
+
+#[inline(never)]
+fn boxed_detached_bootstrap_session(
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    catalog_document_id: DocumentId,
+    reference_catalog_policy: ReferenceCatalogPolicyV1,
+) -> Result<Box<DetachedBootstrapAuthoringSession>, BootstrapStreamingImportError> {
+    DetachedBootstrapAuthoringSession::new(
+        workspace_id,
+        lineage_digest,
+        catalog_document_id,
+        reference_catalog_policy,
+    )
+    .map(Box::new)
+    .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))
+}
+
+#[inline(never)]
+fn finish_boxed_detached_bootstrap_session(
+    session: Box<DetachedBootstrapAuthoringSession>,
+) -> Result<Box<DetachedBootstrapCandidate>, BootstrapStreamingImportError> {
+    (*session)
+        .finish()
+        .map(Box::new)
+        .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))
+}
+
+fn prepared_payload_descriptors(
+    prepared: &super::PreparedBatch,
+) -> Result<Vec<PayloadObjectDescriptorV1>, BootstrapStreamingImportError> {
+    prepared
+        .objects()
+        .iter()
+        .map(|object| {
+            let bytes = object.encode().map_err(|error| {
+                BootstrapStreamingImportError::InvalidOperation(error.to_string())
+            })?;
+            PayloadObjectDescriptorV1::new(ContentDigest::of(&bytes), bytes.len() as u64)
+                .map_err(Into::into)
+        })
+        .collect()
+}
+
+fn validate_prepared_part_limits(
+    prepared: &super::PreparedBatch,
+    operation_count: u32,
+) -> Result<(), BootstrapStreamingImportError> {
+    let manifest = prepared
+        .manifest()
+        .encode()
+        .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+    if manifest.len() > BOOTSTRAP_STREAM_MAX_MANIFEST_BYTES {
+        return if operation_count == 1 {
+            Err(BootstrapStreamingImportError::SingletonOverLimit(
+                "batch manifest bytes",
+            ))
+        } else {
+            Err(BootstrapStreamingImportError::ResourceLimit {
+                resource: "batch manifest bytes",
+                observed: manifest.len() as u64,
+                limit: BOOTSTRAP_STREAM_MAX_MANIFEST_BYTES as u64,
+            })
+        };
+    }
+    let mut total = 0_u64;
+    let mut semantic = None;
+    for object in prepared.objects() {
+        let bytes = object
+            .encode()
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        total = total.checked_add(bytes.len() as u64).ok_or_else(|| {
+            BootstrapStreamingImportError::InvalidOperation(
+                "prepared object byte count overflow".into(),
+            )
+        })?;
+        if object.kind() == ObjectKind::SemanticEffect {
+            semantic = Some(object.payload().len() as u64);
+        }
+    }
+    let semantic = semantic.ok_or_else(|| {
+        BootstrapStreamingImportError::InvalidOperation(
+            "prepared bootstrap part has no semantic effect".into(),
+        )
+    })?;
+    for (resource, observed, limit) in [
+        (
+            "semantic-effect bytes",
+            semantic,
+            MAX_SEMANTIC_EFFECT_BYTES_PER_BOOTSTRAP_PART,
+        ),
+        (
+            "payload/object bytes",
+            total,
+            MAX_BATCH_OBJECT_BYTES_PER_BOOTSTRAP_PART,
+        ),
+    ] {
+        if observed > limit {
+            return if operation_count == 1 {
+                Err(BootstrapStreamingImportError::SingletonOverLimit(resource))
+            } else {
+                Err(BootstrapStreamingImportError::ResourceLimit {
+                    resource,
+                    observed,
+                    limit,
+                })
+            };
+        }
+    }
+    Ok(())
+}
+
+fn write_prepared_bootstrap_part(
+    parts: &Path,
+    ordinal: u32,
+    evidence: BootstrapImportPartEvidenceV1,
+    source_spans: &[SourceSpanV1],
+    manifest_bytes: &[u8],
+    objects: &[super::OperationObject],
+    instrumentation: &mut BootstrapStreamingImportInstrumentation,
+) -> Result<(), BootstrapStreamingImportError> {
+    let directory = parts.join(format!("{ordinal:08}"));
+    create_private_directory(&directory)?;
+    let evidence_bytes = evidence.encode()?;
+    let spans = BootstrapPartSpanIndexV1::new(evidence.part_id(), source_spans.to_vec())?;
+    let span_bytes = spans.encode()?;
+    write_exact_new(
+        &directory.join(BOOTSTRAP_STREAM_PART_MANIFEST),
+        manifest_bytes,
+    )?;
+    write_exact_new(
+        &directory.join(BOOTSTRAP_STREAM_PART_EVIDENCE),
+        &evidence_bytes,
+    )?;
+    write_exact_new(&directory.join(BOOTSTRAP_STREAM_PART_SPANS), &span_bytes)?;
+    let object_path = directory.join(BOOTSTRAP_STREAM_PART_OBJECTS);
+    let mut writer = BufWriter::new(create_new_file(&object_path)?);
+    let mut object_bytes = 0_u64;
+    for object in objects {
+        let bytes = object
+            .encode()
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?;
+        object_bytes = object_bytes.saturating_add(write_frame(&mut writer, &bytes)?);
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    sync_parent(&object_path)?;
+    let prepared_bytes = manifest_bytes.len() as u64
+        + evidence_bytes.len() as u64
+        + span_bytes.len() as u64
+        + object_bytes;
+    instrumentation.prepared_bytes = instrumentation
+        .prepared_bytes
+        .saturating_add(prepared_bytes);
+    instrumentation.peak_owned_part_bytes =
+        instrumentation.peak_owned_part_bytes.max(prepared_bytes);
+    Ok(())
+}
+
+/// Prepare, but do not publish or admit, one complete multipart bootstrap.
+///
+/// `capture` must be the sealed capture minted by `Graph`; this function
+/// consumes it so the final capture-C proof cannot be separated from the
+/// preparation it authorizes. `scratch` is caller-owned disposable storage
+/// outside the graph. Only the final `sealed.commit` file marks a reusable
+/// preparation; all UUID-named work directories are non-authoritative residue.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_inactive_bootstrap_import(
+    graph: &Graph,
+    capture: BootstrapSourceCapture,
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    catalog_document_id: DocumentId,
+    reference_catalog_policy: ReferenceCatalogPolicyV1,
+    scratch: &Path,
+) -> Result<InactiveBootstrapPreparedPublication, BootstrapStreamingImportError> {
+    prepare_bootstrap_scratch(graph, scratch)?;
+    let root = scratch.join(BOOTSTRAP_STREAM_DIRECTORY);
+    create_private_directory(&root)?;
+    let working = root.join(format!(".building-{}", Uuid::new_v4().simple()));
+    create_private_directory(&working)?;
+    let artifacts = working.join("artifacts");
+    create_private_directory(&artifacts)?;
+    let mut instrumentation = BootstrapStreamingImportInstrumentation::default();
+    record_capture_instrumentation(&mut instrumentation, capture.instrumentation());
+
+    let source =
+        prepare_bootstrap_source_protocol(workspace_id, &capture, &working, &mut instrumentation)?;
+    let operations = spool_bootstrap_operations(
+        &capture,
+        source.import_id,
+        workspace_id,
+        &working,
+        &mut instrumentation,
+    )?;
+    let part_count =
+        partition_bootstrap_operation_spool(&operations, &working, &mut instrumentation)?;
+    let graph_resource = graph.canonical_resource_id()?;
+
+    // This is deliberately the final source action. Everything below owns only
+    // sealed spools and detached engine/scratch capabilities.
+    let final_capture = capture.verify_before_inactive_bootstrap_authoring(graph)?;
+    record_capture_instrumentation(&mut instrumentation, &final_capture);
+    let authored = author_bootstrap_parts(
+        workspace_id,
+        lineage_digest,
+        catalog_document_id,
+        reference_catalog_policy,
+        source.import_id,
+        &operations,
+        part_count,
+        &working,
+        &mut instrumentation,
+    )?;
+
+    let profile_digest = BootstrapPartitionProfileV1::v1().digest();
+    let initial_frontier = ArchiveLocalFrontierBindingV1::initial(source.import_id, profile_digest);
+    let aggregate = BootstrapAggregateManifestV1::new_for_import(
+        workspace_id,
+        lineage_digest,
+        graph_resource,
+        source.import_id,
+        source.source_count,
+        source.inventory_root,
+        source.inventory_page_count,
+        source.blob_root,
+        source.blob_page_count,
+        profile_digest,
+        authored.descriptors,
+        initial_frontier,
+        authored.final_frontier,
+    )?;
+    let aggregate_bytes = aggregate.encode()?;
+    let commit = BootstrapAggregateCommitV1::for_aggregate(&aggregate)?;
+    let commit_bytes = commit.encode()?;
+
+    for name in [
+        BOOTSTRAP_STREAM_INVENTORY_PAGES,
+        BOOTSTRAP_STREAM_BLOB_PAGES,
+        BOOTSTRAP_STREAM_PARTS,
+    ] {
+        fs::rename(working.join(name), artifacts.join(name))?;
+    }
+    write_exact_new(
+        &artifacts.join(BOOTSTRAP_STREAM_AGGREGATE),
+        &aggregate_bytes,
+    )?;
+    write_exact_new(&artifacts.join(BOOTSTRAP_STREAM_COMMIT), &commit_bytes)?;
+
+    let sealed_directory = root.join(hex_bootstrap_digest(commit.publication_id().as_bytes()));
+    seal_bootstrap_preparation(&artifacts, &sealed_directory, &commit_bytes)?;
+    let sealed_aggregate = read_bounded_file(
+        &sealed_directory.join(BOOTSTRAP_STREAM_AGGREGATE),
+        super::bootstrap_import::MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES,
+    )?;
+    if BootstrapAggregateManifestV1::decode(&sealed_aggregate)? != aggregate {
+        return Err(BootstrapStreamingImportError::ConflictingSeal);
+    }
+    let sealed_commit = read_bounded_file(
+        &sealed_directory.join(BOOTSTRAP_STREAM_SEAL),
+        super::bootstrap_import::MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES,
+    )?;
+    let decoded_commit = BootstrapAggregateCommitV1::decode(&sealed_commit)?;
+    decoded_commit.validate_aggregate(&aggregate)?;
+    let _ = fs::remove_dir_all(&working);
+
+    Ok(InactiveBootstrapPreparedPublication {
+        source_capture: capture,
+        sealed_directory,
+        aggregate,
+        commit,
+        candidate: authored.candidate,
+        engine_materials: authored.engine_materials,
+        instrumentation,
+    })
+}
+
+fn record_capture_instrumentation(
+    target: &mut BootstrapStreamingImportInstrumentation,
+    source: &BootstrapSourceCaptureInstrumentation,
+) {
+    target.capture_passes = target.capture_passes.saturating_add(source.passes);
+    target.external_sort_runs = target.external_sort_runs.saturating_add(source.sort_runs);
+    target.source_bytes_read = target
+        .source_bytes_read
+        .saturating_add(source.physical_bytes);
+    target.operation_spool_bytes = target
+        .operation_spool_bytes
+        .saturating_add(source.spool_bytes);
+    target.peak_owned_sort_buffer_bytes = target
+        .peak_owned_sort_buffer_bytes
+        .max(source.peak_owned_buffer_bytes);
+}
+
+fn prepare_bootstrap_scratch(graph: &Graph, scratch: &Path) -> io::Result<()> {
+    create_private_directory(scratch)?;
+    let scratch = fs::canonicalize(scratch)?;
+    let graph_root = fs::canonicalize(&graph.root)?;
+    if scratch == graph_root || scratch.starts_with(&graph_root) {
+        return Err(invalid_bootstrap_data(
+            "inactive bootstrap scratch must be outside the graph",
+        ));
+    }
+    Ok(())
+}
+
+fn seal_bootstrap_preparation(
+    source: &Path,
+    destination: &Path,
+    commit_bytes: &[u8],
+) -> Result<(), BootstrapStreamingImportError> {
+    create_private_directory(destination)?;
+    copy_bootstrap_tree_exact(source, destination)?;
+    publish_exact_file(&destination.join(BOOTSTRAP_STREAM_SEAL), commit_bytes)?;
+    File::open(destination)?.sync_all()?;
+    sync_parent(destination)?;
+    Ok(())
+}
+
+fn copy_bootstrap_tree_exact(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), BootstrapStreamingImportError> {
+    // Each exact child has an independent destination name, so filesystem
+    // enumeration order cannot affect the sealed tree. Keep only one entry
+    // live while copying graph-sized artifact directories.
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(BootstrapStreamingImportError::InvalidSource(
+                "bootstrap artifact tree contains a symlink".into(),
+            ));
+        }
+        if metadata.is_dir() {
+            create_private_directory(&destination_path)?;
+            copy_bootstrap_tree_exact(&source_path, &destination_path)?;
+            File::open(&destination_path)?.sync_all()?;
+        } else if metadata.is_file() {
+            copy_bootstrap_file_exact(&source_path, &destination_path)?;
+        } else {
+            return Err(BootstrapStreamingImportError::InvalidSource(
+                "bootstrap artifact tree contains a non-file entry".into(),
+            ));
+        }
+    }
+    File::open(destination)?.sync_all()?;
+    Ok(())
+}
+
+fn copy_bootstrap_file_exact(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), BootstrapStreamingImportError> {
+    match create_new_file(destination) {
+        Ok(mut output) => {
+            let mut input = File::open(source)?;
+            io::copy(&mut input, &mut output)?;
+            output.sync_all()?;
+            sync_parent(destination)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if bootstrap_files_equal(source, destination)? {
+                Ok(())
+            } else {
+                Err(BootstrapStreamingImportError::ConflictingSeal)
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn bootstrap_files_equal(left: &Path, right: &Path) -> io::Result<bool> {
+    let left_metadata = fs::symlink_metadata(left)?;
+    let right_metadata = fs::symlink_metadata(right)?;
+    if left_metadata.file_type().is_symlink()
+        || right_metadata.file_type().is_symlink()
+        || !left_metadata.is_file()
+        || !right_metadata.is_file()
+        || left_metadata.len() != right_metadata.len()
+    {
+        return Ok(false);
+    }
+    let mut left = BufReader::with_capacity(64 * 1024, File::open(left)?);
+    let mut right = BufReader::with_capacity(64 * 1024, File::open(right)?);
+    let mut left_buffer = [0; 64 * 1024];
+    let mut right_buffer = [0; 64 * 1024];
+    loop {
+        let left_read = left.read(&mut left_buffer)?;
+        let right_read = right.read(&mut right_buffer)?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+fn hex_bootstrap_digest(digest: &[u8; 32]) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
 
 #[derive(Clone, Copy)]
 struct ImportReplayLimits {
@@ -4893,6 +7092,591 @@ mod tests {
         assert!(
             large.recorded_work_units() <= small.recorded_work_units().saturating_mul(8),
             "structural work did not scale linearly: small={small:?}, large={large:?}"
+        );
+    }
+
+    fn prepare_streaming_bootstrap(
+        label: &str,
+        files: &[(&str, &str)],
+    ) -> (TestRoot, InactiveBootstrapPreparedPublication, WorkspaceId) {
+        let root = TestRoot::new(label);
+        let graph_root = root.path().join("graph");
+        for (path, contents) in files {
+            let target = graph_root.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, contents).unwrap();
+        }
+        let graph = Graph::open(&graph_root);
+        let capture_scratch = root.path().join("capture-scratch");
+        let preparation_scratch = root.path().join("preparation-scratch");
+        fs::create_dir(&capture_scratch).unwrap();
+        fs::create_dir(&preparation_scratch).unwrap();
+        let capture = graph
+            .capture_inactive_bootstrap_sources(&capture_scratch)
+            .unwrap();
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x5a01));
+        let prepared = prepare_inactive_bootstrap_import(
+            &graph,
+            capture,
+            workspace,
+            LineageDigest::of(b"inactive-streaming-bootstrap-test"),
+            DocumentId::from_uuid(Uuid::from_u128(0x5a02)),
+            ReferenceCatalogPolicyV1::default(),
+            &preparation_scratch,
+        )
+        .unwrap();
+        (root, prepared, workspace)
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_zero_source_is_canonical_and_sealed() {
+        let (_root, prepared, _) = prepare_streaming_bootstrap("streaming-zero", &[]);
+        assert!(prepared.aggregate().parts().is_empty());
+        assert_eq!(prepared.commit().part_count(), 0);
+        assert_eq!(prepared.candidate().part_count(), 0);
+        assert_eq!(prepared.instrumentation().operations, 0);
+        assert_eq!(prepared.instrumentation().parts, 0);
+        prepared
+            .commit()
+            .validate_aggregate(prepared.aggregate())
+            .unwrap();
+        assert_eq!(
+            BootstrapAggregateCommitV1::decode(&prepared.commit_bytes().unwrap()).unwrap(),
+            prepared.commit()
+        );
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_import_id_and_prepared_bytes_are_canonical() {
+        let (_root, prepared, workspace) = prepare_streaming_bootstrap(
+            "streaming-one",
+            &[(
+                "pages/Unicode α.md",
+                "title:: Streaming title\n- parent\n  - child",
+            )],
+        );
+        let mut inventory = Vec::new();
+        let mut cursor = prepared.source_capture().entries_cursor().unwrap();
+        while let Some(entry) = cursor.next().unwrap() {
+            inventory.push(ImportInventoryEntry::with_kind(
+                entry.kind(),
+                entry.path().clone(),
+                ImportInventoryState::Present(entry.description()),
+            ));
+        }
+        let materialized =
+            ImportId::derive(workspace, &[], &inventory, DIFF_SCHEMA_VERSION).unwrap();
+        assert_eq!(prepared.aggregate().import_id(), materialized);
+        assert_eq!(prepared.aggregate().parts().len(), 1);
+        assert_eq!(prepared.instrumentation().operations, 4);
+
+        let mut part = prepared.open_part(0).unwrap();
+        let evidence = part.evidence().unwrap();
+        assert_eq!(evidence.operation_root().operation_count(), 4);
+        let span_index = part.span_index().unwrap();
+        span_index.validate_part(evidence).unwrap();
+        let manifest = super::super::OperationBatch::decode(part.manifest_bytes()).unwrap();
+        let mut objects = Vec::new();
+        while let Some(bytes) = part.next_object_bytes().unwrap() {
+            objects.push(super::super::OperationObject::decode(&bytes).unwrap());
+        }
+        super::super::PreparedBatch::new(manifest, objects).unwrap();
+    }
+
+    fn synthetic_operation_spool(
+        directory: &Path,
+        operation_count: u64,
+    ) -> BootstrapOperationSpool {
+        let path = directory.join("synthetic-operations.sorted");
+        let mut writer = BufWriter::new(create_new_file(&path).unwrap());
+        for index in 0..operation_count {
+            let record = BootstrapOperationRecord::new(
+                SemanticOperation::DeletePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(index as u128 + 1)),
+                },
+                SourceLeafDigestV1::from_bytes([0x61; 32]),
+                None,
+            )
+            .unwrap();
+            write_sort_record(
+                &mut writer,
+                &SortRecord {
+                    key: index.to_be_bytes().to_vec(),
+                    value: record.encode().unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        writer.flush().unwrap();
+        writer.get_ref().sync_all().unwrap();
+        BootstrapOperationSpool {
+            path,
+            operation_count,
+        }
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_partitions_zero_one_4096_and_4097_without_retention() {
+        for (count, expected_parts) in [(0, 0), (1, 1), (4096, 1), (4097, 2)] {
+            let root = TestRoot::new(&format!("streaming-partition-{count}"));
+            let working = root.path().join("partition");
+            fs::create_dir(&working).unwrap();
+            let spool = synthetic_operation_spool(&working, count);
+            let mut instrumentation = BootstrapStreamingImportInstrumentation::default();
+            assert_eq!(
+                partition_bootstrap_operation_spool(&spool, &working, &mut instrumentation)
+                    .unwrap(),
+                expected_parts
+            );
+            assert_eq!(instrumentation.parts, expected_parts);
+            assert!(instrumentation.peak_owned_part_operations == 0);
+        }
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_partitions_100001_synthetic_operations_boundedly() {
+        let root = TestRoot::new("streaming-partition-100001");
+        let working = root.path().join("partition");
+        fs::create_dir(&working).unwrap();
+        let spool = synthetic_operation_spool(&working, 100_001);
+        let mut instrumentation = BootstrapStreamingImportInstrumentation::default();
+        assert_eq!(
+            partition_bootstrap_operation_spool(&spool, &working, &mut instrumentation).unwrap(),
+            25
+        );
+        assert_eq!(instrumentation.parts, 25);
+        assert_eq!(instrumentation.peak_owned_part_operations, 0);
+        assert!(instrumentation.source_spans <= 100_001);
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_capture_c_mutation_leaves_no_seal() {
+        let root = TestRoot::new("streaming-capture-c-mutation");
+        let graph_root = root.path().join("graph");
+        fs::write(graph_root.join("pages/mutable.md"), "- before").unwrap();
+        let graph = Graph::open(&graph_root);
+        let capture_scratch = root.path().join("capture");
+        let preparation_scratch = root.path().join("preparation");
+        fs::create_dir(&capture_scratch).unwrap();
+        fs::create_dir(&preparation_scratch).unwrap();
+        let capture = graph
+            .capture_inactive_bootstrap_sources(&capture_scratch)
+            .unwrap();
+        fs::write(graph_root.join("pages/mutable.md"), "- after").unwrap();
+        assert!(prepare_inactive_bootstrap_import(
+            &graph,
+            capture,
+            WorkspaceId::from_uuid(Uuid::from_u128(0x5b01)),
+            LineageDigest::of(b"capture-c-mutation"),
+            DocumentId::from_uuid(Uuid::from_u128(0x5b02)),
+            ReferenceCatalogPolicyV1::default(),
+            &preparation_scratch,
+        )
+        .is_err());
+        let publication_root = preparation_scratch.join(BOOTSTRAP_STREAM_DIRECTORY);
+        assert!(
+            !publication_root.exists()
+                || fs::read_dir(publication_root).unwrap().all(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".building-"))
+        );
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_repeated_run_reuses_exact_seal() {
+        let root = TestRoot::new("streaming-repeat");
+        let graph_root = root.path().join("graph");
+        fs::write(graph_root.join("pages/repeat.md"), "- repeat").unwrap();
+        let graph = Graph::open(&graph_root);
+        let capture_scratch = root.path().join("capture");
+        let preparation_scratch = root.path().join("preparation");
+        fs::create_dir(&capture_scratch).unwrap();
+        fs::create_dir(&preparation_scratch).unwrap();
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x5c01));
+        let prepare_once = || {
+            let capture = graph
+                .capture_inactive_bootstrap_sources(&capture_scratch)
+                .unwrap();
+            prepare_inactive_bootstrap_import(
+                &graph,
+                capture,
+                workspace,
+                LineageDigest::of(b"streaming-repeat"),
+                DocumentId::from_uuid(Uuid::from_u128(0x5c02)),
+                ReferenceCatalogPolicyV1::default(),
+                &preparation_scratch,
+            )
+            .unwrap()
+        };
+        let first = prepare_once();
+        let first_aggregate = first.aggregate_bytes().unwrap();
+        let first_commit = first.commit_bytes().unwrap();
+        drop(first);
+        let second = prepare_once();
+        assert_eq!(second.aggregate_bytes().unwrap(), first_aggregate);
+        assert_eq!(second.commit_bytes().unwrap(), first_commit);
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_seals_many_artifact_entries_streamingly() {
+        let root = TestRoot::new("streaming-seal-many-entries");
+        let artifacts = root.path().join("artifacts");
+        let sealed = root.path().join("sealed");
+        let nested = artifacts.join("nested");
+        fs::create_dir(&artifacts).unwrap();
+        fs::create_dir(&nested).unwrap();
+
+        for index in 0_u32..128 {
+            let directory = if index % 2 == 0 { &artifacts } else { &nested };
+            fs::write(
+                directory.join(format!("artifact-{index:03}.bin")),
+                index.to_be_bytes(),
+            )
+            .unwrap();
+        }
+
+        for _ in 0..2 {
+            seal_bootstrap_preparation(&artifacts, &sealed, b"commit").unwrap();
+        }
+
+        assert_eq!(
+            fs::read(sealed.join(BOOTSTRAP_STREAM_SEAL)).unwrap(),
+            b"commit"
+        );
+        let sealed_nested = sealed.join("nested");
+        for index in 0_u32..128 {
+            let directory = if index % 2 == 0 {
+                &sealed
+            } else {
+                &sealed_nested
+            };
+            assert_eq!(
+                fs::read(directory.join(format!("artifact-{index:03}.bin"))).unwrap(),
+                index.to_be_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_conflicting_sealed_artifact_fails_closed() {
+        let root = TestRoot::new("streaming-conflicting-seal");
+        let graph_root = root.path().join("graph");
+        fs::write(graph_root.join("pages/conflict.md"), "- conflict").unwrap();
+        let graph = Graph::open(&graph_root);
+        let capture_scratch = root.path().join("capture");
+        let preparation_scratch = root.path().join("preparation");
+        fs::create_dir(&capture_scratch).unwrap();
+        fs::create_dir(&preparation_scratch).unwrap();
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x5c11));
+        let prepare_once = || {
+            let capture = graph
+                .capture_inactive_bootstrap_sources(&capture_scratch)
+                .unwrap();
+            prepare_inactive_bootstrap_import(
+                &graph,
+                capture,
+                workspace,
+                LineageDigest::of(b"streaming-conflicting-seal"),
+                DocumentId::from_uuid(Uuid::from_u128(0x5c12)),
+                ReferenceCatalogPolicyV1::default(),
+                &preparation_scratch,
+            )
+        };
+        let first = prepare_once().unwrap();
+        fs::write(
+            first.sealed_directory.join(BOOTSTRAP_STREAM_AGGREGATE),
+            b"accidental corruption",
+        )
+        .unwrap();
+        drop(first);
+        assert!(matches!(
+            prepare_once(),
+            Err(BootstrapStreamingImportError::ConflictingSeal)
+        ));
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_authors_4096_and_4097_operation_boundaries() {
+        for (block_count, expected_parts) in [(4095, 1), (4096, 2)] {
+            let mut source = String::new();
+            for index in 0..block_count {
+                source.push_str(&format!("- block {index:04}\n"));
+            }
+            let label = format!("streaming-author-boundary-{block_count}");
+            let (_root, prepared, _) =
+                prepare_streaming_bootstrap(&label, &[("pages/boundary.md", &source)]);
+            assert_eq!(prepared.aggregate().parts().len(), expected_parts);
+            assert_eq!(
+                prepared.aggregate().parts()[0]
+                    .evidence()
+                    .operation_root()
+                    .operation_count(),
+                4096
+            );
+            if expected_parts == 2 {
+                assert_eq!(
+                    prepared.aggregate().parts()[1]
+                        .evidence()
+                        .operation_root()
+                        .operation_count(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_cross_part_child_and_later_content_depend_on_candidate() {
+        let root = TestRoot::new("streaming-cross-part");
+        let working = root.path().join("author");
+        fs::create_dir(&working).unwrap();
+        let page = PageId::from_uuid(Uuid::from_u128(0x5d01));
+        let home = DocumentId::from_uuid(Uuid::from_u128(0x5d02));
+        let parent = BlockId::from_uuid(Uuid::from_u128(0x5d03));
+        let child = BlockId::from_uuid(Uuid::from_u128(0x5d04));
+        let operations = [
+            SemanticOperation::CreatePage {
+                page_id: page,
+                home_document_id: home,
+                name: LogicalPageName::parse("Cross part").unwrap(),
+                path: ManagedPath::parse("pages/cross-part.md").unwrap(),
+                kind: ManagedTextKind::Page,
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: parent,
+                    home_document_id: home,
+                },
+                page_id: page,
+                parent: None,
+                order: "0000000000".into(),
+                content: "parent".into(),
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: child,
+                    home_document_id: home,
+                },
+                page_id: page,
+                parent: Some(parent),
+                order: "0000000000".into(),
+                content: "child".into(),
+            },
+            SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: parent,
+                    home_document_id: home,
+                },
+                content: "parent updated later".into(),
+            },
+        ];
+        let operation_path = working.join(BOOTSTRAP_STREAM_OPERATION_SPOOL);
+        let mut writer = BufWriter::new(create_new_file(&operation_path).unwrap());
+        for (index, operation) in operations.into_iter().enumerate() {
+            let record = BootstrapOperationRecord::new(
+                operation,
+                SourceLeafDigestV1::from_bytes([0x62; 32]),
+                None,
+            )
+            .unwrap();
+            write_sort_record(
+                &mut writer,
+                &SortRecord {
+                    key: (index as u64).to_be_bytes().to_vec(),
+                    value: record.encode().unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        writer.flush().unwrap();
+        writer.get_ref().sync_all().unwrap();
+        let boundary_path = working.join(BOOTSTRAP_STREAM_BOUNDARY_SPOOL);
+        let mut boundaries = BufWriter::new(create_new_file(&boundary_path).unwrap());
+        write_frame(&mut boundaries, &2_u32.to_be_bytes()).unwrap();
+        write_frame(&mut boundaries, &2_u32.to_be_bytes()).unwrap();
+        boundaries.flush().unwrap();
+        boundaries.get_ref().sync_all().unwrap();
+        let mut instrumentation = BootstrapStreamingImportInstrumentation::default();
+        let authored = author_bootstrap_parts(
+            WorkspaceId::from_uuid(Uuid::from_u128(0x5d05)),
+            LineageDigest::of(b"cross-part-author"),
+            DocumentId::from_uuid(Uuid::from_u128(0x5d06)),
+            ReferenceCatalogPolicyV1::default(),
+            ImportId::from_digest([0x63; 32]),
+            &BootstrapOperationSpool {
+                path: operation_path,
+                operation_count: 4,
+            },
+            2,
+            &working,
+            &mut instrumentation,
+        )
+        .unwrap();
+        assert_eq!(authored.descriptors.len(), 2);
+        assert_eq!(authored.candidate.part_count(), 2);
+        assert_eq!(
+            authored.descriptors[1].evidence().predecessor(),
+            Some(authored.descriptors[0].part_id())
+        );
+    }
+
+    #[test]
+    fn inactive_streaming_bootstrap_matches_materialized_initial_semantic_order_and_layout() {
+        let root = TestRoot::new("streaming-differential");
+        let graph_root = root.path().join("graph");
+        fs::create_dir_all(graph_root.join("logseq")).unwrap();
+        fs::write(
+            graph_root.join("logseq/config.edn"),
+            r#"{:pages-directory "notes"
+                :journals-directory "diary"
+                :file/name-format :triple-lowbar
+                :journal/file-name-format "dd-MM-yyyy"
+                :journal/page-title-format "yyyy-MM-dd"}"#,
+        )
+        .unwrap();
+        for (path, contents) in [
+            ("Root.md", "title:: Root logical name\n\n- root\n"),
+            (
+                "notes/arbitrary/nested/Markdown.md",
+                "title:: Markdown title ☕\n\n- parent\n  - child\n",
+            ),
+            ("notes/深い/Déjà___計画.markdown", "- filename page\n"),
+            (
+                "diary/nested/25-07-2026.org",
+                "#+TITLE: Org title ��\n\n* org page\n",
+            ),
+            ("diary/nested/26-07-2026.md", "- journal\n"),
+        ] {
+            let target = graph_root.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, contents).unwrap();
+        }
+        let graph = Graph::open(&graph_root);
+        let capture_scratch = root.path().join("capture");
+        let working = root.path().join("working");
+        fs::create_dir(&capture_scratch).unwrap();
+        fs::create_dir(&working).unwrap();
+        let capture = graph
+            .capture_inactive_bootstrap_sources(&capture_scratch)
+            .unwrap();
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x5e01));
+
+        let mut source_instrumentation = BootstrapStreamingImportInstrumentation::default();
+        let source = prepare_bootstrap_source_protocol(
+            workspace,
+            &capture,
+            &working,
+            &mut source_instrumentation,
+        )
+        .unwrap();
+        let streaming = spool_bootstrap_operations(
+            &capture,
+            source.import_id,
+            workspace,
+            &working,
+            &mut source_instrumentation,
+        )
+        .unwrap();
+        let mut streaming_reader = BootstrapOperationSpoolReader::open(&streaming.path).unwrap();
+        let mut streaming_operations = Vec::new();
+        while let Some(operation) = streaming_reader.next().unwrap() {
+            streaming_operations.push(operation.operation);
+        }
+
+        let mut source_reader = BootstrapSourceReader::new(&capture).unwrap();
+        let mut entries = capture.entries_cursor().unwrap();
+        let mut raw_entries = Vec::new();
+        let mut scope_paths = BTreeMap::new();
+        let mut path_identities = BTreeMap::new();
+        let mut read_instrumentation = BootstrapStreamingImportInstrumentation::default();
+        while let Some(entry) = entries.next().unwrap() {
+            let bytes = source_reader
+                .read_entry(&entry, &mut read_instrumentation)
+                .unwrap();
+            raw_entries.push((entry.path().clone(), RawObservation::present(bytes)));
+            scope_paths.insert(entry.path().clone(), ScopedPathEvidence::New);
+            path_identities.insert(
+                entry.path().clone(),
+                ImportedPathIdentity {
+                    name: LogicalPageName::parse(entry.logical_name()).unwrap(),
+                    kind: entry.kind(),
+                },
+            );
+        }
+        source_reader.finish().unwrap();
+        let inventory = RawInventory::from_entries(raw_entries).unwrap();
+        let materialized_id = ImportId::derive(
+            workspace,
+            &[],
+            &inventory.derivation_entries(&path_identities).unwrap(),
+            DIFF_SCHEMA_VERSION,
+        )
+        .unwrap();
+        assert_eq!(source.import_id, materialized_id);
+        let scope = ImportScopeSnapshot {
+            workspace_id: workspace,
+            paths: scope_paths,
+            path_identities,
+        };
+        let matches = ImportMatches::default();
+        let transition =
+            build_desired_page_transition(&inventory, &matches, &scope, materialized_id).unwrap();
+        let old = build_execution_material(
+            materialized_id,
+            &inventory,
+            &matches,
+            &scope,
+            &transition,
+            &mut ImportInstrumentation::default(),
+        )
+        .unwrap();
+        assert_eq!(streaming_operations, old.transaction.operations);
+        let streaming_transaction =
+            OperationTransaction::new(streaming_operations.clone()).unwrap();
+        let canonical_snapshot = |transaction: &OperationTransaction| {
+            let mut engine = ShardedHotEngine::new(
+                workspace,
+                LineageDigest::of(b"streaming-differential-snapshot"),
+                DocumentId::from_uuid(Uuid::from_u128(0x5e02)),
+            );
+            engine
+                .configure_reference_catalog_policy(ReferenceCatalogPolicyV1::default())
+                .unwrap();
+            let prepared = engine
+                .prepare_bootstrap_transaction(
+                    AuthorBatch {
+                        batch_id: BatchId::from_uuid(Uuid::from_u128(0x5e03)),
+                        author_device_id: DeviceId::from_uuid(Uuid::from_u128(0x5e04)),
+                        author_session_id: SessionId::from_uuid(Uuid::from_u128(0x5e05)),
+                        crdt_peer_id: CrdtPeerId::from_u64(0x5e06),
+                    },
+                    transaction,
+                )
+                .unwrap();
+            assert!(matches!(
+                engine
+                    .stage_ready(super::super::ValidatedBatch::new(prepared))
+                    .disposition,
+                super::super::BatchDisposition::Accepted { .. }
+            ));
+            engine.canonical_snapshot().unwrap()
+        };
+        assert_eq!(
+            canonical_snapshot(&streaming_transaction),
+            canonical_snapshot(&old.transaction)
+        );
+        assert_eq!(
+            capture
+                .entries_cursor()
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path()
+                .as_str(),
+            "Root.md"
         );
     }
 }
