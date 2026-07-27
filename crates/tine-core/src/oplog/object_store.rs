@@ -11,12 +11,13 @@
 
 #[cfg(windows)]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 #[cfg(unix)]
 use std::ffi::CString;
 use std::fmt;
 use std::fs;
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 #[cfg(windows)]
@@ -36,21 +37,44 @@ use uuid::Uuid;
 
 use super::identity::parse_digest;
 use super::{
-    BatchError, BatchId, ContentDigest, LineageDigest, ObjectDescriptor, OperationBatch,
-    OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId, MAX_MANIFEST_BYTES,
-    MAX_OBJECT_BYTES,
+    bootstrap_import::{
+        ArchiveLocalFrontierBindingV1, BootstrapAggregateCommitV1, BootstrapAggregateDigestV1,
+        BootstrapAggregateManifestV1, BootstrapImportError, BootstrapImportPartEvidenceV1,
+        BootstrapManifestFingerprintV1, BootstrapPartDescriptorV1, BootstrapPartSpanIndexV1,
+        BootstrapPublicationIdV1, FullObjectDescriptorV1, PayloadObjectDescriptorV1,
+        SourceBlobChunkDescriptorV1, SourceBlobChunkDigestV1, SourceBlobChunkRootBuilderV1,
+        SourceBlobChunkRootV1, SourceBlobIndexPageV1, SourceBlobIndexValidatorV1,
+        SourceInventoryIndexPageV1, SourceInventoryIndexValidatorV1, SourceInventoryRootV1,
+        SourceLeafV1, MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES, MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES,
+        MAX_BOOTSTRAP_PART_EVIDENCE_BYTES, MAX_PART_SPAN_INDEX_BYTES, MAX_SOURCE_BLOB_CHUNK_BYTES,
+        MAX_SOURCE_INDEX_PAGE_BYTES,
+    },
+    BatchError, BatchId, BatchOrigin, ContentDigest, LineageDigest, ObjectDescriptor,
+    OperationBatch, OperationObject, PreparedBatch, ValidatedBatch, WorkspaceId,
+    MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
 };
 
 const OBJECTS_DIR: &str = "objects";
 const BATCHES_DIR: &str = "batches";
+const BOOTSTRAP_DIR: &str = "bootstrap-v1";
+const BOOTSTRAP_SOURCE_INVENTORY_DIR: &str = "source-inventory-indexes";
+const BOOTSTRAP_SOURCE_BLOB_DIR: &str = "source-blob-indexes";
+const BOOTSTRAP_SOURCE_CHUNKS_DIR: &str = "source-chunks";
+const BOOTSTRAP_PARTS_DIR: &str = "parts";
+const BOOTSTRAP_PART_SPANS_DIR: &str = "part-spans";
+const BOOTSTRAP_OBJECTS_DIR: &str = "objects";
+const BOOTSTRAP_EVIDENCE_DIR: &str = "evidence";
+const BOOTSTRAP_AGGREGATES_DIR: &str = "aggregates";
+const BOOTSTRAP_COMMITS_DIR: &str = "commits";
 const LINEAGE_CLAIM_FILE: &str = "lineage.claim";
 const ENGINE_HISTORY_DIR: &str = "engine-history";
 const ENGINE_HISTORY_NODES_DIR: &str = "nodes";
 const ENGINE_HISTORY_ROOTS_DIR: &str = "roots";
 const ENGINE_HISTORY_CLAIM_FILE: &str = "engine-history.claim";
 const ENGINE_HISTORY_HEAD_FILE: &str = "engine-history.head";
+const ENGINE_HISTORY_TRANSITION_LOCK_FILE: &str = "engine-history.transition.lock";
 const ENGINE_HISTORY_ROOT_SUFFIX: &str = ".history-root";
-const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 7;
+const ENGINE_HISTORY_ROOT_SCHEMA_VERSION: u32 = 8;
 const MAX_ENGINE_HISTORY_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENGINE_HISTORY_INDEX_BYTES: u64 = 2 * 1024 * 1024;
 const ENGINE_HISTORY_INDEX_SCHEMA_VERSION: u32 = 1;
@@ -96,11 +120,18 @@ thread_local! {
         std::cell::RefCell::new(None);
     static ENGINE_HISTORY_FAIL_BEFORE_HEAD_SWAP: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    static ENGINE_HISTORY_FAIL_AFTER_HEAD_SWAP: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
 pub(crate) fn fail_next_engine_history_head_swap() {
     ENGINE_HISTORY_FAIL_BEFORE_HEAD_SWAP.with(|fail| fail.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_engine_history_after_head_swap() {
+    ENGINE_HISTORY_FAIL_AFTER_HEAD_SWAP.with(|fail| fail.set(true));
 }
 
 #[cfg(test)]
@@ -273,6 +304,7 @@ pub(crate) struct DurableEngineHistoryStore {
     control: Dir,
     roots: Dir,
     index: EngineHistoryStore,
+    transition_lock: fs::File,
     transition: Mutex<()>,
     authoritative_head: Mutex<Option<ContentDigest>>,
 }
@@ -288,7 +320,142 @@ struct DurableEngineHistoryRoot {
     generation: u64,
     index_root: ContentDigest,
     latest_batch_id: Option<BatchId>,
-    binding: EngineHistoryBinding,
+    binding: DurableEngineHistoryBinding,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableEngineHistoryBinding {
+    engine: EngineHistoryBinding,
+    bootstrap: Option<BootstrapAggregateHistoryBindingV1>,
+}
+
+impl DurableEngineHistoryBinding {
+    fn ordinary(engine: EngineHistoryBinding) -> Self {
+        Self {
+            engine,
+            bootstrap: None,
+        }
+    }
+}
+
+/// Exact portable bootstrap authority retained by the schema-v8 durable
+/// history root. The later hot-engine lane mirrors this value in each cold
+/// record before calling `publish_many_exact`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BootstrapAggregateHistoryBindingV1 {
+    publication_id: BootstrapPublicationIdV1,
+    aggregate_digest: BootstrapAggregateDigestV1,
+    part_count: u32,
+    final_frontier: ArchiveLocalFrontierBindingV1,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapAggregateHistoryBindingWireV1 {
+    publication_id: [u8; 32],
+    aggregate_digest: [u8; 32],
+    part_count: u32,
+    final_frontier: Vec<u8>,
+}
+
+impl BootstrapAggregateHistoryBindingV1 {
+    pub(crate) fn for_aggregate(
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<Self, StoreError> {
+        Self::new(
+            aggregate.publication_id(),
+            aggregate.aggregate_digest(),
+            aggregate.parts().len() as u32,
+            aggregate.final_frontier(),
+        )
+    }
+
+    pub(crate) fn new(
+        publication_id: BootstrapPublicationIdV1,
+        aggregate_digest: BootstrapAggregateDigestV1,
+        part_count: u32,
+        final_frontier: ArchiveLocalFrontierBindingV1,
+    ) -> Result<Self, StoreError> {
+        if final_frontier.accepted_count() != part_count {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        Ok(Self {
+            publication_id,
+            aggregate_digest,
+            part_count,
+            final_frontier,
+        })
+    }
+
+    pub(crate) const fn publication_id(self) -> BootstrapPublicationIdV1 {
+        self.publication_id
+    }
+
+    pub(crate) const fn aggregate_digest(self) -> BootstrapAggregateDigestV1 {
+        self.aggregate_digest
+    }
+
+    pub(crate) const fn part_count(self) -> u32 {
+        self.part_count
+    }
+
+    pub(crate) const fn final_frontier(self) -> ArchiveLocalFrontierBindingV1 {
+        self.final_frontier
+    }
+}
+
+impl Serialize for BootstrapAggregateHistoryBindingV1 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        BootstrapAggregateHistoryBindingWireV1 {
+            publication_id: *self.publication_id.as_bytes(),
+            aggregate_digest: *self.aggregate_digest.as_bytes(),
+            part_count: self.part_count,
+            final_frontier: self.final_frontier.encode(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BootstrapAggregateHistoryBindingV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = BootstrapAggregateHistoryBindingWireV1::deserialize(deserializer)?;
+        let frontier = ArchiveLocalFrontierBindingV1::decode(&wire.final_frontier)
+            .map_err(serde::de::Error::custom)?;
+        Self::new(
+            BootstrapPublicationIdV1::from_bytes(wire.publication_id),
+            BootstrapAggregateDigestV1::from_bytes(wire.aggregate_digest),
+            wire.part_count,
+            frontier,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+pub(crate) struct PreparedBootstrapHistoryRecordV1<'a> {
+    part: BootstrapPartDescriptorV1,
+    bytes: &'a [u8],
+    binding: BootstrapAggregateHistoryBindingV1,
+}
+
+impl<'a> PreparedBootstrapHistoryRecordV1<'a> {
+    pub(crate) fn new(
+        part: BootstrapPartDescriptorV1,
+        bytes: &'a [u8],
+        binding: BootstrapAggregateHistoryBindingV1,
+    ) -> Self {
+        Self {
+            part,
+            bytes,
+            binding,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -500,6 +667,46 @@ pub enum BatchInspection {
     Ready(ValidatedBatch),
 }
 
+#[derive(Debug)]
+pub(crate) enum BootstrapPublicationInspectionV1 {
+    Absent,
+    Pending,
+    Committed(ValidatedBootstrapPublicationV1),
+    CorruptOrConflicting(StoreError),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ValidatedBootstrapPublicationV1 {
+    aggregate: BootstrapAggregateManifestV1,
+}
+
+impl ValidatedBootstrapPublicationV1 {
+    pub(crate) fn aggregate(&self) -> &BootstrapAggregateManifestV1 {
+        &self.aggregate
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct LoadedBootstrapPartV1 {
+    manifest: OperationBatch,
+    objects: Vec<OperationObject>,
+    spans: BootstrapPartSpanIndexV1,
+}
+
+impl LoadedBootstrapPartV1 {
+    pub(crate) fn manifest(&self) -> &OperationBatch {
+        &self.manifest
+    }
+
+    pub(crate) fn objects(&self) -> &[OperationObject] {
+        &self.objects
+    }
+
+    pub(crate) fn spans(&self) -> &BootstrapPartSpanIndexV1 {
+        &self.spans
+    }
+}
+
 impl ObjectStore {
     /// Open or create a store at an explicit root and retain the opened
     /// directory capability for all later operations.
@@ -585,6 +792,9 @@ impl ObjectStore {
     /// not prevent staging the marker and remain invisible until complete.
     pub fn stage_manifest_bytes(&self, bytes: &[u8]) -> Result<BatchId, StoreError> {
         let manifest = OperationBatch::decode(bytes)?;
+        if manifest.origin() == BatchOrigin::BootstrapImport {
+            return Err(StoreError::BootstrapBatchRequiresDirectPublication);
+        }
         if manifest.workspace_id() != self.workspace_id {
             return Err(StoreError::WorkspaceMismatch {
                 expected: self.workspace_id,
@@ -607,6 +817,9 @@ impl ObjectStore {
     /// Publish a prevalidated complete batch in the required order: every
     /// content-addressed object first, then the manifest commit marker.
     pub fn publish_prepared(&self, batch: &PreparedBatch) -> Result<(), StoreError> {
+        if batch.manifest().origin() == BatchOrigin::BootstrapImport {
+            return Err(StoreError::BootstrapBatchRequiresDirectPublication);
+        }
         if batch.manifest().workspace_id() != self.workspace_id {
             return Err(StoreError::WorkspaceMismatch {
                 expected: self.workspace_id,
@@ -619,6 +832,257 @@ impl ObjectStore {
         publish_after_objects_hook()?;
         self.stage_manifest_bytes(&batch.manifest().encode()?)?;
         Ok(())
+    }
+
+    pub(crate) fn publish_bootstrap_source_inventory_page(
+        &self,
+        root: SourceInventoryRootV1,
+        page: &SourceInventoryIndexPageV1,
+    ) -> Result<(), StoreError> {
+        let dir =
+            self.bootstrap_index_root_dir(BOOTSTRAP_SOURCE_INVENTORY_DIR, root.digest(), true)?;
+        let bytes = page.encode()?;
+        publish_bootstrap_immutable(
+            &dir,
+            &bootstrap_page_filename(page.page_ordinal()),
+            &bytes,
+            "source inventory page",
+            format!("{}/{}", hex_bytes(root.digest()), page.page_ordinal()),
+        )
+    }
+
+    pub(crate) fn publish_bootstrap_source_blob_page(
+        &self,
+        root: SourceBlobChunkRootV1,
+        page: &SourceBlobIndexPageV1,
+    ) -> Result<(), StoreError> {
+        let dir = self.bootstrap_index_root_dir(BOOTSTRAP_SOURCE_BLOB_DIR, root.digest(), true)?;
+        let bytes = page.encode()?;
+        publish_bootstrap_immutable(
+            &dir,
+            &bootstrap_page_filename(page.page_ordinal()),
+            &bytes,
+            "source blob page",
+            format!("{}/{}", hex_bytes(root.digest()), page.page_ordinal()),
+        )
+    }
+
+    pub(crate) fn publish_bootstrap_source_chunk(
+        &self,
+        digest: SourceBlobChunkDigestV1,
+        bytes: &[u8],
+    ) -> Result<(), StoreError> {
+        if bytes.is_empty()
+            || bytes.len() > MAX_SOURCE_BLOB_CHUNK_BYTES as usize
+            || ContentDigest::of(bytes).as_bytes() != digest.as_bytes()
+        {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "source chunk digest or length",
+            ));
+        }
+        let dir = self.bootstrap_namespace(BOOTSTRAP_SOURCE_CHUNKS_DIR, true)?;
+        let identity = hex_bytes(digest.as_bytes());
+        publish_bootstrap_immutable(&dir, &identity, bytes, "source chunk", identity.clone())
+    }
+
+    pub(crate) fn publish_bootstrap_object_bytes(
+        &self,
+        bytes: &[u8],
+    ) -> Result<ContentDigest, StoreError> {
+        let object = OperationObject::decode(bytes)?;
+        if object.workspace_id() != self.workspace_id {
+            return Err(StoreError::WorkspaceMismatch {
+                expected: self.workspace_id,
+                found: object.workspace_id(),
+            });
+        }
+        let digest = ContentDigest::of(bytes);
+        let dir = self.bootstrap_namespace(BOOTSTRAP_OBJECTS_DIR, true)?;
+        publish_bootstrap_immutable(
+            &dir,
+            &object_filename(digest),
+            bytes,
+            "bootstrap operation object",
+            digest.to_string(),
+        )?;
+        Ok(digest)
+    }
+
+    pub(crate) fn publish_bootstrap_part_artifacts(
+        &self,
+        descriptor: BootstrapPartDescriptorV1,
+        manifest_bytes: &[u8],
+        spans: &BootstrapPartSpanIndexV1,
+    ) -> Result<(), StoreError> {
+        let manifest = OperationBatch::decode(manifest_bytes)?;
+        self.require_bootstrap_manifest(descriptor, &manifest)?;
+        let manifest_digest = ContentDigest::of(manifest_bytes);
+        let span_bytes = spans.encode()?;
+        descriptor.validate_loaded_artifacts(
+            BootstrapManifestFingerprintV1::from_bytes(*manifest_digest.as_bytes()),
+            &manifest
+                .required_objects()
+                .iter()
+                .map(|object| {
+                    PayloadObjectDescriptorV1::new(
+                        object.content_digest(),
+                        object.encoded_byte_length(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            &[FullObjectDescriptorV1::manifest_defined(
+                *ContentDigest::of(&span_bytes).as_bytes(),
+                span_bytes.len() as u64,
+            )?],
+        )?;
+        spans.validate_part(descriptor.evidence())?;
+
+        let parts = self.bootstrap_namespace(BOOTSTRAP_PARTS_DIR, true)?;
+        let part_name = hex_bytes(descriptor.part_id().as_bytes());
+        publish_bootstrap_immutable(
+            &parts,
+            &part_name,
+            manifest_bytes,
+            "bootstrap part manifest",
+            part_name.clone(),
+        )?;
+
+        let evidence = descriptor.evidence();
+        let evidence_bytes = evidence.encode()?;
+        let evidence_name = hex_bytes(evidence.evidence_digest().as_bytes());
+        let evidence_dir = self.bootstrap_namespace(BOOTSTRAP_EVIDENCE_DIR, true)?;
+        publish_bootstrap_immutable(
+            &evidence_dir,
+            &evidence_name,
+            &evidence_bytes,
+            "bootstrap part evidence",
+            evidence_name.clone(),
+        )?;
+
+        let span_dir = self.bootstrap_namespace(BOOTSTRAP_PART_SPANS_DIR, true)?;
+        publish_bootstrap_immutable(
+            &span_dir,
+            &part_name,
+            &span_bytes,
+            "bootstrap part span index",
+            part_name.clone(),
+        )
+    }
+
+    pub(crate) fn publish_bootstrap_aggregate_prefix(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<BootstrapAggregateDigestV1, StoreError> {
+        self.require_bootstrap_aggregate_context(aggregate)?;
+        let bytes = aggregate.encode()?;
+        let digest = aggregate.aggregate_digest();
+        let name = hex_bytes(digest.as_bytes());
+        let dir = self.bootstrap_namespace(BOOTSTRAP_AGGREGATES_DIR, true)?;
+        publish_bootstrap_immutable(&dir, &name, &bytes, "bootstrap aggregate", name.clone())?;
+        Ok(digest)
+    }
+
+    /// Validate every direct prefix artifact, then publish the sole bootstrap
+    /// authority marker last. Raw source chunks are checked here; reopen can
+    /// skip rereading them because later engine replay needs only validated
+    /// part artifacts.
+    pub(crate) fn commit_bootstrap_aggregate(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<BootstrapPublicationIdV1, StoreError> {
+        self.require_bootstrap_aggregate_context(aggregate)?;
+        self.validate_bootstrap_aggregate_artifacts(aggregate, true)?;
+        self.check_or_establish_lineage(aggregate.lineage_digest())?;
+        let commit = BootstrapAggregateCommitV1::for_aggregate(aggregate)?;
+        let bytes = commit.encode()?;
+        let publication_id = aggregate.publication_id();
+        let name = hex_bytes(publication_id.as_bytes());
+        let dir = self.bootstrap_namespace(BOOTSTRAP_COMMITS_DIR, true)?;
+        publish_bootstrap_immutable(&dir, &name, &bytes, "bootstrap commit", name.clone())?;
+        Ok(publication_id)
+    }
+
+    /// Direct reopen begins with the portable publication ID and never
+    /// enumerates a bootstrap prefix.
+    pub(crate) fn load_bootstrap_publication(
+        &self,
+        publication_id: BootstrapPublicationIdV1,
+    ) -> Result<ValidatedBootstrapPublicationV1, StoreError> {
+        let commits = self.bootstrap_namespace(BOOTSTRAP_COMMITS_DIR, false)?;
+        let commit_name = hex_bytes(publication_id.as_bytes());
+        let commit_bytes = read_required_regular(
+            &commits,
+            &commit_name,
+            MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES as u64,
+            None,
+        )?;
+        let commit = BootstrapAggregateCommitV1::decode(&commit_bytes)?;
+        if commit.publication_id() != publication_id {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap commit publication identity",
+            ));
+        }
+
+        let aggregates = self.bootstrap_namespace(BOOTSTRAP_AGGREGATES_DIR, false)?;
+        let aggregate_name = hex_bytes(commit.aggregate_digest().as_bytes());
+        let aggregate_bytes = read_required_regular(
+            &aggregates,
+            &aggregate_name,
+            MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64,
+            Some(commit.aggregate_byte_length()),
+        )?;
+        let aggregate = BootstrapAggregateManifestV1::decode(&aggregate_bytes)?;
+        commit.validate_aggregate(&aggregate)?;
+        if aggregate.publication_id() != publication_id
+            || aggregate.aggregate_digest() != commit.aggregate_digest()
+        {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap aggregate direct identity",
+            ));
+        }
+        self.require_bootstrap_aggregate_context(&aggregate)?;
+        self.require_lineage(aggregate.lineage_digest())?;
+        self.validate_bootstrap_aggregate_artifacts(&aggregate, false)?;
+
+        let final_commit = read_required_regular(
+            &commits,
+            &commit_name,
+            MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES as u64,
+            Some(commit_bytes.len() as u64),
+        )?;
+        let final_aggregate = read_required_regular(
+            &aggregates,
+            &aggregate_name,
+            MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64,
+            Some(aggregate_bytes.len() as u64),
+        )?;
+        if final_commit != commit_bytes || final_aggregate != aggregate_bytes {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap commit or aggregate changed during direct validation",
+            ));
+        }
+        Ok(ValidatedBootstrapPublicationV1 { aggregate })
+    }
+
+    pub(crate) fn load_bootstrap_part(
+        &self,
+        publication: &ValidatedBootstrapPublicationV1,
+        ordinal: usize,
+    ) -> Result<LoadedBootstrapPartV1, StoreError> {
+        let descriptor = *publication.aggregate.parts().get(ordinal).ok_or(
+            StoreError::BootstrapArtifactMismatch("bootstrap part ordinal"),
+        )?;
+        self.load_and_validate_bootstrap_part(&publication.aggregate, descriptor)
+    }
+
+    pub(crate) fn inspect_bootstrap_aggregate(
+        &self,
+        expected: &BootstrapAggregateManifestV1,
+    ) -> BootstrapPublicationInspectionV1 {
+        match self.inspect_bootstrap_aggregate_inner(expected) {
+            Ok(inspection) => inspection,
+            Err(error) => BootstrapPublicationInspectionV1::CorruptOrConflicting(error),
+        }
     }
 
     /// Inspect a single manifest and validate every present required object.
@@ -871,6 +1335,7 @@ impl ObjectStore {
                 binding.endpoint.graph_resource_id,
                 binding.receipt_store_id,
                 control,
+                open_engine_history_transition_lock(&self.capability)?,
                 Arc::clone(&self.counters),
             )
             .map(SealedControl::Existing),
@@ -942,6 +1407,7 @@ impl ObjectStore {
                 capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
                 counters: Arc::clone(&self.counters),
             },
+            open_engine_history_transition_lock(&self.capability)?,
         )
     }
 
@@ -966,6 +1432,7 @@ impl ObjectStore {
                 capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
                 counters: Arc::clone(&self.counters),
             },
+            open_engine_history_transition_lock(&self.capability)?,
         )
     }
 
@@ -1416,6 +1883,593 @@ impl ObjectStore {
             )));
         }
         open_dir_nofollow(&self.capability, name)
+    }
+
+    fn bootstrap_namespace(&self, name: &'static str, create: bool) -> Result<Dir, StoreError> {
+        if create {
+            ensure_directory_nofollow(&self.capability, BOOTSTRAP_DIR)?;
+        }
+        let bootstrap = open_existing_dir_nofollow(&self.capability, BOOTSTRAP_DIR)?
+            .ok_or(StoreError::MissingBootstrapArtifact("bootstrap namespace"))?;
+        if create {
+            ensure_directory_nofollow(&bootstrap, name)?;
+        }
+        open_existing_dir_nofollow(&bootstrap, name)?
+            .ok_or(StoreError::MissingBootstrapArtifact(name))
+    }
+
+    fn bootstrap_optional_namespace(&self, name: &str) -> Result<Option<Dir>, StoreError> {
+        let Some(bootstrap) = open_existing_dir_nofollow(&self.capability, BOOTSTRAP_DIR)? else {
+            return Ok(None);
+        };
+        open_existing_dir_nofollow(&bootstrap, name)
+    }
+
+    fn bootstrap_index_root_dir(
+        &self,
+        namespace: &'static str,
+        root: &[u8; 32],
+        create: bool,
+    ) -> Result<Dir, StoreError> {
+        let directory = self.bootstrap_namespace(namespace, create)?;
+        let root_name = hex_bytes(root);
+        if create {
+            ensure_directory_nofollow(&directory, &root_name)?;
+        }
+        open_existing_dir_nofollow(&directory, &root_name)?
+            .ok_or(StoreError::MissingBootstrapArtifact(namespace))
+    }
+
+    fn require_bootstrap_manifest(
+        &self,
+        descriptor: BootstrapPartDescriptorV1,
+        manifest: &OperationBatch,
+    ) -> Result<(), StoreError> {
+        if manifest.origin() != BatchOrigin::BootstrapImport {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap part origin",
+            ));
+        }
+        if manifest.workspace_id() != self.workspace_id {
+            return Err(StoreError::WorkspaceMismatch {
+                expected: self.workspace_id,
+                found: manifest.workspace_id(),
+            });
+        }
+        if manifest.batch_id() != descriptor.batch_id() {
+            return Err(StoreError::ManifestPathMismatch {
+                expected: descriptor.batch_id(),
+                found: manifest.batch_id(),
+            });
+        }
+        Ok(())
+    }
+
+    fn require_bootstrap_aggregate_context(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+    ) -> Result<(), StoreError> {
+        if aggregate.workspace_id() != self.workspace_id {
+            return Err(StoreError::WorkspaceMismatch {
+                expected: self.workspace_id,
+                found: aggregate.workspace_id(),
+            });
+        }
+        if let Some(bytes) =
+            read_optional_regular(&self.capability, LINEAGE_CLAIM_FILE, 32, Some(32))?
+        {
+            require_lineage_bytes(aggregate.lineage_digest(), &bytes)?;
+        }
+        Ok(())
+    }
+
+    fn validate_bootstrap_aggregate_artifacts(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+        verify_source_chunk_bytes: bool,
+    ) -> Result<(), StoreError> {
+        let aggregate_dir = self.bootstrap_namespace(BOOTSTRAP_AGGREGATES_DIR, false)?;
+        let aggregate_name = hex_bytes(aggregate.aggregate_digest().as_bytes());
+        let expected_aggregate = aggregate.encode()?;
+        let stored_aggregate = read_required_regular(
+            &aggregate_dir,
+            &aggregate_name,
+            MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64,
+            Some(expected_aggregate.len() as u64),
+        )?;
+        if stored_aggregate != expected_aggregate {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap aggregate bytes",
+            ));
+        }
+
+        self.validate_bootstrap_source_indexes(aggregate, verify_source_chunk_bytes)?;
+        for descriptor in aggregate.parts() {
+            self.load_and_validate_bootstrap_part(aggregate, *descriptor)?;
+        }
+        Ok(())
+    }
+
+    fn validate_bootstrap_source_indexes(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+        verify_source_chunk_bytes: bool,
+    ) -> Result<(), StoreError> {
+        let inventory_root = aggregate.source_inventory_root();
+        let inventory_pages = aggregate.source_inventory_page_count();
+        let blob_root = aggregate.source_blob_root();
+        let blob_pages = aggregate.source_blob_page_count();
+        if inventory_pages == 0 {
+            SourceInventoryIndexValidatorV1::new(inventory_root, 0)?.finish()?;
+            SourceBlobIndexValidatorV1::new(blob_root, blob_pages)?.finish()?;
+            if SourceBlobChunkRootBuilderV1::new().finish()? != blob_root {
+                return Err(StoreError::BootstrapArtifactMismatch(
+                    "empty source blob terminal coverage",
+                ));
+            }
+            return Ok(());
+        }
+        let inventory_dir = self.bootstrap_index_root_dir(
+            BOOTSTRAP_SOURCE_INVENTORY_DIR,
+            inventory_root.digest(),
+            false,
+        )?;
+        let mut inventory_validator =
+            SourceInventoryIndexValidatorV1::new(inventory_root, inventory_pages)?;
+        let mut scratch = BootstrapInventoryScratch::new(&self.capability)?;
+        let mut runs = Vec::with_capacity(inventory_pages as usize);
+        for ordinal in 0..inventory_pages {
+            let bytes = read_required_regular(
+                &inventory_dir,
+                &bootstrap_page_filename(ordinal),
+                MAX_SOURCE_INDEX_PAGE_BYTES as u64,
+                None,
+            )?;
+            let page = SourceInventoryIndexPageV1::decode(&bytes)?;
+            inventory_validator.push_page(&page)?;
+            let mut leaves = page.entries().to_vec();
+            leaves.sort_unstable_by_key(SourceLeafV1::digest);
+            if leaves
+                .windows(2)
+                .any(|pair| pair[0].digest() == pair[1].digest())
+            {
+                return Err(StoreError::BootstrapArtifactMismatch(
+                    "duplicate source leaf digest",
+                ));
+            }
+            runs.push(scratch.write_run(&leaves)?);
+        }
+        inventory_validator.finish()?;
+        let inventory_run = scratch.merge_all(runs)?;
+
+        let blob_dir = if blob_pages == 0 {
+            inventory_dir.try_clone()?
+        } else {
+            self.bootstrap_index_root_dir(BOOTSTRAP_SOURCE_BLOB_DIR, blob_root.digest(), false)?
+        };
+        let source_chunks = if verify_source_chunk_bytes && blob_root.chunk_count() != 0 {
+            Some(self.bootstrap_namespace(BOOTSTRAP_SOURCE_CHUNKS_DIR, false)?)
+        } else {
+            None
+        };
+        let mut blob_cursor =
+            BootstrapBlobCursor::new(blob_dir, source_chunks, blob_root, blob_pages)?;
+        let mut source_builder = SourceBlobChunkRootBuilderV1::new();
+        let mut inventory_reader = inventory_run
+            .as_deref()
+            .map(|name| BootstrapLeafRunReader::open(&scratch.dir, name))
+            .transpose()?;
+        while let Some(source) = inventory_reader
+            .as_mut()
+            .map(BootstrapLeafRunReader::next_leaf)
+            .transpose()?
+            .flatten()
+        {
+            source_builder.begin_source(&source)?;
+            while blob_cursor
+                .peek()?
+                .is_some_and(|descriptor| descriptor.source_leaf() == source.digest())
+            {
+                source_builder.push(
+                    blob_cursor
+                        .next()?
+                        .expect("peeked bootstrap blob descriptor remains present"),
+                )?;
+            }
+            if blob_cursor
+                .peek()?
+                .is_some_and(|descriptor| descriptor.source_leaf() < source.digest())
+            {
+                return Err(StoreError::BootstrapArtifactMismatch(
+                    "source blob descriptor has no inventory leaf",
+                ));
+            }
+        }
+        if blob_cursor.next()?.is_some() {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "source blob descriptor has no inventory leaf",
+            ));
+        }
+        blob_cursor.finish()?;
+        if source_builder.finish()? != blob_root {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "source blob terminal coverage",
+            ));
+        }
+        Ok(())
+    }
+
+    fn load_and_validate_bootstrap_part(
+        &self,
+        aggregate: &BootstrapAggregateManifestV1,
+        descriptor: BootstrapPartDescriptorV1,
+    ) -> Result<LoadedBootstrapPartV1, StoreError> {
+        let part_name = hex_bytes(descriptor.part_id().as_bytes());
+        let parts = self.bootstrap_namespace(BOOTSTRAP_PARTS_DIR, false)?;
+        let manifest_bytes =
+            read_required_regular(&parts, &part_name, MAX_MANIFEST_BYTES as u64, None)?;
+        let manifest = OperationBatch::decode(&manifest_bytes)?;
+        self.require_bootstrap_manifest(descriptor, &manifest)?;
+        if manifest.lineage_digest() != aggregate.lineage_digest() {
+            return Err(StoreError::LineageMismatch {
+                expected: aggregate.lineage_digest(),
+                found: manifest.lineage_digest(),
+            });
+        }
+
+        let evidence = descriptor.evidence();
+        let evidence_name = hex_bytes(evidence.evidence_digest().as_bytes());
+        let evidence_dir = self.bootstrap_namespace(BOOTSTRAP_EVIDENCE_DIR, false)?;
+        let evidence_bytes = read_required_regular(
+            &evidence_dir,
+            &evidence_name,
+            MAX_BOOTSTRAP_PART_EVIDENCE_BYTES as u64,
+            None,
+        )?;
+        let loaded_evidence = BootstrapImportPartEvidenceV1::decode(&evidence_bytes)?;
+        if loaded_evidence != evidence {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "bootstrap part evidence",
+            ));
+        }
+
+        let span_dir = self.bootstrap_namespace(BOOTSTRAP_PART_SPANS_DIR, false)?;
+        let span_bytes = read_required_regular(
+            &span_dir,
+            &part_name,
+            MAX_PART_SPAN_INDEX_BYTES as u64,
+            None,
+        )?;
+        let spans = BootstrapPartSpanIndexV1::decode(&span_bytes)?;
+        spans.validate_part(evidence)?;
+
+        let object_dir = self.bootstrap_namespace(BOOTSTRAP_OBJECTS_DIR, false)?;
+        let mut objects = Vec::with_capacity(manifest.required_objects().len());
+        let mut payloads = Vec::with_capacity(manifest.required_objects().len());
+        for expected in manifest.required_objects() {
+            let bytes = read_required_regular(
+                &object_dir,
+                &object_filename(expected.content_digest()),
+                MAX_OBJECT_BYTES as u64,
+                Some(expected.encoded_byte_length()),
+            )?;
+            if ContentDigest::of(&bytes) != expected.content_digest() {
+                return Err(StoreError::ObjectPathMismatch(expected.content_digest()));
+            }
+            let object = OperationObject::decode(&bytes)?;
+            if object.workspace_id() != self.workspace_id {
+                return Err(StoreError::WorkspaceMismatch {
+                    expected: self.workspace_id,
+                    found: object.workspace_id(),
+                });
+            }
+            if object.descriptor()? != *expected {
+                return Err(StoreError::BootstrapArtifactMismatch(
+                    "bootstrap operation object descriptor",
+                ));
+            }
+            payloads.push(PayloadObjectDescriptorV1::new(
+                expected.content_digest(),
+                expected.encoded_byte_length(),
+            )?);
+            objects.push(object);
+        }
+        let manifest_fingerprint = BootstrapManifestFingerprintV1::from_bytes(
+            *ContentDigest::of(&manifest_bytes).as_bytes(),
+        );
+        let manifest_defined = [FullObjectDescriptorV1::manifest_defined(
+            *ContentDigest::of(&span_bytes).as_bytes(),
+            span_bytes.len() as u64,
+        )?];
+        descriptor.validate_loaded_artifacts(manifest_fingerprint, &payloads, &manifest_defined)?;
+        Ok(LoadedBootstrapPartV1 {
+            manifest,
+            objects,
+            spans,
+        })
+    }
+
+    fn inspect_bootstrap_aggregate_inner(
+        &self,
+        expected: &BootstrapAggregateManifestV1,
+    ) -> Result<BootstrapPublicationInspectionV1, StoreError> {
+        self.require_bootstrap_aggregate_context(expected)?;
+        let publication_id = expected.publication_id();
+        if let Some(commits) = self.bootstrap_optional_namespace(BOOTSTRAP_COMMITS_DIR)? {
+            let name = hex_bytes(publication_id.as_bytes());
+            if read_optional_regular(
+                &commits,
+                &name,
+                MAX_BOOTSTRAP_AGGREGATE_COMMIT_BYTES as u64,
+                None,
+            )?
+            .is_some()
+            {
+                let publication = self.load_bootstrap_publication(publication_id)?;
+                if publication.aggregate() != expected {
+                    return Err(StoreError::BootstrapArtifactMismatch(
+                        "committed bootstrap aggregate",
+                    ));
+                }
+                return Ok(BootstrapPublicationInspectionV1::Committed(publication));
+            }
+        }
+        let Some(aggregates) = self.bootstrap_optional_namespace(BOOTSTRAP_AGGREGATES_DIR)? else {
+            return Ok(BootstrapPublicationInspectionV1::Absent);
+        };
+        let name = hex_bytes(expected.aggregate_digest().as_bytes());
+        let Some(bytes) = read_optional_regular(
+            &aggregates,
+            &name,
+            MAX_BOOTSTRAP_AGGREGATE_MANIFEST_BYTES as u64,
+            None,
+        )?
+        else {
+            return Ok(BootstrapPublicationInspectionV1::Absent);
+        };
+        let found = BootstrapAggregateManifestV1::decode(&bytes)?;
+        if found != *expected {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "pending bootstrap aggregate",
+            ));
+        }
+        Ok(BootstrapPublicationInspectionV1::Pending)
+    }
+}
+
+const BOOTSTRAP_INVENTORY_MERGE_FAN_IN: usize = 32;
+
+struct BootstrapInventoryScratch {
+    dir: Dir,
+    names: Vec<String>,
+}
+
+impl BootstrapInventoryScratch {
+    fn new(dir: &Dir) -> Result<Self, StoreError> {
+        Ok(Self {
+            dir: dir.try_clone()?,
+            names: Vec::new(),
+        })
+    }
+
+    fn create_run(&mut self) -> Result<(String, BufWriter<fs::File>), StoreError> {
+        let name = format!(".tmp-bootstrap-inventory-{}", Uuid::new_v4());
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let file = self.dir.open_with(&name, &options)?.into_std();
+        self.names.push(name.clone());
+        Ok((name, BufWriter::new(file)))
+    }
+
+    fn write_run(&mut self, leaves: &[SourceLeafV1]) -> Result<String, StoreError> {
+        let (name, mut writer) = self.create_run()?;
+        for leaf in leaves {
+            write_bootstrap_leaf_record(&mut writer, leaf)?;
+        }
+        writer.flush()?;
+        Ok(name)
+    }
+
+    fn merge_all(&mut self, mut runs: Vec<String>) -> Result<Option<String>, StoreError> {
+        while runs.len() > 1 {
+            let mut next =
+                Vec::with_capacity(runs.len().div_ceil(BOOTSTRAP_INVENTORY_MERGE_FAN_IN));
+            for group in runs.chunks(BOOTSTRAP_INVENTORY_MERGE_FAN_IN) {
+                next.push(self.merge_group(group)?);
+            }
+            runs = next;
+        }
+        Ok(runs.pop())
+    }
+
+    fn merge_group(&mut self, runs: &[String]) -> Result<String, StoreError> {
+        let mut readers = runs
+            .iter()
+            .map(|name| BootstrapLeafRunReader::open(&self.dir, name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut heads = readers
+            .iter_mut()
+            .map(BootstrapLeafRunReader::next_leaf)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut heap = BinaryHeap::new();
+        for (index, leaf) in heads.iter().enumerate() {
+            if let Some(leaf) = leaf {
+                heap.push(Reverse((*leaf.digest().as_bytes(), index)));
+            }
+        }
+        let (name, mut writer) = self.create_run()?;
+        let mut last = None;
+        while let Some(Reverse((digest, index))) = heap.pop() {
+            if last == Some(digest) {
+                return Err(StoreError::BootstrapArtifactMismatch(
+                    "duplicate source leaf digest",
+                ));
+            }
+            let leaf = heads[index]
+                .take()
+                .ok_or(StoreError::BootstrapArtifactMismatch(
+                    "inventory merge head",
+                ))?;
+            write_bootstrap_leaf_record(&mut writer, &leaf)?;
+            last = Some(digest);
+            heads[index] = readers[index].next_leaf()?;
+            if let Some(next) = &heads[index] {
+                heap.push(Reverse((*next.digest().as_bytes(), index)));
+            }
+        }
+        writer.flush()?;
+        Ok(name)
+    }
+}
+
+impl Drop for BootstrapInventoryScratch {
+    fn drop(&mut self) {
+        for name in &self.names {
+            let _ = self.dir.remove_file(name);
+        }
+    }
+}
+
+struct BootstrapLeafRunReader {
+    reader: BufReader<fs::File>,
+}
+
+impl BootstrapLeafRunReader {
+    fn open(dir: &Dir, name: &str) -> Result<Self, StoreError> {
+        let file = read_regular_file_nofollow(dir, name)?;
+        Ok(Self {
+            reader: BufReader::new(file),
+        })
+    }
+
+    fn next_leaf(&mut self) -> Result<Option<SourceLeafV1>, StoreError> {
+        let mut length = [0_u8; 4];
+        match self.reader.read(&mut length[..1]) {
+            Ok(0) => return Ok(None),
+            Ok(1) => self.reader.read_exact(&mut length[1..])?,
+            Ok(_) => unreachable!("one-byte bootstrap run probe"),
+            Err(error) => return Err(error.into()),
+        }
+        let length = u32::from_be_bytes(length) as usize;
+        if length == 0 || length > MAX_SOURCE_INDEX_PAGE_BYTES {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "inventory scratch record length",
+            ));
+        }
+        let mut bytes = vec![0; length];
+        self.reader.read_exact(&mut bytes)?;
+        Ok(Some(SourceLeafV1::decode(&bytes)?))
+    }
+}
+
+fn write_bootstrap_leaf_record(
+    writer: &mut impl Write,
+    leaf: &SourceLeafV1,
+) -> Result<(), StoreError> {
+    let bytes = leaf.encode();
+    let length = u32::try_from(bytes.len())
+        .map_err(|_| StoreError::BootstrapArtifactMismatch("inventory scratch record length"))?;
+    writer.write_all(&length.to_be_bytes())?;
+    writer.write_all(&bytes)?;
+    Ok(())
+}
+
+struct BootstrapBlobCursor {
+    pages: Dir,
+    chunks: Option<Dir>,
+    validator: Option<SourceBlobIndexValidatorV1>,
+    expected_pages: u32,
+    next_page: u32,
+    entries: Vec<SourceBlobChunkDescriptorV1>,
+    next_entry: usize,
+}
+
+impl BootstrapBlobCursor {
+    fn new(
+        pages: Dir,
+        chunks: Option<Dir>,
+        root: SourceBlobChunkRootV1,
+        expected_pages: u32,
+    ) -> Result<Self, StoreError> {
+        Ok(Self {
+            pages,
+            chunks,
+            validator: Some(SourceBlobIndexValidatorV1::new(root, expected_pages)?),
+            expected_pages,
+            next_page: 0,
+            entries: Vec::new(),
+            next_entry: 0,
+        })
+    }
+
+    fn peek(&mut self) -> Result<Option<SourceBlobChunkDescriptorV1>, StoreError> {
+        self.fill()?;
+        Ok(self.entries.get(self.next_entry).copied())
+    }
+
+    fn next(&mut self) -> Result<Option<SourceBlobChunkDescriptorV1>, StoreError> {
+        self.fill()?;
+        let value = self.entries.get(self.next_entry).copied();
+        if value.is_some() {
+            self.next_entry += 1;
+        }
+        Ok(value)
+    }
+
+    fn fill(&mut self) -> Result<(), StoreError> {
+        while self.next_entry == self.entries.len() && self.next_page < self.expected_pages {
+            let bytes = read_required_regular(
+                &self.pages,
+                &bootstrap_page_filename(self.next_page),
+                MAX_SOURCE_INDEX_PAGE_BYTES as u64,
+                None,
+            )?;
+            let page = SourceBlobIndexPageV1::decode(&bytes)?;
+            self.validator
+                .as_mut()
+                .ok_or(StoreError::BootstrapArtifactMismatch(
+                    "finished source blob validator",
+                ))?
+                .push_page(&page)?;
+            self.entries = page.entries().to_vec();
+            self.next_entry = 0;
+            self.next_page += 1;
+            if let Some(chunks) = &self.chunks {
+                for descriptor in &self.entries {
+                    let name = hex_bytes(descriptor.content_digest().as_bytes());
+                    let chunk = read_required_regular(
+                        chunks,
+                        &name,
+                        MAX_SOURCE_BLOB_CHUNK_BYTES as u64,
+                        Some(u64::from(descriptor.byte_length())),
+                    )?;
+                    if ContentDigest::of(&chunk).as_bytes()
+                        != descriptor.content_digest().as_bytes()
+                    {
+                        return Err(StoreError::BootstrapArtifactMismatch(
+                            "source chunk content digest",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<(), StoreError> {
+        self.fill()?;
+        if self.next_entry != self.entries.len() || self.next_page != self.expected_pages {
+            return Err(StoreError::BootstrapArtifactMismatch(
+                "source blob index cursor",
+            ));
+        }
+        self.validator
+            .take()
+            .ok_or(StoreError::BootstrapArtifactMismatch(
+                "finished source blob validator",
+            ))?
+            .finish()?;
+        Ok(())
     }
 }
 
@@ -1885,6 +2939,7 @@ impl DurableEngineHistoryStore {
         graph_resource_id: super::CanonicalGraphResourceId,
         receipt_store_id: super::ProjectionReceiptStoreId,
         control: Dir,
+        transition_lock: fs::File,
         counters: Arc<StoreCounters>,
     ) -> Result<Self, StoreError> {
         let claim = read_optional_regular(&control, ENGINE_HISTORY_CLAIM_FILE, 256, None)?
@@ -1911,6 +2966,7 @@ impl DurableEngineHistoryStore {
                 capability: nodes,
                 counters,
             },
+            transition_lock,
             transition: Mutex::new(()),
             authoritative_head: Mutex::new(None),
         };
@@ -1931,6 +2987,7 @@ impl DurableEngineHistoryStore {
         control: Dir,
         roots: Dir,
         index: EngineHistoryStore,
+        transition_lock: fs::File,
     ) -> Result<Self, StoreError> {
         let store = Self {
             workspace_id,
@@ -1940,6 +2997,7 @@ impl DurableEngineHistoryStore {
             control,
             roots,
             index,
+            transition_lock,
             transition: Mutex::new(()),
             authoritative_head: Mutex::new(None),
         };
@@ -2089,8 +3147,15 @@ impl DurableEngineHistoryStore {
             root.generation,
             root.index_root,
             root.latest_batch_id,
-            root.binding.clone(),
+            root.binding.engine.clone(),
         ))
+    }
+
+    pub(crate) fn current_bootstrap_binding(
+        &self,
+    ) -> Result<Option<BootstrapAggregateHistoryBindingV1>, StoreError> {
+        let (_, root) = self.load_head_root()?;
+        Ok(root.binding.bootstrap)
     }
 
     fn validate_sealed_open(&self) -> Result<(), StoreError> {
@@ -2144,6 +3209,7 @@ impl DurableEngineHistoryStore {
             .transition
             .lock()
             .map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let _workspace_guard = AdvisoryTransitionGuard::lock(&self.transition_lock)?;
         let (before_digest, before) = self.load_head_root()?;
         let index_root = self.index.insert(before.index_root, batch_id, bytes)?;
         if index_root == before.index_root {
@@ -2161,11 +3227,85 @@ impl DurableEngineHistoryStore {
                 .ok_or(StoreError::MalformedHistoryIndex)?,
             index_root,
             latest_batch_id: Some(batch_id),
-            binding,
+            binding: DurableEngineHistoryBinding {
+                engine: binding,
+                bootstrap: before.binding.bootstrap,
+            },
         };
         let after_digest = self.publish_root(&after)?;
         self.replace_head(before_digest, after_digest)?;
         Ok((after.generation, after.index_root))
+    }
+
+    pub(crate) fn publish_many_exact(
+        &self,
+        records: &[PreparedBootstrapHistoryRecordV1<'_>],
+        binding: BootstrapAggregateHistoryBindingV1,
+        engine_binding: EngineHistoryBinding,
+    ) -> Result<(u64, ContentDigest), StoreError> {
+        if records.len() != binding.part_count() as usize {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        let mut index_root = EngineHistoryStore::empty_root();
+        let mut latest = None;
+        let mut batch_ids = std::collections::BTreeSet::new();
+        for (ordinal, record) in records.iter().enumerate() {
+            if record.binding != binding
+                || record.part.acceptance_sequence() != ordinal as u32 + 1
+                || !batch_ids.insert(record.part.batch_id())
+            {
+                return Err(StoreError::MalformedHistoryIndex);
+            }
+            let next_root = self
+                .index
+                .insert(index_root, record.part.batch_id(), record.bytes)?;
+            if next_root == index_root {
+                return Err(StoreError::MalformedHistoryIndex);
+            }
+            index_root = next_root;
+            latest = Some(record.part.batch_id());
+        }
+        if records
+            .last()
+            .map(|record| record.part.post_frontier())
+            .unwrap_or_else(|| binding.final_frontier())
+            != binding.final_frontier()
+        {
+            return Err(StoreError::MalformedHistoryIndex);
+        }
+        let generation =
+            u64::try_from(records.len()).map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let candidate = DurableEngineHistoryRoot {
+            schema_version: ENGINE_HISTORY_ROOT_SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            endpoint_id: self.endpoint_id,
+            graph_resource_id: self.graph_resource_id,
+            receipt_store_id: self.receipt_store_id,
+            generation,
+            index_root,
+            latest_batch_id: latest,
+            binding: DurableEngineHistoryBinding {
+                engine: engine_binding,
+                bootstrap: Some(binding),
+            },
+        };
+        let candidate_digest = self.publish_root(&candidate)?;
+
+        let _guard = self
+            .transition
+            .lock()
+            .map_err(|_| StoreError::MalformedHistoryIndex)?;
+        let _workspace_guard = AdvisoryTransitionGuard::lock(&self.transition_lock)?;
+        let (before_digest, before) = self.read_live_head_root()?;
+        if before.generation != 0
+            || before.index_root != EngineHistoryStore::empty_root()
+            || before.latest_batch_id.is_some()
+            || before.binding.bootstrap.is_some()
+        {
+            return Err(StoreError::BootstrapHistoryRequiresEmptyAuthority);
+        }
+        self.replace_head(before_digest, candidate_digest)?;
+        Ok((candidate.generation, candidate.index_root))
     }
 
     fn initialize(&self) -> Result<(), StoreError> {
@@ -2182,7 +3322,7 @@ impl DurableEngineHistoryStore {
                     generation: 0,
                     index_root: EngineHistoryStore::empty_root(),
                     latest_batch_id: None,
-                    binding: EngineHistoryBinding::empty(),
+                    binding: DurableEngineHistoryBinding::ordinary(EngineHistoryBinding::empty()),
                 };
                 let empty_digest = self.publish_root(&empty)?;
                 publish_immutable_exact(
@@ -2321,6 +3461,15 @@ impl DurableEngineHistoryStore {
             })?;
             self.control
                 .rename(&temp_name, &self.control, ENGINE_HISTORY_HEAD_FILE)?;
+            #[cfg(test)]
+            ENGINE_HISTORY_FAIL_AFTER_HEAD_SWAP.with(|fail| {
+                if fail.replace(false) {
+                    return Err(StoreError::Io(std::io::Error::other(
+                        "injected engine history failure after authenticated head swap",
+                    )));
+                }
+                Ok(())
+            })?;
             sync_dir_required(&self.control)?;
             Ok::<_, StoreError>(())
         })();
@@ -2367,27 +3516,37 @@ fn validate_engine_history_root(
         || root.endpoint_id != endpoint_id
         || root.graph_resource_id != graph_resource_id
         || root.receipt_store_id != receipt_store_id
-        || root.binding.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
+        || root.binding.engine.portable_path_key_version != super::PORTABLE_PATH_KEY_VERSION
         || (root.generation == 0) != root.latest_batch_id.is_none()
+        || root.binding.bootstrap.is_some_and(|binding| {
+            u64::from(binding.part_count()) > root.generation
+                || binding.final_frontier().accepted_count() != binding.part_count()
+        })
         || root
             .binding
+            .engine
             .portable_path_conflicts
             .windows(2)
             .any(|pair| pair[0].key_digest() >= pair[1].key_digest())
-        || root.binding.portable_path_conflicts.iter().any(|conflict| {
-            conflict.key_version() != super::PORTABLE_PATH_KEY_VERSION
-                || conflict.participants().len() < 2
-                || conflict
-                    .participants()
-                    .windows(2)
-                    .any(|pair| pair[0] >= pair[1])
-        })
-        || (!root.binding.portable_path_conflicts.is_empty()
-            && root.binding.terminal_evidence.is_none())
+        || root
+            .binding
+            .engine
+            .portable_path_conflicts
+            .iter()
+            .any(|conflict| {
+                conflict.key_version() != super::PORTABLE_PATH_KEY_VERSION
+                    || conflict.participants().len() < 2
+                    || conflict
+                        .participants()
+                        .windows(2)
+                        .any(|pair| pair[0] >= pair[1])
+            })
+        || (!root.binding.engine.portable_path_conflicts.is_empty()
+            && root.binding.engine.terminal_evidence.is_none())
     {
         return Err(StoreError::MalformedHistoryIndex);
     }
-    root.binding.page_names.validate()?;
+    root.binding.engine.page_names.validate()?;
     Ok(())
 }
 
@@ -2791,13 +3950,14 @@ enum NamespaceKind {
     Batches,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Collision {
     Object(ContentDigest),
     Batch(BatchId),
     HistoryIndex(ContentDigest),
     Lineage(LineageDigest),
     Exact(&'static str),
+    Bootstrap(&'static str, String),
 }
 
 fn ensure_single_lineage(manifests: &[OperationBatch]) -> Result<(), StoreError> {
@@ -2829,6 +3989,7 @@ fn require_lineage_bytes(expected: LineageDigest, bytes: &[u8]) -> Result<(), St
 pub enum StoreError {
     Io(std::io::Error),
     Batch(BatchError),
+    Bootstrap(String),
     UnsafeEntry(String),
     MalformedPath(String),
     WorkspaceMismatch {
@@ -2885,6 +4046,14 @@ pub enum StoreError {
     Scratch(String),
     LineageClaimCollision(LineageDigest),
     ImmutableCollision(&'static str),
+    BootstrapArtifactCollision {
+        kind: &'static str,
+        identity: String,
+    },
+    BootstrapArtifactMismatch(&'static str),
+    MissingBootstrapArtifact(&'static str),
+    BootstrapBatchRequiresDirectPublication,
+    BootstrapHistoryRequiresEmptyAuthority,
     StoredLengthMismatch {
         path: String,
         expected: u64,
@@ -2902,6 +4071,7 @@ impl fmt::Display for StoreError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::Batch(error) => error.fmt(f),
+            Self::Bootstrap(error) => error.fmt(f),
             Self::UnsafeEntry(message) => write!(f, "unsafe store entry: {message}"),
             Self::MalformedPath(path) => write!(f, "malformed store path: {path}"),
             Self::WorkspaceMismatch { expected, found } => {
@@ -3011,6 +4181,21 @@ impl fmt::Display for StoreError {
             Self::ImmutableCollision(kind) => {
                 write!(f, "immutable {kind} collision")
             }
+            Self::BootstrapArtifactCollision { kind, identity } => {
+                write!(f, "immutable bootstrap {kind} collision at {identity}")
+            }
+            Self::BootstrapArtifactMismatch(kind) => {
+                write!(f, "bootstrap {kind} does not match its direct authority")
+            }
+            Self::MissingBootstrapArtifact(kind) => {
+                write!(f, "required bootstrap {kind} is missing")
+            }
+            Self::BootstrapBatchRequiresDirectPublication => {
+                f.write_str("bootstrap batches require bootstrap-specific direct publication")
+            }
+            Self::BootstrapHistoryRequiresEmptyAuthority => {
+                f.write_str("bootstrap history installation requires empty durable authority")
+            }
             Self::StoredLengthMismatch {
                 path,
                 expected,
@@ -3050,6 +4235,12 @@ impl From<std::io::Error> for StoreError {
 impl From<BatchError> for StoreError {
     fn from(error: BatchError) -> Self {
         Self::Batch(error)
+    }
+}
+
+impl From<BootstrapImportError> for StoreError {
+    fn from(error: BootstrapImportError) -> Self {
+        Self::Bootstrap(error.to_string())
     }
 }
 
@@ -3279,7 +4470,124 @@ fn collision_error(collision: Collision) -> StoreError {
         Collision::HistoryIndex(digest) => StoreError::HistoryIndexPathMismatch(digest),
         Collision::Lineage(lineage) => StoreError::LineageClaimCollision(lineage),
         Collision::Exact(kind) => StoreError::ImmutableCollision(kind),
+        Collision::Bootstrap(kind, identity) => {
+            StoreError::BootstrapArtifactCollision { kind, identity }
+        }
     }
+}
+
+fn publish_bootstrap_immutable(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+    kind: &'static str,
+    identity: String,
+) -> Result<(), StoreError> {
+    publish_immutable(dir, filename, bytes, Collision::Bootstrap(kind, identity))
+}
+
+fn bootstrap_page_filename(ordinal: u32) -> String {
+    ordinal.to_string()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn read_regular_file_nofollow(dir: &Dir, name: &str) -> Result<fs::File, StoreError> {
+    let file = open_file_nofollow(dir, name)?;
+    if !file.metadata()?.is_file() {
+        return Err(StoreError::UnsafeEntry(format!(
+            "{name} is not a regular no-follow file"
+        )));
+    }
+    Ok(file)
+}
+
+struct AdvisoryTransitionGuard<'a>(&'a fs::File);
+
+impl<'a> AdvisoryTransitionGuard<'a> {
+    fn lock(file: &'a fs::File) -> Result<Self, StoreError> {
+        fs2::FileExt::lock_exclusive(file)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for AdvisoryTransitionGuard<'_> {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(self.0);
+    }
+}
+
+#[cfg(unix)]
+fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreError> {
+    let name = CString::new(ENGINE_HISTORY_TRANSITION_LOCK_FILE).map_err(|_| {
+        std::io::Error::new(ErrorKind::InvalidInput, "invalid transition lock name")
+    })?;
+    // SAFETY: the name is live and relative to the retained workspace
+    // capability. O_NOFOLLOW rejects a final-component symlink atomically.
+    let fd = unsafe {
+        libc::openat(
+            root.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: openat returned one newly owned descriptor.
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    if !file.metadata()?.is_file() {
+        return Err(StoreError::UnsafeEntry(
+            "engine history transition lock is not a regular no-follow file".into(),
+        ));
+    }
+    file.sync_all()?;
+    sync_dir_required(root)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreError> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .follow(FollowSymlinks::No);
+    let file = root
+        .open_with(ENGINE_HISTORY_TRANSITION_LOCK_FILE, &options)?
+        .into_std();
+    let metadata = file.metadata()?;
+    if metadata.file_attributes()
+        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+        != 0
+        || !metadata.is_file()
+    {
+        return Err(StoreError::UnsafeEntry(
+            "engine history transition lock is not a regular no-follow file".into(),
+        ));
+    }
+    file.sync_all()?;
+    sync_dir_required(root)?;
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_engine_history_transition_lock(_root: &Dir) -> Result<fs::File, StoreError> {
+    Err(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "workspace advisory transition locks are unsupported on this target",
+    )
+    .into())
 }
 
 #[cfg(unix)]
@@ -4521,7 +5829,7 @@ mod history_index_tests {
                 generation: 0,
                 index_root: EngineHistoryStore::empty_root(),
                 latest_batch_id: None,
-                binding: EngineHistoryBinding::empty(),
+                binding: DurableEngineHistoryBinding::ordinary(EngineHistoryBinding::empty()),
             };
             let bytes = postcard::to_allocvec(&authenticated_root).unwrap();
             let digest = ContentDigest::of(&bytes);
@@ -4958,5 +6266,1094 @@ impl<'a> PublicationDirSync<'a> {
 
     fn sync(&self) -> Result<(), StoreError> {
         sync_dir_required(self.0)
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_store_tests {
+    use super::*;
+    use crate::oplog::bootstrap_import::{
+        BootstrapPartitionProfileV1, OperationDigestV1, OperationLeafV1, OperationRootV1,
+        PayloadObjectRootV1, SourceBlobIndexBuilderV1, SourceContentDigestV1,
+        SourceInventoryIndexBuilderV1, SourceSpanRootV1, SourceSpanV1,
+    };
+    use crate::oplog::{
+        BatchCausalDot, CausalPeerId, DeviceId, DocumentId, FrontierV2, ImportId, ManagedPath,
+        ManagedTextKind, ObjectKind, ProjectionEndpointBinding, ProjectionEndpointId,
+        ProjectionReceiptStoreId, SemanticEffectDigest, SessionId,
+    };
+    use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    struct EmptyBootstrapFixture {
+        root: PathBuf,
+        archive: PathBuf,
+        workspace: WorkspaceId,
+        aggregate: BootstrapAggregateManifestV1,
+    }
+
+    impl EmptyBootstrapFixture {
+        fn new(label: &str) -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("tine-bootstrap-store-{label}-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let archive = root.join("archive");
+            let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x7000));
+            let aggregate = BootstrapAggregateManifestV1::empty(
+                workspace,
+                LineageDigest::from_bytes([0x71; 32]),
+                crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"bootstrap-store-test",
+                    label.as_bytes(),
+                ),
+                ImportId::from_digest([0x72; 32]),
+            )
+            .unwrap();
+            Self {
+                root,
+                archive,
+                workspace,
+                aggregate,
+            }
+        }
+
+        fn store(&self) -> ObjectStore {
+            ObjectStore::open(&self.archive, self.workspace).unwrap()
+        }
+
+        fn history_binding(
+            &self,
+            endpoint: u128,
+        ) -> crate::oplog::hot_engine::ProjectionStorageBinding {
+            crate::oplog::hot_engine::ProjectionStorageBinding {
+                endpoint: ProjectionEndpointBinding {
+                    endpoint_id: ProjectionEndpointId::from_uuid(Uuid::from_u128(endpoint)),
+                    device_id: DeviceId::from_uuid(Uuid::from_u128(endpoint + 1)),
+                    graph_resource_id:
+                        crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                            b"bootstrap-history-test",
+                            &endpoint.to_be_bytes(),
+                        ),
+                },
+                receipt_store_id: ProjectionReceiptStoreId::from_capability_identity(
+                    b"bootstrap-history-test",
+                    &(endpoint + 2).to_be_bytes(),
+                ),
+            }
+        }
+    }
+
+    impl Drop for EmptyBootstrapFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct BootstrapPartFixture {
+        descriptor: BootstrapPartDescriptorV1,
+        manifest_bytes: Vec<u8>,
+        object_bytes: Vec<Vec<u8>>,
+        spans: BootstrapPartSpanIndexV1,
+        history_record: Vec<u8>,
+    }
+
+    struct BootstrapFixture {
+        root: PathBuf,
+        archive: PathBuf,
+        workspace: WorkspaceId,
+        aggregate: BootstrapAggregateManifestV1,
+        inventory_root: SourceInventoryRootV1,
+        inventory_pages: Vec<SourceInventoryIndexPageV1>,
+        blob_root: SourceBlobChunkRootV1,
+        blob_pages: Vec<SourceBlobIndexPageV1>,
+        source_chunks: Vec<(SourceBlobChunkDigestV1, Vec<u8>)>,
+        parts: Vec<BootstrapPartFixture>,
+    }
+
+    impl BootstrapFixture {
+        fn new(label: &str, part_count: u32) -> Self {
+            assert!(part_count > 0);
+            let root = std::env::temp_dir()
+                .join(format!("tine-bootstrap-store-{label}-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let archive = root.join("archive");
+            let workspace = WorkspaceId::from_uuid(Uuid::from_u128(0x7600));
+            let lineage = LineageDigest::from_bytes([0x76; 32]);
+            let import_id = ImportId::from_digest(*ContentDigest::of(label.as_bytes()).as_bytes());
+            let profile = BootstrapPartitionProfileV1::v1().digest();
+            let source_bytes = b"one bounded bootstrap source".to_vec();
+            let source_digest = ContentDigest::of(&source_bytes);
+            let source = SourceLeafV1::new(
+                ManagedTextKind::Page,
+                ManagedPath::parse("pages/bootstrap.md").unwrap(),
+                SourceContentDigestV1::from_bytes(*source_digest.as_bytes()),
+                source_bytes.len() as u64,
+            )
+            .unwrap();
+            let inventory_root =
+                SourceInventoryRootV1::from_leaves(std::slice::from_ref(&source)).unwrap();
+            let mut inventory = SourceInventoryIndexBuilderV1::new(inventory_root);
+            assert!(inventory.push(source.clone()).unwrap().is_none());
+            let inventory_pages = vec![inventory.finish().unwrap().unwrap()];
+
+            let chunk_digest = SourceBlobChunkDigestV1::from_bytes(*source_digest.as_bytes());
+            let blob_descriptor = SourceBlobChunkDescriptorV1::new(
+                source.digest(),
+                0,
+                1,
+                0,
+                source_bytes.len() as u32,
+                chunk_digest,
+            )
+            .unwrap();
+            let blob_root = SourceBlobChunkRootV1::from_descriptors(
+                std::slice::from_ref(&source),
+                std::slice::from_ref(&blob_descriptor),
+            )
+            .unwrap();
+            let mut blob = SourceBlobIndexBuilderV1::new(blob_root);
+            assert!(blob.push(blob_descriptor).unwrap().is_none());
+            let blob_pages = vec![blob.finish().unwrap().unwrap()];
+
+            let mut parts = Vec::with_capacity(part_count as usize);
+            let mut descriptors = Vec::with_capacity(part_count as usize);
+            let mut predecessor = None;
+            let mut frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile);
+            for ordinal in 0..part_count {
+                let payload = format!("bootstrap semantic effect {ordinal}").into_bytes();
+                let object = OperationObject::new(
+                    workspace,
+                    DocumentId::from_uuid(Uuid::from_u128(0x7700 + u128::from(ordinal))),
+                    ObjectKind::SemanticEffect,
+                    payload.clone(),
+                )
+                .unwrap();
+                let object_bytes = object.encode().unwrap();
+                let object_descriptor = object.descriptor().unwrap();
+                let payload_descriptor = PayloadObjectDescriptorV1::new(
+                    object_descriptor.content_digest(),
+                    object_descriptor.encoded_byte_length(),
+                )
+                .unwrap();
+                let span =
+                    SourceSpanV1::new(source.digest(), 0, source_bytes.len() as u64).unwrap();
+                let evidence = BootstrapImportPartEvidenceV1::new(
+                    import_id,
+                    profile,
+                    ordinal,
+                    part_count,
+                    SourceSpanRootV1::from_spans(std::slice::from_ref(&span)).unwrap(),
+                    OperationRootV1::from_operations(&[OperationLeafV1::new(
+                        OperationDigestV1::from_bytes([ordinal as u8 + 1; 32]),
+                        payload.len() as u64,
+                    )
+                    .unwrap()])
+                    .unwrap(),
+                    PayloadObjectRootV1::from_objects(std::slice::from_ref(&payload_descriptor))
+                        .unwrap(),
+                    predecessor,
+                )
+                .unwrap();
+                let device = DeviceId::from_uuid(Uuid::from_u128(0x7800 + u128::from(ordinal)));
+                let manifest = OperationBatch::new_with_causality(
+                    workspace,
+                    lineage,
+                    evidence.batch_id(),
+                    device,
+                    SessionId::from_uuid(Uuid::from_u128(0x7900 + u128::from(ordinal))),
+                    BatchOrigin::BootstrapImport,
+                    BatchCausalDot::new(CausalPeerId::from_device_id(device), 1).unwrap(),
+                    Vec::new(),
+                    FrontierV2::new(Vec::new()).unwrap(),
+                    SemanticEffectDigest::of(&payload),
+                    vec![object_descriptor],
+                )
+                .unwrap();
+                let manifest_bytes = manifest.encode().unwrap();
+                let spans = BootstrapPartSpanIndexV1::new(evidence.part_id(), vec![span]).unwrap();
+                let span_bytes = spans.encode().unwrap();
+                let descriptor = BootstrapPartDescriptorV1::accepted(
+                    evidence,
+                    BootstrapManifestFingerprintV1::from_bytes(
+                        *ContentDigest::of(&manifest_bytes).as_bytes(),
+                    ),
+                    std::slice::from_ref(&payload_descriptor),
+                    &[FullObjectDescriptorV1::manifest_defined(
+                        *ContentDigest::of(&span_bytes).as_bytes(),
+                        span_bytes.len() as u64,
+                    )
+                    .unwrap()],
+                    frontier,
+                )
+                .unwrap();
+                predecessor = Some(descriptor.part_id());
+                frontier = descriptor.post_frontier();
+                descriptors.push(descriptor);
+                parts.push(BootstrapPartFixture {
+                    descriptor,
+                    manifest_bytes,
+                    object_bytes: vec![object_bytes],
+                    spans,
+                    history_record: format!("cold bootstrap history record {ordinal}").into_bytes(),
+                });
+            }
+            let aggregate = BootstrapAggregateManifestV1::new_for_import(
+                workspace,
+                lineage,
+                crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"bootstrap-store-test",
+                    label.as_bytes(),
+                ),
+                import_id,
+                1,
+                inventory_root,
+                inventory_pages.len() as u32,
+                blob_root,
+                blob_pages.len() as u32,
+                profile,
+                descriptors,
+                ArchiveLocalFrontierBindingV1::initial(import_id, profile),
+                frontier,
+            )
+            .unwrap();
+            Self {
+                root,
+                archive,
+                workspace,
+                aggregate,
+                inventory_root,
+                inventory_pages,
+                blob_root,
+                blob_pages,
+                source_chunks: vec![(chunk_digest, source_bytes)],
+                parts,
+            }
+        }
+
+        fn store(&self) -> ObjectStore {
+            ObjectStore::open(&self.archive, self.workspace).unwrap()
+        }
+
+        fn history_binding(
+            &self,
+            endpoint: u128,
+        ) -> crate::oplog::hot_engine::ProjectionStorageBinding {
+            history_storage_binding(endpoint)
+        }
+
+        fn publish_replay_prefix(&self, store: &ObjectStore) {
+            for page in &self.inventory_pages {
+                store
+                    .publish_bootstrap_source_inventory_page(self.inventory_root, page)
+                    .unwrap();
+            }
+            for page in &self.blob_pages {
+                store
+                    .publish_bootstrap_source_blob_page(self.blob_root, page)
+                    .unwrap();
+            }
+            for (digest, bytes) in &self.source_chunks {
+                store
+                    .publish_bootstrap_source_chunk(*digest, bytes)
+                    .unwrap();
+            }
+            for part in &self.parts {
+                for object in &part.object_bytes {
+                    store.publish_bootstrap_object_bytes(object).unwrap();
+                }
+                store
+                    .publish_bootstrap_part_artifacts(
+                        part.descriptor,
+                        &part.manifest_bytes,
+                        &part.spans,
+                    )
+                    .unwrap();
+            }
+        }
+
+        fn publish_committed(&self, store: &ObjectStore) -> BootstrapPublicationIdV1 {
+            self.publish_replay_prefix(store);
+            store
+                .publish_bootstrap_aggregate_prefix(&self.aggregate)
+                .unwrap();
+            store.commit_bootstrap_aggregate(&self.aggregate).unwrap()
+        }
+
+        fn prepared_history(
+            &self,
+            binding: BootstrapAggregateHistoryBindingV1,
+        ) -> Vec<PreparedBootstrapHistoryRecordV1<'_>> {
+            self.parts
+                .iter()
+                .map(|part| {
+                    PreparedBootstrapHistoryRecordV1::new(
+                        part.descriptor,
+                        &part.history_record,
+                        binding,
+                    )
+                })
+                .collect()
+        }
+    }
+
+    impl Drop for BootstrapFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn history_storage_binding(
+        endpoint: u128,
+    ) -> crate::oplog::hot_engine::ProjectionStorageBinding {
+        crate::oplog::hot_engine::ProjectionStorageBinding {
+            endpoint: ProjectionEndpointBinding {
+                endpoint_id: ProjectionEndpointId::from_uuid(Uuid::from_u128(endpoint)),
+                device_id: DeviceId::from_uuid(Uuid::from_u128(endpoint + 1)),
+                graph_resource_id: crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                    b"bootstrap-history-test",
+                    &endpoint.to_be_bytes(),
+                ),
+            },
+            receipt_store_id: ProjectionReceiptStoreId::from_capability_identity(
+                b"bootstrap-history-test",
+                &(endpoint + 2).to_be_bytes(),
+            ),
+        }
+    }
+
+    fn bootstrap_prepared_batch(workspace: WorkspaceId) -> PreparedBatch {
+        let payload = b"bootstrap semantic effect".to_vec();
+        let object = OperationObject::new(
+            workspace,
+            DocumentId::from_uuid(Uuid::from_u128(0x7300)),
+            ObjectKind::SemanticEffect,
+            payload.clone(),
+        )
+        .unwrap();
+        let descriptor = object.descriptor().unwrap();
+        let device = DeviceId::from_uuid(Uuid::from_u128(0x7301));
+        let manifest = OperationBatch::new_with_causality(
+            workspace,
+            LineageDigest::from_bytes([0x73; 32]),
+            BatchId::from_uuid(Uuid::from_u128(0x7302)),
+            device,
+            SessionId::from_uuid(Uuid::from_u128(0x7303)),
+            BatchOrigin::BootstrapImport,
+            BatchCausalDot::new(CausalPeerId::from_device_id(device), 1).unwrap(),
+            Vec::new(),
+            FrontierV2::new(Vec::new()).unwrap(),
+            SemanticEffectDigest::of(&payload),
+            vec![descriptor],
+        )
+        .unwrap();
+        PreparedBatch::new(manifest, vec![object]).unwrap()
+    }
+
+    #[test]
+    fn generic_publication_rejects_bootstrap_batches_without_prefix_writes() {
+        let fixture = EmptyBootstrapFixture::new("generic-rejection");
+        let store = fixture.store();
+        let prepared = bootstrap_prepared_batch(fixture.workspace);
+        assert!(matches!(
+            store.stage_manifest_bytes(&prepared.manifest().encode().unwrap()),
+            Err(StoreError::BootstrapBatchRequiresDirectPublication)
+        ));
+        assert!(matches!(
+            store.publish_prepared(&prepared),
+            Err(StoreError::BootstrapBatchRequiresDirectPublication)
+        ));
+        assert!(store.committed_manifests().unwrap().is_empty());
+        assert!(!fixture.archive.join(BOOTSTRAP_DIR).exists());
+    }
+
+    #[test]
+    fn multipart_publication_cuts_remain_invisible_until_the_exact_commit() {
+        let fixture = BootstrapFixture::new("multipart-cuts", 2);
+        let store = fixture.store();
+        let enumerations = store.instrumentation().directory_enumerations;
+        let assert_absent = || {
+            assert!(matches!(
+                store.inspect_bootstrap_aggregate(&fixture.aggregate),
+                BootstrapPublicationInspectionV1::Absent
+            ));
+            assert!(store
+                .load_bootstrap_publication(fixture.aggregate.publication_id())
+                .is_err());
+        };
+        assert_absent();
+
+        for page in &fixture.inventory_pages {
+            store
+                .publish_bootstrap_source_inventory_page(fixture.inventory_root, page)
+                .unwrap();
+            store
+                .publish_bootstrap_source_inventory_page(fixture.inventory_root, page)
+                .unwrap();
+            assert_absent();
+        }
+        for page in &fixture.blob_pages {
+            store
+                .publish_bootstrap_source_blob_page(fixture.blob_root, page)
+                .unwrap();
+            store
+                .publish_bootstrap_source_blob_page(fixture.blob_root, page)
+                .unwrap();
+            assert_absent();
+        }
+        for (digest, bytes) in &fixture.source_chunks {
+            store
+                .publish_bootstrap_source_chunk(*digest, bytes)
+                .unwrap();
+            store
+                .publish_bootstrap_source_chunk(*digest, bytes)
+                .unwrap();
+            assert_absent();
+        }
+        for part in &fixture.parts {
+            for object in &part.object_bytes {
+                store.publish_bootstrap_object_bytes(object).unwrap();
+                store.publish_bootstrap_object_bytes(object).unwrap();
+                assert_absent();
+            }
+
+            let part_name = hex_bytes(part.descriptor.part_id().as_bytes());
+            let parts = store
+                .bootstrap_namespace(BOOTSTRAP_PARTS_DIR, true)
+                .unwrap();
+            publish_bootstrap_immutable(
+                &parts,
+                &part_name,
+                &part.manifest_bytes,
+                "bootstrap part manifest",
+                part_name.clone(),
+            )
+            .unwrap();
+            assert_absent();
+
+            let evidence = part.descriptor.evidence();
+            let evidence_name = hex_bytes(evidence.evidence_digest().as_bytes());
+            let evidence_dir = store
+                .bootstrap_namespace(BOOTSTRAP_EVIDENCE_DIR, true)
+                .unwrap();
+            publish_bootstrap_immutable(
+                &evidence_dir,
+                &evidence_name,
+                &evidence.encode().unwrap(),
+                "bootstrap part evidence",
+                evidence_name.clone(),
+            )
+            .unwrap();
+            assert_absent();
+
+            let spans = store
+                .bootstrap_namespace(BOOTSTRAP_PART_SPANS_DIR, true)
+                .unwrap();
+            publish_bootstrap_immutable(
+                &spans,
+                &part_name,
+                &part.spans.encode().unwrap(),
+                "bootstrap part span index",
+                part_name.clone(),
+            )
+            .unwrap();
+            assert_absent();
+        }
+
+        store
+            .publish_bootstrap_aggregate_prefix(&fixture.aggregate)
+            .unwrap();
+        store
+            .publish_bootstrap_aggregate_prefix(&fixture.aggregate)
+            .unwrap();
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&fixture.aggregate),
+            BootstrapPublicationInspectionV1::Pending
+        ));
+        let publication_id = store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        let publication = store.load_bootstrap_publication(publication_id).unwrap();
+        assert_eq!(publication.aggregate(), &fixture.aggregate);
+        for (ordinal, expected) in fixture.parts.iter().enumerate() {
+            let loaded = store.load_bootstrap_part(&publication, ordinal).unwrap();
+            assert_eq!(loaded.manifest().encode().unwrap(), expected.manifest_bytes);
+            assert_eq!(loaded.spans(), &expected.spans);
+            assert_eq!(
+                loaded
+                    .objects()
+                    .iter()
+                    .map(|object| object.encode().unwrap())
+                    .collect::<Vec<_>>(),
+                expected.object_bytes
+            );
+        }
+        assert_eq!(
+            store.instrumentation().directory_enumerations,
+            enumerations,
+            "direct bootstrap publication and reopen must not enumerate prefixes"
+        );
+    }
+
+    #[test]
+    fn empty_publication_is_pending_invisible_committed_and_directly_reopenable() {
+        let fixture = EmptyBootstrapFixture::new("empty-lifecycle");
+        let store = fixture.store();
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&fixture.aggregate),
+            BootstrapPublicationInspectionV1::Absent
+        ));
+        let enumerations = store.instrumentation().directory_enumerations;
+        store
+            .publish_bootstrap_aggregate_prefix(&fixture.aggregate)
+            .unwrap();
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&fixture.aggregate),
+            BootstrapPublicationInspectionV1::Pending
+        ));
+        assert!(store.committed_manifests().unwrap().is_empty());
+        let publication_id = store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        let loaded = store.load_bootstrap_publication(publication_id).unwrap();
+        assert_eq!(loaded.aggregate(), &fixture.aggregate);
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&fixture.aggregate),
+            BootstrapPublicationInspectionV1::Committed(_)
+        ));
+        assert_eq!(
+            store.instrumentation().directory_enumerations,
+            enumerations + 1,
+            "only the explicit ordinary batch enumeration may scan"
+        );
+    }
+
+    #[test]
+    fn direct_identity_conflict_and_truncated_committed_aggregate_fail_closed() {
+        let fixture = EmptyBootstrapFixture::new("conflict-truncation");
+        let store = fixture.store();
+        store
+            .publish_bootstrap_aggregate_prefix(&fixture.aggregate)
+            .unwrap();
+        let aggregates = store
+            .bootstrap_namespace(BOOTSTRAP_AGGREGATES_DIR, false)
+            .unwrap();
+        let name = hex_bytes(fixture.aggregate.aggregate_digest().as_bytes());
+        assert!(matches!(
+            publish_bootstrap_immutable(
+                &aggregates,
+                &name,
+                b"different bytes",
+                "bootstrap aggregate",
+                name.clone(),
+            ),
+            Err(StoreError::BootstrapArtifactCollision { .. })
+        ));
+        let publication_id = store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        let aggregate_path = fixture
+            .archive
+            .join(BOOTSTRAP_DIR)
+            .join(BOOTSTRAP_AGGREGATES_DIR)
+            .join(name);
+        let bytes = std::fs::read(&aggregate_path).unwrap();
+        std::fs::write(&aggregate_path, &bytes[..bytes.len() - 1]).unwrap();
+        assert!(store.load_bootstrap_publication(publication_id).is_err());
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&fixture.aggregate),
+            BootstrapPublicationInspectionV1::CorruptOrConflicting(_)
+        ));
+    }
+
+    #[test]
+    fn committed_same_publication_id_with_different_aggregate_is_a_typed_conflict() {
+        let fixture = BootstrapFixture::new("publication-conflict", 1);
+        let store = fixture.store();
+        fixture.publish_committed(&store);
+        let profile = fixture.aggregate.profile_digest();
+        let initial =
+            ArchiveLocalFrontierBindingV1::initial(fixture.aggregate.import_id(), profile);
+        let conflicting = BootstrapAggregateManifestV1::new_for_import(
+            fixture.workspace,
+            fixture.aggregate.lineage_digest(),
+            crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                b"bootstrap-store-conflict",
+                b"different aggregate, same portable identity",
+            ),
+            fixture.aggregate.import_id(),
+            fixture.inventory_root.source_count(),
+            fixture.inventory_root,
+            fixture.inventory_pages.len() as u32,
+            fixture.blob_root,
+            fixture.blob_pages.len() as u32,
+            profile,
+            fixture.parts.iter().map(|part| part.descriptor).collect(),
+            initial,
+            fixture.parts.last().unwrap().descriptor.post_frontier(),
+        )
+        .unwrap();
+        assert_eq!(
+            conflicting.publication_id(),
+            fixture.aggregate.publication_id()
+        );
+        assert_ne!(
+            conflicting.aggregate_digest(),
+            fixture.aggregate.aggregate_digest()
+        );
+        store
+            .publish_bootstrap_aggregate_prefix(&conflicting)
+            .unwrap();
+        assert!(matches!(
+            store.commit_bootstrap_aggregate(&conflicting),
+            Err(StoreError::BootstrapArtifactCollision { .. })
+        ));
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&conflicting),
+            BootstrapPublicationInspectionV1::CorruptOrConflicting(
+                StoreError::BootstrapArtifactMismatch("committed bootstrap aggregate")
+            )
+        ));
+    }
+
+    #[test]
+    fn missing_and_truncated_direct_replay_artifacts_fail_closed() {
+        let missing_chunk = BootstrapFixture::new("missing-chunk", 1);
+        let store = missing_chunk.store();
+        missing_chunk.publish_replay_prefix(&store);
+        store
+            .publish_bootstrap_aggregate_prefix(&missing_chunk.aggregate)
+            .unwrap();
+        let chunk_name = hex_bytes(missing_chunk.source_chunks[0].0.as_bytes());
+        std::fs::remove_file(
+            missing_chunk
+                .archive
+                .join(BOOTSTRAP_DIR)
+                .join(BOOTSTRAP_SOURCE_CHUNKS_DIR)
+                .join(chunk_name),
+        )
+        .unwrap();
+        assert!(store
+            .commit_bootstrap_aggregate(&missing_chunk.aggregate)
+            .is_err());
+
+        let missing_object = BootstrapFixture::new("missing-object", 1);
+        let store = missing_object.store();
+        missing_object.publish_replay_prefix(&store);
+        store
+            .publish_bootstrap_aggregate_prefix(&missing_object.aggregate)
+            .unwrap();
+        let object_digest = ContentDigest::of(&missing_object.parts[0].object_bytes[0]);
+        std::fs::remove_file(
+            missing_object
+                .archive
+                .join(BOOTSTRAP_DIR)
+                .join(BOOTSTRAP_OBJECTS_DIR)
+                .join(object_filename(object_digest)),
+        )
+        .unwrap();
+        assert!(store
+            .commit_bootstrap_aggregate(&missing_object.aggregate)
+            .is_err());
+
+        let truncated = BootstrapFixture::new("truncated-span", 1);
+        let store = truncated.store();
+        let publication_id = truncated.publish_committed(&store);
+        let span_path = truncated
+            .archive
+            .join(BOOTSTRAP_DIR)
+            .join(BOOTSTRAP_PART_SPANS_DIR)
+            .join(hex_bytes(
+                truncated.parts[0].descriptor.part_id().as_bytes(),
+            ));
+        let bytes = std::fs::read(&span_path).unwrap();
+        std::fs::write(&span_path, &bytes[..bytes.len() - 1]).unwrap();
+        assert!(store.load_bootstrap_publication(publication_id).is_err());
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&truncated.aggregate),
+            BootstrapPublicationInspectionV1::CorruptOrConflicting(_)
+        ));
+    }
+
+    #[test]
+    fn source_pages_with_valid_individual_roots_still_require_terminal_inventory_coverage() {
+        let fixture = EmptyBootstrapFixture::new("source-terminal");
+        let store = fixture.store();
+        let first_bytes = b"uncovered source".to_vec();
+        let second_bytes = b"covered source".to_vec();
+        let first = SourceLeafV1::new(
+            ManagedTextKind::Page,
+            ManagedPath::parse("pages/uncovered.md").unwrap(),
+            SourceContentDigestV1::from_bytes(*ContentDigest::of(&first_bytes).as_bytes()),
+            first_bytes.len() as u64,
+        )
+        .unwrap();
+        let second = SourceLeafV1::new(
+            ManagedTextKind::Page,
+            ManagedPath::parse("pages/covered.md").unwrap(),
+            SourceContentDigestV1::from_bytes(*ContentDigest::of(&second_bytes).as_bytes()),
+            second_bytes.len() as u64,
+        )
+        .unwrap();
+        let inventory_root =
+            SourceInventoryRootV1::from_leaves(&[first.clone(), second.clone()]).unwrap();
+        let mut inventory_builder = SourceInventoryIndexBuilderV1::new(inventory_root);
+        let mut leaves = vec![first, second.clone()];
+        leaves.sort_unstable_by(|left, right| {
+            left.path()
+                .as_str()
+                .as_bytes()
+                .cmp(right.path().as_str().as_bytes())
+        });
+        for leaf in leaves {
+            assert!(inventory_builder.push(leaf).unwrap().is_none());
+        }
+        let inventory_page = inventory_builder.finish().unwrap().unwrap();
+
+        let chunk_digest =
+            SourceBlobChunkDigestV1::from_bytes(*ContentDigest::of(&second_bytes).as_bytes());
+        let blob_descriptor = SourceBlobChunkDescriptorV1::new(
+            second.digest(),
+            0,
+            1,
+            0,
+            second_bytes.len() as u32,
+            chunk_digest,
+        )
+        .unwrap();
+        let blob_root = SourceBlobChunkRootV1::from_descriptors(
+            std::slice::from_ref(&second),
+            std::slice::from_ref(&blob_descriptor),
+        )
+        .unwrap();
+        let mut blob_builder = SourceBlobIndexBuilderV1::new(blob_root);
+        assert!(blob_builder.push(blob_descriptor).unwrap().is_none());
+        let blob_page = blob_builder.finish().unwrap().unwrap();
+
+        let mut inventory_validator =
+            SourceInventoryIndexValidatorV1::new(inventory_root, 1).unwrap();
+        inventory_validator.push_page(&inventory_page).unwrap();
+        inventory_validator.finish().unwrap();
+        let mut blob_validator = SourceBlobIndexValidatorV1::new(blob_root, 1).unwrap();
+        blob_validator.push_page(&blob_page).unwrap();
+        blob_validator.finish().unwrap();
+
+        let profile = BootstrapPartitionProfileV1::v1().digest();
+        let import_id = ImportId::from_digest([0x7a; 32]);
+        let frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile);
+        let aggregate = BootstrapAggregateManifestV1::new_for_import(
+            fixture.workspace,
+            LineageDigest::from_bytes([0x7b; 32]),
+            crate::oplog::CanonicalGraphResourceId::from_capability_identity(
+                b"bootstrap-store-test",
+                b"source terminal coverage",
+            ),
+            import_id,
+            2,
+            inventory_root,
+            1,
+            blob_root,
+            1,
+            profile,
+            Vec::new(),
+            frontier,
+            frontier,
+        )
+        .unwrap();
+        store
+            .publish_bootstrap_source_inventory_page(inventory_root, &inventory_page)
+            .unwrap();
+        store
+            .publish_bootstrap_source_blob_page(blob_root, &blob_page)
+            .unwrap();
+        store
+            .publish_bootstrap_source_chunk(chunk_digest, &second_bytes)
+            .unwrap();
+        store
+            .publish_bootstrap_aggregate_prefix(&aggregate)
+            .unwrap();
+        let error = store.commit_bootstrap_aggregate(&aggregate).unwrap_err();
+        assert!(matches!(
+            error,
+            StoreError::Bootstrap(ref message) if message.contains("BlobContinuityMismatch")
+        ));
+        assert!(matches!(
+            store.inspect_bootstrap_aggregate(&aggregate),
+            BootstrapPublicationInspectionV1::Pending
+        ));
+    }
+
+    #[test]
+    fn zero_part_history_install_is_one_atomic_generation_zero_binding() {
+        let fixture = EmptyBootstrapFixture::new("zero-history");
+        let store = fixture.store();
+        store
+            .publish_bootstrap_aggregate_prefix(&fixture.aggregate)
+            .unwrap();
+        store
+            .commit_bootstrap_aggregate(&fixture.aggregate)
+            .unwrap();
+        let history = store
+            .open_engine_history(fixture.history_binding(0x7400))
+            .unwrap();
+        let binding =
+            BootstrapAggregateHistoryBindingV1::for_aggregate(&fixture.aggregate).unwrap();
+        assert_eq!(
+            history
+                .publish_many_exact(&[], binding, EngineHistoryBinding::empty())
+                .unwrap(),
+            (0, EngineHistoryStore::empty_root())
+        );
+        assert_eq!(history.current_bootstrap_binding().unwrap(), Some(binding));
+        drop(history);
+        drop(store);
+
+        let reopened = fixture.store();
+        let history = reopened
+            .open_engine_history(fixture.history_binding(0x7400))
+            .unwrap();
+        assert_eq!(history.current_bootstrap_binding().unwrap(), Some(binding));
+        assert_eq!(
+            history.current().unwrap(),
+            (0, EngineHistoryStore::empty_root())
+        );
+    }
+
+    #[test]
+    fn multipart_history_install_publishes_every_exact_record_with_one_head_swap() {
+        let fixture = BootstrapFixture::new("multipart-history", 2);
+        let store = fixture.store();
+        fixture.publish_committed(&store);
+        let history = store
+            .open_engine_history(fixture.history_binding(0x7c00))
+            .unwrap();
+        let binding =
+            BootstrapAggregateHistoryBindingV1::for_aggregate(&fixture.aggregate).unwrap();
+        let prepared = fixture.prepared_history(binding);
+        let (generation, index_root) = history
+            .publish_many_exact(&prepared, binding, EngineHistoryBinding::empty())
+            .unwrap();
+        assert_eq!(generation, fixture.parts.len() as u64);
+        assert_ne!(index_root, EngineHistoryStore::empty_root());
+        assert_eq!(history.current_bootstrap_binding().unwrap(), Some(binding));
+        for part in &fixture.parts {
+            assert_eq!(
+                history
+                    .lookup(index_root, part.descriptor.batch_id())
+                    .unwrap()
+                    .as_deref(),
+                Some(part.history_record.as_slice())
+            );
+        }
+        drop(history);
+        drop(store);
+
+        let reopened = fixture.store();
+        let publication = reopened
+            .load_bootstrap_publication(binding.publication_id())
+            .unwrap();
+        assert_eq!(
+            publication.aggregate().aggregate_digest(),
+            binding.aggregate_digest()
+        );
+        let history = reopened
+            .open_engine_history(fixture.history_binding(0x7c00))
+            .unwrap();
+        assert_eq!(history.current_bootstrap_binding().unwrap(), Some(binding));
+        assert_eq!(history.current().unwrap(), (generation, index_root));
+    }
+
+    #[test]
+    fn multipart_history_crashes_on_both_sides_of_head_swap_have_atomic_authority() {
+        let fixture = BootstrapFixture::new("multipart-head-cuts", 2);
+        let store = fixture.store();
+        fixture.publish_committed(&store);
+        let history = store
+            .open_engine_history(fixture.history_binding(0x7c10))
+            .unwrap();
+        let binding =
+            BootstrapAggregateHistoryBindingV1::for_aggregate(&fixture.aggregate).unwrap();
+        let prepared = fixture.prepared_history(binding);
+
+        fail_next_engine_history_head_swap();
+        assert!(history
+            .publish_many_exact(&prepared, binding, EngineHistoryBinding::empty())
+            .is_err());
+        assert_eq!(history.current_bootstrap_binding().unwrap(), None);
+        assert_eq!(
+            history.current().unwrap(),
+            (0, EngineHistoryStore::empty_root())
+        );
+
+        fail_next_engine_history_after_head_swap();
+        assert!(history
+            .publish_many_exact(&prepared, binding, EngineHistoryBinding::empty())
+            .is_err());
+        drop(history);
+        drop(store);
+
+        let reopened = fixture.store();
+        let publication = reopened
+            .load_bootstrap_publication(binding.publication_id())
+            .unwrap();
+        assert_eq!(publication.aggregate(), &fixture.aggregate);
+        let history = reopened
+            .open_engine_history(fixture.history_binding(0x7c10))
+            .unwrap();
+        let (generation, index_root) = history.current().unwrap();
+        assert_eq!(generation, 2);
+        assert_ne!(index_root, EngineHistoryStore::empty_root());
+        assert_eq!(history.current_bootstrap_binding().unwrap(), Some(binding));
+        for part in &fixture.parts {
+            assert_eq!(
+                history
+                    .lookup(index_root, part.descriptor.batch_id())
+                    .unwrap()
+                    .as_deref(),
+                Some(part.history_record.as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn publish_many_exact_rejects_records_not_reaching_the_bound_aggregate_frontier() {
+        let fixture = BootstrapFixture::new("history-frontier-mismatch", 1);
+        let other = BootstrapFixture::new("history-frontier-mismatch-other", 1);
+        let store = fixture.store();
+        let history = store
+            .open_engine_history(fixture.history_binding(0x7c20))
+            .unwrap();
+        let binding = BootstrapAggregateHistoryBindingV1::for_aggregate(&other.aggregate).unwrap();
+        let prepared = vec![PreparedBootstrapHistoryRecordV1::new(
+            fixture.parts[0].descriptor,
+            &fixture.parts[0].history_record,
+            binding,
+        )];
+        assert!(matches!(
+            history.publish_many_exact(&prepared, binding, EngineHistoryBinding::empty()),
+            Err(StoreError::MalformedHistoryIndex)
+        ));
+        assert_eq!(
+            history.current().unwrap(),
+            (0, EngineHistoryStore::empty_root())
+        );
+    }
+
+    #[test]
+    fn bootstrap_history_pre_head_crash_and_stale_second_writer_keep_exact_authority() {
+        let fixture = EmptyBootstrapFixture::new("history-crash-stale");
+        let first_store = fixture.store();
+        let second_store = fixture.store();
+        let first = first_store
+            .open_engine_history(fixture.history_binding(0x7500))
+            .unwrap();
+        let second = second_store
+            .open_engine_history(fixture.history_binding(0x7500))
+            .unwrap();
+        let binding =
+            BootstrapAggregateHistoryBindingV1::for_aggregate(&fixture.aggregate).unwrap();
+
+        fail_next_engine_history_head_swap();
+        assert!(first
+            .publish_many_exact(&[], binding, EngineHistoryBinding::empty())
+            .is_err());
+        assert_eq!(first.current_bootstrap_binding().unwrap(), None);
+        first
+            .publish_many_exact(&[], binding, EngineHistoryBinding::empty())
+            .unwrap();
+        assert_eq!(first.current_bootstrap_binding().unwrap(), Some(binding));
+        assert!(matches!(
+            second.publish_many_exact(&[], binding, EngineHistoryBinding::empty()),
+            Err(StoreError::BootstrapHistoryRequiresEmptyAuthority)
+        ));
+    }
+
+    #[test]
+    #[ignore = "subprocess helper invoked by engine_history_lock_serializes_processes"]
+    fn engine_history_lock_subprocess_helper() {
+        let Ok(root) = std::env::var("TINE_BOOTSTRAP_LOCK_HELPER_ROOT") else {
+            return;
+        };
+        let ready = std::env::var("TINE_BOOTSTRAP_LOCK_HELPER_READY").unwrap();
+        let store = ObjectStore::open(
+            Path::new(&root),
+            WorkspaceId::from_uuid(Uuid::from_u128(0x7600)),
+        )
+        .unwrap();
+        let history = store
+            .open_engine_history(history_storage_binding(0x7d00))
+            .unwrap();
+        std::fs::write(&ready, b"ready").unwrap();
+        history
+            .publish(
+                BatchId::from_uuid(Uuid::from_u128(0x7d10)),
+                b"subprocess cold history record",
+                EngineHistoryBinding::empty(),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn engine_history_lock_serializes_processes() {
+        let fixture = BootstrapFixture::new("process-lock", 1);
+        let store = fixture.store();
+        let history = store
+            .open_engine_history(fixture.history_binding(0x7d00))
+            .unwrap();
+        let guard = AdvisoryTransitionGuard::lock(&history.transition_lock).unwrap();
+        let ready = fixture.root.join("child-ready");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("engine_history_lock_subprocess_helper")
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env(
+                "TINE_BOOTSTRAP_LOCK_HELPER_ROOT",
+                fixture.archive.as_os_str(),
+            )
+            .env("TINE_BOOTSTRAP_LOCK_HELPER_READY", ready.as_os_str())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "subprocess did not reach the transition");
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "subprocess crossed the held workspace transition lock"
+        );
+        drop(guard);
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "subprocess publication failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        drop(history);
+        drop(store);
+
+        let reopened = fixture.store();
+        let history = reopened
+            .open_engine_history(fixture.history_binding(0x7d00))
+            .unwrap();
+        let (generation, root) = history.current().unwrap();
+        assert_eq!(generation, 1);
+        assert_eq!(
+            history
+                .lookup(root, BatchId::from_uuid(Uuid::from_u128(0x7d10)))
+                .unwrap()
+                .as_deref(),
+            Some(b"subprocess cold history record".as_slice())
+        );
     }
 }
