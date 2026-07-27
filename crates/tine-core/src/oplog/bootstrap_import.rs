@@ -2765,6 +2765,10 @@ impl BootstrapPartDescriptorV1 {
         self.acceptance_sequence
     }
 
+    pub(crate) const fn post_frontier(self) -> ArchiveLocalFrontierBindingV1 {
+        self.post_frontier
+    }
+
     /// Verify the directly loaded replay artifacts against this aggregate-bound
     /// part descriptor without exposing either committed value or its canonical
     /// full-object encoding.
@@ -2950,6 +2954,47 @@ impl BootstrapAggregateManifestV1 {
         Ok(value)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_for_import(
+        workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
+        graph_resource: CanonicalGraphResourceId,
+        import_id: ImportId,
+        complete_source_count: u32,
+        source_inventory_root: SourceInventoryRootV1,
+        source_inventory_page_count: u32,
+        source_blob_root: SourceBlobChunkRootV1,
+        source_blob_page_count: u32,
+        profile_digest: BootstrapProfileDigestV1,
+        parts: Vec<BootstrapPartDescriptorV1>,
+        initial_frontier: ArchiveLocalFrontierBindingV1,
+        final_frontier: ArchiveLocalFrontierBindingV1,
+    ) -> Result<Self, BootstrapImportError> {
+        let final_frontier_proof = final_frontier_proof(
+            workspace_id,
+            lineage_digest,
+            import_id,
+            profile_digest,
+            final_frontier,
+        );
+        Self::new(
+            workspace_id,
+            lineage_digest,
+            graph_resource,
+            import_id,
+            complete_source_count,
+            source_inventory_root,
+            source_inventory_page_count,
+            source_blob_root,
+            source_blob_page_count,
+            profile_digest,
+            parts,
+            initial_frontier,
+            final_frontier,
+            final_frontier_proof,
+        )
+    }
+
     pub(crate) fn empty(
         workspace_id: WorkspaceId,
         lineage_digest: LineageDigest,
@@ -2958,14 +3003,7 @@ impl BootstrapAggregateManifestV1 {
     ) -> Result<Self, BootstrapImportError> {
         let profile_digest = BootstrapPartitionProfileV1::v1().digest();
         let frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile_digest);
-        let proof = final_frontier_proof(
-            workspace_id,
-            lineage_digest,
-            import_id,
-            profile_digest,
-            frontier,
-        );
-        Self::new(
+        Self::new_for_import(
             workspace_id,
             lineage_digest,
             graph_resource,
@@ -2979,7 +3017,6 @@ impl BootstrapAggregateManifestV1 {
             Vec::new(),
             frontier,
             frontier,
-            proof,
         )
     }
 
@@ -3987,14 +4024,7 @@ mod tests {
     ) -> Result<BootstrapAggregateManifestV1, BootstrapImportError> {
         let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
         let final_frontier = parts.last().map_or(initial, |part| part.post_frontier);
-        let proof = final_frontier_proof(
-            workspace_id(),
-            lineage(),
-            import_id(),
-            profile(),
-            final_frontier,
-        );
-        BootstrapAggregateManifestV1::new(
+        BootstrapAggregateManifestV1::new_for_import(
             workspace_id(),
             lineage(),
             graph_resource(),
@@ -4008,8 +4038,105 @@ mod tests {
             parts,
             initial,
             final_frontier,
-            proof,
         )
+    }
+
+    #[test]
+    fn aggregate_import_constructor_derives_proof_and_preserves_validation() {
+        let initial = ArchiveLocalFrontierBindingV1::initial(import_id(), profile());
+        let part = BootstrapPartDescriptorV1::accepted(
+            evidence(0, 1, None),
+            fingerprint(1),
+            &[payload(1)],
+            &[],
+            initial,
+        )
+        .unwrap();
+        let final_frontier = part.post_frontier();
+        let parts = vec![part];
+        let imported = BootstrapAggregateManifestV1::new_for_import(
+            workspace_id(),
+            lineage(),
+            graph_resource(),
+            import_id(),
+            0,
+            SourceInventoryRootV1::empty(),
+            0,
+            SourceBlobChunkRootV1::empty(),
+            0,
+            profile(),
+            parts.clone(),
+            initial,
+            final_frontier,
+        )
+        .unwrap();
+        let explicit = BootstrapAggregateManifestV1::new(
+            workspace_id(),
+            lineage(),
+            graph_resource(),
+            import_id(),
+            0,
+            SourceInventoryRootV1::empty(),
+            0,
+            SourceBlobChunkRootV1::empty(),
+            0,
+            profile(),
+            parts.clone(),
+            initial,
+            final_frontier,
+            final_frontier_proof(
+                workspace_id(),
+                lineage(),
+                import_id(),
+                profile(),
+                final_frontier,
+            ),
+        )
+        .unwrap();
+        let imported_bytes = imported.encode().unwrap();
+        assert_eq!(imported_bytes, explicit.encode().unwrap());
+        assert_eq!(imported.aggregate_digest(), explicit.aggregate_digest());
+        assert_eq!(
+            BootstrapAggregateManifestV1::decode(&imported_bytes).unwrap(),
+            imported
+        );
+
+        assert!(matches!(
+            BootstrapAggregateManifestV1::new_for_import(
+                workspace_id(),
+                lineage(),
+                graph_resource(),
+                ImportId::from_digest([8; 32]),
+                0,
+                SourceInventoryRootV1::empty(),
+                0,
+                SourceBlobChunkRootV1::empty(),
+                0,
+                profile(),
+                parts.clone(),
+                ArchiveLocalFrontierBindingV1::initial(ImportId::from_digest([8; 32]), profile(),),
+                final_frontier,
+            ),
+            Err(BootstrapImportError::PartContextMismatch)
+        ));
+        assert!(matches!(
+            BootstrapAggregateManifestV1::new_for_import(
+                workspace_id(),
+                lineage(),
+                graph_resource(),
+                import_id(),
+                0,
+                SourceInventoryRootV1::empty(),
+                0,
+                SourceBlobChunkRootV1::empty(),
+                0,
+                profile(),
+                parts,
+                initial,
+                initial,
+            ),
+            Err(BootstrapImportError::FinalFrontierMismatch)
+        ));
     }
 
     #[test]
