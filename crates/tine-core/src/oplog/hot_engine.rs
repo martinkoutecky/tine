@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use ahash::{AHashMap, AHashSet};
+use cap_std::{ambient_authority, fs::Dir};
 use loro::{
     Container, ContainerType, EncodedBlobMode, ExportMode, LoroDoc, LoroMap, LoroValue,
     UpdateOptions, ValueOrContainer, VersionVector,
@@ -13,7 +14,11 @@ use loro::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::bootstrap_import::{
+    BootstrapImportPartEvidenceV1, BootstrapProfileDigestV1, MAX_OPERATIONS_PER_BOOTSTRAP_PART,
+};
 use super::external_import::{ExternalImportObservationEntry, ExternalImportObservationMaterial};
+use super::identity::BootstrapPartId;
 use super::import::ImportExecutionMaterial;
 use super::object_store::{BlockClaimIndexRoot, BlockClaimIndexStore, BlockClaimIndexValue};
 use super::page_name_index::{
@@ -1368,6 +1373,272 @@ pub struct AuthorBatch {
     pub crdt_peer_id: CrdtPeerId,
 }
 
+/// Canonical accepted-engine material emitted beside one detached bootstrap
+/// part. The later aggregate/history installer can turn this into its prepared
+/// cold-history record without re-running CRDT validation or deriving any
+/// acceptance state from caller assertions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct DetachedBootstrapAcceptedEngineMaterial {
+    accepted_evidence: AcceptedBatchEvidence,
+    history_binding: super::object_store::EngineHistoryBinding,
+    logseq_claim_root: LogseqClaimIndexRoot,
+    reference_catalog_policy: ReferenceCatalogPolicyV1,
+    reference_catalog_root: ReferenceCatalogRootV2,
+}
+
+#[allow(dead_code)]
+impl DetachedBootstrapAcceptedEngineMaterial {
+    pub(crate) const fn accepted_evidence(&self) -> &AcceptedBatchEvidence {
+        &self.accepted_evidence
+    }
+
+    pub(crate) const fn history_binding(&self) -> &super::object_store::EngineHistoryBinding {
+        &self.history_binding
+    }
+
+    pub(crate) const fn logseq_claim_root(&self) -> LogseqClaimIndexRoot {
+        self.logseq_claim_root
+    }
+
+    pub(crate) const fn reference_catalog_policy(&self) -> &ReferenceCatalogPolicyV1 {
+        &self.reference_catalog_policy
+    }
+
+    pub(crate) const fn reference_catalog_root(&self) -> &ReferenceCatalogRootV2 {
+        &self.reference_catalog_root
+    }
+}
+
+/// One fully prepared canonical bootstrap part and the exact detached engine
+/// transition it produced.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct DetachedBootstrapAuthoredPart {
+    prepared: PreparedBatch,
+    engine_material: DetachedBootstrapAcceptedEngineMaterial,
+}
+
+#[allow(dead_code)]
+impl DetachedBootstrapAuthoredPart {
+    pub(crate) const fn prepared(&self) -> &PreparedBatch {
+        &self.prepared
+    }
+
+    pub(crate) const fn engine_material(&self) -> &DetachedBootstrapAcceptedEngineMaterial {
+        &self.engine_material
+    }
+
+    pub(crate) fn into_parts(self) -> (PreparedBatch, DetachedBootstrapAcceptedEngineMaterial) {
+        (self.prepared, self.engine_material)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DetachedBootstrapContinuity {
+    import_id: super::ImportId,
+    profile_digest: BootstrapProfileDigestV1,
+    part_count: u32,
+}
+
+struct DetachedBootstrapScratchRoot {
+    parent: Dir,
+    root: Dir,
+    name: String,
+}
+
+impl DetachedBootstrapScratchRoot {
+    fn create() -> Result<Self, EngineError> {
+        let parent = Dir::open_ambient_dir(std::env::temp_dir(), ambient_authority())
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        let name = format!("tine-detached-bootstrap-{}", Uuid::new_v4());
+        super::object_store::ensure_directory_nofollow(&parent, &name)
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        let root = super::object_store::open_dir_nofollow(&parent, &name)
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        Ok(Self { parent, root, name })
+    }
+}
+
+impl Drop for DetachedBootstrapScratchRoot {
+    fn drop(&mut self) {
+        let _ = self.root.remove_dir(super::scratch_store::SCRATCH_DIR);
+        let _ = self.parent.remove_dir(&self.name);
+    }
+}
+
+/// Completed inactive detached candidate. This remains crate-private and has no
+/// publication, projection, graph, SQLite, or enrollment capability.
+#[allow(dead_code)]
+pub(crate) struct DetachedBootstrapCandidate {
+    engine: ShardedHotEngine,
+    scratch_root: DetachedBootstrapScratchRoot,
+    part_count: u32,
+    last_part: Option<BootstrapPartId>,
+}
+
+#[allow(dead_code)]
+impl DetachedBootstrapCandidate {
+    pub(crate) const fn part_count(&self) -> u32 {
+        self.part_count
+    }
+
+    pub(crate) const fn last_part(&self) -> Option<BootstrapPartId> {
+        self.last_part
+    }
+
+    pub(crate) fn accepted_frontier_root(&self) -> Result<AcceptedFrontierRoot, EngineError> {
+        self.engine.accepted_frontier_root()
+    }
+}
+
+/// Inactive, single-use multipart bootstrap author. Every candidate mutation
+/// is isolated in a scratch-backed empty engine. Taking the engine before each
+/// part makes every error permanently poison the session.
+#[allow(dead_code)]
+pub(crate) struct DetachedBootstrapAuthoringSession {
+    candidate: Option<ShardedHotEngine>,
+    scratch_root: Option<DetachedBootstrapScratchRoot>,
+    continuity: Option<DetachedBootstrapContinuity>,
+    next_ordinal: u32,
+    last_part: Option<BootstrapPartId>,
+}
+
+#[allow(dead_code)]
+impl DetachedBootstrapAuthoringSession {
+    pub(crate) fn new(
+        workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
+        catalog_document_id: DocumentId,
+        reference_catalog_policy: ReferenceCatalogPolicyV1,
+    ) -> Result<Self, EngineError> {
+        let scratch_root = DetachedBootstrapScratchRoot::create()?;
+        let scratch = ScratchStore::open(&scratch_root.root, workspace_id)
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        let mut candidate =
+            ShardedHotEngine::new(workspace_id, lineage_digest, catalog_document_id);
+        candidate.scratch = Some(Arc::new(scratch));
+        candidate.configure_reference_catalog_policy(reference_catalog_policy)?;
+        Ok(Self {
+            candidate: Some(candidate),
+            scratch_root: Some(scratch_root),
+            continuity: None,
+            next_ordinal: 0,
+            last_part: None,
+        })
+    }
+
+    pub(crate) fn author_part(
+        &mut self,
+        author: AuthorBatch,
+        transaction: &OperationTransaction,
+        evidence: BootstrapImportPartEvidenceV1,
+    ) -> Result<DetachedBootstrapAuthoredPart, EngineError> {
+        let mut candidate = self.candidate.take().ok_or_else(|| {
+            EngineError::InvalidTransaction(
+                "detached bootstrap authoring session is poisoned or consumed".into(),
+            )
+        })?;
+        let result = (|| {
+            if author.batch_id != evidence.batch_id() {
+                return Err(EngineError::InvalidTransaction(
+                    "bootstrap author batch id does not match part evidence".into(),
+                ));
+            }
+            if evidence.ordinal() != self.next_ordinal {
+                return Err(EngineError::InvalidTransaction(
+                    "bootstrap part ordinal is not the next detached ordinal".into(),
+                ));
+            }
+            if evidence.predecessor() != self.last_part {
+                return Err(EngineError::InvalidTransaction(
+                    "bootstrap part predecessor does not match the detached candidate".into(),
+                ));
+            }
+            let operation_count = u32::try_from(transaction.operations.len()).map_err(|_| {
+                EngineError::InvalidTransaction(
+                    "bootstrap transaction operation count cannot be represented".into(),
+                )
+            })?;
+            if operation_count == 0
+                || operation_count > MAX_OPERATIONS_PER_BOOTSTRAP_PART
+                || operation_count != evidence.operation_root().operation_count()
+            {
+                return Err(EngineError::InvalidTransaction(
+                    "bootstrap transaction does not match the bounded evidence operation count"
+                        .into(),
+                ));
+            }
+            let incoming = DetachedBootstrapContinuity {
+                import_id: evidence.import_id(),
+                profile_digest: evidence.profile_digest(),
+                part_count: evidence.part_count(),
+            };
+            if self.continuity.is_some_and(|bound| bound != incoming) {
+                return Err(EngineError::InvalidTransaction(
+                    "bootstrap part changes the detached import continuity binding".into(),
+                ));
+            }
+
+            let prepared = candidate.prepare_bootstrap_transaction(author, transaction)?;
+            let accepted_evidence =
+                candidate.advance_detached_bootstrap_candidate(prepared.clone())?;
+            let engine_material = DetachedBootstrapAcceptedEngineMaterial {
+                accepted_evidence,
+                history_binding: candidate.durable_history_binding(),
+                logseq_claim_root: candidate.logseq_claim_root,
+                reference_catalog_policy: candidate.reference_catalog.policy().clone(),
+                reference_catalog_root: candidate.reference_catalog.root().clone(),
+            };
+            Ok(DetachedBootstrapAuthoredPart {
+                prepared,
+                engine_material,
+            })
+        })();
+        match result {
+            Ok(part) => {
+                self.continuity.get_or_insert(DetachedBootstrapContinuity {
+                    import_id: evidence.import_id(),
+                    profile_digest: evidence.profile_digest(),
+                    part_count: evidence.part_count(),
+                });
+                self.next_ordinal = self
+                    .next_ordinal
+                    .checked_add(1)
+                    .expect("validated bootstrap part count cannot overflow");
+                self.last_part = Some(evidence.part_id());
+                self.candidate = Some(candidate);
+                Ok(part)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn finish(self) -> Result<DetachedBootstrapCandidate, EngineError> {
+        let candidate = self.candidate.ok_or_else(|| {
+            EngineError::InvalidTransaction(
+                "detached bootstrap authoring session is poisoned or consumed".into(),
+            )
+        })?;
+        if self
+            .continuity
+            .is_some_and(|bound| self.next_ordinal != bound.part_count)
+        {
+            return Err(EngineError::InvalidTransaction(
+                "detached bootstrap authoring session is incomplete".into(),
+            ));
+        }
+        Ok(DetachedBootstrapCandidate {
+            engine: candidate,
+            scratch_root: self
+                .scratch_root
+                .expect("live candidate owns its scratch root"),
+            part_count: self.next_ordinal,
+            last_part: self.last_part,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectionEndpointBinding {
     pub(crate) endpoint_id: ProjectionEndpointId,
@@ -2583,6 +2854,10 @@ pub struct ShardedHotEngine {
     lineage_digest: LineageDigest,
     catalog_document_id: DocumentId,
     archive: BTreeMap<BatchId, ValidatedBatch>,
+    // Inactive detached bootstrap authoring retains only canonical manifests
+    // after validation. Prior object envelopes live in neither this map nor
+    // `archive`; sharded candidate documents are carried by run-local scratch.
+    detached_accepted_manifests: BTreeMap<BatchId, OperationBatch>,
     /// Authenticated offered batches retained only across bounded slices.
     /// Same-process reconstruction deliberately clears this cache and
     /// reauthenticates once before resuming from the durable queue cursor.
@@ -2710,6 +2985,7 @@ impl ShardedHotEngine {
             lineage_digest,
             catalog_document_id,
             archive: BTreeMap::new(),
+            detached_accepted_manifests: BTreeMap::new(),
             bounded_staging_cache: BTreeMap::new(),
             archive_store: None,
             projection_endpoint: None,
@@ -6294,6 +6570,53 @@ impl ShardedHotEngine {
                 None,
             )?
             .prepared)
+    }
+
+    fn advance_detached_bootstrap_candidate(
+        &mut self,
+        prepared: PreparedBatch,
+    ) -> Result<AcceptedBatchEvidence, EngineError> {
+        debug_assert!(self.archive_store.is_none());
+        debug_assert!(self.history_store.is_none());
+        debug_assert!(self.projection_work_index.is_none());
+        let batch_id = prepared.manifest().batch_id();
+        let manifest = prepared.manifest().clone();
+        // The scratch-backed path registers the causal record and prepares
+        // exact/current sharded checkpoints before committing the in-memory
+        // candidate. `persisted` here means resumable scratch work only: this
+        // detached engine has no archive or history store to publish into.
+        let outcome = self.stage_ready_internal(ValidatedBatch::new(prepared), true, None, None);
+        self.resolve_pending_author(batch_id, &outcome.disposition);
+        match outcome.disposition {
+            BatchDisposition::Accepted { .. } => {}
+            BatchDisposition::Rejected { error } => return Err(error),
+            BatchDisposition::IncompleteStaged { .. } => {
+                return Err(EngineError::InvalidTransaction(
+                    "detached bootstrap part did not reach final acceptance".into(),
+                ));
+            }
+            BatchDisposition::DuplicateAccepted { .. } => {
+                return Err(EngineError::InvalidTransaction(
+                    "detached bootstrap part replayed an accepted batch".into(),
+                ));
+            }
+            BatchDisposition::Quarantined => {
+                return Err(EngineError::InvalidTransaction(
+                    "detached bootstrap part would quarantine the candidate".into(),
+                ));
+            }
+        }
+        let evidence = match self.accepted_batch_entry_at(self.next_acceptance_sequence)? {
+            Some((accepted_batch_id, Some(evidence))) if accepted_batch_id == batch_id => evidence,
+            _ => {
+                return Err(EngineError::Archive(
+                    "detached accepted bootstrap part has no accepted evidence".into(),
+                ));
+            }
+        };
+        self.archive.remove(&batch_id);
+        self.detached_accepted_manifests.insert(batch_id, manifest);
+        Ok(evidence)
     }
 
     pub fn draft_author_transaction(
@@ -11489,6 +11812,19 @@ impl ShardedHotEngine {
         if let Some((source_batch, manifest_fingerprint, update_digest)) =
             checkpoint.archive_anchor()
         {
+            if self.validate_detached_update_anchor(
+                source_batch,
+                self.catalog_document_id,
+                manifest_fingerprint,
+                update_digest,
+            )? {
+                return Ok(AuthenticatedCatalogCheckpointArchiveProof {
+                    catalog_document_id: checkpoint.document_id(),
+                    catalog_causal_digest: checkpoint.causal_digest(),
+                    checkpoint_binding: checkpoint.checkpoint_binding(),
+                    checkpoint_content_digest: checkpoint.checkpoint_content_digest(),
+                });
+            }
             let manifest = self.load_observed_manifest(source_batch)?;
             let object = self.load_archive_document_object(
                 source_batch,
@@ -12758,6 +13094,15 @@ impl ShardedHotEngine {
         if self.external_anchor_point_cache.borrow().contains(&anchor) {
             return Ok(());
         }
+        if self.validate_detached_update_anchor(
+            record.latest_source_batch(),
+            document_id,
+            record.latest_manifest_fingerprint(),
+            record.latest_update_digest(),
+        )? {
+            self.external_anchor_point_cache.borrow_mut().insert(anchor);
+            return Ok(());
+        }
         let manifest = self.load_observed_manifest(record.latest_source_batch())?;
         let object = self.load_archive_document_object(
             record.latest_source_batch(),
@@ -13052,6 +13397,9 @@ impl ShardedHotEngine {
         if let Some(batch) = self.archive.get(&batch_id) {
             return Ok(batch.manifest().clone());
         }
+        if let Some(manifest) = self.detached_accepted_manifests.get(&batch_id) {
+            return Ok(manifest.clone());
+        }
         let store = self
             .archive_store
             .as_ref()
@@ -13074,6 +13422,37 @@ impl ShardedHotEngine {
             });
         }
         Ok(manifest)
+    }
+
+    fn validate_detached_update_anchor(
+        &self,
+        batch_id: BatchId,
+        document_id: DocumentId,
+        manifest_fingerprint: ContentDigest,
+        update_digest: ContentDigest,
+    ) -> Result<bool, EngineError> {
+        let Some(manifest) = self.detached_accepted_manifests.get(&batch_id) else {
+            return Ok(false);
+        };
+        if batch_fingerprint_from_manifest(manifest) != manifest_fingerprint {
+            return Err(EngineError::Archive(
+                "detached document checkpoint manifest anchor mismatch".into(),
+            ));
+        }
+        let descriptors = manifest
+            .required_objects()
+            .iter()
+            .filter(|descriptor| {
+                descriptor.kind() == ObjectKind::CrdtUpdate
+                    && descriptor.document_id() == document_id
+            })
+            .collect::<Vec<_>>();
+        if descriptors.len() != 1 || descriptors[0].content_digest() != update_digest {
+            return Err(EngineError::Archive(
+                "detached document checkpoint update anchor mismatch".into(),
+            ));
+        }
+        Ok(true)
     }
 
     fn load_archive_document_object(
@@ -18055,6 +18434,10 @@ mod validation_tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::oplog::bootstrap_import::{
+        BootstrapImportPartEvidenceV1, BootstrapPartitionProfileV1, OperationDigestV1,
+        OperationLeafV1, OperationRootV1, PayloadObjectRootV1, SourceSpanRootV1,
+    };
     use crate::oplog::external_import::{
         ExternalImportObservationEntry, ExternalImportObservationState,
     };
@@ -18201,6 +18584,510 @@ mod validation_tests {
             author_session_id: SessionId::from_uuid(Uuid::from_u128(batch + 2_000)),
             crdt_peer_id: CrdtPeerId::from_u64(peer),
         }
+    }
+
+    fn detached_evidence(
+        import_id: ImportId,
+        ordinal: u32,
+        part_count: u32,
+        predecessor: Option<BootstrapPartId>,
+        operation_count: u32,
+    ) -> BootstrapImportPartEvidenceV1 {
+        let operations = (0..operation_count)
+            .map(|index| {
+                let digest = ContentDigest::of(
+                    format!("detached-bootstrap-operation-{ordinal}-{index}").as_bytes(),
+                );
+                OperationLeafV1::new(
+                    OperationDigestV1::from_bytes(*digest.as_bytes()),
+                    u64::from(index % 17),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        BootstrapImportPartEvidenceV1::new(
+            import_id,
+            BootstrapPartitionProfileV1::v1().digest(),
+            ordinal,
+            part_count,
+            SourceSpanRootV1::empty(),
+            OperationRootV1::from_operations(&operations).unwrap(),
+            PayloadObjectRootV1::empty(),
+            predecessor,
+        )
+        .unwrap()
+    }
+
+    fn detached_author(evidence: BootstrapImportPartEvidenceV1, peer: u64) -> AuthorBatch {
+        AuthorBatch {
+            batch_id: evidence.batch_id(),
+            author_device_id: DeviceId::from_uuid(Uuid::from_u128(91_000)),
+            author_session_id: SessionId::from_uuid(Uuid::from_u128(91_001)),
+            crdt_peer_id: CrdtPeerId::from_u64(peer),
+        }
+    }
+
+    fn encoded_prepared(prepared: &PreparedBatch) -> (Vec<u8>, Vec<Vec<u8>>) {
+        (
+            prepared.manifest().encode().unwrap(),
+            prepared
+                .objects()
+                .iter()
+                .map(|object| object.encode().unwrap())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn detached_bootstrap_zero_part_is_canonical_empty() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_010));
+        let lineage = LineageDigest::of(b"detached-bootstrap-zero");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_011));
+        let policy = ReferenceCatalogPolicyV1::default();
+        let mut expected = ShardedHotEngine::new(workspace, lineage, catalog);
+        expected
+            .configure_reference_catalog_policy(policy.clone())
+            .unwrap();
+
+        let completed = DetachedBootstrapAuthoringSession::new(workspace, lineage, catalog, policy)
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(completed.part_count(), 0);
+        assert_eq!(completed.last_part(), None);
+        assert_eq!(
+            completed.accepted_frontier_root().unwrap(),
+            expected.accepted_frontier_root().unwrap()
+        );
+        let engine = &completed.engine;
+        assert!(engine.archive.is_empty());
+        assert!(engine.detached_accepted_manifests.is_empty());
+        assert!(engine.archive_store.is_none());
+        assert!(engine.history_store.is_none());
+        assert!(engine.projection_work_index.is_none());
+    }
+
+    #[test]
+    fn detached_bootstrap_one_part_is_deterministic_and_byte_identical_to_helper() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_020));
+        let lineage = LineageDigest::of(b"detached-bootstrap-one");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_021));
+        let page = PageId::from_uuid(Uuid::from_u128(91_022));
+        let home = DocumentId::from_uuid(Uuid::from_u128(91_023));
+        let block = BlockId::from_uuid(Uuid::from_u128(91_024));
+        let transaction = create_page_with_block(page, home, block, "Detached", "pages/d.md");
+        let evidence = detached_evidence(
+            ImportId::from_digest([0x41; 32]),
+            0,
+            1,
+            None,
+            transaction.operations.len() as u32,
+        );
+        let author = detached_author(evidence, 91_025);
+        let policy = ReferenceCatalogPolicyV1::default();
+
+        let mut helper = ShardedHotEngine::new(workspace, lineage, catalog);
+        helper
+            .configure_reference_catalog_policy(policy.clone())
+            .unwrap();
+        let expected = helper
+            .prepare_bootstrap_transaction(author, &transaction)
+            .unwrap();
+
+        let author_once = || {
+            let mut session =
+                DetachedBootstrapAuthoringSession::new(workspace, lineage, catalog, policy.clone())
+                    .unwrap();
+            let part = session.author_part(author, &transaction, evidence).unwrap();
+            let completed = session.finish().unwrap();
+            (encoded_prepared(part.prepared()), completed)
+        };
+        let (first, first_completed) = author_once();
+        let (second, second_completed) = author_once();
+        assert_eq!(first, encoded_prepared(&expected));
+        assert_eq!(first, second);
+        assert_eq!(
+            first_completed.accepted_frontier_root().unwrap(),
+            second_completed.accepted_frontier_root().unwrap()
+        );
+        assert_eq!(
+            first_completed
+                .engine
+                .materialize_page(page)
+                .unwrap()
+                .blocks[0]
+                .content,
+            "Detached identity"
+        );
+    }
+
+    #[test]
+    fn detached_bootstrap_multi_part_advances_real_candidate_state() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_030));
+        let lineage = LineageDigest::of(b"detached-bootstrap-multi");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_031));
+        let page = PageId::from_uuid(Uuid::from_u128(91_032));
+        let home = DocumentId::from_uuid(Uuid::from_u128(91_033));
+        let parent = BlockId::from_uuid(Uuid::from_u128(91_034));
+        let child = BlockId::from_uuid(Uuid::from_u128(91_035));
+        let import_id = ImportId::from_digest([0x42; 32]);
+        let first_transaction =
+            create_page_with_block(page, home, parent, "Multipart", "pages/multi.md");
+        let first_evidence = detached_evidence(
+            import_id,
+            0,
+            2,
+            None,
+            first_transaction.operations.len() as u32,
+        );
+        let second_transaction = OperationTransaction::new(vec![
+            SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: parent,
+                    home_document_id: home,
+                },
+                content: "edited in the second part".into(),
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: child,
+                    home_document_id: home,
+                },
+                page_id: page,
+                parent: Some(parent),
+                order: "a".into(),
+                content: "child from the second part".into(),
+            },
+        ])
+        .unwrap();
+        let second_evidence = detached_evidence(
+            import_id,
+            1,
+            2,
+            Some(first_evidence.part_id()),
+            second_transaction.operations.len() as u32,
+        );
+
+        let mut session = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        let first = session
+            .author_part(
+                detached_author(first_evidence, 91_036),
+                &first_transaction,
+                first_evidence,
+            )
+            .unwrap();
+        let second = session
+            .author_part(
+                detached_author(second_evidence, 91_036),
+                &second_transaction,
+                second_evidence,
+            )
+            .unwrap();
+        let authored_bytes = (
+            encoded_prepared(first.prepared()),
+            encoded_prepared(second.prepared()),
+        );
+        assert_eq!(
+            second.prepared().manifest().causal_dependency_heads(),
+            &[first.prepared().manifest().batch_id()]
+        );
+        let completed = session.finish().unwrap();
+        assert_eq!(completed.part_count(), 2);
+        let mut repeated = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        let repeated_first = repeated
+            .author_part(
+                detached_author(first_evidence, 91_036),
+                &first_transaction,
+                first_evidence,
+            )
+            .unwrap();
+        let repeated_second = repeated
+            .author_part(
+                detached_author(second_evidence, 91_036),
+                &second_transaction,
+                second_evidence,
+            )
+            .unwrap();
+        assert_eq!(
+            authored_bytes,
+            (
+                encoded_prepared(repeated_first.prepared()),
+                encoded_prepared(repeated_second.prepared())
+            )
+        );
+        assert_eq!(
+            completed.accepted_frontier_root().unwrap(),
+            repeated.finish().unwrap().accepted_frontier_root().unwrap()
+        );
+        let materialized = completed.engine.materialize_page(page).unwrap();
+        let blocks = materialized
+            .blocks
+            .into_iter()
+            .map(|block| (block.block_id, (block.parent, block.content)))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            blocks[&parent].1, "edited in the second part",
+            "part two must edit state accepted from part one"
+        );
+        assert_eq!(blocks[&child].0, Some(parent));
+    }
+
+    #[test]
+    fn detached_bootstrap_rejects_bad_parts_and_poisoning_is_irreversible() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_040));
+        let lineage = LineageDigest::of(b"detached-bootstrap-errors");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_041));
+        let page = PageId::from_uuid(Uuid::from_u128(91_042));
+        let home = DocumentId::from_uuid(Uuid::from_u128(91_043));
+        let block = BlockId::from_uuid(Uuid::from_u128(91_044));
+        let transaction = create_page_with_block(page, home, block, "Errors", "pages/errors.md");
+        let evidence = detached_evidence(
+            ImportId::from_digest([0x43; 32]),
+            0,
+            1,
+            None,
+            transaction.operations.len() as u32,
+        );
+
+        let mut wrong_batch = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        let mut author = detached_author(evidence, 91_045);
+        author.batch_id = BatchId::from_uuid(Uuid::from_u128(91_046));
+        assert!(wrong_batch
+            .author_part(author, &transaction, evidence)
+            .is_err());
+        assert!(wrong_batch
+            .author_part(detached_author(evidence, 91_045), &transaction, evidence)
+            .is_err());
+        assert!(wrong_batch.finish().is_err());
+
+        let wrong_ordinal_evidence = detached_evidence(
+            ImportId::from_digest([0x44; 32]),
+            1,
+            2,
+            Some(BootstrapPartId::from_digest([0x55; 32])),
+            transaction.operations.len() as u32,
+        );
+        let mut wrong_ordinal = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        assert!(wrong_ordinal
+            .author_part(
+                detached_author(wrong_ordinal_evidence, 91_045),
+                &transaction,
+                wrong_ordinal_evidence,
+            )
+            .is_err());
+
+        let oversized = OperationTransaction {
+            operations: vec![
+                SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: block,
+                        home_document_id: home,
+                    },
+                    content: "oversized".into(),
+                };
+                MAX_OPERATIONS_PER_BOOTSTRAP_PART as usize + 1
+            ],
+        };
+        let oversized_evidence = detached_evidence(
+            ImportId::from_digest([0x45; 32]),
+            0,
+            1,
+            None,
+            MAX_OPERATIONS_PER_BOOTSTRAP_PART,
+        );
+        let mut oversized_session = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        assert!(oversized_session
+            .author_part(
+                detached_author(oversized_evidence, 91_045),
+                &oversized,
+                oversized_evidence,
+            )
+            .is_err());
+
+        let mut invalid_session = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        assert!(invalid_session
+            .author_part(detached_author(evidence, 0), &transaction, evidence)
+            .is_err());
+    }
+
+    #[test]
+    fn detached_bootstrap_rejects_wrong_predecessor_and_replay() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_050));
+        let lineage = LineageDigest::of(b"detached-bootstrap-continuity");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_051));
+        let page = PageId::from_uuid(Uuid::from_u128(91_052));
+        let home = DocumentId::from_uuid(Uuid::from_u128(91_053));
+        let block = BlockId::from_uuid(Uuid::from_u128(91_054));
+        let import_id = ImportId::from_digest([0x46; 32]);
+        let first_transaction =
+            create_page_with_block(page, home, block, "Continuity", "pages/continuity.md");
+        let first = detached_evidence(
+            import_id,
+            0,
+            2,
+            None,
+            first_transaction.operations.len() as u32,
+        );
+        let second_transaction =
+            OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: block,
+                    home_document_id: home,
+                },
+                content: "second".into(),
+            }])
+            .unwrap();
+        let wrong_second = detached_evidence(
+            import_id,
+            1,
+            2,
+            Some(BootstrapPartId::from_digest([0x66; 32])),
+            1,
+        );
+
+        let new_session = || {
+            DetachedBootstrapAuthoringSession::new(
+                workspace,
+                lineage,
+                catalog,
+                ReferenceCatalogPolicyV1::default(),
+            )
+            .unwrap()
+        };
+        let mut predecessor = new_session();
+        predecessor
+            .author_part(detached_author(first, 91_055), &first_transaction, first)
+            .unwrap();
+        assert!(predecessor
+            .author_part(
+                detached_author(wrong_second, 91_055),
+                &second_transaction,
+                wrong_second,
+            )
+            .is_err());
+
+        let mut replay = new_session();
+        replay
+            .author_part(detached_author(first, 91_055), &first_transaction, first)
+            .unwrap();
+        assert!(replay
+            .author_part(detached_author(first, 91_055), &first_transaction, first,)
+            .is_err());
+    }
+
+    #[test]
+    fn detached_bootstrap_retains_no_prior_prepared_payloads_or_live_capabilities() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(91_060));
+        let lineage = LineageDigest::of(b"detached-bootstrap-retention");
+        let catalog = DocumentId::from_uuid(Uuid::from_u128(91_061));
+        let import_id = ImportId::from_digest([0x47; 32]);
+        let mut session = DetachedBootstrapAuthoringSession::new(
+            workspace,
+            lineage,
+            catalog,
+            ReferenceCatalogPolicyV1::default(),
+        )
+        .unwrap();
+        let mut predecessor = None;
+        for ordinal in 0..3 {
+            let page = PageId::from_uuid(Uuid::from_u128(91_100 + u128::from(ordinal)));
+            let home = DocumentId::from_uuid(Uuid::from_u128(91_200 + u128::from(ordinal)));
+            let block = BlockId::from_uuid(Uuid::from_u128(91_300 + u128::from(ordinal)));
+            let transaction = create_page_with_block(
+                page,
+                home,
+                block,
+                &format!("Retained {ordinal}"),
+                &format!("pages/retained-{ordinal}.md"),
+            );
+            let evidence = detached_evidence(
+                import_id,
+                ordinal,
+                3,
+                predecessor,
+                transaction.operations.len() as u32,
+            );
+            session
+                .author_part(detached_author(evidence, 91_062), &transaction, evidence)
+                .unwrap();
+            predecessor = Some(evidence.part_id());
+            let candidate = session.candidate.as_ref().unwrap();
+            assert!(
+                candidate.archive.is_empty(),
+                "accepted PreparedBatch objects must be released after each part"
+            );
+            assert_eq!(
+                candidate.detached_accepted_manifests.len(),
+                ordinal as usize + 1
+            );
+        }
+        let completed = session.finish().unwrap();
+        let engine = &completed.engine;
+        assert!(engine.archive.is_empty());
+        assert!(engine.archive_store.is_none());
+        assert!(engine.history_store.is_none());
+        assert!(engine.projection_work_index.is_none());
+        assert!(engine.projection_endpoint.is_none());
+        for forbidden in [
+            "archive",
+            "history",
+            "projection",
+            "engine-history.head",
+            "objects",
+            "manifests",
+        ] {
+            assert!(
+                completed
+                    .scratch_root
+                    .root
+                    .symlink_metadata(forbidden)
+                    .is_err(),
+                "detached authoring created forbidden live/durable path {forbidden}"
+            );
+        }
+        let parent = completed.scratch_root.parent.try_clone().unwrap();
+        let root_name = completed.scratch_root.name.clone();
+        drop(completed);
+        assert!(
+            parent.symlink_metadata(&root_name).is_err(),
+            "detached scratch root survived candidate drop"
+        );
     }
 
     #[derive(Debug, Eq, PartialEq)]
