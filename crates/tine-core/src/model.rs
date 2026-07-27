@@ -4708,6 +4708,41 @@ impl Graph {
         Ok((semantic, format))
     }
 
+    /// Parse one present graph-text file through the same semantic path used by
+    /// graph-wide admission, while returning only a bounded structural count
+    /// for the inactive source-capture per-file limit.  The document is dropped
+    /// before this method returns.
+    fn decode_present_graph_text_with_node_count(
+        &self,
+        path: &ManagedPath,
+        bytes: &[u8],
+        permit: GraphTextParseBudgetPermit,
+    ) -> io::Result<(PageEntry, Format, u64)> {
+        count_graph_text_admission_parser_invocation();
+        graph_text_parse_failure_hook()?;
+        let content = std::str::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("graph text is not UTF-8: {path}"),
+            )
+        })?;
+        let provisional = self.provisional_graph_entry_for_managed_path(path)?;
+        let format = Format::from_path(Path::new(path.file_name()));
+        let (semantic, document, _) = parse_exact_page(self, &provisional, content)?;
+        let actual_name_allocation = checked_add_bytes(
+            usize_to_u64(std::mem::size_of::<String>())?,
+            usize_to_u64(semantic.name.capacity())?,
+        )?;
+        if usize_to_u64(semantic.name.len())? > permit.semantic_name_bytes
+            || actual_name_allocation > permit.semantic_name_allocation_bytes
+        {
+            return Err(initial_shadow_limit_error(
+                "rendered semantic title allocation",
+            ));
+        }
+        Ok((semantic, format, graph_text_document_node_count(&document)?))
+    }
+
     /// Interpret one already-validated configured-root managed path exactly as
     /// existing import and managed-inventory callers expect. This authority
     /// input deliberately remains separate from the inert graph-wide decoder.
@@ -5807,6 +5842,22 @@ impl Graph {
     ) -> io::Result<Vec<(ManagedPath, Vec<u8>)>> {
         let (first, _) = self.capture_initial_shadow_with_limits(INITIAL_SHADOW_LIMITS)?;
         Ok(initial_shadow_capture_into_raw_inventory(first))
+    }
+
+    /// Capture the present graph-text corpus for the inactive multipart
+    /// bootstrap author.
+    ///
+    /// This is deliberately only source evidence.  It neither derives an
+    /// import ID nor creates operations, history, or any graph mutation.  The
+    /// caller supplies a private scratch directory; incomplete children left
+    /// there after an I/O failure or crash are non-authoritative and may be
+    /// ignored by a later capture.  A returned value names only a fully sealed,
+    /// independently revalidated capture.
+    pub(crate) fn capture_inactive_bootstrap_sources(
+        &self,
+        scratch: &Path,
+    ) -> io::Result<BootstrapSourceCapture> {
+        capture_inactive_bootstrap_sources(self, scratch)
     }
 
     #[cfg(test)]
@@ -16764,6 +16815,32 @@ fn parse_exact_page(
     }
 }
 
+/// Count a parsed document without recursive descent, so an externally edited
+/// deeply nested source cannot consume the process stack during inactive source
+/// capture.  Returning `limit + 1` is sufficient for the caller to reject
+/// before retaining another parser-side row.
+fn graph_text_document_node_count(document: &Document) -> io::Result<u64> {
+    let mut pending = Vec::<&DocBlock>::new();
+    pending.try_reserve(document.roots.len()).map_err(|_| {
+        bootstrap_source_capture_error("source parser-node stack allocation failed")
+    })?;
+    pending.extend(document.roots.iter().rev());
+    let mut count = 0_u64;
+    while let Some(block) = pending.pop() {
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source parser-node counter overflow"))?;
+        if count > BOOTSTRAP_SOURCE_MAX_PARSER_NODES {
+            return Ok(count);
+        }
+        pending.try_reserve(block.children.len()).map_err(|_| {
+            bootstrap_source_capture_error("source parser-node stack allocation failed")
+        })?;
+        pending.extend(block.children.iter().rev());
+    }
+    Ok(count)
+}
+
 fn isolate_page_parse(
     e: PageEntry,
     journal_format: &JournalFormat,
@@ -21605,6 +21682,2189 @@ fn reconciliation_scan_unsafe_error(detail: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, detail.into())
 }
 
+// Inactive multipart-bootstrap source capture ---------------------------------
+//
+// These spools intentionally live below a caller-owned scratch directory, not
+// in the graph and not in the object store.  A spool is evidence for a later
+// author; it has no history/publication authority by itself.
+
+const BOOTSTRAP_SOURCE_CAPTURE_SCHEMA: u32 = 1;
+const BOOTSTRAP_SOURCE_CHUNK_BYTES: usize = 1024 * 1024;
+const BOOTSTRAP_SOURCE_MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const BOOTSTRAP_SOURCE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+const BOOTSTRAP_SOURCE_MAX_FILES: u64 = 1_000_000;
+const BOOTSTRAP_SOURCE_MAX_PARSER_NODES: u64 = 1_000_000;
+const BOOTSTRAP_SOURCE_MAX_ALL_ENTRIES: u64 = 2_000_000;
+const BOOTSTRAP_SOURCE_MAX_DIRECTORIES: u64 = 1_000_000;
+const BOOTSTRAP_SOURCE_MAX_DIRECTORY_DEPTH: usize = 256;
+const BOOTSTRAP_SOURCE_MAX_PATH_BYTES: usize = 4096;
+const BOOTSTRAP_SOURCE_MAX_AGGREGATE_PATH_BYTES: u64 = 512 * 1024 * 1024;
+const BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES: usize = 1024 * 1024;
+const BOOTSTRAP_SOURCE_MAX_SORT_RUNS: u64 = 4096;
+const BOOTSTRAP_SOURCE_MERGE_INPUTS: usize = 32;
+const BOOTSTRAP_SOURCE_CURSOR_BUFFER_BYTES: usize = 64 * 1024;
+const BOOTSTRAP_SOURCE_CAPTURE_DIRECTORY: &str = "bootstrap-source-capture-v1";
+const BOOTSTRAP_SOURCE_MANIFEST: &str = "capture-manifest.bin";
+const BOOTSTRAP_SOURCE_INVENTORY: &str = "inventory.sorted";
+const BOOTSTRAP_SOURCE_ENTRIES: &str = "entries.sorted";
+const BOOTSTRAP_SOURCE_CHUNKS: &str = "chunks.sorted";
+const BOOTSTRAP_SOURCE_CHUNK_DIRECTORY: &str = "source-chunks";
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BootstrapSourceCaptureInstrumentation {
+    pub(crate) physical_bytes: u64,
+    pub(crate) files: u64,
+    pub(crate) passes: u64,
+    pub(crate) chunks: u64,
+    pub(crate) spool_bytes: u64,
+    pub(crate) sort_runs: u64,
+    pub(crate) peak_owned_buffer_bytes: u64,
+    pub(crate) peak_owned_rows: u64,
+}
+
+/// A sealed, private source capture.  It is intentionally crate-private until
+/// the inactive bootstrap author consumes it; callers cannot publish or admit
+/// anything through this type.
+#[derive(Clone, Debug)]
+pub(crate) struct BootstrapSourceCapture {
+    sealed_directory: PathBuf,
+    scratch_directory: PathBuf,
+    binding: BootstrapSourceCaptureBinding,
+    inventory: BlobDescription,
+    entries: BlobDescription,
+    chunks: BlobDescription,
+    source_files: u64,
+    source_chunks: u64,
+    instrumentation: BootstrapSourceCaptureInstrumentation,
+}
+
+impl BootstrapSourceCapture {
+    pub(crate) fn instrumentation(&self) -> &BootstrapSourceCaptureInstrumentation {
+        &self.instrumentation
+    }
+
+    pub(crate) fn source_file_count(&self) -> u64 {
+        self.source_files
+    }
+
+    pub(crate) fn source_chunk_count(&self) -> u64 {
+        self.source_chunks
+    }
+
+    /// Final hash-only proof for the later author.  It rereads every source
+    /// through a fresh retained graph capability and compares the complete
+    /// canonical inventory, entry, and chunk spools to the sealed A/B result.
+    pub(crate) fn verify_before_inactive_bootstrap_authoring(
+        &self,
+        graph: &Graph,
+    ) -> io::Result<BootstrapSourceCaptureInstrumentation> {
+        verify_bootstrap_source_capture(graph, self)
+    }
+
+    pub(crate) fn entries_cursor(&self) -> io::Result<BootstrapSourceEntryCursor> {
+        let path = self.sealed_directory.join(BOOTSTRAP_SOURCE_ENTRIES);
+        verify_capture_file(&path, self.entries)?;
+        BootstrapSourceEntryCursor::open(path)
+    }
+
+    pub(crate) fn chunks_cursor(&self) -> io::Result<BootstrapSourceChunkCursor> {
+        let path = self.sealed_directory.join(BOOTSTRAP_SOURCE_CHUNKS);
+        verify_capture_file(&path, self.chunks)?;
+        BootstrapSourceChunkCursor::open(path)
+    }
+
+    pub(crate) fn open_chunk(
+        &self,
+        chunk: &BootstrapSourceChunk,
+    ) -> io::Result<BootstrapSourceChunkReader> {
+        let path = self
+            .sealed_directory
+            .join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY)
+            .join(hex_digest(chunk.description.sha256()));
+        BootstrapSourceChunkReader::open(path, chunk.description)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BootstrapSourceEntry {
+    path: ManagedPath,
+    kind: ManagedTextKind,
+    description: BlobDescription,
+    file_resource: ContentDigest,
+    link_count: u64,
+    chunk_count: u32,
+}
+
+impl BootstrapSourceEntry {
+    pub(crate) fn path(&self) -> &ManagedPath {
+        &self.path
+    }
+
+    pub(crate) fn kind(&self) -> ManagedTextKind {
+        self.kind
+    }
+
+    pub(crate) fn description(&self) -> BlobDescription {
+        self.description
+    }
+
+    pub(crate) fn file_resource(&self) -> ContentDigest {
+        self.file_resource
+    }
+
+    pub(crate) fn link_count(&self) -> u64 {
+        self.link_count
+    }
+
+    pub(crate) fn chunk_count(&self) -> u32 {
+        self.chunk_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BootstrapSourceChunk {
+    path: ManagedPath,
+    ordinal: u32,
+    description: BlobDescription,
+}
+
+impl BootstrapSourceChunk {
+    pub(crate) fn path(&self) -> &ManagedPath {
+        &self.path
+    }
+
+    pub(crate) fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    pub(crate) fn description(&self) -> BlobDescription {
+        self.description
+    }
+}
+
+pub(crate) struct BootstrapSourceEntryCursor {
+    reader: BootstrapSourceFrameReader,
+    previous: Option<ManagedPath>,
+}
+
+impl BootstrapSourceEntryCursor {
+    fn open(path: PathBuf) -> io::Result<Self> {
+        Ok(Self {
+            reader: BootstrapSourceFrameReader::open(&path)?,
+            previous: None,
+        })
+    }
+
+    pub(crate) fn next(&mut self) -> io::Result<Option<BootstrapSourceEntry>> {
+        let Some(frame) = self.reader.next()? else {
+            return Ok(None);
+        };
+        let entry = decode_bootstrap_source_entry(&frame)?;
+        if self
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous >= &entry.path)
+        {
+            return Err(bootstrap_source_capture_error(
+                "sealed source-entry spool is not strictly path ordered",
+            ));
+        }
+        self.previous = Some(entry.path.clone());
+        Ok(Some(entry))
+    }
+}
+
+pub(crate) struct BootstrapSourceChunkCursor {
+    reader: BootstrapSourceFrameReader,
+    previous: Option<(ManagedPath, u32)>,
+}
+
+impl BootstrapSourceChunkCursor {
+    fn open(path: PathBuf) -> io::Result<Self> {
+        Ok(Self {
+            reader: BootstrapSourceFrameReader::open(&path)?,
+            previous: None,
+        })
+    }
+
+    pub(crate) fn next(&mut self) -> io::Result<Option<BootstrapSourceChunk>> {
+        let Some(frame) = self.reader.next()? else {
+            return Ok(None);
+        };
+        let chunk = decode_bootstrap_source_chunk(&frame)?;
+        let key = (chunk.path.clone(), chunk.ordinal);
+        if self
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous >= &key)
+        {
+            return Err(bootstrap_source_capture_error(
+                "sealed source-chunk spool is not strictly ordered",
+            ));
+        }
+        self.previous = Some(key);
+        Ok(Some(chunk))
+    }
+}
+
+/// A bounded reader for one immutable 1 MiB (or final short) source chunk.
+/// `finish` must be called before accepting the bytes, so an accidental scratch
+/// corruption cannot be mistaken for provenance.
+pub(crate) struct BootstrapSourceChunkReader {
+    file: fs::File,
+    expected: BlobDescription,
+    remaining: u64,
+    hasher: Sha256,
+}
+
+impl BootstrapSourceChunkReader {
+    fn open(path: PathBuf, expected: BlobDescription) -> io::Result<Self> {
+        let file = fs::File::open(&path)?;
+        if file.metadata()?.len() != expected.byte_length() {
+            return Err(bootstrap_source_capture_error(
+                "sealed source chunk length does not match its spool record",
+            ));
+        }
+        Ok(Self {
+            file,
+            expected,
+            remaining: expected.byte_length(),
+            hasher: Sha256::new(),
+        })
+    }
+
+    pub(crate) fn finish(mut self) -> io::Result<()> {
+        let mut buffer = [0_u8; BOOTSTRAP_SOURCE_CURSOR_BUFFER_BYTES];
+        while self.remaining != 0 {
+            let read = self.read(&mut buffer)?;
+            if read == 0 {
+                return Err(bootstrap_source_capture_error(
+                    "sealed source chunk ended before its declared length",
+                ));
+            }
+        }
+        let actual =
+            BlobDescription::from_parts(self.hasher.finalize().into(), self.expected.byte_length());
+        if actual != self.expected {
+            return Err(bootstrap_source_capture_error(
+                "sealed source chunk digest does not match its spool record",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Read for BootstrapSourceChunkReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.remaining == 0 {
+            return Ok(0);
+        }
+        let allowed = usize::try_from(self.remaining.min(buffer.len() as u64))
+            .map_err(|_| bootstrap_source_capture_error("source chunk read length overflow"))?;
+        let read = self.file.read(&mut buffer[..allowed])?;
+        if read == 0 {
+            return Ok(0);
+        }
+        self.remaining -= read as u64;
+        self.hasher.update(&buffer[..read]);
+        Ok(read)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BootstrapSourceCaptureBinding {
+    graph_resource: CanonicalGraphResourceId,
+    scope_binding: GraphTextScopeBinding,
+    config_description: Option<BlobDescription>,
+    pages_dir: String,
+    journals_dir: String,
+    file_name_format: FileNameFormat,
+    journal_file_name_format: Option<String>,
+    journal_page_title_format: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BootstrapSourceSpoolKind {
+    Inventory,
+    Entries,
+    Chunks,
+    Aliases,
+    Portable,
+}
+
+impl BootstrapSourceSpoolKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Inventory => "inventory",
+            Self::Entries => "entries",
+            Self::Chunks => "chunks",
+            Self::Aliases => "aliases",
+            Self::Portable => "portable-paths",
+        }
+    }
+}
+
+struct BootstrapSourceFrameReader {
+    file: fs::File,
+}
+
+impl BootstrapSourceFrameReader {
+    fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self {
+            file: fs::File::open(path)?,
+        })
+    }
+
+    fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
+        let mut length = [0_u8; 4];
+        match self.file.read_exact(&mut length) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let length = usize::try_from(u32::from_be_bytes(length))
+            .map_err(|_| bootstrap_source_capture_error("source spool frame length overflow"))?;
+        if length == 0 || length > BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES {
+            return Err(bootstrap_source_capture_error(
+                "source spool frame exceeds the fixed sort buffer",
+            ));
+        }
+        let mut frame = vec![0_u8; length];
+        self.file.read_exact(&mut frame)?;
+        Ok(Some(frame))
+    }
+}
+
+fn bootstrap_source_capture_error(detail: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, detail.into())
+}
+
+fn bootstrap_source_capture_interrupted(detail: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, detail.into())
+}
+
+struct BootstrapSourcePassPaths {
+    directory: PathBuf,
+    inventory: PathBuf,
+    entries: PathBuf,
+    chunks: PathBuf,
+    aliases: PathBuf,
+    portable: PathBuf,
+}
+
+impl BootstrapSourcePassPaths {
+    fn new(working: &Path, name: &str) -> io::Result<Self> {
+        let directory = working.join(name);
+        fs::create_dir(&directory)?;
+        Ok(Self {
+            inventory: directory.join("inventory.raw"),
+            entries: directory.join("entries.raw"),
+            chunks: directory.join("chunks.raw"),
+            aliases: directory.join("aliases.raw"),
+            portable: directory.join("portable.raw"),
+            directory,
+        })
+    }
+
+    fn raw(&self, kind: BootstrapSourceSpoolKind) -> &Path {
+        match kind {
+            BootstrapSourceSpoolKind::Inventory => &self.inventory,
+            BootstrapSourceSpoolKind::Entries => &self.entries,
+            BootstrapSourceSpoolKind::Chunks => &self.chunks,
+            BootstrapSourceSpoolKind::Aliases => &self.aliases,
+            BootstrapSourceSpoolKind::Portable => &self.portable,
+        }
+    }
+
+    fn sorted(&self, kind: BootstrapSourceSpoolKind) -> PathBuf {
+        self.directory.join(format!("{}.sorted", kind.label()))
+    }
+}
+
+struct BootstrapSourcePass {
+    binding: BootstrapSourceCaptureBinding,
+    paths: BootstrapSourcePassPaths,
+    source_files: u64,
+    source_chunks: u64,
+    instrumentation: BootstrapSourceCaptureInstrumentation,
+}
+
+struct BootstrapSourcePassWriters {
+    inventory: fs::File,
+    entries: fs::File,
+    chunks: fs::File,
+    aliases: fs::File,
+    portable: fs::File,
+}
+
+impl BootstrapSourcePassWriters {
+    fn create(paths: &BootstrapSourcePassPaths) -> io::Result<Self> {
+        Ok(Self {
+            inventory: create_bootstrap_source_spool(&paths.inventory)?,
+            entries: create_bootstrap_source_spool(&paths.entries)?,
+            chunks: create_bootstrap_source_spool(&paths.chunks)?,
+            aliases: create_bootstrap_source_spool(&paths.aliases)?,
+            portable: create_bootstrap_source_spool(&paths.portable)?,
+        })
+    }
+
+    fn sync_all(&mut self) -> io::Result<()> {
+        self.inventory.sync_all()?;
+        self.entries.sync_all()?;
+        self.chunks.sync_all()?;
+        self.aliases.sync_all()?;
+        self.portable.sync_all()
+    }
+}
+
+fn create_bootstrap_source_spool(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+fn write_bootstrap_source_frame(file: &mut fs::File, frame: &[u8]) -> io::Result<()> {
+    let length = u32::try_from(frame.len())
+        .map_err(|_| bootstrap_source_capture_error("source spool frame is too large"))?;
+    file.write_all(&length.to_be_bytes())?;
+    file.write_all(frame)
+}
+
+fn bootstrap_source_binding(graph: &Graph) -> io::Result<BootstrapSourceCaptureBinding> {
+    let page_root = managed_root_components(&graph.config.pages_dir)
+        .ok_or_else(|| bootstrap_source_capture_error("configured pages root is malformed"))?;
+    let journal_root = managed_root_components(&graph.config.journals_dir)
+        .ok_or_else(|| bootstrap_source_capture_error("configured journals root is malformed"))?;
+    let page_root_key = PortablePathKey::from_graph_text_path(&page_root.join("/"));
+    let journal_root_key = PortablePathKey::from_graph_text_path(&journal_root.join("/"));
+    if page_root_key == journal_root_key {
+        return Err(bootstrap_source_capture_error(
+            "configured managed roots are equal or portable aliases",
+        ));
+    }
+    graph.ensure_projection_root_binding()?;
+    let graph_resource = graph.canonical_resource_id()?;
+    let scope_binding = graph.graph_text_scope_binding()?;
+    if scope_binding.graph_resource_id() != graph_resource {
+        return Err(bootstrap_source_capture_error(
+            "source scope binding does not match the retained graph resource",
+        ));
+    }
+    if !graph.reconciliation_scan_open_config_utf8 {
+        return Err(bootstrap_source_capture_error(
+            "source capture requires a graph opened from UTF-8 configuration",
+        ));
+    }
+    Ok(BootstrapSourceCaptureBinding {
+        graph_resource,
+        scope_binding,
+        config_description: graph.reconciliation_scan_open_config_description,
+        pages_dir: graph.config.pages_dir.clone(),
+        journals_dir: graph.config.journals_dir.clone(),
+        file_name_format: graph.config.file_name_format,
+        journal_file_name_format: graph.config.journal_file_name_format.clone(),
+        journal_page_title_format: graph.config.journal_page_title_format.clone(),
+    })
+}
+
+fn current_bootstrap_source_config_description(
+    graph: &Graph,
+) -> io::Result<Option<BlobDescription>> {
+    let root = graph.projection_root.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "graph has no retained no-follow projection capability",
+        )
+    })?;
+    let mut instrumentation =
+        crate::oplog::reconciliation_scan::GraphTextScanPassInstrumentation::default();
+    let mut hashed = 0_u64;
+    reconciliation_scan_current_config_description(
+        root,
+        &mut hashed,
+        &mut instrumentation,
+        crate::oplog::reconciliation_scan::GraphTextScanLimits::default(),
+    )
+}
+
+fn require_current_bootstrap_source_binding(
+    graph: &Graph,
+    expected: &BootstrapSourceCaptureBinding,
+) -> io::Result<()> {
+    let actual = bootstrap_source_binding(graph)?;
+    if &actual != expected {
+        return Err(bootstrap_source_capture_interrupted(
+            "graph root, scope, or configured layout changed during source capture",
+        ));
+    }
+    if current_bootstrap_source_config_description(graph)? != expected.config_description {
+        return Err(bootstrap_source_capture_interrupted(
+            "on-disk configuration changed during source capture",
+        ));
+    }
+    Ok(())
+}
+
+fn capture_inactive_bootstrap_sources(
+    graph: &Graph,
+    scratch: &Path,
+) -> io::Result<BootstrapSourceCapture> {
+    require_projection_platform()?;
+    let scratch = prepare_bootstrap_source_scratch(scratch)?;
+    let graph_root = fs::canonicalize(&graph.root)?;
+    if scratch.starts_with(&graph_root) {
+        return Err(bootstrap_source_capture_error(
+            "bootstrap source scratch must be outside the graph capability root",
+        ));
+    }
+    let binding = bootstrap_source_binding(graph)?;
+    require_current_bootstrap_source_binding(graph, &binding)?;
+    let working = scratch.join(format!(".working-{}", Uuid::new_v4().simple()));
+    fs::create_dir(&working)?;
+    fs::create_dir(working.join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY))?;
+
+    let first = collect_bootstrap_source_pass(graph, &working, "capture-a", &binding, true)?;
+    bootstrap_source_capture_between_passes_hook()?;
+    let second = collect_bootstrap_source_pass(graph, &working, "capture-b", &binding, false)?;
+    compare_bootstrap_source_passes(&first, &second)?;
+    require_current_bootstrap_source_binding(graph, &binding)?;
+
+    let inventory =
+        describe_bootstrap_source_spool(&first.paths.sorted(BootstrapSourceSpoolKind::Inventory))?;
+    let entries =
+        describe_bootstrap_source_spool(&first.paths.sorted(BootstrapSourceSpoolKind::Entries))?;
+    let chunks =
+        describe_bootstrap_source_spool(&first.paths.sorted(BootstrapSourceSpoolKind::Chunks))?;
+    let mut instrumentation = first.instrumentation.clone();
+    bootstrap_source_add_instrumentation(&mut instrumentation, &second.instrumentation)?;
+    let capture = BootstrapSourceCapture {
+        sealed_directory: PathBuf::new(),
+        scratch_directory: scratch.clone(),
+        binding,
+        inventory,
+        entries,
+        chunks,
+        source_files: first.source_files,
+        source_chunks: first.source_chunks,
+        instrumentation,
+    };
+    seal_bootstrap_source_capture(&working, capture)
+}
+
+fn prepare_bootstrap_source_scratch(scratch: &Path) -> io::Result<PathBuf> {
+    let metadata = fs::symlink_metadata(scratch)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(bootstrap_source_capture_error(
+            "bootstrap source scratch must be a private real directory",
+        ));
+    }
+    let scratch = fs::canonicalize(scratch)?;
+    let root = scratch.join(BOOTSTRAP_SOURCE_CAPTURE_DIRECTORY);
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(bootstrap_source_capture_error(
+                "bootstrap source scratch capture directory is not a real directory",
+            ))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(&root)?,
+        Err(error) => return Err(error),
+    }
+    Ok(root)
+}
+
+fn bootstrap_source_add_instrumentation(
+    total: &mut BootstrapSourceCaptureInstrumentation,
+    pass: &BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    total.physical_bytes = total
+        .physical_bytes
+        .checked_add(pass.physical_bytes)
+        .ok_or_else(|| bootstrap_source_capture_error("source physical-byte counter overflow"))?;
+    total.files = total
+        .files
+        .checked_add(pass.files)
+        .ok_or_else(|| bootstrap_source_capture_error("source file counter overflow"))?;
+    total.passes = total
+        .passes
+        .checked_add(pass.passes)
+        .ok_or_else(|| bootstrap_source_capture_error("source pass counter overflow"))?;
+    total.chunks = total
+        .chunks
+        .checked_add(pass.chunks)
+        .ok_or_else(|| bootstrap_source_capture_error("source chunk counter overflow"))?;
+    total.spool_bytes = total
+        .spool_bytes
+        .checked_add(pass.spool_bytes)
+        .ok_or_else(|| bootstrap_source_capture_error("source spool-byte counter overflow"))?;
+    total.sort_runs = total
+        .sort_runs
+        .checked_add(pass.sort_runs)
+        .ok_or_else(|| bootstrap_source_capture_error("source sort-run counter overflow"))?;
+    total.peak_owned_buffer_bytes = total
+        .peak_owned_buffer_bytes
+        .max(pass.peak_owned_buffer_bytes);
+    total.peak_owned_rows = total.peak_owned_rows.max(pass.peak_owned_rows);
+    Ok(())
+}
+
+struct BootstrapSourceWalkState {
+    source_files: u64,
+    source_chunks: u64,
+    total_source_bytes: u64,
+    all_entries: u64,
+    directories: u64,
+    aggregate_path_bytes: u64,
+    instrumentation: BootstrapSourceCaptureInstrumentation,
+}
+
+fn collect_bootstrap_source_pass(
+    graph: &Graph,
+    working: &Path,
+    name: &str,
+    binding: &BootstrapSourceCaptureBinding,
+    seal_chunks: bool,
+) -> io::Result<BootstrapSourcePass> {
+    require_current_bootstrap_source_binding(graph, binding)?;
+    let paths = BootstrapSourcePassPaths::new(working, name)?;
+    let mut writers = BootstrapSourcePassWriters::create(&paths)?;
+    let root = graph
+        .projection_root
+        .as_ref()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "graph has no retained no-follow projection capability",
+            )
+        })?
+        .try_clone()?;
+    let root_resource = canonical_projection_directory_resource_id(&root)?;
+    let mut state = BootstrapSourceWalkState {
+        source_files: 0,
+        source_chunks: 0,
+        total_source_bytes: 0,
+        all_entries: 0,
+        directories: 1,
+        aggregate_path_bytes: 0,
+        instrumentation: BootstrapSourceCaptureInstrumentation {
+            passes: 1,
+            peak_owned_buffer_bytes: (BOOTSTRAP_SOURCE_CHUNK_BYTES
+                + BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES) as u64,
+            peak_owned_rows: 1,
+            ..BootstrapSourceCaptureInstrumentation::default()
+        },
+    };
+    write_bootstrap_source_inventory_directory(
+        &mut writers.inventory,
+        "",
+        root_resource,
+        &mut state.instrumentation,
+    )?;
+    write_bootstrap_source_alias(
+        &mut writers.aliases,
+        0,
+        root_resource,
+        "",
+        &mut state.instrumentation,
+    )?;
+    walk_bootstrap_source_directory(
+        graph,
+        &root,
+        "",
+        0,
+        &mut writers,
+        &mut state,
+        &working.join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY),
+        seal_chunks,
+    )?;
+    writers.sync_all()?;
+    require_current_bootstrap_source_binding(graph, binding)?;
+    for kind in [
+        BootstrapSourceSpoolKind::Inventory,
+        BootstrapSourceSpoolKind::Entries,
+        BootstrapSourceSpoolKind::Chunks,
+        BootstrapSourceSpoolKind::Aliases,
+        BootstrapSourceSpoolKind::Portable,
+    ] {
+        sort_bootstrap_source_spool(&paths, kind, &mut state.instrumentation)?;
+    }
+    validate_bootstrap_source_unique_aliases(&paths.sorted(BootstrapSourceSpoolKind::Aliases))?;
+    validate_bootstrap_source_unique_portable_paths(
+        &paths.sorted(BootstrapSourceSpoolKind::Portable),
+    )?;
+    validate_bootstrap_source_sorted_entries(
+        &paths.sorted(BootstrapSourceSpoolKind::Entries),
+        state.source_files,
+    )?;
+    validate_bootstrap_source_sorted_chunks(
+        &paths.sorted(BootstrapSourceSpoolKind::Chunks),
+        state.source_chunks,
+    )?;
+    require_current_bootstrap_source_binding(graph, binding)?;
+    Ok(BootstrapSourcePass {
+        binding: binding.clone(),
+        paths,
+        source_files: state.source_files,
+        source_chunks: state.source_chunks,
+        instrumentation: state.instrumentation,
+    })
+}
+
+fn walk_bootstrap_source_directory(
+    graph: &Graph,
+    directory: &Dir,
+    relative: &str,
+    depth: usize,
+    writers: &mut BootstrapSourcePassWriters,
+    state: &mut BootstrapSourceWalkState,
+    chunks_directory: &Path,
+    seal_chunks: bool,
+) -> io::Result<()> {
+    for entry in directory.entries()? {
+        state.all_entries = state.all_entries.checked_add(1).ok_or_else(|| {
+            bootstrap_source_capture_error("source directory-entry counter overflow")
+        })?;
+        if state.all_entries > BOOTSTRAP_SOURCE_MAX_ALL_ENTRIES {
+            return Err(bootstrap_source_capture_error(
+                "source directory-entry cap exceeded",
+            ));
+        }
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| bootstrap_source_capture_error("source entry name is not UTF-8"))?;
+        let relative_len = relative
+            .len()
+            .checked_add(usize::from(!relative.is_empty()))
+            .and_then(|length| length.checked_add(name.len()))
+            .ok_or_else(|| bootstrap_source_capture_error("source exact path length overflow"))?;
+        if relative_len > BOOTSTRAP_SOURCE_MAX_PATH_BYTES {
+            return Err(bootstrap_source_capture_error(
+                "source exact path cap exceeded",
+            ));
+        }
+        state.aggregate_path_bytes = state
+            .aggregate_path_bytes
+            .checked_add(relative_len as u64)
+            .ok_or_else(|| {
+                bootstrap_source_capture_error("source aggregate path counter overflow")
+            })?;
+        if state.aggregate_path_bytes > BOOTSTRAP_SOURCE_MAX_AGGREGATE_PATH_BYTES {
+            return Err(bootstrap_source_capture_error(
+                "source aggregate path-byte cap exceeded",
+            ));
+        }
+        let child_relative = if relative.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{relative}/{name}")
+        };
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            if graph.graph_text_scope.should_descend(&child_relative)
+                || graph.graph_text_scope.is_eligible(&child_relative)
+            {
+                return Err(bootstrap_source_capture_error(format!(
+                    "source entry is a symlink or reparse point: {child_relative}"
+                )));
+            }
+            continue;
+        }
+        if file_type.is_dir() {
+            if !graph.graph_text_scope.should_descend(&child_relative) {
+                continue;
+            }
+            let child_depth = depth
+                .checked_add(1)
+                .ok_or_else(|| bootstrap_source_capture_error("source directory depth overflow"))?;
+            if child_depth > BOOTSTRAP_SOURCE_MAX_DIRECTORY_DEPTH {
+                return Err(bootstrap_source_capture_error(
+                    "source directory depth cap exceeded",
+                ));
+            }
+            state.directories = state.directories.checked_add(1).ok_or_else(|| {
+                bootstrap_source_capture_error("source directory counter overflow")
+            })?;
+            if state.directories > BOOTSTRAP_SOURCE_MAX_DIRECTORIES {
+                return Err(bootstrap_source_capture_error(
+                    "source directory cap exceeded",
+                ));
+            }
+            projection_real_directory(directory, name)?;
+            let child = open_projection_dir_nofollow(directory, name)?;
+            let resource = canonical_projection_directory_resource_id(&child)?;
+            write_bootstrap_source_inventory_directory(
+                &mut writers.inventory,
+                &child_relative,
+                resource,
+                &mut state.instrumentation,
+            )?;
+            write_bootstrap_source_alias(
+                &mut writers.aliases,
+                0,
+                resource,
+                &child_relative,
+                &mut state.instrumentation,
+            )?;
+            let rebound = open_projection_dir_nofollow(directory, name)?;
+            if projection_dir_identity(&child)? != projection_dir_identity(&rebound)? {
+                return Err(bootstrap_source_capture_interrupted(format!(
+                    "source directory changed during traversal: {child_relative}"
+                )));
+            }
+            walk_bootstrap_source_directory(
+                graph,
+                &child,
+                &child_relative,
+                child_depth,
+                writers,
+                state,
+                chunks_directory,
+                seal_chunks,
+            )?;
+            continue;
+        }
+        if !file_type.is_file() {
+            return Err(bootstrap_source_capture_error(format!(
+                "source entry is not a regular file: {child_relative}"
+            )));
+        }
+        let file = open_projection_file_nofollow(directory, name)?;
+        let resource = canonical_projection_file_resource_id(&file)?;
+        let link_count = projection_file_link_count(&file)?;
+        if link_count != 1 {
+            return Err(bootstrap_source_capture_error(format!(
+                "source regular file has unsafe link count {link_count}: {child_relative}"
+            )));
+        }
+        write_bootstrap_source_alias(
+            &mut writers.aliases,
+            1,
+            resource,
+            &child_relative,
+            &mut state.instrumentation,
+        )?;
+        let source_path = is_page_file(Path::new(&child_relative))
+            .then(|| ManagedPath::parse(child_relative.clone()))
+            .transpose()
+            .map_err(|error| {
+                bootstrap_source_capture_error(format!("source path is not portable: {error}"))
+            })?;
+        let is_source =
+            source_path.is_some() && graph.graph_text_scope.is_eligible(&child_relative);
+        if is_source {
+            let path = source_path.expect("source path was just checked");
+            let (kind, description, chunk_count) = capture_bootstrap_source_file(
+                graph,
+                file,
+                &path,
+                resource,
+                link_count,
+                writers,
+                state,
+                chunks_directory,
+                seal_chunks,
+            )?;
+            write_bootstrap_source_inventory_file(
+                &mut writers.inventory,
+                &child_relative,
+                resource,
+                link_count,
+                Some((kind, description)),
+                &mut state.instrumentation,
+            )?;
+            write_bootstrap_source_entry(
+                &mut writers.entries,
+                &BootstrapSourceEntry {
+                    path: path.clone(),
+                    kind,
+                    description,
+                    file_resource: resource,
+                    link_count,
+                    chunk_count,
+                },
+                &mut state.instrumentation,
+            )?;
+            write_bootstrap_source_portable(
+                &mut writers.portable,
+                &path.portable_key(),
+                path.as_str(),
+                &mut state.instrumentation,
+            )?;
+        } else {
+            write_bootstrap_source_inventory_file(
+                &mut writers.inventory,
+                &child_relative,
+                resource,
+                link_count,
+                None,
+                &mut state.instrumentation,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn capture_bootstrap_source_file(
+    graph: &Graph,
+    mut file: fs::File,
+    path: &ManagedPath,
+    resource: ContentDigest,
+    link_count: u64,
+    writers: &mut BootstrapSourcePassWriters,
+    state: &mut BootstrapSourceWalkState,
+    chunks_directory: &Path,
+    seal_chunks: bool,
+) -> io::Result<(ManagedTextKind, BlobDescription, u32)> {
+    let advertised_len = file.metadata()?.len();
+    if advertised_len > BOOTSTRAP_SOURCE_MAX_FILE_BYTES {
+        return Err(bootstrap_source_capture_error(format!(
+            "source file exceeds the 64 MiB cap: {path}"
+        )));
+    }
+    let next_total = state
+        .total_source_bytes
+        .checked_add(advertised_len)
+        .ok_or_else(|| bootstrap_source_capture_error("source total-byte counter overflow"))?;
+    if next_total > BOOTSTRAP_SOURCE_MAX_TOTAL_BYTES {
+        return Err(bootstrap_source_capture_error(
+            "source total-byte cap exceeded",
+        ));
+    }
+    if state.source_files >= BOOTSTRAP_SOURCE_MAX_FILES {
+        return Err(bootstrap_source_capture_error(
+            "source file-count cap exceeded",
+        ));
+    }
+    let capacity = usize::try_from(advertised_len)
+        .map_err(|_| bootstrap_source_capture_error("source file is not addressable"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|_| bootstrap_source_capture_error("source file buffer allocation failed"))?;
+    let mut buffer = vec![0_u8; BOOTSTRAP_SOURCE_CHUNK_BYTES];
+    let mut hasher = Sha256::new();
+    let mut chunk_count = 0_u32;
+    let mut actual_len = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        actual_len = actual_len
+            .checked_add(read as u64)
+            .ok_or_else(|| bootstrap_source_capture_error("source file length overflow"))?;
+        if actual_len > BOOTSTRAP_SOURCE_MAX_FILE_BYTES {
+            return Err(bootstrap_source_capture_error(format!(
+                "source file grew beyond the 64 MiB cap: {path}"
+            )));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        hasher.update(&buffer[..read]);
+        let description = BlobDescription::of(&buffer[..read]);
+        if seal_chunks {
+            seal_bootstrap_source_chunk(chunks_directory, &buffer[..read], description)?;
+        }
+        write_bootstrap_source_chunk(
+            &mut writers.chunks,
+            &BootstrapSourceChunk {
+                path: path.clone(),
+                ordinal: chunk_count,
+                description,
+            },
+            &mut state.instrumentation,
+        )?;
+        chunk_count = chunk_count
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source chunk ordinal overflow"))?;
+        state.source_chunks = state
+            .source_chunks
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source chunk counter overflow"))?;
+    }
+    if actual_len != advertised_len
+        || canonical_projection_file_resource_id(&file)? != resource
+        || projection_file_link_count(&file)? != link_count
+    {
+        return Err(bootstrap_source_capture_interrupted(format!(
+            "source file changed while captured: {path}"
+        )));
+    }
+    let content = std::str::from_utf8(&bytes).map_err(|_| {
+        bootstrap_source_capture_error(format!("source graph text is not UTF-8: {path}"))
+    })?;
+    let live_bytes = actual_len
+        .checked_add(BOOTSTRAP_SOURCE_CHUNK_BYTES as u64)
+        .ok_or_else(|| bootstrap_source_capture_error("source working-byte counter overflow"))?;
+    let permit = bootstrap_source_parse_budget_permit(graph, path, content)?;
+    let (semantic, _, node_count) =
+        graph.decode_present_graph_text_with_node_count(path, &bytes, permit)?;
+    if node_count > BOOTSTRAP_SOURCE_MAX_PARSER_NODES {
+        return Err(bootstrap_source_capture_error(format!(
+            "source parser-node cap exceeded: {path}"
+        )));
+    }
+    state.instrumentation.peak_owned_rows = state.instrumentation.peak_owned_rows.max(node_count);
+    let kind = match semantic.kind {
+        PageKind::Page => ManagedTextKind::Page,
+        PageKind::Journal => ManagedTextKind::Journal,
+    };
+    state.source_files += 1;
+    state.total_source_bytes = next_total;
+    state.instrumentation.files += 1;
+    state.instrumentation.chunks = state
+        .instrumentation
+        .chunks
+        .checked_add(u64::from(chunk_count))
+        .ok_or_else(|| bootstrap_source_capture_error("source instrumentation chunk overflow"))?;
+    state.instrumentation.physical_bytes = state
+        .instrumentation
+        .physical_bytes
+        .checked_add(actual_len)
+        .ok_or_else(|| bootstrap_source_capture_error("source physical-byte counter overflow"))?;
+    state.instrumentation.peak_owned_buffer_bytes =
+        state.instrumentation.peak_owned_buffer_bytes.max(
+            live_bytes
+                .checked_add(BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES as u64)
+                .ok_or_else(|| {
+                    bootstrap_source_capture_error("source working-byte counter overflow")
+                })?,
+        );
+    Ok((
+        kind,
+        BlobDescription::from_parts(hasher.finalize().into(), actual_len),
+        chunk_count,
+    ))
+}
+
+fn bootstrap_source_parse_budget_permit(
+    graph: &Graph,
+    path: &ManagedPath,
+    content: &str,
+) -> io::Result<GraphTextParseBudgetPermit> {
+    // `managed_page_build_upper_bound` deliberately budgets DTO construction,
+    // projection, and index rows that this capture never creates.  Source
+    // capture keeps only the parser's one-file tree long enough to obtain the
+    // existing semantic kind, then drops it; its hard 64 MiB source and
+    // 1,000,000-node limits are the applicable fixed envelope here.
+    let semantic = graph_text_observed_semantic_name_upper_bound(graph, path, content)?;
+    Ok(GraphTextParseBudgetPermit {
+        semantic_name_bytes: semantic.semantic_name_bytes,
+        semantic_name_allocation_bytes: owned_string_len_upper_bound(semantic.semantic_name_bytes)?,
+    })
+}
+
+fn seal_bootstrap_source_chunk(
+    directory: &Path,
+    bytes: &[u8],
+    description: BlobDescription,
+) -> io::Result<()> {
+    if bytes.len() > BOOTSTRAP_SOURCE_CHUNK_BYTES {
+        return Err(bootstrap_source_capture_error("source chunk exceeds 1 MiB"));
+    }
+    let destination = directory.join(hex_digest(description.sha256()));
+    match atomic_write_new(&destination, bytes) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            verify_capture_file(&destination, description)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn write_bootstrap_source_inventory_directory(
+    file: &mut fs::File,
+    path: &str,
+    resource: ContentDigest,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(1);
+    frame.string(path)?;
+    frame.digest(resource);
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_inventory_file(
+    file: &mut fs::File,
+    path: &str,
+    resource: ContentDigest,
+    link_count: u64,
+    source: Option<(ManagedTextKind, BlobDescription)>,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(2);
+    frame.string(path)?;
+    frame.digest(resource);
+    frame.u64(link_count);
+    match source {
+        None => frame.u8(0),
+        Some((kind, description)) => {
+            frame.u8(managed_text_kind_tag(kind));
+            frame.description(description);
+        }
+    }
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_entry(
+    file: &mut fs::File,
+    entry: &BootstrapSourceEntry,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(3);
+    frame.string(entry.path.as_str())?;
+    frame.u8(managed_text_kind_tag(entry.kind));
+    frame.description(entry.description);
+    frame.digest(entry.file_resource);
+    frame.u64(entry.link_count);
+    frame.u32(entry.chunk_count);
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_chunk(
+    file: &mut fs::File,
+    chunk: &BootstrapSourceChunk,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(4);
+    frame.string(chunk.path.as_str())?;
+    frame.u32(chunk.ordinal);
+    frame.description(chunk.description);
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_alias(
+    file: &mut fs::File,
+    kind: u8,
+    resource: ContentDigest,
+    path: &str,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(5);
+    frame.u8(kind);
+    frame.digest(resource);
+    frame.string(path)?;
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_portable(
+    file: &mut fs::File,
+    key: &PortablePathKey,
+    path: &str,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut frame = BootstrapSourceEncoder::new(6);
+    frame.string(
+        std::str::from_utf8(key.as_bytes())
+            .map_err(|_| bootstrap_source_capture_error("portable source key is not UTF-8"))?,
+    )?;
+    frame.string(path)?;
+    write_bootstrap_source_frame_accounted(file, frame.finish(), instrumentation)
+}
+
+fn write_bootstrap_source_frame_accounted(
+    file: &mut fs::File,
+    frame: Vec<u8>,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    write_bootstrap_source_frame(file, &frame)?;
+    instrumentation.spool_bytes = instrumentation
+        .spool_bytes
+        .checked_add(frame.len() as u64 + 4)
+        .ok_or_else(|| bootstrap_source_capture_error("source spool-byte counter overflow"))?;
+    Ok(())
+}
+
+struct BootstrapSourceEncoder {
+    bytes: Vec<u8>,
+}
+
+impl BootstrapSourceEncoder {
+    fn new(tag: u8) -> Self {
+        Self { bytes: vec![tag] }
+    }
+
+    fn u8(&mut self, value: u8) {
+        self.bytes.push(value);
+    }
+
+    fn u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn string(&mut self, value: &str) -> io::Result<()> {
+        let length = u32::try_from(value.len())
+            .map_err(|_| bootstrap_source_capture_error("source spool string is too long"))?;
+        self.u32(length);
+        self.bytes.extend_from_slice(value.as_bytes());
+        Ok(())
+    }
+
+    fn digest(&mut self, digest: ContentDigest) {
+        self.bytes.extend_from_slice(digest.as_bytes());
+    }
+
+    fn description(&mut self, description: BlobDescription) {
+        self.bytes.extend_from_slice(description.sha256());
+        self.u64(description.byte_length());
+    }
+
+    fn finish(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+struct BootstrapSourceDecoder<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> BootstrapSourceDecoder<'a> {
+    fn new(bytes: &'a [u8], expected_tag: u8) -> io::Result<Self> {
+        let Some((&tag, rest)) = bytes.split_first() else {
+            return Err(bootstrap_source_capture_error("empty source spool record"));
+        };
+        if tag != expected_tag {
+            return Err(bootstrap_source_capture_error(
+                "unexpected source spool record tag",
+            ));
+        }
+        Ok(Self {
+            bytes: rest,
+            cursor: 0,
+        })
+    }
+
+    fn take(&mut self, length: usize) -> io::Result<&'a [u8]> {
+        let end = self
+            .cursor
+            .checked_add(length)
+            .ok_or_else(|| bootstrap_source_capture_error("source spool record length overflow"))?;
+        let value = self
+            .bytes
+            .get(self.cursor..end)
+            .ok_or_else(|| bootstrap_source_capture_error("truncated source spool record"))?;
+        self.cursor = end;
+        Ok(value)
+    }
+
+    fn u8(&mut self) -> io::Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> io::Result<u32> {
+        Ok(u32::from_be_bytes(
+            self.take(4)?.try_into().expect("four byte source field"),
+        ))
+    }
+
+    fn u64(&mut self) -> io::Result<u64> {
+        Ok(u64::from_be_bytes(
+            self.take(8)?.try_into().expect("eight byte source field"),
+        ))
+    }
+
+    fn string(&mut self) -> io::Result<&'a str> {
+        let length = usize::try_from(self.u32()?)
+            .map_err(|_| bootstrap_source_capture_error("source spool string length overflow"))?;
+        let value = self.take(length)?;
+        std::str::from_utf8(value)
+            .map_err(|_| bootstrap_source_capture_error("source spool string is not UTF-8"))
+    }
+
+    fn digest(&mut self) -> io::Result<ContentDigest> {
+        Ok(ContentDigest::from_bytes(
+            self.take(32)?
+                .try_into()
+                .expect("source digest is 32 bytes"),
+        ))
+    }
+
+    fn description(&mut self) -> io::Result<BlobDescription> {
+        let sha256 = self
+            .take(32)?
+            .try_into()
+            .expect("source digest is 32 bytes");
+        let byte_length = self.u64()?;
+        Ok(BlobDescription::from_parts(sha256, byte_length))
+    }
+
+    fn finish(self) -> io::Result<()> {
+        if self.cursor == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(bootstrap_source_capture_error(
+                "trailing bytes in source spool record",
+            ))
+        }
+    }
+}
+
+fn managed_text_kind_tag(kind: ManagedTextKind) -> u8 {
+    match kind {
+        ManagedTextKind::Page => 1,
+        ManagedTextKind::Journal => 2,
+    }
+}
+
+fn decode_managed_text_kind(tag: u8) -> io::Result<ManagedTextKind> {
+    match tag {
+        1 => Ok(ManagedTextKind::Page),
+        2 => Ok(ManagedTextKind::Journal),
+        _ => Err(bootstrap_source_capture_error(
+            "invalid source managed-text kind",
+        )),
+    }
+}
+
+fn decode_bootstrap_source_entry(frame: &[u8]) -> io::Result<BootstrapSourceEntry> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 3)?;
+    let path = ManagedPath::parse(decoder.string()?.to_owned()).map_err(|error| {
+        bootstrap_source_capture_error(format!("invalid source entry path: {error}"))
+    })?;
+    let kind = decode_managed_text_kind(decoder.u8()?)?;
+    let description = decoder.description()?;
+    let file_resource = decoder.digest()?;
+    let link_count = decoder.u64()?;
+    let chunk_count = decoder.u32()?;
+    decoder.finish()?;
+    if link_count != 1 {
+        return Err(bootstrap_source_capture_error(
+            "source entry has unsafe link count",
+        ));
+    }
+    Ok(BootstrapSourceEntry {
+        path,
+        kind,
+        description,
+        file_resource,
+        link_count,
+        chunk_count,
+    })
+}
+
+fn decode_bootstrap_source_chunk(frame: &[u8]) -> io::Result<BootstrapSourceChunk> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 4)?;
+    let path = ManagedPath::parse(decoder.string()?.to_owned()).map_err(|error| {
+        bootstrap_source_capture_error(format!("invalid source chunk path: {error}"))
+    })?;
+    let ordinal = decoder.u32()?;
+    let description = decoder.description()?;
+    decoder.finish()?;
+    if description.byte_length() > BOOTSTRAP_SOURCE_CHUNK_BYTES as u64 {
+        return Err(bootstrap_source_capture_error(
+            "source chunk record exceeds 1 MiB",
+        ));
+    }
+    Ok(BootstrapSourceChunk {
+        path,
+        ordinal,
+        description,
+    })
+}
+
+fn hex_digest(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in bytes {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    output
+}
+
+fn sort_bootstrap_source_spool(
+    paths: &BootstrapSourcePassPaths,
+    kind: BootstrapSourceSpoolKind,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let input = paths.raw(kind);
+    let mut reader = BootstrapSourceFrameReader::open(input)?;
+    let mut runs = Vec::new();
+    let mut rows = Vec::<Vec<u8>>::new();
+    let mut bytes = 0_usize;
+    loop {
+        let next = reader.next()?;
+        let Some(frame) = next else {
+            break;
+        };
+        validate_bootstrap_source_spool_frame(kind, &frame)?;
+        let frame_bytes = frame
+            .len()
+            .checked_add(4)
+            .ok_or_else(|| bootstrap_source_capture_error("source sort-frame length overflow"))?;
+        if frame_bytes > BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES {
+            return Err(bootstrap_source_capture_error(
+                "source sort record exceeds fixed buffer",
+            ));
+        }
+        if !rows.is_empty()
+            && bytes.saturating_add(frame_bytes) > BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES
+        {
+            bootstrap_source_flush_sort_run(paths, kind, &mut rows, &mut runs, instrumentation)?;
+            bytes = 0;
+        }
+        bytes = bytes
+            .checked_add(frame_bytes)
+            .ok_or_else(|| bootstrap_source_capture_error("source sort-buffer length overflow"))?;
+        rows.push(frame);
+        instrumentation.peak_owned_rows = instrumentation.peak_owned_rows.max(rows.len() as u64);
+        instrumentation.peak_owned_buffer_bytes =
+            instrumentation.peak_owned_buffer_bytes.max(bytes as u64);
+    }
+    if !rows.is_empty() {
+        bootstrap_source_flush_sort_run(paths, kind, &mut rows, &mut runs, instrumentation)?;
+    }
+    fs::remove_file(input)?;
+    let sorted = paths.sorted(kind);
+    if runs.is_empty() {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sorted)?;
+        file.sync_all()?;
+        return Ok(());
+    }
+    let mut generation = 0_u64;
+    while runs.len() > 1 {
+        let mut next = Vec::new();
+        for group in runs.chunks(BOOTSTRAP_SOURCE_MERGE_INPUTS) {
+            let output = paths.directory.join(format!(
+                "{}-merge-{generation}-{}",
+                kind.label(),
+                next.len()
+            ));
+            merge_bootstrap_source_runs(group, &output, kind, instrumentation)?;
+            for input in group {
+                fs::remove_file(input)?;
+            }
+            next.push(output);
+        }
+        runs = next;
+        generation = generation
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source sort generation overflow"))?;
+    }
+    move_file_noreplace(&runs[0], &sorted)?;
+    sync_bootstrap_source_directory(&paths.directory)
+}
+
+fn bootstrap_source_flush_sort_run(
+    paths: &BootstrapSourcePassPaths,
+    kind: BootstrapSourceSpoolKind,
+    rows: &mut Vec<Vec<u8>>,
+    runs: &mut Vec<PathBuf>,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    if runs.len() as u64 >= BOOTSTRAP_SOURCE_MAX_SORT_RUNS {
+        return Err(bootstrap_source_capture_error(
+            "source external-sort run cap exceeded",
+        ));
+    }
+    rows.sort_unstable_by(|left, right| {
+        bootstrap_source_spool_order(kind, left, right)
+            .expect("source spool rows are validated before external sorting")
+    });
+    let run = paths
+        .directory
+        .join(format!("{}-run-{}", kind.label(), runs.len()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&run)?;
+    for row in rows.iter() {
+        write_bootstrap_source_frame(&mut file, row)?;
+    }
+    file.sync_all()?;
+    instrumentation.sort_runs = instrumentation
+        .sort_runs
+        .checked_add(1)
+        .ok_or_else(|| bootstrap_source_capture_error("source sort-run counter overflow"))?;
+    instrumentation.spool_bytes = instrumentation
+        .spool_bytes
+        .checked_add(file.metadata()?.len())
+        .ok_or_else(|| bootstrap_source_capture_error("source spool-byte counter overflow"))?;
+    rows.clear();
+    runs.push(run);
+    Ok(())
+}
+
+fn merge_bootstrap_source_runs(
+    inputs: &[PathBuf],
+    output: &Path,
+    kind: BootstrapSourceSpoolKind,
+    instrumentation: &mut BootstrapSourceCaptureInstrumentation,
+) -> io::Result<()> {
+    let mut readers = inputs
+        .iter()
+        .map(|input| BootstrapSourceFrameReader::open(input))
+        .collect::<io::Result<Vec<_>>>()?;
+    let mut heads = readers
+        .iter_mut()
+        .map(BootstrapSourceFrameReader::next)
+        .collect::<io::Result<Vec<_>>>()?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    loop {
+        let mut smallest: Option<usize> = None;
+        for (index, head) in heads.iter().enumerate() {
+            let Some(head) = head.as_ref() else {
+                continue;
+            };
+            if smallest.is_none_or(|prior| {
+                bootstrap_source_spool_order(
+                    kind,
+                    head,
+                    heads[prior].as_ref().expect("merge head exists"),
+                )
+                .expect("validated source spool rows remain valid")
+                .is_lt()
+            }) {
+                smallest = Some(index);
+            }
+        }
+        let Some(index) = smallest else {
+            break;
+        };
+        let frame = heads[index].take().expect("selected merge head exists");
+        write_bootstrap_source_frame(&mut file, &frame)?;
+        heads[index] = readers[index].next()?;
+        instrumentation.peak_owned_rows = instrumentation.peak_owned_rows.max(heads.len() as u64);
+        instrumentation.peak_owned_buffer_bytes = instrumentation.peak_owned_buffer_bytes.max(
+            heads
+                .iter()
+                .flatten()
+                .map(|frame| frame.len() as u64 + 4)
+                .sum(),
+        );
+    }
+    file.sync_all()?;
+    instrumentation.sort_runs = instrumentation
+        .sort_runs
+        .checked_add(1)
+        .ok_or_else(|| bootstrap_source_capture_error("source sort-run counter overflow"))?;
+    instrumentation.spool_bytes = instrumentation
+        .spool_bytes
+        .checked_add(file.metadata()?.len())
+        .ok_or_else(|| bootstrap_source_capture_error("source spool-byte counter overflow"))?;
+    Ok(())
+}
+
+fn bootstrap_source_spool_order(
+    kind: BootstrapSourceSpoolKind,
+    left: &[u8],
+    right: &[u8],
+) -> io::Result<std::cmp::Ordering> {
+    let order = match kind {
+        BootstrapSourceSpoolKind::Inventory => {
+            let left = bootstrap_source_inventory_key(left)?;
+            let right = bootstrap_source_inventory_key(right)?;
+            left.0.cmp(right.0).then_with(|| left.1.cmp(&right.1))
+        }
+        BootstrapSourceSpoolKind::Entries => {
+            bootstrap_source_entry_key(left)?.cmp(bootstrap_source_entry_key(right)?)
+        }
+        BootstrapSourceSpoolKind::Chunks => {
+            bootstrap_source_chunk_key(left)?.cmp(&bootstrap_source_chunk_key(right)?)
+        }
+        BootstrapSourceSpoolKind::Aliases => {
+            let left = bootstrap_source_alias_key(left)?;
+            let right = bootstrap_source_alias_key(right)?;
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(right.2))
+        }
+        BootstrapSourceSpoolKind::Portable => {
+            let left = bootstrap_source_portable_key(left)?;
+            let right = bootstrap_source_portable_key(right)?;
+            left.0.cmp(right.0).then_with(|| left.1.cmp(right.1))
+        }
+    };
+    Ok(order)
+}
+
+fn validate_bootstrap_source_spool_frame(
+    kind: BootstrapSourceSpoolKind,
+    frame: &[u8],
+) -> io::Result<()> {
+    match kind {
+        BootstrapSourceSpoolKind::Inventory => {
+            let _ = bootstrap_source_inventory_key(frame)?;
+        }
+        BootstrapSourceSpoolKind::Entries => {
+            let _ = decode_bootstrap_source_entry(frame)?;
+        }
+        BootstrapSourceSpoolKind::Chunks => {
+            let _ = decode_bootstrap_source_chunk(frame)?;
+        }
+        BootstrapSourceSpoolKind::Aliases => {
+            let _ = bootstrap_source_alias_key(frame)?;
+        }
+        BootstrapSourceSpoolKind::Portable => {
+            let (key, path) = bootstrap_source_portable_key(frame)?;
+            let parsed = ManagedPath::parse(path.to_owned()).map_err(|error| {
+                bootstrap_source_capture_error(format!("invalid source portable path: {error}"))
+            })?;
+            if parsed.portable_key().as_bytes() != key.as_bytes() {
+                return Err(bootstrap_source_capture_error(
+                    "source portable-key record is inconsistent",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bootstrap_source_inventory_key(frame: &[u8]) -> io::Result<(&str, u8)> {
+    let tag = *frame
+        .first()
+        .ok_or_else(|| bootstrap_source_capture_error("empty source inventory record"))?;
+    let mut decoder = BootstrapSourceDecoder::new(frame, tag)?;
+    match tag {
+        1 => {
+            let path = decoder.string()?;
+            let _ = decoder.digest()?;
+            decoder.finish()?;
+            Ok((path, tag))
+        }
+        2 => {
+            let path = decoder.string()?;
+            let _ = decoder.digest()?;
+            let link_count = decoder.u64()?;
+            if link_count != 1 {
+                return Err(bootstrap_source_capture_error(
+                    "source inventory record has unsafe link count",
+                ));
+            }
+            match decoder.u8()? {
+                0 => {}
+                1 | 2 => {
+                    let _ = decoder.description()?;
+                }
+                _ => {
+                    return Err(bootstrap_source_capture_error(
+                        "source inventory record has invalid kind",
+                    ))
+                }
+            }
+            decoder.finish()?;
+            Ok((path, tag))
+        }
+        _ => Err(bootstrap_source_capture_error(
+            "invalid source inventory record tag",
+        )),
+    }
+}
+
+fn bootstrap_source_entry_key(frame: &[u8]) -> io::Result<&str> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 3)?;
+    let path = decoder.string()?;
+    let _ = decoder.u8()?;
+    let _ = decoder.description()?;
+    let _ = decoder.digest()?;
+    let _ = decoder.u64()?;
+    let _ = decoder.u32()?;
+    decoder.finish()?;
+    Ok(path)
+}
+
+fn bootstrap_source_chunk_key(frame: &[u8]) -> io::Result<(&str, u32)> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 4)?;
+    let path = decoder.string()?;
+    let ordinal = decoder.u32()?;
+    let _ = decoder.description()?;
+    decoder.finish()?;
+    Ok((path, ordinal))
+}
+
+fn bootstrap_source_alias_key(frame: &[u8]) -> io::Result<(u8, ContentDigest, &str)> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 5)?;
+    let kind = decoder.u8()?;
+    if kind > 1 {
+        return Err(bootstrap_source_capture_error("invalid source alias kind"));
+    }
+    let resource = decoder.digest()?;
+    let path = decoder.string()?;
+    decoder.finish()?;
+    Ok((kind, resource, path))
+}
+
+fn bootstrap_source_portable_key(frame: &[u8]) -> io::Result<(&str, &str)> {
+    let mut decoder = BootstrapSourceDecoder::new(frame, 6)?;
+    let key = decoder.string()?;
+    let path = decoder.string()?;
+    decoder.finish()?;
+    Ok((key, path))
+}
+
+fn validate_bootstrap_source_unique_aliases(path: &Path) -> io::Result<()> {
+    let mut reader = BootstrapSourceFrameReader::open(path)?;
+    let mut previous: Option<(u8, ContentDigest, String)> = None;
+    while let Some(frame) = reader.next()? {
+        let (kind, resource, exact) = bootstrap_source_alias_key(&frame)?;
+        if let Some((previous_kind, previous_resource, previous_exact)) = &previous {
+            if *previous_kind == kind && *previous_resource == resource && previous_exact != exact {
+                return Err(bootstrap_source_capture_error(format!(
+                    "source paths alias one retained resource: {previous_exact} and {exact}"
+                )));
+            }
+        }
+        previous = Some((kind, resource, exact.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_bootstrap_source_unique_portable_paths(path: &Path) -> io::Result<()> {
+    let mut reader = BootstrapSourceFrameReader::open(path)?;
+    let mut previous: Option<(String, String)> = None;
+    while let Some(frame) = reader.next()? {
+        let (key, exact) = bootstrap_source_portable_key(&frame)?;
+        if let Some((previous_key, previous_exact)) = &previous {
+            if previous_key == key && previous_exact != exact {
+                return Err(bootstrap_source_capture_error(format!(
+                    "source paths collide under the portable graph-text key: {previous_exact} and {exact}"
+                )));
+            }
+        }
+        previous = Some((key.to_owned(), exact.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_bootstrap_source_sorted_entries(path: &Path, expected_count: u64) -> io::Result<()> {
+    let mut cursor = BootstrapSourceEntryCursor::open(path.to_path_buf())?;
+    let mut count = 0_u64;
+    while cursor.next()?.is_some() {
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source entry count overflow"))?;
+    }
+    if count != expected_count {
+        return Err(bootstrap_source_capture_error(
+            "source entry spool count mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bootstrap_source_sorted_chunks(path: &Path, expected_count: u64) -> io::Result<()> {
+    let mut cursor = BootstrapSourceChunkCursor::open(path.to_path_buf())?;
+    let mut count = 0_u64;
+    while cursor.next()?.is_some() {
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| bootstrap_source_capture_error("source chunk count overflow"))?;
+    }
+    if count != expected_count {
+        return Err(bootstrap_source_capture_error(
+            "source chunk spool count mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bootstrap_source_entry_chunk_layout(entries: &Path, chunks: &Path) -> io::Result<()> {
+    let mut entry_cursor = BootstrapSourceEntryCursor::open(entries.to_path_buf())?;
+    let mut chunk_cursor = BootstrapSourceChunkCursor::open(chunks.to_path_buf())?;
+    let mut next_chunk = chunk_cursor.next()?;
+    while let Some(entry) = entry_cursor.next()? {
+        let mut bytes = 0_u64;
+        for ordinal in 0..entry.chunk_count {
+            let Some(chunk) = next_chunk.take() else {
+                return Err(bootstrap_source_capture_error(
+                    "source entry is missing declared chunks",
+                ));
+            };
+            if chunk.path != entry.path || chunk.ordinal != ordinal {
+                return Err(bootstrap_source_capture_error(
+                    "source chunks do not match their entry order",
+                ));
+            }
+            bytes = bytes
+                .checked_add(chunk.description.byte_length())
+                .ok_or_else(|| bootstrap_source_capture_error("source chunk length overflow"))?;
+            next_chunk = chunk_cursor.next()?;
+        }
+        if bytes != entry.description.byte_length() {
+            return Err(bootstrap_source_capture_error(
+                "source chunks do not sum to their entry length",
+            ));
+        }
+    }
+    if next_chunk.is_some() {
+        return Err(bootstrap_source_capture_error(
+            "source chunk spool has no matching entry",
+        ));
+    }
+    Ok(())
+}
+
+fn describe_bootstrap_source_spool(path: &Path) -> io::Result<BlobDescription> {
+    describe_bootstrap_source_file(path, None)
+}
+
+fn verify_capture_file(path: &Path, expected: BlobDescription) -> io::Result<()> {
+    let actual = describe_bootstrap_source_file(path, Some(expected.byte_length()))?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(bootstrap_source_capture_error(format!(
+            "sealed capture file does not match its descriptor: {}",
+            path.display()
+        )))
+    }
+}
+
+fn describe_bootstrap_source_file(
+    path: &Path,
+    expected_length: Option<u64>,
+) -> io::Result<BlobDescription> {
+    let mut file = fs::File::open(path)?;
+    let advertised = file.metadata()?.len();
+    if expected_length.is_some_and(|expected| expected != advertised) {
+        return Err(bootstrap_source_capture_error(
+            "sealed capture file length changed",
+        ));
+    }
+    let mut buffer = [0_u8; BOOTSTRAP_SOURCE_CURSOR_BUFFER_BYTES];
+    let mut hasher = Sha256::new();
+    let mut length = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        length = length
+            .checked_add(read as u64)
+            .ok_or_else(|| bootstrap_source_capture_error("capture file length overflow"))?;
+        hasher.update(&buffer[..read]);
+    }
+    if length != advertised {
+        return Err(bootstrap_source_capture_interrupted(
+            "capture file changed while hashed",
+        ));
+    }
+    Ok(BlobDescription::from_parts(
+        hasher.finalize().into(),
+        length,
+    ))
+}
+
+fn compare_bootstrap_source_passes(
+    first: &BootstrapSourcePass,
+    second: &BootstrapSourcePass,
+) -> io::Result<()> {
+    if first.binding != second.binding
+        || first.source_files != second.source_files
+        || first.source_chunks != second.source_chunks
+    {
+        return Err(bootstrap_source_capture_interrupted(
+            "source capture bindings or counts changed between A and B",
+        ));
+    }
+    for kind in [
+        BootstrapSourceSpoolKind::Inventory,
+        BootstrapSourceSpoolKind::Entries,
+        BootstrapSourceSpoolKind::Chunks,
+    ] {
+        if !bootstrap_source_files_equal(&first.paths.sorted(kind), &second.paths.sorted(kind))? {
+            return Err(bootstrap_source_capture_interrupted(format!(
+                "source capture A/B {} evidence differs",
+                kind.label()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn bootstrap_source_files_equal(left: &Path, right: &Path) -> io::Result<bool> {
+    if left.metadata()?.len() != right.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut left = fs::File::open(left)?;
+    let mut right = fs::File::open(right)?;
+    let mut left_buffer = [0_u8; BOOTSTRAP_SOURCE_CURSOR_BUFFER_BYTES];
+    let mut right_buffer = [0_u8; BOOTSTRAP_SOURCE_CURSOR_BUFFER_BYTES];
+    loop {
+        let left_read = left.read(&mut left_buffer)?;
+        let right_read = right.read(&mut right_buffer)?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+fn seal_bootstrap_source_capture(
+    working: &Path,
+    mut capture: BootstrapSourceCapture,
+) -> io::Result<BootstrapSourceCapture> {
+    let first = working.join("capture-a");
+    for (kind, destination) in [
+        (
+            BootstrapSourceSpoolKind::Inventory,
+            BOOTSTRAP_SOURCE_INVENTORY,
+        ),
+        (BootstrapSourceSpoolKind::Entries, BOOTSTRAP_SOURCE_ENTRIES),
+        (BootstrapSourceSpoolKind::Chunks, BOOTSTRAP_SOURCE_CHUNKS),
+    ] {
+        move_file_noreplace(
+            &first.join(format!("{}.sorted", kind.label())),
+            &working.join(destination),
+        )?;
+    }
+    validate_bootstrap_source_entry_chunk_layout(
+        &working.join(BOOTSTRAP_SOURCE_ENTRIES),
+        &working.join(BOOTSTRAP_SOURCE_CHUNKS),
+    )?;
+    validate_bootstrap_source_chunk_files(
+        &working.join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY),
+        &working.join(BOOTSTRAP_SOURCE_CHUNKS),
+    )?;
+    sync_bootstrap_source_directory(&working.join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY))?;
+    let manifest = encode_bootstrap_source_manifest(&capture)?;
+    atomic_write_new(&working.join(BOOTSTRAP_SOURCE_MANIFEST), &manifest)?;
+    sync_bootstrap_source_directory(working)?;
+    let capture_id = bootstrap_source_capture_id(&capture)?;
+    let sealed = capture
+        .scratch_directory
+        .join("sealed")
+        .join(hex_digest(capture_id.sha256()));
+    let sealed_parent = sealed.parent().expect("sealed capture has a parent");
+    match fs::symlink_metadata(sealed_parent) {
+        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(bootstrap_source_capture_error(
+                "source sealed-capture parent is unsafe",
+            ))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(sealed_parent)?,
+        Err(error) => return Err(error),
+    }
+    match move_file_noreplace(working, &sealed) {
+        Ok(()) => {
+            sync_bootstrap_source_directory(sealed_parent)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let existing_manifest = fs::read(sealed.join(BOOTSTRAP_SOURCE_MANIFEST))?;
+            if existing_manifest != manifest {
+                return Err(bootstrap_source_capture_error(
+                    "conflicting sealed source capture",
+                ));
+            }
+            // A prior attempt may have inserted the exact immutable directory
+            // but reported the post-insertion directory sync failure.  Retrying
+            // the required sync is safe only after the exact-manifest proof.
+            sync_bootstrap_source_directory(sealed_parent)?;
+        }
+        Err(error) => return Err(error),
+    }
+    capture.sealed_directory = sealed;
+    validate_sealed_bootstrap_source_capture(&capture)?;
+    Ok(capture)
+}
+
+fn bootstrap_source_capture_id(capture: &BootstrapSourceCapture) -> io::Result<BlobDescription> {
+    let manifest = encode_bootstrap_source_manifest(capture)?;
+    Ok(BlobDescription::from_parts(
+        Sha256::digest(
+            [
+                b"tine/inactive-bootstrap-source-capture/v1\0".as_slice(),
+                manifest.as_slice(),
+            ]
+            .concat(),
+        )
+        .into(),
+        manifest.len() as u64,
+    ))
+}
+
+fn validate_bootstrap_source_chunk_files(directory: &Path, chunks: &Path) -> io::Result<()> {
+    let mut cursor = BootstrapSourceChunkCursor::open(chunks.to_path_buf())?;
+    while let Some(chunk) = cursor.next()? {
+        verify_capture_file(
+            &directory.join(hex_digest(chunk.description.sha256())),
+            chunk.description,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_sealed_bootstrap_source_capture(capture: &BootstrapSourceCapture) -> io::Result<()> {
+    let manifest = encode_bootstrap_source_manifest(capture)?;
+    if fs::read(capture.sealed_directory.join(BOOTSTRAP_SOURCE_MANIFEST))? != manifest {
+        return Err(bootstrap_source_capture_error(
+            "sealed source capture manifest differs",
+        ));
+    }
+    verify_capture_file(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_INVENTORY),
+        capture.inventory,
+    )?;
+    verify_capture_file(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_ENTRIES),
+        capture.entries,
+    )?;
+    verify_capture_file(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_CHUNKS),
+        capture.chunks,
+    )?;
+    validate_bootstrap_source_sorted_entries(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_ENTRIES),
+        capture.source_files,
+    )?;
+    validate_bootstrap_source_sorted_chunks(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_CHUNKS),
+        capture.source_chunks,
+    )?;
+    validate_bootstrap_source_entry_chunk_layout(
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_ENTRIES),
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_CHUNKS),
+    )?;
+    validate_bootstrap_source_chunk_files(
+        &capture
+            .sealed_directory
+            .join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY),
+        &capture.sealed_directory.join(BOOTSTRAP_SOURCE_CHUNKS),
+    )
+}
+
+fn encode_bootstrap_source_manifest(capture: &BootstrapSourceCapture) -> io::Result<Vec<u8>> {
+    let mut frame = BootstrapSourceEncoder { bytes: Vec::new() };
+    frame.u32(BOOTSTRAP_SOURCE_CAPTURE_SCHEMA);
+    frame
+        .bytes
+        .extend_from_slice(capture.binding.graph_resource.as_bytes());
+    frame
+        .bytes
+        .extend_from_slice(&capture.binding.scope_binding.canonical_bytes());
+    match capture.binding.config_description {
+        Some(description) => {
+            frame.u8(1);
+            frame.description(description);
+        }
+        None => frame.u8(0),
+    }
+    frame.string(&capture.binding.pages_dir)?;
+    frame.string(&capture.binding.journals_dir)?;
+    frame.u8(match capture.binding.file_name_format {
+        FileNameFormat::Legacy => 0,
+        FileNameFormat::TripleLowbar => 1,
+    });
+    match &capture.binding.journal_file_name_format {
+        Some(value) => {
+            frame.u8(1);
+            frame.string(value)?;
+        }
+        None => frame.u8(0),
+    }
+    match &capture.binding.journal_page_title_format {
+        Some(value) => {
+            frame.u8(1);
+            frame.string(value)?;
+        }
+        None => frame.u8(0),
+    }
+    frame.description(capture.inventory);
+    frame.description(capture.entries);
+    frame.description(capture.chunks);
+    frame.u64(capture.source_files);
+    frame.u64(capture.source_chunks);
+    Ok(frame.finish())
+}
+
+fn sync_bootstrap_source_directory(path: &Path) -> io::Result<()> {
+    let directory = Dir::open_ambient_dir(path, ambient_authority())?;
+    sync_projection_directory_required(&directory)
+}
+
+fn verify_bootstrap_source_capture(
+    graph: &Graph,
+    capture: &BootstrapSourceCapture,
+) -> io::Result<BootstrapSourceCaptureInstrumentation> {
+    validate_sealed_bootstrap_source_capture(capture)?;
+    require_current_bootstrap_source_binding(graph, &capture.binding)?;
+    bootstrap_source_capture_before_final_proof_hook()?;
+    let working = capture
+        .scratch_directory
+        .join(format!(".verify-{}", Uuid::new_v4().simple()));
+    fs::create_dir(&working)?;
+    fs::create_dir(working.join(BOOTSTRAP_SOURCE_CHUNK_DIRECTORY))?;
+    let current =
+        collect_bootstrap_source_pass(graph, &working, "capture-c", &capture.binding, false)?;
+    if current.source_files != capture.source_files
+        || current.source_chunks != capture.source_chunks
+    {
+        return Err(bootstrap_source_capture_interrupted(
+            "source capture changed before final hash-only proof",
+        ));
+    }
+    for (kind, sealed) in [
+        (
+            BootstrapSourceSpoolKind::Inventory,
+            BOOTSTRAP_SOURCE_INVENTORY,
+        ),
+        (BootstrapSourceSpoolKind::Entries, BOOTSTRAP_SOURCE_ENTRIES),
+        (BootstrapSourceSpoolKind::Chunks, BOOTSTRAP_SOURCE_CHUNKS),
+    ] {
+        if !bootstrap_source_files_equal(
+            &current.paths.sorted(kind),
+            &capture.sealed_directory.join(sealed),
+        )? {
+            return Err(bootstrap_source_capture_interrupted(format!(
+                "source capture changed before final {} proof",
+                kind.label()
+            )));
+        }
+    }
+    require_current_bootstrap_source_binding(graph, &capture.binding)?;
+    Ok(current.instrumentation)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = const { std::cell::RefCell::new(None) };
+    static BOOTSTRAP_SOURCE_CAPTURE_BEFORE_FINAL_PROOF: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn bootstrap_source_capture_between_passes_hook() -> io::Result<()> {
+    BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn bootstrap_source_capture_between_passes_hook() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn bootstrap_source_capture_before_final_proof_hook() -> io::Result<()> {
+    BOOTSTRAP_SOURCE_CAPTURE_BEFORE_FINAL_PROOF.with(|hook| match hook.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn bootstrap_source_capture_before_final_proof_hook() -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 fn collect_initial_shadow_managed_inventory(
     graph: &Graph,
@@ -24904,6 +27164,16 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
+        dir
+    }
+
+    fn bootstrap_capture_scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-bootstrap-capture-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -38266,5 +40536,294 @@ mod tests {
 
         let _ = fs::remove_dir_all(&moved);
         let _ = fs::remove_dir_all(&copied);
+    }
+
+    fn bootstrap_capture_entries(capture: &BootstrapSourceCapture) -> Vec<BootstrapSourceEntry> {
+        let mut cursor = capture.entries_cursor().unwrap();
+        let mut entries = Vec::new();
+        while let Some(entry) = cursor.next().unwrap() {
+            entries.push(entry);
+        }
+        entries
+    }
+
+    fn bootstrap_capture_chunks(capture: &BootstrapSourceCapture) -> Vec<BootstrapSourceChunk> {
+        let mut cursor = capture.chunks_cursor().unwrap();
+        let mut chunks = Vec::new();
+        while let Some(chunk) = cursor.next().unwrap() {
+            chunks.push(chunk);
+        }
+        chunks
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_preserves_exact_nested_unicode_org_and_semantic_kinds() {
+        let root = scratch("bootstrap-source-paths");
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(
+            root.join("logseq/config.edn"),
+            r#"{:pages-directory "notes" :journals-directory "diary"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("notes/深い")).unwrap();
+        fs::create_dir_all(root.join("diary/nested")).unwrap();
+        fs::write(root.join("Root.md"), "- root\n").unwrap();
+        fs::write(
+            root.join("notes/深い/e\u{301}.markdown"),
+            "title:: Jul 24th, 2026\n\n- semantic journal\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("diary/nested/Plain.org"),
+            "#+TITLE: Plain Org\n\n* body\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&root);
+        let capture_scratch = bootstrap_capture_scratch("paths");
+        let capture = graph
+            .capture_inactive_bootstrap_sources(&capture_scratch)
+            .unwrap();
+        let entries = bootstrap_capture_entries(&capture);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.path().as_str().to_owned(), entry.kind()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Root.md".to_owned(), ManagedTextKind::Page),
+                ("diary/nested/Plain.org".to_owned(), ManagedTextKind::Page),
+                (
+                    "notes/深い/e\u{301}.markdown".to_owned(),
+                    ManagedTextKind::Journal
+                ),
+            ]
+        );
+        capture
+            .verify_before_inactive_bootstrap_authoring(&graph)
+            .unwrap();
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&capture_scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_is_deterministic_and_chunks_zero_one_and_many_files() {
+        let root = scratch("bootstrap-source-chunks");
+        fs::write(root.join("pages/empty.md"), b"").unwrap();
+        fs::write(root.join("pages/one.md"), b"- one\n").unwrap();
+        let mut many = b"- ".to_vec();
+        many.extend(std::iter::repeat_n(b'x', BOOTSTRAP_SOURCE_CHUNK_BYTES * 2));
+        many.extend_from_slice(b"\n");
+        fs::write(root.join("pages/many.org"), many).unwrap();
+        let scratch = bootstrap_capture_scratch("chunks");
+        let graph = Graph::open(&root);
+        let first = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        let second = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        assert_eq!(
+            bootstrap_capture_entries(&first),
+            bootstrap_capture_entries(&second)
+        );
+        assert_eq!(
+            bootstrap_capture_chunks(&first),
+            bootstrap_capture_chunks(&second)
+        );
+        let entries = bootstrap_capture_entries(&first);
+        assert_eq!(entries[0].path().as_str(), "pages/empty.md");
+        assert_eq!(entries[0].chunk_count(), 0);
+        assert_eq!(entries[1].chunk_count(), 3);
+        assert_eq!(entries[2].chunk_count(), 1);
+        let chunk = bootstrap_capture_chunks(&first).into_iter().next().unwrap();
+        first.open_chunk(&chunk).unwrap().finish().unwrap();
+        assert!(first.instrumentation().peak_owned_rows < 20_000);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_rejects_between_pass_and_before_final_proof_mutations() {
+        let root = scratch("bootstrap-source-mutation");
+        let source = root.join("pages/one.md");
+        fs::write(&source, b"- before\n").unwrap();
+        let scratch = bootstrap_capture_scratch("mutation");
+        let graph = Graph::open(&root);
+        BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new({
+                let source = source.clone();
+                move || fs::write(source, b"- after\n")
+            }));
+        });
+        assert!(graph.capture_inactive_bootstrap_sources(&scratch).is_err());
+        let capture = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        BOOTSTRAP_SOURCE_CAPTURE_BEFORE_FINAL_PROOF.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new({
+                let source = source.clone();
+                let renamed = source.with_file_name("renamed.md");
+                move || fs::rename(source, renamed)
+            }));
+        });
+        assert!(capture
+            .verify_before_inactive_bootstrap_authoring(&graph)
+            .is_err());
+        fs::rename(root.join("pages/renamed.md"), &source).unwrap();
+        BOOTSTRAP_SOURCE_CAPTURE_BETWEEN_PASSES.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new({
+                let source = source.clone();
+                move || fs::remove_file(source)
+            }));
+        });
+        assert!(graph.capture_inactive_bootstrap_sources(&scratch).is_err());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_exact_64_mib_sparse_file_is_accepted() {
+        let root = scratch("bootstrap-source-64mib");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join("pages/boundary.md"))
+            .unwrap();
+        file.set_len(BOOTSTRAP_SOURCE_MAX_FILE_BYTES).unwrap();
+        drop(file);
+        let scratch = bootstrap_capture_scratch("64mib");
+        let graph = Graph::open(&root);
+        let capture = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        let entry = bootstrap_capture_entries(&capture).pop().unwrap();
+        assert_eq!(
+            entry.description().byte_length(),
+            BOOTSTRAP_SOURCE_MAX_FILE_BYTES
+        );
+        assert_eq!(entry.chunk_count(), 64);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_ignores_residue_is_idempotent_and_rejects_conflicting_seal() {
+        let root = scratch("bootstrap-source-seal");
+        fs::write(root.join("pages/one.md"), b"- one\n").unwrap();
+        let scratch = bootstrap_capture_scratch("seal");
+        fs::create_dir(scratch.join(BOOTSTRAP_SOURCE_CAPTURE_DIRECTORY)).unwrap();
+        fs::create_dir(
+            scratch
+                .join(BOOTSTRAP_SOURCE_CAPTURE_DIRECTORY)
+                .join(".working-crash-residue"),
+        )
+        .unwrap();
+        fs::write(
+            scratch
+                .join(BOOTSTRAP_SOURCE_CAPTURE_DIRECTORY)
+                .join(".working-crash-residue/unsealed"),
+            b"residue",
+        )
+        .unwrap();
+        let graph = Graph::open(&root);
+        let first = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        let second = graph.capture_inactive_bootstrap_sources(&scratch).unwrap();
+        assert_eq!(
+            bootstrap_capture_entries(&first),
+            bootstrap_capture_entries(&second)
+        );
+        fs::write(
+            first.sealed_directory.join(BOOTSTRAP_SOURCE_MANIFEST),
+            b"conflict",
+        )
+        .unwrap();
+        assert!(graph.capture_inactive_bootstrap_sources(&scratch).is_err());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_rejects_file_cap_before_streaming() {
+        let root = scratch("bootstrap-source-over-file-cap");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join("pages/too-large.md"))
+            .unwrap();
+        file.set_len(BOOTSTRAP_SOURCE_MAX_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let scratch = bootstrap_capture_scratch("over-file-cap");
+        assert!(Graph::open(&root)
+            .capture_inactive_bootstrap_sources(&scratch)
+            .is_err());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inactive_bootstrap_capture_rejects_source_symlinks_and_hard_links() {
+        use std::ffi::OsString;
+        use std::os::unix::{ffi::OsStringExt, fs::symlink};
+
+        let root = scratch("bootstrap-source-links");
+        fs::write(root.join("pages/one.md"), b"- one\n").unwrap();
+        fs::hard_link(root.join("pages/one.md"), root.join("pages/two.md")).unwrap();
+        let scratch = bootstrap_capture_scratch("links");
+        assert!(Graph::open(&root)
+            .capture_inactive_bootstrap_sources(&scratch)
+            .is_err());
+        fs::remove_file(root.join("pages/two.md")).unwrap();
+        symlink(root.join("pages/one.md"), root.join("pages/link.md")).unwrap();
+        assert!(Graph::open(&root)
+            .capture_inactive_bootstrap_sources(&scratch)
+            .is_err());
+        fs::remove_file(root.join("pages/link.md")).unwrap();
+        fs::write(
+            root.join("pages")
+                .join(OsString::from_vec(b"non-utf8-\xff.md".to_vec())),
+            b"- invalid path\n",
+        )
+        .unwrap();
+        assert!(Graph::open(&root)
+            .capture_inactive_bootstrap_sources(&scratch)
+            .is_err());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn inactive_bootstrap_capture_external_sort_has_fixed_rows_without_real_files() {
+        let root = scratch("bootstrap-source-streaming-scale");
+        let working = root.join("synthetic-working");
+        fs::create_dir(&working).unwrap();
+        let paths = BootstrapSourcePassPaths::new(&working, "synthetic").unwrap();
+        let mut writers = BootstrapSourcePassWriters::create(&paths).unwrap();
+        let mut instrumentation = BootstrapSourceCaptureInstrumentation::default();
+        for index in (0..1_000_000_u32).rev() {
+            let path = ManagedPath::parse(format!("pages/{index:08}.md")).unwrap();
+            write_bootstrap_source_entry(
+                &mut writers.entries,
+                &BootstrapSourceEntry {
+                    path,
+                    kind: ManagedTextKind::Page,
+                    description: BlobDescription::from_parts([0; 32], 0),
+                    file_resource: ContentDigest::from_bytes([1; 32]),
+                    link_count: 1,
+                    chunk_count: 0,
+                },
+                &mut instrumentation,
+            )
+            .unwrap();
+        }
+        writers.sync_all().unwrap();
+        sort_bootstrap_source_spool(
+            &paths,
+            BootstrapSourceSpoolKind::Entries,
+            &mut instrumentation,
+        )
+        .unwrap();
+        assert!(
+            instrumentation.peak_owned_buffer_bytes <= BOOTSTRAP_SOURCE_SORT_BUFFER_BYTES as u64
+        );
+        assert!(instrumentation.peak_owned_rows < 20_000);
+        validate_bootstrap_source_sorted_entries(
+            &paths.sorted(BootstrapSourceSpoolKind::Entries),
+            1_000_000,
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(&root);
     }
 }
