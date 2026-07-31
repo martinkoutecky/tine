@@ -6,12 +6,11 @@ license.workspace = true
 
 [dependencies]
 cap-std = "4.0.2"
+uuid = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+cap-fs-ext = "=4.0.2"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
-
-[dev-dependencies]
-uuid = { workspace = true }
