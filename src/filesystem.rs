@@ -12,6 +12,50 @@ use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _};
 use std::os::windows::fs::MetadataExt as _;
 use uuid::Uuid;
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ImmutablePublicationTestStats {
+    exact_durability_barriers: usize,
+    batch_durability_barriers: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static IMMUTABLE_PUBLICATION_TEST_STATS: std::cell::Cell<ImmutablePublicationTestStats> =
+        const { std::cell::Cell::new(ImmutablePublicationTestStats {
+            exact_durability_barriers: 0,
+            batch_durability_barriers: 0,
+        }) };
+}
+
+#[cfg(test)]
+fn reset_immutable_publication_test_stats() {
+    IMMUTABLE_PUBLICATION_TEST_STATS.with(|stats| stats.set(Default::default()));
+}
+
+#[cfg(test)]
+fn immutable_publication_test_stats() -> ImmutablePublicationTestStats {
+    IMMUTABLE_PUBLICATION_TEST_STATS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn note_exact_durability_barrier() {
+    IMMUTABLE_PUBLICATION_TEST_STATS.with(|stats| {
+        let mut current = stats.get();
+        current.exact_durability_barriers = current.exact_durability_barriers.saturating_add(1);
+        stats.set(current);
+    });
+}
+
+#[cfg(test)]
+fn note_batch_durability_barrier() {
+    IMMUTABLE_PUBLICATION_TEST_STATS.with(|stats| {
+        let mut current = stats.get();
+        current.batch_durability_barriers = current.batch_durability_barriers.saturating_add(1);
+        stats.set(current);
+    });
+}
+
 /// A failure at the generic physical-filesystem boundary.
 #[derive(Debug)]
 pub enum FilesystemError {
@@ -432,23 +476,33 @@ pub fn publish_immutable_exact(
     {
         cleanup?;
     }
+    #[cfg(test)]
+    note_exact_durability_barrier();
     Ok(())
 }
 
 /// An exact immutable publication batch which yields completion only from
 /// `finish` after its platform durability construction has completed.
-pub struct ExactImmutablePublicationBatch<'a> {
-    archive: &'a Dir,
+pub struct ExactImmutablePublicationBatch {
+    archive: Dir,
+    publications: usize,
+    existing_publications: usize,
 }
 
 /// Non-forgeable evidence that an exact immutable publication batch finished.
 pub struct CompletedExactImmutablePublicationBatch {
     _private: (),
+    publications: usize,
+    existing_publications: usize,
 }
 
-impl<'a> ExactImmutablePublicationBatch<'a> {
-    pub fn new(archive: &'a Dir) -> Self {
-        Self { archive }
+impl ExactImmutablePublicationBatch {
+    pub fn new(archive: &Dir) -> Result<Self, FilesystemError> {
+        Ok(Self {
+            archive: archive.try_clone()?,
+            publications: 0,
+            existing_publications: 0,
+        })
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -458,7 +512,12 @@ impl<'a> ExactImmutablePublicationBatch<'a> {
         filename: &str,
         bytes: &[u8],
     ) -> Result<(), FilesystemError> {
-        stage_immutable_unflushed(dir, filename, bytes)
+        let existing = stage_immutable_unflushed(dir, filename, bytes)?;
+        self.publications = self.publications.saturating_add(1);
+        self.existing_publications = self
+            .existing_publications
+            .saturating_add(usize::from(existing));
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -468,12 +527,30 @@ impl<'a> ExactImmutablePublicationBatch<'a> {
         filename: &str,
         bytes: &[u8],
     ) -> Result<(), FilesystemError> {
-        publish_immutable_exact(dir, filename, bytes)
+        publish_immutable_exact(dir, filename, bytes)?;
+        self.publications = self.publications.saturating_add(1);
+        Ok(())
     }
 
     pub fn finish(self) -> Result<CompletedExactImmutablePublicationBatch, FilesystemError> {
-        flush_exact_batch(self.archive)?;
-        Ok(CompletedExactImmutablePublicationBatch { _private: () })
+        flush_exact_batch(&self.archive)?;
+        #[cfg(test)]
+        note_batch_durability_barrier();
+        Ok(CompletedExactImmutablePublicationBatch {
+            _private: (),
+            publications: self.publications,
+            existing_publications: self.existing_publications,
+        })
+    }
+}
+
+impl CompletedExactImmutablePublicationBatch {
+    pub const fn publication_count(&self) -> usize {
+        self.publications
+    }
+
+    pub const fn existing_publication_count(&self) -> usize {
+        self.existing_publications
     }
 }
 
@@ -482,26 +559,32 @@ fn stage_immutable_unflushed(
     dir: &Dir,
     filename: &str,
     bytes: &[u8],
-) -> Result<(), FilesystemError> {
+) -> Result<bool, FilesystemError> {
     let temp_name = format!(".tmp-{}", Uuid::new_v4());
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     let mut temp = dir.open_with(&temp_name, &options)?;
     temp.write_all(bytes)?;
     drop(temp);
-    match rename_noreplace(dir, &temp_name, filename) {
-        Ok(()) => {}
+    let result = match rename_noreplace(dir, &temp_name, filename) {
+        Ok(()) => Ok(false),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            verify_existing(dir, filename, bytes)?;
+            verify_existing(dir, filename, bytes).map(|()| true)
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => Err(error.into()),
+    };
+    let cleanup = dir.remove_file(&temp_name);
+    if let Err(error) = result {
+        let _ = cleanup;
+        return Err(error);
     }
-    if let Err(error) = dir.remove_file(&temp_name) {
-        if error.kind() != ErrorKind::NotFound {
-            return Err(error.into());
-        }
+    if cleanup
+        .as_ref()
+        .is_err_and(|error| error.kind() != ErrorKind::NotFound)
+    {
+        cleanup?;
     }
-    Ok(())
+    result
 }
 
 fn verify_existing(dir: &Dir, filename: &str, expected: &[u8]) -> Result<(), FilesystemError> {
@@ -712,12 +795,64 @@ mod tests {
     #[test]
     fn deferred_batch_returns_completion_only_from_finish() {
         let fixture = TestDirectory::new("batch");
-        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir);
+        reset_immutable_publication_test_stats();
+        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
         batch.publish(&fixture.dir, "first", b"one").unwrap();
         batch.publish(&fixture.dir, "second", b"two").unwrap();
         assert_eq!(fixture.dir.read("first").unwrap(), b"one");
-        let _completed = batch.finish().unwrap();
+        let completed = batch.finish().unwrap();
+        assert_eq!(completed.publication_count(), 2);
+        assert_eq!(completed.existing_publication_count(), 0);
         assert_eq!(fixture.dir.read("second").unwrap(), b"two");
+        assert!(temporary_entries(&fixture.dir).is_empty());
+        let batch_stats = immutable_publication_test_stats();
+        assert_eq!(batch_stats.batch_durability_barriers, 1);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert_eq!(batch_stats.exact_durability_barriers, 0);
+
+        reset_immutable_publication_test_stats();
+        publish_immutable_exact(&fixture.dir, "ordinary-one", b"one").unwrap();
+        publish_immutable_exact(&fixture.dir, "ordinary-two", b"two").unwrap();
+        let ordinary_stats = immutable_publication_test_stats();
+        assert_eq!(ordinary_stats.exact_durability_barriers, 2);
+        assert_eq!(ordinary_stats.batch_durability_barriers, 0);
+    }
+
+    #[test]
+    fn abandoned_batch_retry_verifies_existing_bytes_and_finishes_once() {
+        let fixture = TestDirectory::new("batch-retry");
+        let mut abandoned = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        abandoned
+            .publish(&fixture.dir, "existing", b"exact bytes")
+            .unwrap();
+        drop(abandoned);
+
+        reset_immutable_publication_test_stats();
+        let mut retry = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        retry
+            .publish(&fixture.dir, "existing", b"exact bytes")
+            .unwrap();
+        let completed = retry.finish().unwrap();
+        assert_eq!(completed.publication_count(), 1);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert_eq!(completed.existing_publication_count(), 1);
+        assert_eq!(
+            immutable_publication_test_stats().batch_durability_barriers,
+            1
+        );
+        assert_eq!(fixture.dir.read("existing").unwrap(), b"exact bytes");
+    }
+
+    #[test]
+    fn deferred_batch_conflicting_existing_name_fails_closed() {
+        let fixture = TestDirectory::new("batch-collision");
+        fixture.dir.write("collision", b"winner").unwrap();
+        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        assert!(matches!(
+            batch.publish(&fixture.dir, "collision", b"different"),
+            Err(FilesystemError::ByteCollision)
+        ));
+        assert_eq!(fixture.dir.read("collision").unwrap(), b"winner");
         assert!(temporary_entries(&fixture.dir).is_empty());
     }
 
