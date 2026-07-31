@@ -1,0 +1,17 @@
+[package]
+name = "tine-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cap-std = "4.0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+uuid = { workspace = true }
