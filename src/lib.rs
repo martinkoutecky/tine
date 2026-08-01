@@ -1,4 +1,15 @@
 //! Generic physical storage mechanisms shared by Tine persistence domains.
+//!
+//! The dependency direction is `src-tauri -> tine-core -> tine-storage`.
+//! This crate owns physical storage mechanisms; `tine-core` owns policy,
+//! authority, validation, and domain interpretation. SQLite is a disposable
+//! projection: the oplog/archive remains authoritative and can rebuild it.
+//! Consequently, this crate never depends on `tine-core`, `lsdoc`, Tauri, or
+//! UI crates.
+//!
+//! SQLite implementation modules remain private. Consumers use [`sqlite`],
+//! the deliberately curated physical-storage boundary that does not expose a
+//! raw SQLite connection or schema-construction details.
 
 mod authenticated_patricia;
 mod content_digest;
@@ -6,9 +17,41 @@ mod digest_sealed;
 mod durable_batch;
 mod filesystem;
 mod scratch;
-pub mod sqlite_database;
-pub mod sqlite_frontier;
-pub mod sqlite_materialization;
+mod sqlite_database;
+mod sqlite_frontier;
+mod sqlite_materialization;
+
+/// Curated physical SQLite API for the disposable projection.
+///
+/// This facade exposes typed DTOs, errors, bounded reads, instrumentation,
+/// stable physical constants, and the connection-owning database wrapper. It
+/// intentionally excludes raw DDL, direct connection access, and lower-level
+/// production implementation helpers.
+pub mod sqlite {
+    pub use crate::sqlite_database::{PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase};
+    pub use crate::sqlite_frontier::{
+        ApplyDisposition, ApplyFault, ApplyResult, FrontierError, PhysicalAcceptedBatch,
+        PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,
+        PreflightDisposition, StoredBatch, StoredFrontier, SQLITE_APPLICATION_ID,
+        SQLITE_SCHEMA_VERSION,
+    };
+    pub use crate::sqlite_materialization::{
+        ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
+        PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockRow, PhysicalEntityId,
+        PhysicalMaterializationChange, PhysicalPage, PhysicalPageRow, PhysicalProperty,
+        PhysicalPropertyRow, PhysicalReference, PhysicalReferenceCatalogChange,
+        PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalReferrerRow, PhysicalSearchHit,
+        PhysicalSourceCoverage, PhysicalTagRow, PhysicalTask, PhysicalTaskRow,
+        SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
+        MAX_MATERIALIZATION_READ_BYTES,
+    };
+
+    #[cfg(feature = "test-support")]
+    pub use crate::sqlite_materialization::{
+        apply_change as apply_materialization_change_for_test,
+        initialize_schema as initialize_materialization_schema_for_test,
+    };
+}
 
 pub use authenticated_patricia::{
     PatriciaError, PatriciaIndexConstruction, PatriciaIndexConstructionStats, PatriciaIndexRoot,

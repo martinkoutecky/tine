@@ -2120,7 +2120,7 @@ pub struct SqliteMaterializedRead<'a> {
 }
 
 impl<'a> SqliteMaterializedRead<'a> {
-    pub fn new(
+    pub(crate) fn new(
         connection: &'a Connection,
         acceptance_sequence: u64,
         frontier_digest: ContentDigest,
@@ -2130,6 +2130,20 @@ impl<'a> SqliteMaterializedRead<'a> {
             connection,
             acceptance_sequence,
         })
+    }
+
+    /// Construct a read view from a test-owned connection.
+    ///
+    /// Production callers must obtain views from `PhysicalSqliteDatabase` so
+    /// the storage crate retains ownership of the live connection.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn from_connection_for_test(
+        connection: &'a Connection,
+        acceptance_sequence: u64,
+        frontier_digest: ContentDigest,
+    ) -> Result<Self, MaterializationError> {
+        Self::new(connection, acceptance_sequence, frontier_digest)
     }
 
     pub const fn acceptance_sequence(&self) -> u64 {
