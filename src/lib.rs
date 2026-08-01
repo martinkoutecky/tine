@@ -6,6 +6,7 @@ mod digest_sealed;
 mod durable_batch;
 mod filesystem;
 mod scratch;
+pub mod sqlite_frontier;
 pub mod sqlite_materialization;
 
 pub use authenticated_patricia::{
