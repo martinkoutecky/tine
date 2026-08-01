@@ -2,6 +2,7 @@
 
 mod authenticated_patricia;
 mod content_digest;
+mod digest_sealed;
 mod durable_batch;
 mod filesystem;
 mod scratch;
@@ -12,6 +13,7 @@ pub use authenticated_patricia::{
     MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
 };
 pub use content_digest::ContentDigest;
+pub use digest_sealed::{DigestSealedError, DigestSealedPayload};
 pub use durable_batch::{
     BatchCausalDot, BatchError, CausalPeerId, DurableBatchContract, LineageDigest,
     ObjectDescriptor, ObjectKind, OperationBatch, OperationObject, SemanticEffectDigest,
