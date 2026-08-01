@@ -55,7 +55,7 @@ impl<'de> Deserialize<'de> for ContentDigest {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DigestParseError;
+pub(crate) struct DigestParseError;
 
 impl fmt::Display for DigestParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -63,7 +63,7 @@ impl fmt::Display for DigestParseError {
     }
 }
 
-fn parse_digest(value: &str) -> Result<[u8; 32], DigestParseError> {
+pub(crate) fn parse_digest(value: &str) -> Result<[u8; 32], DigestParseError> {
     if value.len() != 64
         || value
             .bytes()
@@ -86,7 +86,7 @@ fn hex_nibble(value: u8) -> u8 {
     }
 }
 
-fn write_hex(bytes: &[u8], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+pub(crate) fn write_hex(bytes: &[u8], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in bytes {
         formatter.write_str(

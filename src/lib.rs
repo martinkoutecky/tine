@@ -2,6 +2,7 @@
 
 mod authenticated_patricia;
 mod content_digest;
+mod durable_batch;
 mod filesystem;
 mod scratch;
 
@@ -11,6 +12,12 @@ pub use authenticated_patricia::{
     MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
 };
 pub use content_digest::ContentDigest;
+pub use durable_batch::{
+    BatchCausalDot, BatchError, CausalPeerId, DurableBatchContract, LineageDigest,
+    ObjectDescriptor, ObjectKind, OperationBatch, OperationObject, SemanticEffectDigest,
+    MANIFEST_ENCODING_VERSION, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
+    OBJECT_ENVELOPE_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
+};
 pub use filesystem::{
     ensure_directory_nofollow, open_dir_nofollow, open_existing_dir_nofollow, open_file_nofollow,
     publish_immutable_exact, read_optional_regular, read_required_regular, require_regular_entry,
