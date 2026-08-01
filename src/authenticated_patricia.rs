@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::ContentDigest;
 use crate::filesystem::{read_optional_regular, FilesystemError};
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+use crate::packed_patricia::corrupt_packed_node_for_test;
 #[cfg(test)]
 use crate::packed_patricia::PackedPatriciaPublicationWork;
 use crate::packed_patricia::{
@@ -433,6 +435,16 @@ impl PatriciaIndexStore {
         reclaim_unreachable_packed_files(&self.nodes)
             .map(PatriciaIndexReclamationReport::from)
             .map_err(PatriciaIndexReclamationError::from)
+    }
+
+    /// Test-support seam for proving that the adapter rejects corrupted bytes
+    /// beneath an existing packed content-addressed path. This method is not
+    /// compiled into release builds.
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+    pub fn corrupt_packed_node_for_test(&self, digest: ContentDigest) -> Result<(), PatriciaError> {
+        corrupt_packed_node_for_test(&self.nodes, digest).map_err(map_packed_patricia_error)?;
+        *self.packed.lock().map_err(|_| PatriciaError::Malformed)? = None;
+        Ok(())
     }
 
     pub fn validate_root(&self, root: PatriciaIndexRoot) -> Result<(), PatriciaError> {
@@ -2401,6 +2413,28 @@ mod tests {
         fs::remove_dir_all(mixed_path).unwrap();
         fs::remove_dir_all(packed_path).unwrap();
         fs::remove_dir_all(loose_path).unwrap();
+    }
+
+    #[test]
+    fn packed_corruption_test_seam_preserves_path_mismatch_class() {
+        let (path, store) = store_with_publisher("packed-corruption-seam", PackedExactPublisher);
+        let records = BTreeMap::from([
+            (b"pages/corruption-left.md".to_vec(), b"left".to_vec()),
+            (b"pages/corruption-right.md".to_vec(), b"right".to_vec()),
+        ]);
+        let root = store
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        assert_eq!(all_records(&store, root), records);
+
+        store.corrupt_packed_node_for_test(root.digest()).unwrap();
+        assert!(matches!(
+            store.validate_root(root),
+            Err(PatriciaError::PathMismatch(_))
+        ));
+
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

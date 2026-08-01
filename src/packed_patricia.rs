@@ -1030,6 +1030,35 @@ impl PackedPatriciaCatalog {
     }
 }
 
+/// Corrupts the packed bytes that currently contain `node_digest` while
+/// retaining the immutable pack's content-addressed filename. This exists only
+/// for debug test-support builds so adapter callers can prove that reopen
+/// rejects existing path/content mismatches; production builds have no
+/// corruption surface.
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+pub(crate) fn corrupt_packed_node_for_test(
+    dir: &Dir,
+    node_digest: ContentDigest,
+) -> Result<(), PackedPatriciaError> {
+    let catalog = PackedPatriciaCatalog::discover(dir)?.ok_or(PackedPatriciaError::Malformed)?;
+    let (descriptor, pack, range) = catalog
+        .descriptors
+        .iter()
+        .zip(&catalog.packs)
+        .find_map(|(descriptor, pack)| {
+            pack.entries
+                .get(&node_digest)
+                .cloned()
+                .map(|range| (descriptor, pack, range))
+        })
+        .ok_or(PackedPatriciaError::Malformed)?;
+    let mut corrupted = pack.bytes.clone();
+    corrupted[range.start] ^= 0x01;
+    dir.write(pack_filename(descriptor.digest), corrupted)
+        .map_err(FilesystemError::Io)?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn publish_partitioned_catalog(
     dir: &Dir,
