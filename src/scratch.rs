@@ -168,6 +168,18 @@ pub struct ScratchOperationStats {
     pub scratch_syncs: usize,
 }
 
+/// Count-only diagnostics for one process-local authenticated LSM lookup
+/// session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ScratchLookupSessionStats {
+    pub hits: usize,
+    pub misses: usize,
+    pub evictions: usize,
+    pub oversize: usize,
+    pub resident_bytes: usize,
+    pub peak_resident_bytes: usize,
+}
+
 #[derive(Debug, Default)]
 struct ScratchOperationCounters {
     page_reads: AtomicUsize,
@@ -271,6 +283,93 @@ struct ScratchSegment<Tag> {
     kind: Tag,
     generation: u64,
     entries: Vec<ScratchRecord>,
+}
+
+struct CachedScratchSegment<Tag> {
+    segment_ref: ScratchSegmentRef<Tag>,
+    segment: ScratchSegment<Tag>,
+    charge: usize,
+    last_access: u64,
+}
+
+/// Owned, nonpersistent decoded-segment cache bound to one physical run, one
+/// exact LSM root, and one serialized page kind.
+///
+/// This state is deliberately not `Clone`: callers create it for one bounded
+/// operation and discard it before releasing or promoting the scratch run.
+pub struct ScratchLookupSession<Tag> {
+    run_binding: ContentDigest,
+    root: ScratchLsmRoot<Tag>,
+    kind_encoding: Vec<u8>,
+    budget_bytes: usize,
+    entries: [Option<Box<CachedScratchSegment<Tag>>>; SCRATCH_LSM_LEVELS],
+    access_clock: u64,
+    stats: ScratchLookupSessionStats,
+}
+
+enum SessionSegment<'session, Tag> {
+    Cached(&'session ScratchSegment<Tag>),
+    Uncached(ScratchSegment<Tag>),
+}
+
+impl<Tag> SessionSegment<'_, Tag> {
+    fn entries(&self) -> &[ScratchRecord] {
+        match self {
+            Self::Cached(segment) => &segment.entries,
+            Self::Uncached(segment) => &segment.entries,
+        }
+    }
+}
+
+impl<Tag> ScratchLookupSession<Tag> {
+    pub const fn stats(&self) -> ScratchLookupSessionStats {
+        self.stats
+    }
+
+    fn next_access(&mut self) -> u64 {
+        self.access_clock = self.access_clock.saturating_add(1);
+        self.access_clock
+    }
+
+    fn evict_lru(&mut self) {
+        let Some(index) = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.as_ref().map(|entry| (index, entry.last_access)))
+            .min_by_key(|(_, last_access)| *last_access)
+            .map(|(index, _)| index)
+        else {
+            return;
+        };
+        let evicted = self.entries[index]
+            .take()
+            .expect("selected lookup-session entry exists");
+        self.stats.resident_bytes = self.stats.resident_bytes.saturating_sub(evicted.charge);
+        self.stats.evictions = self.stats.evictions.saturating_add(1);
+    }
+}
+
+fn decoded_segment_charge<Tag>(
+    segment_ref: &ScratchSegmentRef<Tag>,
+    segment: &ScratchSegment<Tag>,
+) -> usize {
+    let mut charge = std::mem::size_of::<CachedScratchSegment<Tag>>()
+        .saturating_add(segment_ref.page_ref.key_min.capacity())
+        .saturating_add(segment_ref.page_ref.key_max.capacity())
+        .saturating_add(
+            segment
+                .entries
+                .capacity()
+                .saturating_mul(std::mem::size_of::<ScratchRecord>()),
+        );
+    for record in &segment.entries {
+        charge = charge.saturating_add(record.key.capacity());
+        if let Some(value) = &record.value {
+            charge = charge.saturating_add(value.capacity());
+        }
+    }
+    charge
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -608,6 +707,29 @@ where
 
     pub fn operation_stats(&self) -> ScratchOperationStats {
         self.operation_counters.snapshot()
+    }
+
+    /// Start an empty decoded-segment lookup session bound to this exact
+    /// physical run, LSM root, and serialized page kind.
+    pub fn lookup_session<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        budget_bytes: usize,
+    ) -> Result<ScratchLookupSession<Tag>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        validate_lsm_root(root)?;
+        Ok(ScratchLookupSession {
+            run_binding: self.binding_digest()?,
+            root: root.clone(),
+            kind_encoding: encode_page_canonical(&kind)?,
+            budget_bytes,
+            entries: std::array::from_fn(|_| None),
+            access_clock: 0,
+            stats: ScratchLookupSessionStats::default(),
+        })
     }
 
     /// Record caller-defined logical point operations implemented with generic
@@ -986,6 +1108,73 @@ where
         Ok(values)
     }
 
+    /// Batched authenticated lookup using a caller-owned decoded-segment
+    /// session. The caller-owned absence policy is still evaluated for every
+    /// call, before any segment cache is consulted.
+    pub fn lookup_many_with_session_and_absence_policy<Tag>(
+        &self,
+        session: &mut ScratchLookupSession<Tag>,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        keys: &[Vec<u8>],
+        absence_policy: impl FnOnce() -> Result<Vec<bool>, ScratchRunError>,
+    ) -> Result<Vec<Option<Vec<u8>>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        validate_lsm_root(root)?;
+        if session.run_binding != self.binding_digest()?
+            || session.root != *root
+            || session.kind_encoding != encode_page_canonical(&kind)?
+        {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        self.operation_counters
+            .point_reads
+            .fetch_add(keys.len(), Ordering::Relaxed);
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let known_absent = absence_policy()?;
+        if known_absent.len() != keys.len() {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        let mut resolved = known_absent;
+        let mut values = vec![None; keys.len()];
+        let mut segments = root
+            .levels
+            .iter()
+            .flatten()
+            .collect::<Vec<&ScratchSegmentRef<Tag>>>();
+        segments.sort_unstable_by_key(|segment| std::cmp::Reverse(segment.generation));
+        for segment_ref in segments {
+            let selected = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, key)| {
+                    (!resolved[index]
+                        && key.as_slice() >= segment_ref.page_ref.key_min.as_slice()
+                        && key.as_slice() <= segment_ref.page_ref.key_max.as_slice())
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            if selected.is_empty() {
+                continue;
+            }
+            let segment = self.read_segment_with_session(session, kind, segment_ref)?;
+            for index in selected {
+                if let Ok(record_index) = segment
+                    .entries()
+                    .binary_search_by(|record| record.key.as_slice().cmp(keys[index].as_slice()))
+                {
+                    values[index] = segment.entries()[record_index].value.clone();
+                    resolved[index] = true;
+                }
+            }
+        }
+        Ok(values)
+    }
+
     pub fn scan_prefix<Tag>(
         &self,
         root: &ScratchLsmRoot<Tag>,
@@ -1056,6 +1245,67 @@ where
             return Err(ScratchRunError::PageBindingMismatch);
         }
         Ok(segment)
+    }
+
+    fn read_segment_with_session<'session, Tag>(
+        &self,
+        session: &'session mut ScratchLookupSession<Tag>,
+        kind: Tag,
+        segment_ref: &ScratchSegmentRef<Tag>,
+    ) -> Result<SessionSegment<'session, Tag>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        if let Some(index) = session.entries.iter().position(|entry| {
+            entry
+                .as_ref()
+                .is_some_and(|entry| entry.segment_ref == *segment_ref)
+        }) {
+            let access = session.next_access();
+            session.stats.hits = session.stats.hits.saturating_add(1);
+            let entry = session.entries[index]
+                .as_mut()
+                .expect("located lookup-session entry exists");
+            entry.last_access = access;
+            return Ok(SessionSegment::Cached(&entry.segment));
+        }
+
+        session.stats.misses = session.stats.misses.saturating_add(1);
+        let segment = self.read_segment(kind, segment_ref)?;
+        let charge = decoded_segment_charge(segment_ref, &segment);
+        if charge > session.budget_bytes {
+            session.stats.oversize = session.stats.oversize.saturating_add(1);
+            return Ok(SessionSegment::Uncached(segment));
+        }
+        while session.stats.resident_bytes.saturating_add(charge) > session.budget_bytes {
+            session.evict_lru();
+        }
+        if session.entries.iter().all(Option::is_some) {
+            session.evict_lru();
+        }
+        let index = session
+            .entries
+            .iter()
+            .position(Option::is_none)
+            .expect("eviction leaves one lookup-session slot");
+        let access = session.next_access();
+        session.entries[index] = Some(Box::new(CachedScratchSegment {
+            segment_ref: segment_ref.clone(),
+            segment,
+            charge,
+            last_access: access,
+        }));
+        session.stats.resident_bytes = session.stats.resident_bytes.saturating_add(charge);
+        session.stats.peak_resident_bytes = session
+            .stats
+            .peak_resident_bytes
+            .max(session.stats.resident_bytes);
+        Ok(SessionSegment::Cached(
+            &session.entries[index]
+                .as_ref()
+                .expect("admitted lookup-session entry exists")
+                .segment,
+        ))
     }
 
     pub fn clone_pages_file(&self) -> Result<fs::File, ScratchRunError> {
@@ -2041,6 +2291,420 @@ mod tests {
 
         drop(run);
         assert!(!root.join(SCRATCH_DIR).exists() || namespace_names(&root).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lookup_sessions_preserve_semantics_and_bound_cross_call_segment_residency() {
+        let root = scratch_root("lookup-session-bounds");
+        let archive = archive(&root);
+        let run = ScratchRun::create_ephemeral(&archive, TestOwner(Uuid::from_u128(0x51))).unwrap();
+        let original = (0_u16..192)
+            .map(|index| {
+                (
+                    format!("key-{index:03}").into_bytes(),
+                    Some(format!("old-{index:03}").into_bytes()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut lsm = run
+            .insert_many(&ScratchLsmRoot::default(), TestPageKind::Primary, &original)
+            .unwrap();
+        lsm = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([
+                    (b"key-000".to_vec(), Some(b"new-000".to_vec())),
+                    (b"key-032".to_vec(), None),
+                ]),
+            )
+            .unwrap();
+        lsm = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"key-096".to_vec(), Some(b"new-096".to_vec()))]),
+            )
+            .unwrap();
+
+        let semantic_keys = vec![
+            b"key-000".to_vec(),
+            b"key-032".to_vec(),
+            b"key-096".to_vec(),
+            b"key-096".to_vec(),
+            b"missing".to_vec(),
+        ];
+        let ordinary = run
+            .lookup_many(&lsm, TestPageKind::Primary, &semantic_keys)
+            .unwrap();
+        let mut zero = run.lookup_session(&lsm, TestPageKind::Primary, 0).unwrap();
+        let zero_values = run
+            .lookup_many_with_session_and_absence_policy(
+                &mut zero,
+                &lsm,
+                TestPageKind::Primary,
+                &semantic_keys,
+                || Ok(vec![false; semantic_keys.len()]),
+            )
+            .unwrap();
+        let mut fitting = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        let fitting_values = run
+            .lookup_many_with_session_and_absence_policy(
+                &mut fitting,
+                &lsm,
+                TestPageKind::Primary,
+                &semantic_keys,
+                || Ok(vec![false; semantic_keys.len()]),
+            )
+            .unwrap();
+        assert_eq!(zero_values, ordinary);
+        assert_eq!(fitting_values, ordinary);
+        assert_eq!(ordinary[0], Some(b"new-000".to_vec()));
+        assert_eq!(ordinary[1], None);
+        assert_eq!(ordinary[2], Some(b"new-096".to_vec()));
+        assert_eq!(ordinary[2], ordinary[3]);
+        assert_eq!(ordinary[4], None);
+
+        let mut fitting = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        let before = run.operation_stats();
+        let mut session_values = Vec::new();
+        for chunk in (0_u16..192)
+            .map(|index| format!("key-{index:03}").into_bytes())
+            .collect::<Vec<_>>()
+            .chunks(64)
+        {
+            session_values.extend(
+                run.lookup_many_with_session_and_absence_policy(
+                    &mut fitting,
+                    &lsm,
+                    TestPageKind::Primary,
+                    chunk,
+                    || Ok(vec![false; chunk.len()]),
+                )
+                .unwrap(),
+            );
+        }
+        let after = run.operation_stats();
+        let all_keys = (0_u16..192)
+            .map(|index| format!("key-{index:03}").into_bytes())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            session_values,
+            run.lookup_many(&lsm, TestPageKind::Primary, &all_keys)
+                .unwrap()
+        );
+        let stats = fitting.stats();
+        assert_eq!(stats.misses, 2);
+        assert_eq!(stats.hits, 2);
+        assert_eq!(after.page_reads - before.page_reads, 2);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.oversize, 0);
+        assert!(stats.resident_bytes > 0);
+        assert_eq!(stats.peak_resident_bytes, stats.resident_bytes);
+
+        let segment_refs = lsm.levels.iter().flatten().collect::<Vec<_>>();
+        assert_eq!(segment_refs.len(), 2);
+        let charges = segment_refs
+            .iter()
+            .map(|segment_ref| {
+                let segment = run
+                    .read_segment(TestPageKind::Primary, segment_ref)
+                    .unwrap();
+                decoded_segment_charge(segment_ref, &segment)
+            })
+            .collect::<Vec<_>>();
+        let one_segment_budget = *charges.iter().max().unwrap();
+        let mut evicting = run
+            .lookup_session(&lsm, TestPageKind::Primary, one_segment_budget)
+            .unwrap();
+        let overlap = vec![b"key-095".to_vec(), b"key-096".to_vec()];
+        for _ in 0..2 {
+            run.lookup_many_with_session_and_absence_policy(
+                &mut evicting,
+                &lsm,
+                TestPageKind::Primary,
+                &overlap,
+                || Ok(vec![false; overlap.len()]),
+            )
+            .unwrap();
+        }
+        let stats = evicting.stats();
+        assert!(stats.evictions >= 2);
+        assert!(stats.resident_bytes <= one_segment_budget);
+        assert!(stats.peak_resident_bytes <= one_segment_budget);
+
+        let newer_ref = lsm.levels[0].as_ref().unwrap();
+        let newer = run.read_segment(TestPageKind::Primary, newer_ref).unwrap();
+        let oversize_budget = decoded_segment_charge(newer_ref, &newer) - 1;
+        let mut oversize = run
+            .lookup_session(&lsm, TestPageKind::Primary, oversize_budget)
+            .unwrap();
+        let key = vec![b"key-096".to_vec()];
+        run.lookup_many_with_session_and_absence_policy(
+            &mut oversize,
+            &lsm,
+            TestPageKind::Primary,
+            &key,
+            || Ok(vec![false]),
+        )
+        .unwrap();
+        let stats = oversize.stats();
+        assert_eq!(stats.oversize, 1);
+        assert_eq!(stats.resident_bytes, 0);
+        assert_eq!(stats.peak_resident_bytes, 0);
+        assert_eq!(zero.stats().resident_bytes, 0);
+        assert!(zero.stats().oversize > 0);
+
+        drop(run);
+        assert!(!root.join(SCRATCH_DIR).exists() || namespace_names(&root).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lookup_sessions_fail_closed_before_admission_and_snapshot_only_authenticated_bytes() {
+        let tamper_root = scratch_root("lookup-session-tamper-before");
+        let tamper_archive = archive(&tamper_root);
+        let run = ScratchRun::create_ephemeral(&tamper_archive, TestOwner(Uuid::from_u128(0x52)))
+            .unwrap();
+        let lsm = run
+            .insert_many(
+                &ScratchLsmRoot::default(),
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"key".to_vec(), Some(b"value".to_vec()))]),
+            )
+            .unwrap();
+        let segment_ref = lsm.levels[0].as_ref().unwrap();
+        let mut session = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        run.with_pages(|pages| {
+            pages.seek(SeekFrom::Start(segment_ref.page_ref.offset))?;
+            let mut byte = [0_u8; 1];
+            pages.read_exact(&mut byte)?;
+            byte[0] ^= 0x80;
+            pages.seek(SeekFrom::Start(segment_ref.page_ref.offset))?;
+            pages.write_all(&byte)
+        })
+        .unwrap()
+        .unwrap();
+        let result = run.lookup_many_with_session_and_absence_policy(
+            &mut session,
+            &lsm,
+            TestPageKind::Primary,
+            &[b"key".to_vec()],
+            || Ok(vec![false]),
+        );
+        assert!(matches!(
+            result,
+            Err(ScratchRunError::PageDigestMismatch(_))
+        ));
+        assert_eq!(session.stats().misses, 1);
+        assert_eq!(session.stats().resident_bytes, 0);
+        drop(run);
+        fs::remove_dir_all(tamper_root).unwrap();
+
+        let truncate_root = scratch_root("lookup-session-truncate-before");
+        let truncate_archive = archive(&truncate_root);
+        let run = ScratchRun::create_ephemeral(&truncate_archive, TestOwner(Uuid::from_u128(0x53)))
+            .unwrap();
+        let lsm = run
+            .insert_many(
+                &ScratchLsmRoot::default(),
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"key".to_vec(), Some(b"value".to_vec()))]),
+            )
+            .unwrap();
+        let mut session = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        run.with_pages(|pages| pages.set_len(0)).unwrap().unwrap();
+        let result = run.lookup_many_with_session_and_absence_policy(
+            &mut session,
+            &lsm,
+            TestPageKind::Primary,
+            &[b"key".to_vec()],
+            || Ok(vec![false]),
+        );
+        assert_eq!(result, Err(ScratchRunError::MalformedPage));
+        assert_eq!(session.stats().resident_bytes, 0);
+        drop(run);
+        fs::remove_dir_all(truncate_root).unwrap();
+
+        let uncached_root = scratch_root("lookup-session-tamper-uncached");
+        let uncached_archive = archive(&uncached_root);
+        let run = ScratchRun::create_ephemeral(&uncached_archive, TestOwner(Uuid::from_u128(0x54)))
+            .unwrap();
+        let mut lsm = run
+            .insert_many(
+                &ScratchLsmRoot::default(),
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"a".to_vec(), Some(b"one".to_vec()))]),
+            )
+            .unwrap();
+        lsm = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"b".to_vec(), Some(b"two".to_vec()))]),
+            )
+            .unwrap();
+        lsm = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"z".to_vec(), Some(b"three".to_vec()))]),
+            )
+            .unwrap();
+        let mut session = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        run.lookup_many_with_session_and_absence_policy(
+            &mut session,
+            &lsm,
+            TestPageKind::Primary,
+            &[b"a".to_vec()],
+            || Ok(vec![false]),
+        )
+        .unwrap();
+        let resident_before = session.stats().resident_bytes;
+        let uncached_ref = lsm.levels[0].as_ref().unwrap();
+        run.with_pages(|pages| {
+            pages.seek(SeekFrom::Start(uncached_ref.page_ref.offset))?;
+            let mut byte = [0_u8; 1];
+            pages.read_exact(&mut byte)?;
+            byte[0] ^= 0x40;
+            pages.seek(SeekFrom::Start(uncached_ref.page_ref.offset))?;
+            pages.write_all(&byte)
+        })
+        .unwrap()
+        .unwrap();
+        let result = run.lookup_many_with_session_and_absence_policy(
+            &mut session,
+            &lsm,
+            TestPageKind::Primary,
+            &[b"z".to_vec()],
+            || Ok(vec![false]),
+        );
+        assert!(matches!(
+            result,
+            Err(ScratchRunError::PageDigestMismatch(_))
+        ));
+        assert_eq!(session.stats().resident_bytes, resident_before);
+        drop(run);
+        fs::remove_dir_all(uncached_root).unwrap();
+
+        let cached_root = scratch_root("lookup-session-tamper-cached");
+        let cached_archive = archive(&cached_root);
+        let run = ScratchRun::create_ephemeral(&cached_archive, TestOwner(Uuid::from_u128(0x55)))
+            .unwrap();
+        let lsm = run
+            .insert_many(
+                &ScratchLsmRoot::default(),
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"key".to_vec(), Some(b"value".to_vec()))]),
+            )
+            .unwrap();
+        let mut session = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        let lookup = |session: &mut ScratchLookupSession<TestPageKind>| {
+            run.lookup_many_with_session_and_absence_policy(
+                session,
+                &lsm,
+                TestPageKind::Primary,
+                &[b"key".to_vec()],
+                || Ok(vec![false]),
+            )
+        };
+        assert_eq!(lookup(&mut session).unwrap(), vec![Some(b"value".to_vec())]);
+        let cached_ref = lsm.levels[0].as_ref().unwrap();
+        run.with_pages(|pages| {
+            pages.seek(SeekFrom::Start(cached_ref.page_ref.offset))?;
+            let mut byte = [0_u8; 1];
+            pages.read_exact(&mut byte)?;
+            byte[0] ^= 0x20;
+            pages.seek(SeekFrom::Start(cached_ref.page_ref.offset))?;
+            pages.write_all(&byte)
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(lookup(&mut session).unwrap(), vec![Some(b"value".to_vec())]);
+        assert_eq!(session.stats().hits, 1);
+        let mut fresh = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        assert!(matches!(
+            lookup(&mut fresh),
+            Err(ScratchRunError::PageDigestMismatch(_))
+        ));
+        assert_eq!(fresh.stats().resident_bytes, 0);
+        drop(run);
+        fs::remove_dir_all(cached_root).unwrap();
+    }
+
+    #[test]
+    fn lookup_session_rejects_run_root_and_kind_rebinding() {
+        let root = scratch_root("lookup-session-binding");
+        let archive = archive(&root);
+        let run = ScratchRun::create_ephemeral(&archive, TestOwner(Uuid::from_u128(0x56))).unwrap();
+        let other_run =
+            ScratchRun::create_ephemeral(&archive, TestOwner(Uuid::from_u128(0x56))).unwrap();
+        let lsm = run
+            .insert_many(
+                &ScratchLsmRoot::default(),
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"key".to_vec(), Some(b"value".to_vec()))]),
+            )
+            .unwrap();
+        let rebound_root = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([(b"other".to_vec(), Some(b"value".to_vec()))]),
+            )
+            .unwrap();
+        let mut session = run
+            .lookup_session(&lsm, TestPageKind::Primary, usize::MAX)
+            .unwrap();
+        let keys = [b"key".to_vec()];
+        assert_eq!(
+            other_run.lookup_many_with_session_and_absence_policy(
+                &mut session,
+                &lsm,
+                TestPageKind::Primary,
+                &keys,
+                || Ok(vec![false]),
+            ),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+        assert_eq!(
+            run.lookup_many_with_session_and_absence_policy(
+                &mut session,
+                &rebound_root,
+                TestPageKind::Primary,
+                &keys,
+                || Ok(vec![false]),
+            ),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+        assert_eq!(
+            run.lookup_many_with_session_and_absence_policy(
+                &mut session,
+                &lsm,
+                TestPageKind::Other,
+                &keys,
+                || Ok(vec![false]),
+            ),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+        assert_eq!(session.stats(), ScratchLookupSessionStats::default());
+        drop(other_run);
+        drop(run);
         fs::remove_dir_all(root).unwrap();
     }
 
