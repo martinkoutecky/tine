@@ -19,7 +19,10 @@ pub use filesystem::{
 };
 pub use scratch::{
     census_retained_runs, reclaim_unreachable_retained_runs, RetainedRunCensus,
-    RetainedRunReclamation, ScratchConstructionBoundary, ScratchRetention, ScratchRun,
-    ScratchRunError, ScratchRunLifecycleStats, SCRATCH_BLOBS_FILE, SCRATCH_DIR, SCRATCH_LEASE_FILE,
-    SCRATCH_MARKER_FILE, SCRATCH_PAGES_FILE, SCRATCH_SCHEMA_VERSION,
+    RetainedRunReclamation, ScratchBlobRef, ScratchConstructionBoundary, ScratchLsmRoot,
+    ScratchOperationStats, ScratchPageRef, ScratchPageTag, ScratchRetention, ScratchRun,
+    ScratchRunError, ScratchRunLifecycleStats, ScratchSegmentRef, MAX_SCRATCH_BLOB_BYTES,
+    MAX_SCRATCH_PAGE_BYTES, SCRATCH_BLOBS_FILE, SCRATCH_DIR, SCRATCH_LEASE_FILE,
+    SCRATCH_LSM_LEVELS, SCRATCH_MARKER_FILE, SCRATCH_PAGES_FILE, SCRATCH_PAGE_SCHEMA_VERSION,
+    SCRATCH_SCHEMA_VERSION,
 };

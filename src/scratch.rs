@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::windows::fs::MetadataExt as _;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[cfg(windows)]
@@ -27,6 +28,10 @@ pub const SCRATCH_LEASE_FILE: &str = "lease";
 pub const SCRATCH_PAGES_FILE: &str = "pages.index";
 pub const SCRATCH_BLOBS_FILE: &str = "blobs.data";
 pub const SCRATCH_SCHEMA_VERSION: u32 = 13;
+pub const SCRATCH_PAGE_SCHEMA_VERSION: u32 = 1;
+pub const SCRATCH_LSM_LEVELS: usize = 32;
+pub const MAX_SCRATCH_PAGE_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_SCRATCH_BLOB_BYTES: usize = 256 * 1024 * 1024;
 
 const MAX_MARKER_BYTES: u64 = 4 * 1024;
 
@@ -56,6 +61,13 @@ pub enum ScratchRunError {
     UnsafeEntry(String),
     MalformedMarker(String),
     MalformedEncoding,
+    MalformedPage,
+    MalformedBlob,
+    PageTooLarge(usize),
+    PageDigestMismatch(ContentDigest),
+    BlobDigestMismatch(ContentDigest),
+    PageBindingMismatch,
+    IndexCapacity,
     Poisoned,
 }
 
@@ -66,6 +78,19 @@ impl fmt::Display for ScratchRunError {
             Self::UnsafeEntry(reason) => write!(f, "unsafe scratch entry: {reason}"),
             Self::MalformedMarker(run) => write!(f, "malformed scratch marker in {run}"),
             Self::MalformedEncoding => f.write_str("malformed or non-canonical scratch page"),
+            Self::MalformedPage => f.write_str("malformed or non-canonical scratch page"),
+            Self::MalformedBlob => f.write_str("malformed scratch blob"),
+            Self::PageTooLarge(length) => {
+                write!(f, "scratch page is too large: {length} bytes")
+            }
+            Self::PageDigestMismatch(digest) => {
+                write!(f, "scratch page digest mismatch for {digest}")
+            }
+            Self::BlobDigestMismatch(digest) => {
+                write!(f, "scratch blob digest mismatch for {digest}")
+            }
+            Self::PageBindingMismatch => f.write_str("scratch page reference is misbound"),
+            Self::IndexCapacity => f.write_str("scratch index exceeded its fixed capacity"),
             Self::Poisoned => f.write_str("scratch file lock was poisoned"),
         }
     }
@@ -126,6 +151,184 @@ pub struct ScratchRunLifecycleStats {
     pub unclassified_runs_preserved: usize,
 }
 
+/// Generic operation counts for one physical scratch run.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ScratchOperationStats {
+    pub page_reads: usize,
+    pub page_writes: usize,
+    pub page_bytes_read: usize,
+    pub page_bytes_written: usize,
+    pub max_page_bytes_read: usize,
+    pub blob_reads: usize,
+    pub blob_writes: usize,
+    pub blob_bytes_read: usize,
+    pub blob_bytes_written: usize,
+    pub point_reads: usize,
+    pub range_reads: usize,
+    pub scratch_syncs: usize,
+}
+
+#[derive(Debug, Default)]
+struct ScratchOperationCounters {
+    page_reads: AtomicUsize,
+    page_writes: AtomicUsize,
+    page_bytes_read: AtomicUsize,
+    page_bytes_written: AtomicUsize,
+    max_page_bytes_read: AtomicUsize,
+    blob_reads: AtomicUsize,
+    blob_writes: AtomicUsize,
+    blob_bytes_read: AtomicUsize,
+    blob_bytes_written: AtomicUsize,
+    point_reads: AtomicUsize,
+    range_reads: AtomicUsize,
+    // Deliberately has no increment site. Any future scratch sync must become
+    // visible to normal-flow regression gates.
+    scratch_syncs: AtomicUsize,
+}
+
+impl ScratchOperationCounters {
+    fn snapshot(&self) -> ScratchOperationStats {
+        ScratchOperationStats {
+            page_reads: self.page_reads.load(Ordering::Relaxed),
+            page_writes: self.page_writes.load(Ordering::Relaxed),
+            page_bytes_read: self.page_bytes_read.load(Ordering::Relaxed),
+            page_bytes_written: self.page_bytes_written.load(Ordering::Relaxed),
+            max_page_bytes_read: self.max_page_bytes_read.load(Ordering::Relaxed),
+            blob_reads: self.blob_reads.load(Ordering::Relaxed),
+            blob_writes: self.blob_writes.load(Ordering::Relaxed),
+            blob_bytes_read: self.blob_bytes_read.load(Ordering::Relaxed),
+            blob_bytes_written: self.blob_bytes_written.load(Ordering::Relaxed),
+            point_reads: self.point_reads.load(Ordering::Relaxed),
+            range_reads: self.range_reads.load(Ordering::Relaxed),
+            scratch_syncs: self.scratch_syncs.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// A caller-owned page-kind tag serialized verbatim into scratch envelopes.
+pub trait ScratchPageTag: Copy + Eq + Serialize + DeserializeOwned {
+    /// The caller's widest tag for saturation-only encoded-root bound proofs.
+    #[doc(hidden)]
+    fn saturation_tag() -> Self;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchPageRef<Tag> {
+    pub offset: u64,
+    pub encoded_len: u32,
+    pub digest: ContentDigest,
+    pub kind: Tag,
+    pub key_min: Vec<u8>,
+    pub key_max: Vec<u8>,
+}
+
+impl<Tag> ScratchPageRef<Tag> {
+    pub fn key_min(&self) -> &[u8] {
+        &self.key_min
+    }
+
+    pub fn key_max(&self) -> &[u8] {
+        &self.key_max
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScratchPageEnvelope<Tag> {
+    schema_version: u32,
+    kind: Tag,
+    key_min: Vec<u8>,
+    key_max: Vec<u8>,
+    payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchBlobRef {
+    pub offset: u64,
+    pub encoded_len: u32,
+    pub digest: ContentDigest,
+}
+
+impl ScratchBlobRef {
+    pub const fn digest(&self) -> ContentDigest {
+        self.digest
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScratchRecord {
+    key: Vec<u8>,
+    value: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScratchSegment<Tag> {
+    schema_version: u32,
+    kind: Tag,
+    generation: u64,
+    entries: Vec<ScratchRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchSegmentRef<Tag> {
+    pub generation: u64,
+    pub entry_count: u64,
+    pub page_ref: ScratchPageRef<Tag>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchLsmRoot<Tag> {
+    pub next_generation: u64,
+    pub levels: Vec<Option<ScratchSegmentRef<Tag>>>,
+}
+
+impl<Tag: Clone> Default for ScratchLsmRoot<Tag> {
+    fn default() -> Self {
+        Self {
+            next_generation: 0,
+            levels: vec![None; SCRATCH_LSM_LEVELS],
+        }
+    }
+}
+
+impl<Tag: ScratchPageTag> ScratchPageRef<Tag> {
+    #[doc(hidden)]
+    pub fn saturated_for_test(key_bytes: usize) -> Self {
+        Self {
+            offset: u64::MAX,
+            encoded_len: u32::MAX,
+            digest: ContentDigest::of(b"saturated scratch page"),
+            kind: Tag::saturation_tag(),
+            key_min: vec![0xff; key_bytes],
+            key_max: vec![0xff; key_bytes],
+        }
+    }
+}
+
+impl<Tag: ScratchPageTag> ScratchLsmRoot<Tag> {
+    /// Every fixed binary-carry level occupied with widest encodable fields.
+    #[doc(hidden)]
+    pub fn saturated_for_test(key_bytes: usize) -> Self {
+        Self {
+            next_generation: u64::MAX,
+            levels: vec![
+                Some(ScratchSegmentRef {
+                    generation: u64::MAX,
+                    entry_count: u64::MAX,
+                    page_ref: ScratchPageRef::saturated_for_test(key_bytes),
+                });
+                SCRATCH_LSM_LEVELS
+            ],
+        }
+    }
+}
+
 /// One exclusively leased physical scratch run and its raw address spaces.
 pub struct ScratchRun<Owner> {
     namespace: Dir,
@@ -135,6 +338,7 @@ pub struct ScratchRun<Owner> {
     lease: fs::File,
     pages: Mutex<fs::File>,
     blobs: Mutex<fs::File>,
+    operation_counters: ScratchOperationCounters,
     lifecycle_stats: ScratchRunLifecycleStats,
 }
 
@@ -272,6 +476,7 @@ where
             lease,
             pages: Mutex::new(pages),
             blobs: Mutex::new(blobs),
+            operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
     }
@@ -313,6 +518,7 @@ where
             lease,
             pages: Mutex::new(pages),
             blobs: Mutex::new(blobs),
+            operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
     }
@@ -347,6 +553,7 @@ where
                 lease,
                 pages: Mutex::new(pages),
                 blobs: Mutex::new(blobs),
+                operation_counters: ScratchOperationCounters::default(),
                 lifecycle_stats: ScratchRunLifecycleStats::default(),
             };
             migrated.copy_exact_from(self)?;
@@ -397,6 +604,458 @@ where
     ) -> Result<T, ScratchRunError> {
         let mut file = self.blobs.lock().map_err(|_| ScratchRunError::Poisoned)?;
         Ok(operation(&mut file))
+    }
+
+    pub fn operation_stats(&self) -> ScratchOperationStats {
+        self.operation_counters.snapshot()
+    }
+
+    /// Record caller-defined logical point operations implemented with generic
+    /// scratch pages rather than the storage-owned LSM codec.
+    pub fn record_point_reads(&self, count: usize) {
+        self.operation_counters
+            .point_reads
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Record one caller-defined logical range operation implemented with
+    /// generic scratch pages rather than the storage-owned LSM codec.
+    pub fn record_range_read(&self) {
+        self.operation_counters
+            .range_reads
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn append_blob(&self, bytes: &[u8]) -> Result<ScratchBlobRef, ScratchRunError> {
+        if bytes.is_empty() || bytes.len() > MAX_SCRATCH_BLOB_BYTES {
+            return Err(ScratchRunError::MalformedBlob);
+        }
+        let digest = ContentDigest::of(bytes);
+        let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedBlob)?;
+        let offset = self.with_blobs(|file| -> Result<_, ScratchRunError> {
+            let offset = file.seek(SeekFrom::End(0))?;
+            file.write_all(bytes)?;
+            Ok(offset)
+        })??;
+        self.operation_counters
+            .blob_writes
+            .fetch_add(1, Ordering::Relaxed);
+        self.operation_counters
+            .blob_bytes_written
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        Ok(ScratchBlobRef {
+            offset,
+            encoded_len,
+            digest,
+        })
+    }
+
+    pub fn read_blob(&self, blob_ref: &ScratchBlobRef) -> Result<Vec<u8>, ScratchRunError> {
+        let length =
+            usize::try_from(blob_ref.encoded_len).map_err(|_| ScratchRunError::MalformedBlob)?;
+        if length == 0 || length > MAX_SCRATCH_BLOB_BYTES {
+            return Err(ScratchRunError::MalformedBlob);
+        }
+        let mut bytes = vec![0_u8; length];
+        self.with_blobs(|file| -> Result<_, ScratchRunError> {
+            file.seek(SeekFrom::Start(blob_ref.offset))?;
+            file.read_exact(&mut bytes)
+                .map_err(|_| ScratchRunError::MalformedBlob)
+        })??;
+        if ContentDigest::of(&bytes) != blob_ref.digest {
+            return Err(ScratchRunError::BlobDigestMismatch(blob_ref.digest));
+        }
+        self.operation_counters
+            .blob_reads
+            .fetch_add(1, Ordering::Relaxed);
+        self.operation_counters
+            .blob_bytes_read
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        Ok(bytes)
+    }
+
+    pub fn append_page<Tag, Value>(
+        &self,
+        kind: Tag,
+        key_min: Vec<u8>,
+        key_max: Vec<u8>,
+        value: &Value,
+    ) -> Result<ScratchPageRef<Tag>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+        Value: Serialize,
+    {
+        if key_min.is_empty() || key_min > key_max {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        let payload = encode_page_canonical(value)?;
+        let envelope = ScratchPageEnvelope {
+            schema_version: SCRATCH_PAGE_SCHEMA_VERSION,
+            kind,
+            key_min: key_min.clone(),
+            key_max: key_max.clone(),
+            payload,
+        };
+        let bytes = encode_page_canonical(&envelope)?;
+        if bytes.len() > MAX_SCRATCH_PAGE_BYTES {
+            return Err(ScratchRunError::PageTooLarge(bytes.len()));
+        }
+        let digest = ContentDigest::of(&bytes);
+        let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedPage)?;
+        let offset = self.with_pages(|file| -> Result<_, ScratchRunError> {
+            let offset = file.seek(SeekFrom::End(0))?;
+            file.write_all(&bytes)?;
+            Ok(offset)
+        })??;
+        self.operation_counters
+            .page_writes
+            .fetch_add(1, Ordering::Relaxed);
+        self.operation_counters
+            .page_bytes_written
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        Ok(ScratchPageRef {
+            offset,
+            encoded_len,
+            digest,
+            kind,
+            key_min,
+            key_max,
+        })
+    }
+
+    pub fn read_page<Tag, Value>(
+        &self,
+        page_ref: &ScratchPageRef<Tag>,
+        expected_kind: Tag,
+    ) -> Result<Value, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+        Value: DeserializeOwned + Serialize,
+    {
+        if page_ref.kind != expected_kind {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        let length =
+            usize::try_from(page_ref.encoded_len).map_err(|_| ScratchRunError::MalformedPage)?;
+        if length == 0 || length > MAX_SCRATCH_PAGE_BYTES {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        let mut bytes = vec![0_u8; length];
+        self.with_pages(|file| -> Result<_, ScratchRunError> {
+            file.seek(SeekFrom::Start(page_ref.offset))?;
+            file.read_exact(&mut bytes)
+                .map_err(|_| ScratchRunError::MalformedPage)
+        })??;
+        if ContentDigest::of(&bytes) != page_ref.digest {
+            return Err(ScratchRunError::PageDigestMismatch(page_ref.digest));
+        }
+        let envelope: ScratchPageEnvelope<Tag> = decode_page_canonical(&bytes)?;
+        if envelope.schema_version != SCRATCH_PAGE_SCHEMA_VERSION
+            || envelope.kind != expected_kind
+            || envelope.key_min != page_ref.key_min
+            || envelope.key_max != page_ref.key_max
+        {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        self.operation_counters
+            .page_reads
+            .fetch_add(1, Ordering::Relaxed);
+        self.operation_counters
+            .page_bytes_read
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        self.operation_counters
+            .max_page_bytes_read
+            .fetch_max(bytes.len(), Ordering::Relaxed);
+        decode_page_canonical(&envelope.payload)
+    }
+
+    pub fn insert_many<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        records: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    ) -> Result<ScratchLsmRoot<Tag>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        if records.is_empty() {
+            return Ok(root.clone());
+        }
+        validate_lsm_root(root)?;
+        let generation = root
+            .next_generation
+            .checked_add(1)
+            .ok_or(ScratchRunError::MalformedPage)?;
+        let mut merged = records.clone();
+        let mut next = root.clone();
+        next.next_generation = generation;
+        for level in 0..SCRATCH_LSM_LEVELS {
+            if let Some(existing) = next.levels[level].take() {
+                let old = self.read_segment(kind, &existing)?;
+                for record in old.entries {
+                    merged.entry(record.key).or_insert(record.value);
+                }
+                continue;
+            }
+            let entries = merged
+                .into_iter()
+                .map(|(key, value)| ScratchRecord { key, value })
+                .collect::<Vec<_>>();
+            let segment = ScratchSegment {
+                schema_version: SCRATCH_PAGE_SCHEMA_VERSION,
+                kind,
+                generation,
+                entries,
+            };
+            validate_segment(&segment)?;
+            let key_min = segment
+                .entries
+                .first()
+                .expect("nonempty insertion")
+                .key
+                .clone();
+            let key_max = segment
+                .entries
+                .last()
+                .expect("nonempty insertion")
+                .key
+                .clone();
+            let page_ref = self.append_page(kind, key_min, key_max, &segment)?;
+            next.levels[level] = Some(ScratchSegmentRef {
+                generation,
+                entry_count: segment.entries.len() as u64,
+                page_ref,
+            });
+            return Ok(next);
+        }
+        Err(ScratchRunError::IndexCapacity)
+    }
+
+    pub fn lookup<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        self.lookup_with_known_absent(root, kind, key, false)
+    }
+
+    /// Perform one authenticated lookup while allowing a caller-owned policy
+    /// filter to prove the point absent without reading segment pages.
+    pub fn lookup_with_known_absent<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        key: &[u8],
+        known_absent: bool,
+    ) -> Result<Option<Vec<u8>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        self.lookup_with_absence_policy(root, kind, key, || Ok(known_absent))
+    }
+
+    /// Validate and account for a point lookup before consulting a caller-owned
+    /// absence policy, then perform the generic authenticated lookup if needed.
+    pub fn lookup_with_absence_policy<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        key: &[u8],
+        absence_policy: impl FnOnce() -> Result<bool, ScratchRunError>,
+    ) -> Result<Option<Vec<u8>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        validate_lsm_root(root)?;
+        self.operation_counters
+            .point_reads
+            .fetch_add(1, Ordering::Relaxed);
+        let known_absent = absence_policy()?;
+        if known_absent {
+            return Ok(None);
+        }
+        let mut segments = root
+            .levels
+            .iter()
+            .flatten()
+            .collect::<Vec<&ScratchSegmentRef<Tag>>>();
+        segments.sort_unstable_by_key(|segment| std::cmp::Reverse(segment.generation));
+        for segment_ref in segments {
+            if key < segment_ref.page_ref.key_min.as_slice()
+                || key > segment_ref.page_ref.key_max.as_slice()
+            {
+                continue;
+            }
+            let segment = self.read_segment(kind, segment_ref)?;
+            if let Ok(index) = segment
+                .entries
+                .binary_search_by(|record| record.key.as_slice().cmp(key))
+            {
+                return Ok(segment.entries[index].value.clone());
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn lookup_many<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Option<Vec<u8>>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        self.lookup_many_with_known_absent(root, kind, keys, &vec![false; keys.len()])
+    }
+
+    /// Batched authenticated lookup with caller-owned, per-key absence proofs.
+    pub fn lookup_many_with_known_absent<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        keys: &[Vec<u8>],
+        known_absent: &[bool],
+    ) -> Result<Vec<Option<Vec<u8>>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        self.lookup_many_with_absence_policy(root, kind, keys, || Ok(known_absent.to_vec()))
+    }
+
+    /// Validate and account for a batched lookup before consulting caller-owned
+    /// absence policy, while reading each relevant segment at most once.
+    pub fn lookup_many_with_absence_policy<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        keys: &[Vec<u8>],
+        absence_policy: impl FnOnce() -> Result<Vec<bool>, ScratchRunError>,
+    ) -> Result<Vec<Option<Vec<u8>>>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        validate_lsm_root(root)?;
+        self.operation_counters
+            .point_reads
+            .fetch_add(keys.len(), Ordering::Relaxed);
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let known_absent = absence_policy()?;
+        if known_absent.len() != keys.len() {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        let mut resolved = known_absent;
+        let mut values = vec![None; keys.len()];
+        let mut segments = root
+            .levels
+            .iter()
+            .flatten()
+            .collect::<Vec<&ScratchSegmentRef<Tag>>>();
+        segments.sort_unstable_by_key(|segment| std::cmp::Reverse(segment.generation));
+        for segment_ref in segments {
+            let selected = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, key)| {
+                    (!resolved[index]
+                        && key.as_slice() >= segment_ref.page_ref.key_min.as_slice()
+                        && key.as_slice() <= segment_ref.page_ref.key_max.as_slice())
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            if selected.is_empty() {
+                continue;
+            }
+            let segment = self.read_segment(kind, segment_ref)?;
+            for index in selected {
+                if let Ok(record_index) = segment
+                    .entries
+                    .binary_search_by(|record| record.key.as_slice().cmp(keys[index].as_slice()))
+                {
+                    values[index] = segment.entries[record_index].value.clone();
+                    resolved[index] = true;
+                }
+            }
+        }
+        Ok(values)
+    }
+
+    pub fn scan_prefix<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+        prefix: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        validate_lsm_root(root)?;
+        self.operation_counters
+            .range_reads
+            .fetch_add(1, Ordering::Relaxed);
+        let mut segments = root
+            .levels
+            .iter()
+            .flatten()
+            .collect::<Vec<&ScratchSegmentRef<Tag>>>();
+        segments.sort_unstable_by_key(|segment| segment.generation);
+        let mut merged = BTreeMap::<Vec<u8>, Option<Vec<u8>>>::new();
+        for segment_ref in segments {
+            let segment = self.read_segment(kind, segment_ref)?;
+            for record in segment.entries {
+                if record.key.starts_with(prefix) {
+                    merged.insert(record.key, record.value);
+                }
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect())
+    }
+
+    pub fn materialize<Tag>(
+        &self,
+        root: &ScratchLsmRoot<Tag>,
+        kind: Tag,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        self.scan_prefix(root, kind, &[])
+    }
+
+    fn read_segment<Tag>(
+        &self,
+        kind: Tag,
+        segment_ref: &ScratchSegmentRef<Tag>,
+    ) -> Result<ScratchSegment<Tag>, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+    {
+        let segment: ScratchSegment<Tag> = self.read_page(&segment_ref.page_ref, kind)?;
+        validate_segment(&segment)?;
+        if segment.kind != kind
+            || segment.generation != segment_ref.generation
+            || segment.entries.len() as u64 != segment_ref.entry_count
+            || segment
+                .entries
+                .first()
+                .is_none_or(|record| record.key != segment_ref.page_ref.key_min)
+            || segment
+                .entries
+                .last()
+                .is_none_or(|record| record.key != segment_ref.page_ref.key_max)
+        {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        Ok(segment)
     }
 
     pub fn clone_pages_file(&self) -> Result<fs::File, ScratchRunError> {
@@ -914,6 +1573,54 @@ fn require_regular_entry(entry: &cap_std::fs::DirEntry, name: &str) -> Result<()
     Ok(())
 }
 
+fn validate_lsm_root<Tag>(root: &ScratchLsmRoot<Tag>) -> Result<(), ScratchRunError> {
+    if root.levels.len() != SCRATCH_LSM_LEVELS {
+        return Err(ScratchRunError::MalformedPage);
+    }
+    for segment in root.levels.iter().flatten() {
+        if segment.generation == 0
+            || segment.generation > root.next_generation
+            || segment.entry_count == 0
+        {
+            return Err(ScratchRunError::MalformedPage);
+        }
+    }
+    Ok(())
+}
+
+fn validate_segment<Tag>(segment: &ScratchSegment<Tag>) -> Result<(), ScratchRunError> {
+    if segment.schema_version != SCRATCH_PAGE_SCHEMA_VERSION
+        || segment.generation == 0
+        || segment.entries.is_empty()
+    {
+        return Err(ScratchRunError::MalformedPage);
+    }
+    let mut previous: Option<&[u8]> = None;
+    for record in &segment.entries {
+        if record.key.is_empty()
+            || previous.is_some_and(|previous| previous >= record.key.as_slice())
+        {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        previous = Some(&record.key);
+    }
+    Ok(())
+}
+
+fn encode_page_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>, ScratchRunError> {
+    postcard::to_allocvec(value).map_err(|_| ScratchRunError::MalformedPage)
+}
+
+fn decode_page_canonical<T: DeserializeOwned + Serialize>(
+    bytes: &[u8],
+) -> Result<T, ScratchRunError> {
+    let value: T = postcard::from_bytes(bytes).map_err(|_| ScratchRunError::MalformedPage)?;
+    if encode_page_canonical(&value)? != bytes {
+        return Err(ScratchRunError::MalformedPage);
+    }
+    Ok(value)
+}
+
 fn encode_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>, ScratchRunError> {
     postcard::to_allocvec(value).map_err(|_| ScratchRunError::MalformedEncoding)
 }
@@ -996,6 +1703,18 @@ mod tests {
     #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
     #[serde(transparent)]
     struct TestOwner(Uuid);
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+    enum TestPageKind {
+        Primary,
+        Other,
+    }
+
+    impl ScratchPageTag for TestPageKind {
+        fn saturation_tag() -> Self {
+            Self::Other
+        }
+    }
 
     fn scratch_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("tine-storage-scratch-{label}-{}", Uuid::new_v4()))
@@ -1092,6 +1811,237 @@ mod tests {
         drop(reopened);
         fs::remove_dir_all(source_root).unwrap();
         fs::remove_dir_all(destination_root).unwrap();
+    }
+
+    #[test]
+    fn page_and_blob_refusal_is_fail_closed_and_read_only() {
+        let root = scratch_root("data-refusal");
+        let archive = archive(&root);
+        let run =
+            ScratchRun::create_retained(&archive, TestOwner(Uuid::from_u128(0xfeed))).unwrap();
+        let run_id = run.run_id();
+        let page_ref = run
+            .append_page(TestPageKind::Primary, b"a".to_vec(), b"z".to_vec(), &7_u64)
+            .unwrap();
+        let blob_ref = run.append_blob(b"authenticated blob").unwrap();
+
+        let assert_unchanged = |before: &BTreeMap<&'static str, Vec<u8>>| {
+            assert_eq!(run_snapshot(&root, run_id), *before);
+        };
+        let baseline = run_snapshot(&root, run_id);
+
+        assert_eq!(
+            run.append_page(TestPageKind::Primary, Vec::new(), b"z".to_vec(), &7_u64),
+            Err(ScratchRunError::MalformedPage)
+        );
+        assert_eq!(run.append_blob(&[]), Err(ScratchRunError::MalformedBlob));
+        assert_unchanged(&baseline);
+
+        let mut wrong_kind = page_ref.clone();
+        wrong_kind.kind = TestPageKind::Other;
+        assert_eq!(
+            run.read_page::<_, u64>(&wrong_kind, TestPageKind::Primary),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+        assert_unchanged(&baseline);
+
+        let mut wrong_page_digest = page_ref.clone();
+        wrong_page_digest.digest = ContentDigest::of(b"wrong page");
+        assert!(matches!(
+            run.read_page::<_, u64>(&wrong_page_digest, TestPageKind::Primary),
+            Err(ScratchRunError::PageDigestMismatch(_))
+        ));
+        assert_unchanged(&baseline);
+
+        let mut wrong_page_length = page_ref.clone();
+        wrong_page_length.encoded_len = 0;
+        assert_eq!(
+            run.read_page::<_, u64>(&wrong_page_length, TestPageKind::Primary),
+            Err(ScratchRunError::MalformedPage)
+        );
+        assert_unchanged(&baseline);
+
+        let mut wrong_page_offset = page_ref.clone();
+        wrong_page_offset.offset = u64::MAX;
+        assert!(matches!(
+            run.read_page::<_, u64>(&wrong_page_offset, TestPageKind::Primary),
+            Err(ScratchRunError::Io(_)) | Err(ScratchRunError::MalformedPage)
+        ));
+        assert_unchanged(&baseline);
+
+        let mut wrong_page_range = page_ref.clone();
+        wrong_page_range.key_min = b"b".to_vec();
+        assert_eq!(
+            run.read_page::<_, u64>(&wrong_page_range, TestPageKind::Primary),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+        assert_unchanged(&baseline);
+
+        let noncanonical_payload = vec![0x80, 0x00];
+        let noncanonical_envelope = ScratchPageEnvelope {
+            schema_version: SCRATCH_PAGE_SCHEMA_VERSION,
+            kind: TestPageKind::Primary,
+            key_min: b"n".to_vec(),
+            key_max: b"n".to_vec(),
+            payload: noncanonical_payload,
+        };
+        let noncanonical_bytes = encode_page_canonical(&noncanonical_envelope).unwrap();
+        let noncanonical_ref = run
+            .with_pages(|pages| -> Result<_, ScratchRunError> {
+                let offset = pages.seek(SeekFrom::End(0))?;
+                pages.write_all(&noncanonical_bytes)?;
+                Ok(ScratchPageRef {
+                    offset,
+                    encoded_len: noncanonical_bytes.len() as u32,
+                    digest: ContentDigest::of(&noncanonical_bytes),
+                    kind: TestPageKind::Primary,
+                    key_min: b"n".to_vec(),
+                    key_max: b"n".to_vec(),
+                })
+            })
+            .unwrap()
+            .unwrap();
+        let before_noncanonical_read = run_snapshot(&root, run_id);
+        assert_eq!(
+            run.read_page::<_, u64>(&noncanonical_ref, TestPageKind::Primary),
+            Err(ScratchRunError::MalformedPage)
+        );
+        assert_unchanged(&before_noncanonical_read);
+
+        let mut wrong_blob_digest = blob_ref.clone();
+        wrong_blob_digest.digest = ContentDigest::of(b"wrong blob");
+        assert!(matches!(
+            run.read_blob(&wrong_blob_digest),
+            Err(ScratchRunError::BlobDigestMismatch(_))
+        ));
+        assert_unchanged(&before_noncanonical_read);
+
+        let mut wrong_blob_length = blob_ref.clone();
+        wrong_blob_length.encoded_len = 0;
+        assert_eq!(
+            run.read_blob(&wrong_blob_length),
+            Err(ScratchRunError::MalformedBlob)
+        );
+        assert_unchanged(&before_noncanonical_read);
+
+        let mut wrong_blob_offset = blob_ref.clone();
+        wrong_blob_offset.offset = u64::MAX;
+        assert!(matches!(
+            run.read_blob(&wrong_blob_offset),
+            Err(ScratchRunError::Io(_)) | Err(ScratchRunError::MalformedBlob)
+        ));
+        assert_unchanged(&before_noncanonical_read);
+
+        run.with_blobs(|blobs| blobs.set_len(blob_ref.encoded_len as u64 - 1))
+            .unwrap()
+            .unwrap();
+        let truncated = run_snapshot(&root, run_id);
+        assert_eq!(
+            run.read_blob(&blob_ref),
+            Err(ScratchRunError::MalformedBlob)
+        );
+        assert_unchanged(&truncated);
+
+        drop(run);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_lsm_preserves_merge_range_batch_and_carry_semantics() {
+        let root = scratch_root("bounded-lsm");
+        let archive = archive(&root);
+        let run =
+            ScratchRun::create_ephemeral(&archive, TestOwner(Uuid::from_u128(0xcafe))).unwrap();
+        let original = (0_u8..64)
+            .map(|index| {
+                (
+                    format!("key-{index:02}").into_bytes(),
+                    Some(format!("old-{index:02}").into_bytes()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut lsm = run
+            .insert_many(&ScratchLsmRoot::default(), TestPageKind::Primary, &original)
+            .unwrap();
+        lsm = run
+            .insert_many(
+                &lsm,
+                TestPageKind::Primary,
+                &BTreeMap::from([
+                    (b"key-00".to_vec(), Some(b"new-00".to_vec())),
+                    (b"key-32".to_vec(), None),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(
+            run.lookup(&lsm, TestPageKind::Primary, b"key-00").unwrap(),
+            Some(b"new-00".to_vec())
+        );
+        assert_eq!(
+            run.lookup(&lsm, TestPageKind::Primary, b"key-32").unwrap(),
+            None
+        );
+        assert_eq!(
+            run.scan_prefix(&lsm, TestPageKind::Primary, b"key-0")
+                .unwrap()
+                .first(),
+            Some(&(b"key-00".to_vec(), b"new-00".to_vec()))
+        );
+        let keys = (0_u8..64)
+            .map(|index| format!("key-{index:02}").into_bytes())
+            .chain([b"absent".to_vec(), b"key-00".to_vec()])
+            .collect::<Vec<_>>();
+        let expected = keys
+            .iter()
+            .map(|key| run.lookup(&lsm, TestPageKind::Primary, key).unwrap())
+            .collect::<Vec<_>>();
+        let before = run.operation_stats();
+        let batched = run.lookup_many(&lsm, TestPageKind::Primary, &keys).unwrap();
+        let after = run.operation_stats();
+        assert_eq!(batched, expected);
+        assert!(after.page_reads - before.page_reads <= lsm.levels.iter().flatten().count());
+
+        let mut carry = ScratchLsmRoot::default();
+        for index in 0_u64..31 {
+            carry = run
+                .insert_many(
+                    &carry,
+                    TestPageKind::Other,
+                    &BTreeMap::from([(
+                        index.to_be_bytes().to_vec(),
+                        Some(index.to_be_bytes().to_vec()),
+                    )]),
+                )
+                .unwrap();
+        }
+        let before = run.operation_stats();
+        carry = run
+            .insert_many(
+                &carry,
+                TestPageKind::Other,
+                &BTreeMap::from([(
+                    31_u64.to_be_bytes().to_vec(),
+                    Some(31_u64.to_be_bytes().to_vec()),
+                )]),
+            )
+            .unwrap();
+        let after = run.operation_stats();
+        let reads = after.page_reads - before.page_reads;
+        let writes = after.page_writes - before.page_writes;
+        let bytes = (after.page_bytes_read - before.page_bytes_read)
+            + (after.page_bytes_written - before.page_bytes_written);
+        assert_eq!(reads, 5);
+        assert_eq!(writes, 1);
+        assert!(reads + writes <= SCRATCH_LSM_LEVELS + 1);
+        assert!(bytes <= (SCRATCH_LSM_LEVELS + 1) * MAX_SCRATCH_PAGE_BYTES);
+        assert_eq!(
+            run.materialize(&carry, TestPageKind::Other).unwrap().len(),
+            32
+        );
+
+        drop(run);
+        assert!(!root.join(SCRATCH_DIR).exists() || namespace_names(&root).is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
