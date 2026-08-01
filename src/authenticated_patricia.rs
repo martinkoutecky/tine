@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ContentDigest;
 use crate::filesystem::{read_optional_regular, FilesystemError};
-#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+#[cfg(any(test, feature = "test-support"))]
 use crate::packed_patricia::corrupt_packed_node_for_test;
 #[cfg(test)]
 use crate::packed_patricia::PackedPatriciaPublicationWork;
@@ -438,9 +438,10 @@ impl PatriciaIndexStore {
     }
 
     /// Test-support seam for proving that the adapter rejects corrupted bytes
-    /// beneath an existing packed content-addressed path. This method is not
-    /// compiled into release builds.
-    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+    /// beneath an existing packed content-addressed path. This method remains
+    /// unavailable unless the crate is built for its own tests or with the
+    /// explicit `test-support` feature.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn corrupt_packed_node_for_test(&self, digest: ContentDigest) -> Result<(), PatriciaError> {
         corrupt_packed_node_for_test(&self.nodes, digest).map_err(map_packed_patricia_error)?;
         *self.packed.lock().map_err(|_| PatriciaError::Malformed)? = None;
