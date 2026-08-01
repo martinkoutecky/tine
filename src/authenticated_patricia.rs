@@ -4,12 +4,14 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 
 use super::ContentDigest;
 use crate::filesystem::{read_optional_regular, FilesystemError};
+use crate::packed_patricia::{PackedPatriciaCatalog, PackedPatriciaError};
 
 /// Opaque publication failure returned by the policy-owning Patricia adapter.
 pub struct PatriciaPublicationError(Box<dyn Any + Send>);
@@ -135,6 +137,7 @@ struct Counters {
 pub struct PatriciaIndexStore {
     nodes: Dir,
     publisher: Box<dyn PatriciaNodePublisher>,
+    packed: OnceLock<Option<PackedPatriciaCatalog>>,
     counters: Counters,
 }
 
@@ -298,6 +301,7 @@ impl PatriciaIndexStore {
         Self {
             nodes,
             publisher: Box::new(publisher),
+            packed: OnceLock::new(),
             counters: Counters::default(),
         }
     }
@@ -309,6 +313,7 @@ impl PatriciaIndexStore {
         Ok(Self {
             nodes: self.nodes.try_clone()?,
             publisher: Box::new(publisher),
+            packed: OnceLock::new(),
             counters: Counters::default(),
         })
     }
@@ -1089,12 +1094,23 @@ impl PatriciaIndexStore {
     }
 
     fn read_node(&self, digest: ContentDigest) -> Result<Node, PatriciaError> {
-        let bytes =
-            read_optional_regular(&self.nodes, &node_filename(digest), MAX_NODE_BYTES, None)?
-                .ok_or(PatriciaError::MissingNode(digest))?;
-        if ContentDigest::of(&bytes) != digest {
+        let loose =
+            read_optional_regular(&self.nodes, &node_filename(digest), MAX_NODE_BYTES, None)?;
+        if loose
+            .as_ref()
+            .is_some_and(|bytes| ContentDigest::of(bytes) != digest)
+        {
             return Err(PatriciaError::PathMismatch(digest));
         }
+        let packed = self.read_packed_node(digest)?;
+        let bytes = match (loose, packed) {
+            (Some(loose), Some(packed)) if loose != packed => {
+                return Err(PatriciaError::PathMismatch(digest));
+            }
+            (Some(loose), _) => loose,
+            (None, Some(packed)) => packed.to_vec(),
+            (None, None) => return Err(PatriciaError::MissingNode(digest)),
+        };
         let node: Node = postcard::from_bytes(&bytes).map_err(|_| PatriciaError::Malformed)?;
         validate_node(&node)?;
         if postcard::to_allocvec(&node).map_err(|_| PatriciaError::Malformed)? != bytes {
@@ -1105,6 +1121,36 @@ impl PatriciaIndexStore {
             .bytes_read
             .fetch_add(bytes.len(), Ordering::Relaxed);
         Ok(node)
+    }
+
+    fn read_packed_node(&self, digest: ContentDigest) -> Result<Option<&[u8]>, PatriciaError> {
+        if self.packed.get().is_none() {
+            let discovered =
+                PackedPatriciaCatalog::discover(&self.nodes).map_err(map_packed_patricia_error)?;
+            // A concurrent first read may win this race. Whichever completed
+            // discovery installs first defines this store's atomic before- or
+            // after-head snapshot; callers reopen to observe later authority.
+            let _ = self.packed.set(discovered);
+        }
+        Ok(self
+            .packed
+            .get()
+            .expect("packed discovery initialized")
+            .as_ref()
+            .and_then(|catalog| catalog.get(digest)))
+    }
+}
+
+fn map_packed_patricia_error(error: PackedPatriciaError) -> PatriciaError {
+    match error {
+        PackedPatriciaError::Filesystem(error) => PatriciaError::Filesystem(error),
+        PackedPatriciaError::Publication(error) => PatriciaError::Publication(error),
+        PackedPatriciaError::PathMismatch(digest) => PatriciaError::PathMismatch(digest),
+        PackedPatriciaError::Empty
+        | PackedPatriciaError::TooManyEntries
+        | PackedPatriciaError::EntryTooLarge(_)
+        | PackedPatriciaError::PackTooLarge
+        | PackedPatriciaError::Malformed => PatriciaError::Malformed,
     }
 }
 
@@ -1453,6 +1499,27 @@ mod tests {
         records
     }
 
+    fn publish_cataloged_nodes(
+        dir: &Dir,
+        nodes: &BTreeMap<ContentDigest, Vec<u8>>,
+        entries_per_pack: usize,
+    ) {
+        let mut packs = Vec::new();
+        for chunk in nodes.iter().collect::<Vec<_>>().chunks(entries_per_pack) {
+            let entries = chunk
+                .iter()
+                .map(|(digest, bytes)| (**digest, (*bytes).clone()))
+                .collect();
+            let publication =
+                crate::packed_patricia::PackedPatriciaPublication::build(&entries).unwrap();
+            packs.push(publication.publish(dir, &ExactPublisher).unwrap());
+        }
+        let catalog =
+            crate::packed_patricia::PackedPatriciaCatalogPublication::build(&packs).unwrap();
+        let catalog = catalog.publish(dir, &ExactPublisher).unwrap();
+        crate::packed_patricia::publish_catalog_head(dir, &catalog, &ExactPublisher).unwrap();
+    }
+
     #[test]
     fn packed_primitive_reopens_a_real_patricia_history_semantically() {
         const RECORDS: usize = 256;
@@ -1500,6 +1567,113 @@ mod tests {
         drop(loose);
         fs::remove_dir_all(loose_path).unwrap();
         fs::remove_dir_all(pack_path).unwrap();
+    }
+
+    #[test]
+    fn adapter_is_differential_for_legacy_packed_mixed_and_loose_advancement() {
+        const RECORDS: usize = 192;
+
+        let (legacy_path, legacy) = store("adapter-legacy-source");
+        let expected = (0..RECORDS)
+            .map(|index| {
+                (
+                    format!("pages/adapter-α-{index:04}.md").into_bytes(),
+                    format!("值-{index:04}").into_bytes(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let root = legacy
+            .insert_many(PatriciaIndexRoot::empty(), &expected)
+            .unwrap();
+        let reachable = reachable_node_bytes(&legacy, [root]);
+        let legacy_file_count = fs::read_dir(legacy_path.join("nodes")).unwrap().count();
+        drop(legacy);
+
+        let legacy_root = Dir::open_ambient_dir(&legacy_path, ambient_authority()).unwrap();
+        let legacy = PatriciaIndexStore::new(
+            open_dir_nofollow(&legacy_root, "nodes").unwrap(),
+            ExactPublisher,
+        );
+        assert_eq!(all_records(&legacy, root), expected);
+        assert_eq!(
+            fs::read_dir(legacy_path.join("nodes")).unwrap().count(),
+            legacy_file_count,
+            "head absence must not migrate, delete, or eagerly repack legacy history"
+        );
+
+        let packed_path =
+            std::env::temp_dir().join(format!("tine-patricia-adapter-packed-{}", Uuid::new_v4()));
+        fs::create_dir(&packed_path).unwrap();
+        let packed_dir = Dir::open_ambient_dir(&packed_path, ambient_authority()).unwrap();
+        publish_cataloged_nodes(&packed_dir, &reachable, reachable.len());
+        assert_eq!(fs::read_dir(&packed_path).unwrap().count(), 3);
+        let packed = PatriciaIndexStore::new(packed_dir, ExactPublisher);
+        assert_eq!(all_records(&packed, root), expected);
+        assert_eq!(
+            packed
+                .lookup(root, "pages/adapter-α-0096.md".as_bytes())
+                .unwrap(),
+            Some("值-0096".as_bytes().to_vec())
+        );
+        assert_eq!(fs::read_dir(&packed_path).unwrap().count(), 3);
+
+        let root_node = reachable.get(&root.digest()).unwrap();
+        fs::write(
+            packed_path.join(node_filename(root.digest())),
+            b"conflicting loose bytes",
+        )
+        .unwrap();
+        assert!(matches!(
+            packed.lookup(root, "pages/adapter-α-0096.md".as_bytes()),
+            Err(PatriciaError::PathMismatch(digest)) if digest == root.digest()
+        ));
+        fs::remove_file(packed_path.join(node_filename(root.digest()))).unwrap();
+        publish_immutable_exact(
+            &Dir::open_ambient_dir(&packed_path, ambient_authority()).unwrap(),
+            &node_filename(root.digest()),
+            root_node,
+        )
+        .unwrap();
+
+        let advanced = packed
+            .insert_many(
+                root,
+                &BTreeMap::from([(b"pages/adapter-new.md".to_vec(), b"new".to_vec())]),
+            )
+            .unwrap();
+        let mut advanced_expected = expected.clone();
+        advanced_expected.insert(b"pages/adapter-new.md".to_vec(), b"new".to_vec());
+        assert_eq!(all_records(&packed, advanced), advanced_expected);
+        assert!(
+            fs::read_dir(&packed_path).unwrap().count() > 3,
+            "the current writer may safely add loose nodes over a packed history"
+        );
+
+        let mixed_path =
+            std::env::temp_dir().join(format!("tine-patricia-adapter-mixed-{}", Uuid::new_v4()));
+        fs::create_dir(&mixed_path).unwrap();
+        let mixed_dir = Dir::open_ambient_dir(&mixed_path, ambient_authority()).unwrap();
+        let entries = reachable.iter().collect::<Vec<_>>();
+        let split = entries.len() / 2;
+        let cataloged = entries[..split]
+            .iter()
+            .map(|(digest, bytes)| (**digest, (*bytes).clone()))
+            .collect::<BTreeMap<_, _>>();
+        publish_cataloged_nodes(&mixed_dir, &cataloged, cataloged.len());
+        for (digest, bytes) in &entries[split..] {
+            publish_immutable_exact(&mixed_dir, &node_filename(**digest), bytes).unwrap();
+        }
+        let mixed = PatriciaIndexStore::new(mixed_dir, ExactPublisher);
+        assert_eq!(all_records(&mixed, root), expected);
+        mixed.validate_root(root).unwrap();
+
+        drop(mixed);
+        drop(packed);
+        drop(legacy);
+        drop(legacy_root);
+        fs::remove_dir_all(mixed_path).unwrap();
+        fs::remove_dir_all(packed_path).unwrap();
+        fs::remove_dir_all(legacy_path).unwrap();
     }
 
     #[test]
