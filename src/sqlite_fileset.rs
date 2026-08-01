@@ -30,6 +30,7 @@ pub const SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES: usize = 16 * 1024;
 const SQLITE_CHECKPOINT_INTERIOR_MAX_RANGES: usize =
     SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES / SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES;
 const SQLITE_CHECKPOINT_TEMP_ATTEMPTS: usize = 8;
+const SQLITE_FORENSIC_NAMES: [&str; 4] = ["database", "wal", "shm", "auth"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CheckpointPublicationStage {
@@ -57,6 +58,13 @@ pub struct PhysicalFileCheckpoint {
 pub struct PhysicalSqliteCheckpoint {
     pub database: PhysicalFileCheckpoint,
     pub wal: Option<PhysicalFileCheckpoint>,
+}
+
+/// Exact source-to-preserved path mapping for one physical SQLite file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SqliteForensicPathMapping {
+    pub original_path: PathBuf,
+    pub preserved_path: PathBuf,
 }
 
 /// The database and physical sidecars that form one disposable SQLite file set.
@@ -201,6 +209,102 @@ impl SqliteFileSet {
     /// Database-first physical paths, in stable forensic-move order.
     pub fn paths(&self) -> [&Path; 4] {
         [&self.database, &self.wal, &self.shm, &self.checkpoint]
+    }
+
+    /// Move every present regular file into a newly allocated forensic
+    /// directory, in stable database/WAL/SHM/checkpoint order.
+    ///
+    /// The callback runs after each rename and both required directory-sync
+    /// operations. Core uses it only to retain its crash-test orchestration.
+    pub fn preserve_forensic_files<F>(
+        &self,
+        directory: &Path,
+        mut after_move: F,
+    ) -> Result<Vec<SqliteForensicPathMapping>, SqliteFileSetError>
+    where
+        F: FnMut(usize),
+    {
+        let parent = self
+            .database
+            .parent()
+            .ok_or_else(|| SqliteFileSetError::UnsafePath("database path has no parent".into()))?;
+        let mut preserved = Vec::new();
+        for mapping in self.forensic_path_mappings(directory) {
+            match fs::symlink_metadata(&mapping.original_path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() || !metadata.is_file() {
+                        return Err(SqliteFileSetError::UnsafePath(format!(
+                            "projection evidence {} is not a regular file",
+                            mapping.original_path.display()
+                        )));
+                    }
+                    fs::rename(&mapping.original_path, &mapping.preserved_path)
+                        .map_err(SqliteFileSetError::Io)?;
+                    sync_directory(directory)?;
+                    sync_directory(parent)?;
+                    preserved.push(mapping);
+                    after_move(preserved.len());
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(SqliteFileSetError::Io(error)),
+            }
+        }
+        Ok(preserved)
+    }
+
+    /// Resume or observe one previously allocated forensic directory.
+    ///
+    /// Core interprets the evidence-completion marker and supplies its state.
+    /// Before completion, an original and its preserved name may not coexist;
+    /// present originals are validated and moved. After completion, this is an
+    /// observation only and reports whichever preserved names exist.
+    pub fn resume_forensic_files(
+        &self,
+        directory: &Path,
+        evidence_complete: bool,
+    ) -> Result<Vec<SqliteForensicPathMapping>, SqliteFileSetError> {
+        let parent = self
+            .database
+            .parent()
+            .ok_or_else(|| SqliteFileSetError::UnsafePath("database path has no parent".into()))?;
+        let mut preserved = Vec::new();
+        for mapping in self.forensic_path_mappings(directory) {
+            let original_exists = mapping.original_path.exists();
+            let preserved_exists = mapping.preserved_path.exists();
+            if !evidence_complete && original_exists && preserved_exists {
+                return Err(SqliteFileSetError::Corrupt(format!(
+                    "forensic recovery found both {} and {}",
+                    mapping.original_path.display(),
+                    mapping.preserved_path.display()
+                )));
+            }
+            if !evidence_complete && original_exists {
+                let metadata =
+                    fs::symlink_metadata(&mapping.original_path).map_err(SqliteFileSetError::Io)?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(SqliteFileSetError::UnsafePath(format!(
+                        "projection evidence {} is not a regular file",
+                        mapping.original_path.display()
+                    )));
+                }
+                fs::rename(&mapping.original_path, &mapping.preserved_path)
+                    .map_err(SqliteFileSetError::Io)?;
+                sync_directory(directory)?;
+                sync_directory(parent)?;
+            }
+            if mapping.preserved_path.exists() {
+                preserved.push(mapping);
+            }
+        }
+        Ok(preserved)
+    }
+
+    fn forensic_path_mappings(&self, directory: &Path) -> [SqliteForensicPathMapping; 4] {
+        let paths = self.paths();
+        std::array::from_fn(|index| SqliteForensicPathMapping {
+            original_path: paths[index].to_path_buf(),
+            preserved_path: directory.join(SQLITE_FORENSIC_NAMES[index]),
+        })
     }
 
     /// Preserve the prior path-based existence semantics, including I/O errors
@@ -480,6 +584,12 @@ fn appended_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
+fn sync_directory(path: &Path) -> Result<(), SqliteFileSetError> {
+    let directory =
+        Dir::open_ambient_dir(path, ambient_authority()).map_err(SqliteFileSetError::Io)?;
+    sync_dir_required(&directory).map_err(SqliteFileSetError::Io)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
@@ -537,6 +647,145 @@ mod tests {
             files.checkpoint_path(),
             Path::new("workspace.frontier.sqlite-auth")
         );
+    }
+
+    #[test]
+    fn forensic_move_skips_absent_file_set_members() {
+        let directory = TestDirectory::new("forensic-absent-members");
+        let files = SqliteFileSet::new(&directory.path().join("frontier.sqlite"));
+        let sources = write_forensic_sources(&files, [true, false, true, false]);
+        let forensic = create_forensic_directory(&directory);
+
+        let mappings = files
+            .preserve_forensic_files(&forensic, |_moved| {})
+            .unwrap();
+
+        assert_eq!(
+            mappings,
+            expected_forensic_mappings(&files, &sources, &forensic)
+        );
+        assert_eq!(fs::read(&mappings[0].preserved_path).unwrap(), b"source-0");
+        assert_eq!(fs::read(&mappings[1].preserved_path).unwrap(), b"source-2");
+        assert!(!files.wal_path().exists());
+        assert!(!files.checkpoint_path().exists());
+    }
+
+    #[test]
+    fn forensic_move_preserves_full_set_order_paths_and_bytes() {
+        let directory = TestDirectory::new("forensic-full-set");
+        let files = SqliteFileSet::new(&directory.path().join("frontier.sqlite"));
+        let sources = write_forensic_sources(&files, [true; 4]);
+        let forensic = create_forensic_directory(&directory);
+        let mut moved_counts = Vec::new();
+
+        let mappings = files
+            .preserve_forensic_files(&forensic, |moved| moved_counts.push(moved))
+            .unwrap();
+
+        assert_eq!(moved_counts, [1, 2, 3, 4]);
+        assert_eq!(
+            mappings,
+            expected_forensic_mappings(&files, &sources, &forensic)
+        );
+        for (index, mapping) in mappings.iter().enumerate() {
+            assert!(!mapping.original_path.exists());
+            assert_eq!(
+                fs::read(&mapping.preserved_path).unwrap(),
+                format!("source-{index}").as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn forensic_resume_completes_interruption_shaped_partial_move() {
+        let directory = TestDirectory::new("forensic-partial-resume");
+        let files = SqliteFileSet::new(&directory.path().join("frontier.sqlite"));
+        let sources = write_forensic_sources(&files, [true; 4]);
+        let forensic = create_forensic_directory(&directory);
+
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            files
+                .preserve_forensic_files(&forensic, |moved| {
+                    assert_ne!(moved, 1, "simulated process interruption after first move");
+                })
+                .unwrap();
+        }));
+        assert!(interrupted.is_err());
+        assert!(!sources[0].0.exists());
+        assert_eq!(fs::read(forensic.join("database")).unwrap(), b"source-0");
+        for (path, bytes) in &sources[1..] {
+            assert_eq!(fs::read(path).unwrap(), bytes.as_slice());
+        }
+
+        let mappings = files.resume_forensic_files(&forensic, false).unwrap();
+
+        assert_eq!(
+            mappings,
+            expected_forensic_mappings(&files, &sources, &forensic)
+        );
+        for (index, mapping) in mappings.iter().enumerate() {
+            assert!(!mapping.original_path.exists());
+            assert_eq!(
+                fs::read(&mapping.preserved_path).unwrap(),
+                format!("source-{index}").as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn forensic_resume_rejects_original_and_preserved_before_completion() {
+        let directory = TestDirectory::new("forensic-coexistence");
+        let files = SqliteFileSet::new(&directory.path().join("frontier.sqlite"));
+        let sources = write_forensic_sources(&files, [true; 4]);
+        let forensic = create_forensic_directory(&directory);
+        let preserved = forensic.join("database");
+        fs::write(&preserved, b"preserved-database").unwrap();
+
+        let result = files.resume_forensic_files(&forensic, false);
+
+        assert!(matches!(
+            result,
+            Err(SqliteFileSetError::Corrupt(error))
+                if error == format!(
+                    "forensic recovery found both {} and {}",
+                    sources[0].0.display(),
+                    preserved.display()
+                )
+        ));
+        assert_eq!(fs::read(&sources[0].0).unwrap(), sources[0].1.as_slice());
+        assert_eq!(fs::read(&preserved).unwrap(), b"preserved-database");
+        assert!(!forensic.join("wal").exists());
+        assert_eq!(fs::read(&sources[1].0).unwrap(), sources[1].1.as_slice());
+    }
+
+    #[test]
+    fn completed_forensic_evidence_is_observed_without_moving_sources() {
+        let directory = TestDirectory::new("forensic-completed-observation");
+        let files = SqliteFileSet::new(&directory.path().join("frontier.sqlite"));
+        let sources = write_forensic_sources(&files, [true; 4]);
+        let forensic = create_forensic_directory(&directory);
+        fs::write(forensic.join("database"), b"preserved-0").unwrap();
+        fs::write(forensic.join("shm"), b"preserved-2").unwrap();
+
+        let mappings = files.resume_forensic_files(&forensic, true).unwrap();
+
+        let expected = expected_forensic_mappings(
+            &files,
+            &[sources[0].clone(), sources[2].clone()],
+            &forensic,
+        );
+        assert_eq!(mappings, expected);
+        for (index, (path, bytes)) in sources.iter().enumerate() {
+            assert_eq!(
+                fs::read(path).unwrap(),
+                bytes.as_slice(),
+                "source {index} moved"
+            );
+        }
+        assert_eq!(fs::read(forensic.join("database")).unwrap(), b"preserved-0");
+        assert_eq!(fs::read(forensic.join("shm")).unwrap(), b"preserved-2");
+        assert!(!forensic.join("wal").exists());
+        assert!(!forensic.join("auth").exists());
     }
 
     #[test]
@@ -1033,6 +1282,51 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"complete candidate");
         assert!(!candidate.database_path().exists());
         assert!(!candidate.checkpoint_path().exists());
+    }
+
+    fn create_forensic_directory(directory: &TestDirectory) -> PathBuf {
+        let forensic = directory.path().join("frontier.sqlite.forensic-test");
+        fs::create_dir(&forensic).unwrap();
+        forensic
+    }
+
+    fn write_forensic_sources(
+        files: &SqliteFileSet,
+        present: [bool; 4],
+    ) -> Vec<(PathBuf, Vec<u8>)> {
+        files
+            .paths()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                present[index].then(|| {
+                    let bytes = format!("source-{index}").into_bytes();
+                    fs::write(path, &bytes).unwrap();
+                    (path.to_path_buf(), bytes)
+                })
+            })
+            .collect()
+    }
+
+    fn expected_forensic_mappings(
+        files: &SqliteFileSet,
+        sources: &[(PathBuf, Vec<u8>)],
+        directory: &Path,
+    ) -> Vec<SqliteForensicPathMapping> {
+        sources
+            .iter()
+            .map(|(original_path, _bytes)| {
+                let index = files
+                    .paths()
+                    .into_iter()
+                    .position(|path| path == original_path)
+                    .expect("test source belongs to the SQLite file set");
+                SqliteForensicPathMapping {
+                    original_path: original_path.clone(),
+                    preserved_path: directory.join(SQLITE_FORENSIC_NAMES[index]),
+                }
+            })
+            .collect()
     }
 
     fn legacy_bounded_file_checkpoint(path: &Path) -> LegacyBoundedFileCheckpoint {
