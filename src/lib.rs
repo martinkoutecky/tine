@@ -64,7 +64,8 @@ pub mod sqlite {
 }
 
 pub use authenticated_patricia::{
-    PatriciaError, PatriciaIndexConstruction, PatriciaIndexConstructionStats, PatriciaIndexRoot,
+    PatriciaError, PatriciaIndexConstruction, PatriciaIndexConstructionStats,
+    PatriciaIndexReclamationError, PatriciaIndexReclamationReport, PatriciaIndexRoot,
     PatriciaIndexStats, PatriciaIndexStore, PatriciaNodePublisher, PatriciaPublicationError,
     MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
 };

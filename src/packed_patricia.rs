@@ -35,14 +35,24 @@
 //! non-canonical indexes, entry tampering, and path/content mismatch before
 //! exposing any node bytes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::{self, ErrorKind};
 use std::ops::Range;
+#[cfg(windows)]
+use std::thread;
+#[cfg(windows)]
+use std::time::Duration;
 
-use cap_std::fs::Dir;
+use cap_std::fs::{Dir, OpenOptions};
+use fs2::FileExt as _;
+use uuid::Uuid;
 
 use super::authenticated_patricia::{PatriciaNodePublisher, PatriciaPublicationError};
+use super::content_digest::parse_digest;
 use super::filesystem::{
     read_optional_regular, read_required_regular, transition_regular_exact, FilesystemError,
+    ValidatedDirectorySync,
 };
 use super::ContentDigest;
 
@@ -65,6 +75,7 @@ const HEAD_MAGIC: &[u8; 8] = b"TINEPHD\0";
 const HEAD_SCHEMA_VERSION: u32 = 1;
 const HEAD_BYTES: usize = 8 + 4 + 32 + 4;
 pub(crate) const HEAD_FILENAME: &str = "patricia-pack-head-v1";
+pub(crate) const OPERATION_LOCK_FILENAME: &str = "patricia-pack-operation-lock-v1";
 
 const LEGACY_MAX_PACK_ENTRIES: usize = 4_096;
 /// Schema 2 uses the byte bound, rather than an unrelated entry-count ceiling,
@@ -92,6 +103,16 @@ pub(crate) const MAX_CATALOG_PACKS: usize = 256;
 pub(crate) const MAX_CATALOG_PACK_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CATALOG_BYTES: usize = CATALOG_HEADER_BYTES + MAX_CATALOG_PACKS * CATALOG_ENTRY_BYTES;
 
+#[cfg(test)]
+thread_local! {
+    static RECLAMATION_DIRECTORY_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reclamation_directory_scans() -> usize {
+    RECLAMATION_DIRECTORY_SCANS.with(std::cell::Cell::get)
+}
+
 #[derive(Debug)]
 pub(crate) enum PackedPatriciaError {
     Filesystem(FilesystemError),
@@ -105,9 +126,92 @@ pub(crate) enum PackedPatriciaError {
     Malformed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PackedPatriciaReclamationReport {
+    pub(crate) examined_files: usize,
+    pub(crate) examined_bytes: u64,
+    pub(crate) deleted_files: usize,
+    pub(crate) deleted_bytes: u64,
+    pub(crate) retained_files: usize,
+    pub(crate) retained_bytes: u64,
+}
+
+pub(crate) enum PackedPatriciaReclamationError {
+    Busy,
+    Packed(PackedPatriciaError),
+}
+
+pub(crate) struct PackedOperationalGuard {
+    file: fs::File,
+}
+
+impl Drop for PackedOperationalGuard {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+fn open_operational_lock(dir: &Dir) -> Result<fs::File, PackedPatriciaError> {
+    let mut create = OpenOptions::new();
+    create.read(true).write(true).create_new(true);
+    let file = match dir.open_with(OPERATION_LOCK_FILENAME, &create) {
+        Ok(file) => {
+            let file = file.into_std();
+            if !file.metadata()?.is_file() {
+                return Err(FilesystemError::UnsafeEntry(format!(
+                    "{OPERATION_LOCK_FILENAME} is not a regular file"
+                ))
+                .into());
+            }
+            file.sync_all()?;
+            ValidatedDirectorySync::open(dir)?.sync()?;
+            file
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            let mut open = OpenOptions::new();
+            open.read(true).write(true);
+            let file = dir.open_with(OPERATION_LOCK_FILENAME, &open)?.into_std();
+            if !file.metadata()?.is_file() {
+                return Err(FilesystemError::UnsafeEntry(format!(
+                    "{OPERATION_LOCK_FILENAME} is not a regular file"
+                ))
+                .into());
+            }
+            file
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(file)
+}
+
+pub(crate) fn lock_packed_operation_shared(
+    dir: &Dir,
+) -> Result<PackedOperationalGuard, PackedPatriciaError> {
+    let file = open_operational_lock(dir)?;
+    fs2::FileExt::lock_shared(&file)?;
+    Ok(PackedOperationalGuard { file })
+}
+
+fn try_lock_packed_operation_exclusive(
+    dir: &Dir,
+) -> Result<Option<PackedOperationalGuard>, PackedPatriciaError> {
+    let file = open_operational_lock(dir)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(PackedOperationalGuard { file })),
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 impl From<FilesystemError> for PackedPatriciaError {
     fn from(error: FilesystemError) -> Self {
         Self::Filesystem(error)
+    }
+}
+
+impl From<io::Error> for PackedPatriciaError {
+    fn from(error: io::Error) -> Self {
+        Self::Filesystem(error.into())
     }
 }
 
@@ -644,9 +748,9 @@ pub(crate) fn publish_catalog_head(
 
 /// Transition the fixed head under the caller's existing single-writer lease.
 /// Immutable prerequisites are represented by publication evidence, and an
-/// authenticated prior head is the only replaceable authority. Superseded
-/// immutable files are intentionally retained: the current external reader
-/// contract has no persistent pin proving that no reader observed the old head.
+/// authenticated prior head is the only replaceable authority. Routine
+/// publication retains superseded immutable files; only explicit maintenance
+/// under the exclusive operational guard reclaims them.
 pub(crate) fn transition_catalog_head(
     dir: &Dir,
     expected: Option<PackedPatriciaHeadAuthority>,
@@ -662,6 +766,141 @@ pub(crate) fn transition_catalog_head(
     )
 }
 
+pub(crate) fn reclaim_unreachable_packed_files(
+    dir: &Dir,
+) -> Result<PackedPatriciaReclamationReport, PackedPatriciaReclamationError> {
+    let Some(_guard) =
+        try_lock_packed_operation_exclusive(dir).map_err(PackedPatriciaReclamationError::Packed)?
+    else {
+        return Err(PackedPatriciaReclamationError::Busy);
+    };
+
+    // Authenticate the complete authority before even opening the directory
+    // iterator. A malformed head, catalog, or named pack therefore cannot
+    // authorize any deletion.
+    let current = PackedPatriciaCatalog::discover_under_guard(dir)
+        .map_err(PackedPatriciaReclamationError::Packed)?
+        .ok_or(PackedPatriciaReclamationError::Packed(
+            PackedPatriciaError::Malformed,
+        ))?;
+    let live = current.live_filenames();
+    let durability = ValidatedDirectorySync::open(dir)
+        .and_then(|sync| {
+            sync.preflight()?;
+            Ok(sync)
+        })
+        .map_err(|error| {
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+        })?;
+
+    let mut report = PackedPatriciaReclamationReport::default();
+    let mut deletions = Vec::new();
+    #[cfg(test)]
+    RECLAMATION_DIRECTORY_SCANS.with(|scans| scans.set(scans.get().saturating_add(1)));
+    let entries = dir.entries().map_err(|error| {
+        PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+        })?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let metadata = entry.metadata().map_err(|error| {
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+        })?;
+        let length = metadata.len();
+        report.examined_files = report.examined_files.saturating_add(1);
+        report.examined_bytes = report.examined_bytes.saturating_add(length);
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if is_reclaimable_packed_name(name) && !live.contains(name) {
+            deletions.push((name.to_owned(), length));
+        }
+    }
+
+    for (name, length) in deletions {
+        if let Err(error) = remove_reclamation_file(dir, &name) {
+            if report.deleted_files != 0 {
+                durability.sync().map_err(|sync_error| {
+                    PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(
+                        sync_error.into(),
+                    ))
+                })?;
+            }
+            return Err(PackedPatriciaReclamationError::Packed(
+                PackedPatriciaError::Filesystem(error.into()),
+            ));
+        }
+        report.deleted_files = report.deleted_files.saturating_add(1);
+        report.deleted_bytes = report.deleted_bytes.saturating_add(length);
+    }
+    if report.deleted_files != 0 {
+        durability.sync().map_err(|error| {
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error.into()))
+        })?;
+    }
+    report.retained_files = report.examined_files.saturating_sub(report.deleted_files);
+    report.retained_bytes = report.examined_bytes.saturating_sub(report.deleted_bytes);
+    Ok(report)
+}
+
+fn is_reclaimable_packed_name(name: &str) -> bool {
+    digest_from_filename(name, PACK_SUFFIX).is_some()
+        || digest_from_filename(name, CATALOG_SUFFIX).is_some()
+        || is_publication_temp_name(name)
+}
+
+fn digest_from_filename(name: &str, suffix: &str) -> Option<ContentDigest> {
+    let digest = name.strip_suffix(suffix)?;
+    parse_digest(digest).ok().map(ContentDigest::from_bytes)
+}
+
+fn is_publication_temp_name(name: &str) -> bool {
+    let Some(uuid) = name.strip_prefix(".tmp-") else {
+        return false;
+    };
+    Uuid::parse_str(uuid)
+        .ok()
+        .is_some_and(|parsed| parsed.to_string() == uuid)
+}
+
+#[cfg(not(windows))]
+fn remove_reclamation_file(dir: &Dir, name: &str) -> io::Result<()> {
+    dir.remove_file(name)
+}
+
+#[cfg(windows)]
+fn remove_reclamation_file(dir: &Dir, name: &str) -> io::Result<()> {
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+
+    const ATTEMPTS: usize = 4;
+    for attempt in 0..ATTEMPTS {
+        match dir.remove_file(name) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < ATTEMPTS
+                    && matches!(
+                        error.raw_os_error(),
+                        Some(code)
+                            if code == ERROR_SHARING_VIOLATION as i32
+                                || code == ERROR_ACCESS_DENIED as i32
+                    ) =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded deletion retry returns on every final attempt")
+}
+
 /// Fully authenticated catalog snapshot used by the Patricia adapter. All
 /// named packs are opened and checked once before any cataloged node is
 /// exposed, so an absent or corrupt non-target pack invalidates the authority.
@@ -673,6 +912,11 @@ pub(crate) struct PackedPatriciaCatalog {
 
 impl PackedPatriciaCatalog {
     pub(crate) fn discover(dir: &Dir) -> Result<Option<Self>, PackedPatriciaError> {
+        let _guard = lock_packed_operation_shared(dir)?;
+        Self::discover_under_guard(dir)
+    }
+
+    pub(crate) fn discover_under_guard(dir: &Dir) -> Result<Option<Self>, PackedPatriciaError> {
         let Some(head) = read_optional_regular(
             dir,
             HEAD_FILENAME,
@@ -751,6 +995,20 @@ impl PackedPatriciaCatalog {
 
     pub(crate) const fn authority(&self) -> PackedPatriciaHeadAuthority {
         self.authority
+    }
+
+    pub(crate) fn live_filenames(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::from([
+            HEAD_FILENAME.to_owned(),
+            OPERATION_LOCK_FILENAME.to_owned(),
+            catalog_filename(self.authority.catalog_digest),
+        ]);
+        names.extend(
+            self.descriptors
+                .iter()
+                .map(|descriptor| pack_filename(descriptor.digest)),
+        );
+        names
     }
 
     pub(crate) fn get(&self, digest: ContentDigest) -> Option<&[u8]> {
@@ -1643,8 +1901,8 @@ mod tests {
         }
         assert_eq!(
             fs::read_dir(&fixture.path).unwrap().count(),
-            UNRELATED_LIFETIME_FILES + PACKS + 2,
-            "four directly named packs plus one catalog and one fixed head replace 1,024 loose files"
+            UNRELATED_LIFETIME_FILES + PACKS + 3,
+            "four packs, one catalog, one fixed head, and one stable lock replace 1,024 loose files"
         );
 
         let head = fs::read(fixture.path.join(HEAD_FILENAME)).unwrap();

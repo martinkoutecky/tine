@@ -14,8 +14,9 @@ use crate::filesystem::{read_optional_regular, FilesystemError};
 #[cfg(test)]
 use crate::packed_patricia::PackedPatriciaPublicationWork;
 use crate::packed_patricia::{
-    publish_appended_catalog, transition_catalog_head, PackedPatriciaCatalog, PackedPatriciaError,
-    MAX_CATALOG_PACK_BYTES,
+    lock_packed_operation_shared, publish_appended_catalog, reclaim_unreachable_packed_files,
+    transition_catalog_head, PackedPatriciaCatalog, PackedPatriciaError,
+    PackedPatriciaReclamationError, PackedPatriciaReclamationReport, MAX_CATALOG_PACK_BYTES,
 };
 
 /// Opaque publication failure returned by the policy-owning Patricia adapter.
@@ -67,6 +68,76 @@ pub enum PatriciaError {
     MissingNode(ContentDigest),
     PathMismatch(ContentDigest),
     Malformed,
+}
+
+/// Regular-file and byte accounting for one completed explicit packed-store
+/// reclamation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PatriciaIndexReclamationReport {
+    pub examined_files: usize,
+    pub examined_bytes: u64,
+    pub deleted_files: usize,
+    pub deleted_bytes: u64,
+    pub retained_files: usize,
+    pub retained_bytes: u64,
+}
+
+#[derive(Debug)]
+pub enum PatriciaIndexReclamationError {
+    Busy,
+    Filesystem(FilesystemError),
+    PathMismatch(ContentDigest),
+    MalformedAuthority,
+}
+
+impl fmt::Display for PatriciaIndexReclamationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Busy => formatter.write_str("packed Patricia storage is busy"),
+            Self::Filesystem(error) => error.fmt(formatter),
+            Self::PathMismatch(digest) => {
+                write!(formatter, "packed Patricia content does not match {digest}")
+            }
+            Self::MalformedAuthority => formatter.write_str("malformed packed Patricia authority"),
+        }
+    }
+}
+
+impl std::error::Error for PatriciaIndexReclamationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Filesystem(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<PackedPatriciaReclamationReport> for PatriciaIndexReclamationReport {
+    fn from(report: PackedPatriciaReclamationReport) -> Self {
+        Self {
+            examined_files: report.examined_files,
+            examined_bytes: report.examined_bytes,
+            deleted_files: report.deleted_files,
+            deleted_bytes: report.deleted_bytes,
+            retained_files: report.retained_files,
+            retained_bytes: report.retained_bytes,
+        }
+    }
+}
+
+impl From<PackedPatriciaReclamationError> for PatriciaIndexReclamationError {
+    fn from(error: PackedPatriciaReclamationError) -> Self {
+        match error {
+            PackedPatriciaReclamationError::Busy => Self::Busy,
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::Filesystem(error)) => {
+                Self::Filesystem(error)
+            }
+            PackedPatriciaReclamationError::Packed(PackedPatriciaError::PathMismatch(digest)) => {
+                Self::PathMismatch(digest)
+            }
+            PackedPatriciaReclamationError::Packed(_) => Self::MalformedAuthority,
+        }
+    }
 }
 
 impl From<FilesystemError> for PatriciaError {
@@ -349,6 +420,19 @@ impl PatriciaIndexStore {
             bytes_read: self.counters.bytes_read.load(Ordering::Relaxed),
             bytes_written: self.counters.bytes_written.load(Ordering::Relaxed),
         }
+    }
+
+    /// Explicitly reclaim unreachable packed Patricia artifacts.
+    ///
+    /// This is the only Patricia operation which scans the node directory. It
+    /// never waits for active readers or publishers: contention is reported as
+    /// [`PatriciaIndexReclamationError::Busy`].
+    pub fn reclaim_unreachable_packed_files(
+        &self,
+    ) -> Result<PatriciaIndexReclamationReport, PatriciaIndexReclamationError> {
+        reclaim_unreachable_packed_files(&self.nodes)
+            .map(PatriciaIndexReclamationReport::from)
+            .map_err(PatriciaIndexReclamationError::from)
     }
 
     pub fn validate_root(&self, root: PatriciaIndexRoot) -> Result<(), PatriciaError> {
@@ -984,6 +1068,8 @@ impl PatriciaIndexStore {
                 Err(error) => return Err(map_packed_patricia_error(error)),
             }
         }
+        let _operation =
+            lock_packed_operation_shared(&self.nodes).map_err(map_packed_patricia_error)?;
         for digest in publication_order {
             let bytes = entries
                 .get(&digest)
@@ -1030,12 +1116,13 @@ impl PatriciaIndexStore {
         &self,
         new_entries: &BTreeMap<ContentDigest, Vec<u8>>,
     ) -> Result<(), PackedPatriciaError> {
+        let _operation = lock_packed_operation_shared(&self.nodes)?;
         let mut resolver = self
             .packed
             .lock()
             .map_err(|_| PackedPatriciaError::Malformed)?;
         if resolver.is_none() {
-            *resolver = Some(PackedPatriciaCatalog::discover(&self.nodes)?);
+            *resolver = Some(PackedPatriciaCatalog::discover_under_guard(&self.nodes)?);
         }
         let current = resolver.as_ref().expect("packed discovery initialized");
         let expected = current.as_ref().map(PackedPatriciaCatalog::authority);
@@ -1409,8 +1496,8 @@ fn node_filename(digest: ContentDigest) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier, Mutex};
 
     use cap_std::ambient_authority;
     use uuid::Uuid;
@@ -1441,6 +1528,35 @@ mod tests {
             bytes: &[u8],
         ) -> Result<(), PatriciaPublicationError> {
             publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+
+        fn permits_packed_head_transition(&self) -> bool {
+            true
+        }
+    }
+
+    #[derive(Clone)]
+    struct PausingPackedPublisher {
+        armed: Arc<AtomicBool>,
+        catalog_published: Arc<Barrier>,
+        release: Arc<Barrier>,
+    }
+
+    impl PatriciaNodePublisher for PausingPackedPublisher {
+        fn publish(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)?;
+            if filename.ends_with(".patricia-catalog-v1")
+                && self.armed.swap(false, Ordering::SeqCst)
+            {
+                self.catalog_published.wait();
+                self.release.wait();
+            }
+            Ok(())
         }
 
         fn permits_packed_head_transition(&self) -> bool {
@@ -1564,6 +1680,22 @@ mod tests {
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(suffix))
             .count()
+    }
+
+    fn regular_file_inventory(path: &std::path::Path) -> BTreeMap<String, u64> {
+        fs::read_dir(path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                metadata.is_file().then(|| {
+                    (
+                        entry.file_name().to_string_lossy().into_owned(),
+                        metadata.len(),
+                    )
+                })
+            })
+            .collect()
     }
 
     fn publish_leaf(store: &PatriciaIndexStore, key: &[u8]) -> ContentDigest {
@@ -1765,7 +1897,7 @@ mod tests {
         assert_eq!(reopened.len(), reachable.len());
         assert_eq!(fs::read_dir(&pack_path).unwrap().count(), 1);
         assert_eq!(
-            fs::read_dir(loose_path.join("nodes")).unwrap().count(),
+            count_suffix(&loose_path.join("nodes"), NODE_SUFFIX),
             reachable.len()
         );
 
@@ -1774,6 +1906,411 @@ mod tests {
         drop(loose);
         fs::remove_dir_all(loose_path).unwrap();
         fs::remove_dir_all(pack_path).unwrap();
+    }
+
+    #[test]
+    fn packed_reclamation_contracts_long_history_to_exact_live_authority() {
+        const VERSIONS: usize = 24;
+
+        let (path, store) =
+            store_with_publisher("packed-reclamation-history", PackedExactPublisher);
+        let nodes_path = path.join("nodes");
+        let mut root = PatriciaIndexRoot::empty();
+        let mut roots = Vec::new();
+        for version in 0..VERSIONS {
+            let key = format!("pages/history-{version:03}").into_bytes();
+            let value = format!("value-{version:03}").into_bytes();
+            root = store
+                .insert_many(root, &BTreeMap::from([(key.clone(), value.clone())]))
+                .unwrap();
+            roots.push((root, key, value));
+        }
+        for (historical_root, key, value) in &roots {
+            assert_eq!(
+                store.lookup(*historical_root, key).unwrap(),
+                Some(value.clone())
+            );
+        }
+
+        let nodes = Dir::open_ambient_dir(&nodes_path, ambient_authority()).unwrap();
+        let active = crate::packed_patricia::PackedPatriciaCatalog::discover(&nodes)
+            .unwrap()
+            .unwrap()
+            .live_filenames();
+        let before = regular_file_inventory(&nodes_path);
+        let physical_bytes = before.values().copied().sum::<u64>();
+        let active_bytes = active
+            .iter()
+            .map(|name| before.get(name).copied().unwrap())
+            .sum::<u64>();
+        assert!(physical_bytes > active_bytes);
+        assert!(before.keys().any(|name| !active.contains(name)));
+
+        let report = store.reclaim_unreachable_packed_files().unwrap();
+        let after = regular_file_inventory(&nodes_path);
+        assert_eq!(after.keys().cloned().collect::<BTreeSet<_>>(), active);
+        assert_eq!(report.examined_files, before.len());
+        assert_eq!(report.examined_bytes, physical_bytes);
+        assert_eq!(report.deleted_files, before.len() - after.len());
+        assert_eq!(
+            report.deleted_bytes,
+            physical_bytes - after.values().copied().sum::<u64>()
+        );
+        assert_eq!(report.retained_files, after.len());
+        assert_eq!(report.retained_bytes, after.values().copied().sum::<u64>());
+        for (historical_root, key, value) in &roots {
+            assert_eq!(
+                store.lookup(*historical_root, key).unwrap(),
+                Some(value.clone())
+            );
+        }
+
+        drop(nodes);
+        drop(store);
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let reopened = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        for (historical_root, key, value) in &roots {
+            assert_eq!(
+                reopened.lookup(*historical_root, key).unwrap(),
+                Some(value.clone())
+            );
+        }
+        drop(reopened);
+        drop(root_dir);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn packed_reclamation_preserves_unknown_and_loose_files() {
+        let (path, store) =
+            store_with_publisher("packed-reclamation-preserve", PackedExactPublisher);
+        let nodes_path = path.join("nodes");
+        let first = store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"first".to_vec(), b"one".to_vec())]),
+            )
+            .unwrap();
+        let current = store
+            .insert_many(
+                first,
+                &BTreeMap::from([(b"second".to_vec(), b"two".to_vec())]),
+            )
+            .unwrap();
+        let loose_bytes = b"preserved loose bytes";
+        let loose_name = format!("{}.patricia-node", ContentDigest::of(loose_bytes));
+        fs::write(nodes_path.join(&loose_name), loose_bytes).unwrap();
+        fs::write(nodes_path.join("unknown-owner-file"), b"unknown").unwrap();
+        let uppercase_pack =
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.patricia-pack-v1";
+        fs::write(
+            nodes_path.join(uppercase_pack),
+            b"not a recognized lower-case digest name",
+        )
+        .unwrap();
+        let temp_name = format!(".tmp-{}", Uuid::new_v4());
+        fs::write(nodes_path.join(&temp_name), b"stale temp").unwrap();
+
+        let report = store.reclaim_unreachable_packed_files().unwrap();
+        assert!(report.deleted_files >= 1);
+        assert!(!nodes_path.join(temp_name).exists());
+        assert_eq!(fs::read(nodes_path.join(loose_name)).unwrap(), loose_bytes);
+        assert_eq!(
+            fs::read(nodes_path.join("unknown-owner-file")).unwrap(),
+            b"unknown"
+        );
+        assert!(nodes_path.join(uppercase_pack).exists());
+        assert_eq!(
+            store.lookup(current, b"second").unwrap(),
+            Some(b"two".to_vec())
+        );
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn malformed_packed_authority_scans_and_deletes_nothing() {
+        let (path, store) =
+            store_with_publisher("packed-reclamation-malformed", PackedExactPublisher);
+        let nodes_path = path.join("nodes");
+        store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"authority".to_vec(), b"valid".to_vec())]),
+            )
+            .unwrap();
+        drop(store);
+        let orphan_bytes = b"recognized orphan bytes";
+        let orphan_name = format!("{}.patricia-pack-v1", ContentDigest::of(orphan_bytes));
+        fs::write(nodes_path.join(orphan_name), orphan_bytes).unwrap();
+        let temp_name = format!(".tmp-{}", Uuid::new_v4());
+        fs::write(nodes_path.join(temp_name), b"stale temp").unwrap();
+        fs::write(
+            nodes_path.join(crate::packed_patricia::HEAD_FILENAME),
+            b"malformed authority",
+        )
+        .unwrap();
+        let before = regular_file_inventory(&nodes_path);
+
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let store = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        let scans_before = crate::packed_patricia::reclamation_directory_scans();
+        assert!(matches!(
+            store.reclaim_unreachable_packed_files(),
+            Err(PatriciaIndexReclamationError::Filesystem(_)
+                | PatriciaIndexReclamationError::MalformedAuthority
+                | PatriciaIndexReclamationError::PathMismatch(_))
+        ));
+        assert_eq!(
+            crate::packed_patricia::reclamation_directory_scans(),
+            scans_before
+        );
+        assert_eq!(regular_file_inventory(&nodes_path), before);
+        drop(store);
+        drop(root_dir);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn absent_packed_authority_scans_and_deletes_nothing() {
+        let (path, store) = store_with_publisher("packed-reclamation-absent", PackedExactPublisher);
+        let nodes_path = path.join("nodes");
+        store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"authority".to_vec(), b"valid".to_vec())]),
+            )
+            .unwrap();
+        drop(store);
+        fs::remove_file(nodes_path.join(crate::packed_patricia::HEAD_FILENAME)).unwrap();
+        let temp_name = format!(".tmp-{}", Uuid::new_v4());
+        fs::write(nodes_path.join(&temp_name), b"stale temp").unwrap();
+        let before = regular_file_inventory(&nodes_path);
+        assert!(before
+            .keys()
+            .any(|name| name.ends_with(".patricia-pack-v1")));
+        assert!(before
+            .keys()
+            .any(|name| name.ends_with(".patricia-catalog-v1")));
+        assert!(before.contains_key(&temp_name));
+
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let store = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        let scans_before = crate::packed_patricia::reclamation_directory_scans();
+        assert!(matches!(
+            store.reclaim_unreachable_packed_files(),
+            Err(PatriciaIndexReclamationError::MalformedAuthority)
+        ));
+        assert_eq!(
+            crate::packed_patricia::reclamation_directory_scans(),
+            scans_before
+        );
+        assert_eq!(regular_file_inventory(&nodes_path), before);
+        drop(store);
+        drop(root_dir);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn reader_holding_old_head_observation_blocks_nonblocking_reclamation() {
+        let (path, store) = store_with_publisher("packed-reclamation-reader", PackedExactPublisher);
+        store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"reader".to_vec(), b"value".to_vec())]),
+            )
+            .unwrap();
+        let nodes_path = path.join("nodes");
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let reader_path = nodes_path.clone();
+        let reader = std::thread::spawn(move || {
+            let nodes = Dir::open_ambient_dir(reader_path, ambient_authority()).unwrap();
+            let _guard = crate::packed_patricia::lock_packed_operation_shared(&nodes).unwrap();
+            let head =
+                read_optional_regular(&nodes, crate::packed_patricia::HEAD_FILENAME, 128, None)
+                    .unwrap()
+                    .unwrap();
+            observed_tx.send(head).unwrap();
+            release_rx.recv().unwrap();
+            crate::packed_patricia::PackedPatriciaCatalog::discover_under_guard(&nodes)
+                .unwrap()
+                .unwrap();
+        });
+        assert!(!observed_rx.recv().unwrap().is_empty());
+
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let independent = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        assert!(matches!(
+            independent.reclaim_unreachable_packed_files(),
+            Err(PatriciaIndexReclamationError::Busy)
+        ));
+        release_tx.send(()).unwrap();
+        reader.join().unwrap();
+        independent.reclaim_unreachable_packed_files().unwrap();
+        drop(independent);
+        drop(root_dir);
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn publication_prerequisites_remain_protected_until_head_transition() {
+        let armed = Arc::new(AtomicBool::new(false));
+        let catalog_published = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let publisher = PausingPackedPublisher {
+            armed: armed.clone(),
+            catalog_published: catalog_published.clone(),
+            release: release.clone(),
+        };
+        let (path, store) = store_with_publisher("packed-reclamation-publication", publisher);
+        let store = Arc::new(store);
+        let first = store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"first".to_vec(), b"one".to_vec())]),
+            )
+            .unwrap();
+        armed.store(true, Ordering::SeqCst);
+        let writer_store = store.clone();
+        let writer = std::thread::spawn(move || {
+            writer_store.insert_many(
+                first,
+                &BTreeMap::from([(b"second".to_vec(), b"two".to_vec())]),
+            )
+        });
+        catalog_published.wait();
+
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let independent = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        assert!(matches!(
+            independent.reclaim_unreachable_packed_files(),
+            Err(PatriciaIndexReclamationError::Busy)
+        ));
+        release.wait();
+        let current = writer.join().unwrap().unwrap();
+        assert_eq!(
+            independent.lookup(current, b"second").unwrap(),
+            Some(b"two".to_vec())
+        );
+        independent.reclaim_unreachable_packed_files().unwrap();
+        assert_eq!(
+            independent.lookup(current, b"first").unwrap(),
+            Some(b"one".to_vec())
+        );
+        drop(independent);
+        drop(root_dir);
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "subprocess helper invoked by packed_lock_process_death_releases_reclamation"]
+    fn packed_operational_lock_subprocess_helper() {
+        use std::io::{BufRead as _, Write as _};
+
+        let Ok(path) = std::env::var("TINE_PACKED_LOCK_HELPER_PATH") else {
+            return;
+        };
+        let nodes = Dir::open_ambient_dir(path, ambient_authority()).unwrap();
+        let _guard = crate::packed_patricia::lock_packed_operation_shared(&nodes).unwrap();
+        println!("locked");
+        std::io::stdout().flush().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(std::io::stdin())
+            .read_line(&mut line)
+            .unwrap();
+    }
+
+    #[test]
+    fn packed_lock_process_death_releases_reclamation() {
+        use std::io::BufRead as _;
+        use std::process::{Command, Stdio};
+
+        let (path, store) =
+            store_with_publisher("packed-reclamation-process", PackedExactPublisher);
+        store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"authority".to_vec(), b"valid".to_vec())]),
+            )
+            .unwrap();
+        let nodes_path = path.join("nodes");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("packed_operational_lock_subprocess_helper")
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env("TINE_PACKED_LOCK_HELPER_PATH", &nodes_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(output.read_line(&mut line).unwrap(), 0);
+            if line.trim() == "locked" {
+                break;
+            }
+        }
+        assert!(matches!(
+            store.reclaim_unreachable_packed_files(),
+            Err(PatriciaIndexReclamationError::Busy)
+        ));
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        store.reclaim_unreachable_packed_files().unwrap();
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn normal_patricia_operations_never_scan_the_node_directory() {
+        let scans_before = crate::packed_patricia::reclamation_directory_scans();
+        let (path, store) = store_with_publisher("packed-no-normal-scan", PackedExactPublisher);
+        let root = store
+            .insert_many(
+                PatriciaIndexRoot::empty(),
+                &BTreeMap::from([(b"normal".to_vec(), b"operation".to_vec())]),
+            )
+            .unwrap();
+        assert_eq!(
+            store.lookup(root, b"normal").unwrap(),
+            Some(b"operation".to_vec())
+        );
+        drop(store);
+        let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let reopened = PatriciaIndexStore::new(
+            open_dir_nofollow(&root_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        assert_eq!(
+            reopened.lookup(root, b"normal").unwrap(),
+            Some(b"operation".to_vec())
+        );
+        assert_eq!(
+            crate::packed_patricia::reclamation_directory_scans(),
+            scans_before
+        );
+        drop(reopened);
+        drop(root_dir);
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -1805,7 +2342,7 @@ mod tests {
             count_suffix(&packed_nodes, crate::packed_patricia::PACK_SUFFIX),
             1
         );
-        assert_eq!(fs::read_dir(&packed_nodes).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(&packed_nodes).unwrap().count(), 4);
 
         let update = BTreeMap::from([
             (
@@ -2090,7 +2627,7 @@ mod tests {
                 .unwrap(),
             Some("值-0096".as_bytes().to_vec())
         );
-        assert_eq!(fs::read_dir(&packed_path).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(&packed_path).unwrap().count(), 4);
 
         let root_node = reachable.get(&root.digest()).unwrap();
         fs::write(
