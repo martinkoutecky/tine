@@ -2119,6 +2119,10 @@ pub struct SqliteMaterializedRead<'a> {
     acceptance_sequence: u64,
 }
 
+fn allow_any_page_header(_path: &str, _kind: i64) -> Result<(), MaterializationError> {
+    Ok(())
+}
+
 impl<'a> SqliteMaterializedRead<'a> {
     pub(crate) fn new(
         connection: &'a Connection,
@@ -2151,6 +2155,14 @@ impl<'a> SqliteMaterializedRead<'a> {
     }
 
     pub fn page(&self, page_id: [u8; 16]) -> Result<Option<PhysicalPageRow>, MaterializationError> {
+        self.page_with_header_validation(page_id, allow_any_page_header)
+    }
+
+    pub fn page_with_header_validation(
+        &self,
+        page_id: [u8; 16],
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Option<PhysicalPageRow>, MaterializationError> {
         let page = self
             .connection
             .query_row(
@@ -2158,10 +2170,11 @@ impl<'a> SqliteMaterializedRead<'a> {
                         text_kind, preamble, searchable_text
                  FROM pages WHERE page_id = ?1",
                 params![page_id.as_slice()],
-                page_row,
+                |row| page_row_with_header_validation(row, &mut validate_header),
             )
             .optional()
             .map_err(MaterializationError::from)?;
+        let page = page.transpose()?;
         if let Some(row) = &page {
             let mut budget = MaterializationReadBudget::default();
             budget.add(page_row_output_bytes(row)?)?;
@@ -2197,7 +2210,16 @@ impl<'a> SqliteMaterializedRead<'a> {
         name: &str,
         limit: usize,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
-        self.pages_by_text_column("name", name, limit)
+        self.pages_by_name_with_header_validation(name, limit, allow_any_page_header)
+    }
+
+    pub fn pages_by_name_with_header_validation(
+        &self,
+        name: &str,
+        limit: usize,
+        validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_text_column_with_header_validation("name", name, limit, validate_header)
     }
 
     pub fn pages_by_name_key(
@@ -2205,7 +2227,21 @@ impl<'a> SqliteMaterializedRead<'a> {
         name_key: &str,
         limit: usize,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
-        self.pages_by_text_column("name_key", name_key, limit)
+        self.pages_by_name_key_with_header_validation(name_key, limit, allow_any_page_header)
+    }
+
+    pub fn pages_by_name_key_with_header_validation(
+        &self,
+        name_key: &str,
+        limit: usize,
+        validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_text_column_with_header_validation(
+            "name_key",
+            name_key,
+            limit,
+            validate_header,
+        )
     }
 
     /// Exact OG-compatible logical-name lookup scoped by managed text kind.
@@ -2217,6 +2253,21 @@ impl<'a> SqliteMaterializedRead<'a> {
         kind: i64,
         limit: usize,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_name_key_and_kind_with_header_validation(
+            name_key,
+            kind,
+            limit,
+            allow_any_page_header,
+        )
+    }
+
+    pub fn pages_by_name_key_and_kind_with_header_validation(
+        &self,
+        name_key: &str,
+        kind: i64,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
         let limit = checked_limit(limit)?;
         checked_query_text(name_key)?;
         let mut statement = self.connection.prepare(
@@ -2226,9 +2277,11 @@ impl<'a> SqliteMaterializedRead<'a> {
              WHERE name_key = ?1 AND text_kind = ?2
              ORDER BY page_id LIMIT ?3",
         )?;
-        let rows = statement.query_map(params![name_key, kind, limit], page_row)?;
+        let rows = statement.query_map(params![name_key, kind, limit], |row| {
+            page_row_with_header_validation(row, &mut validate_header)
+        })?;
         collect_read_rows(
-            rows.map(|row| row.map_err(MaterializationError::from)),
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
             page_row_output_bytes,
         )
     }
@@ -2238,7 +2291,21 @@ impl<'a> SqliteMaterializedRead<'a> {
         path: &String,
         limit: usize,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
-        self.pages_by_text_column("path", path.as_str(), limit)
+        self.pages_by_path_with_header_validation(path, limit, allow_any_page_header)
+    }
+
+    pub fn pages_by_path_with_header_validation(
+        &self,
+        path: &String,
+        limit: usize,
+        validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_text_column_with_header_validation(
+            "path",
+            path.as_str(),
+            limit,
+            validate_header,
+        )
     }
 
     /// Bounded stable page listing for application-facing exact queries. This
@@ -2248,6 +2315,15 @@ impl<'a> SqliteMaterializedRead<'a> {
         &self,
         kind: Option<i64>,
         limit: usize,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_with_header_validation(kind, limit, allow_any_page_header)
+    }
+
+    pub fn pages_with_header_validation(
+        &self,
+        kind: Option<i64>,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
         let limit = checked_limit(limit)?;
         let (sql, args): (&str, Vec<rusqlite::types::Value>) = match kind {
@@ -2265,18 +2341,21 @@ impl<'a> SqliteMaterializedRead<'a> {
             ),
         };
         let mut statement = self.connection.prepare(sql)?;
-        let rows = statement.query_map(rusqlite::params_from_iter(args), page_row)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            page_row_with_header_validation(row, &mut validate_header)
+        })?;
         collect_read_rows(
-            rows.map(|row| row.map_err(MaterializationError::from)),
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
             page_row_output_bytes,
         )
     }
 
-    fn pages_by_text_column(
+    fn pages_by_text_column_with_header_validation(
         &self,
         column: &str,
         value: &str,
         limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
     ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
         let limit = checked_limit(limit)?;
         checked_query_text(value)?;
@@ -2286,9 +2365,11 @@ impl<'a> SqliteMaterializedRead<'a> {
              FROM pages WHERE {column} = ?1 ORDER BY page_id LIMIT ?2"
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let rows = statement.query_map(params![value, limit], page_row)?;
+        let rows = statement.query_map(params![value, limit], |row| {
+            page_row_with_header_validation(row, &mut validate_header)
+        })?;
         collect_read_rows(
-            rows.map(|row| row.map_err(MaterializationError::from)),
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
             page_row_output_bytes,
         )
     }
@@ -2538,12 +2619,18 @@ impl<'a> SqliteMaterializedRead<'a> {
     }
 }
 
-fn page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhysicalPageRow> {
+fn page_row_with_header_validation(
+    row: &rusqlite::Row<'_>,
+    validate_header: &mut impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+) -> rusqlite::Result<Result<PhysicalPageRow, MaterializationError>> {
     let page_id: Vec<u8> = row.get(0)?;
     let home_document_id: Vec<u8> = row.get(1)?;
     let path: String = row.get(4)?;
     let kind: i64 = row.get(5)?;
-    Ok(PhysicalPageRow {
+    if let Err(error) = validate_header(path.as_str(), kind) {
+        return Ok(Err(error));
+    }
+    Ok(Ok(PhysicalPageRow {
         page_id: decode_id_sql(&page_id)?,
         home_document_id: decode_id_sql(&home_document_id)?,
         name: row.get(2)?,
@@ -2552,7 +2639,7 @@ fn page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhysicalPageRow> {
         text_kind: kind,
         preamble: row.get(6)?,
         searchable_text: row.get(7)?,
-    })
+    }))
 }
 
 fn block_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhysicalBlockRow> {
