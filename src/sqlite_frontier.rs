@@ -2382,6 +2382,11 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+    use crate::sqlite::{
+        PhysicalEntityId, PhysicalReferenceCatalogChange, PhysicalReferencePosting,
+        PhysicalReferenceTarget, PhysicalSourceCoverage, PhysicalSqliteDatabase,
+    };
+
     use super::*;
 
     static NEXT_DATABASE: AtomicU64 = AtomicU64::new(1);
@@ -2391,13 +2396,18 @@ mod tests {
     }
 
     impl TestDatabase {
-        fn create() -> (Self, Connection) {
+        fn new() -> Self {
             let serial = NEXT_DATABASE.fetch_add(1, AtomicOrdering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "tine-storage-frontier-{}-{serial}.sqlite3",
                 std::process::id()
             ));
-            let connection = Connection::open(&path).unwrap();
+            Self { path }
+        }
+
+        fn create() -> (Self, Connection) {
+            let database = Self::new();
+            let connection = Connection::open(&database.path).unwrap();
             connection
                 .execute_batch(
                     "PRAGMA journal_mode = WAL;
@@ -2406,7 +2416,7 @@ mod tests {
                  PRAGMA trusted_schema = OFF;",
                 )
                 .unwrap();
-            (Self { path }, connection)
+            (database, connection)
         }
 
         fn reopen(&self) -> Connection {
@@ -2597,6 +2607,130 @@ mod tests {
         (database, connection, empty)
     }
 
+    fn initialized_facade() -> (TestDatabase, PhysicalSqliteDatabase, PhysicalFrontierRoot) {
+        let database = TestDatabase::new();
+        let physical = PhysicalSqliteDatabase::open_writable(&database.path).unwrap();
+        let empty = root(0, &[], &[]);
+        physical
+            .initialize_schema(claim(), &empty.canonical_bytes)
+            .unwrap();
+        (database, physical, empty)
+    }
+
+    fn catalog_root(sources: &[[u8; 16]]) -> Vec<u8> {
+        let mut bytes = b"synthetic fresh bootstrap catalog\0".to_vec();
+        for source in sources {
+            bytes.extend_from_slice(source);
+        }
+        bytes
+    }
+
+    fn reference_target_name(source_page_id: [u8; 16]) -> String {
+        format!("bootstrap-target-{}", u128::from_be_bytes(source_page_id))
+    }
+
+    fn configure_fresh_bootstrap_reference(
+        request: &mut PhysicalApplyRequest,
+        prior_sources: &[[u8; 16]],
+    ) -> [u8; 16] {
+        let source_page_id = request.batch.batch_id;
+        let mut post_sources = prior_sources.to_vec();
+        post_sources.push(source_page_id);
+        let prior_catalog_root = catalog_root(prior_sources);
+        let post_catalog_root = catalog_root(&post_sources);
+        let extractor_dependency_stamp_digest = ContentDigest::of(b"bootstrap extractor");
+        let source_digest = ContentDigest::of(&source_page_id);
+        let target_name = reference_target_name(source_page_id);
+        request.materialization.as_mut().unwrap().reference_catalog =
+            Some(PhysicalReferenceCatalogChange {
+                prior_catalog_root: prior_catalog_root.clone(),
+                prior_catalog_root_digest: ContentDigest::of(&prior_catalog_root),
+                prior_source_count: prior_sources.len() as u64,
+                post_catalog_root: post_catalog_root.clone(),
+                post_catalog_root_digest: ContentDigest::of(&post_catalog_root),
+                post_source_count: post_sources.len() as u64,
+                coverage_digest: ContentDigest::of(&post_catalog_root),
+                extractor_dependency_stamp_digest,
+                postings: vec![PhysicalReferencePosting {
+                    source_page_id,
+                    source_entity: PhysicalEntityId::Page(source_page_id),
+                    source_locator: vec![request.batch.acceptance_sequence as u8],
+                    ordinal: 0,
+                    kind: 0,
+                    target: PhysicalReferenceTarget::PageName {
+                        raw_name: target_name.clone(),
+                        normalized_name: target_name,
+                        resolved_page_id: None,
+                    },
+                }],
+                aliases: Vec::new(),
+                coverage: vec![PhysicalSourceCoverage {
+                    source_page_id,
+                    source_digest,
+                    extractor_dependency_stamp_digest,
+                }],
+                removed_sources: Vec::new(),
+                canonical_bytes: post_catalog_root,
+            });
+        request.authenticated_reference = Some(PhysicalAuthenticatedReference {
+            event_binding_digest: request.batch.event_binding_digest,
+            prior_frontier_root_digest: request.batch.prior_frontier_root.digest(),
+            post_frontier_root_digest: request.batch.post_frontier_root.digest(),
+        });
+        request.prior_reference_coverage_count = Some(prior_sources.len() as u64);
+        source_page_id
+    }
+
+    struct FreshBootstrapScenario {
+        first_apply: ApplyResult,
+        second_apply: ApplyResult,
+        first_batch_id: [u8; 16],
+        second_batch_id: [u8; 16],
+        first_source_page_id: [u8; 16],
+        second_source_page_id: [u8; 16],
+        final_root: PhysicalFrontierRoot,
+        batch_entries: Vec<([u8; 16], ContentDigest)>,
+    }
+
+    fn apply_two_part_fresh_bootstrap(
+        physical: &mut PhysicalSqliteDatabase,
+        empty: &PhysicalFrontierRoot,
+    ) -> FreshBootstrapScenario {
+        let document = PhysicalFrontierDocument {
+            document_id: id(50),
+            canonical_bytes: b"fresh-bootstrap-document".to_vec(),
+        };
+        let (mut first, first_entries) = request(empty, 1, None, vec![document.clone()], &[], true);
+        let first_source_page_id = configure_fresh_bootstrap_reference(&mut first, &[]);
+        let first_batch_id = first.batch.batch_id;
+        let first_apply = physical.apply(empty, &first).unwrap();
+        let first_root = first.batch.post_frontier_root.clone();
+
+        let (mut second, batch_entries) = request(
+            &first_root,
+            2,
+            Some(first_batch_id),
+            vec![document],
+            &first_entries,
+            true,
+        );
+        let second_source_page_id =
+            configure_fresh_bootstrap_reference(&mut second, &[first_source_page_id]);
+        let second_batch_id = second.batch.batch_id;
+        let second_apply = physical.apply(&first_root, &second).unwrap();
+
+        FreshBootstrapScenario {
+            first_apply,
+            second_apply,
+            first_batch_id,
+            second_batch_id,
+            first_source_page_id,
+            second_source_page_id,
+            final_root: second.batch.post_frontier_root,
+            batch_entries,
+        }
+    }
+
     #[test]
     fn ordered_apply_duplicate_collision_and_missing_dependency_are_physical() {
         let (_database, mut connection, empty) = initialized();
@@ -2751,6 +2885,222 @@ mod tests {
             sqlite_materialization::recorded_digest(&connection, change.batch.acceptance_sequence)
                 .unwrap(),
             Some(input_digest)
+        );
+    }
+
+    #[test]
+    fn fresh_bootstrap_inductively_covers_authenticated_reference_catalog_transitions() {
+        let (_database, mut physical, empty) = initialized_facade();
+        let scenario = apply_two_part_fresh_bootstrap(&mut physical, &empty);
+
+        assert_eq!(
+            scenario
+                .first_apply
+                .materialization
+                .reference_coverage_count,
+            Some(1)
+        );
+        assert_eq!(
+            scenario
+                .second_apply
+                .materialization
+                .reference_coverage_count,
+            Some(2)
+        );
+        assert_eq!(
+            scenario
+                .first_apply
+                .materialization
+                .reference_coverage_inductive_checks,
+            1
+        );
+        assert_eq!(
+            scenario
+                .second_apply
+                .materialization
+                .reference_coverage_inductive_checks,
+            1
+        );
+        assert_eq!(
+            scenario
+                .first_apply
+                .materialization
+                .reference_coverage_full_scans,
+            0
+        );
+        assert_eq!(
+            scenario
+                .second_apply
+                .materialization
+                .reference_coverage_full_scans,
+            0
+        );
+        assert_eq!(physical.reference_source_coverage_count().unwrap(), 2);
+        assert_eq!(
+            physical
+                .reference_page_candidates_for_name(
+                    &reference_target_name(scenario.first_source_page_id),
+                    2,
+                )
+                .unwrap(),
+            BTreeSet::from([scenario.first_source_page_id])
+        );
+        assert_eq!(
+            physical
+                .reference_page_candidates_for_name(
+                    &reference_target_name(scenario.second_source_page_id),
+                    2,
+                )
+                .unwrap(),
+            BTreeSet::from([scenario.second_source_page_id])
+        );
+    }
+
+    #[test]
+    fn fresh_bootstrap_finalization_retains_only_reachable_accepted_physical_state() {
+        let (_database, mut physical, empty) = initialized_facade();
+        let scenario = apply_two_part_fresh_bootstrap(&mut physical, &empty);
+        let document = PhysicalFrontierDocument {
+            document_id: id(50),
+            canonical_bytes: b"fresh-bootstrap-document".to_vec(),
+        };
+        let (mut staged, _) = request(
+            &scenario.final_root,
+            3,
+            Some(scenario.second_batch_id),
+            vec![document],
+            &scenario.batch_entries,
+            true,
+        );
+        let staged_source_page_id = configure_fresh_bootstrap_reference(
+            &mut staged,
+            &[
+                scenario.first_source_page_id,
+                scenario.second_source_page_id,
+            ],
+        );
+        staged.fault = ApplyFault::ReturnAfterMaterialization;
+        assert_eq!(
+            physical.apply(&scenario.final_root, &staged),
+            Err(FrontierError::InjectedFailure)
+        );
+
+        physical.finalize_fresh_bootstrap(2, 2).unwrap();
+        assert_eq!(
+            physical.read_frontier().unwrap(),
+            StoredFrontier {
+                canonical_bytes: scenario.final_root.canonical_bytes.clone(),
+                digest: scenario.final_root.digest(),
+                applied_batch_count: 2,
+            }
+        );
+        assert_eq!(
+            physical
+                .load_all_batches()
+                .unwrap()
+                .into_iter()
+                .map(|batch| batch.batch_id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([scenario.first_batch_id, scenario.second_batch_id])
+        );
+        assert!(physical
+            .load_batch(staged.batch.batch_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(physical.reference_source_coverage_count().unwrap(), 2);
+        assert!(physical
+            .reference_page_candidates_for_name(&reference_target_name(staged_source_page_id), 2)
+            .unwrap()
+            .is_empty());
+
+        let read = physical
+            .materialized_read(
+                scenario.final_root.acceptance_sequence,
+                scenario.final_root.digest(),
+            )
+            .unwrap();
+        assert_eq!(
+            read.pages(None, 3)
+                .unwrap()
+                .into_iter()
+                .map(|page| page.page_id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                scenario.first_source_page_id,
+                scenario.second_source_page_id
+            ])
+        );
+        assert!(read.page(staged_source_page_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn finalized_fresh_bootstrap_reopens_through_public_storage_facade() {
+        let (database, mut physical, empty) = initialized_facade();
+        let scenario = apply_two_part_fresh_bootstrap(&mut physical, &empty);
+        physical.finalize_fresh_bootstrap(2, 2).unwrap();
+
+        let expected_frontier = physical.read_frontier().unwrap();
+        let expected_batches = physical.load_all_batches().unwrap();
+        let expected_coverage_count = physical.reference_source_coverage_count().unwrap();
+        let expected_first_candidates = physical
+            .reference_page_candidates_for_name(
+                &reference_target_name(scenario.first_source_page_id),
+                2,
+            )
+            .unwrap();
+        let expected_second_candidates = physical
+            .reference_page_candidates_for_name(
+                &reference_target_name(scenario.second_source_page_id),
+                2,
+            )
+            .unwrap();
+        let expected_pages = physical
+            .materialized_read(
+                scenario.final_root.acceptance_sequence,
+                scenario.final_root.digest(),
+            )
+            .unwrap()
+            .pages(None, 3)
+            .unwrap();
+        physical.checkpoint_truncate().unwrap();
+        drop(physical);
+
+        let reopened = PhysicalSqliteDatabase::open_read_only(&database.path).unwrap();
+        reopened.validate_schema_and_claim(claim()).unwrap();
+        assert_eq!(reopened.read_frontier().unwrap(), expected_frontier);
+        assert_eq!(reopened.load_all_batches().unwrap(), expected_batches);
+        assert_eq!(
+            reopened.reference_source_coverage_count().unwrap(),
+            expected_coverage_count
+        );
+        assert_eq!(
+            reopened
+                .reference_page_candidates_for_name(
+                    &reference_target_name(scenario.first_source_page_id),
+                    2,
+                )
+                .unwrap(),
+            expected_first_candidates
+        );
+        assert_eq!(
+            reopened
+                .reference_page_candidates_for_name(
+                    &reference_target_name(scenario.second_source_page_id),
+                    2,
+                )
+                .unwrap(),
+            expected_second_candidates
+        );
+        assert_eq!(
+            reopened
+                .materialized_read(
+                    scenario.final_root.acceptance_sequence,
+                    scenario.final_root.digest(),
+                )
+                .unwrap()
+                .pages(None, 3)
+                .unwrap(),
+            expected_pages
         );
     }
 }
