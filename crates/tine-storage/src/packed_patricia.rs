@@ -1032,10 +1032,10 @@ impl PackedPatriciaCatalog {
 
 /// Corrupts the packed bytes that currently contain `node_digest` while
 /// retaining the immutable pack's content-addressed filename. This exists only
-/// for debug test-support builds so adapter callers can prove that reopen
-/// rejects existing path/content mismatches; production builds have no
-/// corruption surface.
-#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+/// for crate tests or explicit test-support builds so adapter callers can
+/// prove that reopen rejects existing path/content mismatches; ordinary
+/// production builds have no corruption surface.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn corrupt_packed_node_for_test(
     dir: &Dir,
     node_digest: ContentDigest,
