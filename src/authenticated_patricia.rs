@@ -84,9 +84,10 @@ const MAX_NODE_BYTES: u64 = 128 * 1024;
 const NODE_SUFFIX: &str = ".patricia-node";
 
 // Private bootstrap construction keeps newly addressed nodes hot across part
-// boundaries. Once this conservative encoded-size budget is crossed, every
-// staged node is immutable-published and the buffer is cleared. This is a
-// single-use construction buffer, not a second persistent cache.
+// boundaries. Once this conservative encoded-size budget is crossed, nodes
+// reachable from construction authority are immutable-published and the
+// buffer is cleared. This is a single-use construction buffer, not a second
+// persistent cache.
 pub const MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -213,12 +214,16 @@ impl StagedNodes {
 /// Single-use node construction shared by every checkpoint of one private
 /// bootstrap session. Roots remain ordinary Patricia roots; only publication
 /// timing changes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PatriciaIndexConstruction {
     staged: StagedNodes,
     checkpoint_roots: BTreeSet<ContentDigest>,
+    live_roots: BTreeSet<ContentDigest>,
+    resident_budget_bytes: usize,
     peak_resident_bytes: usize,
     flushes: usize,
+    staged_nodes_at_publication: usize,
+    published_staged_nodes: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -227,20 +232,53 @@ pub struct PatriciaIndexConstructionStats {
     pub flushes: usize,
 }
 
+impl Default for PatriciaIndexConstruction {
+    fn default() -> Self {
+        Self {
+            staged: StagedNodes::default(),
+            checkpoint_roots: BTreeSet::new(),
+            live_roots: BTreeSet::new(),
+            resident_budget_bytes: MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
+            peak_resident_bytes: 0,
+            flushes: 0,
+            staged_nodes_at_publication: 0,
+            published_staged_nodes: 0,
+        }
+    }
+}
+
 impl PatriciaIndexConstruction {
     pub fn checkpoint(&mut self, roots: impl IntoIterator<Item = PatriciaIndexRoot>) {
         self.checkpoint_roots
             .extend(roots.into_iter().map(PatriciaIndexRoot::digest));
     }
 
+    /// Replaces the complete set of roots that the caller currently treats as
+    /// live construction authority. Historical roots are retained separately
+    /// with [`Self::checkpoint`].
+    pub fn set_live_roots(&mut self, roots: impl IntoIterator<Item = PatriciaIndexRoot>) {
+        self.live_roots = roots.into_iter().map(PatriciaIndexRoot::digest).collect();
+    }
+
     fn note_residency(&mut self) {
         self.peak_resident_bytes = self.peak_resident_bytes.max(self.staged.encoded_bytes);
     }
 
-    fn flush_if_over_budget(&mut self, store: &PatriciaIndexStore) -> Result<(), PatriciaError> {
+    fn flush_if_over_budget(
+        &mut self,
+        store: &PatriciaIndexStore,
+        in_progress_root: PatriciaIndexRoot,
+    ) -> Result<(), PatriciaError> {
         self.note_residency();
-        if self.staged.encoded_bytes > MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES {
-            store.publish_all_staged(&self.staged)?;
+        if self.staged.encoded_bytes > self.resident_budget_bytes {
+            let mut roots = self.checkpoint_roots.clone();
+            roots.extend(self.live_roots.iter().copied());
+            roots.insert(in_progress_root.digest());
+            let published = store.publish_staged_roots(&roots, &self.staged)?;
+            self.staged_nodes_at_publication = self
+                .staged_nodes_at_publication
+                .saturating_add(self.staged.nodes.len());
+            self.published_staged_nodes = self.published_staged_nodes.saturating_add(published);
             self.staged.clear();
             self.flushes = self.flushes.saturating_add(1);
         }
@@ -521,7 +559,7 @@ impl PatriciaIndexStore {
                 value,
                 &mut construction.staged,
             )?);
-            construction.flush_if_over_budget(self)?;
+            construction.flush_if_over_budget(self, root)?;
         }
         Ok(root)
     }
@@ -538,7 +576,7 @@ impl PatriciaIndexStore {
         for key in keys {
             validate_key(key)?;
             root = self.remove_constructed(construction, root, key)?;
-            construction.flush_if_over_budget(self)?;
+            construction.flush_if_over_budget(self, root)?;
         }
         Ok(root)
     }
@@ -548,7 +586,15 @@ impl PatriciaIndexStore {
         construction: &mut PatriciaIndexConstruction,
     ) -> Result<(), PatriciaError> {
         construction.note_residency();
-        self.publish_staged_roots(&construction.checkpoint_roots, &construction.staged)?;
+        let mut roots = construction.checkpoint_roots.clone();
+        roots.extend(construction.live_roots.iter().copied());
+        let published = self.publish_staged_roots(&roots, &construction.staged)?;
+        construction.staged_nodes_at_publication = construction
+            .staged_nodes_at_publication
+            .saturating_add(construction.staged.nodes.len());
+        construction.published_staged_nodes = construction
+            .published_staged_nodes
+            .saturating_add(published);
         construction.staged.clear();
         Ok(())
     }
@@ -904,20 +950,14 @@ impl PatriciaIndexStore {
         Ok(())
     }
 
-    fn publish_all_staged(&self, staged: &StagedNodes) -> Result<(), PatriciaError> {
-        for node in staged.nodes.values() {
-            self.publish_node(node)?;
-        }
-        Ok(())
-    }
-
     fn publish_staged_roots(
         &self,
         roots: &BTreeSet<ContentDigest>,
         staged: &StagedNodes,
-    ) -> Result<(), PatriciaError> {
+    ) -> Result<usize, PatriciaError> {
         let mut pending = roots.iter().copied().collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
+        let mut published = 0_usize;
         while let Some(digest) = pending.pop() {
             if !visited.insert(digest) {
                 continue;
@@ -930,8 +970,9 @@ impl PatriciaIndexStore {
                 pending.push(*right);
             }
             self.publish_node(node)?;
+            published = published.saturating_add(1);
         }
-        Ok(())
+        Ok(published)
     }
 
     fn verify_staged_reachable(
@@ -1320,6 +1361,199 @@ mod tests {
             store.lookup_prefix(root, key),
             Err(PatriciaError::Malformed)
         ));
+    }
+
+    fn all_records(
+        store: &PatriciaIndexStore,
+        root: PatriciaIndexRoot,
+    ) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let mut records = BTreeMap::new();
+        store
+            .visit_all(root, |key, value| {
+                records.insert(key.to_vec(), value.to_vec());
+                true
+            })
+            .unwrap();
+        records
+    }
+
+    fn reachable_node_bytes(
+        store: &PatriciaIndexStore,
+        roots: impl IntoIterator<Item = PatriciaIndexRoot>,
+    ) -> BTreeMap<ContentDigest, Vec<u8>> {
+        let mut pending = roots
+            .into_iter()
+            .filter(|root| *root != PatriciaIndexRoot::empty())
+            .map(PatriciaIndexRoot::digest)
+            .collect::<Vec<_>>();
+        let mut bytes = BTreeMap::new();
+        while let Some(digest) = pending.pop() {
+            if bytes.contains_key(&digest) {
+                continue;
+            }
+            let node = store.read_node(digest).unwrap();
+            if let Node::Branch { left, right, .. } = &node {
+                pending.push(*left);
+                pending.push(*right);
+            }
+            bytes.insert(digest, postcard::to_allocvec(&node).unwrap());
+        }
+        bytes
+    }
+
+    #[test]
+    fn construction_flushes_only_checkpoint_live_and_in_progress_roots() {
+        const RESIDENT_BUDGET: usize = 4 * 1024;
+        const ROUNDS: usize = 48;
+
+        let (baseline_path, baseline) = store("construction-baseline");
+        let (construction_path, constructed) = store("construction-reachable");
+        let mut construction = PatriciaIndexConstruction {
+            resident_budget_bytes: RESIDENT_BUDGET,
+            ..PatriciaIndexConstruction::default()
+        };
+        let mut baseline_roots = [PatriciaIndexRoot::empty(); 3];
+        let mut live_roots = [PatriciaIndexRoot::empty(); 3];
+        let mut expected: [BTreeMap<Vec<u8>, Vec<u8>>; 3] =
+            std::array::from_fn(|_| BTreeMap::new());
+        let mut checkpoints: Vec<([PatriciaIndexRoot; 3], [BTreeMap<Vec<u8>, Vec<u8>>; 3])> =
+            Vec::new();
+        let mut removal_flushes = 0_usize;
+        construction.set_live_roots(live_roots);
+
+        for round in 0..ROUNDS {
+            for sibling in 0..3 {
+                let key = format!("sibling-{sibling}/record-{round:03}").into_bytes();
+                let value = vec![(round * 3 + sibling) as u8; 96];
+                let records = BTreeMap::from([(key.clone(), value.clone())]);
+                baseline_roots[sibling] = baseline
+                    .insert_many(baseline_roots[sibling], &records)
+                    .unwrap();
+                let flushes_before = construction.flushes;
+                live_roots[sibling] = constructed
+                    .construction_insert_many(&mut construction, live_roots[sibling], &records)
+                    .unwrap();
+                expected[sibling].insert(key, value);
+                assert_eq!(live_roots[sibling], baseline_roots[sibling]);
+                construction.set_live_roots(live_roots);
+
+                if construction.flushes != flushes_before {
+                    for (roots, records) in &checkpoints {
+                        for index in 0..3 {
+                            assert_eq!(all_records(&constructed, roots[index]), records[index]);
+                        }
+                    }
+                    for index in 0..3 {
+                        assert_eq!(
+                            all_records(&constructed, live_roots[index]),
+                            expected[index]
+                        );
+                    }
+                }
+            }
+
+            if round >= 8 && round % 7 == 3 {
+                let sibling = round % 3;
+                let key = format!("sibling-{sibling}/record-{:03}", round - 8).into_bytes();
+                let keys = vec![key.clone()];
+                baseline_roots[sibling] = baseline
+                    .remove_many(baseline_roots[sibling], &keys)
+                    .unwrap();
+                let flushes_before = construction.flushes;
+                live_roots[sibling] = constructed
+                    .construction_remove_many(&mut construction, live_roots[sibling], &keys)
+                    .unwrap();
+                expected[sibling].remove(&key);
+                assert_eq!(live_roots[sibling], baseline_roots[sibling]);
+                construction.set_live_roots(live_roots);
+                if construction.flushes != flushes_before {
+                    removal_flushes = removal_flushes.saturating_add(1);
+                    for index in 0..3 {
+                        assert_eq!(
+                            all_records(&constructed, live_roots[index]),
+                            expected[index]
+                        );
+                    }
+                }
+            }
+
+            if round % 6 == 5 && round + 1 != ROUNDS {
+                construction.checkpoint(live_roots);
+                checkpoints.push((live_roots, expected.clone()));
+            }
+        }
+
+        assert!(
+            construction.flushes >= 3,
+            "fixture must force several flushes"
+        );
+        assert!(removal_flushes > 0, "fixture must flush during a removal");
+        assert!(
+            construction.peak_resident_bytes > RESIDENT_BUDGET,
+            "the check must retain the existing post-insert overshoot"
+        );
+        assert!(
+            construction.peak_resident_bytes <= RESIDENT_BUDGET + 4 * 1024,
+            "the fixture must stay within one insert's old overshoot"
+        );
+        assert!(
+            !construction.staged.nodes.is_empty(),
+            "fixture must leave reachable work for finalization"
+        );
+        assert!(
+            construction.published_staged_nodes < construction.staged_nodes_at_publication,
+            "budget flushes must omit transient staged path copies before finalization"
+        );
+        let publications_before_finish = construction.published_staged_nodes;
+        constructed.finish_construction(&mut construction).unwrap();
+        assert!(construction.staged.nodes.is_empty());
+        assert!(construction.published_staged_nodes > publications_before_finish);
+        let publications_after_finish = construction.published_staged_nodes;
+        let writes_after_finish = constructed.stats().writes;
+        constructed.finish_construction(&mut construction).unwrap();
+        assert_eq!(
+            construction.published_staged_nodes, publications_after_finish,
+            "final reachable staged nodes publish only once"
+        );
+        assert_eq!(constructed.stats().writes, writes_after_finish);
+        let authority_roots = checkpoints
+            .iter()
+            .flat_map(|(roots, _)| roots.iter().copied())
+            .chain(live_roots);
+        assert_eq!(
+            reachable_node_bytes(&constructed, authority_roots.clone()),
+            reachable_node_bytes(&baseline, authority_roots),
+            "every reachable node must retain its prior canonical bytes"
+        );
+        assert!(
+            fs::read_dir(baseline_path.join("nodes")).unwrap().count()
+                > fs::read_dir(construction_path.join("nodes"))
+                    .unwrap()
+                    .count(),
+            "optimized construction must create fewer immutable node files"
+        );
+
+        drop(constructed);
+        let construction_root =
+            Dir::open_ambient_dir(&construction_path, ambient_authority()).unwrap();
+        let reopened = PatriciaIndexStore::new(
+            open_dir_nofollow(&construction_root, "nodes").unwrap(),
+            ExactPublisher,
+        );
+        for (roots, records) in checkpoints {
+            for index in 0..3 {
+                assert_eq!(all_records(&reopened, roots[index]), records[index]);
+            }
+        }
+        for index in 0..3 {
+            assert_eq!(all_records(&reopened, live_roots[index]), expected[index]);
+        }
+
+        drop(reopened);
+        drop(construction_root);
+        drop(baseline);
+        fs::remove_dir_all(baseline_path).unwrap();
+        fs::remove_dir_all(construction_path).unwrap();
     }
 
     #[test]
