@@ -4,14 +4,19 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 
 use super::ContentDigest;
 use crate::filesystem::{read_optional_regular, FilesystemError};
-use crate::packed_patricia::{PackedPatriciaCatalog, PackedPatriciaError};
+#[cfg(test)]
+use crate::packed_patricia::PackedPatriciaPublicationWork;
+use crate::packed_patricia::{
+    publish_appended_catalog, transition_catalog_head, PackedPatriciaCatalog, PackedPatriciaError,
+    MAX_CATALOG_PACK_BYTES,
+};
 
 /// Opaque publication failure returned by the policy-owning Patricia adapter.
 pub struct PatriciaPublicationError(Box<dyn Any + Send>);
@@ -46,6 +51,13 @@ pub trait PatriciaNodePublisher: Send + Sync {
         filename: &str,
         bytes: &[u8],
     ) -> Result<(), PatriciaPublicationError>;
+
+    /// Opt in only when each successful publication is independently durable
+    /// and calls are serialized beneath the archive's existing writer lease.
+    /// Batched detached publishers must retain the loose path.
+    fn permits_packed_head_transition(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -137,8 +149,12 @@ struct Counters {
 pub struct PatriciaIndexStore {
     nodes: Dir,
     publisher: Box<dyn PatriciaNodePublisher>,
-    packed: OnceLock<Option<PackedPatriciaCatalog>>,
+    packed: Mutex<Option<Option<PackedPatriciaCatalog>>>,
     counters: Counters,
+    #[cfg(test)]
+    packed_catalog_byte_limit: usize,
+    #[cfg(test)]
+    packed_publication_work: Mutex<Option<PackedPatriciaPublicationWork>>,
 }
 
 impl fmt::Debug for PatriciaIndexStore {
@@ -301,8 +317,12 @@ impl PatriciaIndexStore {
         Self {
             nodes,
             publisher: Box::new(publisher),
-            packed: OnceLock::new(),
+            packed: Mutex::new(None),
             counters: Counters::default(),
+            #[cfg(test)]
+            packed_catalog_byte_limit: MAX_CATALOG_PACK_BYTES,
+            #[cfg(test)]
+            packed_publication_work: Mutex::new(None),
         }
     }
 
@@ -313,8 +333,12 @@ impl PatriciaIndexStore {
         Ok(Self {
             nodes: self.nodes.try_clone()?,
             publisher: Box::new(publisher),
-            packed: OnceLock::new(),
+            packed: Mutex::new(None),
             counters: Counters::default(),
+            #[cfg(test)]
+            packed_catalog_byte_limit: self.packed_catalog_byte_limit,
+            #[cfg(test)]
+            packed_publication_work: Mutex::new(None),
         })
     }
 
@@ -937,22 +961,8 @@ impl PatriciaIndexStore {
         root: PatriciaIndexRoot,
         staged: &StagedNodes,
     ) -> Result<(), PatriciaError> {
-        let mut pending = vec![root.digest()];
-        let mut visited = BTreeSet::new();
-        while let Some(digest) = pending.pop() {
-            if !visited.insert(digest) {
-                continue;
-            }
-            let Some(node) = staged.nodes.get(&digest) else {
-                continue;
-            };
-            if let Node::Branch { left, right, .. } = node {
-                pending.push(*left);
-                pending.push(*right);
-            }
-            self.publish_node(node)?;
-        }
-        Ok(())
+        self.publish_staged_roots(&BTreeSet::from([root.digest()]), staged)
+            .map(|_| ())
     }
 
     fn publish_staged_roots(
@@ -960,9 +970,41 @@ impl PatriciaIndexStore {
         roots: &BTreeSet<ContentDigest>,
         staged: &StagedNodes,
     ) -> Result<usize, PatriciaError> {
+        let (entries, publication_order) = self.reachable_staged_bytes(roots, staged)?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        if self.publisher.permits_packed_head_transition() {
+            match self.publish_packed_entries(&entries) {
+                Ok(()) => {
+                    self.note_writes(&entries);
+                    return Ok(entries.len());
+                }
+                Err(error) if packed_capacity_error(&error) => {}
+                Err(error) => return Err(map_packed_patricia_error(error)),
+            }
+        }
+        for digest in publication_order {
+            let bytes = entries
+                .get(&digest)
+                .expect("reachable publication order names an exact staged node");
+            self.publisher
+                .publish(&self.nodes, &node_filename(digest), bytes)
+                .map_err(PatriciaError::Publication)?;
+        }
+        self.note_writes(&entries);
+        Ok(entries.len())
+    }
+
+    fn reachable_staged_bytes(
+        &self,
+        roots: &BTreeSet<ContentDigest>,
+        staged: &StagedNodes,
+    ) -> Result<(BTreeMap<ContentDigest, Vec<u8>>, Vec<ContentDigest>), PatriciaError> {
         let mut pending = roots.iter().copied().collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
-        let mut published = 0_usize;
+        let mut entries = BTreeMap::new();
+        let mut publication_order = Vec::new();
         while let Some(digest) = pending.pop() {
             if !visited.insert(digest) {
                 continue;
@@ -974,10 +1016,68 @@ impl PatriciaIndexStore {
                 pending.push(*left);
                 pending.push(*right);
             }
-            self.publish_node(node)?;
-            published = published.saturating_add(1);
+            let bytes = postcard::to_allocvec(node).map_err(|_| PatriciaError::Malformed)?;
+            if ContentDigest::of(&bytes) != digest {
+                return Err(PatriciaError::PathMismatch(digest));
+            }
+            entries.insert(digest, bytes);
+            publication_order.push(digest);
         }
-        Ok(published)
+        Ok((entries, publication_order))
+    }
+
+    fn publish_packed_entries(
+        &self,
+        new_entries: &BTreeMap<ContentDigest, Vec<u8>>,
+    ) -> Result<(), PackedPatriciaError> {
+        let mut resolver = self
+            .packed
+            .lock()
+            .map_err(|_| PackedPatriciaError::Malformed)?;
+        if resolver.is_none() {
+            *resolver = Some(PackedPatriciaCatalog::discover(&self.nodes)?);
+        }
+        let current = resolver.as_ref().expect("packed discovery initialized");
+        let expected = current.as_ref().map(PackedPatriciaCatalog::authority);
+        #[cfg(test)]
+        let catalog_pack_byte_limit = self.packed_catalog_byte_limit;
+        #[cfg(not(test))]
+        let catalog_pack_byte_limit = MAX_CATALOG_PACK_BYTES;
+        let (pending, work) = publish_appended_catalog(
+            &self.nodes,
+            self.publisher.as_ref(),
+            current.as_ref(),
+            new_entries,
+            catalog_pack_byte_limit,
+        )?;
+        #[cfg(test)]
+        {
+            *self
+                .packed_publication_work
+                .lock()
+                .map_err(|_| PackedPatriciaError::Malformed)? = Some(work);
+        }
+        #[cfg(not(test))]
+        let _ = work;
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        transition_catalog_head(&self.nodes, expected, pending.published_catalog())?;
+        let current = resolver
+            .take()
+            .expect("packed discovery initialized before transition");
+        *resolver = Some(Some(pending.finish(current)));
+        Ok(())
+    }
+
+    fn note_writes(&self, entries: &BTreeMap<ContentDigest, Vec<u8>>) {
+        self.counters
+            .writes
+            .fetch_add(entries.len(), Ordering::Relaxed);
+        self.counters.bytes_written.fetch_add(
+            entries.values().map(Vec::len).sum::<usize>(),
+            Ordering::Relaxed,
+        );
     }
 
     fn verify_staged_reachable(
@@ -1108,7 +1208,7 @@ impl PatriciaIndexStore {
                 return Err(PatriciaError::PathMismatch(digest));
             }
             (Some(loose), _) => loose,
-            (None, Some(packed)) => packed.to_vec(),
+            (None, Some(packed)) => packed,
             (None, None) => return Err(PatriciaError::MissingNode(digest)),
         };
         let node: Node = postcard::from_bytes(&bytes).map_err(|_| PatriciaError::Malformed)?;
@@ -1123,21 +1223,18 @@ impl PatriciaIndexStore {
         Ok(node)
     }
 
-    fn read_packed_node(&self, digest: ContentDigest) -> Result<Option<&[u8]>, PatriciaError> {
-        if self.packed.get().is_none() {
-            let discovered =
-                PackedPatriciaCatalog::discover(&self.nodes).map_err(map_packed_patricia_error)?;
-            // A concurrent first read may win this race. Whichever completed
-            // discovery installs first defines this store's atomic before- or
-            // after-head snapshot; callers reopen to observe later authority.
-            let _ = self.packed.set(discovered);
+    fn read_packed_node(&self, digest: ContentDigest) -> Result<Option<Vec<u8>>, PatriciaError> {
+        let mut resolver = self.packed.lock().map_err(|_| PatriciaError::Malformed)?;
+        if resolver.is_none() {
+            *resolver = Some(
+                PackedPatriciaCatalog::discover(&self.nodes).map_err(map_packed_patricia_error)?,
+            );
         }
-        Ok(self
-            .packed
-            .get()
+        Ok(resolver
+            .as_ref()
             .expect("packed discovery initialized")
             .as_ref()
-            .and_then(|catalog| catalog.get(digest)))
+            .and_then(|catalog| catalog.get(digest).map(<[u8]>::to_vec)))
     }
 }
 
@@ -1150,7 +1247,19 @@ fn map_packed_patricia_error(error: PackedPatriciaError) -> PatriciaError {
         | PackedPatriciaError::TooManyEntries
         | PackedPatriciaError::EntryTooLarge(_)
         | PackedPatriciaError::PackTooLarge
+        | PackedPatriciaError::UnexpectedHead
         | PackedPatriciaError::Malformed => PatriciaError::Malformed,
+    }
+}
+
+fn packed_capacity_error(error: &PackedPatriciaError) -> bool {
+    match error {
+        PackedPatriciaError::TooManyEntries | PackedPatriciaError::PackTooLarge => true,
+        PackedPatriciaError::EntryTooLarge(digest) => {
+            let _ = digest;
+            true
+        }
+        _ => false,
     }
 }
 
@@ -1300,6 +1409,7 @@ fn node_filename(digest: ContentDigest) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use cap_std::ambient_authority;
@@ -1318,6 +1428,83 @@ mod tests {
             bytes: &[u8],
         ) -> Result<(), PatriciaPublicationError> {
             publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+    }
+
+    struct PackedExactPublisher;
+
+    impl PatriciaNodePublisher for PackedExactPublisher {
+        fn publish(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+
+        fn permits_packed_head_transition(&self) -> bool {
+            true
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct MeasuringPackedPublisher {
+        publications: Arc<Mutex<Vec<(String, usize)>>>,
+    }
+
+    impl MeasuringPackedPublisher {
+        fn take(&self) -> Vec<(String, usize)> {
+            std::mem::take(&mut *self.publications.lock().unwrap())
+        }
+    }
+
+    impl PatriciaNodePublisher for MeasuringPackedPublisher {
+        fn publish(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            self.publications
+                .lock()
+                .unwrap()
+                .push((filename.to_owned(), bytes.len()));
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+
+        fn permits_packed_head_transition(&self) -> bool {
+            true
+        }
+    }
+
+    #[derive(Clone)]
+    struct BoundaryCrashPublisher {
+        calls: Arc<AtomicUsize>,
+        fail_at: usize,
+        after_commit: bool,
+    }
+
+    impl PatriciaNodePublisher for BoundaryCrashPublisher {
+        fn publish(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            if call == self.fail_at && !self.after_commit {
+                return Err(PatriciaPublicationError::new("injected pre-commit crash"));
+            }
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)?;
+            if call == self.fail_at && self.after_commit {
+                return Err(PatriciaPublicationError::new("injected post-commit crash"));
+            }
+            Ok(())
+        }
+
+        fn permits_packed_head_transition(&self) -> bool {
+            true
         }
     }
 
@@ -1357,6 +1544,26 @@ mod tests {
         ensure_directory_nofollow(&root, "nodes").unwrap();
         let nodes = open_dir_nofollow(&root, "nodes").unwrap();
         (path, PatriciaIndexStore::new(nodes, ExactPublisher))
+    }
+
+    fn store_with_publisher(
+        name: &str,
+        publisher: impl PatriciaNodePublisher + 'static,
+    ) -> (std::path::PathBuf, PatriciaIndexStore) {
+        let path = std::env::temp_dir().join(format!("tine-claim-index-{name}-{}", Uuid::new_v4()));
+        fs::create_dir(&path).unwrap();
+        let root = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        ensure_directory_nofollow(&root, "nodes").unwrap();
+        let nodes = open_dir_nofollow(&root, "nodes").unwrap();
+        (path, PatriciaIndexStore::new(nodes, publisher))
+    }
+
+    fn count_suffix(path: &std::path::Path, suffix: &str) -> usize {
+        fs::read_dir(path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(suffix))
+            .count()
     }
 
     fn publish_leaf(store: &PatriciaIndexStore, key: &[u8]) -> ContentDigest {
@@ -1570,6 +1777,274 @@ mod tests {
     }
 
     #[test]
+    fn packed_writer_first_update_and_mixed_loose_ancestor_are_semantic_with_low_fanout() {
+        let records = (0..512)
+            .map(|index| {
+                (
+                    format!("pages/packed-writer-{index:04}.md").into_bytes(),
+                    format!("value-{index:04}-α").into_bytes(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let (loose_path, loose) = store("writer-fanout-loose");
+        let loose_root = loose
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        let (packed_path, packed) =
+            store_with_publisher("writer-fanout-packed", PackedExactPublisher);
+        let packed_root = packed
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        assert_eq!(packed_root, loose_root);
+        assert_eq!(all_records(&packed, packed_root), records);
+
+        let packed_nodes = packed_path.join("nodes");
+        let loose_nodes = loose_path.join("nodes");
+        assert_eq!(count_suffix(&packed_nodes, NODE_SUFFIX), 0);
+        assert_eq!(
+            count_suffix(&packed_nodes, crate::packed_patricia::PACK_SUFFIX),
+            1
+        );
+        assert_eq!(fs::read_dir(&packed_nodes).unwrap().count(), 3);
+
+        let update = BTreeMap::from([
+            (
+                b"pages/packed-writer-0256.md".to_vec(),
+                b"updated-value".to_vec(),
+            ),
+            (
+                b"pages/packed-writer-new.md".to_vec(),
+                b"new-value".to_vec(),
+            ),
+        ]);
+        let updated_packed = packed.insert_many(packed_root, &update).unwrap();
+        let updated_loose = loose.insert_many(loose_root, &update).unwrap();
+        assert_eq!(updated_packed, updated_loose);
+        let mut expected = records.clone();
+        expected.extend(update);
+        assert_eq!(all_records(&packed, updated_packed), expected);
+        assert_eq!(count_suffix(&packed_nodes, NODE_SUFFIX), 0);
+        assert!(
+            fs::read_dir(&loose_nodes).unwrap().count()
+                > fs::read_dir(&packed_nodes).unwrap().count() * 50,
+            "a real two-write journey must materially reduce immutable directory fan-out"
+        );
+
+        let (mixed_path, mixed_loose) = store("writer-mixed-ancestor");
+        let ancestor_records = records.into_iter().take(128).collect::<BTreeMap<_, _>>();
+        let ancestor_root = mixed_loose
+            .insert_many(PatriciaIndexRoot::empty(), &ancestor_records)
+            .unwrap();
+        let mixed_nodes = mixed_path.join("nodes");
+        let loose_before = count_suffix(&mixed_nodes, NODE_SUFFIX);
+        drop(mixed_loose);
+        let mixed_dir = Dir::open_ambient_dir(&mixed_path, ambient_authority()).unwrap();
+        let mixed = PatriciaIndexStore::new(
+            open_dir_nofollow(&mixed_dir, "nodes").unwrap(),
+            PackedExactPublisher,
+        );
+        let mixed_update = BTreeMap::from([(
+            b"pages/packed-writer-0064.md".to_vec(),
+            b"mixed-update".to_vec(),
+        )]);
+        let mixed_root = mixed.insert_many(ancestor_root, &mixed_update).unwrap();
+        let mut mixed_expected = ancestor_records;
+        mixed_expected.extend(mixed_update);
+        assert_eq!(all_records(&mixed, mixed_root), mixed_expected);
+        assert_eq!(count_suffix(&mixed_nodes, NODE_SUFFIX), loose_before);
+        assert_eq!(
+            count_suffix(&mixed_nodes, crate::packed_patricia::PACK_SUFFIX),
+            1
+        );
+
+        drop(mixed);
+        drop(mixed_dir);
+        drop(packed);
+        drop(loose);
+        fs::remove_dir_all(mixed_path).unwrap();
+        fs::remove_dir_all(packed_path).unwrap();
+        fs::remove_dir_all(loose_path).unwrap();
+    }
+
+    #[test]
+    fn packed_writer_capacity_falls_back_to_loose_without_changing_head() {
+        let (path, mut store) =
+            store_with_publisher("writer-capacity-fallback", PackedExactPublisher);
+        let initial = (0..64)
+            .map(|index| {
+                (
+                    format!("capacity/{index:04}").into_bytes(),
+                    vec![index as u8; 32],
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let root = store
+            .insert_many(PatriciaIndexRoot::empty(), &initial)
+            .unwrap();
+        let nodes = path.join("nodes");
+        let head_before = fs::read(nodes.join(crate::packed_patricia::HEAD_FILENAME)).unwrap();
+        let packs_before = count_suffix(&nodes, crate::packed_patricia::PACK_SUFFIX);
+        let catalogs_before = count_suffix(&nodes, ".patricia-catalog-v1");
+        store.packed_catalog_byte_limit = 1;
+        let update = BTreeMap::from([(b"capacity/0032".to_vec(), b"fallback-value".to_vec())]);
+        let updated = store.insert_many(root, &update).unwrap();
+        let mut expected = initial;
+        expected.extend(update);
+        assert_eq!(all_records(&store, updated), expected);
+        assert_eq!(
+            fs::read(nodes.join(crate::packed_patricia::HEAD_FILENAME)).unwrap(),
+            head_before
+        );
+        assert!(count_suffix(&nodes, NODE_SUFFIX) > 0);
+        assert_eq!(
+            count_suffix(&nodes, crate::packed_patricia::PACK_SUFFIX),
+            packs_before,
+            "capacity fallback must fail before publishing an orphan delta pack"
+        );
+        assert_eq!(
+            count_suffix(&nodes, ".patricia-catalog-v1"),
+            catalogs_before,
+            "capacity fallback must fail before publishing a replacement catalog"
+        );
+
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn packed_writer_large_history_update_touches_only_delta_payload_and_bounded_metadata() {
+        const RECORDS: usize = 4_096;
+
+        let publisher = MeasuringPackedPublisher::default();
+        let (path, store) = store_with_publisher("writer-large-history-work", publisher.clone());
+        let initial = (0..RECORDS)
+            .map(|index| {
+                (
+                    format!("history/{index:05}").into_bytes(),
+                    format!("historical-value-{index:05}-{}", "x".repeat(48)).into_bytes(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let root = store
+            .insert_many(PatriciaIndexRoot::empty(), &initial)
+            .unwrap();
+        let nodes = path.join("nodes");
+        let historical_pack_bytes = fs::read_dir(&nodes)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(crate::packed_patricia::PACK_SUFFIX)
+            })
+            .map(|entry| entry.metadata().unwrap().len() as usize)
+            .sum::<usize>();
+        assert!(historical_pack_bytes > 512 * 1024);
+        publisher.take();
+        let stats_before = store.stats();
+
+        let updated = store
+            .insert_many(
+                root,
+                &BTreeMap::from([(b"history/02048".to_vec(), b"one-small-update".to_vec())]),
+            )
+            .unwrap();
+        let stats_after = store.stats();
+        let work = store
+            .packed_publication_work
+            .lock()
+            .unwrap()
+            .expect("successful packed update records its physical work");
+        let publications = publisher.take();
+
+        assert_ne!(updated, root);
+        assert_eq!(work.existing_payload_bytes_compared, 0);
+        assert_eq!(work.pack_bytes_encoded, work.pack_bytes_published);
+        assert_eq!(
+            work.catalog_metadata_bytes_encoded,
+            work.catalog_metadata_bytes_published
+        );
+        assert_eq!(work.packs_published, 1);
+        assert_eq!(
+            publications
+                .iter()
+                .filter(|(name, _)| name.ends_with(crate::packed_patricia::PACK_SUFFIX))
+                .count(),
+            1
+        );
+        assert_eq!(
+            publications
+                .iter()
+                .filter(|(name, _)| name.ends_with(".patricia-catalog-v1"))
+                .count(),
+            1
+        );
+        assert!(work.new_payload_bytes < historical_pack_bytes / 50);
+        assert!(work.pack_bytes_published < historical_pack_bytes / 50);
+        assert!(work.catalog_metadata_bytes_published <= 1_024);
+        assert!(stats_after.bytes_read - stats_before.bytes_read < historical_pack_bytes / 50);
+        eprintln!(
+            "large-history packed update: history_pack_bytes={historical_pack_bytes}, mutation_read_bytes={}, new_payload_bytes={}, pack_bytes_encoded={}, pack_bytes_published={}, catalog_bytes={}",
+            stats_after.bytes_read - stats_before.bytes_read,
+            work.new_payload_bytes,
+            work.pack_bytes_encoded,
+            work.pack_bytes_published,
+            work.catalog_metadata_bytes_published,
+        );
+
+        assert_eq!(
+            store.lookup(updated, b"history/02048").unwrap(),
+            Some(b"one-small-update".to_vec())
+        );
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn packed_writer_reopens_and_retries_pack_and_catalog_crash_boundaries() {
+        let records = (0..96)
+            .map(|index| {
+                (
+                    format!("crash/{index:04}").into_bytes(),
+                    format!("value-{index:04}").into_bytes(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for (fail_at, after_commit) in [(1, false), (1, true), (2, false), (2, true)] {
+            let publisher = BoundaryCrashPublisher {
+                calls: Arc::new(AtomicUsize::new(0)),
+                fail_at,
+                after_commit,
+            };
+            let (path, failed) =
+                store_with_publisher(&format!("writer-crash-{fail_at}-{after_commit}"), publisher);
+            assert!(matches!(
+                failed.insert_many(PatriciaIndexRoot::empty(), &records),
+                Err(PatriciaError::Publication(_))
+            ));
+            assert!(!path
+                .join("nodes")
+                .join(crate::packed_patricia::HEAD_FILENAME)
+                .exists());
+            drop(failed);
+
+            let root_dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+            let retry = PatriciaIndexStore::new(
+                open_dir_nofollow(&root_dir, "nodes").unwrap(),
+                PackedExactPublisher,
+            );
+            let root = retry
+                .insert_many(PatriciaIndexRoot::empty(), &records)
+                .unwrap();
+            assert_eq!(all_records(&retry, root), records);
+            drop(retry);
+            drop(root_dir);
+            fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[test]
     fn adapter_is_differential_for_legacy_packed_mixed_and_loose_advancement() {
         const RECORDS: usize = 192;
 
@@ -1682,7 +2157,8 @@ mod tests {
         const ROUNDS: usize = 48;
 
         let (baseline_path, baseline) = store("construction-baseline");
-        let (construction_path, constructed) = store("construction-reachable");
+        let (construction_path, constructed) =
+            store_with_publisher("construction-reachable", PackedExactPublisher);
         let mut construction = PatriciaIndexConstruction {
             resident_budget_bytes: RESIDENT_BUDGET,
             ..PatriciaIndexConstruction::default()
@@ -1805,7 +2281,7 @@ mod tests {
                 > fs::read_dir(construction_path.join("nodes"))
                     .unwrap()
                     .count(),
-            "optimized construction must create fewer immutable node files"
+            "the real construction journey must create fewer immutable files through packs"
         );
 
         drop(constructed);

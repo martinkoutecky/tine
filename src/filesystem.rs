@@ -481,6 +481,64 @@ pub fn publish_immutable_exact(
     Ok(())
 }
 
+/// Durably replace one fixed regular file after checking the exact authority
+/// the caller observed under its external single-writer contract.
+///
+/// This is deliberately not a lock-free compare-and-swap. The equality check
+/// and rename are serialized by the caller's writer lease. A retry that finds
+/// the replacement already installed succeeds after repeating the directory
+/// durability barrier; any other unexpected current bytes fail closed.
+pub(crate) fn transition_regular_exact(
+    dir: &Dir,
+    filename: &str,
+    expected: Option<&[u8]>,
+    replacement: &[u8],
+) -> Result<(), FilesystemError> {
+    let publication_sync = ValidatedDirectorySync::open(dir)?;
+    publication_sync.preflight()?;
+    let current = read_optional_regular(
+        dir,
+        filename,
+        replacement.len() as u64,
+        Some(replacement.len() as u64),
+    )?;
+    if current.as_deref() == Some(replacement) {
+        publication_sync.sync()?;
+        return Ok(());
+    }
+    if current.as_deref() != expected {
+        return Err(FilesystemError::ByteCollision);
+    }
+
+    let temp_name = format!(".tmp-{}", Uuid::new_v4());
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut temp = dir.open_with(&temp_name, &options)?;
+    let result = (|| {
+        temp.write_all(replacement)?;
+        temp.sync_all()?;
+        drop(temp);
+        if expected.is_some() {
+            dir.rename(&temp_name, dir, filename)?;
+        } else {
+            rename_noreplace(dir, &temp_name, filename)?;
+        }
+        publication_sync.sync().map_err(FilesystemError::from)
+    })();
+    let cleanup = dir.remove_file(&temp_name);
+    if let Err(error) = result {
+        let _ = cleanup;
+        return Err(error);
+    }
+    if cleanup
+        .as_ref()
+        .is_err_and(|error| error.kind() != ErrorKind::NotFound)
+    {
+        cleanup?;
+    }
+    Ok(())
+}
+
 /// An exact immutable publication batch which yields completion only from
 /// `finish` after its platform durability construction has completed.
 pub struct ExactImmutablePublicationBatch {

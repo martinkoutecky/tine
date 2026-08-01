@@ -2,9 +2,10 @@
 //!
 //! Version 1 keeps Patricia roots and node encodings unchanged. Immutable
 //! packs are named by their complete-byte digest; one fixed, atomically
-//! published head names one immutable content-addressed catalog. The catalog
-//! directly names a bounded set of packs, so discovery never scans the node
-//! directory.
+//! published head names one immutable content-addressed catalog. Catalog
+//! schema 2 is a bounded append-only sequence of immutable packs. Historical
+//! pack names remain unchanged across ordinary writes; lookup examines at
+//! most the fixed catalog pack bound. Discovery never scans the node directory.
 //!
 //! The canonical byte layout is:
 //!
@@ -24,15 +25,15 @@
 //! reject truncation, non-canonical indexes, entry tampering, and path/content
 //! mismatch before exposing any node bytes.
 
-#![allow(dead_code)] // publication is package-local until the bounded writer slice lands
-
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use cap_std::fs::Dir;
 
 use super::authenticated_patricia::{PatriciaNodePublisher, PatriciaPublicationError};
-use super::filesystem::{read_optional_regular, read_required_regular, FilesystemError};
+use super::filesystem::{
+    read_optional_regular, read_required_regular, transition_regular_exact, FilesystemError,
+};
 use super::ContentDigest;
 
 const PACK_MAGIC: &[u8; 8] = b"TINEPPK\0";
@@ -41,7 +42,8 @@ const PACK_HEADER_BYTES: usize = 8 + 4 + 4 + 4;
 const PACK_INDEX_ENTRY_BYTES: usize = 32 + 4 + 4;
 pub(crate) const PACK_SUFFIX: &str = ".patricia-pack-v1";
 const CATALOG_MAGIC: &[u8; 8] = b"TINEPCT\0";
-const CATALOG_SCHEMA_VERSION: u32 = 1;
+const LEGACY_CATALOG_SCHEMA_VERSION: u32 = 1;
+const CATALOG_SCHEMA_VERSION: u32 = 2;
 const CATALOG_HEADER_BYTES: usize = 8 + 4 + 4 + 4 + 8;
 const CATALOG_ENTRY_BYTES: usize = 32 + 32 + 32 + 4 + 4;
 const CATALOG_SUFFIX: &str = ".patricia-catalog-v1";
@@ -56,7 +58,10 @@ pub(crate) const HEAD_FILENAME: &str = "patricia-pack-head-v1";
 pub(crate) const MAX_PACK_ENTRIES: usize = 4_096;
 pub(crate) const MAX_PACK_ENTRY_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_PACK_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_CATALOG_PACKS: usize = 64;
+/// A bounded delta window with useful ordinary-write capacity. Reaching this
+/// limit safely falls back to loose publication. A later size-tiered compactor
+/// can amortize merging a full tier without changing the catalog/head protocol.
+pub(crate) const MAX_CATALOG_PACKS: usize = 256;
 pub(crate) const MAX_CATALOG_PACK_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CATALOG_BYTES: usize = CATALOG_HEADER_BYTES + MAX_CATALOG_PACKS * CATALOG_ENTRY_BYTES;
 
@@ -69,6 +74,7 @@ pub(crate) enum PackedPatriciaError {
     EntryTooLarge(ContentDigest),
     PackTooLarge,
     PathMismatch(ContentDigest),
+    UnexpectedHead,
     Malformed,
 }
 
@@ -149,6 +155,7 @@ impl PackedPatriciaPublication {
         })
     }
 
+    #[cfg(test)]
     pub(crate) const fn digest(&self) -> ContentDigest {
         self.digest
     }
@@ -157,6 +164,7 @@ impl PackedPatriciaPublication {
         pack_filename(self.digest)
     }
 
+    #[cfg(test)]
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -180,6 +188,10 @@ impl PackedPatriciaPublication {
             bytes: self.bytes.len() as u32,
         })
     }
+
+    fn into_opened(self) -> Result<PackedPatriciaPack, PackedPatriciaError> {
+        PackedPatriciaPack::decode(self.digest, self.bytes)
+    }
 }
 
 /// Non-forgeable package-local evidence of completed pack publication.
@@ -192,6 +204,7 @@ pub(crate) struct PublishedPatriciaPack {
 }
 
 impl PublishedPatriciaPack {
+    #[cfg(test)]
     pub(crate) const fn digest(&self) -> ContentDigest {
         self.digest
     }
@@ -299,6 +312,7 @@ impl PackedPatriciaPack {
             .map(|range| &self.bytes[range.clone()])
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -332,14 +346,16 @@ struct PackDescriptor {
 }
 
 /// Canonical immutable catalog bytes constructed only from successful pack
-/// publication evidence. Digest ranges are disjoint, making each node's pack
-/// authority unique without an unbounded digest-to-pack index.
+/// publication evidence. Schema 2 preserves descriptor order as bounded
+/// oldest-to-newest layers. Ranges may overlap, but duplicate node digests must
+/// resolve to exact identical bytes when the catalog is authenticated.
 pub(crate) struct PackedPatriciaCatalogPublication {
     digest: ContentDigest,
     bytes: Vec<u8>,
 }
 
 impl PackedPatriciaCatalogPublication {
+    #[cfg(test)]
     pub(crate) fn build(packs: &[PublishedPatriciaPack]) -> Result<Self, PackedPatriciaError> {
         if packs.is_empty() {
             return Err(PackedPatriciaError::Empty);
@@ -358,7 +374,18 @@ impl PackedPatriciaCatalogPublication {
             })
             .collect::<Vec<_>>();
         descriptors.sort_unstable_by_key(|descriptor| descriptor.first);
-        validate_descriptors(&descriptors)?;
+        validate_descriptors(&descriptors, true)?;
+        Self::build_descriptors(&descriptors)
+    }
+
+    fn build_descriptors(descriptors: &[PackDescriptor]) -> Result<Self, PackedPatriciaError> {
+        if descriptors.is_empty() {
+            return Err(PackedPatriciaError::Empty);
+        }
+        if descriptors.len() > MAX_CATALOG_PACKS {
+            return Err(PackedPatriciaError::TooManyEntries);
+        }
+        validate_descriptors(descriptors, false)?;
         let total_entries = descriptors.iter().try_fold(0_u32, |total, descriptor| {
             total
                 .checked_add(descriptor.entries)
@@ -415,28 +442,100 @@ pub(crate) struct PublishedPatriciaCatalog {
     bytes: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PackedPatriciaPublicationWork {
+    /// New exact node payload bytes considered for this catalog transition.
+    pub(crate) new_payload_bytes: usize,
+    /// Historical bytes compared only for a matching content digest. This is
+    /// bounded by the new payload, never by the lifetime catalog payload.
+    pub(crate) existing_payload_bytes_compared: usize,
+    pub(crate) pack_bytes_encoded: usize,
+    pub(crate) pack_bytes_published: usize,
+    pub(crate) catalog_metadata_bytes_encoded: usize,
+    pub(crate) catalog_metadata_bytes_published: usize,
+    pub(crate) packs_published: usize,
+}
+
+pub(crate) struct PendingPackedPatriciaCatalog {
+    catalog: PublishedPatriciaCatalog,
+    descriptors: Vec<PackDescriptor>,
+    packs: Vec<PackedPatriciaPack>,
+}
+
+impl PendingPackedPatriciaCatalog {
+    pub(crate) fn published_catalog(&self) -> &PublishedPatriciaCatalog {
+        &self.catalog
+    }
+
+    /// Install the already-published delta in memory only after the fixed head
+    /// transition succeeds. Historical pack payloads are moved, not cloned or
+    /// reopened.
+    pub(crate) fn finish(self, current: Option<PackedPatriciaCatalog>) -> PackedPatriciaCatalog {
+        let (mut descriptors, mut packs) = current
+            .map(|catalog| (catalog.descriptors, catalog.packs))
+            .unwrap_or_default();
+        descriptors.extend(self.descriptors);
+        packs.extend(self.packs);
+        PackedPatriciaCatalog {
+            authority: PackedPatriciaHeadAuthority {
+                catalog_digest: self.catalog.digest,
+                catalog_bytes: self.catalog.bytes,
+            },
+            descriptors,
+            packs,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackedPatriciaHeadAuthority {
+    catalog_digest: ContentDigest,
+    catalog_bytes: u32,
+}
+
+impl PackedPatriciaHeadAuthority {
+    fn encode(self) -> Vec<u8> {
+        encode_catalog_head(self.catalog_digest, self.catalog_bytes)
+    }
+}
+
 /// Publish the initial fixed discovery head. Exact immutable publication makes
 /// a retry of the same catalog idempotent and rejects a competing authority.
+#[cfg(test)]
 pub(crate) fn publish_catalog_head(
     dir: &Dir,
     catalog: &PublishedPatriciaCatalog,
     publisher: &dyn PatriciaNodePublisher,
 ) -> Result<(), PackedPatriciaError> {
-    let mut bytes = Vec::with_capacity(HEAD_BYTES);
-    bytes.extend_from_slice(HEAD_MAGIC);
-    bytes.extend_from_slice(&HEAD_SCHEMA_VERSION.to_le_bytes());
-    bytes.extend_from_slice(catalog.digest.as_bytes());
-    bytes.extend_from_slice(&catalog.bytes.to_le_bytes());
-    debug_assert_eq!(bytes.len(), HEAD_BYTES);
+    let bytes = encode_catalog_head(catalog.digest, catalog.bytes);
     publisher
         .publish(dir, HEAD_FILENAME, &bytes)
         .map_err(PackedPatriciaError::Publication)
+}
+
+/// Transition the fixed head under the caller's existing single-writer lease.
+/// Immutable prerequisites are represented by publication evidence, and an
+/// authenticated prior head is the only replaceable authority.
+pub(crate) fn transition_catalog_head(
+    dir: &Dir,
+    expected: Option<PackedPatriciaHeadAuthority>,
+    catalog: &PublishedPatriciaCatalog,
+) -> Result<(), PackedPatriciaError> {
+    let expected = expected.map(PackedPatriciaHeadAuthority::encode);
+    let replacement = encode_catalog_head(catalog.digest, catalog.bytes);
+    transition_regular_exact(dir, HEAD_FILENAME, expected.as_deref(), &replacement).map_err(
+        |error| match error {
+            FilesystemError::ByteCollision => PackedPatriciaError::UnexpectedHead,
+            error => PackedPatriciaError::Filesystem(error),
+        },
+    )
 }
 
 /// Fully authenticated catalog snapshot used by the Patricia adapter. All
 /// named packs are opened and checked once before any cataloged node is
 /// exposed, so an absent or corrupt non-target pack invalidates the authority.
 pub(crate) struct PackedPatriciaCatalog {
+    authority: PackedPatriciaHeadAuthority,
     descriptors: Vec<PackDescriptor>,
     packs: Vec<PackedPatriciaPack>,
 }
@@ -455,8 +554,12 @@ impl PackedPatriciaCatalog {
         if &head[..8] != HEAD_MAGIC || read_u32(&head, 8)? != HEAD_SCHEMA_VERSION {
             return Err(PackedPatriciaError::Malformed);
         }
-        let catalog_digest = read_digest(&head, 12)?;
-        let catalog_bytes = read_u32(&head, 44)? as usize;
+        let authority = PackedPatriciaHeadAuthority {
+            catalog_digest: read_digest(&head, 12)?,
+            catalog_bytes: read_u32(&head, 44)?,
+        };
+        let catalog_digest = authority.catalog_digest;
+        let catalog_bytes = authority.catalog_bytes as usize;
         if !(CATALOG_HEADER_BYTES..=MAX_CATALOG_BYTES).contains(&catalog_bytes) {
             return Err(PackedPatriciaError::Malformed);
         }
@@ -469,6 +572,35 @@ impl PackedPatriciaCatalog {
         if ContentDigest::of(&bytes) != catalog_digest {
             return Err(PackedPatriciaError::PathMismatch(catalog_digest));
         }
+        Self::open_catalog(dir, authority, bytes).map(Some)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_published(
+        dir: &Dir,
+        catalog: &PublishedPatriciaCatalog,
+    ) -> Result<Self, PackedPatriciaError> {
+        let authority = PackedPatriciaHeadAuthority {
+            catalog_digest: catalog.digest,
+            catalog_bytes: catalog.bytes,
+        };
+        let bytes = read_required_regular(
+            dir,
+            &catalog_filename(catalog.digest),
+            MAX_CATALOG_BYTES as u64,
+            Some(catalog.bytes as u64),
+        )?;
+        if ContentDigest::of(&bytes) != catalog.digest {
+            return Err(PackedPatriciaError::PathMismatch(catalog.digest));
+        }
+        Self::open_catalog(dir, authority, bytes)
+    }
+
+    fn open_catalog(
+        dir: &Dir,
+        authority: PackedPatriciaHeadAuthority,
+        bytes: Vec<u8>,
+    ) -> Result<Self, PackedPatriciaError> {
         let descriptors = decode_catalog(&bytes)?;
         let mut packs = Vec::with_capacity(descriptors.len());
         for expected in &descriptors {
@@ -478,18 +610,36 @@ impl PackedPatriciaCatalog {
             }
             packs.push(pack);
         }
-        Ok(Some(Self { descriptors, packs }))
+        validate_duplicate_nodes(&packs)?;
+        Ok(Self {
+            authority,
+            descriptors,
+            packs,
+        })
+    }
+
+    pub(crate) const fn authority(&self) -> PackedPatriciaHeadAuthority {
+        self.authority
     }
 
     pub(crate) fn get(&self, digest: ContentDigest) -> Option<&[u8]> {
-        let index = self
-            .descriptors
-            .partition_point(|descriptor| descriptor.last < digest);
-        let descriptor = self.descriptors.get(index)?;
-        if digest < descriptor.first {
-            return None;
+        // Newest layers usually contain recently authored paths. Duplicate
+        // digests are safe because authenticated open checked exact equality.
+        for (descriptor, pack) in self.descriptors.iter().zip(&self.packs).rev() {
+            if descriptor.first <= digest && digest <= descriptor.last {
+                if let Some(bytes) = pack.get(digest) {
+                    return Some(bytes);
+                }
+            }
         }
-        self.packs[index].get(digest)
+        None
+    }
+
+    fn pack_bytes(&self) -> usize {
+        self.descriptors
+            .iter()
+            .map(|descriptor| descriptor.bytes as usize)
+            .sum()
     }
 
     #[cfg(test)]
@@ -498,19 +648,212 @@ impl PackedPatriciaCatalog {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn publish_partitioned_catalog(
+    dir: &Dir,
+    publisher: &dyn PatriciaNodePublisher,
+    entries: &BTreeMap<ContentDigest, Vec<u8>>,
+    catalog_pack_byte_limit: usize,
+) -> Result<(PublishedPatriciaCatalog, PackedPatriciaCatalog), PackedPatriciaError> {
+    let publications = partition_publications(entries)?;
+    let total_pack_bytes = publications
+        .iter()
+        .try_fold(0_usize, |total, publication| {
+            total
+                .checked_add(publication.bytes.len())
+                .ok_or(PackedPatriciaError::PackTooLarge)
+        })?;
+    if publications.len() > MAX_CATALOG_PACKS
+        || total_pack_bytes > catalog_pack_byte_limit.min(MAX_CATALOG_PACK_BYTES)
+    {
+        return Err(PackedPatriciaError::PackTooLarge);
+    }
+
+    let packs = publications
+        .iter()
+        .map(|publication| publication.publish(dir, publisher))
+        .collect::<Result<Vec<_>, _>>()?;
+    let catalog = PackedPatriciaCatalogPublication::build(&packs)?;
+    let catalog = catalog.publish(dir, publisher)?;
+    let opened = PackedPatriciaCatalog::open_published(dir, &catalog)?;
+    Ok((catalog, opened))
+}
+
+/// Publish only new delta packs and a bounded metadata catalog. Existing pack
+/// payloads are neither cloned, encoded, reopened, nor republished. Capacity is
+/// checked before the first immutable publication so the caller can safely use
+/// its frozen loose-node fallback without changing the catalog head.
+pub(crate) fn publish_appended_catalog(
+    dir: &Dir,
+    publisher: &dyn PatriciaNodePublisher,
+    current: Option<&PackedPatriciaCatalog>,
+    entries: &BTreeMap<ContentDigest, Vec<u8>>,
+    catalog_pack_byte_limit: usize,
+) -> Result<
+    (
+        Option<PendingPackedPatriciaCatalog>,
+        PackedPatriciaPublicationWork,
+    ),
+    PackedPatriciaError,
+> {
+    if entries.is_empty() {
+        return Err(PackedPatriciaError::Empty);
+    }
+
+    let mut work = PackedPatriciaPublicationWork::default();
+    let mut delta = BTreeMap::new();
+    for (digest, bytes) in entries {
+        if bytes.is_empty() || bytes.len() > MAX_PACK_ENTRY_BYTES {
+            return Err(PackedPatriciaError::EntryTooLarge(*digest));
+        }
+        if ContentDigest::of(bytes) != *digest {
+            return Err(PackedPatriciaError::PathMismatch(*digest));
+        }
+        if let Some(existing) = current.and_then(|catalog| catalog.get(*digest)) {
+            work.existing_payload_bytes_compared = work
+                .existing_payload_bytes_compared
+                .checked_add(existing.len())
+                .ok_or(PackedPatriciaError::PackTooLarge)?;
+            if existing != bytes {
+                return Err(PackedPatriciaError::PathMismatch(*digest));
+            }
+        } else {
+            work.new_payload_bytes = work
+                .new_payload_bytes
+                .checked_add(bytes.len())
+                .ok_or(PackedPatriciaError::PackTooLarge)?;
+            delta.insert(*digest, bytes.clone());
+        }
+    }
+    if delta.is_empty() {
+        return Ok((None, work));
+    }
+
+    let publications = partition_publications(&delta)?;
+    let new_pack_bytes = publications
+        .iter()
+        .try_fold(0_usize, |total, publication| {
+            total
+                .checked_add(publication.bytes.len())
+                .ok_or(PackedPatriciaError::PackTooLarge)
+        })?;
+    work.pack_bytes_encoded = new_pack_bytes;
+    let old_pack_count = current.map_or(0, |catalog| catalog.descriptors.len());
+    let old_pack_bytes = current.map_or(0, PackedPatriciaCatalog::pack_bytes);
+    if old_pack_count
+        .checked_add(publications.len())
+        .is_none_or(|count| count > MAX_CATALOG_PACKS)
+        || old_pack_bytes
+            .checked_add(new_pack_bytes)
+            .is_none_or(|bytes| bytes > catalog_pack_byte_limit.min(MAX_CATALOG_PACK_BYTES))
+    {
+        return Err(PackedPatriciaError::PackTooLarge);
+    }
+
+    let mut descriptors = current
+        .map(|catalog| catalog.descriptors.clone())
+        .unwrap_or_default();
+    descriptors.extend(publications.iter().map(|publication| PackDescriptor {
+        digest: publication.digest,
+        first: publication.first,
+        last: publication.last,
+        entries: publication.entries,
+        bytes: publication.bytes.len() as u32,
+    }));
+    let catalog_publication = PackedPatriciaCatalogPublication::build_descriptors(&descriptors)?;
+    work.catalog_metadata_bytes_encoded = catalog_publication.bytes.len();
+
+    let mut published_descriptors = Vec::with_capacity(publications.len());
+    for publication in &publications {
+        let published = publication.publish(dir, publisher)?;
+        work.pack_bytes_published = work
+            .pack_bytes_published
+            .checked_add(publication.bytes.len())
+            .ok_or(PackedPatriciaError::PackTooLarge)?;
+        work.packs_published += 1;
+        published_descriptors.push(PackDescriptor {
+            digest: published.digest,
+            first: published.first,
+            last: published.last,
+            entries: published.entries,
+            bytes: published.bytes,
+        });
+    }
+    let catalog = catalog_publication.publish(dir, publisher)?;
+    work.catalog_metadata_bytes_published = catalog.bytes as usize;
+    let packs = publications
+        .into_iter()
+        .map(PackedPatriciaPublication::into_opened)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((
+        Some(PendingPackedPatriciaCatalog {
+            catalog,
+            descriptors: published_descriptors,
+            packs,
+        }),
+        work,
+    ))
+}
+
+fn partition_publications(
+    entries: &BTreeMap<ContentDigest, Vec<u8>>,
+) -> Result<Vec<PackedPatriciaPublication>, PackedPatriciaError> {
+    if entries.is_empty() {
+        return Err(PackedPatriciaError::Empty);
+    }
+    let mut publications = Vec::new();
+    let mut chunk = BTreeMap::new();
+    let mut chunk_payload_bytes = 0_usize;
+    for (digest, bytes) in entries {
+        let candidate_entries = chunk.len() + 1;
+        let candidate_bytes = PACK_HEADER_BYTES
+            .checked_add(candidate_entries * PACK_INDEX_ENTRY_BYTES)
+            .and_then(|total| total.checked_add(chunk_payload_bytes))
+            .and_then(|total| total.checked_add(bytes.len()))
+            .ok_or(PackedPatriciaError::PackTooLarge)?;
+        if !chunk.is_empty()
+            && (candidate_entries > MAX_PACK_ENTRIES || candidate_bytes > MAX_PACK_BYTES)
+        {
+            publications.push(PackedPatriciaPublication::build(&chunk)?);
+            chunk.clear();
+            chunk_payload_bytes = 0;
+        }
+        chunk_payload_bytes = chunk_payload_bytes
+            .checked_add(bytes.len())
+            .ok_or(PackedPatriciaError::PackTooLarge)?;
+        chunk.insert(*digest, bytes.clone());
+    }
+    if !chunk.is_empty() {
+        publications.push(PackedPatriciaPublication::build(&chunk)?);
+    }
+    Ok(publications)
+}
+
+fn encode_catalog_head(catalog_digest: ContentDigest, catalog_bytes: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEAD_BYTES);
+    bytes.extend_from_slice(HEAD_MAGIC);
+    bytes.extend_from_slice(&HEAD_SCHEMA_VERSION.to_le_bytes());
+    bytes.extend_from_slice(catalog_digest.as_bytes());
+    bytes.extend_from_slice(&catalog_bytes.to_le_bytes());
+    debug_assert_eq!(bytes.len(), HEAD_BYTES);
+    bytes
+}
+
 fn decode_catalog(bytes: &[u8]) -> Result<Vec<PackDescriptor>, PackedPatriciaError> {
     if bytes.len() < CATALOG_HEADER_BYTES
         || bytes.len() > MAX_CATALOG_BYTES
         || &bytes[..8] != CATALOG_MAGIC
-        || read_u32(bytes, 8)? != CATALOG_SCHEMA_VERSION
     {
+        return Err(PackedPatriciaError::Malformed);
+    }
+    let schema_version = read_u32(bytes, 8)?;
+    if schema_version != LEGACY_CATALOG_SCHEMA_VERSION && schema_version != CATALOG_SCHEMA_VERSION {
         return Err(PackedPatriciaError::Malformed);
     }
     let pack_count = read_u32(bytes, 12)? as usize;
     let total_entries = read_u32(bytes, 16)?;
     let total_pack_bytes = read_u64(bytes, 20)?;
     if pack_count == 0
-        || pack_count > MAX_CATALOG_PACKS
         || bytes.len() != CATALOG_HEADER_BYTES + pack_count * CATALOG_ENTRY_BYTES
         || total_pack_bytes > MAX_CATALOG_PACK_BYTES as u64
     {
@@ -527,7 +870,10 @@ fn decode_catalog(bytes: &[u8]) -> Result<Vec<PackDescriptor>, PackedPatriciaErr
             bytes: read_u32(bytes, start + 100)?,
         });
     }
-    validate_descriptors(&descriptors)?;
+    validate_descriptors(
+        &descriptors,
+        schema_version == LEGACY_CATALOG_SCHEMA_VERSION,
+    )?;
     if descriptors
         .iter()
         .map(|descriptor| descriptor.entries)
@@ -544,7 +890,10 @@ fn decode_catalog(bytes: &[u8]) -> Result<Vec<PackDescriptor>, PackedPatriciaErr
     Ok(descriptors)
 }
 
-fn validate_descriptors(descriptors: &[PackDescriptor]) -> Result<(), PackedPatriciaError> {
+fn validate_descriptors(
+    descriptors: &[PackDescriptor],
+    require_disjoint_ranges: bool,
+) -> Result<(), PackedPatriciaError> {
     let mut digests = std::collections::BTreeSet::new();
     for (index, descriptor) in descriptors.iter().enumerate() {
         if descriptor.first > descriptor.last
@@ -553,9 +902,28 @@ fn validate_descriptors(descriptors: &[PackDescriptor]) -> Result<(), PackedPatr
             || (descriptor.bytes as usize) > MAX_PACK_BYTES
             || (descriptor.bytes as usize) < PACK_HEADER_BYTES
             || !digests.insert(descriptor.digest)
-            || index > 0 && descriptors[index - 1].last >= descriptor.first
+            || require_disjoint_ranges
+                && index > 0
+                && descriptors[index - 1].last >= descriptor.first
         {
             return Err(PackedPatriciaError::Malformed);
+        }
+    }
+    Ok(())
+}
+
+fn validate_duplicate_nodes(packs: &[PackedPatriciaPack]) -> Result<(), PackedPatriciaError> {
+    let mut seen = BTreeMap::<ContentDigest, (usize, Range<usize>)>::new();
+    for (pack_index, pack) in packs.iter().enumerate() {
+        for (digest, range) in &pack.entries {
+            if let Some((prior_pack_index, prior_range)) = seen.get(digest) {
+                if packs[*prior_pack_index].bytes[prior_range.clone()] != pack.bytes[range.clone()]
+                {
+                    return Err(PackedPatriciaError::PathMismatch(*digest));
+                }
+            } else {
+                seen.insert(*digest, (pack_index, range.clone()));
+            }
         }
     }
     Ok(())
@@ -887,6 +1255,97 @@ mod tests {
     }
 
     #[test]
+    fn schema_two_layers_accept_exact_duplicates_and_legacy_catalogs_still_reopen() {
+        let fixture = Fixture::new("catalog-layered-duplicates");
+        let duplicate_bytes = b"exact duplicate node".to_vec();
+        let duplicate_digest = ContentDigest::of(&duplicate_bytes);
+        let old_only = b"old layer node".to_vec();
+        let new_only = b"new layer node".to_vec();
+        let old_entries = BTreeMap::from([
+            (duplicate_digest, duplicate_bytes.clone()),
+            (ContentDigest::of(&old_only), old_only.clone()),
+        ]);
+        let new_entries = BTreeMap::from([
+            (duplicate_digest, duplicate_bytes.clone()),
+            (ContentDigest::of(&new_only), new_only.clone()),
+        ]);
+        let old_pack = PackedPatriciaPublication::build(&old_entries)
+            .unwrap()
+            .publish(&fixture.dir, &ExactPublisher)
+            .unwrap();
+        let new_pack = PackedPatriciaPublication::build(&new_entries)
+            .unwrap()
+            .publish(&fixture.dir, &ExactPublisher)
+            .unwrap();
+        let descriptors = [old_pack, new_pack]
+            .iter()
+            .map(|pack| PackDescriptor {
+                digest: pack.digest,
+                first: pack.first,
+                last: pack.last,
+                entries: pack.entries,
+                bytes: pack.bytes,
+            })
+            .collect::<Vec<_>>();
+        let catalog = PackedPatriciaCatalogPublication::build_descriptors(&descriptors).unwrap();
+        let catalog = catalog.publish(&fixture.dir, &ExactPublisher).unwrap();
+        publish_catalog_head(&fixture.dir, &catalog, &ExactPublisher).unwrap();
+        let opened = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            opened.get(duplicate_digest),
+            Some(duplicate_bytes.as_slice())
+        );
+        assert_eq!(
+            opened.get(ContentDigest::of(&old_only)),
+            Some(old_only.as_slice())
+        );
+        assert_eq!(
+            opened.get(ContentDigest::of(&new_only)),
+            Some(new_only.as_slice())
+        );
+
+        let collision_digest = ContentDigest::of(b"synthetic collision");
+        let conflicting = [
+            PackedPatriciaPack {
+                digest: ContentDigest::of(b"pack one"),
+                bytes: b"a".to_vec(),
+                entries: BTreeMap::from([(collision_digest, 0..1)]),
+            },
+            PackedPatriciaPack {
+                digest: ContentDigest::of(b"pack two"),
+                bytes: b"b".to_vec(),
+                entries: BTreeMap::from([(collision_digest, 0..1)]),
+            },
+        ];
+        assert!(matches!(
+            validate_duplicate_nodes(&conflicting),
+            Err(PackedPatriciaError::PathMismatch(digest)) if digest == collision_digest
+        ));
+
+        let legacy_fixture = Fixture::new("catalog-legacy-schema-one");
+        let legacy_nodes = representative_nodes(32);
+        let legacy_pack = PackedPatriciaPublication::build(&legacy_nodes)
+            .unwrap()
+            .publish(&legacy_fixture.dir, &ExactPublisher)
+            .unwrap();
+        let mut legacy = PackedPatriciaCatalogPublication::build(&[legacy_pack]).unwrap();
+        legacy.bytes[8..12].copy_from_slice(&LEGACY_CATALOG_SCHEMA_VERSION.to_le_bytes());
+        legacy.digest = ContentDigest::of(&legacy.bytes);
+        let legacy = legacy
+            .publish(&legacy_fixture.dir, &ExactPublisher)
+            .unwrap();
+        publish_catalog_head(&legacy_fixture.dir, &legacy, &ExactPublisher).unwrap();
+        let reopened = PackedPatriciaCatalog::discover(&legacy_fixture.dir)
+            .unwrap()
+            .unwrap();
+        for (digest, bytes) in legacy_nodes {
+            assert_eq!(reopened.get(digest), Some(bytes.as_slice()));
+        }
+    }
+
+    #[test]
     fn pack_catalog_and_head_crash_windows_are_invisible_or_retry_exactly() {
         let fixture = Fixture::new("catalog-crash-windows");
         let publication = PackedPatriciaPublication::build(&representative_nodes(32)).unwrap();
@@ -970,6 +1429,64 @@ mod tests {
             PackedPatriciaCatalog::discover(&fixture.dir),
             Err(PackedPatriciaError::PathMismatch(_))
         ));
+    }
+
+    #[test]
+    fn replacement_head_checks_authenticated_prior_and_retries_identical_target() {
+        let fixture = Fixture::new("catalog-head-replacement");
+        let first_nodes = representative_nodes(32);
+        let (first, _) =
+            publish_partitioned_catalog(&fixture.dir, &ExactPublisher, &first_nodes, usize::MAX)
+                .unwrap();
+        transition_catalog_head(&fixture.dir, None, &first).unwrap();
+        let first_authority = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap()
+            .authority();
+
+        let mut second_nodes = first_nodes.clone();
+        let second_bytes = b"second catalog exact node".to_vec();
+        second_nodes.insert(ContentDigest::of(&second_bytes), second_bytes);
+        let (second, _) =
+            publish_partitioned_catalog(&fixture.dir, &ExactPublisher, &second_nodes, usize::MAX)
+                .unwrap();
+
+        // A crash before the transition leaves the authenticated old head.
+        assert_eq!(
+            PackedPatriciaCatalog::discover(&fixture.dir)
+                .unwrap()
+                .unwrap()
+                .authority(),
+            first_authority
+        );
+        transition_catalog_head(&fixture.dir, Some(first_authority), &second).unwrap();
+
+        // A crash immediately after replacement is retried with stale prior
+        // evidence; the already-installed identical target is success.
+        transition_catalog_head(&fixture.dir, Some(first_authority), &second).unwrap();
+        let second_authority = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap()
+            .authority();
+        assert_ne!(second_authority, first_authority);
+
+        let mut third_nodes = second_nodes;
+        let third_bytes = b"conflicting third catalog exact node".to_vec();
+        third_nodes.insert(ContentDigest::of(&third_bytes), third_bytes);
+        let (third, _) =
+            publish_partitioned_catalog(&fixture.dir, &ExactPublisher, &third_nodes, usize::MAX)
+                .unwrap();
+        assert!(matches!(
+            transition_catalog_head(&fixture.dir, Some(first_authority), &third),
+            Err(PackedPatriciaError::UnexpectedHead)
+        ));
+        assert_eq!(
+            PackedPatriciaCatalog::discover(&fixture.dir)
+                .unwrap()
+                .unwrap()
+                .authority(),
+            second_authority
+        );
     }
 
     #[test]
