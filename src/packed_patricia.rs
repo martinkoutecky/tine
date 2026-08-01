@@ -3,10 +3,12 @@
 //! Version 1 keeps Patricia roots and node encodings unchanged. Immutable
 //! packs are named by their complete-byte digest; one fixed, atomically
 //! published head names one immutable content-addressed catalog. Catalog
-//! schema 2 is a bounded oldest-to-newest sequence of immutable packs. Ordinary
-//! writes append deltas and coalesce only overflowing power-of-two byte tiers;
-//! lookup examines at most four packs per derived tier. Discovery never scans
-//! the node directory.
+//! Catalog schemas 1 and 2 remain backward-readable. Schema 2 is an
+//! oldest-to-newest layered sequence and may contain as many as 256 packs in
+//! one derived byte-size tier. Schema 3 certifies at most four packs per tier.
+//! Ordinary writes normalize old schema-2 catalogs incrementally by coalescing
+//! one oldest group of five per tier, while schema-3 histories remain bounded.
+//! Discovery never scans the node directory.
 //!
 //! The canonical byte layout is:
 //!
@@ -44,7 +46,8 @@ const PACK_INDEX_ENTRY_BYTES: usize = 32 + 4 + 4;
 pub(crate) const PACK_SUFFIX: &str = ".patricia-pack-v1";
 const CATALOG_MAGIC: &[u8; 8] = b"TINEPCT\0";
 const LEGACY_CATALOG_SCHEMA_VERSION: u32 = 1;
-const CATALOG_SCHEMA_VERSION: u32 = 2;
+const LAYERED_CATALOG_SCHEMA_VERSION: u32 = 2;
+const CATALOG_SCHEMA_VERSION: u32 = 3;
 const CATALOG_HEADER_BYTES: usize = 8 + 4 + 4 + 4 + 8;
 const CATALOG_ENTRY_BYTES: usize = 32 + 32 + 32 + 4 + 4;
 const CATALOG_SUFFIX: &str = ".patricia-catalog-v1";
@@ -61,16 +64,17 @@ pub(crate) const MAX_PACK_ENTRIES: usize =
     (MAX_PACK_BYTES - PACK_HEADER_BYTES) / (PACK_INDEX_ENTRY_BYTES + 1);
 pub(crate) const MAX_PACK_ENTRY_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_PACK_BYTES: usize = 16 * 1024 * 1024;
-/// Catalog descriptors are grouped into power-of-two tiers derived solely from
-/// authenticated pack bytes. Five packs in a tier are coalesced, so a byte can
-/// advance through at most the fixed number of tiers admitted by the hard pack
-/// and catalog limits.
+/// Schema-3 catalog descriptors are grouped into power-of-two tiers derived
+/// solely from authenticated pack bytes. Five packs in a tier are coalesced,
+/// so a byte can advance through at most the fixed number of tiers admitted by
+/// the hard pack and catalog limits.
 const MAX_PACKS_PER_SIZE_TIER: usize = 4;
 const MIN_PACK_BYTES: usize = PACK_HEADER_BYTES + PACK_INDEX_ENTRY_BYTES + 1;
 const PACK_SIZE_TIER_COUNT: usize = (MAX_PACK_BYTES.ilog2() - MIN_PACK_BYTES.ilog2() + 1) as usize;
-/// Before a carry, a tier has at most four packs, each less than twice the
-/// tier's lower bound. Charging those selected bytes to the arriving carry at
-/// every possible tier gives this conservative lifetime amortized bound.
+/// In schema-3 histories, before a carry a tier has at most four packs, each
+/// less than twice the tier's lower bound. Charging those selected bytes to the
+/// arriving carry at every possible tier gives this conservative lifetime
+/// amortized bound. Schema-2 migration instead has a fixed per-mutation bound.
 #[cfg(test)]
 const AMORTIZED_SELECTED_BYTE_FACTOR: usize = 2 * MAX_PACKS_PER_SIZE_TIER * PACK_SIZE_TIER_COUNT;
 pub(crate) const MAX_CATALOG_PACKS: usize = 256;
@@ -395,7 +399,7 @@ struct PackDescriptor {
 }
 
 /// Canonical immutable catalog bytes constructed only from successful pack
-/// publication evidence. Schema 2 preserves descriptor order as bounded
+/// publication evidence. Schemas 2 and 3 preserve descriptor order as
 /// oldest-to-newest layers. Ranges may overlap, but duplicate node digests must
 /// resolve to exact identical bytes when the catalog is authenticated.
 pub(crate) struct PackedPatriciaCatalogPublication {
@@ -424,17 +428,38 @@ impl PackedPatriciaCatalogPublication {
             .collect::<Vec<_>>();
         descriptors.sort_unstable_by_key(|descriptor| descriptor.first);
         validate_descriptors(&descriptors, true)?;
-        Self::build_descriptors(&descriptors)
+        Self::build_descriptors_for_schema(&descriptors, CATALOG_SCHEMA_VERSION)
     }
 
     fn build_descriptors(descriptors: &[PackDescriptor]) -> Result<Self, PackedPatriciaError> {
+        let schema_version = if size_tiers_are_bounded(descriptors) {
+            CATALOG_SCHEMA_VERSION
+        } else {
+            LAYERED_CATALOG_SCHEMA_VERSION
+        };
+        Self::build_descriptors_for_schema(descriptors, schema_version)
+    }
+
+    fn build_descriptors_for_schema(
+        descriptors: &[PackDescriptor],
+        schema_version: u32,
+    ) -> Result<Self, PackedPatriciaError> {
         if descriptors.is_empty() {
             return Err(PackedPatriciaError::Empty);
         }
         if descriptors.len() > MAX_CATALOG_PACKS {
             return Err(PackedPatriciaError::TooManyEntries);
         }
-        validate_descriptors(descriptors, false)?;
+        if !matches!(
+            schema_version,
+            LEGACY_CATALOG_SCHEMA_VERSION | LAYERED_CATALOG_SCHEMA_VERSION | CATALOG_SCHEMA_VERSION
+        ) {
+            return Err(PackedPatriciaError::Malformed);
+        }
+        validate_descriptors(descriptors, schema_version == LEGACY_CATALOG_SCHEMA_VERSION)?;
+        if schema_version == CATALOG_SCHEMA_VERSION && !size_tiers_are_bounded(descriptors) {
+            return Err(PackedPatriciaError::Malformed);
+        }
         let total_entries = descriptors.iter().try_fold(0_u32, |total, descriptor| {
             total
                 .checked_add(descriptor.entries)
@@ -452,7 +477,7 @@ impl PackedPatriciaCatalogPublication {
         let mut bytes =
             Vec::with_capacity(CATALOG_HEADER_BYTES + descriptors.len() * CATALOG_ENTRY_BYTES);
         bytes.extend_from_slice(CATALOG_MAGIC);
-        bytes.extend_from_slice(&CATALOG_SCHEMA_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&schema_version.to_le_bytes());
         bytes.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&total_entries.to_le_bytes());
         bytes.extend_from_slice(&total_pack_bytes.to_le_bytes());
@@ -501,10 +526,12 @@ pub(crate) struct PackedPatriciaPublicationWork {
     /// Canonical bytes of the newly arrived delta before any tier carries.
     pub(crate) delta_pack_bytes_encoded: usize,
     /// Canonical input-pack bytes selected by size-tier compaction. A pack is
-    /// counted again only if a carry reaches another derived tier. Across a
-    /// catalog lifetime this is bounded by `2 * packs-per-tier * tier-count`
-    /// times the canonical arriving delta bytes.
+    /// counted again only if a carry reaches another derived tier. Schema-3
+    /// histories have the documented lifetime amortized bound; schema-2
+    /// normalization selects at most five packs per derived tier per mutation.
     pub(crate) compaction_pack_bytes_selected: usize,
+    /// Exact count corresponding to `compaction_pack_bytes_selected`.
+    pub(crate) compaction_packs_selected: usize,
     /// Exact node payload bytes copied while coalescing selected tiers.
     pub(crate) compaction_payload_bytes_reencoded: usize,
     pub(crate) pack_bytes_encoded: usize,
@@ -856,7 +883,20 @@ pub(crate) fn publish_appended_catalog(
     {
         return Err(PackedPatriciaError::PackTooLarge);
     }
-    let catalog_publication = PackedPatriciaCatalogPublication::build_descriptors(&descriptors)?;
+    let input_was_tier_bounded = current
+        .map(|catalog| size_tiers_are_bounded(&catalog.descriptors))
+        .unwrap_or(true);
+    if input_was_tier_bounded && !size_tiers_are_bounded(&descriptors) {
+        return Err(PackedPatriciaError::PackTooLarge);
+    }
+    let catalog_publication = if input_was_tier_bounded {
+        PackedPatriciaCatalogPublication::build_descriptors_for_schema(
+            &descriptors,
+            CATALOG_SCHEMA_VERSION,
+        )?
+    } else {
+        PackedPatriciaCatalogPublication::build_descriptors(&descriptors)?
+    };
     work.catalog_metadata_bytes_encoded = catalog_publication.bytes.len();
 
     for pack in &planned {
@@ -898,23 +938,28 @@ fn compact_size_tiers(
     planned: &mut Vec<PlannedPatriciaPack>,
     work: &mut PackedPatriciaPublicationWork,
 ) -> Result<(), PackedPatriciaError> {
+    // A schema-2 input may begin arbitrarily overfull. Carrying a tier at most
+    // once bounds one routine mutation independently of that historical
+    // fan-in; subsequent mutations continue making deterministic progress.
+    let mut carried_tiers = [false; PACK_SIZE_TIER_COUNT];
     loop {
         let mut tier_counts = [0_usize; PACK_SIZE_TIER_COUNT];
         for pack in planned.iter() {
             tier_counts[pack_size_tier(pack.descriptor().bytes)] += 1;
         }
-        let Some(tier) = tier_counts
-            .iter()
-            .position(|count| *count > MAX_PACKS_PER_SIZE_TIER)
-        else {
+        let Some(tier) = tier_counts.iter().enumerate().find_map(|(tier, count)| {
+            (*count > MAX_PACKS_PER_SIZE_TIER && !carried_tiers[tier]).then_some(tier)
+        }) else {
             return Ok(());
         };
+        carried_tiers[tier] = true;
         let selected = planned
             .iter()
             .enumerate()
             .filter_map(|(index, pack)| {
                 (pack_size_tier(pack.descriptor().bytes) == tier).then_some(index)
             })
+            .take(MAX_PACKS_PER_SIZE_TIER + 1)
             .collect::<Vec<_>>();
         let selected_set = selected
             .iter()
@@ -924,6 +969,10 @@ fn compact_size_tiers(
         let mut entries = BTreeMap::new();
         for index in &selected {
             let pack = &planned[*index];
+            work.compaction_packs_selected = work
+                .compaction_packs_selected
+                .checked_add(1)
+                .ok_or(PackedPatriciaError::TooManyEntries)?;
             work.compaction_pack_bytes_selected = work
                 .compaction_pack_bytes_selected
                 .checked_add(pack.descriptor().bytes as usize)
@@ -1055,7 +1104,10 @@ fn decode_catalog(bytes: &[u8]) -> Result<Vec<PackDescriptor>, PackedPatriciaErr
         return Err(PackedPatriciaError::Malformed);
     }
     let schema_version = read_u32(bytes, 8)?;
-    if schema_version != LEGACY_CATALOG_SCHEMA_VERSION && schema_version != CATALOG_SCHEMA_VERSION {
+    if !matches!(
+        schema_version,
+        LEGACY_CATALOG_SCHEMA_VERSION | LAYERED_CATALOG_SCHEMA_VERSION | CATALOG_SCHEMA_VERSION
+    ) {
         return Err(PackedPatriciaError::Malformed);
     }
     let pack_count = read_u32(bytes, 12)? as usize;
@@ -1082,6 +1134,9 @@ fn decode_catalog(bytes: &[u8]) -> Result<Vec<PackDescriptor>, PackedPatriciaErr
         &descriptors,
         schema_version == LEGACY_CATALOG_SCHEMA_VERSION,
     )?;
+    if schema_version == CATALOG_SCHEMA_VERSION && !size_tiers_are_bounded(&descriptors) {
+        return Err(PackedPatriciaError::Malformed);
+    }
     if descriptors
         .iter()
         .map(|descriptor| descriptor.entries)
@@ -1108,7 +1163,7 @@ fn validate_descriptors(
             || descriptor.entries == 0
             || descriptor.entries as usize > MAX_PACK_ENTRIES
             || (descriptor.bytes as usize) > MAX_PACK_BYTES
-            || (descriptor.bytes as usize) < PACK_HEADER_BYTES
+            || (descriptor.bytes as usize) < MIN_PACK_BYTES
             || !digests.insert(descriptor.digest)
             || require_disjoint_ranges
                 && index > 0
@@ -1118,6 +1173,21 @@ fn validate_descriptors(
         }
     }
     Ok(())
+}
+
+fn size_tiers_are_bounded(descriptors: &[PackDescriptor]) -> bool {
+    let mut tier_counts = [0_usize; PACK_SIZE_TIER_COUNT];
+    for descriptor in descriptors {
+        if !(MIN_PACK_BYTES..=MAX_PACK_BYTES).contains(&(descriptor.bytes as usize)) {
+            return false;
+        }
+        let tier = pack_size_tier(descriptor.bytes);
+        tier_counts[tier] += 1;
+        if tier_counts[tier] > MAX_PACKS_PER_SIZE_TIER {
+            return false;
+        }
+    }
+    true
 }
 
 fn validate_duplicate_nodes(packs: &[PackedPatriciaPack]) -> Result<(), PackedPatriciaError> {
@@ -1319,6 +1389,16 @@ mod tests {
         Ok((pending.finish(current), work))
     }
 
+    fn catalog_schema_version(fixture: &Fixture, catalog: &PackedPatriciaCatalog) -> u32 {
+        let bytes = fs::read(
+            fixture
+                .path
+                .join(catalog_filename(catalog.authority.catalog_digest)),
+        )
+        .unwrap();
+        read_u32(&bytes, 8).unwrap()
+    }
+
     #[test]
     fn v1_is_deterministic_bounded_and_exactly_reopenable() {
         let nodes = representative_nodes(257);
@@ -1514,7 +1594,15 @@ mod tests {
                 bytes: pack.bytes,
             })
             .collect::<Vec<_>>();
-        let catalog = PackedPatriciaCatalogPublication::build_descriptors(&descriptors).unwrap();
+        let catalog = PackedPatriciaCatalogPublication::build_descriptors_for_schema(
+            &descriptors,
+            LAYERED_CATALOG_SCHEMA_VERSION,
+        )
+        .unwrap();
+        assert_eq!(
+            read_u32(&catalog.bytes, 8).unwrap(),
+            LAYERED_CATALOG_SCHEMA_VERSION
+        );
         let catalog = catalog.publish(&fixture.dir, &ExactPublisher).unwrap();
         publish_catalog_head(&fixture.dir, &catalog, &ExactPublisher).unwrap();
         let opened = PackedPatriciaCatalog::discover(&fixture.dir)
@@ -1573,6 +1661,175 @@ mod tests {
     }
 
     #[test]
+    fn one_append_to_maximally_overfull_schema_two_compacts_only_five_oldest_packs() {
+        let fixture = Fixture::new("catalog-schema-two-bounded-normalization");
+        let mut expected = BTreeMap::new();
+        let mut oldest_group = BTreeMap::new();
+        let mut published = Vec::new();
+        let mut single_pack_bytes = None;
+        for index in 0..MAX_CATALOG_PACKS {
+            let bytes = format!("overfull historical node {index:03}").into_bytes();
+            let digest = ContentDigest::of(&bytes);
+            expected.insert(digest, bytes.clone());
+            if index <= MAX_PACKS_PER_SIZE_TIER {
+                oldest_group.insert(digest, bytes.clone());
+            }
+            let publication =
+                PackedPatriciaPublication::build(&BTreeMap::from([(digest, bytes)])).unwrap();
+            assert_eq!(
+                *single_pack_bytes.get_or_insert(publication.bytes().len()),
+                publication.bytes().len()
+            );
+            published.push(publication.publish(&fixture.dir, &ExactPublisher).unwrap());
+        }
+        let descriptors = published
+            .iter()
+            .map(PublishedPatriciaPack::descriptor)
+            .collect::<Vec<_>>();
+        let catalog = PackedPatriciaCatalogPublication::build_descriptors_for_schema(
+            &descriptors,
+            LAYERED_CATALOG_SCHEMA_VERSION,
+        )
+        .unwrap();
+        assert_eq!(
+            read_u32(&catalog.bytes, 8).unwrap(),
+            LAYERED_CATALOG_SCHEMA_VERSION
+        );
+        let catalog = catalog.publish(&fixture.dir, &ExactPublisher).unwrap();
+        publish_catalog_head(&fixture.dir, &catalog, &ExactPublisher).unwrap();
+        let current = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap();
+
+        let bytes = b"overfull historical node 256".to_vec();
+        let digest = ContentDigest::of(&bytes);
+        expected.insert(digest, bytes.clone());
+        let (next, work) = append_catalog(
+            &fixture,
+            Some(current),
+            &BTreeMap::from([(digest, bytes)]),
+            &ExactPublisher,
+        )
+        .unwrap();
+
+        assert_eq!(
+            work.compaction_pack_bytes_selected,
+            5 * single_pack_bytes.unwrap()
+        );
+        assert_eq!(work.compaction_packs_selected, 5);
+        assert_eq!(
+            work.compaction_payload_bytes_reencoded,
+            5 * b"overfull historical node 000".len()
+        );
+        assert_eq!(
+            next.descriptors.first().copied(),
+            Some(
+                PackedPatriciaPublication::build(&oldest_group)
+                    .unwrap()
+                    .descriptor()
+            ),
+            "the carry must replace the fixed oldest group"
+        );
+        assert_eq!(next.pack_count(), MAX_CATALOG_PACKS - 3);
+        assert_eq!(
+            catalog_schema_version(&fixture, &next),
+            LAYERED_CATALOG_SCHEMA_VERSION
+        );
+        for (digest, bytes) in &expected {
+            assert_eq!(next.get(*digest), Some(bytes.as_slice()));
+        }
+        drop(next);
+        let mut current = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap();
+        for (digest, bytes) in &expected {
+            assert_eq!(current.get(*digest), Some(bytes.as_slice()));
+        }
+
+        for index in (MAX_CATALOG_PACKS + 1)..(MAX_CATALOG_PACKS + 129) {
+            if catalog_schema_version(&fixture, &current) == CATALOG_SCHEMA_VERSION {
+                break;
+            }
+            let bytes = format!("overfull historical node {index:03}").into_bytes();
+            let digest = ContentDigest::of(&bytes);
+            expected.insert(digest, bytes.clone());
+            let (next, work) = append_catalog(
+                &fixture,
+                Some(current),
+                &BTreeMap::from([(digest, bytes)]),
+                &ExactPublisher,
+            )
+            .unwrap();
+            assert!(work.compaction_packs_selected > 0);
+            assert_eq!(
+                work.compaction_packs_selected % (MAX_PACKS_PER_SIZE_TIER + 1),
+                0
+            );
+            assert!(
+                work.compaction_packs_selected
+                    <= (MAX_PACKS_PER_SIZE_TIER + 1) * PACK_SIZE_TIER_COUNT
+            );
+            current = next;
+        }
+        assert_eq!(
+            catalog_schema_version(&fixture, &current),
+            CATALOG_SCHEMA_VERSION,
+            "bounded mutations must eventually certify the schema-3 invariant"
+        );
+        assert!(size_tiers_are_bounded(&current.descriptors));
+        for (digest, bytes) in &expected {
+            assert_eq!(current.get(*digest), Some(bytes.as_slice()));
+        }
+        drop(current);
+
+        let reopened = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            catalog_schema_version(&fixture, &reopened),
+            CATALOG_SCHEMA_VERSION
+        );
+        for (digest, bytes) in expected {
+            assert_eq!(reopened.get(digest), Some(bytes.as_slice()));
+        }
+    }
+
+    #[test]
+    fn schema_three_rejects_an_overfull_derived_size_tier() {
+        let fixture = Fixture::new("catalog-schema-three-tier-invariant");
+        let mut published = Vec::new();
+        for index in 0..=MAX_PACKS_PER_SIZE_TIER {
+            let bytes = format!("schema three invalid tier {index}").into_bytes();
+            let digest = ContentDigest::of(&bytes);
+            let publication =
+                PackedPatriciaPublication::build(&BTreeMap::from([(digest, bytes)])).unwrap();
+            published.push(publication.publish(&fixture.dir, &ExactPublisher).unwrap());
+        }
+        let descriptors = published
+            .iter()
+            .map(PublishedPatriciaPack::descriptor)
+            .collect::<Vec<_>>();
+        let mut catalog = PackedPatriciaCatalogPublication::build_descriptors_for_schema(
+            &descriptors,
+            LAYERED_CATALOG_SCHEMA_VERSION,
+        )
+        .unwrap();
+        assert_eq!(
+            read_u32(&catalog.bytes, 8).unwrap(),
+            LAYERED_CATALOG_SCHEMA_VERSION
+        );
+        catalog.bytes[8..12].copy_from_slice(&CATALOG_SCHEMA_VERSION.to_le_bytes());
+        catalog.digest = ContentDigest::of(&catalog.bytes);
+        let catalog = catalog.publish(&fixture.dir, &ExactPublisher).unwrap();
+        publish_catalog_head(&fixture.dir, &catalog, &ExactPublisher).unwrap();
+
+        assert!(matches!(
+            PackedPatriciaCatalog::discover(&fixture.dir),
+            Err(PackedPatriciaError::Malformed)
+        ));
+    }
+
+    #[test]
     fn many_tiny_deltas_stay_tier_bounded_reopen_exactly_and_have_bounded_amortized_work() {
         const DELTAS: usize = 160;
 
@@ -1597,6 +1854,10 @@ mod tests {
             }
             assert!(tiers.iter().all(|count| *count <= MAX_PACKS_PER_SIZE_TIER));
             assert!(next.pack_count() <= MAX_PACKS_PER_SIZE_TIER * PACK_SIZE_TIER_COUNT);
+            assert_eq!(
+                catalog_schema_version(&fixture, &next),
+                CATALOG_SCHEMA_VERSION
+            );
             current = Some(next);
         }
 
