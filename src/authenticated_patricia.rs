@@ -671,6 +671,148 @@ impl PatriciaIndexStore {
         }
     }
 
+    pub fn construction_validate_root(
+        &self,
+        construction: &PatriciaIndexConstruction,
+        root: PatriciaIndexRoot,
+    ) -> Result<(), PatriciaError> {
+        if root == PatriciaIndexRoot::empty() {
+            return Ok(());
+        }
+        self.read_staged_or_persisted(root.digest(), &construction.staged)
+            .and_then(|node| validate_node(&node))
+    }
+
+    pub fn construction_lookup_prefix_limited(
+        &self,
+        construction: &PatriciaIndexConstruction,
+        root: PatriciaIndexRoot,
+        prefix: &[u8],
+        limit: usize,
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, PatriciaError> {
+        validate_key(prefix)?;
+        let mut found = BTreeMap::new();
+        if root == PatriciaIndexRoot::empty() || limit == 0 {
+            return Ok(found);
+        }
+        let budget = traversal_node_budget(MAX_KEY_BYTES)?;
+        let mut pending = vec![(root.digest(), None, budget)];
+        while let Some((digest, constraint, remaining_nodes)) = pending.pop() {
+            let remaining_nodes = consume_node_budget(remaining_nodes)?;
+            let node = self.read_staged_or_persisted(digest, &construction.staged)?;
+            validate_node_path(&node, constraint.as_ref())?;
+            match node {
+                Node::Leaf { key, value, .. } => {
+                    if key.starts_with(prefix) {
+                        found.insert(key, value);
+                        if found.len() == limit {
+                            break;
+                        }
+                    }
+                }
+                Node::Branch {
+                    prefix: branch_prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    let split = prefix_bit_len as usize;
+                    let requested_bits = key_bit_len(prefix)?;
+                    let compared = split.min(requested_bits);
+                    if !prefix_matches(prefix, &branch_prefix, compared)? {
+                        continue;
+                    }
+                    if requested_bits <= split {
+                        pending.push((
+                            right,
+                            Some(ChildPathConstraint {
+                                parent_prefix: branch_prefix.clone(),
+                                parent_prefix_bit_len: split,
+                                right: true,
+                            }),
+                            remaining_nodes,
+                        ));
+                        pending.push((
+                            left,
+                            Some(ChildPathConstraint {
+                                parent_prefix: branch_prefix,
+                                parent_prefix_bit_len: split,
+                                right: false,
+                            }),
+                            remaining_nodes,
+                        ));
+                    } else {
+                        let rightward = key_bit(prefix, split)?;
+                        pending.push((
+                            if rightward { right } else { left },
+                            Some(ChildPathConstraint {
+                                parent_prefix: branch_prefix,
+                                parent_prefix_bit_len: split,
+                                right: rightward,
+                            }),
+                            remaining_nodes,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    pub fn construction_visit_all(
+        &self,
+        construction: &PatriciaIndexConstruction,
+        root: PatriciaIndexRoot,
+        mut visit: impl FnMut(&[u8], &[u8]) -> bool,
+    ) -> Result<(), PatriciaError> {
+        if root == PatriciaIndexRoot::empty() {
+            return Ok(());
+        }
+        let budget = traversal_node_budget(MAX_KEY_BYTES)?;
+        let mut pending = vec![(root.digest(), None, budget)];
+        while let Some((digest, constraint, remaining_nodes)) = pending.pop() {
+            let remaining_nodes = consume_node_budget(remaining_nodes)?;
+            let node = self.read_staged_or_persisted(digest, &construction.staged)?;
+            validate_node_path(&node, constraint.as_ref())?;
+            match node {
+                Node::Leaf { key, value, .. } => {
+                    if !visit(&key, &value) {
+                        return Ok(());
+                    }
+                }
+                Node::Branch {
+                    prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    let split = prefix_bit_len as usize;
+                    pending.push((
+                        right,
+                        Some(ChildPathConstraint {
+                            parent_prefix: prefix.clone(),
+                            parent_prefix_bit_len: split,
+                            right: true,
+                        }),
+                        remaining_nodes,
+                    ));
+                    pending.push((
+                        left,
+                        Some(ChildPathConstraint {
+                            parent_prefix: prefix,
+                            parent_prefix_bit_len: split,
+                            right: false,
+                        }),
+                        remaining_nodes,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn construction_insert_many(
         &self,
         construction: &mut PatriciaIndexConstruction,
@@ -2826,6 +2968,35 @@ mod tests {
         assert!(
             construction.published_staged_nodes < construction.staged_nodes_at_publication,
             "budget flushes must omit transient staged path copies before finalization"
+        );
+        for (root, records) in live_roots.iter().copied().zip(expected.iter()) {
+            constructed
+                .construction_validate_root(&construction, root)
+                .unwrap();
+            let mut visited = BTreeMap::new();
+            constructed
+                .construction_visit_all(&construction, root, |key, value| {
+                    visited.insert(key.to_vec(), value.to_vec());
+                    true
+                })
+                .unwrap();
+            assert_eq!(&visited, records);
+        }
+        assert_eq!(
+            constructed
+                .construction_lookup_prefix_limited(
+                    &construction,
+                    live_roots[1],
+                    b"sibling-1/record-0",
+                    5,
+                )
+                .unwrap(),
+            expected[1]
+                .iter()
+                .filter(|(key, _)| key.starts_with(b"sibling-1/record-0"))
+                .take(5)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
         );
         let publications_before_finish = construction.published_staged_nodes;
         constructed.finish_construction(&mut construction).unwrap();
