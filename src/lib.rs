@@ -19,17 +19,19 @@ mod filesystem;
 mod packed_patricia;
 mod scratch;
 mod sqlite_database;
+mod sqlite_fileset;
 mod sqlite_frontier;
 mod sqlite_materialization;
 
 /// Curated physical SQLite API for the disposable projection.
 ///
 /// This facade exposes typed DTOs, errors, bounded reads, instrumentation,
-/// stable physical constants, and the connection-owning database wrapper. It
-/// intentionally excludes raw DDL, direct connection access, and lower-level
-/// production implementation helpers.
+/// stable physical constants, physical file-set/candidate publication, and the
+/// connection-owning database wrapper. It intentionally excludes raw DDL,
+/// direct connection access, and lower-level production implementation helpers.
 pub mod sqlite {
     pub use crate::sqlite_database::{PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase};
+    pub use crate::sqlite_fileset::{SqliteFileSet, SqliteFileSetError};
     pub use crate::sqlite_frontier::{
         ApplyDisposition, ApplyFault, ApplyResult, FrontierError, PhysicalAcceptedBatch,
         PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,

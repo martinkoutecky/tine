@@ -418,6 +418,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::sqlite_fileset::SqliteFileSet;
 
     static NEXT_DATABASE: AtomicU64 = AtomicU64::new(1);
 
@@ -440,10 +441,7 @@ mod tests {
 
     impl Drop for TestDatabasePath {
         fn drop(&mut self) {
-            for suffix in ["", "-wal", "-shm"] {
-                let path = PathBuf::from(format!("{}{}", self.0.display(), suffix));
-                let _ = fs::remove_file(path);
-            }
+            let _ = SqliteFileSet::new(&self.0).remove();
         }
     }
 
@@ -535,7 +533,7 @@ mod tests {
                 "UPDATE meta SET managed_entity_set_version = managed_entity_set_version",
             )
             .unwrap();
-        let wal_path = PathBuf::from(format!("{}-wal", path.as_path().display()));
+        let wal_path = SqliteFileSet::new(path.as_path()).wal_path().to_path_buf();
         assert!(fs::metadata(&wal_path).unwrap().len() > 0);
 
         database.checkpoint_truncate().unwrap();
