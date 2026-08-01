@@ -1,9 +1,13 @@
 //! Bounded physical packing for exact authenticated Patricia node bytes.
 //!
-//! Version 1 keeps Patricia roots and node encodings unchanged. Immutable
-//! packs are named by their complete-byte digest; one fixed, atomically
-//! published head names one immutable content-addressed catalog. Catalog
-//! Catalog schemas 1 and 2 remain backward-readable. Schema 2 is an
+//! Packing keeps Patricia roots and node encodings unchanged. Pack schema 1
+//! has the historical 4,096-entry ceiling; current writers emit schema 2,
+//! whose entry ceiling is derived from the unchanged hard byte bound. Both
+//! schemas use the same canonical layout; the current decoder authenticates
+//! both and remains backward-readable for schema 1.
+//! Immutable packs are named by their complete-byte digest; one fixed,
+//! atomically published head names one immutable content-addressed catalog.
+//! Catalog schemas 1 and 2 remain backward-readable. Catalog schema 2 is an
 //! oldest-to-newest layered sequence and may contain as many as 256 packs in
 //! one derived byte-size tier. Schema 3 certifies at most four packs per tier.
 //! Ordinary writes normalize old schema-2 catalogs incrementally by coalescing
@@ -14,7 +18,7 @@
 //!
 //! ```text
 //! magic[8] = "TINEPPK\0"
-//! schema_version: u32 little endian = 1
+//! schema_version: u32 little endian = 1 or 2
 //! entry_count: u32 little endian
 //! payload_bytes: u32 little endian
 //! entry[entry_count] = digest[32], payload_offset: u32 LE, length: u32 LE
@@ -24,9 +28,12 @@
 //! Entries are non-empty, strictly digest-sorted, and densely laid out with no
 //! gaps. Every entry digest is SHA-256 of its exact payload slice. The pack
 //! filename is SHA-256 of the complete canonical pack bytes followed by
-//! [`PACK_SUFFIX`]. These rules make retries byte-exact and allow readers to
-//! reject truncation, non-canonical indexes, entry tampering, and path/content
-//! mismatch before exposing any node bytes.
+//! [`PACK_SUFFIX`]. The existing `-v1` suffix identifies this physical file
+//! family, not the authenticated header schema, so it remains valid for both
+//! schemas without changing exact naming or scan-free discovery. These rules
+//! make retries byte-exact and allow readers to reject truncation,
+//! non-canonical indexes, entry tampering, and path/content mismatch before
+//! exposing any node bytes.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -40,9 +47,12 @@ use super::filesystem::{
 use super::ContentDigest;
 
 const PACK_MAGIC: &[u8; 8] = b"TINEPPK\0";
-const PACK_SCHEMA_VERSION: u32 = 1;
+const LEGACY_PACK_SCHEMA_VERSION: u32 = 1;
+const PACK_SCHEMA_VERSION: u32 = 2;
 const PACK_HEADER_BYTES: usize = 8 + 4 + 4 + 4;
 const PACK_INDEX_ENTRY_BYTES: usize = 32 + 4 + 4;
+/// Physical family suffix retained across authenticated header schemas. The
+/// complete-byte digest distinguishes schema-1 and schema-2 encodings.
 pub(crate) const PACK_SUFFIX: &str = ".patricia-pack-v1";
 const CATALOG_MAGIC: &[u8; 8] = b"TINEPCT\0";
 const LEGACY_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -56,10 +66,11 @@ const HEAD_SCHEMA_VERSION: u32 = 1;
 const HEAD_BYTES: usize = 8 + 4 + 32 + 4;
 pub(crate) const HEAD_FILENAME: &str = "patricia-pack-head-v1";
 
-/// The byte bound, rather than an unrelated entry-count ceiling, is the hard
-/// pack allocation bound. This permits compaction to coalesce packs containing
-/// many tiny nodes instead of retaining an unbounded number of entry-limited
-/// packs in one byte-size tier.
+const LEGACY_MAX_PACK_ENTRIES: usize = 4_096;
+/// Schema 2 uses the byte bound, rather than an unrelated entry-count ceiling,
+/// as the hard pack allocation bound. This permits compaction to coalesce packs
+/// containing many tiny nodes instead of retaining an unbounded number of
+/// entry-limited packs in one byte-size tier.
 pub(crate) const MAX_PACK_ENTRIES: usize =
     (MAX_PACK_BYTES - PACK_HEADER_BYTES) / (PACK_INDEX_ENTRY_BYTES + 1);
 pub(crate) const MAX_PACK_ENTRY_BYTES: usize = 128 * 1024;
@@ -298,10 +309,12 @@ impl PackedPatriciaPack {
         let schema_version = read_u32(&bytes, 8)?;
         let entry_count = read_u32(&bytes, 12)? as usize;
         let payload_bytes = read_u32(&bytes, 16)? as usize;
-        if schema_version != PACK_SCHEMA_VERSION
-            || entry_count == 0
-            || entry_count > MAX_PACK_ENTRIES
-        {
+        let max_entries = match schema_version {
+            LEGACY_PACK_SCHEMA_VERSION => LEGACY_MAX_PACK_ENTRIES,
+            PACK_SCHEMA_VERSION => MAX_PACK_ENTRIES,
+            _ => return Err(PackedPatriciaError::Malformed),
+        };
+        if entry_count == 0 || entry_count > max_entries {
             return Err(PackedPatriciaError::Malformed);
         }
         let index_bytes = entry_count
@@ -1328,17 +1341,34 @@ mod tests {
         }
     }
 
-    fn representative_nodes(count: usize) -> BTreeMap<ContentDigest, Vec<u8>> {
+    fn representative_nodes_in_family(
+        family: &str,
+        count: usize,
+    ) -> BTreeMap<ContentDigest, Vec<u8>> {
         (0..count)
             .map(|index| {
                 let bytes = format!(
-                    "node-v1/{index:04}/pages/Unicode α-{index:04}.md/值-{}",
+                    "{family}/{index:04}/pages/Unicode α-{index:04}.md/值-{}",
                     index % 17
                 )
                 .into_bytes();
                 (ContentDigest::of(&bytes), bytes)
             })
             .collect()
+    }
+
+    fn representative_nodes(count: usize) -> BTreeMap<ContentDigest, Vec<u8>> {
+        representative_nodes_in_family("node-v1", count)
+    }
+
+    fn publication_with_schema(
+        entries: &BTreeMap<ContentDigest, Vec<u8>>,
+        schema_version: u32,
+    ) -> PackedPatriciaPublication {
+        let mut publication = PackedPatriciaPublication::build(entries).unwrap();
+        publication.bytes[8..12].copy_from_slice(&schema_version.to_le_bytes());
+        publication.digest = ContentDigest::of(&publication.bytes);
+        publication
     }
 
     fn publish_loose(fixture: &Fixture, nodes: &BTreeMap<ContentDigest, Vec<u8>>) {
@@ -1400,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_is_deterministic_bounded_and_exactly_reopenable() {
+    fn schema_two_is_deterministic_bounded_and_exactly_reopenable() {
         let nodes = representative_nodes(257);
         let publication = PackedPatriciaPublication::build(&nodes).unwrap();
         let same = PackedPatriciaPublication::build(&nodes).unwrap();
@@ -1408,6 +1438,7 @@ mod tests {
         assert_eq!(publication.digest(), same.digest());
         assert!(publication.bytes().len() <= MAX_PACK_BYTES);
         assert_eq!(&publication.bytes()[..8], PACK_MAGIC);
+        assert_eq!(PACK_SCHEMA_VERSION, 2);
         assert_eq!(
             read_u32(publication.bytes(), 8).unwrap(),
             PACK_SCHEMA_VERSION
@@ -1423,6 +1454,82 @@ mod tests {
         assert_eq!(reopened.len(), nodes.len());
         for (digest, expected) in nodes {
             assert_eq!(reopened.get(digest), Some(expected.as_slice()));
+        }
+    }
+
+    #[test]
+    fn schema_one_reopens_at_legacy_entry_boundary_and_rejects_the_next_entry() {
+        let boundary_nodes =
+            representative_nodes_in_family("legacy-boundary", LEGACY_MAX_PACK_ENTRIES);
+        let boundary = publication_with_schema(&boundary_nodes, LEGACY_PACK_SCHEMA_VERSION);
+        let reopened =
+            PackedPatriciaPack::decode(boundary.digest(), boundary.bytes.clone()).unwrap();
+        assert_eq!(reopened.len(), boundary_nodes.len());
+        for (digest, expected) in boundary_nodes {
+            assert_eq!(reopened.get(digest), Some(expected.as_slice()));
+        }
+
+        let over_boundary_nodes =
+            representative_nodes_in_family("legacy-over-boundary", LEGACY_MAX_PACK_ENTRIES + 1);
+        let over_boundary =
+            publication_with_schema(&over_boundary_nodes, LEGACY_PACK_SCHEMA_VERSION);
+        assert!(matches!(
+            PackedPatriciaPack::decode(over_boundary.digest(), over_boundary.bytes),
+            Err(PackedPatriciaError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn schema_two_crosses_legacy_entry_boundary_and_reopens_exactly() {
+        let nodes = representative_nodes_in_family("schema-two-dense", LEGACY_MAX_PACK_ENTRIES + 1);
+        let publication = PackedPatriciaPublication::build(&nodes).unwrap();
+        assert_eq!(
+            read_u32(publication.bytes(), 8).unwrap(),
+            PACK_SCHEMA_VERSION
+        );
+        assert!(nodes.len() > LEGACY_MAX_PACK_ENTRIES);
+
+        let reopened =
+            PackedPatriciaPack::decode(publication.digest(), publication.bytes.clone()).unwrap();
+        assert_eq!(reopened.len(), nodes.len());
+        for (digest, expected) in nodes {
+            assert_eq!(reopened.get(digest), Some(expected.as_slice()));
+        }
+    }
+
+    #[test]
+    fn catalog_mixes_schema_one_and_two_packs_and_reopens_exactly() {
+        let fixture = Fixture::new("mixed-pack-schemas");
+        let legacy_nodes = representative_nodes_in_family("mixed-legacy", 64);
+        let current_nodes = representative_nodes_in_family("mixed-current", 65);
+        let legacy = publication_with_schema(&legacy_nodes, LEGACY_PACK_SCHEMA_VERSION);
+        let current = PackedPatriciaPublication::build(&current_nodes).unwrap();
+        assert_eq!(
+            read_u32(legacy.bytes(), 8).unwrap(),
+            LEGACY_PACK_SCHEMA_VERSION
+        );
+        assert_eq!(read_u32(current.bytes(), 8).unwrap(), PACK_SCHEMA_VERSION);
+        assert!(legacy.filename().ends_with(PACK_SUFFIX));
+        assert!(current.filename().ends_with(PACK_SUFFIX));
+        assert_ne!(legacy.filename(), current.filename());
+
+        let packs = [
+            legacy.publish(&fixture.dir, &ExactPublisher).unwrap(),
+            current.publish(&fixture.dir, &ExactPublisher).unwrap(),
+        ];
+        let descriptors = packs
+            .iter()
+            .map(PublishedPatriciaPack::descriptor)
+            .collect::<Vec<_>>();
+        let catalog = PackedPatriciaCatalogPublication::build_descriptors(&descriptors).unwrap();
+        let catalog = catalog.publish(&fixture.dir, &ExactPublisher).unwrap();
+        publish_catalog_head(&fixture.dir, &catalog, &ExactPublisher).unwrap();
+
+        let reopened = PackedPatriciaCatalog::discover(&fixture.dir)
+            .unwrap()
+            .unwrap();
+        for (digest, expected) in legacy_nodes.iter().chain(&current_nodes) {
+            assert_eq!(reopened.get(*digest), Some(expected.as_slice()));
         }
     }
 
