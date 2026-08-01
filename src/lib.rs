@@ -16,6 +16,7 @@ mod content_digest;
 mod digest_sealed;
 mod durable_batch;
 mod filesystem;
+mod packed_patricia;
 mod scratch;
 mod sqlite_database;
 mod sqlite_frontier;

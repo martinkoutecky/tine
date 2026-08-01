@@ -1401,6 +1401,107 @@ mod tests {
         bytes
     }
 
+    fn packed_records(
+        pack: &crate::packed_patricia::PackedPatriciaPack,
+        root: PatriciaIndexRoot,
+    ) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let mut pending = vec![(root.digest(), None)];
+        let mut visited = BTreeSet::new();
+        let mut records = BTreeMap::new();
+        while let Some((digest, constraint)) = pending.pop() {
+            assert!(
+                visited.insert(digest),
+                "fixture must be an acyclic Patricia graph"
+            );
+            let bytes = pack
+                .get(digest)
+                .expect("pack must contain every reachable node");
+            let node: Node = postcard::from_bytes(bytes).unwrap();
+            validate_node(&node).unwrap();
+            validate_node_path(&node, constraint.as_ref()).unwrap();
+            match node {
+                Node::Leaf { key, value, .. } => {
+                    records.insert(key, value);
+                }
+                Node::Branch {
+                    prefix,
+                    prefix_bit_len,
+                    left,
+                    right,
+                    ..
+                } => {
+                    let split = prefix_bit_len as usize;
+                    pending.push((
+                        left,
+                        Some(ChildPathConstraint {
+                            parent_prefix: prefix.clone(),
+                            parent_prefix_bit_len: split,
+                            right: false,
+                        }),
+                    ));
+                    pending.push((
+                        right,
+                        Some(ChildPathConstraint {
+                            parent_prefix: prefix,
+                            parent_prefix_bit_len: split,
+                            right: true,
+                        }),
+                    ));
+                }
+            }
+        }
+        records
+    }
+
+    #[test]
+    fn packed_primitive_reopens_a_real_patricia_history_semantically() {
+        const RECORDS: usize = 256;
+
+        let (loose_path, loose) = store("packed-semantic-loose");
+        let expected = (0..RECORDS)
+            .map(|index| {
+                (
+                    format!("pages/Unicode-α-{index:04}.md").into_bytes(),
+                    format!("值-{index:04}").into_bytes(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let root = loose
+            .insert_many(PatriciaIndexRoot::empty(), &expected)
+            .unwrap();
+        let reachable = reachable_node_bytes(&loose, [root]);
+        assert_eq!(
+            reachable.len(),
+            RECORDS * 2 - 1,
+            "a full binary Patricia tree has one leaf per record and one fewer branch"
+        );
+
+        let pack_path =
+            std::env::temp_dir().join(format!("tine-patricia-semantic-pack-{}", Uuid::new_v4()));
+        fs::create_dir(&pack_path).unwrap();
+        let pack_dir = Dir::open_ambient_dir(&pack_path, ambient_authority()).unwrap();
+        let publication =
+            crate::packed_patricia::PackedPatriciaPublication::build(&reachable).unwrap();
+        let completed = publication.publish(&pack_dir, &ExactPublisher).unwrap();
+        let reopened =
+            crate::packed_patricia::PackedPatriciaPack::open(&pack_dir, completed.digest())
+                .unwrap();
+
+        assert_eq!(packed_records(&reopened, root), expected);
+        assert_eq!(reopened.len(), reachable.len());
+        assert_eq!(fs::read_dir(&pack_path).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(loose_path.join("nodes")).unwrap().count(),
+            reachable.len()
+        );
+
+        drop(reopened);
+        drop(pack_dir);
+        drop(loose);
+        fs::remove_dir_all(loose_path).unwrap();
+        fs::remove_dir_all(pack_path).unwrap();
+    }
+
     #[test]
     fn construction_flushes_only_checkpoint_live_and_in_progress_roots() {
         const RESIDENT_BUDGET: usize = 4 * 1024;
