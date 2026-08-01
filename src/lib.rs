@@ -31,7 +31,11 @@ mod sqlite_materialization;
 /// direct connection access, and lower-level production implementation helpers.
 pub mod sqlite {
     pub use crate::sqlite_database::{PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase};
-    pub use crate::sqlite_fileset::{SqliteFileSet, SqliteFileSetError};
+    pub use crate::sqlite_fileset::{
+        PhysicalFileCheckpoint, PhysicalSqliteCheckpoint, SqliteFileSet, SqliteFileSetError,
+        SQLITE_CHECKPOINT_EDGE_BYTES, SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES,
+        SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES,
+    };
     pub use crate::sqlite_frontier::{
         ApplyDisposition, ApplyFault, ApplyResult, FrontierError, PhysicalAcceptedBatch,
         PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,
@@ -48,6 +52,9 @@ pub mod sqlite {
         SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
         MAX_MATERIALIZATION_READ_BYTES,
     };
+
+    #[cfg(feature = "test-support")]
+    pub use crate::sqlite_fileset::physical_checkpoint_interior_ranges_for_test;
 
     #[cfg(feature = "test-support")]
     pub use crate::sqlite_materialization::{
