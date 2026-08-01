@@ -789,13 +789,47 @@ mod tests {
             .collect()
     }
 
+    fn assert_persisted_entries(fixture: &TestDirectory, entries: &[(&str, &[u8])]) {
+        for (filename, bytes) in entries {
+            assert_eq!(fixture.dir.read(filename).unwrap(), *bytes);
+        }
+        assert!(temporary_entries(&fixture.dir).is_empty());
+    }
+
+    fn publish_exact_sequence(
+        fixture: &TestDirectory,
+        entries: &[(&str, &[u8])],
+    ) -> ImmutablePublicationTestStats {
+        reset_immutable_publication_test_stats();
+        for (filename, bytes) in entries {
+            publish_immutable_exact(&fixture.dir, filename, bytes).unwrap();
+        }
+        immutable_publication_test_stats()
+    }
+
+    fn publish_batched_sequence(
+        fixture: &TestDirectory,
+        entries: &[(&str, &[u8])],
+    ) -> (
+        CompletedExactImmutablePublicationBatch,
+        ImmutablePublicationTestStats,
+    ) {
+        reset_immutable_publication_test_stats();
+        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        for (filename, bytes) in entries {
+            batch.publish(&fixture.dir, filename, bytes).unwrap();
+        }
+        let completed = batch.finish().unwrap();
+        let stats = immutable_publication_test_stats();
+        (completed, stats)
+    }
+
     #[test]
     fn exact_publish_retries_identically_without_temporary_residue() {
         let fixture = TestDirectory::new("exact-retry");
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
-        assert_eq!(fixture.dir.read("entry").unwrap(), b"exact bytes");
-        assert!(temporary_entries(&fixture.dir).is_empty());
+        assert_persisted_entries(&fixture, &[("entry", b"exact bytes")]);
     }
 
     #[test]
@@ -853,27 +887,19 @@ mod tests {
     #[test]
     fn deferred_batch_returns_completion_only_from_finish() {
         let fixture = TestDirectory::new("batch");
-        reset_immutable_publication_test_stats();
-        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
-        batch.publish(&fixture.dir, "first", b"one").unwrap();
-        batch.publish(&fixture.dir, "second", b"two").unwrap();
-        assert_eq!(fixture.dir.read("first").unwrap(), b"one");
-        let completed = batch.finish().unwrap();
+        let entries = [("first", b"one".as_slice()), ("second", b"two".as_slice())];
+        let (completed, batch_stats) = publish_batched_sequence(&fixture, &entries);
         assert_eq!(completed.publication_count(), 2);
         assert_eq!(completed.existing_publication_count(), 0);
-        assert_eq!(fixture.dir.read("second").unwrap(), b"two");
-        assert!(temporary_entries(&fixture.dir).is_empty());
-        let batch_stats = immutable_publication_test_stats();
+        assert_persisted_entries(&fixture, &entries);
         assert_eq!(batch_stats.batch_durability_barriers, 1);
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        assert_eq!(batch_stats.exact_durability_barriers, 0);
 
-        reset_immutable_publication_test_stats();
-        publish_immutable_exact(&fixture.dir, "ordinary-one", b"one").unwrap();
-        publish_immutable_exact(&fixture.dir, "ordinary-two", b"two").unwrap();
-        let ordinary_stats = immutable_publication_test_stats();
-        assert_eq!(ordinary_stats.exact_durability_barriers, 2);
+        let ordinary_fixture = TestDirectory::new("ordinary");
+        let ordinary_stats = publish_exact_sequence(&ordinary_fixture, &entries);
+        assert_persisted_entries(&ordinary_fixture, &entries);
         assert_eq!(ordinary_stats.batch_durability_barriers, 0);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert!(batch_stats.exact_durability_barriers < ordinary_stats.exact_durability_barriers);
     }
 
     #[test]
@@ -898,7 +924,7 @@ mod tests {
             immutable_publication_test_stats().batch_durability_barriers,
             1
         );
-        assert_eq!(fixture.dir.read("existing").unwrap(), b"exact bytes");
+        assert_persisted_entries(&fixture, &[("existing", b"exact bytes")]);
     }
 
     #[test]
