@@ -6,7 +6,7 @@
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use cap_std::{ambient_authority, fs::Dir};
@@ -18,6 +18,8 @@ use crate::ContentDigest;
 
 /// Bytes authenticated independently at each physical SQLite file edge.
 pub const SQLITE_CHECKPOINT_EDGE_BYTES: usize = 64 * 1024;
+/// Maximum authenticated checkpoint-envelope bytes admitted for publication.
+pub const MAX_SQLITE_CHECKPOINT_BYTES: usize = 64 * 1024;
 /// Maximum total bytes read from deterministic interior sample ranges.
 ///
 /// This is a bounded accidental-corruption tripwire, not byte-complete
@@ -27,6 +29,14 @@ pub const SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES: usize = 1024 * 1024;
 pub const SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES: usize = 16 * 1024;
 const SQLITE_CHECKPOINT_INTERIOR_MAX_RANGES: usize =
     SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES / SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES;
+const SQLITE_CHECKPOINT_TEMP_ATTEMPTS: usize = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckpointPublicationStage {
+    FileSynced,
+    Replaced,
+    ParentSyncApplied,
+}
 
 /// Bounded physical identity of one SQLite database or WAL file.
 ///
@@ -92,6 +102,100 @@ impl SqliteFileSet {
             database: physical_file_checkpoint(&self.database)?,
             wal: optional_physical_file_checkpoint(&self.wal)?,
         })
+    }
+
+    /// Durably publish already-authenticated checkpoint-envelope bytes.
+    ///
+    /// Core owns the byte construction and authentication. Storage admits only
+    /// the bounded envelope, creates a no-follow temporary beside the stable
+    /// checkpoint name, synchronizes its contents, atomically replaces the
+    /// predecessor, and applies the shared parent-directory sync contract.
+    pub fn publish_checkpoint(&self, bytes: &[u8]) -> Result<(), SqliteFileSetError> {
+        self.publish_checkpoint_with(
+            bytes,
+            |name, _attempt| format!(".{name}.tmp-{}", Uuid::new_v4()),
+            |_stage| Ok(()),
+        )
+    }
+
+    fn publish_checkpoint_with<N, F>(
+        &self,
+        bytes: &[u8],
+        mut temporary_name: N,
+        mut post_stage: F,
+    ) -> Result<(), SqliteFileSetError>
+    where
+        N: FnMut(&str, usize) -> String,
+        F: FnMut(CheckpointPublicationStage) -> Result<(), SqliteFileSetError>,
+    {
+        if bytes.len() > MAX_SQLITE_CHECKPOINT_BYTES {
+            return Err(SqliteFileSetError::CheckpointTooLarge {
+                length: bytes.len(),
+                limit: MAX_SQLITE_CHECKPOINT_BYTES,
+            });
+        }
+        let parent = self
+            .checkpoint
+            .parent()
+            .ok_or_else(|| SqliteFileSetError::UnsafePath("checkpoint has no parent".into()))?;
+        let name = self
+            .checkpoint
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| SqliteFileSetError::UnsafePath("checkpoint name is not UTF-8".into()))?;
+        let mut last_collision = None;
+        for attempt in 0..SQLITE_CHECKPOINT_TEMP_ATTEMPTS {
+            let temporary = parent.join(temporary_name(name, attempt));
+            // Atomic create-new is the predecessor's cross-platform no-follow
+            // final-component creation primitive: an existing file or symlink
+            // is a collision and is never opened.
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    last_collision = Some(error);
+                    continue;
+                }
+                Err(error) => return Err(SqliteFileSetError::Io(error)),
+            };
+            let result = (|| {
+                file.write_all(bytes).map_err(SqliteFileSetError::Io)?;
+                file.sync_all().map_err(SqliteFileSetError::Io)?;
+                post_stage(CheckpointPublicationStage::FileSynced)?;
+                drop(file);
+                // Keep std::fs::rename deliberately: its atomic predecessor-
+                // replacement semantics are the contract being extracted.
+                fs::rename(&temporary, &self.checkpoint).map_err(SqliteFileSetError::Io)?;
+                post_stage(CheckpointPublicationStage::Replaced)?;
+                let directory = Dir::open_ambient_dir(parent, ambient_authority())
+                    .map_err(SqliteFileSetError::Io)?;
+                sync_dir_required(&directory).map_err(SqliteFileSetError::Io)?;
+                post_stage(CheckpointPublicationStage::ParentSyncApplied)
+            })();
+            let cleanup = fs::remove_file(&temporary);
+            if let Err(error) = result {
+                let _ = cleanup;
+                return Err(error);
+            }
+            if cleanup
+                .as_ref()
+                .is_err_and(|error| error.kind() != io::ErrorKind::NotFound)
+            {
+                cleanup.map_err(SqliteFileSetError::Io)?;
+            }
+            return Ok(());
+        }
+        Err(SqliteFileSetError::Io(last_collision.unwrap_or_else(
+            || {
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "checkpoint temporary name collision",
+                )
+            },
+        )))
     }
 
     /// Database-first physical paths, in stable forensic-move order.
@@ -186,6 +290,7 @@ pub enum SqliteFileSetError {
     Io(io::Error),
     UnsafePath(String),
     Corrupt(String),
+    CheckpointTooLarge { length: usize, limit: usize },
     CandidateRetainedSidecars,
 }
 
@@ -195,6 +300,10 @@ impl fmt::Display for SqliteFileSetError {
             Self::Io(error) => error.fmt(formatter),
             Self::UnsafePath(error) => error.fmt(formatter),
             Self::Corrupt(error) => error.fmt(formatter),
+            Self::CheckpointTooLarge { length, limit } => write!(
+                formatter,
+                "SQLite projection checkpoint is too large: {length} bytes exceeds {limit}"
+            ),
             Self::CandidateRetainedSidecars => {
                 formatter.write_str("checkpointed SQLite candidate retained sidecars")
             }
@@ -206,7 +315,10 @@ impl std::error::Error for SqliteFileSetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::UnsafePath(_) | Self::Corrupt(_) | Self::CandidateRetainedSidecars => None,
+            Self::UnsafePath(_)
+            | Self::Corrupt(_)
+            | Self::CheckpointTooLarge { .. }
+            | Self::CandidateRetainedSidecars => None,
         }
     }
 }
@@ -601,6 +713,268 @@ mod tests {
             Err(SqliteFileSetError::Io(error))
                 if error.kind() == io::ErrorKind::UnexpectedEof
         ));
+    }
+
+    #[test]
+    fn checkpoint_publication_admits_only_bounded_bytes() {
+        let directory = TestDirectory::new("checkpoint-byte-bound");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        fs::write(files.checkpoint_path(), b"predecessor").unwrap();
+
+        let result = files.publish_checkpoint(&vec![0_u8; MAX_SQLITE_CHECKPOINT_BYTES + 1]);
+
+        assert!(matches!(
+            result,
+            Err(SqliteFileSetError::CheckpointTooLarge { length, limit })
+                if length == MAX_SQLITE_CHECKPOINT_BYTES + 1
+                    && limit == MAX_SQLITE_CHECKPOINT_BYTES
+        ));
+        assert_eq!(fs::read(files.checkpoint_path()).unwrap(), b"predecessor");
+
+        let admitted = vec![7_u8; MAX_SQLITE_CHECKPOINT_BYTES];
+        files.publish_checkpoint(&admitted).unwrap();
+        assert_eq!(fs::read(files.checkpoint_path()).unwrap(), admitted);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkpoint_temporary_symlink_collision_is_not_followed_and_retries() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new("checkpoint-temp-symlink-collision");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        let sentinel = directory.path().join("sentinel");
+        fs::write(&sentinel, b"must survive").unwrap();
+        let collision_name = ".frontier.sqlite-auth.tmp-collision";
+        symlink(&sentinel, directory.path().join(collision_name)).unwrap();
+
+        files
+            .publish_checkpoint_with(
+                b"authenticated envelope",
+                |_name, attempt| {
+                    if attempt == 0 {
+                        collision_name.into()
+                    } else {
+                        ".frontier.sqlite-auth.tmp-retry".into()
+                    }
+                },
+                |_stage| Ok(()),
+            )
+            .unwrap();
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"authenticated envelope"
+        );
+        assert!(fs::symlink_metadata(directory.path().join(collision_name))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!directory
+            .path()
+            .join(".frontier.sqlite-auth.tmp-retry")
+            .exists());
+    }
+
+    #[test]
+    fn checkpoint_temporary_collision_retry_is_explicitly_bounded() {
+        let directory = TestDirectory::new("checkpoint-temp-collision-bound");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        fs::write(files.checkpoint_path(), b"predecessor").unwrap();
+        for attempt in 0..SQLITE_CHECKPOINT_TEMP_ATTEMPTS {
+            fs::write(
+                directory.path().join(format!(".collision-{attempt}")),
+                b"occupied",
+            )
+            .unwrap();
+        }
+
+        let result = files.publish_checkpoint_with(
+            b"authenticated envelope",
+            |_name, attempt| format!(".collision-{attempt}"),
+            |_stage| Ok(()),
+        );
+
+        assert!(matches!(
+            result,
+            Err(SqliteFileSetError::Io(error))
+                if error.kind() == io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(fs::read(files.checkpoint_path()).unwrap(), b"predecessor");
+    }
+
+    #[test]
+    fn checkpoint_failure_after_file_sync_cleans_the_temporary() {
+        let directory = TestDirectory::new("checkpoint-cleanup-after-file-sync");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        fs::write(files.checkpoint_path(), b"predecessor").unwrap();
+        let temporary_name = ".frontier.sqlite-auth.tmp-injected";
+
+        let result = files.publish_checkpoint_with(
+            b"authenticated envelope",
+            |_name, _attempt| temporary_name.into(),
+            |stage| {
+                if stage == CheckpointPublicationStage::FileSynced {
+                    Err(SqliteFileSetError::Io(io::Error::other(
+                        "simulated failure after file sync",
+                    )))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(matches!(result, Err(SqliteFileSetError::Io(_))));
+        assert_eq!(fs::read(files.checkpoint_path()).unwrap(), b"predecessor");
+        assert!(!directory.path().join(temporary_name).exists());
+    }
+
+    #[test]
+    fn checkpoint_retry_after_crash_before_replacement_keeps_predecessor_safe() {
+        let directory = TestDirectory::new("checkpoint-crash-before-replace");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        fs::write(files.checkpoint_path(), b"predecessor").unwrap();
+
+        // Recreate the durable state left by process death after the temporary
+        // file was synced but before it replaced the stable checkpoint.
+        let abandoned = directory.path().join(".frontier.sqlite-auth.tmp-abandoned");
+        let mut abandoned_file = fs::File::create(&abandoned).unwrap();
+        abandoned_file
+            .write_all(b"complete but unpublished envelope")
+            .unwrap();
+        abandoned_file.sync_all().unwrap();
+        drop(abandoned_file);
+        assert_eq!(fs::read(files.checkpoint_path()).unwrap(), b"predecessor");
+
+        files
+            .publish_checkpoint_with(
+                b"replacement envelope",
+                |_name, _attempt| ".frontier.sqlite-auth.tmp-retry".into(),
+                |_stage| Ok(()),
+            )
+            .unwrap();
+
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"replacement envelope"
+        );
+        assert_eq!(
+            fs::read(abandoned).unwrap(),
+            b"complete but unpublished envelope"
+        );
+    }
+
+    #[test]
+    fn checkpoint_crash_after_atomic_replacement_exposes_complete_bytes_and_retries() {
+        let directory = TestDirectory::new("checkpoint-crash-after-replace");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        fs::write(files.checkpoint_path(), b"predecessor").unwrap();
+        let temporary_name = ".frontier.sqlite-auth.tmp-crash";
+
+        let result = files.publish_checkpoint_with(
+            b"complete authenticated envelope",
+            |_name, _attempt| temporary_name.into(),
+            |stage| {
+                if stage == CheckpointPublicationStage::Replaced {
+                    Err(SqliteFileSetError::Io(io::Error::other(
+                        "simulated process crash after replacement",
+                    )))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(matches!(result, Err(SqliteFileSetError::Io(_))));
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"complete authenticated envelope"
+        );
+        assert!(!directory.path().join(temporary_name).exists());
+
+        let mut retry_stages = Vec::new();
+        files
+            .publish_checkpoint_with(
+                b"complete authenticated envelope",
+                |_name, _attempt| ".frontier.sqlite-auth.tmp-retry-after-crash".into(),
+                |stage| {
+                    retry_stages.push(stage);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            retry_stages.last(),
+            Some(&CheckpointPublicationStage::ParentSyncApplied)
+        );
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"complete authenticated envelope"
+        );
+    }
+
+    #[test]
+    fn checkpoint_success_applies_file_and_platform_parent_sync_in_order() {
+        let directory = TestDirectory::new("checkpoint-durability-order");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        let mut stages = Vec::new();
+
+        files
+            .publish_checkpoint_with(
+                b"authenticated envelope",
+                |_name, _attempt| ".frontier.sqlite-auth.tmp-durable".into(),
+                |stage| {
+                    stages.push(stage);
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            stages,
+            [
+                CheckpointPublicationStage::FileSynced,
+                CheckpointPublicationStage::Replaced,
+                CheckpointPublicationStage::ParentSyncApplied,
+            ]
+        );
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"authenticated envelope"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkpoint_replacement_unlinks_predecessor_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new("checkpoint-replace-symlink");
+        let path = directory.path().join("frontier.sqlite");
+        let files = SqliteFileSet::new(&path);
+        let sentinel = directory.path().join("sentinel");
+        fs::write(&sentinel, b"must survive").unwrap();
+        symlink(&sentinel, files.checkpoint_path()).unwrap();
+
+        files.publish_checkpoint(b"authenticated envelope").unwrap();
+
+        assert_eq!(fs::read(&sentinel).unwrap(), b"must survive");
+        assert_eq!(
+            fs::read(files.checkpoint_path()).unwrap(),
+            b"authenticated envelope"
+        );
+        assert!(!fs::symlink_metadata(files.checkpoint_path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
