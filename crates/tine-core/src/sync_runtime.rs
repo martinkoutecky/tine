@@ -23247,8 +23247,10 @@ mod tests {
     #[test]
     fn effective_title_projection_authority_is_point_bounded_with_a_wide_unrelated_frontier() {
         const UNRELATED_PAGES: usize = 24;
+        // Crash-cut hooks are keyed by workspace across the test process, so
+        // this fixture must not alias a provider recovery-cut fixture.
         let (first, second, first_handle, second_handle) =
-            joined_shared_pair("effective-title-point-authority", 0xea00);
+            joined_shared_pair("effective-title-point-authority", 0xfaa00);
         let target_path = "notes/effective-title-point-target.md";
         let (target_batch, target_page_id, _, _) = submit_shared_page(
             &first_handle,
