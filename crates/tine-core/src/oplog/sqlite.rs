@@ -1780,11 +1780,86 @@ pub(crate) struct BootstrapSqliteRebuildInstrumentation {
     pub(crate) terminal_materialization_chunks: usize,
     pub(crate) peak_terminal_bulk_pages: usize,
     pub(crate) terminal_materialization_micros: u128,
+    pub(crate) terminal_reference_micros: u128,
     pub(crate) terminal_lowering_micros: u128,
     pub(crate) terminal_insert_micros: u128,
+    pub(crate) terminal_catalog_cursor_micros: u128,
+    pub(crate) terminal_finish_micros: u128,
+    /// Bulk materializers, and therefore decoded-segment lookup sessions,
+    /// opened by the terminal row seed. A graph-lifetime session leaves this at
+    /// one no matter how many pages the terminal root carries.
+    pub(crate) terminal_lookup_sessions: usize,
+    /// Catalog rows the terminal row seed authenticated through the paged
+    /// current-path cursor.
+    pub(crate) terminal_catalog_rows_authenticated: usize,
+    /// Catalog-document shape proofs derived while seeding the terminal rows.
+    ///
+    /// Each one costs a read linear in the catalog's page entries, so this must
+    /// count bounded read windows (cursor pages plus materialization chunks)
+    /// and never catalog rows: one proof per row is quadratic in graph pages.
+    pub(crate) terminal_catalog_document_validations: usize,
+    /// Peak pages one lookup session was asked to cover before it was dropped.
+    /// This is the structural window bound: it must not grow with graph pages.
+    pub(crate) peak_terminal_session_pages: usize,
+    pub(crate) terminal_accepted_frontier_session_hits: usize,
+    pub(crate) terminal_accepted_frontier_session_misses: usize,
+    pub(crate) terminal_accepted_frontier_session_evictions: usize,
+    pub(crate) terminal_accepted_frontier_session_oversize: usize,
+    pub(crate) terminal_accepted_frontier_session_peak_resident_bytes: usize,
+    pub(crate) terminal_external_exact_session_hits: usize,
+    pub(crate) terminal_external_exact_session_misses: usize,
+    pub(crate) terminal_external_exact_session_evictions: usize,
+    pub(crate) terminal_external_exact_session_oversize: usize,
+    pub(crate) terminal_external_exact_session_peak_resident_bytes: usize,
     /// One when retained terminal material was present but refused, so this
     /// activation discarded the private candidate and replayed the archive.
     pub(crate) terminal_construction_refusals: usize,
+}
+
+impl BootstrapSqliteRebuildInstrumentation {
+    /// Fold one finished terminal lookup session's decoded-segment counters in.
+    ///
+    /// Residency is a peak rather than a sum: it is the bound on how much
+    /// decoded state one window may hold at once.
+    fn record_terminal_lookup_session(
+        &mut self,
+        session_pages: usize,
+        accepted_frontier: super::scratch_store::ScratchLookupSessionStats,
+        external_exact: super::scratch_store::ScratchLookupSessionStats,
+    ) {
+        self.terminal_lookup_sessions = self.terminal_lookup_sessions.saturating_add(1);
+        self.peak_terminal_session_pages = self.peak_terminal_session_pages.max(session_pages);
+        self.terminal_accepted_frontier_session_hits = self
+            .terminal_accepted_frontier_session_hits
+            .saturating_add(accepted_frontier.hits);
+        self.terminal_accepted_frontier_session_misses = self
+            .terminal_accepted_frontier_session_misses
+            .saturating_add(accepted_frontier.misses);
+        self.terminal_accepted_frontier_session_evictions = self
+            .terminal_accepted_frontier_session_evictions
+            .saturating_add(accepted_frontier.evictions);
+        self.terminal_accepted_frontier_session_oversize = self
+            .terminal_accepted_frontier_session_oversize
+            .saturating_add(accepted_frontier.oversize);
+        self.terminal_accepted_frontier_session_peak_resident_bytes = self
+            .terminal_accepted_frontier_session_peak_resident_bytes
+            .max(accepted_frontier.peak_resident_bytes);
+        self.terminal_external_exact_session_hits = self
+            .terminal_external_exact_session_hits
+            .saturating_add(external_exact.hits);
+        self.terminal_external_exact_session_misses = self
+            .terminal_external_exact_session_misses
+            .saturating_add(external_exact.misses);
+        self.terminal_external_exact_session_evictions = self
+            .terminal_external_exact_session_evictions
+            .saturating_add(external_exact.evictions);
+        self.terminal_external_exact_session_oversize = self
+            .terminal_external_exact_session_oversize
+            .saturating_add(external_exact.oversize);
+        self.terminal_external_exact_session_peak_resident_bytes = self
+            .terminal_external_exact_session_peak_resident_bytes
+            .max(external_exact.peak_resident_bytes);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -3800,6 +3875,7 @@ impl SqliteFrontier {
             ));
         }
         trace_terminal_phase("accepted prefix seed", prefix_started);
+        let _ = super::hot_engine::take_current_path_cursor_probe();
         let rows_started = std::time::Instant::now();
         let coverage_count = self.seed_terminal_rows(
             engine,
@@ -3809,6 +3885,12 @@ impl SqliteFrontier {
             &mut bootstrap,
         )?;
         trace_terminal_phase("terminal row seed", rows_started);
+        let cursor_probe = super::hot_engine::take_current_path_cursor_probe();
+        bootstrap.terminal_catalog_rows_authenticated = cursor_probe.rows;
+        bootstrap.terminal_catalog_document_validations = cursor_probe.catalog_document_validations;
+        if std::env::var_os("TINE_ACTIVATION_TRACE").is_some() {
+            eprintln!("sqlite terminal current-path cursor probe: {cursor_probe:?}");
+        }
         self.fresh_reference_coverage_count = Some(coverage_count);
         if instrumentation.cleanup_page_attempts != 0
             || instrumentation.cleanup_owned_rows != 0
@@ -3822,6 +3904,27 @@ impl SqliteFrontier {
             return Err(ProjectionError::Rebuild(
                 "terminal candidate structural accounting invariant failed".into(),
             ));
+        }
+        // Every catalog-document shape proof costs a read linear in the
+        // catalog's page entries, so the terminal seed may derive at most one
+        // per bounded read window - one per cursor page and one per
+        // materialization chunk. Deriving one per catalog row is quadratic in
+        // graph pages, which is what this construction exists to avoid.
+        let window_bound = bootstrap
+            .terminal_catalog_rows_authenticated
+            .div_ceil(TERMINAL_CATALOG_CURSOR_PAGE_ROWS)
+            .saturating_add(bootstrap.terminal_materialization_chunks)
+            .saturating_add(1);
+        if bootstrap.terminal_catalog_rows_authenticated != bootstrap.terminal_pages_materialized
+            || bootstrap.terminal_catalog_document_validations > window_bound
+        {
+            return Err(ProjectionError::Rebuild(format!(
+                "terminal candidate catalog authority is not bounded by its read window: \
+                 rows {} pages {} validations {} bound {window_bound}",
+                bootstrap.terminal_catalog_rows_authenticated,
+                bootstrap.terminal_pages_materialized,
+                bootstrap.terminal_catalog_document_validations,
+            )));
         }
         let proof_started = std::time::Instant::now();
         self.finish_fresh_candidate(source, coverage_count, &mut instrumentation)?;
@@ -3889,6 +3992,7 @@ impl SqliteFrontier {
         let mut observed_rows = 0_u64;
         let mut seen_pages = BTreeSet::new();
         while let Some(token) = cursor.take() {
+            let cursor_started = std::time::Instant::now();
             let page = engine
                 .current_path_cursor_page(
                     token,
@@ -3896,6 +4000,9 @@ impl SqliteFrontier {
                         .min(super::hot_engine::MAX_CURRENT_PATH_CURSOR_PAGE_ROWS),
                 )
                 .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
+            bootstrap.terminal_catalog_cursor_micros = bootstrap
+                .terminal_catalog_cursor_micros
+                .saturating_add(cursor_started.elapsed().as_micros());
             let (rows, next) = page.into_parts();
             cursor = next;
             pending.extend(rows);
@@ -3929,6 +4036,14 @@ impl SqliteFrontier {
                 )?;
             }
         }
+        if let Some(materializer) = materializer.as_ref() {
+            let (accepted_frontier, external_exact) = materializer.lookup_session_stats();
+            bootstrap.record_terminal_lookup_session(
+                seen_pages.len(),
+                accepted_frontier,
+                external_exact,
+            );
+        }
         let current = engine
             .current_path_catalog_binding()
             .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
@@ -3961,9 +4076,15 @@ impl SqliteFrontier {
             extractor_dependency_stamp_digest: extractor_stamp.digest()?,
             source_count: catalog_root.source_count(),
         };
-        self.physical
+        let finish_started = std::time::Instant::now();
+        let finished = self
+            .physical
             .finish_terminal_bootstrap_construction(provenance, &stamp)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        bootstrap.terminal_finish_micros = bootstrap
+            .terminal_finish_micros
+            .saturating_add(finish_started.elapsed().as_micros());
+        finished
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3988,6 +4109,7 @@ impl SqliteFrontier {
         let mut chunk = super::sqlite_materialization::TerminalMaterializationChunk::default();
         let mut reference_rows = ReferenceCatalogSourceRows::default();
         let lower_started = std::time::Instant::now();
+        let mut reference_micros = 0_u128;
         for (row, page) in rows.iter().zip(materialized) {
             let page = page.ok_or_else(|| {
                 ProjectionError::Rebuild(
@@ -4001,13 +4123,17 @@ impl SqliteFrontier {
                 ));
             }
             chunk.pages.push(materialized_page_input(page));
-            if !collect_reference_source_rows(
+            let reference_started = std::time::Instant::now();
+            let posted = collect_reference_source_rows(
                 engine,
                 catalog_root,
                 extractor_stamp,
                 row.page_id(),
                 &mut reference_rows,
-            )? {
+            )?;
+            reference_micros =
+                reference_micros.saturating_add(reference_started.elapsed().as_micros());
+            if !posted {
                 return Err(ProjectionError::Rebuild(
                     "terminal catalog page has no authenticated reference posting".into(),
                 ));
@@ -4024,9 +4150,15 @@ impl SqliteFrontier {
         instrumentation.peak_bulk_pages = instrumentation.peak_bulk_pages.max(page_ids.len());
         instrumentation.exact_document_loads = materializer.exact_document_loads();
         let physical = super::sqlite_materialization::lower_terminal_chunk(chunk)?;
-        bootstrap.terminal_lowering_micros = bootstrap
-            .terminal_lowering_micros
-            .saturating_add(lower_started.elapsed().as_micros());
+        bootstrap.terminal_reference_micros = bootstrap
+            .terminal_reference_micros
+            .saturating_add(reference_micros);
+        bootstrap.terminal_lowering_micros = bootstrap.terminal_lowering_micros.saturating_add(
+            lower_started
+                .elapsed()
+                .as_micros()
+                .saturating_sub(reference_micros),
+        );
         let insert_started = std::time::Instant::now();
         let seeded = self
             .physical

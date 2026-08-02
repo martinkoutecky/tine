@@ -120,6 +120,63 @@ pub(crate) const MAX_CURRENT_PATH_CURSOR_PAGE_BYTES: usize = 256 * 1024;
 #[allow(dead_code)]
 pub(crate) const MAX_CURRENT_PATH_CURSORS: usize = 32;
 
+/// Thread-local causal probe for graph-sized authenticated catalog reads.
+///
+/// It attributes one catalog traversal between its authenticated trie walk, its
+/// per-row path/name/page authority, and the catalog-document shape proof whose
+/// cost is linear in the catalog's page entries. `catalog_document_validations`
+/// is the structural counter: it must count bounded read windows, never rows,
+/// or a graph-sized traversal is quadratic in pages.
+///
+/// It is thread-local so that one build's structural accounting cannot be
+/// perturbed by a concurrent build in the same process. It carries no
+/// authority, is never persisted, and is read only by traces and scale tests.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CurrentPathCursorProbe {
+    pub(crate) rows: usize,
+    pub(crate) catalog_document_validations: usize,
+    pub(crate) walk_micros: u128,
+    pub(crate) portable_path_micros: u128,
+    pub(crate) catalog_state_micros: u128,
+    pub(crate) page_name_micros: u128,
+}
+
+thread_local! {
+    static CURRENT_PATH_CURSOR_PROBE: Cell<CurrentPathCursorProbe> =
+        const { Cell::new(CurrentPathCursorProbe {
+            rows: 0,
+            catalog_document_validations: 0,
+            walk_micros: 0,
+            portable_path_micros: 0,
+            catalog_state_micros: 0,
+            page_name_micros: 0,
+        }) };
+}
+
+fn update_cursor_probe(update: impl FnOnce(&mut CurrentPathCursorProbe)) {
+    CURRENT_PATH_CURSOR_PROBE.with(|probe| {
+        let mut current = probe.get();
+        update(&mut current);
+        probe.set(current);
+    });
+}
+
+fn record_cursor_probe(
+    select: impl FnOnce(&mut CurrentPathCursorProbe) -> &mut u128,
+    started: std::time::Instant,
+) {
+    let elapsed = started.elapsed().as_micros();
+    update_cursor_probe(|probe| {
+        let counter = select(probe);
+        *counter = counter.saturating_add(elapsed);
+    });
+}
+
+/// Read and reset this thread's cursor probe.
+pub(crate) fn take_current_path_cursor_probe() -> CurrentPathCursorProbe {
+    CURRENT_PATH_CURSOR_PROBE.with(|probe| probe.replace(CurrentPathCursorProbe::default()))
+}
+
 /// One exact current page path supplied by the authenticated cursor.
 ///
 /// This semantic row intentionally carries no projected blob or projection
@@ -3905,14 +3962,14 @@ impl BootstrapBulkMaterializer<'_> {
         }
 
         let mut page_documents = BTreeMap::<PageId, DocumentId>::new();
+        // One catalog shape proof for the whole bounded chunk: it is a property
+        // of the retained catalog document, not of any page in it.
+        let validated_catalog =
+            validate_catalog_document(self.engine.catalog_document_id, &self.catalog)?;
         let mut results = page_ids
             .iter()
             .map(|page_id| {
-                let state = validate_catalog_page(
-                    self.engine.catalog_document_id,
-                    &self.catalog,
-                    *page_id,
-                )?;
+                let state = read_validated_catalog_page(validated_catalog, *page_id)?;
                 if let Some(PageState::Live {
                     home_document_id, ..
                 }) = state
@@ -4029,15 +4086,17 @@ impl BootstrapBulkMaterializer<'_> {
             }
             dependencies.sort_unstable_by_key(DocumentDependencies::document_id);
             dependencies.dedup_by_key(|dependency| dependency.document_id());
-            let page =
-                self.engine
-                    .materialize_page_from_document_lookup(page_id, |document_id| {
-                        if document_id == self.engine.catalog_document_id {
-                            Some(&self.catalog)
-                        } else {
-                            documents.get(&document_id).map(|(_, document)| document)
-                        }
-                    })?;
+            let page = self.engine.materialize_page_in_catalog_window(
+                Some(validated_catalog),
+                page_id,
+                |document_id| {
+                    if document_id == self.engine.catalog_document_id {
+                        Some(&self.catalog)
+                    } else {
+                        documents.get(&document_id).map(|(_, document)| document)
+                    }
+                },
+            )?;
             results[index] = Some(BootstrapBulkPage { page, dependencies });
         }
         Ok(BootstrapBulkChunk {
@@ -8520,7 +8579,8 @@ impl ShardedHotEngine {
             kind: stored.kind,
             accepted_name_digest: stored.accepted_name_digest,
         };
-        self.validate_current_path_catalog_row(&row)?;
+        let validated = self.validated_current_catalog_window(&mut None)?;
+        self.validate_current_path_catalog_row(validated, &row)?;
         if row.path != *path {
             return Err(EngineError::Archive(
                 "current-path point row is misbound to its exact path".into(),
@@ -8565,13 +8625,20 @@ impl ShardedHotEngine {
             .map_err(|error| EngineError::Archive(error.to_string()))?;
         let mut page_bytes = 0_usize;
         let mut last = None;
+        // The catalog document's shape proof is row-independent and costs one
+        // catalog-sized read, so this bounded page establishes it at most once
+        // and only when it actually has a row to authenticate.
+        let mut catalog_window = None;
         while rows.len() < limit {
-            let Some((key, encoded)) = range
+            let walk_started = std::time::Instant::now();
+            let next_entry = range
                 .next_entry()
-                .map_err(|error| EngineError::Archive(error.to_string()))?
-            else {
+                .map_err(|error| EngineError::Archive(error.to_string()))?;
+            record_cursor_probe(|probe| &mut probe.walk_micros, walk_started);
+            let Some((key, encoded)) = next_entry else {
                 break;
             };
+            update_cursor_probe(|probe| probe.rows = probe.rows.saturating_add(1));
             let page_id = PageId::from_uuid(Uuid::from_bytes(key));
             let stored = decode_current_path_catalog_row(&encoded)?;
             let row = CurrentPathCatalogRow {
@@ -8586,7 +8653,8 @@ impl ShardedHotEngine {
                     "current-path cursor path for {page_id} is {path_bytes} bytes, bound {MAX_CURRENT_PATH_CURSOR_PATH_BYTES}"
                 )));
             }
-            self.validate_current_path_catalog_row(&row)?;
+            let validated = self.validated_current_catalog_window(&mut catalog_window)?;
+            self.validate_current_path_catalog_row(validated, &row)?;
             page_bytes = page_bytes.checked_add(path_bytes).ok_or_else(|| {
                 EngineError::Archive("current-path cursor page-byte counter overflow".into())
             })?;
@@ -8604,12 +8672,16 @@ impl ShardedHotEngine {
         {
             Some((key, encoded)) => {
                 let stored = decode_current_path_catalog_row(&encoded)?;
-                self.validate_current_path_catalog_row(&CurrentPathCatalogRow {
-                    page_id: PageId::from_uuid(Uuid::from_bytes(key)),
-                    path: stored.path,
-                    kind: stored.kind,
-                    accepted_name_digest: stored.accepted_name_digest,
-                })?;
+                let validated = self.validated_current_catalog_window(&mut catalog_window)?;
+                self.validate_current_path_catalog_row(
+                    validated,
+                    &CurrentPathCatalogRow {
+                        page_id: PageId::from_uuid(Uuid::from_bytes(key)),
+                        path: stored.path,
+                        kind: stored.kind,
+                        accepted_name_digest: stored.accepted_name_digest,
+                    },
+                )?;
                 true
             }
             None => false,
@@ -8782,12 +8854,34 @@ impl ShardedHotEngine {
         Ok(state)
     }
 
+    /// The accepted catalog document and its shape proof for one bounded read
+    /// window, established at most once per window and only on first use.
+    fn validated_current_catalog_window<'engine>(
+        &'engine self,
+        window: &mut Option<ValidatedCatalogDocument<'engine>>,
+    ) -> Result<ValidatedCatalogDocument<'engine>, EngineError> {
+        if let Some(established) = *window {
+            return Ok(established);
+        }
+        let catalog = self.current_catalog_document()?.ok_or_else(|| {
+            EngineError::Archive(
+                "current-path catalog row has no accepted catalog page state".into(),
+            )
+        })?;
+        let established = validate_catalog_document(self.catalog_document_id, catalog)?;
+        *window = Some(established);
+        Ok(established)
+    }
+
     fn validate_current_path_catalog_row(
         &self,
+        validated_catalog: ValidatedCatalogDocument<'_>,
         row: &CurrentPathCatalogRow,
     ) -> Result<(), EngineError> {
         let key = row.path.portable_key().digest();
+        let portable_started = std::time::Instant::now();
         let records = self.portable_path_records_many(std::slice::from_ref(&key))?;
+        record_cursor_probe(|probe| &mut probe.portable_path_micros, portable_started);
         let occupied = records.get(&key).and_then(PortablePathRecord::occupied);
         if occupied.is_none_or(|occupied| {
             occupied.page_id() != row.page_id || occupied.exact_path() != &row.path
@@ -8796,12 +8890,9 @@ impl ShardedHotEngine {
                 "current-path catalog row has missing, duplicate, or corrupt path authority".into(),
             ));
         }
-        let catalog = self.current_catalog_document()?.ok_or_else(|| {
-            EngineError::Archive(
-                "current-path catalog row has no accepted catalog page state".into(),
-            )
-        })?;
-        let state = validate_catalog_page(self.catalog_document_id, catalog, row.page_id)?;
+        let catalog_started = std::time::Instant::now();
+        let state = read_validated_catalog_page(validated_catalog, row.page_id)?;
+        record_cursor_probe(|probe| &mut probe.catalog_state_micros, catalog_started);
         let Some(PageState::Live {
             name, path, kind, ..
         }) = state
@@ -8810,9 +8901,11 @@ impl ShardedHotEngine {
                 "current-path catalog row is missing its accepted catalog page state".into(),
             ));
         };
-        let effective_name = match self
-            .authenticated_page_name_exact_state(&self.page_name_root, name.key_digest())?
-        {
+        let page_name_started = std::time::Instant::now();
+        let exact_state =
+            self.authenticated_page_name_exact_state(&self.page_name_root, name.key_digest())?;
+        record_cursor_probe(|probe| &mut probe.page_name_micros, page_name_started);
+        let effective_name = match exact_state {
             Some(selection) if selection.page_id() == row.page_id => selection.exact_name().clone(),
             Some(_) => {
                 return Err(EngineError::Archive(
@@ -14919,11 +15012,28 @@ impl ShardedHotEngine {
     fn materialize_page_from_document_lookup<'document>(
         &self,
         page_id: PageId,
+        document: impl FnMut(DocumentId) -> Option<&'document LoroDoc>,
+    ) -> Result<MaterializedPage, EngineError> {
+        self.materialize_page_in_catalog_window(None, page_id, document)
+    }
+
+    /// Materialize one page, optionally reusing a catalog shape proof already
+    /// established for the surrounding bounded window.
+    fn materialize_page_in_catalog_window<'document>(
+        &self,
+        validated_catalog: Option<ValidatedCatalogDocument<'document>>,
+        page_id: PageId,
         mut document: impl FnMut(DocumentId) -> Option<&'document LoroDoc>,
     ) -> Result<MaterializedPage, EngineError> {
-        let catalog = document(self.catalog_document_id)
-            .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
-        let page_state = validate_catalog_page(self.catalog_document_id, catalog, page_id)?
+        let validated_catalog = match validated_catalog {
+            Some(validated_catalog) => validated_catalog,
+            None => {
+                let catalog = document(self.catalog_document_id)
+                    .ok_or(EngineError::MissingDocument(self.catalog_document_id))?;
+                validate_catalog_document(self.catalog_document_id, catalog)?
+            }
+        };
+        let page_state = read_validated_catalog_page(validated_catalog, page_id)?
             .ok_or(EngineError::PageNotFound(page_id))?;
         let PageState::Live {
             name,
@@ -23654,18 +23764,49 @@ fn validate_catalog(
     Ok(pages)
 }
 
-pub(super) fn validate_catalog_page(
+/// Proof that one borrowed catalog document has the accepted catalog shape.
+///
+/// This is a property of the document, not of any page in it, and deriving it
+/// costs `LoroDoc::get_value`, which is linear in the catalog's page entries. A
+/// caller reading many pages out of one borrowed document therefore holds this
+/// token for the whole bounded window instead of re-deriving it per page, which
+/// is what makes a graph-sized catalog traversal linear rather than quadratic.
+///
+/// The token borrows the exact document it proved, so it cannot authorize a
+/// page read against a different one.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ValidatedCatalogDocument<'document> {
+    catalog_document_id: DocumentId,
+    document: &'document LoroDoc,
+}
+
+/// Establish the catalog document shape once for a bounded read window.
+pub(super) fn validate_catalog_document(
     catalog_document_id: DocumentId,
     document: &LoroDoc,
-    page_id: PageId,
-) -> Result<Option<PageState>, EngineError> {
+) -> Result<ValidatedCatalogDocument<'_>, EngineError> {
+    update_cursor_probe(|probe| {
+        probe.catalog_document_validations = probe.catalog_document_validations.saturating_add(1);
+    });
     validate_document_roots(catalog_document_id, document, &[CATALOG_PAGES])?;
     if document.get_map(CATALOG_PAGES).len() > MAX_DOCUMENT_ENTRIES {
         return Err(EngineError::InvalidCrdt(
             "catalog entry bound exceeded".into(),
         ));
     }
-    let state = read_page_state(document, page_id)?;
+    Ok(ValidatedCatalogDocument {
+        catalog_document_id,
+        document,
+    })
+}
+
+/// One page's accepted state out of an already shape-validated catalog.
+pub(super) fn read_validated_catalog_page(
+    validated: ValidatedCatalogDocument<'_>,
+    page_id: PageId,
+) -> Result<Option<PageState>, EngineError> {
+    let catalog_document_id = validated.catalog_document_id;
+    let state = read_page_state(validated.document, page_id)?;
     if state
         .as_ref()
         .is_some_and(|state| state.home_document_id() == catalog_document_id)
@@ -23676,6 +23817,17 @@ pub(super) fn validate_catalog_page(
         });
     }
     Ok(state)
+}
+
+pub(super) fn validate_catalog_page(
+    catalog_document_id: DocumentId,
+    document: &LoroDoc,
+    page_id: PageId,
+) -> Result<Option<PageState>, EngineError> {
+    read_validated_catalog_page(
+        validate_catalog_document(catalog_document_id, document)?,
+        page_id,
+    )
 }
 
 fn validate_shard(
