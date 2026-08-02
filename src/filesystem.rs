@@ -481,6 +481,157 @@ pub fn publish_immutable_exact(
     Ok(())
 }
 
+/// One synced, unpublished exact immutable file.
+///
+/// Construction writes through the supplied file handle and returns the exact
+/// final name and length only after it has finished deriving the content
+/// address. The staged object owns the temporary name and removes it on drop
+/// until a consuming no-replace commit installs (or exact-verifies) the final
+/// immutable name.
+pub struct StagedExactImmutablePublication {
+    dir: Dir,
+    temp_name: String,
+    final_name: String,
+    exact_length: u64,
+}
+
+impl StagedExactImmutablePublication {
+    pub fn construct(
+        dir: &Dir,
+        construct: impl FnOnce(&mut fs::File) -> io::Result<(String, u64)>,
+    ) -> Result<Self, FilesystemError> {
+        let publication_sync = ValidatedDirectorySync::open(dir)?;
+        publication_sync.preflight()?;
+        let temp_name = format!(".tmp-{}", Uuid::new_v4());
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        let mut temp = dir.open_with(&temp_name, &options)?.into_std();
+        let constructed = construct(&mut temp);
+        let (final_name, exact_length) = match constructed {
+            Ok(constructed) => constructed,
+            Err(error) => {
+                drop(temp);
+                let _ = dir.remove_file(&temp_name);
+                return Err(error.into());
+            }
+        };
+        let actual = match temp.metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                drop(temp);
+                let _ = dir.remove_file(&temp_name);
+                return Err(error.into());
+            }
+        };
+        if actual != exact_length {
+            drop(temp);
+            let _ = dir.remove_file(&temp_name);
+            return Err(FilesystemError::StoredLengthMismatch {
+                path: final_name,
+                expected: exact_length,
+                actual,
+            });
+        }
+        if let Err(error) = temp.sync_all() {
+            drop(temp);
+            let _ = dir.remove_file(&temp_name);
+            return Err(error.into());
+        }
+        drop(temp);
+        let staged_dir = match dir.try_clone() {
+            Ok(dir) => dir,
+            Err(error) => {
+                let _ = dir.remove_file(&temp_name);
+                return Err(error.into());
+            }
+        };
+        Ok(Self {
+            dir: staged_dir,
+            temp_name,
+            final_name,
+            exact_length,
+        })
+    }
+
+    /// Open the synced temporary bytes for a bounded construction cursor.
+    pub(crate) fn open_staged(&self) -> Result<fs::File, FilesystemError> {
+        let file = open_file_nofollow(&self.dir, &self.temp_name)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(FilesystemError::UnsafeEntry(format!(
+                "staged path is not a regular no-follow file: {}",
+                self.temp_name
+            )));
+        }
+        if metadata.len() != self.exact_length {
+            return Err(FilesystemError::StoredLengthMismatch {
+                path: self.temp_name.clone(),
+                expected: self.exact_length,
+                actual: metadata.len(),
+            });
+        }
+        Ok(file)
+    }
+
+    pub(crate) fn owned_name_bytes(&self) -> usize {
+        self.temp_name
+            .capacity()
+            .saturating_add(self.final_name.capacity())
+    }
+
+    /// Atomically install the exact final name without replacement, or stream-
+    /// compare an existing winner before repeating the directory barrier.
+    pub fn commit(self) -> Result<(), FilesystemError> {
+        let publication_sync = ValidatedDirectorySync::open(&self.dir)?;
+        publication_sync.preflight()?;
+        match rename_noreplace(&self.dir, &self.temp_name, &self.final_name) {
+            Ok(()) => publication_sync.sync()?,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                verify_existing_staged(&self)?;
+                publication_sync.sync()?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        #[cfg(test)]
+        note_exact_durability_barrier();
+        Ok(())
+    }
+}
+
+impl Drop for StagedExactImmutablePublication {
+    fn drop(&mut self) {
+        let _ = self.dir.remove_file(&self.temp_name);
+    }
+}
+
+const STAGED_COMPARE_BUFFER_BYTES: usize = 64 * 1024;
+
+fn verify_existing_staged(staged: &StagedExactImmutablePublication) -> Result<(), FilesystemError> {
+    let mut existing = match open_file_nofollow(&staged.dir, &staged.final_name) {
+        Ok(file) => file,
+        Err(error) => return Err(error.into()),
+    };
+    let existing_metadata = existing.metadata()?;
+    if !existing_metadata.is_file() || existing_metadata.len() != staged.exact_length {
+        return Err(FilesystemError::ByteCollision);
+    }
+    let mut source = staged.open_staged()?;
+    let mut existing_buffer = [0_u8; STAGED_COMPARE_BUFFER_BYTES];
+    let mut source_buffer = [0_u8; STAGED_COMPARE_BUFFER_BYTES];
+    let mut remaining = staged.exact_length;
+    while remaining != 0 {
+        let chunk = usize::try_from(remaining.min(STAGED_COMPARE_BUFFER_BYTES as u64))
+            .map_err(|_| FilesystemError::ByteCollision)?;
+        existing.read_exact(&mut existing_buffer[..chunk])?;
+        source.read_exact(&mut source_buffer[..chunk])?;
+        if existing_buffer[..chunk] != source_buffer[..chunk] {
+            return Err(FilesystemError::ByteCollision);
+        }
+        remaining -= chunk as u64;
+    }
+    Ok(())
+}
+
 /// Durably replace one fixed regular file after checking the exact authority
 /// the caller observed under its external single-writer contract.
 ///
@@ -830,6 +981,43 @@ mod tests {
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         assert_persisted_entries(&fixture, &[("entry", b"exact bytes")]);
+    }
+
+    fn staged_bytes(
+        fixture: &TestDirectory,
+        final_name: &str,
+        bytes: &[u8],
+    ) -> StagedExactImmutablePublication {
+        StagedExactImmutablePublication::construct(&fixture.dir, |file| {
+            file.write_all(bytes)?;
+            Ok((final_name.to_owned(), bytes.len() as u64))
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn staged_exact_commit_retries_streamingly_and_drop_cleans_unpublished_temp() {
+        let fixture = TestDirectory::new("staged-exact");
+        let abandoned = staged_bytes(&fixture, "abandoned", b"unpublished");
+        assert_eq!(temporary_entries(&fixture.dir).len(), 1);
+        drop(abandoned);
+        assert!(temporary_entries(&fixture.dir).is_empty());
+
+        staged_bytes(&fixture, "entry", b"exact streamed bytes")
+            .commit()
+            .unwrap();
+        staged_bytes(&fixture, "entry", b"exact streamed bytes")
+            .commit()
+            .unwrap();
+        assert_eq!(fixture.dir.read("entry").unwrap(), b"exact streamed bytes");
+        assert!(temporary_entries(&fixture.dir).is_empty());
+
+        assert!(matches!(
+            staged_bytes(&fixture, "entry", b"conflicting streamed bytes").commit(),
+            Err(FilesystemError::ByteCollision)
+        ));
+        assert_eq!(fixture.dir.read("entry").unwrap(), b"exact streamed bytes");
+        assert!(temporary_entries(&fixture.dir).is_empty());
     }
 
     #[test]

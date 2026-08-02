@@ -10,15 +10,16 @@ use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 
 use super::ContentDigest;
-use crate::filesystem::{read_optional_regular, FilesystemError};
+use crate::filesystem::{read_optional_regular, FilesystemError, StagedExactImmutablePublication};
 #[cfg(any(test, feature = "test-support"))]
 use crate::packed_patricia::corrupt_packed_node_for_test;
 use crate::packed_patricia::{
-    lock_packed_operation_shared, publish_appended_catalog, publish_appended_catalog_bounded,
-    reclaim_unreachable_packed_files, transition_catalog_head, PackedPatriciaCatalog,
-    PackedPatriciaConstructionSink, PackedPatriciaError, PackedPatriciaPublicationWork,
-    PackedPatriciaReclamationError, PackedPatriciaReclamationReport, PackedPatriciaResidencyBudget,
-    HEAD_BYTES, MAX_CATALOG_PACK_BYTES,
+    lock_packed_operation_shared, publish_appended_catalog,
+    publish_appended_catalog_bounded_streaming, reclaim_unreachable_packed_files,
+    transition_catalog_head, PackedPatriciaCatalog, PackedPatriciaConstructionSink,
+    PackedPatriciaError, PackedPatriciaPublicationWork, PackedPatriciaReclamationError,
+    PackedPatriciaReclamationReport, PackedPatriciaResidencyBudget, HEAD_BYTES,
+    MAX_CATALOG_PACK_BYTES,
 };
 
 /// Opaque publication failure returned by the policy-owning Patricia adapter.
@@ -79,6 +80,15 @@ pub trait PatriciaNodePublisher: Send + Sync {
     fn permits_construction_packed_head_transition(&self) -> bool {
         self.permits_packed_head_transition()
     }
+
+    /// Consume one synced construction prerequisite through the policy-owned
+    /// collision/error boundary.
+    fn publish_staged_construction_exact(
+        &self,
+        publication: StagedExactImmutablePublication,
+    ) -> Result<(), PatriciaPublicationError> {
+        publication.commit().map_err(PatriciaPublicationError::new)
+    }
 }
 
 struct ConstructionExactPublisher<'a>(&'a dyn PatriciaNodePublisher);
@@ -91,6 +101,13 @@ impl PatriciaNodePublisher for ConstructionExactPublisher<'_> {
         bytes: &[u8],
     ) -> Result<(), PatriciaPublicationError> {
         self.0.publish_construction_exact(dir, filename, bytes)
+    }
+
+    fn publish_staged_construction_exact(
+        &self,
+        publication: StagedExactImmutablePublication,
+    ) -> Result<(), PatriciaPublicationError> {
+        self.0.publish_staged_construction_exact(publication)
     }
 }
 
@@ -419,13 +436,8 @@ fn construction_sink_owned_limit(
         .staged
         .owned_bytes()
         .checked_add(retained_mutation_bytes)
+        .and_then(|retained| retained.checked_add(CONSTRUCTION_ENCODING_SCRATCH_BYTES))
         .and_then(|retained| construction.resident_budget_bytes.checked_sub(retained))
-        // The append planner can concurrently retain the canonical delta,
-        // one partition clone, and encoded publication/range maps in addition
-        // to the caller-owned sink. Admission reserves those three peer-sized
-        // ownership phases so an oversized bulk sink selects its mutation's
-        // loose/staged fallback before planning or publication begins.
-        .map(|available| available / 4)
         .ok_or(PatriciaError::Malformed)
 }
 
@@ -1799,7 +1811,9 @@ impl PatriciaIndexStore {
         let mut peak_owned_bytes = construction
             .staged
             .owned_bytes()
-            .saturating_add(retained_traversal_bytes);
+            .checked_add(retained_traversal_bytes)
+            .and_then(|bytes| bytes.checked_add(CONSTRUCTION_ENCODING_SCRATCH_BYTES))
+            .ok_or(PatriciaError::Malformed)?;
         for root in &roots {
             let mut pending = vec![(*root, false)];
             while let Some((digest, expanded)) = pending.pop() {
@@ -1841,13 +1855,17 @@ impl PatriciaIndexStore {
                     Ok(false) => {
                         construction.capacity_fallbacks =
                             construction.capacity_fallbacks.saturating_add(1);
-                        construction.peak_resident_bytes = construction.peak_resident_bytes.max(
-                            construction
-                                .staged
-                                .owned_bytes()
-                                .saturating_add(retained_traversal_bytes)
-                                .saturating_add(sink.owned_bytes()),
-                        );
+                        let sink_peak = construction
+                            .staged
+                            .owned_bytes()
+                            .checked_add(retained_traversal_bytes)
+                            .and_then(|bytes| bytes.checked_add(sink.owned_bytes()))
+                            .and_then(|bytes| {
+                                bytes.checked_add(CONSTRUCTION_ENCODING_SCRATCH_BYTES)
+                            })
+                            .ok_or(PatriciaError::Malformed)?;
+                        construction.peak_resident_bytes =
+                            construction.peak_resident_bytes.max(sink_peak);
                         drop(sink);
                         return self.publish_construction_roots_loose(&roots, construction);
                     }
@@ -1855,6 +1873,15 @@ impl PatriciaIndexStore {
                 }
             }
         }
+        peak_owned_bytes = peak_owned_bytes.max(
+            construction
+                .staged
+                .owned_bytes()
+                .checked_add(retained_traversal_bytes)
+                .and_then(|bytes| bytes.checked_add(sink.owned_bytes()))
+                .and_then(|bytes| bytes.checked_add(CONSTRUCTION_ENCODING_SCRATCH_BYTES))
+                .ok_or(PatriciaError::Malformed)?,
+        );
         let publication_peak =
             self.publish_construction_sink(construction, &sink, retained_traversal_bytes)?;
         peak_owned_bytes = peak_owned_bytes.max(publication_peak);
@@ -2111,6 +2138,12 @@ impl PatriciaIndexStore {
             .checked_add(retained_mutation_bytes)
             .and_then(|bytes| bytes.checked_add(sink.owned_bytes()))
             .ok_or(PackedPatriciaError::PackTooLarge)?;
+        let sink_peak_bytes = retained_bytes
+            .checked_add(CONSTRUCTION_ENCODING_SCRATCH_BYTES)
+            .ok_or(PackedPatriciaError::PackTooLarge)?;
+        if sink_peak_bytes > resident_budget_bytes {
+            return Err(PackedPatriciaError::PackTooLarge);
+        }
         let remaining_resolver_bytes = resident_budget_bytes
             .checked_sub(retained_bytes)
             .ok_or(PackedPatriciaError::PackTooLarge)?;
@@ -2118,7 +2151,7 @@ impl PatriciaIndexStore {
             .packed
             .lock()
             .map_err(|_| PackedPatriciaError::Malformed)?;
-        let mut discovery_peak_bytes = retained_bytes;
+        let mut discovery_peak_bytes = sink_peak_bytes;
         if resolver.is_none() {
             let (discovered, resolver_peak_bytes) =
                 PackedPatriciaCatalog::discover_under_guard_bounded(
@@ -2138,7 +2171,7 @@ impl PatriciaIndexStore {
         #[cfg(not(test))]
         let catalog_pack_byte_limit = MAX_CATALOG_PACK_BYTES;
         let construction_publisher = ConstructionExactPublisher(self.publisher.as_ref());
-        let (pending, mut work) = publish_appended_catalog_bounded(
+        let (pending, mut work) = publish_appended_catalog_bounded_streaming(
             &self.nodes,
             &construction_publisher,
             current.as_ref(),
@@ -2167,19 +2200,14 @@ impl PatriciaIndexStore {
                 peak_resident_bytes: work.peak_resident_bytes,
             });
         };
-        transition_catalog_head(&self.nodes, expected, pending.published_catalog())?;
-        let current = resolver
-            .take()
-            .expect("packed discovery initialized before transition");
-        *resolver = Some(Some(pending.finish(current)));
-        let completed_resident_bytes = resolver
-            .as_ref()
-            .and_then(Option::as_ref)
-            .map_or(0, PackedPatriciaCatalog::resident_bytes);
+        let transition =
+            transition_catalog_head(&self.nodes, expected, pending.published_catalog());
+        *resolver = None;
+        transition?;
         let completed_peak = staged_owned_bytes
-            .saturating_add(retained_mutation_bytes)
-            .saturating_add(sink.owned_bytes())
-            .saturating_add(completed_resident_bytes)
+            .checked_add(retained_mutation_bytes)
+            .and_then(|bytes| bytes.checked_add(sink.owned_bytes()))
+            .ok_or(PackedPatriciaError::PackTooLarge)?
             .max(work.peak_resident_bytes);
         if completed_peak > resident_budget_bytes || completed_peak > work.peak_resident_bytes {
             return Err(PackedPatriciaError::Malformed);
@@ -2682,6 +2710,48 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct ConstructionPublicationRecorder {
+        final_publication_calls: Arc<AtomicUsize>,
+    }
+
+    impl PatriciaNodePublisher for ConstructionPublicationRecorder {
+        fn publish(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+
+        fn permits_packed_head_transition(&self) -> bool {
+            true
+        }
+
+        fn publish_construction_exact(
+            &self,
+            dir: &Dir,
+            filename: &str,
+            bytes: &[u8],
+        ) -> Result<(), PatriciaPublicationError> {
+            self.final_publication_calls.fetch_add(1, Ordering::Relaxed);
+            publish_immutable_exact(dir, filename, bytes).map_err(PatriciaPublicationError::new)
+        }
+
+        fn publish_staged_construction_exact(
+            &self,
+            publication: StagedExactImmutablePublication,
+        ) -> Result<(), PatriciaPublicationError> {
+            self.final_publication_calls.fetch_add(1, Ordering::Relaxed);
+            publication.commit().map_err(PatriciaPublicationError::new)
+        }
+
+        fn permits_construction_packed_head_transition(&self) -> bool {
+            true
+        }
+    }
+
     #[derive(Clone)]
     struct PausingPackedPublisher {
         armed: Arc<AtomicBool>,
@@ -2808,6 +2878,27 @@ mod tests {
             if call == self.fail_at && self.after_commit {
                 return Err(PatriciaPublicationError::new(
                     "injected post-publication construction prerequisite failure",
+                ));
+            }
+            Ok(())
+        }
+
+        fn publish_staged_construction_exact(
+            &self,
+            publication: StagedExactImmutablePublication,
+        ) -> Result<(), PatriciaPublicationError> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            if call == self.fail_at && !self.after_commit {
+                return Err(PatriciaPublicationError::new(
+                    "injected staged construction prerequisite failure",
+                ));
+            }
+            publication
+                .commit()
+                .map_err(PatriciaPublicationError::new)?;
+            if call == self.fail_at && self.after_commit {
+                return Err(PatriciaPublicationError::new(
+                    "injected post-publication staged construction prerequisite failure",
                 ));
             }
             Ok(())
@@ -3738,8 +3829,9 @@ mod tests {
 
     #[test]
     fn packed_construction_capacity_falls_back_before_pack_or_head_mutation() {
-        let (path, mut store) =
-            store_with_publisher("construction-capacity-fallback", PackedExactPublisher);
+        let publisher = ConstructionPublicationRecorder::default();
+        let final_publication_calls = Arc::clone(&publisher.final_publication_calls);
+        let (path, mut store) = store_with_publisher("construction-capacity-fallback", publisher);
         let initial = bulk_differential_records(0, 96, 0);
         let root = store
             .insert_many(PatriciaIndexRoot::empty(), &initial)
@@ -3772,6 +3864,20 @@ mod tests {
         assert_eq!(
             count_suffix(&nodes, ".patricia-catalog-v1"),
             catalogs_before,
+        );
+        assert_eq!(
+            final_publication_calls.load(Ordering::Relaxed),
+            0,
+            "capacity refusal must precede every final pack/catalog publisher call",
+        );
+        assert_eq!(
+            fs::read_dir(&nodes)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+                .count(),
+            0,
+            "capacity fallback must drop every unpublished staged temp",
         );
         let mut expected = initial;
         expected.extend(update);
@@ -4365,6 +4471,22 @@ mod tests {
     fn construction_sink_growth_refuses_within_small_budget_and_stays_semantic() {
         const RESIDENT_BUDGET: usize = 2 * 1024 * 1024;
 
+        let mut retained_with_spare = Vec::with_capacity(4 * 1024);
+        retained_with_spare.extend_from_slice(b"retained spare capacity");
+        let retained_capacity = retained_with_spare.capacity();
+        let mut capacity_sink = PackedPatriciaConstructionSink::new(8 * 1024);
+        assert!(capacity_sink
+            .accept(ContentDigest::of(&retained_with_spare), retained_with_spare)
+            .unwrap());
+        assert!(capacity_sink.owned_bytes() >= retained_capacity);
+
+        let mut refused_with_spare = Vec::with_capacity(64 * 1024);
+        refused_with_spare.extend_from_slice(b"refused spare capacity");
+        let mut capacity_sink = PackedPatriciaConstructionSink::new(32 * 1024);
+        assert!(!capacity_sink
+            .accept(ContentDigest::of(&refused_with_spare), refused_with_spare)
+            .unwrap());
+
         let records = small_budget_records(96, 7);
         let (baseline_path, baseline) = store("construction-small-sink-baseline");
         let (path, constructed) =
@@ -4558,9 +4680,13 @@ mod tests {
         failure: crate::packed_patricia::HeadTransitionFailureForTest,
         authority_visible_after_failure: bool,
     ) {
+        let (baseline_path, baseline) = store("construction-packed-head-retry-baseline");
         let (path, store) =
             store_with_publisher("construction-packed-head-retry", PackedExactPublisher);
         let records = bulk_differential_records(0, 96, 30_000);
+        let expected_root = baseline
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
         let mut construction = PatriciaIndexConstruction::default();
         crate::packed_patricia::fail_next_head_transition_for_test(failure);
         assert!(matches!(
@@ -4578,6 +4704,9 @@ mod tests {
                 .is_some(),
             authority_visible_after_failure,
         );
+        if authority_visible_after_failure {
+            assert_eq!(all_records(&store, expected_root), records);
+        }
 
         let root = store
             .construction_insert_many_bulk(&mut construction, PatriciaIndexRoot::empty(), &records)
@@ -4588,7 +4717,9 @@ mod tests {
         assert_eq!(all_records(&store, root), records);
         drop(nodes);
         drop(store);
+        drop(baseline);
         fs::remove_dir_all(path).unwrap();
+        fs::remove_dir_all(baseline_path).unwrap();
     }
 
     #[test]
