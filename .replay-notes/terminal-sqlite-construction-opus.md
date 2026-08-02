@@ -342,3 +342,232 @@ next open rebuilds it while preserving the evidence.
    the 2,000-page SQLite phase is 5.6 s instead of 4.4 s, i.e. the terminal cut
    alone is roughly break-even at that scale and the measured win comes from the
    two together.
+
+---
+
+# Follow-up, 2026-08-02: bounding terminal materialization at 10,000 pages
+
+Branch `perf/terminal-sqlite-construction`, base `efe46312`.
+
+## The assigned cause is falsified by measurement
+
+The dossier attributed the 10,000-page regression to one graph-lifetime bulk
+materializer whose "accepted-frontier and external-exact lookup state thrashes
+as the terminal root grows", and asked for that session to be replaced with
+bounded windows.
+
+Contract item 1 required proving that thrash causally before editing. The
+terminal path already had the session counters plumbed for per-event
+materialization but never read them for the terminal build, so the first change
+was to record `ScratchLookupSessionStats` for the terminal materializer and to
+split the terminal row seed into per-sub-phase micros. Measured, release:
+
+| graph | af hits/misses | af evict | af oversize | af peak | ex peak |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 pages | 16 / 1 | 0 | 0 | 0.18 MB | 1.9 MB |
+| 4,000 pages | 187 / 3 | 0 | 0 | 1.0 MB | 7.8 MB |
+| 10,000 pages | 157 / 1 | 0 | 0 | 1.8 MB | 19.5 MB |
+
+Zero evictions, zero oversize reads, and peak decoded residency of 19.5 MB
+against a 32 MiB per-root budget at the target scale. **The one graph-lifetime
+session does not thrash.** Segmenting it into per-part windows would have removed
+no measured work and would have multiplied its misses and root authentications by
+the window count. Per the dossier's own instruction to stop with the next
+measured cause rather than tune blindly, contract item 2 was not implemented as
+written; what follows is the cause the same probe found instead.
+
+## Exact cause
+
+The terminal builder is the only SQLite construction that traverses the engine's
+whole authenticated current-path catalog. Splitting the terminal row seed showed
+one sub-phase growing quadratically while every other grew near linearly:
+
+| terminal row seed sub-phase | 1,000 pages | 4,000 pages | ratio for 4x |
+| --- | --- | --- | --- |
+| one bulk materialization | 231 ms | 972 ms | 4.2 |
+| reference posting lookups | 169 ms | 1099 ms | 6.5 |
+| lowering | 195 ms | 862 ms | 4.4 |
+| SQL row/FTS/reference inserts | 413 ms | 2324 ms | 5.6 |
+| **authenticated catalog cursor** | **191 ms** | **1795 ms** | **9.4** |
+
+A narrow thread-local probe inside `current_path_cursor_page` and
+`validate_catalog_page` then attributed the cursor exactly:
+
+| cursor sub-phase | 1,000 pages | 4,000 pages | per row |
+| --- | --- | --- | --- |
+| authenticated trie walk | 6.5 ms | 30.1 ms | flat |
+| portable-path authority | 44.3 ms | 235.0 ms | flat |
+| page-name authority | 64.5 ms | 315.0 ms | flat |
+| catalog page state | 61.4 ms | 1131.7 ms | 61 us -> 283 us |
+| — of which document shape | 58.0 ms | 1098.7 ms | 58 us -> 275 us |
+| — of which `len` bound | 0.04 ms | 0.14 ms | flat |
+| — of which page-state read | 5.0 ms | 39.9 ms | flat |
+
+`validate_catalog_page` opened with `validate_document_roots`, whose
+`LoroDoc::get_value` read is linear in the catalog document's page entries. It
+was derived once **per catalog row**, so a traversal of N pages cost O(N^2). The
+per-row price rose from 58 us at 1,000 pages to 275 us at 4,000; extrapolated to
+10,000 pages it alone was about 6.9 s of the SQLite phase, and the shadow
+projection paid it a second time through the same cursor.
+
+This quadratic was introduced into the SQLite phase by chunk 1 itself: the
+archive replay path materialized each part's affected pages and never walked the
+whole catalog, so it never paid a graph-sized traversal here.
+
+## Design
+
+The catalog document's shape is a property of the document, not of any page in
+it, and cannot change under an `&self` borrow. It is now proved once per bounded
+read window and carried as a `ValidatedCatalogDocument<'document>` token that
+borrows the exact document it proved, so it cannot authorize a read against a
+different one.
+
+- `current_path_cursor_page` establishes it at most once per cursor page, lazily,
+  so a cursor page with no rows still requires no catalog document.
+- `BootstrapBulkMaterializer::materialize_chunk` establishes it once per 64-page
+  chunk and threads it through `materialize_page_in_catalog_window`, which
+  removed the second per-page derivation.
+- `validate_catalog_page` keeps its exact prior contract, composing the two
+  halves, for the twenty call sites that read a single page.
+
+Every row still receives the identical authority it did before: portable-path
+ownership, accepted catalog page state, page-name ownership, and
+path/kind/name-digest agreement. Nothing was batched, cached across windows,
+persisted, or skipped.
+
+Terminal construction additionally refuses outright, and therefore falls back to
+the unchanged archive replay, when its shape proofs are not bounded by its read
+windows. A quadratic terminal build can no longer ship silently.
+
+## Commits
+
+| Commit | Subject |
+| --- | --- |
+| `8e111bff` | `perf(oplog): bound the catalog shape proof to one read window` |
+| `e2e428da` | `test(oplog): assert the terminal catalog authority is window bounded` |
+
+Diff `efe46312..e2e428da`: 4 files, +393 / -49.
+
+| File | What changed |
+| --- | --- |
+| `tine-core/src/oplog/hot_engine.rs` | `ValidatedCatalogDocument` / `validate_catalog_document` / `read_validated_catalog_page` split; `validated_current_catalog_window`; `materialize_page_in_catalog_window`; thread-local `CurrentPathCursorProbe`. |
+| `tine-core/src/oplog/sqlite.rs` | Terminal session/sub-phase/cursor counters; the window-bound refusal; `assert_catalog_authority_is_window_bounded`. |
+| `tine-core/src/sync_runtime.rs` | Window-bound and scale-independence assertions in the activation scale receipt. |
+| `tine-core/src/oplog/local_active/tests.rs` | Window-bound assertion in the terminal differential suite. |
+
+No schema, DDL, wire, version constant, durable format, encoding, cache, pack,
+or index changed. Shadow projection, migration backup, and enrollment were not
+edited; shadow gets faster only because it drives the same engine cursor.
+
+## Before / after receipts
+
+Release, same machine, `cargo test -p tine-core --release
+activation_scaled_manual_phase_receipt -- --ignored`, `TINE_ACTIVATION_TRACE=1`.
+
+| Scale | `SqliteOpenBuild` before | after | delta |
+| --- | --- | --- | --- |
+| 2,000 pages (2003 files) | 4445 / 4366 ms | 4218 ms | -4% |
+| 10,000 pages (10003 files) | ~57,500 ms | **28,073 ms** | **-51%** |
+
+Structural shape from 2,000 to 10,000 pages, a 5x data increase:
+
+| | 2,000 -> 10,000 | exponent |
+| --- | --- | --- |
+| `SqliteOpenBuild` before | 4445 -> ~57,500 ms (12.9x) | 1.59 |
+| `SqliteOpenBuild` after | 4218 -> 28,073 ms (6.7x) | 1.18 |
+
+10,000-page terminal sub-phases after (row seed 16,368 ms of a 28,073 ms phase;
+accepted-prefix seed 5689 ms, candidate proof scans 2692 ms):
+
+| Sub-phase | 2,000 | 10,000 | ratio for 5x |
+| --- | --- | --- | --- |
+| one bulk materialization | 435 ms | 2305 ms | 5.3 |
+| reference posting lookups | 343 ms | 3168 ms | 9.2 |
+| lowering | 388 ms | 2124 ms | 5.5 |
+| SQL row/FTS/reference inserts | 938 ms | 6622 ms | 7.1 |
+| authenticated catalog cursor | 259 ms | 1840 ms | 7.1 |
+| — of which catalog page state | 2.6 ms | 18.0 ms | 6.9 |
+| alias/provenance/stamp finish | 3.8 ms | 25.2 ms | 6.6 |
+
+`ShadowReconstructionByteVerification` fell from 11,197 ms to 7748 ms at 4,000
+pages for the same reason. Total activation at 10,000 pages is 164.9 s, still
+dominated by `BootstrapImportPreparation` at 100.4 s, which this cut does not
+touch. True cold reopen after a 10,000-page activation is 250 ms.
+
+## Structural proof
+
+`terminal_catalog_document_validations` is asserted as an exact identity, not a
+bound, in the eight terminal differential/interruption tests and in the
+activation scale receipt:
+
+    validations == ceil(catalog rows / 128) + materialization chunks
+
+At 2,000 pages that is 16 + 32 = 48, observed 48. At 10,000 pages it is 79 + 157
+= 236, observed 236. The scale receipt additionally asserts that a larger graph
+buys zero extra proofs, and asserts the sessions record zero evictions, zero
+oversize reads, and peak residency within the per-root budget. The same bound is
+enforced in production: violating it refuses the terminal candidate and selects
+archive replay.
+
+## Commands and results
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p tine-core --lib terminal_construction` | 8 passed |
+| `cargo test -p tine-core --lib -- oplog::sqlite oplog::import oplog::local_active oplog::shadow_projection oplog::enrollment oplog::exact_external_feed oplog::hot_engine oplog::reconciliation_scan` | 577 passed, 1 failed (pre-existing, limitation 4 above), 14 ignored |
+| `cargo test -p tine-core --lib -- oplog::local_active sync_runtime::` | 235 passed, 3 ignored |
+| `cargo test -p tine-storage` | 130 passed, 1 ignored |
+| `cargo fmt --all` | clean |
+| `git diff --check` | clean |
+
+`RUST_MIN_STACK=134217728` is set for the `tine-core` runs, as before.
+
+## Preserved invariants
+
+Everything the chunk-1 note lists is unchanged. Specifically: exact accepted
+prefix and frontier chain, one candidate transaction, zero per-part intermediate
+page/reference DML, one logical terminal materialization, complete
+row/reference/coverage/stamp proofs, `finalize_fresh_bootstrap`, semantic and
+materialized-row digests, WAL checkpoint, atomic publication, post-publication
+reopen, the typed `VerifiedBootstrapSqliteProjection`, all four interruption
+behaviors, cold-process replay, and ordinary post-activation apply. No schema,
+wire, protocol constant, archive format, activation lifecycle, migration backup,
+enrollment, frontend, or Tauri surface was touched. The catalog authority each
+row receives is byte-identical to before; only the number of times a
+row-independent document predicate is re-derived changed.
+
+## Limitations and follow-ups
+
+1. **The lookup session is still graph-lifetime, and that is now measured rather
+   than assumed.** `peak_terminal_session_pages` reports 10,000 and the
+   external-exact session's peak decoded residency grows linearly with the graph
+   (3.9 MB at 2,000 pages, 19.5 MB at 10,000). It will reach the 32 MiB per-root
+   budget somewhere around 16,000 pages and start evicting, and a single LSM
+   level larger than the budget would go oversize and be re-decoded per call.
+   Bounding the *session* does not fix that, because the unit that must fit is
+   the decoded **segment**, not the session; the segment is one LSM level of the
+   accepted-frontier root and its size is a property of the graph. If the
+   manager wants headroom past ~16,000 pages the lever is the segment/level
+   layout or the budget, not the session lifetime. *Follow-up, needs a decision.*
+2. **Reference posting lookups are now the most superlinear terminal sub-phase**
+   (exponent 1.38, 3.2 s at 10,000 pages). `collect_reference_source_rows` does
+   one `posting_at_root` Patricia lookup per page with no batching, so each page
+   re-reads the nodes on its own root path. A batched per-chunk lookup is the
+   obvious next cut and is the same shape as this one. *Follow-up.*
+3. **`BootstrapImportPreparation` is now 3.6x the SQLite phase at 10,000 pages**
+   (100.4 s of 164.9 s), dominated by `reference_catalog_postings_patricia` in
+   detached authoring, which grows per part as the catalog grows. That is where
+   the next graph-scale work is, not in SQLite. *Follow-up, out of this cut.*
+4. **The accepted-prefix seed is unchanged and grows at exponent 1.32** (5.7 s at
+   10,000 pages) - the document-map upserts already called out as follow-up 2 in
+   the chunk-1 note. *Expected.*
+5. **The pre-existing debug failures listed in limitation 4 of the chunk-1 note
+   are unchanged**, including
+   `oplog::import::tests::detached_bootstrap_conflicting_abandoned_content_address_fails_closed`.
+   *Follow-up, not this cut.*
+6. **The `CurrentPathCursorProbe` timers stay in the hot path.** They are six
+   `Instant::now` pairs per catalog row against roughly 130 us of work per row,
+   are thread-local, carry no authority, and are never persisted; the
+   `catalog_document_validations` counter is load-bearing for the production
+   window bound. They could be reduced to the counter alone if the manager
+   prefers. *Optional.*
