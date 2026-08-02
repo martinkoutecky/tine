@@ -25737,6 +25737,10 @@ mod tests {
                 receipt.construction.sqlite.peak_terminal_bulk_pages
                     <= crate::oplog::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES
             );
+            receipt
+                .construction
+                .sqlite
+                .assert_catalog_authority_is_window_bounded();
             assert_eq!(
                 receipt.construction.shadow.catalog_rows,
                 receipt.source_files as u64
@@ -25768,6 +25772,21 @@ mod tests {
                 receipt.source_bytes as u64
             );
         }
+        // Growing the graph must not buy the terminal builder a single extra
+        // catalog-document shape proof: its catalog authority is priced per
+        // bounded read window, not per page. This is the structural reason the
+        // graph-sized traversal is linear rather than quadratic in pages.
+        assert!(large_receipt.source_files > small_receipt.source_files);
+        assert_eq!(
+            large_receipt
+                .construction
+                .sqlite
+                .terminal_catalog_document_validations,
+            small_receipt
+                .construction
+                .sqlite
+                .terminal_catalog_document_validations
+        );
         assert_activation_near_linear(&small_receipt, &large_receipt);
     }
 

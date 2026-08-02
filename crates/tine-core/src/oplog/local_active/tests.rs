@@ -9503,6 +9503,9 @@ mod terminal_construction {
             terminal.bootstrap.peak_terminal_bulk_pages
                 <= crate::oplog::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES
         );
+        terminal
+            .bootstrap
+            .assert_catalog_authority_is_window_bounded();
 
         // The replay path is exercised separately and keeps reporting the work
         // terminal construction deleted.

@@ -79,7 +79,7 @@ const PROJECTION_CHECKPOINT_SCHEMA_VERSION: u32 = 2;
 /// Bounded current-path catalog page size for terminal construction. The rows
 /// are drained into materialization chunks, so this only caps how many
 /// authenticated catalog rows the builder owns at once.
-const TERMINAL_CATALOG_CURSOR_PAGE_ROWS: usize = 128;
+pub(crate) const TERMINAL_CATALOG_CURSOR_PAGE_ROWS: usize = 128;
 const OBJECT_STORE_LEASE_NAMESPACE: &str = ".tine-runtime";
 const SQLITE_WORKSPACE_LEASE_NAMESPACE: &str = "sqlite-workspaces";
 const SQLITE_APPLIER_LEASE_FILE: &str = "sqlite-applier.lock";
@@ -1859,6 +1859,44 @@ impl BootstrapSqliteRebuildInstrumentation {
         self.terminal_external_exact_session_peak_resident_bytes = self
             .terminal_external_exact_session_peak_resident_bytes
             .max(external_exact.peak_resident_bytes);
+    }
+
+    /// The terminal builder's catalog authority must cost one document shape
+    /// proof per bounded read window and never one per catalog row.
+    ///
+    /// Each proof reads the catalog document, which is linear in its page
+    /// entries, so a per-row proof makes the graph-sized traversal quadratic in
+    /// pages. This is asserted as an exact identity rather than a bound so that
+    /// a regression to per-row derivation cannot hide inside slack.
+    #[cfg(test)]
+    pub(crate) fn assert_catalog_authority_is_window_bounded(&self) {
+        assert_eq!(
+            self.terminal_catalog_rows_authenticated, self.terminal_pages_materialized,
+            "every terminal page comes from one authenticated catalog row"
+        );
+        assert_eq!(
+            self.terminal_catalog_document_validations,
+            self.terminal_catalog_rows_authenticated
+                .div_ceil(TERMINAL_CATALOG_CURSOR_PAGE_ROWS)
+                + self.terminal_materialization_chunks,
+            "catalog shape proofs must count cursor pages plus materialization \
+             chunks, never catalog rows: {self:?}"
+        );
+        // The one graph-lifetime decoded-segment session is measured, not
+        // assumed: it must not thrash while it covers the whole terminal root.
+        assert_eq!(self.terminal_accepted_frontier_session_evictions, 0);
+        assert_eq!(self.terminal_accepted_frontier_session_oversize, 0);
+        assert_eq!(self.terminal_external_exact_session_evictions, 0);
+        assert_eq!(self.terminal_external_exact_session_oversize, 0);
+        for peak in [
+            self.terminal_accepted_frontier_session_peak_resident_bytes,
+            self.terminal_external_exact_session_peak_resident_bytes,
+        ] {
+            assert!(
+                peak <= super::hot_engine::BOOTSTRAP_LOOKUP_SESSION_BYTES_PER_ROOT,
+                "lookup session peak residency {peak} exceeds its per-root budget"
+            );
+        }
     }
 }
 
