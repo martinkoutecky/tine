@@ -11954,6 +11954,619 @@ mod tests {
         assert_eq!(overlay.status().retained_bytes, 0);
     }
 
+    /// Manifest and object reads the accepted-event loader performs, as the
+    /// object store itself counts them.
+    fn accepted_batch_inspection_reads(store: &ObjectStore) -> (usize, usize) {
+        let stats = store.instrumentation();
+        (
+            stats.inspected_manifest_operations,
+            stats.inspected_object_operations,
+        )
+    }
+
+    fn edit_block_content(
+        engine: &mut ShardedHotEngine,
+        store: &ObjectStore,
+        ids: TestIds,
+        seed: u128,
+        content: &str,
+        stage: fn(&mut ShardedHotEngine, &ObjectStore, &PreparedBatch),
+    ) {
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(seed),
+                &OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: ids.block,
+                        home_document_id: ids.document,
+                    },
+                    content: content.into(),
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        stage(engine, store, &prepared);
+    }
+
+    /// A drain whose bound source frontier advanced proves that frontier by
+    /// reconstructing the terminal accepted event, and then applies exactly
+    /// that event. Reconstructing it twice re-reads the same archive manifest
+    /// and objects and re-derives identical bytes, so an ordinary save must
+    /// read one accepted event's archive objects, not two.
+    #[test]
+    fn ordinary_drain_reconstructs_each_accepted_event_once() {
+        let ids = TestIds::new(2_396);
+        let dir = TestDir::new("drain-reconstructs-once");
+        let (mut database, mut engine, store) = open_empty(&dir, ids);
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(2_397),
+                &root_transaction(ids, "pages/drain-once.md", "first"),
+            )
+            .unwrap();
+        publish_and_stage(&mut engine, &store, &prepared);
+
+        let source = RebuildSource::new(&engine, &store).unwrap();
+        let mut overlay = TailOverlay::from_durable(&database, &source).unwrap();
+        assert_eq!(overlay.drain_ready(&mut database, &source, 1).unwrap(), 1);
+        drop(source);
+
+        // One reconstruction of one accepted event, measured through the same
+        // loader the drain uses.
+        edit_block_content(&mut engine, &store, ids, 2_398, "second", publish_and_stage);
+        let source = RebuildSource::new(&engine, &store).unwrap();
+        let (manifests_before, objects_before) = accepted_batch_inspection_reads(&store);
+        let probe = source.accepted_event_at(2).unwrap();
+        assert_eq!(probe.acceptance_sequence(), 2);
+        let (manifests_after, objects_after) = accepted_batch_inspection_reads(&store);
+        let manifests_per_event = manifests_after - manifests_before;
+        let objects_per_event = objects_after - objects_before;
+        assert_eq!(
+            manifests_per_event, 1,
+            "one accepted event reads one manifest"
+        );
+        assert!(objects_per_event > 0, "an accepted event reads its objects");
+        drop(probe);
+
+        let (manifests_before, objects_before) = accepted_batch_inspection_reads(&store);
+        assert_eq!(overlay.drain_ready(&mut database, &source, 1).unwrap(), 1);
+        let (manifests_after, objects_after) = accepted_batch_inspection_reads(&store);
+        assert_eq!(
+            (
+                manifests_after - manifests_before,
+                objects_after - objects_before
+            ),
+            (manifests_per_event, objects_per_event),
+            "the drain reconstructed the accepted event more than once"
+        );
+        assert_eq!(database.frontier_root().unwrap().acceptance_sequence(), 2);
+    }
+
+    /// One ordinary drained save must leave exactly the database a clean
+    /// archive replay of the same accepted history builds, across every shape
+    /// the drain's own evidence reuse could plausibly disturb: Markdown and Org
+    /// sources, references gained and lost, alias declarations, page and block
+    /// properties, a rename that moves both name and path, and a deletion. The
+    /// drained database is additionally reopened and re-compared, because the
+    /// inductive coverage state is deliberately not carried across an open.
+    #[test]
+    fn ordinary_drained_saves_match_clean_archive_replay_across_rich_shapes() {
+        let ids = TestIds::new(2_420);
+        let dir = TestDir::new("drain-differential-rich");
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let drained_path = dir.path().join("drained.sqlite");
+        let mut database = open_test_projection(
+            &drained_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+
+        let org_document = DocumentId::from_uuid(uuid(2_421));
+        let org_page = PageId::from_uuid(uuid(2_422));
+        let org_block = BlockId::from_uuid(uuid(2_423));
+        let markdown_child = BlockId::from_uuid(uuid(2_424));
+        let doomed_document = DocumentId::from_uuid(uuid(2_425));
+        let doomed_page = PageId::from_uuid(uuid(2_426));
+        let doomed_block = BlockId::from_uuid(uuid(2_427));
+
+        let markdown_location = BlockLocation {
+            block_id: ids.block,
+            home_document_id: ids.document,
+        };
+        let child_location = BlockLocation {
+            block_id: markdown_child,
+            home_document_id: ids.document,
+        };
+        let org_location = BlockLocation {
+            block_id: org_block,
+            home_document_id: org_document,
+        };
+
+        // Each entry is one ordinary accepted batch, drained on its own exactly
+        // as a save does.
+        let saves: Vec<Vec<SemanticOperation>> = vec![
+            vec![
+                SemanticOperation::CreatePage {
+                    page_id: ids.page,
+                    home_document_id: ids.document,
+                    name: crate::oplog::LogicalPageName::parse("Drain Markdown").unwrap(),
+                    path: ManagedPath::parse("pages/drain-markdown.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::SetPagePreamble {
+                    page_id: ids.page,
+                    preamble: Some("title:: Drain Markdown\ntype:: note".into()),
+                },
+                SemanticOperation::CreateBlock {
+                    block: markdown_location,
+                    page_id: ids.page,
+                    parent: None,
+                    order: "a".into(),
+                    content: "TODO [#A] Ship #release\nSCHEDULED: <2026-08-02 Sun>\nowner:: Ada"
+                        .into(),
+                },
+                SemanticOperation::CreateBlock {
+                    block: child_location,
+                    page_id: ids.page,
+                    parent: Some(ids.block),
+                    order: "a".into(),
+                    content: "nested markdown child".into(),
+                },
+            ],
+            vec![
+                SemanticOperation::CreatePage {
+                    page_id: org_page,
+                    home_document_id: org_document,
+                    name: crate::oplog::LogicalPageName::parse("Drain Org").unwrap(),
+                    path: ManagedPath::parse("pages/drain-org.org").unwrap(),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::SetPagePreamble {
+                    page_id: org_page,
+                    preamble: Some("#+TITLE: Drain Org\n:PROPERTIES:\n:alias: Org Alias\n:END:".into()),
+                },
+                SemanticOperation::CreateBlock {
+                    block: org_location,
+                    page_id: org_page,
+                    parent: None,
+                    order: "a".into(),
+                    content: "* DONE Org entry :orgtag:\n  :PROPERTIES:\n  :owner: Grace\n  :END:"
+                        .into(),
+                },
+            ],
+            // References gained: page name and block reference across sources.
+            vec![SemanticOperation::EditBlockContent {
+                block: markdown_location,
+                content: "TODO [#A] Ship #release\nsee [[Drain Org]] and #[[Drain Org]]".into(),
+            }],
+            vec![SemanticOperation::EditBlockContent {
+                block: org_location,
+                content:
+                    "* DONE Org entry :orgtag:\n  :PROPERTIES:\n  :owner: Grace\n  :END:\n  back to [[Drain Markdown]]"
+                        .into(),
+            }],
+            // References lost again on the Markdown side only.
+            vec![SemanticOperation::EditBlockContent {
+                block: markdown_location,
+                content: "TODO [#A] Ship #release\nowner:: Ada\nno references left".into(),
+            }],
+            // Path-sensitive metadata: name and path move together, and the
+            // surviving referrer's text is rewritten in the same batch.
+            vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![PageRename {
+                    page_id: ids.page,
+                    new_name: crate::oplog::LogicalPageName::parse("Drain Renamed").unwrap(),
+                    new_path: ManagedPath::parse("notes/deeper/drain-renamed.md").unwrap(),
+                }],
+                block_rewrites: vec![crate::oplog::hot_engine::BlockContentRewrite {
+                    block: org_location,
+                    new_content:
+                        "* DONE Org entry :orgtag:\n  :PROPERTIES:\n  :owner: Grace\n  :END:\n  back to [[Drain Renamed]]"
+                            .into(),
+                }],
+                page_preamble_rewrites: vec![crate::oplog::hot_engine::PagePreambleRewrite {
+                    page_id: ids.page,
+                    new_preamble: Some("title:: Drain Renamed\ntype:: note".into()),
+                }],
+            }],
+            vec![
+                SemanticOperation::CreatePage {
+                    page_id: doomed_page,
+                    home_document_id: doomed_document,
+                    name: crate::oplog::LogicalPageName::parse("Drain Doomed").unwrap(),
+                    path: ManagedPath::parse("pages/drain-doomed.md").unwrap(),
+                    kind: ManagedTextKind::Journal,
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: doomed_block,
+                        home_document_id: doomed_document,
+                    },
+                    page_id: doomed_page,
+                    parent: None,
+                    order: "a".into(),
+                    content: "doomed [[Drain Org]]".into(),
+                },
+            ],
+            vec![SemanticOperation::DeletePage {
+                page_id: doomed_page,
+            }],
+        ];
+
+        let mut overlay: Option<TailOverlay> = None;
+        for (index, operations) in saves.into_iter().enumerate() {
+            let prepared = engine
+                .prepare_bootstrap_transaction(
+                    author(2_430 + index as u128),
+                    &OperationTransaction::new(operations).unwrap(),
+                )
+                .unwrap();
+            publish_and_stage_archive(&mut engine, &store, &prepared);
+            let source = RebuildSource::new(&engine, &store).unwrap();
+            let overlay = match overlay.as_mut() {
+                Some(overlay) => overlay,
+                None => overlay.insert(TailOverlay::from_durable(&database, &source).unwrap()),
+            };
+            assert_eq!(overlay.drain_ready(&mut database, &source, 1).unwrap(), 1);
+            assert_eq!(
+                database.frontier_root().unwrap().acceptance_sequence(),
+                index as u64 + 1
+            );
+        }
+        drop(overlay);
+
+        let observed_pages = [ids.page, org_page, doomed_page];
+        let observed_blocks = [ids.block, markdown_child, org_block, doomed_block];
+        let observe = |database: &SqliteFrontier| {
+            database.diagnose_full_integrity().unwrap();
+            let read = database.materialized_read().unwrap();
+            let mut observation = Vec::new();
+            observation.push(format!("{:?}", read.pages(None, 64).unwrap()));
+            observation.push(format!(
+                "{:?}",
+                read.pages(Some(ManagedTextKind::Journal), 64).unwrap()
+            ));
+            for page_id in observed_pages {
+                observation.push(format!("{:?}", read.page(page_id).unwrap()));
+                observation.push(format!("{:?}", read.blocks_on_page(page_id, 64).unwrap()));
+                observation.push(format!(
+                    "{:?}",
+                    read.referrers_to(MaterializedEntityId::Page(page_id), 64)
+                        .unwrap()
+                ));
+                observation.push(format!(
+                    "{:?}",
+                    read.properties(MaterializedEntityId::Page(page_id), 64)
+                        .unwrap()
+                ));
+            }
+            for block_id in observed_blocks {
+                observation.push(format!("{:?}", read.block(block_id).unwrap()));
+                observation.push(format!(
+                    "{:?}",
+                    read.referrers_to(MaterializedEntityId::Block(block_id), 64)
+                        .unwrap()
+                ));
+                observation.push(format!(
+                    "{:?}",
+                    read.properties(MaterializedEntityId::Block(block_id), 64)
+                        .unwrap()
+                ));
+            }
+            for path in [
+                "notes/deeper/drain-renamed.md",
+                "pages/drain-markdown.md",
+                "pages/drain-org.org",
+                "pages/drain-doomed.md",
+            ] {
+                observation.push(format!(
+                    "{:?}",
+                    read.pages_by_path(&ManagedPath::parse(path).unwrap(), 64)
+                        .unwrap()
+                ));
+            }
+            for name in ["Drain Renamed", "Drain Org", "Drain Markdown", "Org Alias"] {
+                observation.push(format!("{:?}", read.pages_by_name(name, 64).unwrap()));
+                observation.push(format!(
+                    "{:?}",
+                    read.search(&format!("\"{name}\""), 64).unwrap()
+                ));
+            }
+            observation.push(format!("{:?}", read.tags("release", 64).unwrap()));
+            observation.push(format!("{:?}", read.tags("orgtag", 64).unwrap()));
+            observation.push(format!("{:?}", read.tasks(None, 64).unwrap()));
+            observation.push(format!(
+                "{:?}",
+                read.properties_named("owner", None, 64).unwrap()
+            ));
+            drop(read);
+            for normalized in ["drain renamed", "drain org", "drain markdown", "org alias"] {
+                observation.push(format!(
+                    "{:?}",
+                    database
+                        .physical
+                        .reference_page_candidates_for_name(normalized, 64)
+                        .unwrap()
+                ));
+                observation.push(format!(
+                    "{:?}",
+                    database
+                        .physical
+                        .reference_page_candidates_for_alias(normalized, 64)
+                        .unwrap()
+                ));
+            }
+            observation.push(format!(
+                "{:?}",
+                database.physical.reference_source_coverage_count().unwrap()
+            ));
+            (
+                database.frontier_root().unwrap(),
+                database.semantic_projection_digest().unwrap(),
+                database.authenticated_reference_catalog_root().unwrap(),
+                database
+                    .materialized_row_digests_by_table_for_test()
+                    .unwrap(),
+                observation,
+            )
+        };
+
+        // The comparison below is only meaningful if the drained database
+        // actually carries every shape the sequence authored, so state that
+        // first rather than letting two empty observations agree.
+        {
+            let read = database.materialized_read().unwrap();
+            assert_eq!(read.pages(None, 64).unwrap().len(), 2);
+            assert!(read.page(doomed_page).unwrap().is_none());
+            assert_eq!(
+                read.pages_by_path(
+                    &ManagedPath::parse("notes/deeper/drain-renamed.md").unwrap(),
+                    64
+                )
+                .unwrap()
+                .len(),
+                1
+            );
+            assert!(read
+                .pages_by_path(&ManagedPath::parse("pages/drain-markdown.md").unwrap(), 64)
+                .unwrap()
+                .is_empty());
+            assert_eq!(read.blocks_on_page(ids.page, 64).unwrap().len(), 2);
+
+            assert!(!read.tags("release", 64).unwrap().is_empty());
+            assert!(!read.tags("orgtag", 64).unwrap().is_empty());
+            assert!(!read.tasks(None, 64).unwrap().is_empty());
+            assert!(!read.properties_named("owner", None, 64).unwrap().is_empty());
+            assert!(!read.search("\"Drain Renamed\"", 64).unwrap().is_empty());
+            drop(read);
+            // Reference rows for an oplog-derived materialization live in the
+            // authenticated reference catalog, not in `refs`.
+            assert_eq!(
+                database
+                    .physical
+                    .reference_page_candidates_for_name("drain renamed", 64)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(database
+                .physical
+                .reference_page_candidates_for_name("drain org", 64)
+                .unwrap()
+                .is_empty());
+            assert_eq!(
+                database.physical.reference_source_coverage_count().unwrap(),
+                2
+            );
+        }
+
+        // One workspace applier lock covers this runtime root, so each
+        // projection is observed and released before the next is opened.
+        let drained_observation = observe(&database);
+        let drained_row_digest = database.materialized_row_digest_for_harness().unwrap();
+        drop(database);
+
+        let replayed = open_test_projection(
+            &dir.path().join("replayed.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            replayed.recovery,
+            ProjectionRecovery::RebuiltMissing { .. }
+        ));
+        let replayed_observation = observe(&replayed.database);
+        let replayed_row_digest = replayed
+            .database
+            .materialized_row_digest_for_harness()
+            .unwrap();
+        drop(replayed);
+        assert_eq!(drained_observation.0, replayed_observation.0);
+        assert_eq!(drained_observation.1, replayed_observation.1);
+        assert_eq!(drained_observation.2, replayed_observation.2);
+        assert_eq!(drained_observation.3, replayed_observation.3);
+        assert_eq!(drained_observation.4, replayed_observation.4);
+        assert_eq!(drained_row_digest, replayed_row_digest);
+
+        let reopened = open_test_projection(
+            &drained_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
+        assert_eq!(observe(&reopened.database), replayed_observation);
+    }
+
+    /// Counting `reference_source_coverage` is the only whole-table read an
+    /// otherwise point-sized ordinary apply performs. One open pays it once;
+    /// every later apply on that handle inducts from the count it already
+    /// proved against the authenticated catalog's source counts. The accounting
+    /// is asserted identical at two graph sizes, which is the property that
+    /// makes a one-page save proportional to its own delta.
+    #[test]
+    fn ordinary_applies_count_the_reference_coverage_table_once_per_open() {
+        let small = coverage_accounting_for_graph(2_400, 0);
+        let large = coverage_accounting_for_graph(2_600, 40);
+        assert_eq!(
+            small.0, large.0,
+            "coverage accounting per ordinary save must not depend on total graph sources"
+        );
+        assert_eq!(small.1, 1, "the small graph holds one reference source");
+        assert_eq!(large.1, 41, "the large graph holds forty more sources");
+    }
+
+    /// Returns the per-apply `(full_scans, inductive_checks)` sequence and the
+    /// final `reference_source_coverage` row count.
+    fn coverage_accounting_for_graph(
+        seed: u128,
+        extra_sources: usize,
+    ) -> (Vec<(usize, usize)>, i64) {
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new(&format!("coverage-count-once-per-open-{extra_sources}"));
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let mut database = open_test_projection(
+            &dir.path().join("frontier.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+        let mut bulk = Vec::new();
+        for extra in 0..extra_sources {
+            let extra = extra as u128;
+            bulk.push(SemanticOperation::CreatePage {
+                page_id: PageId::from_uuid(uuid(seed + 100_000 + extra)),
+                home_document_id: DocumentId::from_uuid(uuid(seed + 200_000 + extra)),
+                name: crate::oplog::LogicalPageName::parse(&format!("Bulk Source {extra}"))
+                    .unwrap(),
+                path: ManagedPath::parse(&format!("pages/bulk-source-{extra}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
+            });
+            bulk.push(SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: BlockId::from_uuid(uuid(seed + 300_000 + extra)),
+                    home_document_id: DocumentId::from_uuid(uuid(seed + 200_000 + extra)),
+                },
+                page_id: PageId::from_uuid(uuid(seed + 100_000 + extra)),
+                parent: None,
+                order: "a".into(),
+                content: format!("bulk source {extra} referring to [[Root Fixture Page]]"),
+            });
+        }
+        let mut sequence = 0_u64;
+        if !bulk.is_empty() {
+            let prepared = engine
+                .prepare_bootstrap_transaction(
+                    author(seed + 90_000),
+                    &OperationTransaction::new(bulk).unwrap(),
+                )
+                .unwrap();
+            publish_and_stage_archive(&mut engine, &store, &prepared);
+            sequence += 1;
+        }
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(seed + 1),
+                &root_transaction(ids, "pages/coverage-induction.md", "first"),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &prepared);
+
+        let mut coverage_accounting = Vec::new();
+        let mut apply_next = |database: &mut SqliteFrontier,
+                              engine: &ShardedHotEngine,
+                              store: &ObjectStore,
+                              sequence: u64| {
+            let source = RebuildSource::new(engine, store).unwrap();
+            let event = source.accepted_event_at(sequence).unwrap();
+            let (disposition, _, stats) = database
+                .apply_engine_owned_accepted_with_stats(&event, engine)
+                .unwrap();
+            assert_eq!(disposition, ApplyDisposition::Applied);
+            (
+                stats.reference_coverage_full_scans,
+                stats.reference_coverage_inductive_checks,
+            )
+        };
+
+        // The bulk sources, if any, are drained first and are not part of the
+        // ordinary-save accounting under test.
+        for bulk_sequence in 1..=sequence {
+            let _ = apply_next(&mut database, &engine, &store, bulk_sequence);
+        }
+        sequence += 1;
+        coverage_accounting.push(apply_next(&mut database, &engine, &store, sequence));
+        for (index, content) in ["second", "third", "fourth"].iter().enumerate() {
+            edit_block_content(
+                &mut engine,
+                &store,
+                ids,
+                seed + 2 + index as u128,
+                content,
+                publish_and_stage_archive,
+            );
+            sequence += 1;
+            coverage_accounting.push(apply_next(&mut database, &engine, &store, sequence));
+        }
+        assert_eq!(
+            coverage_accounting[0],
+            (
+                usize::from(extra_sources == 0),
+                usize::from(extra_sources > 0)
+            ),
+            "the first apply of an open is the only one that may count the table"
+        );
+        assert_eq!(
+            &coverage_accounting[1..],
+            &[(0, 1), (0, 1), (0, 1)],
+            "an ordinary apply must not count the coverage table"
+        );
+
+        // A reopened database never inherits the count, so it re-proves it.
+        let database_path = database.path().to_path_buf();
+        drop(database);
+        let reopened = open_test_projection(
+            &database_path,
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
+        let mut database = reopened.database;
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            seed + 10,
+            "fifth",
+            publish_and_stage_archive,
+        );
+        sequence += 1;
+        assert_eq!(apply_next(&mut database, &engine, &store, sequence), (1, 0));
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            seed + 11,
+            "sixth",
+            publish_and_stage_archive,
+        );
+        sequence += 1;
+        assert_eq!(apply_next(&mut database, &engine, &store, sequence), (0, 1));
+        let coverage_rows = database.physical.reference_source_coverage_count().unwrap();
+        (coverage_accounting[1..].to_vec(), coverage_rows)
+    }
+
     #[test]
     fn sampled_interior_block_corruption_rebuilds_from_authority_and_preserves_evidence() {
         const BLOCK_COUNT: usize = 128;
