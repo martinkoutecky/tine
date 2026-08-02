@@ -5756,7 +5756,7 @@ mod bounded_admission {
                 &root.path().join("bootstrap.sqlite"),
                 &runtime,
                 &authority,
-            None,
+                None,
             )
             .expect("inactive bootstrap runtime session");
             let archive_resource_id = authority

@@ -9235,3 +9235,613 @@ fn a_safe_point_older_than_the_clean_restart_refuses_before_automatic_supersessi
         fixture.assert_graph_unchanged();
     });
 }
+
+/// Terminal SQLite construction differentials.
+///
+/// Every test below builds the same authority twice — once from the retained
+/// terminal accepted state and once by forced clean archive replay — and
+/// compares what a reader can actually observe. Physical bytes, page layout,
+/// and the construction-only `materialization_batches`/`materialization_stamp`
+/// provenance are deliberately not required to match; everything a query,
+/// frontier, digest, or complete row observation can see is.
+mod terminal_construction {
+    use super::*;
+    use crate::oplog::import::TerminalBootstrapConstructionMaterial;
+    use crate::oplog::sqlite_materialization::{
+        MaterializedBlockRow, MaterializedPageRow, MaterializedPropertyRow,
+        MaterializedReferrerRow, MaterializedTaskRow,
+    };
+    use crate::oplog::{
+        ContentDigest, MaterializedEntityId, ProjectionRecovery, RebuildInstrumentation,
+    };
+
+    const QUERY_LIMIT: usize = 4_096;
+
+    /// Construction-only provenance. Both databases authenticate independently
+    /// and rebuild from archive history; neither is required to record the same
+    /// per-event derivation evidence for rows it never replayed.
+    const CONSTRUCTION_PROVENANCE_TABLES: [&str; 2] =
+        ["materialization_batches", "materialization_stamp"];
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub(super) struct BlockObservation {
+        row: Option<MaterializedBlockRow>,
+        properties: Vec<MaterializedPropertyRow>,
+        referrers: Vec<MaterializedReferrerRow>,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub(super) struct PageObservation {
+        row: Option<MaterializedPageRow>,
+        by_path: Vec<MaterializedPageRow>,
+        by_name: Vec<MaterializedPageRow>,
+        by_name_key: Vec<MaterializedPageRow>,
+        by_name_key_and_kind: Vec<MaterializedPageRow>,
+        blocks: Vec<MaterializedBlockRow>,
+        properties: Vec<MaterializedPropertyRow>,
+        referrers: Vec<MaterializedReferrerRow>,
+        blocks_detail: Vec<BlockObservation>,
+        search_hits: Vec<(String, Uuid, Uuid)>,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub(super) struct ProjectionObservation {
+        frontier_root: AcceptedFrontierRoot,
+        pub(super) accepted_batch_count: usize,
+        semantic_projection_digest: ContentDigest,
+        semantic_effects: Vec<Vec<u8>>,
+        reference_catalog_root: Option<crate::oplog::ReferenceCatalogRootV2>,
+        table_rows: Vec<(&'static str, ContentDigest)>,
+        pages: Vec<MaterializedPageRow>,
+        page_kind_pages: Vec<MaterializedPageRow>,
+        journal_kind_pages: Vec<MaterializedPageRow>,
+        tasks: Vec<MaterializedTaskRow>,
+        page_details: Vec<PageObservation>,
+    }
+
+    fn observe(database: &SqliteFrontier) -> ProjectionObservation {
+        let frontier_root = database.frontier_root().unwrap();
+        let accepted_batch_count = database.applied_batch_count().unwrap();
+        let read = database.materialized_read().unwrap();
+        let pages = read.pages(None, QUERY_LIMIT).unwrap();
+        let mut page_details = Vec::new();
+        for page in &pages {
+            let blocks = read.blocks_on_page(page.page_id, QUERY_LIMIT).unwrap();
+            let blocks_detail = blocks
+                .iter()
+                .map(|block| BlockObservation {
+                    row: read.block(block.block_id).unwrap(),
+                    properties: read
+                        .properties(MaterializedEntityId::Block(block.block_id), QUERY_LIMIT)
+                        .unwrap(),
+                    referrers: read
+                        .referrers_to(MaterializedEntityId::Block(block.block_id), QUERY_LIMIT)
+                        .unwrap(),
+                })
+                .collect();
+            // The page's own logical name is a term every page contributes to
+            // the search index, so this exercises FTS ownership per page.
+            let mut search_hits = read
+                .search(&fts_query_for(&page.name), QUERY_LIMIT)
+                .unwrap()
+                .into_iter()
+                .map(|hit| {
+                    (
+                        hit.text,
+                        match hit.entity {
+                            MaterializedEntityId::Page(id) => id.as_uuid(),
+                            MaterializedEntityId::Block(id) => id.as_uuid(),
+                        },
+                        hit.page_id.as_uuid(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            search_hits.sort();
+            page_details.push(PageObservation {
+                row: read.page(page.page_id).unwrap(),
+                by_path: read.pages_by_path(&page.path, QUERY_LIMIT).unwrap(),
+                by_name: read.pages_by_name(&page.name, QUERY_LIMIT).unwrap(),
+                by_name_key: read.pages_by_name_key(&page.name_key, QUERY_LIMIT).unwrap(),
+                by_name_key_and_kind: read
+                    .pages_by_name_key_and_kind(&page.name_key, page.kind, QUERY_LIMIT)
+                    .unwrap(),
+                properties: read
+                    .properties(MaterializedEntityId::Page(page.page_id), QUERY_LIMIT)
+                    .unwrap(),
+                referrers: read
+                    .referrers_to(MaterializedEntityId::Page(page.page_id), QUERY_LIMIT)
+                    .unwrap(),
+                blocks,
+                blocks_detail,
+                search_hits,
+            });
+        }
+        ProjectionObservation {
+            reference_catalog_root: (accepted_batch_count != 0)
+                .then(|| database.authenticated_reference_catalog_root().unwrap()),
+            frontier_root,
+            accepted_batch_count,
+            semantic_projection_digest: database.semantic_projection_digest().unwrap(),
+            semantic_effects: database
+                .applied_semantic_effects_for_test()
+                .unwrap()
+                .iter()
+                .map(|effect| effect.encode().unwrap())
+                .collect(),
+            table_rows: database
+                .materialized_row_digests_by_table_for_test()
+                .unwrap()
+                .into_iter()
+                .filter(|(table, _)| !CONSTRUCTION_PROVENANCE_TABLES.contains(table))
+                .collect(),
+            pages,
+            page_kind_pages: read
+                .pages(Some(ManagedTextKind::Page), QUERY_LIMIT)
+                .unwrap(),
+            journal_kind_pages: read
+                .pages(Some(ManagedTextKind::Journal), QUERY_LIMIT)
+                .unwrap(),
+            tasks: read.tasks(None, QUERY_LIMIT).unwrap(),
+            page_details,
+        }
+    }
+
+    /// FTS5 treats most punctuation as a separator; quote the whole name so a
+    /// nonstandard or Unicode page title stays one legal query term.
+    fn fts_query_for(name: &str) -> String {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+
+    pub(super) struct BuiltProjection {
+        observation: ProjectionObservation,
+        recovery: ProjectionRecovery,
+        rebuild: RebuildInstrumentation,
+        bootstrap: crate::oplog::sqlite::BootstrapSqliteRebuildInstrumentation,
+        proof_frontier: AcceptedFrontierRoot,
+        proof_semantic_digest: ContentDigest,
+        proof_accepted_count: u64,
+    }
+
+    impl BuiltProjection {
+        pub(super) const fn observation(&self) -> &ProjectionObservation {
+            &self.observation
+        }
+
+        pub(super) const fn recovery(&self) -> &ProjectionRecovery {
+            &self.recovery
+        }
+
+        pub(super) const fn bootstrap(
+            &self,
+        ) -> &crate::oplog::sqlite::BootstrapSqliteRebuildInstrumentation {
+            &self.bootstrap
+        }
+    }
+
+    pub(super) fn build_projection(
+        fixture: &Fixture,
+        label: &str,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
+    ) -> BuiltProjection {
+        let path = fixture.root.path().join(format!("{label}.sqlite"));
+        build_projection_at(fixture, &path, label, terminal)
+    }
+
+    pub(super) fn build_projection_at(
+        fixture: &Fixture,
+        path: &Path,
+        label: &str,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
+    ) -> BuiltProjection {
+        let runtime =
+            ApplicationRuntimeRoot::open_for_test(&fixture.root.path().join(format!("rt-{label}")))
+                .unwrap();
+        let (opened, proof) = match terminal {
+            Some(material) => SqliteFrontier::open_or_rebuild_inactive_bootstrap_terminally(
+                path,
+                &runtime,
+                &fixture.authority,
+                material,
+            ),
+            None => SqliteFrontier::open_or_rebuild_inactive_bootstrap(
+                path,
+                &runtime,
+                &fixture.authority,
+            ),
+        }
+        .unwrap_or_else(|error| panic!("{label} bootstrap projection: {error}"));
+        // Every current terminal proof must still hold on the built database.
+        opened.database.diagnose_full_integrity().unwrap();
+        opened
+            .database
+            .freshly_verify_inactive_bootstrap(&fixture.authority, &proof)
+            .unwrap();
+        let observation = observe(&opened.database);
+        BuiltProjection {
+            observation,
+            recovery: opened.recovery.clone(),
+            rebuild: opened.rebuild,
+            bootstrap: proof.bootstrap_rebuild(),
+            proof_frontier: proof.frontier_root().clone(),
+            proof_semantic_digest: proof.semantic_projection_digest(),
+            proof_accepted_count: proof.accepted_batch_count(),
+        }
+    }
+
+    /// Build the same authority both ways and prove a reader cannot tell them
+    /// apart.
+    fn assert_terminal_equals_replay(fixture: &mut Fixture) {
+        let material = fixture
+            .prepared
+            .take_terminal_construction_material()
+            .expect("uninterrupted preparation retains terminal construction material");
+        assert!(
+            fixture
+                .prepared
+                .take_terminal_construction_material()
+                .is_none(),
+            "the one-shot construction capability must not be reusable"
+        );
+        // Release the fixture's own bootstrap session so each build below takes
+        // and releases the workspace lease itself.
+        fixture.release_bootstrap_projection();
+
+        let terminal = build_projection(fixture, "terminal", Some(&material));
+        let replay = build_projection(fixture, "replay", None);
+
+        assert_eq!(terminal.bootstrap.terminal_constructions, 1);
+        assert_eq!(terminal.bootstrap.terminal_construction_refusals, 0);
+        assert_eq!(terminal.bootstrap.bootstrap_part_reads, 0);
+        assert_eq!(terminal.bootstrap.bootstrap_object_reads, 0);
+        assert_eq!(terminal.bootstrap.intermediate_page_materializations, 0);
+        assert_eq!(terminal.bootstrap.terminal_materializations, 1);
+        assert_eq!(
+            terminal.bootstrap.terminal_pages_materialized,
+            terminal.observation.pages.len()
+        );
+        assert!(
+            terminal.bootstrap.peak_terminal_bulk_pages
+                <= crate::oplog::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES
+        );
+
+        // The replay path is exercised separately and keeps reporting the work
+        // terminal construction deleted.
+        assert_eq!(replay.bootstrap.terminal_constructions, 0);
+        assert_eq!(
+            replay.bootstrap.bootstrap_part_reads,
+            replay.observation.accepted_batch_count
+        );
+        assert_eq!(
+            replay.bootstrap.intermediate_page_materializations,
+            replay.observation.accepted_batch_count
+        );
+        assert_eq!(replay.bootstrap.terminal_materializations, 0);
+
+        // One candidate transaction and one durability barrier on both paths.
+        for built in [&terminal, &replay] {
+            assert_eq!(built.rebuild.physical_candidate_transactions, 1);
+            assert_eq!(built.rebuild.physical_candidate_durability_barriers, 1);
+            assert_eq!(built.rebuild.physical_ordinary_transactions, 0);
+            assert_eq!(built.rebuild.final_semantic_equivalence_proofs, 1);
+            assert_eq!(built.rebuild.final_row_digest_equivalence_proofs, 1);
+        }
+
+        assert_eq!(terminal.proof_frontier, replay.proof_frontier);
+        assert_eq!(terminal.proof_accepted_count, replay.proof_accepted_count);
+        assert_eq!(
+            terminal.proof_semantic_digest, replay.proof_semantic_digest,
+            "terminal and replayed accepted-prefix semantics diverged"
+        );
+        assert_eq!(
+            terminal.observation, replay.observation,
+            "terminal construction and clean archive replay are observably different"
+        );
+    }
+
+    #[test]
+    fn terminal_construction_matches_clean_replay_for_zero_one_and_multipart_shapes() {
+        let mut cases = local_active_shape_fixtures("terminal-shapes");
+        assert_local_active_fixture_shapes(&cases);
+        for fixture in &mut cases {
+            assert_terminal_equals_replay(fixture);
+            fixture.assert_graph_unchanged();
+        }
+    }
+
+    #[test]
+    fn terminal_construction_matches_clean_replay_for_a_huge_page_split() {
+        let mut blocks = String::new();
+        for ordinal in 0..3_000 {
+            blocks.push_str(&format!("- split {ordinal:04} [[Target {ordinal:04}]]\n"));
+        }
+        let mut fixture = Fixture::new(
+            "terminal-huge-page-split",
+            None,
+            vec![("pages/huge.md".into(), blocks.into_bytes())],
+        );
+        assert!(
+            fixture.verified.part_count() >= 2,
+            "the huge page must genuinely split across parts"
+        );
+        assert_terminal_equals_replay(&mut fixture);
+        fixture.assert_graph_unchanged();
+    }
+
+    #[test]
+    fn terminal_construction_matches_clean_replay_for_rich_semantic_layout() {
+        let mut fixture = Fixture::new(
+            "terminal-rich-semantics",
+            Some(
+                br#"{:pages-directory "notes"
+                    :journals-directory "diary"
+                    :file/name-format :triple-lowbar
+                    :journal/file-name-format "dd-MM-yyyy"
+                    :journal/page-title-format "yyyy-MM-dd"}"#,
+            ),
+            vec![
+                (
+                    "notes/Hub.md".into(),
+                    concat!(
+                        "title:: Hub logical\n",
+                        "alias:: Hub Alias, Second Alias\n",
+                        "\n",
+                        "- TODO [#A] plan the [[Spoke]] work\n",
+                        "  SCHEDULED: <2026-08-02 Sun>\n",
+                        "  id:: 00000000-0000-0000-0000-0000000cafe1\n",
+                        "  kind:: planning\n",
+                        "- DONE tagged #project work\n",
+                        "- embed ((00000000-0000-0000-0000-0000000cafe1))\n",
+                    )
+                    .as_bytes()
+                    .to_vec(),
+                ),
+                (
+                    "notes/Spoke.org".into(),
+                    concat!(
+                        "#+title: Spoke logical\n",
+                        "* TODO org task referencing [[Hub Alias]]\n",
+                        "  :PROPERTIES:\n",
+                        "  :owner: spoke\n",
+                        "  :END:\n",
+                        "* another #org-tag line\n",
+                    )
+                    .as_bytes()
+                    .to_vec(),
+                ),
+                (
+                    "notes/Crlf___Bom.markdown".into(),
+                    "\u{feff}title:: Crlf/Bom\r\n\r\n- caf\u{e9} \u{4e2d}\u{6587} [[Hub]]\r\n"
+                        .as_bytes()
+                        .to_vec(),
+                ),
+                ("notes/Empty.md".into(), Vec::new()),
+                (
+                    "diary/nested/02-08-2026.org".into(),
+                    b"* journal entry [[Spoke]]\n".to_vec(),
+                ),
+            ],
+        );
+        assert!(fixture.verified.part_count() > 0);
+        assert_terminal_equals_replay(&mut fixture);
+        fixture.assert_graph_unchanged();
+    }
+
+    #[test]
+    fn terminal_construction_matches_clean_replay_for_duplicate_uuid_collapse() {
+        let duplicate = "00000000-0000-0000-0000-0000000dup01";
+        let mut fixture = Fixture::new(
+            "terminal-duplicate-uuid",
+            None,
+            vec![
+                (
+                    "pages/first.md".into(),
+                    format!("- first claim\n  id:: {duplicate}\n").into_bytes(),
+                ),
+                (
+                    "pages/second.md".into(),
+                    format!("- second claim\n  id:: {duplicate}\n").into_bytes(),
+                ),
+                (
+                    "pages/third.org".into(),
+                    format!("* third claim\n  :PROPERTIES:\n  :id: {duplicate}\n  :END:\n")
+                        .into_bytes(),
+                ),
+            ],
+        );
+        assert_terminal_equals_replay(&mut fixture);
+        fixture.assert_graph_unchanged();
+    }
+}
+
+/// Terminal SQLite construction interruption and fallback.
+mod terminal_construction_interruption {
+    use super::terminal_construction::*;
+    use super::*;
+    use crate::oplog::sqlite::{fail_next_terminal_construction_at, TerminalConstructionCut};
+    use crate::oplog::ProjectionRecovery;
+
+    fn candidate_residue(root: &Path) -> Vec<String> {
+        fs::read_dir(root)
+            .unwrap()
+            .map(Result::unwrap)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("candidate"))
+            .collect()
+    }
+
+    /// Every private-candidate interruption discards the candidate and lets the
+    /// unchanged archive replay path finish the same activation.
+    #[test]
+    fn interrupted_terminal_candidate_falls_back_to_archive_replay() {
+        for cut in [
+            TerminalConstructionCut::BeforeCandidateCommit,
+            TerminalConstructionCut::AfterCandidateCommitBeforePublication,
+        ] {
+            let mut fixture = Fixture::new(
+                &format!("terminal-cut-{cut:?}"),
+                None,
+                vec![
+                    (
+                        "pages/interrupted.md".into(),
+                        b"- interrupted [[Other]]\n".to_vec(),
+                    ),
+                    ("pages/other.md".into(), b"- other\n".to_vec()),
+                ],
+            );
+            let material = fixture
+                .prepared
+                .take_terminal_construction_material()
+                .unwrap();
+            fixture.release_bootstrap_projection();
+
+            fail_next_terminal_construction_at(cut);
+            let interrupted = build_projection(&fixture, "interrupted", Some(&material));
+            assert_eq!(
+                interrupted.bootstrap().terminal_construction_refusals,
+                1,
+                "{cut:?} must be recorded as a discarded private candidate"
+            );
+            assert_eq!(interrupted.bootstrap().terminal_constructions, 0);
+            assert_eq!(
+                interrupted.bootstrap().bootstrap_part_reads,
+                interrupted.observation().accepted_batch_count,
+                "{cut:?} must fall back to the physical archive replay"
+            );
+
+            let replay = build_projection(&fixture, "replay", None);
+            assert_eq!(
+                interrupted.observation(),
+                replay.observation(),
+                "{cut:?} fallback is observably different from a clean archive replay"
+            );
+            assert!(
+                candidate_residue(fixture.root.path()).is_empty(),
+                "{cut:?} left private candidate residue"
+            );
+            fixture.assert_graph_unchanged();
+        }
+    }
+
+    /// An interruption after the atomic file publication but before the
+    /// checkpoint proof refuses outright: the unproved database authorizes
+    /// nothing, and a restart rebuilds it while preserving the evidence.
+    #[test]
+    fn interruption_after_publication_refuses_and_a_restart_rebuilds() {
+        let mut fixture = Fixture::new(
+            "terminal-cut-after-publication",
+            None,
+            vec![(
+                "pages/published.md".into(),
+                b"- published [[Other]]\n".to_vec(),
+            )],
+        );
+        let material = fixture
+            .prepared
+            .take_terminal_construction_material()
+            .unwrap();
+        fixture.release_bootstrap_projection();
+
+        let runtime =
+            ApplicationRuntimeRoot::open_for_test(&fixture.root.path().join("rt-cut")).unwrap();
+        let path = fixture.root.path().join("cut.sqlite");
+        fail_next_terminal_construction_at(
+            TerminalConstructionCut::AfterPublicationBeforeCheckpointProof,
+        );
+        let refused = SqliteFrontier::open_or_rebuild_inactive_bootstrap_terminally(
+            &path,
+            &runtime,
+            &fixture.authority,
+            &material,
+        );
+        assert!(
+            matches!(refused, Err(ProjectionError::InjectedFailure)),
+            "an unproved published database must not authorize anything: {:?}",
+            refused.map(|(_opened, proof)| proof)
+        );
+
+        // Restart without the one-shot process artifact: the existing archive
+        // replay path rebuilds the published file and preserves its evidence.
+        drop(material);
+        let restarted = build_projection_at(&fixture, &path, "restart", None);
+        assert!(
+            matches!(
+                restarted.recovery(),
+                ProjectionRecovery::RebuiltPreservingEvidence { .. }
+            ),
+            "a restart over an interrupted publication must preserve evidence: {:?}",
+            restarted.recovery()
+        );
+        let clean = build_projection(&fixture, "clean", None);
+        assert_eq!(restarted.observation(), clean.observation());
+        fixture.assert_graph_unchanged();
+    }
+
+    /// Retained material from another preparation is not authority: it refuses
+    /// to bind and the build falls back to the archive.
+    #[test]
+    fn substituted_terminal_material_refuses_and_falls_back() {
+        let mut donor = Fixture::new(
+            "terminal-substitute-donor",
+            None,
+            vec![("pages/donor.md".into(), b"- donor\n".to_vec())],
+        );
+        let foreign = donor
+            .prepared
+            .take_terminal_construction_material()
+            .unwrap();
+        donor.release_bootstrap_projection();
+
+        let mut fixture = Fixture::new(
+            "terminal-substitute-target",
+            None,
+            vec![("pages/target.md".into(), b"- target [[Donor]]\n".to_vec())],
+        );
+        fixture.release_bootstrap_projection();
+
+        let substituted = build_projection(&fixture, "substituted", Some(&foreign));
+        assert_eq!(substituted.bootstrap().terminal_construction_refusals, 1);
+        assert_eq!(substituted.bootstrap().terminal_constructions, 0);
+        let clean = build_projection(&fixture, "clean", None);
+        assert_eq!(substituted.observation(), clean.observation());
+        assert!(candidate_residue(fixture.root.path()).is_empty());
+        fixture.assert_graph_unchanged();
+        donor.assert_graph_unchanged();
+    }
+
+    /// A forced rebuild over an already-published terminal database produces the
+    /// same observations from the archive alone.
+    #[test]
+    fn forced_rebuild_over_a_terminal_database_replays_the_archive() {
+        let mut fixture = Fixture::new(
+            "terminal-forced-rebuild",
+            None,
+            vec![
+                (
+                    "pages/rebuilt.md".into(),
+                    b"- rebuilt #tagged [[Other]]\n".to_vec(),
+                ),
+                ("pages/other.md".into(), b"- other\n".to_vec()),
+            ],
+        );
+        let material = fixture
+            .prepared
+            .take_terminal_construction_material()
+            .unwrap();
+        fixture.release_bootstrap_projection();
+
+        let path = fixture.root.path().join("rebuilt.sqlite");
+        let terminal = build_projection_at(&fixture, &path, "terminal", Some(&material));
+        assert_eq!(terminal.bootstrap().terminal_constructions, 1);
+        drop(material);
+
+        let rebuilt = build_projection_at(&fixture, &path, "rebuild", None);
+        assert_eq!(rebuilt.bootstrap().terminal_constructions, 0);
+        assert_eq!(
+            rebuilt.bootstrap().bootstrap_part_reads,
+            rebuilt.observation().accepted_batch_count
+        );
+        assert_eq!(terminal.observation(), rebuilt.observation());
+        assert!(candidate_residue(fixture.root.path()).is_empty());
+        fixture.assert_graph_unchanged();
+    }
+}

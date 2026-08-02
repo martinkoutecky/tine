@@ -25714,7 +25714,10 @@ mod tests {
             // through ordinary event DML, and exactly one bounded terminal
             // materialization covers every accepted page.
             assert_eq!(receipt.construction.sqlite.terminal_constructions, 1);
-            assert_eq!(receipt.construction.sqlite.terminal_construction_refusals, 0);
+            assert_eq!(
+                receipt.construction.sqlite.terminal_construction_refusals,
+                0
+            );
             assert_eq!(receipt.construction.sqlite.bootstrap_part_reads, 0);
             assert_eq!(receipt.construction.sqlite.bootstrap_object_reads, 0);
             assert_eq!(

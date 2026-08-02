@@ -1514,8 +1514,7 @@ fn validate_terminal_construction_material(
         ));
     }
     let events = material.accepted_events();
-    if events.len() != aggregate.parts().len()
-        || events.len() as u64 != source.accepted_batch_count
+    if events.len() != aggregate.parts().len() || events.len() as u64 != source.accepted_batch_count
     {
         return Err(ProjectionError::Rebuild(
             "retained terminal material does not cover the exact accepted prefix".into(),
@@ -1533,9 +1532,7 @@ fn validate_terminal_construction_material(
             .accepted_batch_entry_at(sequence)
             .map_err(|error| ProjectionError::Rebuild(error.to_string()))?
             .ok_or_else(|| {
-                ProjectionError::Rebuild(format!(
-                    "accepted history is missing sequence {sequence}"
-                ))
+                ProjectionError::Rebuild(format!("accepted history is missing sequence {sequence}"))
             })?;
         let evidence = indexed_evidence.ok_or_else(|| {
             ProjectionError::Rebuild(
@@ -1638,26 +1635,28 @@ fn collect_reference_source_rows(
                 },
             ),
         };
-        rows.postings
-            .push(super::sqlite_materialization::MaterializedReferencePosting {
+        rows.postings.push(
+            super::sqlite_materialization::MaterializedReferencePosting {
                 source_page_id: page_id,
                 source_entity,
                 source_locator,
                 ordinal,
                 kind,
                 target,
-            });
+            },
+        );
         if let ReferenceFactV1::PageName(fact) = fact {
             if matches!(fact.kind, super::PageReferenceKindV1::AliasDeclaration) {
-                rows.aliases
-                    .push(super::sqlite_materialization::MaterializedAliasDeclaration {
+                rows.aliases.push(
+                    super::sqlite_materialization::MaterializedAliasDeclaration {
                         source_page_id: page_id,
                         source_entity,
                         source_locator,
                         ordinal,
                         raw_alias: fact.raw_target.clone(),
                         normalized_alias: fact.normalized_target.clone(),
-                    });
+                    },
+                );
             }
         }
     }
@@ -2621,6 +2620,41 @@ pub(crate) fn fail_next_apply_during_materialization_for_harness() {
     HARNESS_FAIL_DURING_APPLY.with(|fail| fail.set(true));
 }
 
+/// The three interruption boundaries of one terminal bootstrap construction.
+///
+/// They are the exact atomic edges the build crosses: the candidate
+/// transaction's commit, the candidate file set's atomic publication, and the
+/// projection checkpoint that finally proves the published file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalConstructionCut {
+    BeforeCandidateCommit,
+    AfterCandidateCommitBeforePublication,
+    AfterPublicationBeforeCheckpointProof,
+}
+
+thread_local! {
+    // Crate-private deterministic simulator hook, in the same shape as
+    // `HARNESS_FAIL_DURING_APPLY` above: it fires at a real atomic boundary so
+    // a harness observes the actual recovery behavior rather than a simulated
+    // one.
+    static HARNESS_TERMINAL_CONSTRUCTION_CUT: std::cell::Cell<Option<TerminalConstructionCut>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn fail_next_terminal_construction_at(cut: TerminalConstructionCut) {
+    HARNESS_TERMINAL_CONSTRUCTION_CUT.with(|slot| slot.set(Some(cut)));
+}
+
+fn terminal_construction_cut(cut: TerminalConstructionCut) -> Result<(), ProjectionError> {
+    HARNESS_TERMINAL_CONSTRUCTION_CUT.with(|slot| {
+        if slot.get() == Some(cut) {
+            slot.set(None);
+            return Err(ProjectionError::InjectedFailure);
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn refresh_projection_checkpoint_for_harness(
     path: &Path,
@@ -3159,10 +3193,19 @@ impl SqliteFrontier {
                 return Err(error);
             }
         };
-        if let Err(error) = candidate.physical.checkpoint_truncate_and_disable_wal() {
+        let checkpointed = candidate
+            .physical
+            .checkpoint_truncate_and_disable_wal()
+            .map_err(ProjectionError::from)
+            .and_then(|()| {
+                terminal_construction_cut(
+                    TerminalConstructionCut::AfterCandidateCommitBeforePublication,
+                )
+            });
+        if let Err(error) = checkpointed {
             drop(candidate);
             candidate_files.remove()?;
-            return Err(error.into());
+            return Err(error);
         }
         drop(candidate);
         Ok((candidate_files, rebuild, bootstrap_rebuild))
@@ -3188,6 +3231,7 @@ impl SqliteFrontier {
     > {
         let (candidate_files, rebuild, bootstrap_rebuild) = built;
         candidate_files.publish_candidate(path)?;
+        terminal_construction_cut(TerminalConstructionCut::AfterPublicationBeforeCheckpointProof)?;
         let physical = PhysicalSqliteDatabase::open_writable(path)?;
         let root = read_frontier_root(&physical)?;
         write_projection_checkpoint(path, claim, &root)?;
@@ -3457,7 +3501,7 @@ impl SqliteFrontier {
             .map_err(Into::into)
     }
 
-    fn authenticated_reference_catalog_root(
+    pub(crate) fn authenticated_reference_catalog_root(
         &self,
     ) -> Result<super::ReferenceCatalogRootV2, ProjectionError> {
         let frontier = read_frontier_root(&self.physical)?;
@@ -3648,6 +3692,18 @@ impl SqliteFrontier {
         self.physical.materialized_row_digest().map_err(Into::into)
     }
 
+    /// Test-only complete per-table row observation, used to compare two
+    /// independently built projections table by table.
+    #[cfg(test)]
+    pub(crate) fn materialized_row_digests_by_table_for_test(
+        &self,
+    ) -> Result<Vec<(&'static str, ContentDigest)>, ProjectionError> {
+        let _gate = self.materialized_read()?;
+        self.physical
+            .materialized_row_digests_by_table()
+            .map_err(Into::into)
+    }
+
     /// Test-only recovery inspection of the exact semantic records rebuilt into
     /// this frontier. Production consumers retain only the authenticated
     /// frontier APIs above.
@@ -3739,7 +3795,8 @@ impl SqliteFrontier {
             || reached.acceptance_sequence() != source.accepted_batch_count
         {
             return Err(ProjectionError::Rebuild(
-                "terminal accepted-prefix seed did not reach the authenticated frontier root".into(),
+                "terminal accepted-prefix seed did not reach the authenticated frontier root"
+                    .into(),
             ));
         }
         trace_terminal_phase("accepted prefix seed", prefix_started);
@@ -3769,6 +3826,7 @@ impl SqliteFrontier {
         let proof_started = std::time::Instant::now();
         self.finish_fresh_candidate(source, coverage_count, &mut instrumentation)?;
         trace_terminal_phase("candidate proof scans", proof_started);
+        terminal_construction_cut(TerminalConstructionCut::BeforeCandidateCommit)?;
         self.physical.finish_candidate_build()?;
         record_candidate_write_instrumentation(
             &mut instrumentation,
@@ -3804,10 +3862,11 @@ impl SqliteFrontier {
             ));
         }
         let catalog_root = terminal_root.reference_catalog_root().clone();
-        let extractor_stamp = super::sqlite_materialization::ReferenceExtractorDependencyStamp::new(
-            catalog_root.extractor_digest(),
-            catalog_root.policy_digest(),
-        )?;
+        let extractor_stamp =
+            super::sqlite_materialization::ReferenceExtractorDependencyStamp::new(
+                catalog_root.extractor_digest(),
+                catalog_root.policy_digest(),
+            )?;
         let materializer = (binding.catalog_rows() != 0)
             .then(|| {
                 engine
@@ -3856,13 +3915,11 @@ impl SqliteFrontier {
                     }
                 }
                 self.seed_terminal_chunk(
-                    materializer
-                        .as_ref()
-                        .ok_or_else(|| {
-                            ProjectionError::Rebuild(
-                                "terminal catalog rows require a bulk materializer".into(),
-                            )
-                        })?,
+                    materializer.as_ref().ok_or_else(|| {
+                        ProjectionError::Rebuild(
+                            "terminal catalog rows require a bulk materializer".into(),
+                        )
+                    })?,
                     engine,
                     &catalog_root,
                     extractor_stamp,
@@ -3937,7 +3994,8 @@ impl SqliteFrontier {
                     "authenticated current-path catalog row has no terminal page".into(),
                 )
             })?;
-            if page.page_id != row.page_id() || page.path != *row.path() || page.kind != row.kind() {
+            if page.page_id != row.page_id() || page.path != *row.path() || page.kind != row.kind()
+            {
                 return Err(ProjectionError::Rebuild(
                     "terminal page identity differs from its authenticated catalog row".into(),
                 ));

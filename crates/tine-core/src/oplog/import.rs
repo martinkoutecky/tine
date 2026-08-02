@@ -50,14 +50,13 @@ use super::receipt::ImportIdDerivation;
 use super::shadow_projection::BootstrapProjectionAuthority;
 use super::{
     plan_projection, AcceptedBatchEvent, AnnotatedIdentity, BatchId, BatchOrigin, BlobDescription,
-    BlockId,
-    BlockLocation, ContentDigest, CrdtPeerId, CurrentPageAtPath, DeviceId, DocumentId, ImportId,
-    ImportInventoryEntry, ImportInventoryState, ImportLocator, LineageDigest, LogicalCompletionId,
-    LogicalPageName, LogseqIdentityMutation, LogseqUuid, ManagedPath, ManagedTextKind, ObjectKind,
-    OperationBatch, OperationObject, OperationTransaction, PageId, ProjectionCompletedReceipt,
-    ProjectionCompletion, ProjectionIntent, ProjectionReceiptStore, ProjectionStoreError,
-    ReferenceCatalogPolicyV1, SemanticOperation, SessionId, ShardedHotEngine, StructuralLocator,
-    StructuralSpan, WorkspaceId, DIFF_SCHEMA_VERSION,
+    BlockId, BlockLocation, ContentDigest, CrdtPeerId, CurrentPageAtPath, DeviceId, DocumentId,
+    ImportId, ImportInventoryEntry, ImportInventoryState, ImportLocator, LineageDigest,
+    LogicalCompletionId, LogicalPageName, LogseqIdentityMutation, LogseqUuid, ManagedPath,
+    ManagedTextKind, ObjectKind, OperationBatch, OperationObject, OperationTransaction, PageId,
+    ProjectionCompletedReceipt, ProjectionCompletion, ProjectionIntent, ProjectionReceiptStore,
+    ProjectionStoreError, ReferenceCatalogPolicyV1, SemanticOperation, SessionId, ShardedHotEngine,
+    StructuralLocator, StructuralSpan, WorkspaceId, DIFF_SCHEMA_VERSION,
 };
 use crate::model::{
     path_is_sync_conflict, resolve_external_document_identity, AcceptedExternalDocumentIdentity,
@@ -3216,9 +3215,7 @@ fn author_bootstrap_parts(
                 &super::ValidatedBatch::new(prepared),
                 engine_material.accepted_evidence(),
             )
-            .map_err(|error| {
-                BootstrapStreamingImportError::InvalidOperation(error.to_string())
-            })?,
+            .map_err(|error| BootstrapStreamingImportError::InvalidOperation(error.to_string()))?,
         );
         descriptors.push(descriptor);
         engine_materials.push(engine_material);
