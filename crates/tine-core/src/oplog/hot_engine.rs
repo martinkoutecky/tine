@@ -316,6 +316,25 @@ struct AuthorCatalogLookup {
     page_homes: BTreeMap<PageId, DocumentId>,
 }
 
+/// One document of a prospective projection derivation.
+///
+/// A document the drafted transaction changes is read from the transaction's
+/// own prospective state; every other document keeps its current visible state
+/// and is read in place instead of being copied.
+enum ProspectiveDocument<'engine> {
+    Borrowed(&'engine LoroDoc),
+    Owned(LoroDoc),
+}
+
+impl ProspectiveDocument<'_> {
+    fn document(&self) -> &LoroDoc {
+        match self {
+            Self::Borrowed(document) => document,
+            Self::Owned(document) => document,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct CrdtUpdatePayload {
     schema_version: u32,
@@ -3044,6 +3063,16 @@ struct DraftProjectionPage {
     post_frontier: FrontierV2,
 }
 
+/// What one differential draft proof observed, so a caller can also pin which
+/// derivation copied the whole-graph catalog and which refused.
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DraftOracleObservation {
+    pub(crate) refused: Option<EngineError>,
+    pub(crate) oracle_catalog_copies: usize,
+    pub(crate) optimized_catalog_copies: usize,
+}
+
 /// Speculative author state. Only bounded path requirements are observable;
 /// CRDT buffers, semantic effects, and the prospective object set remain
 /// private until exact endpoint inputs finalize the closed batch.
@@ -4469,6 +4498,9 @@ struct HistoryWorkStats {
     prepare_document_head_visits: usize,
     author_snapshot_clones: usize,
     author_snapshot_clone_ops: usize,
+    prospective_document_copies: usize,
+    prospective_document_copy_ops: usize,
+    prospective_catalog_document_copies: usize,
     stage_snapshot_clones: usize,
     stage_snapshot_clone_ops: usize,
     stage_structural_buffer_reuses: usize,
@@ -4810,6 +4842,13 @@ pub struct EngineInstrumentation {
     pub prepare_document_head_visits: usize,
     pub author_snapshot_clones: usize,
     pub author_snapshot_clone_ops: usize,
+    /// Whole documents copied while deriving a draft's prospective projection.
+    pub prospective_document_copies: usize,
+    /// Total CRDT operations reproduced by those copies. This is the term that
+    /// used to grow with the page count of the whole graph.
+    pub prospective_document_copy_ops: usize,
+    /// The subset of those copies that reproduced the whole-graph catalog.
+    pub prospective_catalog_document_copies: usize,
     pub stage_snapshot_clones: usize,
     pub stage_snapshot_clone_ops: usize,
     pub stage_structural_buffer_reuses: usize,
@@ -5557,6 +5596,10 @@ pub struct ShardedHotEngine {
     pending_author_fast_path_attempts: usize,
     #[cfg(test)]
     author_generation_root_probe: Cell<AuthorGenerationRootProbe>,
+    /// Restores the previous derivation, which reproduced every document it
+    /// read. Differential proofs run one draft both ways.
+    #[cfg(test)]
+    previous_document_derivation: Cell<bool>,
 }
 
 /// Deterministic instrumentation for the author staleness token. `calls`
@@ -5698,6 +5741,8 @@ impl ShardedHotEngine {
             pending_author_fast_path_attempts: 0,
             #[cfg(test)]
             author_generation_root_probe: Cell::new(AuthorGenerationRootProbe::default()),
+            #[cfg(test)]
+            previous_document_derivation: Cell::new(false),
         }
     }
 
@@ -8148,6 +8193,13 @@ impl ShardedHotEngine {
         self.reference_source_observations.set(observations);
     }
 
+    /// Force the previous derivation, which reproduced every document it read,
+    /// so a differential proof can compare both derivations.
+    #[cfg(test)]
+    pub(crate) fn set_previous_document_derivation(&self, enabled: bool) {
+        self.previous_document_derivation.set(enabled);
+    }
+
     pub fn instrumentation(&self) -> EngineInstrumentation {
         let work = self.history_work.get();
         let logseq_claims = self
@@ -8176,6 +8228,9 @@ impl ShardedHotEngine {
             prepare_document_head_visits: work.prepare_document_head_visits,
             author_snapshot_clones: work.author_snapshot_clones,
             author_snapshot_clone_ops: work.author_snapshot_clone_ops,
+            prospective_document_copies: work.prospective_document_copies,
+            prospective_document_copy_ops: work.prospective_document_copy_ops,
+            prospective_catalog_document_copies: work.prospective_catalog_document_copies,
             stage_snapshot_clones: work.stage_snapshot_clones,
             stage_snapshot_clone_ops: work.stage_snapshot_clone_ops,
             stage_structural_buffer_reuses: work.stage_structural_buffer_reuses,
@@ -11623,6 +11678,98 @@ impl ShardedHotEngine {
         self.draft_author_transaction_with_observation(author, origin, transaction, None)
     }
 
+    /// Draft one transaction twice — once with the in-place prospective
+    /// derivation and once with the previous derivation, which reproduced every
+    /// document it read — and prove the two drafts are the same draft.
+    ///
+    /// Both drafts are speculative: nothing is captured, so the second draft
+    /// starts from the same engine state as the first.
+    #[cfg(test)]
+    pub(crate) fn assert_draft_matches_previous_derivation(
+        &self,
+        author: AuthorBatch,
+        origin: BatchOrigin,
+        transaction: &OperationTransaction,
+    ) -> DraftOracleObservation {
+        let oracle_copies = self.prospective_catalog_document_copies();
+        self.set_previous_document_derivation(true);
+        let oracle =
+            self.draft_author_transaction_with_observation(author, origin, transaction, None);
+        let oracle_copies = self.prospective_catalog_document_copies() - oracle_copies;
+
+        let optimized_copies = self.prospective_catalog_document_copies();
+        self.set_previous_document_derivation(false);
+        let optimized =
+            self.draft_author_transaction_with_observation(author, origin, transaction, None);
+        let optimized_copies = self.prospective_catalog_document_copies() - optimized_copies;
+
+        match (oracle, optimized) {
+            (Ok(oracle), Ok(optimized)) => {
+                assert_eq!(oracle.author, optimized.author);
+                assert_eq!(oracle.origin, optimized.origin);
+                assert_eq!(oracle.generation, optimized.generation);
+                assert_eq!(oracle.root_token, optimized.root_token);
+                assert_eq!(oracle.prepared_core, optimized.prepared_core);
+                assert_eq!(oracle.semantic_effect, optimized.semantic_effect);
+                assert_eq!(oracle.portable_path_root, optimized.portable_path_root);
+                assert_eq!(oracle.requirements, optimized.requirements);
+                assert_eq!(
+                    oracle.prospective_documents.keys().collect::<Vec<_>>(),
+                    optimized.prospective_documents.keys().collect::<Vec<_>>()
+                );
+                for (document_id, document) in &oracle.prospective_documents {
+                    assert_eq!(
+                        document.oplog_vv(),
+                        optimized.prospective_documents[document_id].oplog_vv(),
+                        "prospective document {document_id} diverged"
+                    );
+                }
+                assert_eq!(
+                    oracle.pages.keys().collect::<Vec<_>>(),
+                    optimized.pages.keys().collect::<Vec<_>>()
+                );
+                for (page_id, page) in &oracle.pages {
+                    let other = &optimized.pages[page_id];
+                    assert_eq!(
+                        page.before, other.before,
+                        "page {page_id} pre-state diverged"
+                    );
+                    assert_eq!(
+                        page.after, other.after,
+                        "page {page_id} post-state diverged"
+                    );
+                    assert_eq!(
+                        page.post_frontier, other.post_frontier,
+                        "page {page_id} accepted frontier diverged"
+                    );
+                }
+                DraftOracleObservation {
+                    refused: None,
+                    oracle_catalog_copies: oracle_copies,
+                    optimized_catalog_copies: optimized_copies,
+                }
+            }
+            (Err(oracle), Err(optimized)) => {
+                assert_eq!(oracle, optimized, "the two derivations refused differently");
+                DraftOracleObservation {
+                    refused: Some(oracle),
+                    oracle_catalog_copies: oracle_copies,
+                    optimized_catalog_copies: optimized_copies,
+                }
+            }
+            (oracle, optimized) => panic!(
+                "one derivation refused and the other did not: oracle={:?} optimized={:?}",
+                oracle.err(),
+                optimized.err()
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    fn prospective_catalog_document_copies(&self) -> usize {
+        self.history_work.get().prospective_catalog_document_copies
+    }
+
     /// Draft a sealed external-import transaction with its already bounded
     /// observation object. The object joins the core manifest before the
     /// engine applies semantic operations, so object-set validation and the
@@ -13070,10 +13217,72 @@ impl ShardedHotEngine {
         document_id: DocumentId,
         prospective: &BTreeMap<DocumentId, LoroDoc>,
     ) -> Result<LoroDoc, EngineError> {
-        match prospective.get(&document_id) {
+        let copy = match prospective.get(&document_id) {
             Some(document) => clone_doc(document, 1),
             None => self.clone_visible_document(document_id, 1),
+        }?;
+        self.record_prospective_document_copy(document_id, &copy);
+        Ok(copy)
+    }
+
+    /// Resolve one document of a prospective projection derivation.
+    ///
+    /// The whole-graph catalog is the one document this derivation reproduced
+    /// on every ordinary block edit, which made one-page authoring proportional
+    /// to the total page count. A transaction that does not change the catalog
+    /// leaves it at exactly its current visible state, and the catalog is the
+    /// one document with a hot, anchor-validated in-place reader — the same
+    /// reader that already produces this draft's pre-state in
+    /// `materialize_page_inner` — so that state is read in place instead.
+    ///
+    /// Every other document, and the catalog itself once the drafted
+    /// transaction changes catalog-wide page identity, keeps the previous
+    /// derivation.
+    fn prospective_document_ref<'engine>(
+        &'engine self,
+        document_id: DocumentId,
+        prospective: &'engine BTreeMap<DocumentId, LoroDoc>,
+    ) -> Result<ProspectiveDocument<'engine>, EngineError> {
+        if document_id == self.catalog_document_id
+            && !prospective.contains_key(&document_id)
+            && !self.uses_previous_document_derivation()
+        {
+            if let Some(catalog) = self.current_catalog_document()? {
+                return Ok(ProspectiveDocument::Borrowed(catalog));
+            }
         }
+        Ok(ProspectiveDocument::Owned(
+            self.prospective_document(document_id, prospective)?,
+        ))
+    }
+
+    fn record_prospective_document_copy(&self, document_id: DocumentId, copy: &LoroDoc) {
+        let mut work = self.history_work.get();
+        work.prospective_document_copies = work.prospective_document_copies.saturating_add(1);
+        work.prospective_document_copy_ops = work.prospective_document_copy_ops.saturating_add(
+            copy.oplog_vv()
+                .values()
+                .filter_map(|end| usize::try_from((*end).max(0)).ok())
+                .sum::<usize>(),
+        );
+        if document_id == self.catalog_document_id {
+            work.prospective_catalog_document_copies =
+                work.prospective_catalog_document_copies.saturating_add(1);
+        }
+        self.history_work.set(work);
+    }
+
+    /// Test-only escape hatch that restores the previous derivation, which
+    /// reproduced every document it read. Differential proofs use it as the
+    /// oracle.
+    #[cfg(test)]
+    fn uses_previous_document_derivation(&self) -> bool {
+        self.previous_document_derivation.get()
+    }
+
+    #[cfg(not(test))]
+    fn uses_previous_document_derivation(&self) -> bool {
+        false
     }
 
     fn prospective_document_dependencies(
@@ -13102,8 +13311,9 @@ impl ShardedHotEngine {
         prospective: &BTreeMap<DocumentId, LoroDoc>,
         effect: &SemanticEffect,
     ) -> Result<Option<ProjectionPageState>, EngineError> {
-        let catalog = self.prospective_document(self.catalog_document_id, prospective)?;
-        let Some(page_state) = validate_catalog_page(self.catalog_document_id, &catalog, page_id)?
+        let catalog = self.prospective_document_ref(self.catalog_document_id, prospective)?;
+        let Some(page_state) =
+            validate_catalog_page(self.catalog_document_id, catalog.document(), page_id)?
         else {
             return Ok(None);
         };
@@ -13114,8 +13324,8 @@ impl ShardedHotEngine {
         else {
             return Ok(None);
         };
-        let page_document = self.prospective_document(page_document_id, prospective)?;
-        let members = read_memberships(page_document_id, &page_document)?;
+        let page_document = self.prospective_document_ref(page_document_id, prospective)?;
+        let members = read_memberships(page_document_id, page_document.document())?;
         let mut documents = BTreeMap::from([
             (self.catalog_document_id, catalog),
             (page_document_id, page_document),
@@ -13124,11 +13334,15 @@ impl ShardedHotEngine {
             if !documents.contains_key(&claim.home_document_id) {
                 documents.insert(
                     claim.home_document_id,
-                    self.prospective_document(claim.home_document_id, prospective)?,
+                    self.prospective_document_ref(claim.home_document_id, prospective)?,
                 );
             }
         }
-        let page = self.materialize_page_from_documents(page_id, &documents)?;
+        let page = self.materialize_page_from_document_lookup(page_id, |document_id| {
+            documents
+                .get(&document_id)
+                .map(ProspectiveDocument::document)
+        })?;
         let mut requested =
             page_logseq_references(&page.path, page.preamble.as_deref(), &page.blocks);
         requested.extend(page.blocks.iter().filter_map(|block| block.logseq_uuid));
@@ -13170,13 +13384,21 @@ impl ShardedHotEngine {
                 if !documents.contains_key(&document_id) {
                     documents.insert(
                         document_id,
-                        self.prospective_document(document_id, prospective)?,
+                        self.prospective_document_ref(document_id, prospective)?,
                     );
                 }
             }
             let evidence =
                 ProjectionClaimEvidence::new(logseq_uuid, participants.into_iter().collect())?;
-            match self.resolve_logseq_uuid_from_documents(logseq_uuid, &evidence, &documents)? {
+            match self.resolve_logseq_uuid_from_document_lookup(
+                logseq_uuid,
+                &evidence,
+                |document_id| {
+                    documents
+                        .get(&document_id)
+                        .map(ProspectiveDocument::document)
+                },
+            )? {
                 LogseqUuidResolution::Ambiguous { claim_count } => {
                     return Err(EngineError::AmbiguousLogseqUuid {
                         logseq_uuid,
@@ -13194,7 +13416,7 @@ impl ShardedHotEngine {
                 .map(|(document_id, document)| {
                     self.prospective_document_dependencies(
                         *document_id,
-                        document,
+                        document.document(),
                         batch_id,
                         prospective,
                     )
@@ -13224,10 +13446,10 @@ impl ShardedHotEngine {
                 .iter()
                 .map(|dependencies| {
                     let document_id = dependencies.document_id();
-                    let document = self.prospective_document(document_id, prospective)?;
+                    let document = self.prospective_document_ref(document_id, prospective)?;
                     self.prospective_document_dependencies(
                         document_id,
-                        &document,
+                        document.document(),
                         batch_id,
                         prospective,
                     )
@@ -23810,6 +24032,23 @@ fn record_owned_semantic_snapshot_entries(entries: usize) {
     );
 }
 
+#[cfg(test)]
+thread_local! {
+    static CATALOG_PAGE_ENTRY_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Catalog rows decoded by whole-catalog enumeration. Any nonzero delta on a
+/// one-page transaction is graph-wide work.
+#[cfg(test)]
+pub(crate) fn catalog_page_entry_visits() -> usize {
+    CATALOG_PAGE_ENTRY_VISITS.get()
+}
+
+#[cfg(test)]
+fn record_catalog_page_entry_visits(entries: usize) {
+    CATALOG_PAGE_ENTRY_VISITS.set(CATALOG_PAGE_ENTRY_VISITS.get().saturating_add(entries));
+}
+
 fn snapshot_document(
     catalog_document_id: DocumentId,
     document_id: DocumentId,
@@ -24869,6 +25108,8 @@ fn read_all_pages(document: &LoroDoc) -> Result<BTreeMap<PageId, PageState>, Eng
             "catalog entry bound exceeded".into(),
         ));
     }
+    #[cfg(test)]
+    record_catalog_page_entry_visits(pages.len());
     let mut result = BTreeMap::new();
     for key in pages.keys() {
         let page_id = PageId::from_str(&key)
