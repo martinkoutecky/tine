@@ -1078,7 +1078,7 @@ pub fn finalize_fresh_bootstrap(
 }
 
 fn apply_reference_catalog_change(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     input: &PhysicalReferenceCatalogChange,
     coverage_validation: CoverageValidation,
 ) -> Result<(Vec<u8>, ContentDigest, ContentDigest, ContentDigest, u64), MaterializationError> {
@@ -1358,9 +1358,61 @@ pub fn apply_change_fresh_bootstrap(
     )
 }
 
+pub(crate) fn apply_change_in_open_candidate(
+    transaction: &Connection,
+    change: &PhysicalMaterializationChange,
+    sequence: u64,
+    input_digest: ContentDigest,
+    post_frontier_digest: ContentDigest,
+    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
+) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+    if transaction.is_autocommit() {
+        return Err(MaterializationError::InvalidInput(
+            "candidate materialization requires an active transaction".into(),
+        ));
+    }
+    apply_change_inner(
+        transaction,
+        change,
+        sequence,
+        input_digest,
+        post_frontier_digest,
+        authenticated_reference,
+        CoverageValidation::FullScan,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_change_fresh_bootstrap_in_open_candidate(
+    transaction: &Connection,
+    change: &PhysicalMaterializationChange,
+    sequence: u64,
+    input_digest: ContentDigest,
+    post_frontier_digest: ContentDigest,
+    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
+    prior_reference_coverage_count: u64,
+) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+    if transaction.is_autocommit() {
+        return Err(MaterializationError::InvalidInput(
+            "candidate materialization requires an active transaction".into(),
+        ));
+    }
+    apply_change_inner(
+        transaction,
+        change,
+        sequence,
+        input_digest,
+        post_frontier_digest,
+        authenticated_reference,
+        CoverageValidation::FreshInductive {
+            prior_count: prior_reference_coverage_count,
+        },
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_change_inner(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     change: &PhysicalMaterializationChange,
     sequence: u64,
     input_digest: ContentDigest,
@@ -1505,7 +1557,7 @@ fn apply_change_inner(
 }
 
 fn validate_preserved_page_metadata(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     change: &PhysicalMaterializationChange,
 ) -> Result<(), MaterializationError> {
     for page in &change.replacements {
@@ -1597,7 +1649,7 @@ struct PageCleanupInstrumentation {
 }
 
 fn delete_page(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     page_id: [u8; 16],
     remove_incoming_page_references: bool,
     retained_blocks: &BTreeSet<[u8; 16]>,
@@ -1697,10 +1749,7 @@ fn delete_page(
     Ok(instrumentation)
 }
 
-fn insert_page(
-    transaction: &Transaction<'_>,
-    page: &PhysicalPage,
-) -> Result<(), MaterializationError> {
+fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), MaterializationError> {
     let page_id = &page.page_id;
     transaction.execute(
         "INSERT INTO pages (
@@ -1750,7 +1799,7 @@ fn insert_page(
 }
 
 fn insert_block(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     page_id: [u8; 16],
     block: &PhysicalBlock,
 ) -> Result<(), MaterializationError> {
@@ -1814,7 +1863,7 @@ fn insert_block(
 }
 
 fn insert_fts(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     entity_type: &str,
     entity_id: [u8; 16],
     page_id: [u8; 16],
@@ -1850,7 +1899,7 @@ fn insert_fts(
 }
 
 fn insert_references(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source: PhysicalEntityId,
     source_page_id: [u8; 16],
     references: &[PhysicalReference],
@@ -1880,7 +1929,7 @@ fn insert_references(
 }
 
 fn insert_properties(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     owner: PhysicalEntityId,
     page_id: [u8; 16],
     properties: &[PhysicalProperty],
@@ -1907,7 +1956,7 @@ fn insert_properties(
 }
 
 fn insert_tags(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     owner: PhysicalEntityId,
     page_id: [u8; 16],
     tags: &[String],

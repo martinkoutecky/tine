@@ -1457,7 +1457,7 @@ pub fn read_frontier_documents(
 }
 
 fn store_frontier_map_node(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     node: &FrontierMapNode,
 ) -> Result<(), FrontierError> {
     if node.node_digest != node.recompute_digest() {
@@ -1497,7 +1497,7 @@ fn store_frontier_map_node(
 }
 
 fn upsert_frontier_map(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     root: Option<MapLink>,
     document: &PhysicalFrontierDocument,
     depth: usize,
@@ -1560,7 +1560,7 @@ fn upsert_frontier_map(
 }
 
 fn rotate_frontier_right(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     mut node: FrontierMapNode,
 ) -> Result<MapLink, FrontierError> {
     let left = node.left.take().ok_or_else(|| {
@@ -1578,7 +1578,7 @@ fn rotate_frontier_right(
 }
 
 fn rotate_frontier_left(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     mut node: FrontierMapNode,
 ) -> Result<MapLink, FrontierError> {
     let right = node.right.take().ok_or_else(|| {
@@ -1823,7 +1823,7 @@ fn split_clock(
 }
 
 fn derive_causal_clock_root(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     root: &PhysicalFrontierRoot,
     batch: &PhysicalAcceptedBatch,
 ) -> Result<MapLink, FrontierError> {
@@ -2006,7 +2006,7 @@ fn stored_matches_request(
 }
 
 fn insert_event(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     batch: &PhysicalAcceptedBatch,
     clock_root: &MapLink,
 ) -> Result<(), FrontierError> {
@@ -2189,6 +2189,26 @@ pub fn apply(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
 ) -> Result<ApplyResult, FrontierError> {
+    apply_with_transaction_policy(connection, current_root, request, false)
+}
+
+/// Apply one transition inside a candidate-build transaction already owned by
+/// the caller. This is deliberately separate from [`apply`]: ordinary live
+/// applies continue to own and durably commit exactly one transaction each.
+pub fn apply_candidate(
+    connection: &mut Connection,
+    current_root: &PhysicalFrontierRoot,
+    request: &PhysicalApplyRequest,
+) -> Result<ApplyResult, FrontierError> {
+    apply_with_transaction_policy(connection, current_root, request, true)
+}
+
+fn apply_with_transaction_policy(
+    connection: &mut Connection,
+    current_root: &PhysicalFrontierRoot,
+    request: &PhysicalApplyRequest,
+    candidate_build: bool,
+) -> Result<ApplyResult, FrontierError> {
     validate_request_shape(request)?;
     let batch = &request.batch;
     let stored_frontier = read_frontier(connection)?;
@@ -2277,19 +2297,69 @@ pub fn apply(
         )?;
     }
 
+    if candidate_build {
+        if connection.is_autocommit() {
+            return Err(FrontierError::InvalidInput(
+                "candidate apply requires an active candidate-build transaction".into(),
+            ));
+        }
+        return apply_in_open_transaction(
+            OpenApplyTransaction::Candidate(connection),
+            current_root,
+            request,
+            &stored_frontier,
+        );
+    }
+    if !connection.is_autocommit() {
+        return Err(FrontierError::InvalidInput(
+            "ordinary apply cannot join a caller-owned transaction".into(),
+        ));
+    }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let result = apply_in_open_transaction(
+        OpenApplyTransaction::Ordinary(&transaction),
+        current_root,
+        request,
+        &stored_frontier,
+    )?;
+    transaction.commit()?;
+    Ok(result)
+}
+
+enum OpenApplyTransaction<'transaction, 'connection> {
+    Ordinary(&'transaction Transaction<'connection>),
+    Candidate(&'transaction Connection),
+}
+
+impl OpenApplyTransaction<'_, '_> {
+    fn connection(&self) -> &Connection {
+        match self {
+            Self::Ordinary(transaction) => transaction,
+            Self::Candidate(connection) => connection,
+        }
+    }
+}
+
+fn apply_in_open_transaction(
+    transaction: OpenApplyTransaction<'_, '_>,
+    current_root: &PhysicalFrontierRoot,
+    request: &PhysicalApplyRequest,
+    stored_frontier: &StoredFrontier,
+) -> Result<ApplyResult, FrontierError> {
+    let connection = transaction.connection();
+    let batch = &request.batch;
     // Re-read after BEGIN IMMEDIATE so every physical premise is protected by the write
     // transaction even if this API is used without Tine's higher-level single-writer lease.
-    let transaction_frontier = read_frontier(&transaction)?;
-    if transaction_frontier != stored_frontier {
+    let transaction_frontier = read_frontier(connection)?;
+    if &transaction_frontier != stored_frontier {
         return Err(FrontierError::Corrupt(
             "physical frontier changed while beginning apply".into(),
         ));
     }
-    let clock_root = derive_causal_clock_root(&transaction, current_root, batch)?;
+    let clock_root = derive_causal_clock_root(connection, current_root, batch)?;
     let causal_record_digest = accepted_causal_record_digest(batch, &clock_root);
     let post_batch_root = upsert_batch_map(
-        &transaction,
+        connection,
         current_root.batch_map_root_key.map(|key| MapLink {
             key,
             digest: current_root.batch_map_root_digest,
@@ -2303,7 +2373,7 @@ pub fn apply(
     {
         return Err(FrontierError::FrontierRegression);
     }
-    insert_event(&transaction, batch, &clock_root)?;
+    insert_event(connection, batch, &clock_root)?;
     match request.fault {
         ApplyFault::ReturnAfterInsert => return Err(FrontierError::InjectedFailure),
         ApplyFault::AbortAfterInsert => std::process::abort(),
@@ -2316,7 +2386,7 @@ pub fn apply(
     });
     let mut new_documents = 0_u64;
     for document in &batch.affected_documents {
-        let (root, inserted) = upsert_frontier_map(&transaction, document_root, document, 0)?;
+        let (root, inserted) = upsert_frontier_map(connection, document_root, document, 0)?;
         document_root = Some(root);
         new_documents = new_documents.saturating_add(u64::from(inserted));
     }
@@ -2336,41 +2406,65 @@ pub fn apply(
         request.materialization.as_ref(),
         request.materialization_input_digest,
     ) {
-        materialization_stats = match request.prior_reference_coverage_count {
-            Some(prior_count) => sqlite_materialization::apply_change_fresh_bootstrap(
-                &transaction,
-                change,
-                batch.acceptance_sequence,
-                input_digest,
-                batch.post_frontier_root.digest(),
-                request.authenticated_reference.as_ref(),
-                prior_count,
-            )?,
-            None => sqlite_materialization::apply_change(
-                &transaction,
-                change,
-                batch.acceptance_sequence,
-                input_digest,
-                batch.post_frontier_root.digest(),
-                request.authenticated_reference.as_ref(),
-            )?,
+        materialization_stats = match (&transaction, request.prior_reference_coverage_count) {
+            (OpenApplyTransaction::Ordinary(transaction), Some(prior_count)) => {
+                sqlite_materialization::apply_change_fresh_bootstrap(
+                    transaction,
+                    change,
+                    batch.acceptance_sequence,
+                    input_digest,
+                    batch.post_frontier_root.digest(),
+                    request.authenticated_reference.as_ref(),
+                    prior_count,
+                )?
+            }
+            (OpenApplyTransaction::Ordinary(transaction), None) => {
+                sqlite_materialization::apply_change(
+                    transaction,
+                    change,
+                    batch.acceptance_sequence,
+                    input_digest,
+                    batch.post_frontier_root.digest(),
+                    request.authenticated_reference.as_ref(),
+                )?
+            }
+            (OpenApplyTransaction::Candidate(transaction), Some(prior_count)) => {
+                sqlite_materialization::apply_change_fresh_bootstrap_in_open_candidate(
+                    transaction,
+                    change,
+                    batch.acceptance_sequence,
+                    input_digest,
+                    batch.post_frontier_root.digest(),
+                    request.authenticated_reference.as_ref(),
+                    prior_count,
+                )?
+            }
+            (OpenApplyTransaction::Candidate(transaction), None) => {
+                sqlite_materialization::apply_change_in_open_candidate(
+                    transaction,
+                    change,
+                    batch.acceptance_sequence,
+                    input_digest,
+                    batch.post_frontier_root.digest(),
+                    request.authenticated_reference.as_ref(),
+                )?
+            }
         };
     }
     if matches!(request.fault, ApplyFault::ReturnAfterMaterialization) {
         return Err(FrontierError::InjectedFailure);
     }
-    transaction.execute(
+    connection.execute(
         "UPDATE frontier SET frontier_root = ?1, frontier_root_digest = ?2,
                              applied_batch_count = ?3 WHERE singleton = 1",
         params![
             &batch.post_frontier_root.canonical_bytes,
             batch.post_frontier_root.digest().as_bytes().as_slice(),
-            i64::try_from(expected_sequence).map_err(|_| FrontierError::Corrupt(
+            i64::try_from(batch.acceptance_sequence).map_err(|_| FrontierError::Corrupt(
                 "applied batch sequence exceeds SQLite".into()
             ))?,
         ],
     )?;
-    transaction.commit()?;
     Ok(ApplyResult {
         disposition: ApplyDisposition::Applied,
         materialization: materialization_stats,
@@ -2696,6 +2790,14 @@ mod tests {
         physical: &mut PhysicalSqliteDatabase,
         empty: &PhysicalFrontierRoot,
     ) -> FreshBootstrapScenario {
+        apply_two_part_fresh_bootstrap_with(physical, empty, false)
+    }
+
+    fn apply_two_part_fresh_bootstrap_with(
+        physical: &mut PhysicalSqliteDatabase,
+        empty: &PhysicalFrontierRoot,
+        candidate: bool,
+    ) -> FreshBootstrapScenario {
         let document = PhysicalFrontierDocument {
             document_id: id(50),
             canonical_bytes: b"fresh-bootstrap-document".to_vec(),
@@ -2703,7 +2805,12 @@ mod tests {
         let (mut first, first_entries) = request(empty, 1, None, vec![document.clone()], &[], true);
         let first_source_page_id = configure_fresh_bootstrap_reference(&mut first, &[]);
         let first_batch_id = first.batch.batch_id;
-        let first_apply = physical.apply(empty, &first).unwrap();
+        let first_apply = if candidate {
+            physical.apply_candidate(empty, &first)
+        } else {
+            physical.apply(empty, &first)
+        }
+        .unwrap();
         let first_root = first.batch.post_frontier_root.clone();
 
         let (mut second, batch_entries) = request(
@@ -2717,7 +2824,12 @@ mod tests {
         let second_source_page_id =
             configure_fresh_bootstrap_reference(&mut second, &[first_source_page_id]);
         let second_batch_id = second.batch.batch_id;
-        let second_apply = physical.apply(&first_root, &second).unwrap();
+        let second_apply = if candidate {
+            physical.apply_candidate(&first_root, &second)
+        } else {
+            physical.apply(&first_root, &second)
+        }
+        .unwrap();
 
         FreshBootstrapScenario {
             first_apply,
@@ -2954,6 +3066,81 @@ mod tests {
                 .unwrap(),
             BTreeSet::from([scenario.second_source_page_id])
         );
+    }
+
+    #[test]
+    fn candidate_batch_matches_ordinary_apply_and_keeps_live_commit_durability() {
+        let (_ordinary_path, mut ordinary, empty) = initialized_facade();
+        let ordinary_scenario = apply_two_part_fresh_bootstrap(&mut ordinary, &empty);
+        let ordinary_semantic = ordinary.semantic_projection_digest().unwrap();
+        let ordinary_rows = ordinary.materialized_row_digest().unwrap();
+        let ordinary_writes = ordinary.write_instrumentation();
+        assert_eq!(ordinary_writes.ordinary_transactions, 2);
+        assert_eq!(ordinary_writes.ordinary_durability_barriers, 2);
+        assert_eq!(ordinary_writes.candidate_transactions, 0);
+        assert_eq!(ordinary_writes.candidate_durability_barriers, 0);
+
+        let (_candidate_path, mut candidate, candidate_empty) = initialized_facade();
+        candidate.begin_candidate_build().unwrap();
+        let candidate_scenario =
+            apply_two_part_fresh_bootstrap_with(&mut candidate, &candidate_empty, true);
+        assert_eq!(
+            candidate.read_frontier().unwrap().canonical_bytes,
+            candidate_scenario.final_root.canonical_bytes
+        );
+        candidate.finish_candidate_build().unwrap();
+
+        assert_eq!(candidate_scenario.final_root, ordinary_scenario.final_root);
+        assert_eq!(
+            candidate.semantic_projection_digest().unwrap(),
+            ordinary_semantic
+        );
+        assert_eq!(candidate.materialized_row_digest().unwrap(), ordinary_rows);
+        let candidate_writes = candidate.write_instrumentation();
+        assert_eq!(candidate_writes.ordinary_transactions, 0);
+        assert_eq!(candidate_writes.ordinary_durability_barriers, 0);
+        assert_eq!(candidate_writes.candidate_transactions, 1);
+        assert_eq!(candidate_writes.candidate_durability_barriers, 1);
+    }
+
+    #[test]
+    fn failed_unfinished_candidate_transaction_is_not_reopenable_as_accepted_state() {
+        let (database, mut candidate, empty) = initialized_facade();
+        candidate.begin_candidate_build().unwrap();
+        let document = PhysicalFrontierDocument {
+            document_id: id(50),
+            canonical_bytes: b"fresh-bootstrap-document".to_vec(),
+        };
+        let (mut first, first_entries) =
+            request(&empty, 1, None, vec![document.clone()], &[], true);
+        let first_source = configure_fresh_bootstrap_reference(&mut first, &[]);
+        candidate.apply_candidate(&empty, &first).unwrap();
+        let first_root = first.batch.post_frontier_root.clone();
+
+        let (mut second, _) = request(
+            &first_root,
+            2,
+            Some(first.batch.batch_id),
+            vec![document],
+            &first_entries,
+            true,
+        );
+        configure_fresh_bootstrap_reference(&mut second, &[first_source]);
+        second.fault = ApplyFault::ReturnAfterMaterialization;
+        assert_eq!(
+            candidate.apply_candidate(&first_root, &second),
+            Err(FrontierError::InjectedFailure)
+        );
+        drop(candidate);
+
+        let reopened = PhysicalSqliteDatabase::open_writable(&database.path).unwrap();
+        assert_eq!(
+            reopened.read_frontier().unwrap().canonical_bytes,
+            empty.canonical_bytes
+        );
+        assert!(reopened.load_all_batches().unwrap().is_empty());
+        assert_eq!(reopened.reference_source_coverage_count().unwrap(), 0);
+        assert!(reopened.stored_semantic_effects().unwrap().is_empty());
     }
 
     #[test]

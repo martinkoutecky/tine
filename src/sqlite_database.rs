@@ -42,6 +42,19 @@ pub struct PhysicalReferenceCatalogStamp {
 /// physical data or lifecycle action it performs.
 pub struct PhysicalSqliteDatabase {
     connection: Connection,
+    write_instrumentation: PhysicalWriteInstrumentation,
+    candidate_build_active: bool,
+}
+
+/// Physical commit accounting for accepted-event application. Schema setup,
+/// checkpoint publication, and directory publication are intentionally outside
+/// these apply-path counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PhysicalWriteInstrumentation {
+    pub ordinary_transactions: u64,
+    pub ordinary_durability_barriers: u64,
+    pub candidate_transactions: u64,
+    pub candidate_durability_barriers: u64,
 }
 
 impl PhysicalSqliteDatabase {
@@ -59,7 +72,11 @@ impl PhysicalSqliteDatabase {
              PRAGMA foreign_keys = ON;
              PRAGMA trusted_schema = OFF;",
         )?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            write_instrumentation: PhysicalWriteInstrumentation::default(),
+            candidate_build_active: false,
+        })
     }
 
     pub fn open_read_only(path: &Path) -> Result<Self, FrontierError> {
@@ -67,7 +84,11 @@ impl PhysicalSqliteDatabase {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            write_instrumentation: PhysicalWriteInstrumentation::default(),
+            candidate_build_active: false,
+        })
     }
 
     pub fn initialize_schema(
@@ -191,7 +212,77 @@ impl PhysicalSqliteDatabase {
         current_root: &PhysicalFrontierRoot,
         request: &PhysicalApplyRequest,
     ) -> Result<ApplyResult, FrontierError> {
-        sqlite_frontier::apply(&mut self.connection, current_root, request)
+        let result = sqlite_frontier::apply(&mut self.connection, current_root, request)?;
+        if matches!(
+            result.disposition,
+            sqlite_frontier::ApplyDisposition::Applied
+        ) {
+            self.write_instrumentation.ordinary_transactions = self
+                .write_instrumentation
+                .ordinary_transactions
+                .saturating_add(1);
+            self.write_instrumentation.ordinary_durability_barriers = self
+                .write_instrumentation
+                .ordinary_durability_barriers
+                .saturating_add(1);
+        }
+        Ok(result)
+    }
+
+    /// Begin one unpublished disposable-candidate transaction. Only the
+    /// candidate apply method below can join it; ordinary live apply refuses a
+    /// caller-owned transaction.
+    pub fn begin_candidate_build(&mut self) -> Result<(), FrontierError> {
+        if self.candidate_build_active || !self.connection.is_autocommit() {
+            return Err(FrontierError::InvalidInput(
+                "candidate build transaction is already active".into(),
+            ));
+        }
+        self.connection.execute_batch("BEGIN IMMEDIATE")?;
+        self.candidate_build_active = true;
+        self.write_instrumentation.candidate_transactions = self
+            .write_instrumentation
+            .candidate_transactions
+            .saturating_add(1);
+        Ok(())
+    }
+
+    /// Replay one already-validated transition into the active unpublished
+    /// candidate without committing it independently.
+    pub fn apply_candidate(
+        &mut self,
+        current_root: &PhysicalFrontierRoot,
+        request: &PhysicalApplyRequest,
+    ) -> Result<ApplyResult, FrontierError> {
+        if !self.candidate_build_active {
+            return Err(FrontierError::InvalidInput(
+                "candidate apply has no active candidate-build transaction".into(),
+            ));
+        }
+        sqlite_frontier::apply_candidate(&mut self.connection, current_root, request)
+    }
+
+    /// Commit the fully proved candidate once. Under this connection's
+    /// `synchronous=FULL` contract, the commit is the candidate apply-path
+    /// durability barrier; WAL checkpoint and atomic publication remain later
+    /// explicit boundaries.
+    pub fn finish_candidate_build(&mut self) -> Result<(), FrontierError> {
+        if !self.candidate_build_active || self.connection.is_autocommit() {
+            return Err(FrontierError::InvalidInput(
+                "candidate build transaction is not active".into(),
+            ));
+        }
+        self.connection.execute_batch("COMMIT")?;
+        self.candidate_build_active = false;
+        self.write_instrumentation.candidate_durability_barriers = self
+            .write_instrumentation
+            .candidate_durability_barriers
+            .saturating_add(1);
+        Ok(())
+    }
+
+    pub fn write_instrumentation(&self) -> PhysicalWriteInstrumentation {
+        self.write_instrumentation
     }
 
     pub fn ensure_materialization_stamp(

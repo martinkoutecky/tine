@@ -30,7 +30,9 @@ mod sqlite_materialization;
 /// connection-owning database wrapper. It intentionally excludes raw DDL,
 /// direct connection access, and lower-level production implementation helpers.
 pub mod sqlite {
-    pub use crate::sqlite_database::{PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase};
+    pub use crate::sqlite_database::{
+        PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase, PhysicalWriteInstrumentation,
+    };
     pub use crate::sqlite_fileset::{
         PhysicalFileCheckpoint, PhysicalSqliteCheckpoint, SqliteFileSet, SqliteFileSetError,
         SqliteForensicPathMapping, MAX_SQLITE_CHECKPOINT_BYTES, SQLITE_CHECKPOINT_EDGE_BYTES,
