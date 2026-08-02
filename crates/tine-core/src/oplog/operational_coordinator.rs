@@ -3583,6 +3583,33 @@ mod tests {
         }
     }
 
+    /// Settle a local mutation whose publication legitimately needs more than
+    /// one bounded turn.
+    fn settle_local(
+        fixture: &mut Fixture,
+        mut state: LocalMutationCoordinatorState,
+    ) -> LocalMutationCompletion {
+        for _ in 0..8 {
+            match state {
+                LocalMutationCoordinatorState::Active(completion) => return completion,
+                LocalMutationCoordinatorState::Recovering(LocalMutationRecovery::Published(
+                    continuation,
+                )) => {
+                    state = continuation.retry(
+                        &LocalRuntimeAdmission::unenrolled_pre_activation(),
+                        &fixture.graph,
+                        &fixture.receipts,
+                        &mut fixture.engine,
+                        &mut fixture.database,
+                        &mut fixture.tail,
+                    );
+                }
+                other => return expect_local_active(other),
+            }
+        }
+        panic!("local mutation did not settle within the bounded turn budget")
+    }
+
     fn expect_local_published_recovery(
         state: LocalMutationCoordinatorState,
     ) -> LocalPublishedContinuation {
@@ -3874,6 +3901,138 @@ mod tests {
             expect_local_active(fixture.local_edit(43_000 + index as u128 * 10, "utf local edit"));
             assert_eq!(fs::read(fixture.graph_root.join(path)).unwrap(), expected);
             fixture.assert_drained();
+        }
+    }
+
+    /// The draft derivation that reads the unchanged catalog in place must
+    /// publish exactly what the previous whole-copy derivation published, in
+    /// both managed source languages, including when publication only settles
+    /// on the durable retry.
+    #[test]
+    fn in_place_catalog_derivation_publishes_the_same_markdown_and_org_source() {
+        for (index, (path, kind, edited, inserted, settled)) in [
+            (
+                "content/pages/研究/über topic.md",
+                ManagedTextKind::Page,
+                b"- TODO utf derivation edit [[Other Page]]\n\t- child\n".as_slice(),
+                b"- TODO utf derivation edit [[Other Page]]\n\t- child\n- DONE appended tail\n"
+                    .as_slice(),
+                b"- TODO settled after deferral\n\t- child\n- DONE appended tail\n".as_slice(),
+            ),
+            (
+                "content/pages/研究/über topic.org",
+                ManagedTextKind::Page,
+                b"* TODO utf derivation edit [[Other Page]]\n** child\n".as_slice(),
+                b"* TODO utf derivation edit [[Other Page]]\n** child\n* DONE appended tail\n"
+                    .as_slice(),
+                b"* TODO settled after deferral\n** child\n* DONE appended tail\n".as_slice(),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut fixture = Fixture::new_at(
+                &format!("local-derivation-{index}"),
+                path,
+                Some(
+                    "{:pages-directory \"content/pages\"\n\
+                      :journals-directory \"content/journals\"}\n",
+                ),
+                kind,
+            );
+
+            let edit_author = fixture.local_author(44_000 + index as u128 * 100);
+            let edit = OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: fixture.block_id,
+                    home_document_id: fixture.home_document_id,
+                },
+                content: "TODO utf derivation edit [[Other Page]]".into(),
+            }])
+            .unwrap();
+            let observed = fixture.engine.assert_draft_matches_previous_derivation(
+                edit_author,
+                BatchOrigin::LocalMutation,
+                &edit,
+            );
+            assert_eq!(observed.refused, None);
+            assert_eq!(
+                observed.optimized_catalog_copies, 0,
+                "a page-local content edit must read the catalog in place"
+            );
+            assert!(observed.oracle_catalog_copies >= 1);
+            let state = fixture.execute_local(edit_author, &edit);
+            settle_local(&mut fixture, state);
+            assert_eq!(fs::read(fixture.graph_root.join(path)).unwrap(), edited);
+            fixture.assert_drained();
+
+            // Deferred, then durable: the same derivation must survive a
+            // publication that only completes on the retry.
+            let insert_author = fixture.local_author(44_050 + index as u128 * 100);
+            let insert = OperationTransaction::new(vec![SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: BlockId::from_uuid(Uuid::from_u128(44_900 + index as u128)),
+                    home_document_id: fixture.home_document_id,
+                },
+                page_id: PageId::from_uuid(Uuid::from_u128(5)),
+                parent: None,
+                order: "b".into(),
+                content: "DONE appended tail".into(),
+            }])
+            .unwrap();
+            let observed = fixture.engine.assert_draft_matches_previous_derivation(
+                insert_author,
+                BatchOrigin::LocalMutation,
+                &insert,
+            );
+            assert_eq!(observed.refused, None);
+            assert_eq!(observed.optimized_catalog_copies, 0);
+            assert!(observed.oracle_catalog_copies >= 1);
+
+            let state = fixture.execute_local(insert_author, &insert);
+            settle_local(&mut fixture, state);
+            assert_eq!(fs::read(fixture.graph_root.join(path)).unwrap(), inserted);
+            fixture.assert_drained();
+
+            // Deferred, then durable: the same derivation must survive a
+            // publication that only completes on the retry.
+            let settle_author = fixture.local_author(44_070 + index as u128 * 100);
+            let settle = OperationTransaction::new(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: fixture.block_id,
+                    home_document_id: fixture.home_document_id,
+                },
+                content: "TODO settled after deferral".into(),
+            }])
+            .unwrap();
+            let observed = fixture.engine.assert_draft_matches_previous_derivation(
+                settle_author,
+                BatchOrigin::LocalMutation,
+                &settle,
+            );
+            assert_eq!(observed.refused, None);
+            assert_eq!(observed.optimized_catalog_copies, 0);
+            fail_once_at(OperationalFaultPoint::BeforeProjection);
+            let deferred =
+                expect_local_published_recovery(fixture.execute_local(settle_author, &settle));
+            let batch_id = deferred.batch_id();
+            let state = deferred.retry(
+                &LocalRuntimeAdmission::unenrolled_pre_activation(),
+                &fixture.graph,
+                &fixture.receipts,
+                &mut fixture.engine,
+                &mut fixture.database,
+                &mut fixture.tail,
+            );
+            let completion = settle_local(&mut fixture, state);
+            assert_eq!(completion.batch_id(), batch_id);
+            assert_eq!(fs::read(fixture.graph_root.join(path)).unwrap(), settled);
+            fixture.assert_drained();
+
+            // Restart and replay must reproduce exactly the same source.
+            let restarted = fixture.restart_projection_runtime();
+            assert_eq!(fs::read(restarted.graph_root.join(path)).unwrap(), settled);
+            restarted.assert_drained();
         }
     }
 
