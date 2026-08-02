@@ -264,6 +264,50 @@ impl RuntimeOpenInstrumentation {
     }
 }
 
+/// Test-only receipt for the existing application editor-save path. The actor
+/// owns the mutable runtime, so collecting the counters here preserves the
+/// application's queueing, authority, and durability path while keeping the
+/// benchmark's observation out of production builds.
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+struct ManagedOrdinarySaveInstrumentation {
+    saves: usize,
+    actor_total: Duration,
+    prepare_editor_turn: Duration,
+    application_translation: Duration,
+    editor_save: Duration,
+    application_reload: Duration,
+    directory_enumerations: usize,
+    document_head_visits: usize,
+    document_point_reads: usize,
+    archive_reads: usize,
+    archive_index_writes: usize,
+    sqlite_applies: usize,
+    projection_writes: usize,
+    projection_removes: usize,
+    scratch_syncs: usize,
+    archive_index_syncs: usize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct ManagedOrdinarySaveSnapshot {
+    engine: crate::oplog::hot_engine::EngineInstrumentation,
+    sqlite_applied_batches: usize,
+    projection: crate::model::ProjectionGraphTestCounters,
+}
+
+#[cfg(test)]
+impl ManagedOrdinarySaveSnapshot {
+    fn capture(runtime: &PromotedLocalRuntime) -> Option<Self> {
+        Some(Self {
+            engine: runtime.engine().instrumentation(),
+            sqlite_applied_batches: runtime.database().applied_batch_count().ok()?,
+            projection: crate::model::projection_graph_test_counters(),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ProviderRecoveryCoverageRoot {
     acceptance_sequence: u64,
@@ -372,6 +416,13 @@ static ACTIVATION_ACTOR_OPEN_INSTRUMENTATION: Mutex<
 #[cfg(test)]
 static RUNTIME_OPEN_INSTRUMENTATION: Mutex<BTreeMap<WorkspaceId, RuntimeOpenInstrumentation>> =
     Mutex::new(BTreeMap::new());
+/// Cross-thread receipt for ordinary frontend saves. The public handle sends
+/// the request to the actor, which is the only location that can compare the
+/// retained runtime's existing counters before and after the complete path.
+#[cfg(test)]
+static MANAGED_ORDINARY_SAVE_INSTRUMENTATION: Mutex<
+    BTreeMap<WorkspaceId, ManagedOrdinarySaveInstrumentation>,
+> = Mutex::new(BTreeMap::new());
 #[cfg(test)]
 static PREPARE_SHARED_TEST_CUT: Mutex<Option<WorkspaceId>> = Mutex::new(None);
 #[cfg(test)]
@@ -508,6 +559,119 @@ fn take_runtime_open_instrumentation(workspace: WorkspaceId) -> RuntimeOpenInstr
         .unwrap()
         .remove(&workspace)
         .expect("existing-active runtime open instrumentation was recorded")
+}
+
+#[cfg(test)]
+fn reset_managed_ordinary_save_instrumentation(workspace: WorkspaceId) {
+    MANAGED_ORDINARY_SAVE_INSTRUMENTATION
+        .lock()
+        .unwrap()
+        .remove(&workspace);
+}
+
+#[cfg(test)]
+fn take_managed_ordinary_save_instrumentation(
+    workspace: WorkspaceId,
+) -> ManagedOrdinarySaveInstrumentation {
+    MANAGED_ORDINARY_SAVE_INSTRUMENTATION
+        .lock()
+        .unwrap()
+        .remove(&workspace)
+        .expect("ordinary application-save instrumentation was recorded")
+}
+
+#[cfg(test)]
+fn record_managed_ordinary_save_instrumentation(
+    workspace: WorkspaceId,
+    mut timings: ManagedOrdinarySaveInstrumentation,
+    before: Option<ManagedOrdinarySaveSnapshot>,
+    after: Option<ManagedOrdinarySaveSnapshot>,
+) {
+    let (Some(before), Some(after)) = (before, after) else {
+        return;
+    };
+    let before_store = before.engine.store;
+    let after_store = after.engine.store;
+    timings.saves = 1;
+    timings.directory_enumerations = after_store
+        .directory_enumerations
+        .saturating_sub(before_store.directory_enumerations);
+    timings.document_head_visits = after
+        .engine
+        .prepare_document_head_visits
+        .saturating_sub(before.engine.prepare_document_head_visits);
+    timings.document_point_reads = after
+        .engine
+        .document_point_reads
+        .saturating_sub(before.engine.document_point_reads);
+    timings.archive_reads = after_store
+        .accepted_manifest_reads
+        .saturating_sub(before_store.accepted_manifest_reads)
+        .saturating_add(
+            after_store
+                .accepted_object_reads
+                .saturating_sub(before_store.accepted_object_reads),
+        )
+        .saturating_add(
+            after_store
+                .dag_manifest_reads
+                .saturating_sub(before_store.dag_manifest_reads),
+        )
+        .saturating_add(
+            after_store
+                .history_record_reads
+                .saturating_sub(before_store.history_record_reads),
+        )
+        .saturating_add(
+            after_store
+                .history_index_reads
+                .saturating_sub(before_store.history_index_reads),
+        );
+    timings.archive_index_writes = after_store
+        .history_index_writes
+        .saturating_sub(before_store.history_index_writes)
+        .saturating_add(
+            after_store
+                .block_claim_index_writes
+                .saturating_sub(before_store.block_claim_index_writes),
+        );
+    timings.sqlite_applies = after
+        .sqlite_applied_batches
+        .saturating_sub(before.sqlite_applied_batches);
+    timings.projection_writes = after
+        .projection
+        .write_calls
+        .saturating_sub(before.projection.write_calls);
+    timings.projection_removes = after
+        .projection
+        .remove_calls
+        .saturating_sub(before.projection.remove_calls);
+    timings.scratch_syncs = after
+        .engine
+        .scratch_syncs
+        .saturating_sub(before.engine.scratch_syncs);
+    timings.archive_index_syncs = after_store
+        .block_claim_index_syncs
+        .saturating_sub(before_store.block_claim_index_syncs);
+
+    let mut records = MANAGED_ORDINARY_SAVE_INSTRUMENTATION.lock().unwrap();
+    let record = records.entry(workspace).or_default();
+    record.saves += timings.saves;
+    record.actor_total += timings.actor_total;
+    record.prepare_editor_turn += timings.prepare_editor_turn;
+    record.application_translation += timings.application_translation;
+    record.editor_save += timings.editor_save;
+    record.application_reload += timings.application_reload;
+    record.directory_enumerations += timings.directory_enumerations;
+    record.document_head_visits += timings.document_head_visits;
+    record.document_point_reads += timings.document_point_reads;
+    record.archive_reads += timings.archive_reads;
+    record.archive_index_writes += timings.archive_index_writes;
+    record.sqlite_applies += timings.sqlite_applies;
+    record.projection_writes += timings.projection_writes;
+    record.projection_removes += timings.projection_removes;
+    record.scratch_syncs += timings.scratch_syncs;
+    record.archive_index_syncs += timings.archive_index_syncs;
 }
 #[cfg(test)]
 static PROVIDER_RECOVERY_PUBLICATION_TEST_CUTS: Mutex<
@@ -6596,150 +6760,211 @@ impl RuntimeActor {
         &mut self,
         request: SyncApplicationPageSaveRequest,
     ) -> Result<SyncApplicationPageSaveOutcome, SyncApplicationPageRequestError> {
-        if let EditorTurnReadiness::Deferred(state) = self.prepare_editor_turn() {
-            return Ok(SyncApplicationPageSaveOutcome::Deferred { state });
-        }
-        let (editor_request, reload_target) = match &request.target {
-            SyncApplicationPageSaveTarget::Existing { path, revision } => {
-                let current = match self.load_application_exact_ready(path)? {
-                    ApplicationExactLoad::Loaded(current) => current,
-                    ApplicationExactLoad::Missing => {
-                        return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                            reason: SyncApplicationPageConflict::MissingPage,
-                        })
-                    }
-                    ApplicationExactLoad::Ambiguous => {
-                        return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                            reason: SyncApplicationPageConflict::AmbiguousPageName,
-                        })
-                    }
-                };
-                if current.revision != *revision {
-                    return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                        reason: SyncApplicationPageConflict::StaleBase,
-                    });
-                }
-                if current.page.read_only {
-                    return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                        reason: SyncApplicationPageConflict::ReadOnly,
-                    });
-                }
-                validate_existing_application_page_shape(&request.page, &current.page)?;
-                let blocks = match application_editor_blocks_existing(&request.page, &current) {
-                    Ok(blocks) => blocks,
-                    Err(reason) => return Ok(SyncApplicationPageSaveOutcome::Conflict { reason }),
-                };
-                (
-                    SyncEditorSaveRequest {
-                        target: SyncEditorSaveTarget::Existing {
-                            page_id: current.editor.page.page_id.to_string(),
-                            revision: revision.clone(),
-                        },
-                        preamble: request.page.pre_block.clone(),
-                        blocks,
-                    },
-                    ApplicationSaveReloadTarget::ExistingPath(path.clone()),
-                )
+        #[cfg(test)]
+        let ordinary_before = self
+            .runtime
+            .as_ref()
+            .and_then(ManagedOrdinarySaveSnapshot::capture);
+        #[cfg(test)]
+        let ordinary_started = Instant::now();
+        #[cfg(test)]
+        let mut ordinary_timings = ManagedOrdinarySaveInstrumentation::default();
+
+        let result = (|| {
+            #[cfg(test)]
+            let phase_started = Instant::now();
+            if let EditorTurnReadiness::Deferred(state) = self.prepare_editor_turn() {
+                return Ok(SyncApplicationPageSaveOutcome::Deferred { state });
             }
-            SyncApplicationPageSaveTarget::New { name, page_kind } => {
-                validate_new_application_page_shape(&request.page, name, *page_kind, &self.graph)?;
-                let runtime = self
-                    .runtime
-                    .as_ref()
-                    .ok_or(SyncApplicationPageRequestError::ActorUnavailable)?;
-                let current_revision =
-                    match editor_name_state(runtime, &self.graph, name.clone(), *page_kind)
-                        .map_err(map_editor_application_error)?
-                    {
-                        EditorNameState::Missing { revision, .. } => revision,
-                        EditorNameState::Exact(_) => {
+            #[cfg(test)]
+            {
+                ordinary_timings.prepare_editor_turn = phase_started.elapsed();
+            }
+
+            #[cfg(test)]
+            let phase_started = Instant::now();
+            let (editor_request, reload_target) = match &request.target {
+                SyncApplicationPageSaveTarget::Existing { path, revision } => {
+                    let current = match self.load_application_exact_ready(path)? {
+                        ApplicationExactLoad::Loaded(current) => current,
+                        ApplicationExactLoad::Missing => {
                             return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                                reason: SyncApplicationPageConflict::PageAlreadyExists,
+                                reason: SyncApplicationPageConflict::MissingPage,
                             })
                         }
-                        EditorNameState::Ambiguous => {
+                        ApplicationExactLoad::Ambiguous => {
                             return Ok(SyncApplicationPageSaveOutcome::Conflict {
                                 reason: SyncApplicationPageConflict::AmbiguousPageName,
                             })
                         }
-                        EditorNameState::PathOccupied => {
-                            return Ok(SyncApplicationPageSaveOutcome::Conflict {
-                                reason: SyncApplicationPageConflict::DerivedPathOccupied,
-                            })
+                    };
+                    if current.revision != *revision {
+                        return Ok(SyncApplicationPageSaveOutcome::Conflict {
+                            reason: SyncApplicationPageConflict::StaleBase,
+                        });
+                    }
+                    if current.page.read_only {
+                        return Ok(SyncApplicationPageSaveOutcome::Conflict {
+                            reason: SyncApplicationPageConflict::ReadOnly,
+                        });
+                    }
+                    validate_existing_application_page_shape(&request.page, &current.page)?;
+                    let blocks = match application_editor_blocks_existing(&request.page, &current) {
+                        Ok(blocks) => blocks,
+                        Err(reason) => {
+                            return Ok(SyncApplicationPageSaveOutcome::Conflict { reason })
                         }
                     };
-                (
-                    SyncEditorSaveRequest {
-                        target: SyncEditorSaveTarget::New {
-                            name: name.clone(),
-                            page_kind: *page_kind,
-                            revision: current_revision,
+                    (
+                        SyncEditorSaveRequest {
+                            target: SyncEditorSaveTarget::Existing {
+                                page_id: current.editor.page.page_id.to_string(),
+                                revision: revision.clone(),
+                            },
+                            preamble: request.page.pre_block.clone(),
+                            blocks,
                         },
-                        preamble: request.page.pre_block.clone(),
-                        blocks: application_editor_blocks_new(&request.page)?,
-                    },
-                    ApplicationSaveReloadTarget::CreatedPage,
-                )
+                        ApplicationSaveReloadTarget::ExistingPath(path.clone()),
+                    )
+                }
+                SyncApplicationPageSaveTarget::New { name, page_kind } => {
+                    validate_new_application_page_shape(
+                        &request.page,
+                        name,
+                        *page_kind,
+                        &self.graph,
+                    )?;
+                    let runtime = self
+                        .runtime
+                        .as_ref()
+                        .ok_or(SyncApplicationPageRequestError::ActorUnavailable)?;
+                    let current_revision =
+                        match editor_name_state(runtime, &self.graph, name.clone(), *page_kind)
+                            .map_err(map_editor_application_error)?
+                        {
+                            EditorNameState::Missing { revision, .. } => revision,
+                            EditorNameState::Exact(_) => {
+                                return Ok(SyncApplicationPageSaveOutcome::Conflict {
+                                    reason: SyncApplicationPageConflict::PageAlreadyExists,
+                                })
+                            }
+                            EditorNameState::Ambiguous => {
+                                return Ok(SyncApplicationPageSaveOutcome::Conflict {
+                                    reason: SyncApplicationPageConflict::AmbiguousPageName,
+                                })
+                            }
+                            EditorNameState::PathOccupied => {
+                                return Ok(SyncApplicationPageSaveOutcome::Conflict {
+                                    reason: SyncApplicationPageConflict::DerivedPathOccupied,
+                                })
+                            }
+                        };
+                    (
+                        SyncEditorSaveRequest {
+                            target: SyncEditorSaveTarget::New {
+                                name: name.clone(),
+                                page_kind: *page_kind,
+                                revision: current_revision,
+                            },
+                            preamble: request.page.pre_block.clone(),
+                            blocks: application_editor_blocks_new(&request.page)?,
+                        },
+                        ApplicationSaveReloadTarget::CreatedPage,
+                    )
+                }
+            };
+            #[cfg(test)]
+            {
+                ordinary_timings.application_translation = phase_started.elapsed();
             }
-        };
-        validate_editor_save_request(&editor_request).map_err(map_editor_application_error)?;
-        match self
-            .save_editor_page(editor_request)
-            .map_err(map_editor_application_error)?
-        {
-            SyncEditorSaveOutcome::Durable { batch_id, page, .. } => {
-                let accepted = self.reload_application_page(&page.path)?;
-                Ok(SyncApplicationPageSaveOutcome::Saved {
-                    batch_id,
-                    page: accepted.page,
-                    revision: accepted.revision,
-                })
+            validate_editor_save_request(&editor_request).map_err(map_editor_application_error)?;
+            #[cfg(test)]
+            let phase_started = Instant::now();
+            let editor_outcome = self
+                .save_editor_page(editor_request)
+                .map_err(map_editor_application_error)?;
+            #[cfg(test)]
+            {
+                ordinary_timings.editor_save = phase_started.elapsed();
             }
-            SyncEditorSaveOutcome::Unchanged { page, .. } => {
-                let accepted = self.reload_application_page(&page.path)?;
-                Ok(SyncApplicationPageSaveOutcome::Unchanged {
-                    page: accepted.page,
-                    revision: accepted.revision,
-                })
-            }
-            SyncEditorSaveOutcome::Conflict { reason } => {
-                Ok(SyncApplicationPageSaveOutcome::Conflict {
-                    reason: map_application_conflict(reason),
-                })
-            }
-            SyncEditorSaveOutcome::Deferred {
-                state: SyncEditorDeferred::RetryableRetainedPublication { batch_id, phase },
-                affected_page_ids,
-            } => match self.settle_application_publication(&batch_id, phase)? {
-                ApplicationPublicationSettlement::Durable => {
-                    let accepted = match reload_target {
-                        ApplicationSaveReloadTarget::ExistingPath(path) => {
-                            self.reload_application_page(&path)?
-                        }
-                        ApplicationSaveReloadTarget::CreatedPage => {
-                            let [page_id] = affected_page_ids.as_slice() else {
-                                return Err(SyncApplicationPageRequestError::ActorRefused);
-                            };
-                            self.load_application_page_id_ready(
-                                parse_editor_page_id(page_id)
-                                    .map_err(map_editor_application_error)?,
-                            )?
-                        }
-                    };
+            #[cfg(test)]
+            let phase_started = Instant::now();
+            let outcome = match editor_outcome {
+                SyncEditorSaveOutcome::Durable { batch_id, page, .. } => {
+                    let accepted = self.reload_application_page(&page.path)?;
                     Ok(SyncApplicationPageSaveOutcome::Saved {
                         batch_id,
                         page: accepted.page,
                         revision: accepted.revision,
                     })
                 }
-                ApplicationPublicationSettlement::Deferred(state) => {
+                SyncEditorSaveOutcome::Unchanged { page, .. } => {
+                    let accepted = self.reload_application_page(&page.path)?;
+                    Ok(SyncApplicationPageSaveOutcome::Unchanged {
+                        page: accepted.page,
+                        revision: accepted.revision,
+                    })
+                }
+                SyncEditorSaveOutcome::Conflict { reason } => {
+                    Ok(SyncApplicationPageSaveOutcome::Conflict {
+                        reason: map_application_conflict(reason),
+                    })
+                }
+                SyncEditorSaveOutcome::Deferred {
+                    state: SyncEditorDeferred::RetryableRetainedPublication { batch_id, phase },
+                    affected_page_ids,
+                } => match self.settle_application_publication(&batch_id, phase)? {
+                    ApplicationPublicationSettlement::Durable => {
+                        let accepted = match reload_target {
+                            ApplicationSaveReloadTarget::ExistingPath(path) => {
+                                self.reload_application_page(&path)?
+                            }
+                            ApplicationSaveReloadTarget::CreatedPage => {
+                                let [page_id] = affected_page_ids.as_slice() else {
+                                    return Err(SyncApplicationPageRequestError::ActorRefused);
+                                };
+                                self.load_application_page_id_ready(
+                                    parse_editor_page_id(page_id)
+                                        .map_err(map_editor_application_error)?,
+                                )?
+                            }
+                        };
+                        Ok(SyncApplicationPageSaveOutcome::Saved {
+                            batch_id,
+                            page: accepted.page,
+                            revision: accepted.revision,
+                        })
+                    }
+                    ApplicationPublicationSettlement::Deferred(state) => {
+                        Ok(SyncApplicationPageSaveOutcome::Deferred { state })
+                    }
+                },
+                SyncEditorSaveOutcome::Deferred { state, .. } => {
                     Ok(SyncApplicationPageSaveOutcome::Deferred { state })
                 }
-            },
-            SyncEditorSaveOutcome::Deferred { state, .. } => {
-                Ok(SyncApplicationPageSaveOutcome::Deferred { state })
+            };
+            #[cfg(test)]
+            {
+                ordinary_timings.application_reload = phase_started.elapsed();
             }
+            outcome
+        })();
+
+        #[cfg(test)]
+        {
+            ordinary_timings.actor_total = ordinary_started.elapsed();
+            let ordinary_after = self
+                .runtime
+                .as_ref()
+                .and_then(ManagedOrdinarySaveSnapshot::capture);
+            record_managed_ordinary_save_instrumentation(
+                self.binding.workspace_id(),
+                ordinary_timings,
+                ordinary_before,
+                ordinary_after,
+            );
         }
+        result
     }
 
     fn settle_application_publication(
@@ -25777,6 +26002,272 @@ mod tests {
         );
         assert!(cold_ms < 10_000, "true cold reopen exceeded 10 seconds");
         drop(reopened.handle);
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct ManagedOrdinaryBenchmarkConfig {
+        small_pages: usize,
+        large_pages: usize,
+        blocks_per_page: usize,
+        edits: usize,
+    }
+
+    impl ManagedOrdinaryBenchmarkConfig {
+        fn read_usize(variable: &str, default: usize) -> usize {
+            std::env::var(variable)
+                .map(|value| {
+                    value.parse::<usize>().unwrap_or_else(|error| {
+                        panic!("{variable} must be a positive integer, got {value:?}: {error}")
+                    })
+                })
+                .unwrap_or(default)
+        }
+
+        fn from_environment() -> Self {
+            let config = Self {
+                small_pages: Self::read_usize("TINE_MANAGED_ORDINARY_SMALL_PAGES", 1_000),
+                large_pages: Self::read_usize("TINE_MANAGED_ORDINARY_LARGE_PAGES", 10_000),
+                blocks_per_page: Self::read_usize("TINE_MANAGED_ORDINARY_BLOCKS_PER_PAGE", 10),
+                edits: Self::read_usize("TINE_MANAGED_ORDINARY_EDITS", 50),
+            };
+            assert!(
+                config.small_pages >= 3 && config.large_pages >= 3,
+                "TINE_MANAGED_ORDINARY_*_PAGES must leave room for ActivationFixture's three seed pages: {config:?}"
+            );
+            assert!(
+                config.blocks_per_page > 0 && config.edits > 0,
+                "TINE_MANAGED_ORDINARY_BLOCKS_PER_PAGE and TINE_MANAGED_ORDINARY_EDITS must be positive: {config:?}"
+            );
+            config
+        }
+    }
+
+    #[derive(Debug)]
+    struct ManagedOrdinaryModeReceipt {
+        samples: Vec<Duration>,
+        work: ManagedOrdinarySaveInstrumentation,
+    }
+
+    fn managed_ordinary_percentile(samples: &[Duration], percentile: usize) -> Duration {
+        assert!(
+            !samples.is_empty(),
+            "ordinary benchmark retained no samples"
+        );
+        let mut ordered = samples.to_vec();
+        ordered.sort_unstable();
+        let index = percentile
+            .saturating_mul(ordered.len())
+            .div_ceil(100)
+            .saturating_sub(1)
+            .min(ordered.len() - 1);
+        ordered[index]
+    }
+
+    fn managed_ordinary_ms(duration: Duration) -> f64 {
+        duration.as_secs_f64() * 1_000.0
+    }
+
+    fn managed_ordinary_mean_ms(total: Duration, samples: usize) -> f64 {
+        managed_ordinary_ms(total) / samples.max(1) as f64
+    }
+
+    fn managed_ordinary_target_path() -> &'static str {
+        "notes/規模/0/深い/Página-0-計画.md"
+    }
+
+    fn assert_managed_ordinary_semantics(
+        fixture: &ActivationFixture,
+        handle: &SyncRuntimeHandle,
+        path: &str,
+        expected_content: &str,
+        returned: &PageDto,
+    ) {
+        assert_eq!(returned.path, path);
+        assert_eq!(returned.blocks.len(), fixture_block_count(fixture));
+        assert_eq!(returned.blocks[0].raw, expected_content);
+        let parser = Graph::open(&fixture.graph_root);
+        let parsed = parser
+            .load_by_path(path)
+            .unwrap()
+            .unwrap_or_else(|| panic!("projected page disappeared at {path:?}"));
+        assert_parser_dto_semantics(&parsed, returned);
+        assert_eq!(
+            handle.status().unwrap().lifecycle,
+            SyncRuntimeLifecycle::Active
+        );
+    }
+
+    fn fixture_block_count(fixture: &ActivationFixture) -> usize {
+        let parser = Graph::open(&fixture.graph_root);
+        parser
+            .load_by_path(managed_ordinary_target_path())
+            .unwrap()
+            .unwrap_or_else(|| panic!("ordinary benchmark target page is absent"))
+            .blocks
+            .len()
+    }
+
+    fn run_managed_ordinary_mode(
+        fixture: &ActivationFixture,
+        mode: &str,
+        edits: usize,
+    ) -> ManagedOrdinaryModeReceipt {
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated
+            .handle
+            .expect("ordinary benchmark activation retains the promoted actor");
+        drive_initial_feed(&handle);
+        let handle = if mode == "shared" {
+            handle
+                .prepare_shared()
+                .expect("ActivationFixture can activate the existing shared provider");
+            drop(handle);
+            let shared = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+            drive_initial_feed(&shared);
+            assert_eq!(
+                shared.status().unwrap().shared_phase,
+                Some(SyncSharedPhase::Active),
+                "prepared shared runtime did not become active"
+            );
+            shared
+        } else {
+            assert_eq!(handle.status().unwrap().shared_phase, None);
+            handle
+        };
+
+        let path = managed_ordinary_target_path();
+        let (mut page, mut revision) = load_application_exact(&handle, path);
+        let expected_blocks = page.blocks.len();
+        assert_eq!(expected_blocks, fixture_block_count(fixture));
+        assert!(
+            expected_blocks > 0,
+            "ordinary benchmark target has no editable block"
+        );
+
+        let workspace = fixture.request.identities.workspace_id;
+        reset_managed_ordinary_save_instrumentation(workspace);
+        let mut samples = Vec::with_capacity(edits);
+        let mut expected_content = String::new();
+        for edit in 0..edits {
+            expected_content = format!("ordinary {mode} content edit {edit}");
+            page.blocks[0].raw.clone_from(&expected_content);
+            let started = Instant::now();
+            let outcome = handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::Existing {
+                        path: path.into(),
+                        revision,
+                    },
+                    page,
+                })
+                .expect("ordinary application save request reached the actor");
+            samples.push(started.elapsed());
+            let (saved, saved_revision) = match outcome {
+                SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+                other => panic!(
+                    "ordinary application save did not complete in its public call: {other:?}"
+                ),
+            };
+            assert_managed_ordinary_semantics(fixture, &handle, path, &expected_content, &saved);
+            page = saved;
+            revision = saved_revision;
+        }
+
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+
+        let reopened = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+        drive_initial_feed(&reopened);
+        if mode == "shared" {
+            assert_eq!(
+                reopened.status().unwrap().shared_phase,
+                Some(SyncSharedPhase::Active),
+                "shared provider did not survive the ordinary-save restart"
+            );
+        }
+        let (preserved, _) = load_application_exact(&reopened, path);
+        assert_managed_ordinary_semantics(fixture, &reopened, path, &expected_content, &preserved);
+        assert!(matches!(
+            reopened.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+
+        let work = take_managed_ordinary_save_instrumentation(workspace);
+        assert_eq!(work.saves, edits, "ordinary save receipt lost an edit");
+        assert_eq!(
+            work.sqlite_applies, edits,
+            "each durable ordinary save must advance SQLite once"
+        );
+        assert_eq!(
+            work.projection_writes, edits,
+            "each durable ordinary save must write one projected page"
+        );
+        assert_eq!(
+            work.projection_removes, 0,
+            "content edits must not remove pages"
+        );
+        ManagedOrdinaryModeReceipt { samples, work }
+    }
+
+    fn managed_ordinary_receipt_fields(mode: &str, receipt: &ManagedOrdinaryModeReceipt) -> String {
+        let work = &receipt.work;
+        format!(
+            "{mode}_p50_ms={:.3} {mode}_p95_ms={:.3} {mode}_actor_mean_ms={:.3} {mode}_prepare_mean_ms={:.3} {mode}_translate_mean_ms={:.3} {mode}_editor_mean_ms={:.3} {mode}_reload_mean_ms={:.3} {mode}_dir_enums={} {mode}_document_head_visits={} {mode}_document_point_reads={} {mode}_archive_reads={} {mode}_archive_index_writes={} {mode}_archive_object_writes=na {mode}_sqlite_applies={} {mode}_projection_writes={} {mode}_observed_durability_syncs={} {mode}_scratch_syncs={} {mode}_archive_index_syncs={}",
+            managed_ordinary_ms(managed_ordinary_percentile(&receipt.samples, 50)),
+            managed_ordinary_ms(managed_ordinary_percentile(&receipt.samples, 95)),
+            managed_ordinary_mean_ms(work.actor_total, work.saves),
+            managed_ordinary_mean_ms(work.prepare_editor_turn, work.saves),
+            managed_ordinary_mean_ms(work.application_translation, work.saves),
+            managed_ordinary_mean_ms(work.editor_save, work.saves),
+            managed_ordinary_mean_ms(work.application_reload, work.saves),
+            work.directory_enumerations,
+            work.document_head_visits,
+            work.document_point_reads,
+            work.archive_reads,
+            work.archive_index_writes,
+            work.sqlite_applies,
+            work.projection_writes,
+            work.scratch_syncs + work.archive_index_syncs,
+            work.scratch_syncs,
+            work.archive_index_syncs,
+        )
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    #[ignore = "manual release receipt for the complete managed ordinary editor-save path"]
+    fn managed_ordinary_save_manual_release_receipt() {
+        let config = ManagedOrdinaryBenchmarkConfig::from_environment();
+        for (label, pages, seed) in [
+            ("small", config.small_pages, 0xa2_100),
+            ("large", config.large_pages, 0xa2_200),
+        ] {
+            let additional_pages = pages - 3;
+            let local = ActivationFixture::scaled_with_blocks(
+                &format!("managed-ordinary-{label}-local"),
+                seed,
+                additional_pages,
+                config.blocks_per_page,
+            );
+            let local_receipt = run_managed_ordinary_mode(&local, "local", config.edits);
+            let shared = ActivationFixture::scaled_with_blocks(
+                &format!("managed-ordinary-{label}-shared"),
+                seed + 1,
+                additional_pages,
+                config.blocks_per_page,
+            );
+            let shared_receipt = run_managed_ordinary_mode(&shared, "shared", config.edits);
+            eprintln!(
+                "managed_ordinary_save_v1 scale={label} pages={pages} blocks_per_page={} edits={} {} {}",
+                config.blocks_per_page,
+                config.edits,
+                managed_ordinary_receipt_fields("local", &local_receipt),
+                managed_ordinary_receipt_fields("shared", &shared_receipt),
+            );
+        }
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
