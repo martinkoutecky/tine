@@ -1460,6 +1460,17 @@ fn attach_authenticated_reference_catalog_at(
         .map_err(Into::into)
 }
 
+/// Opt-in construction phase trace, matching the activation trace the bootstrap
+/// preparation phases already emit.
+fn trace_terminal_phase(label: &str, started: std::time::Instant) {
+    if std::env::var_os("TINE_ACTIVATION_TRACE").is_some() {
+        eprintln!(
+            "sqlite terminal {label}: {} ms",
+            started.elapsed().as_millis()
+        );
+    }
+}
+
 fn record_candidate_write_instrumentation(
     instrumentation: &mut RebuildInstrumentation,
     before: storage_frontier::PhysicalWriteInstrumentation,
@@ -1769,6 +1780,9 @@ pub(crate) struct BootstrapSqliteRebuildInstrumentation {
     pub(crate) terminal_pages_materialized: usize,
     pub(crate) terminal_materialization_chunks: usize,
     pub(crate) peak_terminal_bulk_pages: usize,
+    pub(crate) terminal_materialization_micros: u128,
+    pub(crate) terminal_lowering_micros: u128,
+    pub(crate) terminal_insert_micros: u128,
     /// One when retained terminal material was present but refused, so this
     /// activation discarded the private candidate and replayed the archive.
     pub(crate) terminal_construction_refusals: usize,
@@ -3686,6 +3700,7 @@ impl SqliteFrontier {
         let writes_before = self.physical.write_instrumentation();
         self.physical.begin_candidate_build()?;
         self.physical.begin_terminal_bootstrap_construction()?;
+        let prefix_started = std::time::Instant::now();
         let mut provenance = Vec::with_capacity(material.accepted_events().len());
         for event in material.accepted_events() {
             instrumentation.accepted_events_validated += 1;
@@ -3727,6 +3742,8 @@ impl SqliteFrontier {
                 "terminal accepted-prefix seed did not reach the authenticated frontier root".into(),
             ));
         }
+        trace_terminal_phase("accepted prefix seed", prefix_started);
+        let rows_started = std::time::Instant::now();
         let coverage_count = self.seed_terminal_rows(
             engine,
             &source.exact_frontier_root,
@@ -3734,6 +3751,7 @@ impl SqliteFrontier {
             &mut instrumentation,
             &mut bootstrap,
         )?;
+        trace_terminal_phase("terminal row seed", rows_started);
         self.fresh_reference_coverage_count = Some(coverage_count);
         if instrumentation.cleanup_page_attempts != 0
             || instrumentation.cleanup_owned_rows != 0
@@ -3748,7 +3766,9 @@ impl SqliteFrontier {
                 "terminal candidate structural accounting invariant failed".into(),
             ));
         }
+        let proof_started = std::time::Instant::now();
         self.finish_fresh_candidate(source, coverage_count, &mut instrumentation)?;
+        trace_terminal_phase("candidate proof scans", proof_started);
         self.physical.finish_candidate_build()?;
         record_candidate_write_instrumentation(
             &mut instrumentation,
@@ -3901,11 +3921,16 @@ impl SqliteFrontier {
         bootstrap: &mut BootstrapSqliteRebuildInstrumentation,
     ) -> Result<(), ProjectionError> {
         let page_ids = rows.iter().map(|row| row.page_id()).collect::<Vec<_>>();
+        let materialize_started = std::time::Instant::now();
         let materialized = materializer
             .materialize_pages(&page_ids)
             .map_err(|error| ProjectionError::Materialization(error.to_string()))?;
+        bootstrap.terminal_materialization_micros = bootstrap
+            .terminal_materialization_micros
+            .saturating_add(materialize_started.elapsed().as_micros());
         let mut chunk = super::sqlite_materialization::TerminalMaterializationChunk::default();
         let mut reference_rows = ReferenceCatalogSourceRows::default();
+        let lower_started = std::time::Instant::now();
         for (row, page) in rows.iter().zip(materialized) {
             let page = page.ok_or_else(|| {
                 ProjectionError::Rebuild(
@@ -3941,9 +3966,18 @@ impl SqliteFrontier {
         instrumentation.peak_bulk_pages = instrumentation.peak_bulk_pages.max(page_ids.len());
         instrumentation.exact_document_loads = materializer.exact_document_loads();
         let physical = super::sqlite_materialization::lower_terminal_chunk(chunk)?;
-        self.physical
+        bootstrap.terminal_lowering_micros = bootstrap
+            .terminal_lowering_micros
+            .saturating_add(lower_started.elapsed().as_micros());
+        let insert_started = std::time::Instant::now();
+        let seeded = self
+            .physical
             .seed_terminal_bootstrap_chunk(&physical)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        bootstrap.terminal_insert_micros = bootstrap
+            .terminal_insert_micros
+            .saturating_add(insert_started.elapsed().as_micros());
+        seeded
     }
 
     /// The two complete unpublished-candidate scans that close a fresh build's
