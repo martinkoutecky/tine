@@ -213,6 +213,7 @@ impl Fixture {
             &root.path().join("bootstrap.sqlite"),
             &runtime,
             &authority,
+            None,
         )
         .expect("inactive bootstrap runtime session");
         let archive_resource_id = authority

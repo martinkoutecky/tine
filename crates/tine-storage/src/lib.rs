@@ -51,7 +51,9 @@ pub mod sqlite {
         PhysicalPropertyRow, PhysicalReference, PhysicalReferenceCatalogChange,
         PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalReferrerRow, PhysicalSearchHit,
         PhysicalSourceCoverage, PhysicalTagRow, PhysicalTask, PhysicalTaskRow,
-        SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
+        PhysicalTerminalCatalogStamp, PhysicalTerminalConstructionBatch,
+        PhysicalTerminalMaterializationChunk, SqliteMaterializedRead,
+        MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
         MAX_MATERIALIZATION_READ_BYTES,
     };
 

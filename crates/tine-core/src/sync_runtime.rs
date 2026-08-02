@@ -3280,7 +3280,7 @@ fn activate_non_active_local(
     progress(SyncLocalActivationProgress::Phase {
         phase: SyncLocalActivationPhase::BootstrapImportPreparation,
     });
-    let prepared = prepare_inactive_bootstrap_import_with_progress(
+    let mut prepared = prepare_inactive_bootstrap_import_with_progress(
         &graph,
         capture,
         binding.workspace_id(),
@@ -3326,12 +3326,17 @@ fn activate_non_active_local(
     progress(SyncLocalActivationProgress::Phase {
         phase: SyncLocalActivationPhase::SqliteOpenBuild,
     });
+    // The uninterrupted same-process path consumes the one-shot terminal
+    // construction capability here. Taking it also means a later resumed or
+    // restarted activation cannot see it, so that run rebuilds from the archive.
+    let terminal_construction = prepared.take_terminal_construction_material();
     let inactive = InactiveBootstrapRuntimeSession::open(
         &request.archive_root,
         binding.workspace_id(),
         &request.database_path,
         &application_runtime_root,
         &accepted_authority,
+        terminal_construction,
     )
     .map_err(display)?;
     progress(SyncLocalActivationProgress::Phase {
@@ -25703,9 +25708,31 @@ mod tests {
                     < crate::oplog::batch::MAX_MANIFEST_BYTES as u64
             );
             assert_eq!(receipt.construction.publication.durability_syncs, 2);
+            // The uninterrupted same-process activation builds SQLite from the
+            // retained terminal accepted state: no physical bootstrap part is
+            // reloaded, no intermediate page/reference replacement is applied
+            // through ordinary event DML, and exactly one bounded terminal
+            // materialization covers every accepted page.
+            assert_eq!(receipt.construction.sqlite.terminal_constructions, 1);
+            assert_eq!(receipt.construction.sqlite.terminal_construction_refusals, 0);
+            assert_eq!(receipt.construction.sqlite.bootstrap_part_reads, 0);
+            assert_eq!(receipt.construction.sqlite.bootstrap_object_reads, 0);
             assert_eq!(
-                receipt.construction.sqlite.bootstrap_part_reads,
-                receipt.construction.preparation.parts as usize
+                receipt
+                    .construction
+                    .sqlite
+                    .intermediate_page_materializations,
+                0
+            );
+            assert_eq!(receipt.construction.sqlite.terminal_materializations, 1);
+            assert_eq!(
+                receipt.construction.sqlite.terminal_pages_materialized,
+                receipt.source_files
+            );
+            assert!(receipt.construction.sqlite.terminal_materialization_chunks > 0);
+            assert!(
+                receipt.construction.sqlite.peak_terminal_bulk_pages
+                    <= crate::oplog::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES
             );
             assert_eq!(
                 receipt.construction.shadow.catalog_rows,

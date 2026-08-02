@@ -281,6 +281,50 @@ impl PhysicalSqliteDatabase {
         Ok(())
     }
 
+    /// Refuse terminal bootstrap construction unless the active candidate's
+    /// materialized tables are still completely empty.
+    pub fn begin_terminal_bootstrap_construction(&mut self) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_materialization::begin_terminal_construction_in_open_candidate(&self.connection)
+            .map_err(Into::into)
+    }
+
+    /// Seed one bounded chunk of terminal bootstrap rows into the active
+    /// candidate-build transaction.
+    pub fn seed_terminal_bootstrap_chunk(
+        &mut self,
+        chunk: &sqlite_materialization::PhysicalTerminalMaterializationChunk,
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_materialization::seed_terminal_chunk_in_open_candidate(&self.connection, chunk)
+            .map_err(Into::into)
+    }
+
+    /// Close the terminal seed with its accepted-prefix construction provenance
+    /// and the one authenticated catalog stamp.
+    pub fn finish_terminal_bootstrap_construction(
+        &mut self,
+        provenance: &[sqlite_materialization::PhysicalTerminalConstructionBatch],
+        stamp: &sqlite_materialization::PhysicalTerminalCatalogStamp,
+    ) -> Result<u64, FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_materialization::finish_terminal_construction_in_open_candidate(
+            &self.connection,
+            provenance,
+            stamp,
+        )
+        .map_err(Into::into)
+    }
+
+    fn require_candidate_build(&self) -> Result<(), FrontierError> {
+        if !self.candidate_build_active {
+            return Err(FrontierError::InvalidInput(
+                "terminal bootstrap construction has no active candidate-build transaction".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn write_instrumentation(&self) -> PhysicalWriteInstrumentation {
         self.write_instrumentation
     }

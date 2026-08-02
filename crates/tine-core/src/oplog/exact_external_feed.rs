@@ -1257,6 +1257,7 @@ pub(crate) mod tests {
                 &root.path().join("bootstrap.sqlite"),
                 &bootstrap_runtime,
                 &accepted,
+                None,
             )
             .unwrap();
             let archive_resource = accepted

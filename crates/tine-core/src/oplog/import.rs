@@ -49,7 +49,8 @@ use super::object_store::{
 use super::receipt::ImportIdDerivation;
 use super::shadow_projection::BootstrapProjectionAuthority;
 use super::{
-    plan_projection, AnnotatedIdentity, BatchId, BatchOrigin, BlobDescription, BlockId,
+    plan_projection, AcceptedBatchEvent, AnnotatedIdentity, BatchId, BatchOrigin, BlobDescription,
+    BlockId,
     BlockLocation, ContentDigest, CrdtPeerId, CurrentPageAtPath, DeviceId, DocumentId, ImportId,
     ImportInventoryEntry, ImportInventoryState, ImportLocator, LineageDigest, LogicalCompletionId,
     LogicalPageName, LogseqIdentityMutation, LogseqUuid, ManagedPath, ManagedTextKind, ObjectKind,
@@ -342,6 +343,7 @@ pub(crate) struct InactiveBootstrapPreparedPublication {
     reference_catalog_archive_identity: ControlDirectoryIdentity,
     candidate: Rc<DetachedBootstrapCandidate>,
     engine_materials: Vec<DetachedBootstrapAcceptedEngineMaterial>,
+    terminal_construction: Option<TerminalBootstrapConstructionMaterial>,
     instrumentation: BootstrapStreamingImportInstrumentation,
 }
 
@@ -361,6 +363,15 @@ impl InactiveBootstrapPreparedPublication {
 
     pub(crate) fn engine_materials(&self) -> &[DetachedBootstrapAcceptedEngineMaterial] {
         &self.engine_materials
+    }
+
+    /// Move the one-shot terminal construction capability out of this
+    /// preparation. A second call yields `None`, so no caller can build two
+    /// candidates from the same retained material.
+    pub(crate) fn take_terminal_construction_material(
+        &mut self,
+    ) -> Option<TerminalBootstrapConstructionMaterial> {
+        self.terminal_construction.take()
     }
 
     pub(crate) const fn instrumentation(&self) -> &BootstrapStreamingImportInstrumentation {
@@ -723,6 +734,78 @@ impl InactiveBootstrapAcceptedAuthority {
     #[cfg(test)]
     pub(crate) fn corrupt_retained_candidate_scratch_for_test(&self) {
         self.candidate.corrupt_scratch_for_promotion_test();
+    }
+}
+
+/// One-shot, process-local capability that lets an uninterrupted fresh
+/// activation build its SQLite projection from the terminal accepted state it
+/// just authored, instead of reloading and replaying every physical bootstrap
+/// part.
+///
+/// It retains only values this preparation already produced: the existing
+/// operation spool file and the already-typed accepted event of each authored
+/// part. It is deliberately neither `Clone` nor serializable, is never sealed,
+/// fsynced, or named by any durable artifact, and removes its relocated spool
+/// on drop. Crash residue is ordinary incomplete-preparation garbage that a new
+/// process ignores.
+///
+/// It is an optimization capability, never an authority: every consumer must
+/// independently bind it to the retained candidate, aggregate, durable history
+/// root, and accepted frontier. Absence or refusal simply selects the existing
+/// archive replay path.
+pub(crate) struct TerminalBootstrapConstructionMaterial {
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    import_id: ImportId,
+    operations: PathBuf,
+    operation_count: u64,
+    declaration_count: u64,
+    accepted_events: Vec<AcceptedBatchEvent>,
+}
+
+#[allow(dead_code)]
+impl TerminalBootstrapConstructionMaterial {
+    pub(crate) const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+
+    pub(crate) const fn lineage_digest(&self) -> LineageDigest {
+        self.lineage_digest
+    }
+
+    pub(crate) const fn import_id(&self) -> ImportId {
+        self.import_id
+    }
+
+    pub(crate) fn accepted_events(&self) -> &[AcceptedBatchEvent] {
+        &self.accepted_events
+    }
+
+    pub(crate) const fn operation_count(&self) -> u64 {
+        self.operation_count
+    }
+
+    pub(crate) const fn declaration_count(&self) -> u64 {
+        self.declaration_count
+    }
+
+    /// Reopen the retained operation spool. Chunk 2's manifest-intent sink is
+    /// this handle's other consumer; chunk 1 only proves the spool survived the
+    /// working-directory removal so the capability stays one artifact.
+    pub(crate) fn open_operations(
+        &self,
+    ) -> Result<BootstrapOperationSpoolReader, BootstrapStreamingImportError> {
+        Ok(BootstrapOperationSpoolReader::open(&self.operations)?)
+    }
+
+    pub(crate) fn operations_path(&self) -> &Path {
+        &self.operations
+    }
+}
+
+impl Drop for TerminalBootstrapConstructionMaterial {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.operations);
     }
 }
 
@@ -2705,7 +2788,7 @@ fn require_bootstrap_operation_limit(count: u64) -> Result<(), BootstrapStreamin
     }
 }
 
-struct BootstrapOperationSpoolReader {
+pub(crate) struct BootstrapOperationSpoolReader {
     records: SortRecordReader,
 }
 
@@ -2939,6 +3022,7 @@ struct AuthoredBootstrapParts {
     descriptors: Vec<BootstrapPartDescriptorV1>,
     candidate: Box<DetachedBootstrapCandidate>,
     engine_materials: Vec<DetachedBootstrapAcceptedEngineMaterial>,
+    accepted_events: Vec<AcceptedBatchEvent>,
     final_frontier: ArchiveLocalFrontierBindingV1,
 }
 
@@ -2990,6 +3074,7 @@ fn author_bootstrap_parts(
     let mut archive_frontier = ArchiveLocalFrontierBindingV1::initial(import_id, profile_digest);
     let mut descriptors = Vec::with_capacity(part_count as usize);
     let mut engine_materials = Vec::with_capacity(part_count as usize);
+    let mut accepted_events = Vec::with_capacity(part_count as usize);
     let mut authored_operations = 0_u64;
 
     for ordinal in 0..part_count {
@@ -3121,6 +3206,20 @@ fn author_bootstrap_parts(
                 .affected_documents()
                 .len() as u64,
         );
+        // Retain the exact accepted event this authoring pass produced, from
+        // the same prepared bytes and the same accepted evidence the archive
+        // replay path reconstructs. Nothing here asserts acceptance: the
+        // evidence is the detached engine's own, and every later consumer
+        // re-binds this value to the engine's authenticated history.
+        accepted_events.push(
+            AcceptedBatchEvent::from_authored_bootstrap_part(
+                &super::ValidatedBatch::new(prepared),
+                engine_material.accepted_evidence(),
+            )
+            .map_err(|error| {
+                BootstrapStreamingImportError::InvalidOperation(error.to_string())
+            })?,
+        );
         descriptors.push(descriptor);
         engine_materials.push(engine_material);
         predecessor = Some(evidence.part_id());
@@ -3155,6 +3254,7 @@ fn author_bootstrap_parts(
         descriptors,
         candidate,
         engine_materials,
+        accepted_events,
         final_frontier: archive_frontier,
     })
 }
@@ -3527,6 +3627,18 @@ pub(crate) fn prepare_inactive_bootstrap_import_with_progress(
             instrumentation.preparation_sealing_micros / 1_000
         );
     }
+    // Move the existing operation spool out of the working directory before it
+    // is removed, under a fresh random name in the same preparation prefix. The
+    // relocation is a rename of a file this preparation already wrote; it is
+    // never fsynced or sealed, and the handle removes it on drop.
+    let terminal_construction = retain_terminal_construction_material(
+        workspace_id,
+        lineage_digest,
+        source.import_id,
+        &root,
+        &operations,
+        authored.accepted_events,
+    );
     let _ = fs::remove_dir_all(&working);
     progress(BootstrapPreparationProgress::Summary(
         BootstrapPreparationSummary::from(&instrumentation),
@@ -3548,7 +3660,34 @@ pub(crate) fn prepare_inactive_bootstrap_import_with_progress(
         reference_catalog_archive_identity: reference_catalog.archive_identity(),
         candidate: Rc::from(authored.candidate),
         engine_materials: authored.engine_materials,
+        terminal_construction,
         instrumentation,
+    })
+}
+
+/// Retain the process-only terminal construction capability, or `None` if the
+/// spool could not be relocated. `None` is not a failure: it only means this
+/// activation takes the existing archive replay path.
+fn retain_terminal_construction_material(
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    import_id: ImportId,
+    root: &Path,
+    operations: &BootstrapOperationSpool,
+    accepted_events: Vec<AcceptedBatchEvent>,
+) -> Option<TerminalBootstrapConstructionMaterial> {
+    let retained = root.join(format!(".terminal-{}", Uuid::new_v4().simple()));
+    if fs::rename(&operations.path, &retained).is_err() {
+        return None;
+    }
+    Some(TerminalBootstrapConstructionMaterial {
+        workspace_id,
+        lineage_digest,
+        import_id,
+        operations: retained,
+        operation_count: operations.operation_count,
+        declaration_count: operations.declaration_count,
+        accepted_events,
     })
 }
 

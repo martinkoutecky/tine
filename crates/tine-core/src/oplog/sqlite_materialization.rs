@@ -1672,71 +1672,195 @@ fn lower_reference_catalog(
         post_source_count: input.post_catalog_root.source_count(),
         coverage_digest: input.post_catalog_root.source_coverage_root(),
         extractor_dependency_stamp_digest,
-        postings: input
-            .postings
-            .iter()
-            .map(|posting| {
-                Ok(storage::PhysicalReferencePosting {
-                    source_page_id: posting.source_page_id.as_uuid().into_bytes(),
-                    source_entity: lower_entity(posting.source_entity),
-                    source_locator: canonical_reference_source_locator_bytes(
-                        posting.source_locator,
-                    )?,
-                    ordinal: posting.ordinal,
-                    kind: posting.kind.sql_value(),
-                    target: match &posting.target {
-                        MaterializedReferenceTarget::PageName {
-                            raw_name,
-                            normalized_name,
-                            resolved_page_id,
-                        } => storage::PhysicalReferenceTarget::PageName {
-                            raw_name: raw_name.clone(),
-                            normalized_name: normalized_name.clone(),
-                            resolved_page_id: resolved_page_id.map(|id| id.as_uuid().into_bytes()),
-                        },
-                        MaterializedReferenceTarget::ExternalUuid {
-                            raw_claim,
-                            resolved_block_id,
-                        } => storage::PhysicalReferenceTarget::ExternalUuid {
-                            raw_claim: raw_claim.as_uuid().into_bytes(),
-                            resolved_block_id: resolved_block_id
-                                .map(|id| id.as_uuid().into_bytes()),
-                        },
-                    },
-                })
-            })
-            .collect::<Result<Vec<_>, MaterializationError>>()?,
-        aliases: input
-            .aliases
-            .iter()
-            .map(|alias| {
-                Ok(storage::PhysicalAliasDeclaration {
-                    source_page_id: alias.source_page_id.as_uuid().into_bytes(),
-                    source_entity: lower_entity(alias.source_entity),
-                    source_locator: canonical_reference_source_locator_bytes(alias.source_locator)?,
-                    ordinal: alias.ordinal,
-                    raw_alias: alias.raw_alias.clone(),
-                    normalized_alias: alias.normalized_alias.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, MaterializationError>>()?,
-        coverage: input
-            .coverage
-            .iter()
-            .map(|facet| {
-                Ok(storage::PhysicalSourceCoverage {
-                    source_page_id: facet.source_page_id.as_uuid().into_bytes(),
-                    source_digest: facet.source_digest,
-                    extractor_dependency_stamp_digest: facet.extractor_dependency_stamp.digest()?,
-                })
-            })
-            .collect::<Result<Vec<_>, MaterializationError>>()?,
+        postings: lower_reference_postings(&input.postings)?,
+        aliases: lower_alias_declarations(&input.aliases)?,
+        coverage: lower_source_coverage(&input.coverage)?,
         removed_sources: input
             .removed_sources
             .iter()
             .map(|id| id.as_uuid().into_bytes())
             .collect(),
         canonical_bytes,
+    })
+}
+
+fn lower_reference_postings(
+    postings: &[MaterializedReferencePosting],
+) -> Result<Vec<storage::PhysicalReferencePosting>, MaterializationError> {
+    postings
+        .iter()
+        .map(|posting| {
+            Ok(storage::PhysicalReferencePosting {
+                source_page_id: posting.source_page_id.as_uuid().into_bytes(),
+                source_entity: lower_entity(posting.source_entity),
+                source_locator: canonical_reference_source_locator_bytes(posting.source_locator)?,
+                ordinal: posting.ordinal,
+                kind: posting.kind.sql_value(),
+                target: match &posting.target {
+                    MaterializedReferenceTarget::PageName {
+                        raw_name,
+                        normalized_name,
+                        resolved_page_id,
+                    } => storage::PhysicalReferenceTarget::PageName {
+                        raw_name: raw_name.clone(),
+                        normalized_name: normalized_name.clone(),
+                        resolved_page_id: resolved_page_id.map(|id| id.as_uuid().into_bytes()),
+                    },
+                    MaterializedReferenceTarget::ExternalUuid {
+                        raw_claim,
+                        resolved_block_id,
+                    } => storage::PhysicalReferenceTarget::ExternalUuid {
+                        raw_claim: raw_claim.as_uuid().into_bytes(),
+                        resolved_block_id: resolved_block_id.map(|id| id.as_uuid().into_bytes()),
+                    },
+                },
+            })
+        })
+        .collect()
+}
+
+fn lower_alias_declarations(
+    aliases: &[MaterializedAliasDeclaration],
+) -> Result<Vec<storage::PhysicalAliasDeclaration>, MaterializationError> {
+    aliases
+        .iter()
+        .map(|alias| {
+            Ok(storage::PhysicalAliasDeclaration {
+                source_page_id: alias.source_page_id.as_uuid().into_bytes(),
+                source_entity: lower_entity(alias.source_entity),
+                source_locator: canonical_reference_source_locator_bytes(alias.source_locator)?,
+                ordinal: alias.ordinal,
+                raw_alias: alias.raw_alias.clone(),
+                normalized_alias: alias.normalized_alias.clone(),
+            })
+        })
+        .collect()
+}
+
+fn lower_source_coverage(
+    coverage: &[SourceCoverageFacet],
+) -> Result<Vec<storage::PhysicalSourceCoverage>, MaterializationError> {
+    coverage
+        .iter()
+        .map(|facet| {
+            Ok(storage::PhysicalSourceCoverage {
+                source_page_id: facet.source_page_id.as_uuid().into_bytes(),
+                source_digest: facet.source_digest,
+                extractor_dependency_stamp_digest: facet.extractor_dependency_stamp.digest()?,
+            })
+        })
+        .collect()
+}
+
+/// One bounded chunk of terminal bootstrap rows, before lowering.
+///
+/// Terminal construction never replays an intermediate page or reference
+/// replacement, so a chunk has no deletions, no removed sources, and no prior
+/// catalog transition: the accepted terminal catalog root authenticates every
+/// row in it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TerminalMaterializationChunk {
+    pub(crate) pages: Vec<MaterializedPageInput>,
+    pub(crate) coverage: Vec<SourceCoverageFacet>,
+    pub(crate) postings: Vec<MaterializedReferencePosting>,
+    pub(crate) aliases: Vec<MaterializedAliasDeclaration>,
+}
+
+/// Validate and lower one bounded terminal chunk with the same field rules the
+/// per-event lowering applies. The caller separately proves the chunk's pages
+/// are exactly the authenticated terminal current-path catalog rows, so there
+/// is no per-event semantic effect to validate against here.
+pub(crate) fn lower_terminal_chunk(
+    mut chunk: TerminalMaterializationChunk,
+) -> Result<storage::PhysicalTerminalMaterializationChunk, MaterializationError> {
+    chunk.pages.sort_unstable_by_key(|page| page.page_id);
+    chunk.coverage.sort_unstable();
+    chunk.postings.sort_unstable();
+    chunk.aliases.sort_unstable();
+    let mut input_budget = MaterializationInputBudget::default();
+    input_budget.add_pages(chunk.pages.len())?;
+    if !strictly_sorted_unique_by(&chunk.pages, |page| page.page_id) {
+        return Err(MaterializationError::InvalidInput(
+            "terminal pages are not canonical".into(),
+        ));
+    }
+    let mut block_ids = BTreeSet::new();
+    for page in &chunk.pages {
+        validate_page(page, &mut input_budget)?;
+        for block in &page.blocks {
+            if !block_ids.insert(block.block_id) {
+                return Err(MaterializationError::InvalidInput(format!(
+                    "block {} occurs in multiple terminal pages",
+                    block.block_id
+                )));
+            }
+        }
+    }
+    if !strictly_sorted_unique_by(&chunk.coverage, |facet| facet.source_page_id) {
+        return Err(MaterializationError::InvalidInput(
+            "terminal reference source coverage is not canonical".into(),
+        ));
+    }
+    if !strictly_sorted_unique_by(&chunk.postings, |posting| {
+        (
+            posting.source_page_id,
+            posting.source_entity,
+            posting.source_locator,
+            posting.ordinal,
+        )
+    }) {
+        return Err(MaterializationError::InvalidInput(
+            "terminal reference postings are not canonical".into(),
+        ));
+    }
+    if !strictly_sorted_unique_by(&chunk.aliases, |alias| {
+        (
+            alias.source_page_id,
+            alias.source_entity,
+            alias.source_locator,
+            alias.ordinal,
+        )
+    }) {
+        return Err(MaterializationError::InvalidInput(
+            "terminal reference alias declarations are not canonical".into(),
+        ));
+    }
+    let covered = chunk
+        .coverage
+        .iter()
+        .map(|facet| facet.source_page_id)
+        .collect::<BTreeSet<_>>();
+    for posting in &chunk.postings {
+        if !covered.contains(&posting.source_page_id) {
+            return Err(MaterializationError::InvalidInput(
+                "terminal reference posting has no source coverage".into(),
+            ));
+        }
+        validate_reference_posting(posting, &mut input_budget)?;
+    }
+    for alias in &chunk.aliases {
+        if !covered.contains(&alias.source_page_id) {
+            return Err(MaterializationError::InvalidInput(
+                "terminal reference alias has no source coverage".into(),
+            ));
+        }
+        validate_alias_declaration(alias, &mut input_budget)?;
+    }
+    for facet in &chunk.coverage {
+        facet.extractor_dependency_stamp.validate()?;
+        let _ = facet.extractor_dependency_stamp.digest()?;
+        input_budget.add_facet_values(1)?;
+        input_budget.add_bytes(REFERENCE_CATALOG_COVERAGE_OVERHEAD_BYTES)?;
+    }
+    Ok(storage::PhysicalTerminalMaterializationChunk {
+        pages: chunk
+            .pages
+            .iter()
+            .map(lower_page)
+            .collect::<Result<Vec<_>, _>>()?,
+        coverage: lower_source_coverage(&chunk.coverage)?,
+        postings: lower_reference_postings(&chunk.postings)?,
+        aliases: lower_alias_declarations(&chunk.aliases)?,
     })
 }
 

@@ -300,7 +300,10 @@ use super::hot_engine::{
     EngineError, EngineOpenRetention, LocalAuthorGeneration, PackedPatriciaMaintenanceReport,
     ProjectionStorageBinding, RuntimeResumeObservation, ShardedHotEngine,
 };
-use super::import::{InactiveBootstrapAcceptedAuthority, RetainedBootstrapPromotionCandidate};
+use super::import::{
+    InactiveBootstrapAcceptedAuthority, RetainedBootstrapPromotionCandidate,
+    TerminalBootstrapConstructionMaterial,
+};
 use super::migration_backup::MigrationBackupRoot;
 use super::object_store::{
     EngineHistoryAuthority, EngineHistoryBinding, EngineScratchRetentionPlan,
@@ -5472,17 +5475,28 @@ pub(crate) struct InactiveBootstrapRuntimeSession {
 impl InactiveBootstrapRuntimeSession {
     /// Take the archive-rooted workspace lease and open the inactive bootstrap
     /// database under its single applier slot.
+    /// The retained terminal construction material is consumed by value: it is
+    /// a one-shot same-process capability, so a session that used it cannot
+    /// hand it to a second build. Passing `None` — including on every retry
+    /// path below — selects the existing archive replay build.
     pub(crate) fn open(
         archive_root: &Path,
         workspace: WorkspaceId,
         database_path: &Path,
         application_runtime_root: &ApplicationRuntimeRoot,
         authority: &InactiveBootstrapAcceptedAuthority,
+        terminal: Option<TerminalBootstrapConstructionMaterial>,
     ) -> Result<Self, ProjectionError> {
         let archive = ObjectStore::open(archive_root, workspace)?;
         let lease = WorkspaceRuntimeLease::acquire(&archive, workspace)?;
-        Self::reopen_under(lease, database_path, application_runtime_root, authority)
-            .map_err(|(_released_lease, error)| error)
+        Self::reopen_under_with_terminal_material(
+            lease,
+            database_path,
+            application_runtime_root,
+            authority,
+            terminal,
+        )
+        .map_err(|(_released_lease, error)| error)
     }
 
     /// Reopen the inactive bootstrap database under a lease this process is
@@ -5497,6 +5511,22 @@ impl InactiveBootstrapRuntimeSession {
         application_runtime_root: &ApplicationRuntimeRoot,
         authority: &InactiveBootstrapAcceptedAuthority,
     ) -> Result<Self, (WorkspaceRuntimeLease, ProjectionError)> {
+        Self::reopen_under_with_terminal_material(
+            lease,
+            database_path,
+            application_runtime_root,
+            authority,
+            None,
+        )
+    }
+
+    fn reopen_under_with_terminal_material(
+        lease: WorkspaceRuntimeLease,
+        database_path: &Path,
+        application_runtime_root: &ApplicationRuntimeRoot,
+        authority: &InactiveBootstrapAcceptedAuthority,
+        terminal: Option<TerminalBootstrapConstructionMaterial>,
+    ) -> Result<Self, (WorkspaceRuntimeLease, ProjectionError)> {
         LeasedWorkspaceProjection::open_under::<VerifiedBootstrapSqliteProjection, ProjectionError>(
             lease,
             |slot| {
@@ -5505,6 +5535,7 @@ impl InactiveBootstrapRuntimeSession {
                     application_runtime_root,
                     authority,
                     slot,
+                    terminal.as_ref(),
                 )
             },
         )
@@ -5725,6 +5756,7 @@ mod bounded_admission {
                 &root.path().join("bootstrap.sqlite"),
                 &runtime,
                 &authority,
+            None,
             )
             .expect("inactive bootstrap runtime session");
             let archive_resource_id = authority

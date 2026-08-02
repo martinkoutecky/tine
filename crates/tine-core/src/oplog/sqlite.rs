@@ -58,6 +58,7 @@ use uuid::Uuid;
 use super::hot_engine::{AcceptedFrontierRoot, EngineAuthority};
 use super::import::{
     InactiveBootstrapAcceptedAuthority, InactiveBootstrapAcceptedAuthorityBinding,
+    TerminalBootstrapConstructionMaterial,
 };
 use super::object_store::ValidatedBootstrapPublicationV1;
 use super::{
@@ -75,6 +76,10 @@ pub const TAIL_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const TAIL_MAX_BATCHES: usize = 10_000;
 
 const PROJECTION_CHECKPOINT_SCHEMA_VERSION: u32 = 2;
+/// Bounded current-path catalog page size for terminal construction. The rows
+/// are drained into materialization chunks, so this only caps how many
+/// authenticated catalog rows the builder owns at once.
+const TERMINAL_CATALOG_CURSOR_PAGE_ROWS: usize = 128;
 const OBJECT_STORE_LEASE_NAMESPACE: &str = ".tine-runtime";
 const SQLITE_WORKSPACE_LEASE_NAMESPACE: &str = "sqlite-workspaces";
 const SQLITE_APPLIER_LEASE_FILE: &str = "sqlite-applier.lock";
@@ -239,6 +244,22 @@ impl AcceptedBatchEvent {
             });
         }
         Self::from_validated(&validated, evidence)?.with_effective_view(engine)
+    }
+
+    /// Retain the accepted event of one bootstrap part directly from the
+    /// prepared bytes and accepted evidence a detached authoring pass just
+    /// produced.
+    ///
+    /// This is deliberately the exact constructor the archive replay path takes
+    /// after loading the same part back out of the immutable publication, so a
+    /// retained value and a replayed value are the same typed event. It grants
+    /// no acceptance by itself: `authenticate_event_for_engine` still has to
+    /// bind it to the engine's authenticated history before it may be applied.
+    pub(crate) fn from_authored_bootstrap_part(
+        batch: &ValidatedBatch,
+        evidence: &super::AcceptedBatchEvidence,
+    ) -> Result<Self, ProjectionError> {
+        Self::from_validated(batch, evidence)
     }
 
     fn from_validated(
@@ -1410,88 +1431,18 @@ fn attach_authenticated_reference_catalog_at(
         post_root.extractor_digest(),
         post_root.policy_digest(),
     )?;
-    let mut postings = Vec::new();
-    let mut aliases = Vec::new();
-    let mut coverage = Vec::new();
+    let mut rows = ReferenceCatalogSourceRows::default();
     let mut removed_sources = Vec::new();
     for page_id in super::reference_catalog::affected_reference_sources(&effect) {
-        let Some(posting) = engine
-            .reference_source_posting_at(&post_root, page_id)
-            .map_err(|error| ProjectionError::Materialization(error.to_string()))?
-        else {
+        if !collect_reference_source_rows(engine, &post_root, stamp, page_id, &mut rows)? {
             removed_sources.push(page_id);
-            continue;
-        };
-        coverage.push(super::sqlite_materialization::SourceCoverageFacet {
-            source_page_id: page_id,
-            source_digest: posting
-                .digest()
-                .map_err(|error| ProjectionError::Materialization(error.to_string()))?,
-            extractor_dependency_stamp: stamp,
-        });
-        for (ordinal, fact) in posting.facts().iter().enumerate() {
-            let ordinal = u32::try_from(ordinal).map_err(|_| {
-                ProjectionError::Materialization(
-                    "reference posting ordinal exceeds the SQLite adapter bound".into(),
-                )
-            })?;
-            let (source_entity, source_locator) = match fact {
-                ReferenceFactV1::PageName(fact) => (fact.source, fact.source),
-                ReferenceFactV1::Block(fact) => (fact.source, fact.source),
-            };
-            let source_entity = match source_entity {
-                ReferenceSourceLocatorV1::Preamble => super::MaterializedEntityId::Page(page_id),
-                ReferenceSourceLocatorV1::Block { block_id, .. } => {
-                    super::MaterializedEntityId::Block(block_id)
-                }
-            };
-            let (kind, target) = match fact {
-                ReferenceFactV1::PageName(fact) => (
-                    super::sqlite_materialization::ReferenceCatalogReferenceKind::from_page_kind(
-                        fact.kind,
-                    ),
-                    super::sqlite_materialization::MaterializedReferenceTarget::PageName {
-                        raw_name: fact.raw_target.clone(),
-                        normalized_name: fact.normalized_target.clone(),
-                        resolved_page_id: None,
-                    },
-                ),
-                ReferenceFactV1::Block(fact) => (
-                    super::sqlite_materialization::ReferenceCatalogReferenceKind::from_block_kind(
-                        fact.kind,
-                    ),
-                    super::sqlite_materialization::MaterializedReferenceTarget::ExternalUuid {
-                        raw_claim: fact.logseq_uuid,
-                        resolved_block_id: None,
-                    },
-                ),
-            };
-            postings.push(
-                super::sqlite_materialization::MaterializedReferencePosting {
-                    source_page_id: page_id,
-                    source_entity,
-                    source_locator,
-                    ordinal,
-                    kind,
-                    target,
-                },
-            );
-            if let ReferenceFactV1::PageName(fact) = fact {
-                if matches!(fact.kind, super::PageReferenceKindV1::AliasDeclaration) {
-                    aliases.push(
-                        super::sqlite_materialization::MaterializedAliasDeclaration {
-                            source_page_id: page_id,
-                            source_entity,
-                            source_locator,
-                            ordinal,
-                            raw_alias: fact.raw_target.clone(),
-                            normalized_alias: fact.normalized_target.clone(),
-                        },
-                    );
-                }
-            }
         }
     }
+    let ReferenceCatalogSourceRows {
+        coverage,
+        postings,
+        aliases,
+    } = rows;
     let reference_catalog =
         super::sqlite_materialization::ReferenceCatalogMaterializationInput::new(
             prior_root,
@@ -1507,6 +1458,199 @@ fn attach_authenticated_reference_catalog_at(
     change
         .with_authenticated_reference_catalog(reference_catalog)
         .map_err(Into::into)
+}
+
+fn record_candidate_write_instrumentation(
+    instrumentation: &mut RebuildInstrumentation,
+    before: storage_frontier::PhysicalWriteInstrumentation,
+    after: storage_frontier::PhysicalWriteInstrumentation,
+) {
+    instrumentation.physical_candidate_transactions = after
+        .candidate_transactions
+        .saturating_sub(before.candidate_transactions);
+    instrumentation.physical_candidate_durability_barriers = after
+        .candidate_durability_barriers
+        .saturating_sub(before.candidate_durability_barriers);
+    instrumentation.physical_ordinary_transactions = after
+        .ordinary_transactions
+        .saturating_sub(before.ordinary_transactions);
+    instrumentation.physical_ordinary_durability_barriers = after
+        .ordinary_durability_barriers
+        .saturating_sub(before.ordinary_durability_barriers);
+}
+
+/// Bind the retained process-local construction material to the exact archive
+/// authority this build is for.
+///
+/// The material carries no acceptance of its own: this refuses unless its
+/// events are the aggregate's parts, in order, with the authenticated prior/post
+/// root chain that ends at the engine's exact terminal frontier. A refusal is
+/// not corruption of the durable state — it only means this activation must
+/// take the existing archive replay path.
+fn validate_terminal_construction_material(
+    source: &RebuildSource<'_>,
+    publication: &ValidatedBootstrapPublicationV1,
+    material: &TerminalBootstrapConstructionMaterial,
+) -> Result<(), ProjectionError> {
+    let aggregate = publication.aggregate();
+    let engine = source.engine;
+    if material.workspace_id() != engine.workspace_id()
+        || material.lineage_digest() != engine.lineage_digest()
+        || material.import_id() != aggregate.import_id()
+    {
+        return Err(ProjectionError::Rebuild(
+            "retained terminal material belongs to another workspace, lineage, or import".into(),
+        ));
+    }
+    let events = material.accepted_events();
+    if events.len() != aggregate.parts().len()
+        || events.len() as u64 != source.accepted_batch_count
+    {
+        return Err(ProjectionError::Rebuild(
+            "retained terminal material does not cover the exact accepted prefix".into(),
+        ));
+    }
+    let mut prior = AcceptedFrontierRoot::empty();
+    for (ordinal, (event, descriptor)) in events.iter().zip(aggregate.parts().iter()).enumerate() {
+        let sequence = u64::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| ordinal.checked_add(1))
+            .ok_or_else(|| {
+                ProjectionError::Rebuild("terminal accepted sequence overflowed".into())
+            })?;
+        let (indexed_batch_id, indexed_evidence) = engine
+            .accepted_batch_entry_at(sequence)
+            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?
+            .ok_or_else(|| {
+                ProjectionError::Rebuild(format!(
+                    "accepted history is missing sequence {sequence}"
+                ))
+            })?;
+        let evidence = indexed_evidence.ok_or_else(|| {
+            ProjectionError::Rebuild(
+                "bootstrap accepted sequence lacks indexed accepted evidence".into(),
+            )
+        })?;
+        if event.batch_id() != indexed_batch_id
+            || event.batch_id() != descriptor.batch_id()
+            || event.acceptance_sequence() != sequence
+            || u64::from(descriptor.acceptance_sequence()) != sequence
+            || descriptor.evidence().ordinal() as usize != ordinal
+            || evidence.batch_id() != indexed_batch_id
+            || evidence.acceptance_sequence() != sequence
+            || event.manifest_digest() != evidence.manifest_fingerprint()
+            || event.event_binding_digest() != evidence.event_binding_digest()
+            || *event.prior_frontier_root() != prior
+        {
+            return Err(ProjectionError::Rebuild(format!(
+                "retained terminal event {ordinal} is not the aggregate's authenticated part"
+            )));
+        }
+        prior = event.post_frontier_root().clone();
+    }
+    if prior != source.exact_frontier_root {
+        return Err(ProjectionError::Rebuild(
+            "retained terminal events do not chain to the engine's accepted frontier root".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The authenticated catalog rows one reference source contributes at one
+/// catalog root. Per-event lowering and terminal construction share this exact
+/// derivation so a replayed database and a terminal one cannot disagree.
+#[derive(Debug, Default)]
+struct ReferenceCatalogSourceRows {
+    coverage: Vec<super::sqlite_materialization::SourceCoverageFacet>,
+    postings: Vec<super::sqlite_materialization::MaterializedReferencePosting>,
+    aliases: Vec<super::sqlite_materialization::MaterializedAliasDeclaration>,
+}
+
+/// Append one source's authenticated rows. Returns `false` when the catalog has
+/// no posting for that page at this root, which the per-event caller records as
+/// a removed source.
+fn collect_reference_source_rows(
+    engine: &ShardedHotEngine,
+    post_root: &super::ReferenceCatalogRootV2,
+    stamp: super::sqlite_materialization::ReferenceExtractorDependencyStamp,
+    page_id: PageId,
+    rows: &mut ReferenceCatalogSourceRows,
+) -> Result<bool, ProjectionError> {
+    let Some(posting) = engine
+        .reference_source_posting_at(post_root, page_id)
+        .map_err(|error| ProjectionError::Materialization(error.to_string()))?
+    else {
+        return Ok(false);
+    };
+    rows.coverage
+        .push(super::sqlite_materialization::SourceCoverageFacet {
+            source_page_id: page_id,
+            source_digest: posting
+                .digest()
+                .map_err(|error| ProjectionError::Materialization(error.to_string()))?,
+            extractor_dependency_stamp: stamp,
+        });
+    for (ordinal, fact) in posting.facts().iter().enumerate() {
+        let ordinal = u32::try_from(ordinal).map_err(|_| {
+            ProjectionError::Materialization(
+                "reference posting ordinal exceeds the SQLite adapter bound".into(),
+            )
+        })?;
+        let (source_entity, source_locator) = match fact {
+            ReferenceFactV1::PageName(fact) => (fact.source, fact.source),
+            ReferenceFactV1::Block(fact) => (fact.source, fact.source),
+        };
+        let source_entity = match source_entity {
+            ReferenceSourceLocatorV1::Preamble => super::MaterializedEntityId::Page(page_id),
+            ReferenceSourceLocatorV1::Block { block_id, .. } => {
+                super::MaterializedEntityId::Block(block_id)
+            }
+        };
+        let (kind, target) = match fact {
+            ReferenceFactV1::PageName(fact) => (
+                super::sqlite_materialization::ReferenceCatalogReferenceKind::from_page_kind(
+                    fact.kind,
+                ),
+                super::sqlite_materialization::MaterializedReferenceTarget::PageName {
+                    raw_name: fact.raw_target.clone(),
+                    normalized_name: fact.normalized_target.clone(),
+                    resolved_page_id: None,
+                },
+            ),
+            ReferenceFactV1::Block(fact) => (
+                super::sqlite_materialization::ReferenceCatalogReferenceKind::from_block_kind(
+                    fact.kind,
+                ),
+                super::sqlite_materialization::MaterializedReferenceTarget::ExternalUuid {
+                    raw_claim: fact.logseq_uuid,
+                    resolved_block_id: None,
+                },
+            ),
+        };
+        rows.postings
+            .push(super::sqlite_materialization::MaterializedReferencePosting {
+                source_page_id: page_id,
+                source_entity,
+                source_locator,
+                ordinal,
+                kind,
+                target,
+            });
+        if let ReferenceFactV1::PageName(fact) = fact {
+            if matches!(fact.kind, super::PageReferenceKindV1::AliasDeclaration) {
+                rows.aliases
+                    .push(super::sqlite_materialization::MaterializedAliasDeclaration {
+                        source_page_id: page_id,
+                        source_entity,
+                        source_locator,
+                        ordinal,
+                        raw_alias: fact.raw_target.clone(),
+                        normalized_alias: fact.normalized_target.clone(),
+                    });
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn authenticated_reference_materialization(
@@ -1615,6 +1759,19 @@ pub(crate) struct BootstrapSqliteRebuildInstrumentation {
     pub(crate) bootstrap_part_reads: usize,
     pub(crate) bootstrap_object_reads: usize,
     pub(crate) max_live_bootstrap_parts: usize,
+    /// One when this database was seeded from the retained terminal accepted
+    /// state, zero when it replayed the archive parts.
+    pub(crate) terminal_constructions: usize,
+    /// Per-part intermediate page/reference materializations run through
+    /// ordinary event DML. Terminal construction must leave this at zero.
+    pub(crate) intermediate_page_materializations: usize,
+    pub(crate) terminal_materializations: usize,
+    pub(crate) terminal_pages_materialized: usize,
+    pub(crate) terminal_materialization_chunks: usize,
+    pub(crate) peak_terminal_bulk_pages: usize,
+    /// One when retained terminal material was present but refused, so this
+    /// activation discarded the private candidate and replayed the archive.
+    pub(crate) terminal_construction_refusals: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2582,6 +2739,26 @@ impl SqliteFrontier {
             application_runtime_root,
             authority,
             &ApplierAuthorization::OwnWorkspaceLease,
+            None,
+        )
+    }
+
+    /// Test-only twin that additionally consumes retained terminal
+    /// construction material, so SQLite-level tests can exercise both build
+    /// paths over one authority.
+    #[cfg(test)]
+    pub(crate) fn open_or_rebuild_inactive_bootstrap_terminally(
+        path: &Path,
+        application_runtime_root: &ApplicationRuntimeRoot,
+        authority: &InactiveBootstrapAcceptedAuthority,
+        terminal: &TerminalBootstrapConstructionMaterial,
+    ) -> Result<(OpenProjection, VerifiedBootstrapSqliteProjection), ProjectionError> {
+        Self::open_or_rebuild_inactive_bootstrap_authorized(
+            path,
+            application_runtime_root,
+            authority,
+            &ApplierAuthorization::OwnWorkspaceLease,
+            Some(terminal),
         )
     }
 
@@ -2598,6 +2775,7 @@ impl SqliteFrontier {
         application_runtime_root: &ApplicationRuntimeRoot,
         authority: &InactiveBootstrapAcceptedAuthority,
         slot: SqliteApplierSlot<'lease>,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
     ) -> Result<
         (
             LeasedOpenProjection<'lease>,
@@ -2610,6 +2788,7 @@ impl SqliteFrontier {
             application_runtime_root,
             authority,
             &ApplierAuthorization::Slot(&slot),
+            terminal,
         )?;
         Ok((LeasedOpenProjection::bind(opened, slot), proof))
     }
@@ -2619,12 +2798,13 @@ impl SqliteFrontier {
         _application_runtime_root: &ApplicationRuntimeRoot,
         authority: &InactiveBootstrapAcceptedAuthority,
         authorization: &ApplierAuthorization<'_, '_>,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
     ) -> Result<(OpenProjection, VerifiedBootstrapSqliteProjection), ProjectionError> {
         let binding = authority.binding();
         let claim = ProjectionClaim::current(binding.workspace_id(), binding.lineage_digest());
         let source = RebuildSource::from_inactive_bootstrap(authority)?;
         let (opened, bootstrap_rebuild) =
-            Self::rebuild_fresh_inactive_bootstrap(path, claim, source, authorization)?;
+            Self::rebuild_fresh_inactive_bootstrap(path, claim, source, authorization, terminal)?;
         let frontier_root = opened.database.frontier_root()?;
         let accepted_batch_count = u64::try_from(opened.database.applied_batch_count()?)
             .map_err(|_| ProjectionError::Rebuild("SQLite accepted count overflowed".into()))?;
@@ -2674,6 +2854,7 @@ impl SqliteFrontier {
         claim: ProjectionClaim,
         source: RebuildSource<'_>,
         authorization: &ApplierAuthorization<'_, '_>,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
     ) -> Result<(OpenProjection, BootstrapSqliteRebuildInstrumentation), ProjectionError> {
         validate_source(claim, &source)?;
         source.authenticate_exact_frontier()?;
@@ -2686,7 +2867,7 @@ impl SqliteFrontier {
             maybe_abort_forensic_test("before-rebuild", 0);
         }
         let (database, rebuild, bootstrap_rebuild) =
-            Self::build_candidate_and_publish(&path, claim, lease, &source)?;
+            Self::build_candidate_and_publish(&path, claim, lease, &source, terminal)?;
         if !pending_forensics.directories.is_empty() {
             mark_rebuild_complete(&pending_forensics)?;
             return Ok((
@@ -2861,7 +3042,7 @@ impl SqliteFrontier {
                     pending_forensics.extend(preserve_forensics(&path)?);
                     maybe_abort_forensic_test("before-rebuild", 0);
                     let (database, rebuild, _) =
-                        Self::build_candidate_and_publish(&path, claim, lease, &source)?;
+                        Self::build_candidate_and_publish(&path, claim, lease, &source, None)?;
                     mark_rebuild_complete(&pending_forensics)?;
                     return Ok(OpenProjection {
                         database,
@@ -2877,7 +3058,7 @@ impl SqliteFrontier {
         }
 
         let (database, rebuild, _) =
-            Self::build_candidate_and_publish(&path, claim, lease, &source)?;
+            Self::build_candidate_and_publish(&path, claim, lease, &source, None)?;
         if !pending_forensics.directories.is_empty() {
             mark_rebuild_complete(&pending_forensics)?;
             return Ok(OpenProjection {
@@ -2904,9 +3085,40 @@ impl SqliteFrontier {
         claim: ProjectionClaim,
         lease: Arc<HeldApplierLocks>,
         source: &RebuildSource<'_>,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
     ) -> Result<
         (
             Self,
+            RebuildInstrumentation,
+            BootstrapSqliteRebuildInstrumentation,
+        ),
+        ProjectionError,
+    > {
+        // The retained terminal material is an optimization capability, never
+        // an authority. If it is absent, refuses to bind, or fails part way
+        // through, the private candidate is discarded and this build falls back
+        // to the unchanged archive replay path over the same durable evidence.
+        let mut refused = 0_usize;
+        if terminal.is_some() {
+            match Self::build_candidate(path, claim, Arc::clone(&lease), source, terminal) {
+                Ok(built) => return Self::publish_candidate(path, claim, lease, source, built),
+                Err(_discarded) => refused = 1,
+            }
+        }
+        let mut built = Self::build_candidate(path, claim, Arc::clone(&lease), source, None)?;
+        built.2.terminal_construction_refusals = refused;
+        Self::publish_candidate(path, claim, lease, source, built)
+    }
+
+    fn build_candidate(
+        path: &Path,
+        claim: ProjectionClaim,
+        lease: Arc<HeldApplierLocks>,
+        source: &RebuildSource<'_>,
+        terminal: Option<&TerminalBootstrapConstructionMaterial>,
+    ) -> Result<
+        (
+            SqliteFileSet,
             RebuildInstrumentation,
             BootstrapSqliteRebuildInstrumentation,
         ),
@@ -2917,11 +3129,15 @@ impl SqliteFrontier {
         let mut candidate = Self::create_new(
             &candidate_path,
             claim,
-            Arc::clone(&lease),
+            lease,
             source.runtime_authority.clone(),
         )?;
         candidate.require_frontier(&source.exact_frontier_root)?;
-        let (rebuild, bootstrap_rebuild) = match candidate.rebuild_stream(source) {
+        let streamed = match terminal {
+            Some(material) => candidate.terminal_stream(source, material),
+            None => candidate.rebuild_stream(source),
+        };
+        let (rebuild, bootstrap_rebuild) = match streamed {
             Ok(rebuild) => rebuild,
             Err(error) => {
                 drop(candidate);
@@ -2929,8 +3145,34 @@ impl SqliteFrontier {
                 return Err(error);
             }
         };
-        candidate.physical.checkpoint_truncate_and_disable_wal()?;
+        if let Err(error) = candidate.physical.checkpoint_truncate_and_disable_wal() {
+            drop(candidate);
+            candidate_files.remove()?;
+            return Err(error.into());
+        }
         drop(candidate);
+        Ok((candidate_files, rebuild, bootstrap_rebuild))
+    }
+
+    fn publish_candidate(
+        path: &Path,
+        claim: ProjectionClaim,
+        lease: Arc<HeldApplierLocks>,
+        source: &RebuildSource<'_>,
+        built: (
+            SqliteFileSet,
+            RebuildInstrumentation,
+            BootstrapSqliteRebuildInstrumentation,
+        ),
+    ) -> Result<
+        (
+            Self,
+            RebuildInstrumentation,
+            BootstrapSqliteRebuildInstrumentation,
+        ),
+        ProjectionError,
+    > {
+        let (candidate_files, rebuild, bootstrap_rebuild) = built;
         candidate_files.publish_candidate(path)?;
         let physical = PhysicalSqliteDatabase::open_writable(path)?;
         let root = read_frontier_root(&physical)?;
@@ -3409,6 +3651,332 @@ impl SqliteFrontier {
             .collect()
     }
 
+    /// Seed the fresh inactive-bootstrap candidate from the retained terminal
+    /// accepted state.
+    ///
+    /// Each authored part still contributes its complete authenticated
+    /// accepted-prefix rows, in order, under the same event authentication the
+    /// replay path performs — but no intermediate page or reference
+    /// replacement is applied. Exactly one terminal page/block/facet/search and
+    /// reference-catalog materialization then seeds the same unchanged schema
+    /// inside the same candidate transaction.
+    fn terminal_stream(
+        &mut self,
+        source: &RebuildSource<'_>,
+        material: &TerminalBootstrapConstructionMaterial,
+    ) -> Result<
+        (
+            RebuildInstrumentation,
+            BootstrapSqliteRebuildInstrumentation,
+        ),
+        ProjectionError,
+    > {
+        let RebuildLoader::InactiveBootstrap { publication } = source.loader else {
+            return Err(ProjectionError::Rebuild(
+                "terminal construction is only defined for a fresh inactive bootstrap".into(),
+            ));
+        };
+        validate_terminal_construction_material(source, publication, material)?;
+        let engine = source.engine;
+        let mut instrumentation = RebuildInstrumentation::default();
+        let mut bootstrap = BootstrapSqliteRebuildInstrumentation {
+            terminal_constructions: 1,
+            ..BootstrapSqliteRebuildInstrumentation::default()
+        };
+        let writes_before = self.physical.write_instrumentation();
+        self.physical.begin_candidate_build()?;
+        self.physical.begin_terminal_bootstrap_construction()?;
+        let mut provenance = Vec::with_capacity(material.accepted_events().len());
+        for event in material.accepted_events() {
+            instrumentation.accepted_events_validated += 1;
+            instrumentation.max_live_events = instrumentation.max_live_events.max(1);
+            instrumentation.max_live_evidence_records =
+                instrumentation.max_live_evidence_records.max(1);
+            authenticate_event_for_engine(engine, event)?;
+            let (_, apply_stats) =
+                self.apply_candidate_with_materialization_and_stats(event, ApplyFault::None, None)?;
+            instrumentation.cleanup_page_attempts += apply_stats.cleanup_page_attempts;
+            instrumentation.cleanup_existing_pages += apply_stats.cleanup_existing_pages;
+            instrumentation.cleanup_owned_rows += apply_stats.cleanup_owned_rows;
+            instrumentation.cleanup_fts_rowids += apply_stats.cleanup_fts_rowids;
+            instrumentation.reference_coverage_inductive_checks +=
+                apply_stats.reference_coverage_inductive_checks;
+            instrumentation.reference_coverage_full_scans +=
+                apply_stats.reference_coverage_full_scans;
+            // Construction provenance for one accepted sequence whose page and
+            // reference rows this build did not replay: the digest is of the
+            // empty change actually applied here, never a copied per-event one.
+            provenance.push(storage_frontier::PhysicalTerminalConstructionBatch {
+                acceptance_sequence: event.acceptance_sequence(),
+                batch_id: event.batch_id().as_uuid().into_bytes(),
+                input_digest: super::MaterializationChange::new(
+                    event.batch_id(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .and_then(|change| change.digest())?,
+            });
+            instrumentation.accepted_events_applied += 1;
+            maybe_abort_rebuild_test(instrumentation.accepted_events_applied);
+        }
+        let reached = read_frontier_root(&self.physical)?;
+        if reached != source.exact_frontier_root
+            || reached.acceptance_sequence() != source.accepted_batch_count
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal accepted-prefix seed did not reach the authenticated frontier root".into(),
+            ));
+        }
+        let coverage_count = self.seed_terminal_rows(
+            engine,
+            &source.exact_frontier_root,
+            &provenance,
+            &mut instrumentation,
+            &mut bootstrap,
+        )?;
+        self.fresh_reference_coverage_count = Some(coverage_count);
+        if instrumentation.cleanup_page_attempts != 0
+            || instrumentation.cleanup_owned_rows != 0
+            || instrumentation.cleanup_fts_rowids != 0
+            || instrumentation.reference_coverage_inductive_checks != 0
+            || instrumentation.reference_coverage_full_scans != 0
+            || bootstrap.intermediate_page_materializations != 0
+            || bootstrap.bootstrap_part_reads != 0
+            || bootstrap.terminal_materializations != 1
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal candidate structural accounting invariant failed".into(),
+            ));
+        }
+        self.finish_fresh_candidate(source, coverage_count, &mut instrumentation)?;
+        self.physical.finish_candidate_build()?;
+        record_candidate_write_instrumentation(
+            &mut instrumentation,
+            writes_before,
+            self.physical.write_instrumentation(),
+        );
+        Ok((instrumentation, bootstrap))
+    }
+
+    /// Stream the complete terminal page and reference rows in bounded chunks.
+    ///
+    /// The page set is the engine's authenticated current-path catalog at the
+    /// exact terminal accepted frontier, and every row is materialized once at
+    /// that same root. The final coverage count is separately proved against
+    /// `AcceptedFrontierRoot::reference_catalog_root`.
+    fn seed_terminal_rows(
+        &mut self,
+        engine: &ShardedHotEngine,
+        terminal_root: &AcceptedFrontierRoot,
+        provenance: &[storage_frontier::PhysicalTerminalConstructionBatch],
+        instrumentation: &mut RebuildInstrumentation,
+        bootstrap: &mut BootstrapSqliteRebuildInstrumentation,
+    ) -> Result<u64, ProjectionError> {
+        let binding = engine
+            .current_path_catalog_binding()
+            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
+        if binding.workspace_id() != engine.workspace_id()
+            || binding.lineage_digest() != engine.lineage_digest()
+            || binding.accepted_frontier() != terminal_root.state_digest()
+        {
+            return Err(ProjectionError::Rebuild(
+                "current-path catalog is not bound to the terminal accepted frontier".into(),
+            ));
+        }
+        let catalog_root = terminal_root.reference_catalog_root().clone();
+        let extractor_stamp = super::sqlite_materialization::ReferenceExtractorDependencyStamp::new(
+            catalog_root.extractor_digest(),
+            catalog_root.policy_digest(),
+        )?;
+        let materializer = (binding.catalog_rows() != 0)
+            .then(|| {
+                engine
+                    .bootstrap_bulk_materializer_with_session_budget(
+                        terminal_root,
+                        super::hot_engine::BOOTSTRAP_LOOKUP_SESSION_BYTES_PER_ROOT,
+                    )
+                    .map_err(|error| ProjectionError::Materialization(error.to_string()))
+            })
+            .transpose()?;
+        bootstrap.terminal_materializations = 1;
+        instrumentation.accepted_root_authentications += usize::from(materializer.is_some());
+        instrumentation.exact_catalog_loads += usize::from(materializer.is_some());
+        let mut cursor = Some(
+            engine
+                .begin_current_path_cursor()
+                .map_err(|error| ProjectionError::Rebuild(error.to_string()))?,
+        );
+        let mut pending: Vec<super::hot_engine::CurrentPathCatalogRow> = Vec::new();
+        let mut observed_rows = 0_u64;
+        let mut seen_pages = BTreeSet::new();
+        while let Some(token) = cursor.take() {
+            let page = engine
+                .current_path_cursor_page(
+                    token,
+                    TERMINAL_CATALOG_CURSOR_PAGE_ROWS
+                        .min(super::hot_engine::MAX_CURRENT_PATH_CURSOR_PAGE_ROWS),
+                )
+                .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
+            let (rows, next) = page.into_parts();
+            cursor = next;
+            pending.extend(rows);
+            while pending.len() >= super::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES
+                || (cursor.is_none() && !pending.is_empty())
+            {
+                let take = pending
+                    .len()
+                    .min(super::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES);
+                let chunk_rows = pending.drain(..take).collect::<Vec<_>>();
+                observed_rows = observed_rows.saturating_add(chunk_rows.len() as u64);
+                for row in &chunk_rows {
+                    if !seen_pages.insert(row.page_id()) {
+                        return Err(ProjectionError::Rebuild(
+                            "current-path catalog repeats a terminal page identity".into(),
+                        ));
+                    }
+                }
+                self.seed_terminal_chunk(
+                    materializer
+                        .as_ref()
+                        .ok_or_else(|| {
+                            ProjectionError::Rebuild(
+                                "terminal catalog rows require a bulk materializer".into(),
+                            )
+                        })?,
+                    engine,
+                    &catalog_root,
+                    extractor_stamp,
+                    &chunk_rows,
+                    instrumentation,
+                    bootstrap,
+                )?;
+            }
+        }
+        let current = engine
+            .current_path_catalog_binding()
+            .map_err(|error| ProjectionError::Rebuild(error.to_string()))?;
+        if current != binding
+            || observed_rows != binding.catalog_rows()
+            || seen_pages.len() as u64 != binding.catalog_rows()
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal current-path catalog changed or is incompletely covered".into(),
+            ));
+        }
+        if provenance.is_empty() {
+            if binding.catalog_rows() != 0 || catalog_root.source_count() != 0 {
+                return Err(ProjectionError::Rebuild(
+                    "an empty accepted prefix cannot carry terminal catalog rows".into(),
+                ));
+            }
+            return Ok(0);
+        }
+        let stamp = storage_frontier::PhysicalTerminalCatalogStamp {
+            acceptance_sequence: terminal_root.acceptance_sequence(),
+            frontier_root_digest: ContentDigest::of(&canonical_frontier_root_bytes(terminal_root)?),
+            catalog_root: catalog_root
+                .encode()
+                .map_err(|error| ProjectionError::Materialization(error.to_string()))?,
+            catalog_root_digest: catalog_root
+                .external_digest()
+                .map_err(|error| ProjectionError::Materialization(error.to_string()))?,
+            coverage_digest: catalog_root.source_coverage_root(),
+            extractor_dependency_stamp_digest: extractor_stamp.digest()?,
+            source_count: catalog_root.source_count(),
+        };
+        self.physical
+            .finish_terminal_bootstrap_construction(provenance, &stamp)
+            .map_err(Into::into)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_terminal_chunk(
+        &mut self,
+        materializer: &super::hot_engine::BootstrapBulkMaterializer<'_>,
+        engine: &ShardedHotEngine,
+        catalog_root: &super::ReferenceCatalogRootV2,
+        extractor_stamp: super::sqlite_materialization::ReferenceExtractorDependencyStamp,
+        rows: &[super::hot_engine::CurrentPathCatalogRow],
+        instrumentation: &mut RebuildInstrumentation,
+        bootstrap: &mut BootstrapSqliteRebuildInstrumentation,
+    ) -> Result<(), ProjectionError> {
+        let page_ids = rows.iter().map(|row| row.page_id()).collect::<Vec<_>>();
+        let materialized = materializer
+            .materialize_pages(&page_ids)
+            .map_err(|error| ProjectionError::Materialization(error.to_string()))?;
+        let mut chunk = super::sqlite_materialization::TerminalMaterializationChunk::default();
+        let mut reference_rows = ReferenceCatalogSourceRows::default();
+        for (row, page) in rows.iter().zip(materialized) {
+            let page = page.ok_or_else(|| {
+                ProjectionError::Rebuild(
+                    "authenticated current-path catalog row has no terminal page".into(),
+                )
+            })?;
+            if page.page_id != row.page_id() || page.path != *row.path() || page.kind != row.kind() {
+                return Err(ProjectionError::Rebuild(
+                    "terminal page identity differs from its authenticated catalog row".into(),
+                ));
+            }
+            chunk.pages.push(materialized_page_input(page));
+            if !collect_reference_source_rows(
+                engine,
+                catalog_root,
+                extractor_stamp,
+                row.page_id(),
+                &mut reference_rows,
+            )? {
+                return Err(ProjectionError::Rebuild(
+                    "terminal catalog page has no authenticated reference posting".into(),
+                ));
+            }
+        }
+        chunk.coverage = reference_rows.coverage;
+        chunk.postings = reference_rows.postings;
+        chunk.aliases = reference_rows.aliases;
+        bootstrap.terminal_materialization_chunks += 1;
+        bootstrap.terminal_pages_materialized += page_ids.len();
+        bootstrap.peak_terminal_bulk_pages = bootstrap.peak_terminal_bulk_pages.max(page_ids.len());
+        instrumentation.bulk_materialization_chunks += 1;
+        instrumentation.bulk_pages_materialized += page_ids.len();
+        instrumentation.peak_bulk_pages = instrumentation.peak_bulk_pages.max(page_ids.len());
+        instrumentation.exact_document_loads = materializer.exact_document_loads();
+        let physical = super::sqlite_materialization::lower_terminal_chunk(chunk)?;
+        self.physical
+            .seed_terminal_bootstrap_chunk(&physical)
+            .map_err(Into::into)
+    }
+
+    /// The two complete unpublished-candidate scans that close a fresh build's
+    /// semantic and materialized-row proof, shared by archive replay and
+    /// terminal construction.
+    fn finish_fresh_candidate(
+        &mut self,
+        source: &RebuildSource<'_>,
+        inductive_coverage_count: u64,
+        instrumentation: &mut RebuildInstrumentation,
+    ) -> Result<(), ProjectionError> {
+        self.physical.finalize_fresh_bootstrap(
+            source
+                .exact_frontier_root
+                .reference_catalog_root()
+                .source_count(),
+            inductive_coverage_count,
+        )?;
+        instrumentation.reference_coverage_full_scans += 1;
+        let _semantic_digest = self.semantic_projection_digest()?;
+        instrumentation.final_semantic_equivalence_proofs += 1;
+        #[cfg(test)]
+        let row_digest_started = std::time::Instant::now();
+        let _row_digest = self.materialized_row_digest_for_harness()?;
+        instrumentation.final_row_digest_equivalence_proofs += 1;
+        #[cfg(test)]
+        {
+            instrumentation.final_row_digest_proof_micros =
+                row_digest_started.elapsed().as_micros();
+        }
+        Ok(())
+    }
+
     fn rebuild_stream(
         &mut self,
         source: &RebuildSource<'_>,
@@ -3420,6 +3988,7 @@ impl SqliteFrontier {
         ProjectionError,
     > {
         let mut instrumentation = RebuildInstrumentation::default();
+        let mut intermediate_page_materializations = 0_usize;
         let inactive_bulk = matches!(source.loader, RebuildLoader::InactiveBootstrap { .. });
         let writes_before = self.physical.write_instrumentation();
         if inactive_bulk {
@@ -3437,6 +4006,7 @@ impl SqliteFrontier {
                 let materialization =
                     attach_authenticated_reference_catalog(source.engine, &event, materialization)?;
                 instrumentation.record_materialization(materialization_stats);
+                intermediate_page_materializations += 1;
                 self.apply_candidate_with_materialization_and_stats(
                     &event,
                     ApplyFault::None,
@@ -3492,47 +4062,23 @@ impl SqliteFrontier {
                 "fresh candidate lost its inductive reference coverage state".into(),
             )
         })?;
-        self.physical.finalize_fresh_bootstrap(
-            source
-                .exact_frontier_root
-                .reference_catalog_root()
-                .source_count(),
-            inductive_coverage_count,
-        )?;
-        instrumentation.reference_coverage_full_scans += 1;
         // Every preceding row transition was committed atomically with one
         // authenticated archive event, and the exact terminal frontier above
-        // equals the source authority. These two complete scans close that
+        // equals the source authority. The two complete scans below close that
         // inductive semantic/materialized-row proof while the file is still an
         // unpublished candidate; publication happens only after this returns.
-        let _semantic_digest = self.semantic_projection_digest()?;
-        instrumentation.final_semantic_equivalence_proofs += 1;
-        #[cfg(test)]
-        let row_digest_started = std::time::Instant::now();
-        let _row_digest = self.materialized_row_digest_for_harness()?;
-        instrumentation.final_row_digest_equivalence_proofs += 1;
-        #[cfg(test)]
-        {
-            instrumentation.final_row_digest_proof_micros =
-                row_digest_started.elapsed().as_micros();
-        }
+        self.finish_fresh_candidate(source, inductive_coverage_count, &mut instrumentation)?;
         if inactive_bulk {
             self.physical.finish_candidate_build()?;
         }
-        let writes_after = self.physical.write_instrumentation();
-        instrumentation.physical_candidate_transactions = writes_after
-            .candidate_transactions
-            .saturating_sub(writes_before.candidate_transactions);
-        instrumentation.physical_candidate_durability_barriers = writes_after
-            .candidate_durability_barriers
-            .saturating_sub(writes_before.candidate_durability_barriers);
-        instrumentation.physical_ordinary_transactions = writes_after
-            .ordinary_transactions
-            .saturating_sub(writes_before.ordinary_transactions);
-        instrumentation.physical_ordinary_durability_barriers = writes_after
-            .ordinary_durability_barriers
-            .saturating_sub(writes_before.ordinary_durability_barriers);
-        Ok((instrumentation, cursor.bootstrap_instrumentation()))
+        record_candidate_write_instrumentation(
+            &mut instrumentation,
+            writes_before,
+            self.physical.write_instrumentation(),
+        );
+        let mut bootstrap = cursor.bootstrap_instrumentation();
+        bootstrap.intermediate_page_materializations = intermediate_page_materializations;
+        Ok((instrumentation, bootstrap))
     }
 
     #[cfg(test)]
