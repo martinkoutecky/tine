@@ -893,44 +893,91 @@ pub fn validate_schema(connection: &Connection) -> Result<(), MaterializationErr
 /// encoding. That preserves distinctions SQLite's ordinary comparison rules
 /// collapse, notably `0.0` and `-0.0`, while allowing the SHA-256 input to be
 /// consumed one row at a time.
-pub fn row_digest(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
-    install_canonical_row_key_function(connection)?;
-    let mut hasher = Sha256::new();
-    hasher.update(b"tine/sqlite-materialization/rows/v2\0");
-    for (table, columns) in MATERIALIZATION_TABLE_COLUMNS
+fn digested_materialization_tables() -> impl Iterator<Item = (&'static str, &'static [&'static str])>
+{
+    MATERIALIZATION_TABLE_COLUMNS
         .into_iter()
         .chain(std::iter::once((
             "search_fts",
             &["entity_type", "entity_id", "page_id", "text"] as &[&str],
         )))
-    {
-        update_len(&mut hasher, table.len());
-        hasher.update(table.as_bytes());
-        update_len(&mut hasher, columns.len());
-        for column in columns {
-            update_len(&mut hasher, column.len());
-            hasher.update(column.as_bytes());
-        }
-        let row_count: i64 =
-            connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })?;
-        let row_count = usize::try_from(row_count).map_err(|_| {
-            MaterializationError::Corrupt(format!("{table} row count is negative or exceeds usize"))
+}
+
+fn update_table_rows(
+    hasher: &mut Sha256,
+    connection: &Connection,
+    table: &str,
+    columns: &[&str],
+) -> Result<(), MaterializationError> {
+    update_len(hasher, table.len());
+    hasher.update(table.as_bytes());
+    update_len(hasher, columns.len());
+    for column in columns {
+        update_len(hasher, column.len());
+        hasher.update(column.as_bytes());
+    }
+    let row_count: i64 =
+        connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
         })?;
-        update_len(&mut hasher, row_count);
-        let select_columns = columns.join(", ");
-        let sql = format!(
-            "SELECT {select_columns} FROM {table}
-             ORDER BY tine_materialization_canonical_row({select_columns}) COLLATE BINARY"
-        );
-        let mut statement = connection.prepare(&sql)?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            update_canonical_row(&mut hasher, row, columns.len())?;
-        }
+    let row_count = usize::try_from(row_count).map_err(|_| {
+        MaterializationError::Corrupt(format!("{table} row count is negative or exceeds usize"))
+    })?;
+    update_len(hasher, row_count);
+    let select_columns = columns.join(", ");
+    let sql = format!(
+        "SELECT {select_columns} FROM {table}
+         ORDER BY tine_materialization_canonical_row({select_columns}) COLLATE BINARY"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        update_canonical_row(hasher, row, columns.len())?;
+    }
+    Ok(())
+}
+
+pub fn row_digest(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
+    install_canonical_row_key_function(connection)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/sqlite-materialization/rows/v2\0");
+    for (table, columns) in digested_materialization_tables() {
+        update_table_rows(&mut hasher, connection, table, columns)?;
     }
     Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+/// Columns that carry SQLite's insertion order rather than an authoritative
+/// observation. Two independently built databases agree on the mapping such a
+/// column expresses, not on the integers SQLite happened to assign; the FTS
+/// owner rowid is joined to `search_fts` and proved inside each database.
+#[cfg(any(test, feature = "test-support"))]
+const CONSTRUCTION_ORDER_COLUMNS: [(&str, &str); 1] = [("search_fts_owners", "rowid")];
+
+/// Per-table complete row observation.
+///
+/// Differential tests compare two independently built databases table by
+/// table, so a divergence names the table it is in and construction-only
+/// provenance tables can be excluded deliberately rather than by weakening the
+/// whole-database digest.
+#[cfg(any(test, feature = "test-support"))]
+pub fn row_digests_by_table(
+    connection: &Connection,
+) -> Result<Vec<(&'static str, ContentDigest)>, MaterializationError> {
+    install_canonical_row_key_function(connection)?;
+    digested_materialization_tables()
+        .map(|(table, columns)| {
+            let columns = columns
+                .iter()
+                .copied()
+                .filter(|column| !CONSTRUCTION_ORDER_COLUMNS.contains(&(table, column)))
+                .collect::<Vec<_>>();
+            let mut hasher = Sha256::new();
+            hasher.update(b"tine/sqlite-materialization/table-rows/v1\0");
+            update_table_rows(&mut hasher, connection, table, &columns)?;
+            Ok((table, ContentDigest::from_bytes(hasher.finalize().into())))
+        })
+        .collect()
 }
 
 fn install_canonical_row_key_function(connection: &Connection) -> Result<(), MaterializationError> {
@@ -1283,7 +1330,9 @@ pub(crate) fn begin_terminal_construction_in_open_candidate(
     require_open_candidate(transaction)?;
     for table in TERMINAL_CONSTRUCTION_EMPTY_TABLES {
         let count: i64 =
-            transaction.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))?;
+            transaction.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })?;
         if count != 0 {
             return Err(MaterializationError::Contradiction(format!(
                 "terminal construction requires an empty candidate but {table} has {count} rows"
@@ -1423,32 +1472,38 @@ fn insert_reference_posting(
 ) -> Result<(), MaterializationError> {
     let (source_entity_type, source_entity_id) = posting.source_entity.sql_parts();
     let locator = &posting.source_locator;
-    let (target_type, raw_name, normalized_name, raw_uuid_claim, resolved_page_id, resolved_block_id) =
-        match &posting.target {
-            PhysicalReferenceTarget::PageName {
-                raw_name,
-                normalized_name,
-                resolved_page_id,
-            } => (
-                0_i64,
-                Some(raw_name.as_str()),
-                Some(normalized_name.as_str()),
-                None,
-                resolved_page_id.map(|id| id.to_vec()),
-                None,
-            ),
-            PhysicalReferenceTarget::ExternalUuid {
-                raw_claim,
-                resolved_block_id,
-            } => (
-                1_i64,
-                None,
-                None,
-                Some(raw_claim.to_vec()),
-                None,
-                resolved_block_id.map(|id| id.to_vec()),
-            ),
-        };
+    let (
+        target_type,
+        raw_name,
+        normalized_name,
+        raw_uuid_claim,
+        resolved_page_id,
+        resolved_block_id,
+    ) = match &posting.target {
+        PhysicalReferenceTarget::PageName {
+            raw_name,
+            normalized_name,
+            resolved_page_id,
+        } => (
+            0_i64,
+            Some(raw_name.as_str()),
+            Some(normalized_name.as_str()),
+            None,
+            resolved_page_id.map(|id| id.to_vec()),
+            None,
+        ),
+        PhysicalReferenceTarget::ExternalUuid {
+            raw_claim,
+            resolved_block_id,
+        } => (
+            1_i64,
+            None,
+            None,
+            Some(raw_claim.to_vec()),
+            None,
+            resolved_block_id.map(|id| id.to_vec()),
+        ),
+    };
     execute_cached(
         transaction,
         "INSERT INTO reference_postings (

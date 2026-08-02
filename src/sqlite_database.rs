@@ -362,6 +362,15 @@ impl PhysicalSqliteDatabase {
         sqlite_materialization::row_digest(&self.connection).map_err(Into::into)
     }
 
+    /// Complete per-table row observation for differential comparison of two
+    /// independently built databases.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn materialized_row_digests_by_table(
+        &self,
+    ) -> Result<Vec<(&'static str, ContentDigest)>, FrontierError> {
+        sqlite_materialization::row_digests_by_table(&self.connection).map_err(Into::into)
+    }
+
     pub fn materialized_read(
         &self,
         acceptance_sequence: u64,
