@@ -6441,3 +6441,545 @@ fn semantic_encoding_is_canonical_and_bounded() {
     assert_ne!(ContentDigest::of(b"a"), ContentDigest::of(b"b"));
     let _ = CrdtPeerCounter::new(CrdtPeerId::from_u64(1), 0);
 }
+
+/// One archive-backed engine whose catalog holds `pages` live pages, warmed so
+/// the next local author draft is an ordinary warm edit.
+struct WarmCatalogFixture {
+    _dir: TestDir,
+    writer: ObjectStore,
+    author_engine: ShardedHotEngine,
+    engine: ShardedHotEngine,
+    page_id: PageId,
+    home_document_id: DocumentId,
+    block_id: crate::oplog::BlockId,
+    reference_block_id: crate::oplog::BlockId,
+    second_page_id: PageId,
+    second_home_document_id: DocumentId,
+    second_block_id: crate::oplog::BlockId,
+}
+
+impl WarmCatalogFixture {
+    fn new(label: &str, pages: usize) -> Self {
+        assert!(
+            pages >= 2,
+            "the fixture edits one page and moves into another"
+        );
+        let ids = Ids::new();
+        let dir = TestDir::new(label);
+        let archive_path = dir.path().join("archive");
+        let graph_path = dir.path().join("graph");
+        std::fs::create_dir_all(&graph_path).unwrap();
+        let graph = Graph::open(&graph_path);
+        let binding = ProjectionEndpointBinding::enroll_graph(
+            &graph,
+            ProjectionEndpointId::from_uuid(uuid(94_500)),
+            DeviceId::from_uuid(uuid(94_501)),
+        )
+        .unwrap();
+        let receipts = ProjectionReceiptStore::open_for_endpoint(
+            &dir.path().join("receipts"),
+            ids.workspace,
+            binding,
+        )
+        .unwrap();
+        let writer = ObjectStore::open(&archive_path, ids.workspace).unwrap();
+        let reader = ObjectStore::open(&archive_path, ids.workspace).unwrap();
+        let mut author_engine = ShardedHotEngine::new(ids.workspace, ids.lineage, ids.catalog);
+        // The promoted runtime authors against an enrolled, scratch-backed
+        // engine, which is where whole-document reads actually cost.
+        let mut engine = ShardedHotEngine::with_enrolled_projection(
+            reader,
+            ids.lineage,
+            ids.catalog,
+            &graph,
+            &receipts,
+        );
+
+        let mut operations = Vec::with_capacity(pages * 3);
+        for index in 0..pages {
+            let page_id = PageId::from_uuid(uuid(90_000 + index as u128));
+            let home_document_id = DocumentId::from_uuid(uuid(91_000 + index as u128));
+            operations.push(SemanticOperation::CreatePage {
+                page_id,
+                home_document_id,
+                name: crate::oplog::LogicalPageName::parse(format!("Warm {index:05}")).unwrap(),
+                path: path(&format!("pages/研究/Warm {index:05}.md")),
+                kind: ManagedTextKind::Page,
+            });
+            operations.push(SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: crate::oplog::BlockId::from_uuid(uuid(92_000 + index as u128)),
+                    home_document_id,
+                },
+                page_id,
+                parent: None,
+                order: "a".into(),
+                content: format!("TODO initial {index}"),
+            });
+            operations.push(SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: crate::oplog::BlockId::from_uuid(uuid(93_000 + index as u128)),
+                    home_document_id,
+                },
+                page_id,
+                parent: None,
+                order: "b".into(),
+                content: format!(
+                    "key:: value {index}\nsee [[Warm {:05}]]",
+                    (index + 1) % pages
+                ),
+            });
+        }
+        let genesis = author_engine
+            .prepare_bootstrap_transaction(author(94_000, 94_000), &tx(operations))
+            .unwrap();
+        let genesis_ready = ready(&writer, &genesis);
+        assert!(matches!(
+            author_engine.stage_ready(genesis_ready).disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+        assert!(matches!(
+            engine
+                .stage_archive_batch(genesis.manifest().batch_id())
+                .unwrap()
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+
+        let page_id = PageId::from_uuid(uuid(90_000));
+        // A warm editor has already read the page it is about to save.
+        engine.materialize_page(page_id).unwrap();
+        Self {
+            _dir: dir,
+            writer,
+            author_engine,
+            engine,
+            page_id,
+            home_document_id: DocumentId::from_uuid(uuid(91_000)),
+            block_id: crate::oplog::BlockId::from_uuid(uuid(92_000)),
+            reference_block_id: crate::oplog::BlockId::from_uuid(uuid(93_000)),
+            second_page_id: PageId::from_uuid(uuid(90_001)),
+            second_home_document_id: DocumentId::from_uuid(uuid(91_001)),
+            second_block_id: crate::oplog::BlockId::from_uuid(uuid(92_001)),
+        }
+    }
+
+    /// Accept one more batch into both the authoring and the archive-backed
+    /// engine, so a later draft sees it as durable accepted state.
+    fn accept(&mut self, batch: u128, transaction: &OperationTransaction) {
+        let prepared = self
+            .author_engine
+            .prepare_bootstrap_transaction(author(batch, batch as u64), transaction)
+            .unwrap();
+        let staged = ready(&self.writer, &prepared);
+        assert!(matches!(
+            self.author_engine.stage_ready(staged).disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+        assert!(matches!(
+            self.engine
+                .stage_archive_batch(prepared.manifest().batch_id())
+                .unwrap()
+                .disposition,
+            BatchDisposition::Accepted { .. }
+        ));
+    }
+
+    fn content_edit(&self, content: &str) -> OperationTransaction {
+        tx(vec![SemanticOperation::EditBlockContent {
+            block: BlockLocation {
+                block_id: self.block_id,
+                home_document_id: self.home_document_id,
+            },
+            content: content.into(),
+        }])
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WarmDraftWork {
+    prospective_document_copies: usize,
+    prospective_document_copy_ops: usize,
+    prospective_catalog_document_copies: usize,
+    author_snapshot_clones: usize,
+    author_snapshot_clone_ops: usize,
+    prepare_document_head_visits: usize,
+    catalog_page_entry_visits: usize,
+    scratch_page_reads: usize,
+}
+
+fn warm_draft_work(fixture: &WarmCatalogFixture, batch: u128, content: &str) -> WarmDraftWork {
+    let before = fixture.engine.instrumentation();
+    let before_entries = crate::oplog::hot_engine::catalog_page_entry_visits();
+    fixture
+        .engine
+        .draft_author_transaction(
+            author(batch, batch as u64),
+            BatchOrigin::LocalMutation,
+            &fixture.content_edit(content),
+        )
+        .unwrap();
+    let after = fixture.engine.instrumentation();
+    WarmDraftWork {
+        prospective_document_copies: after.prospective_document_copies
+            - before.prospective_document_copies,
+        prospective_document_copy_ops: after.prospective_document_copy_ops
+            - before.prospective_document_copy_ops,
+        prospective_catalog_document_copies: after.prospective_catalog_document_copies
+            - before.prospective_catalog_document_copies,
+        author_snapshot_clones: after.author_snapshot_clones - before.author_snapshot_clones,
+        author_snapshot_clone_ops: after.author_snapshot_clone_ops
+            - before.author_snapshot_clone_ops,
+        prepare_document_head_visits: after.prepare_document_head_visits
+            - before.prepare_document_head_visits,
+        catalog_page_entry_visits: crate::oplog::hot_engine::catalog_page_entry_visits()
+            - before_entries,
+        scratch_page_reads: after.scratch_page_reads - before.scratch_page_reads,
+    }
+}
+
+#[test]
+fn warm_one_page_content_edit_draft_is_independent_of_total_graph_pages() {
+    let small = WarmCatalogFixture::new("warm-draft-small", 4);
+    let large = WarmCatalogFixture::new("warm-draft-large", 40);
+    let small_work = warm_draft_work(&small, 95_000, "TODO edited [[Warm 00001]]");
+    let large_work = warm_draft_work(&large, 95_100, "TODO edited [[Warm 00001]]");
+
+    // Every term the draft derivation itself controls: the documents it
+    // reproduces, the CRDT operations it reproduces, the catalog rows it
+    // enumerates, and the authenticated point reads it issues.
+    assert_eq!(
+        small_work, large_work,
+        "a warm one-page content edit must do the same draft work at every graph size"
+    );
+    assert_eq!(
+        small_work.prospective_catalog_document_copies, 0,
+        "a warm one-page content edit must not reproduce the whole-graph catalog"
+    );
+    assert_eq!(large_work.prospective_catalog_document_copies, 0);
+    assert_eq!(
+        small_work.catalog_page_entry_visits, 0,
+        "a warm one-page content edit must not enumerate every catalog page"
+    );
+    assert_eq!(large_work.catalog_page_entry_visits, 0);
+    assert_eq!(
+        small_work.prospective_document_copies, 1,
+        "only the edited page's own shard is reproduced"
+    );
+    assert!(
+        small_work.scratch_page_reads > 0,
+        "the draft really does read authenticated durable state"
+    );
+}
+
+#[test]
+fn warm_draft_previous_derivation_still_reproduces_the_whole_catalog() {
+    // The oracle is what the derivation used to do, so it pins that the
+    // counters above are measuring the real cause and not a dead probe.
+    let small = WarmCatalogFixture::new("warm-oracle-small", 4);
+    let large = WarmCatalogFixture::new("warm-oracle-large", 40);
+    let small_observed = small.engine.assert_draft_matches_previous_derivation(
+        author(95_200, 95_200),
+        BatchOrigin::LocalMutation,
+        &small.content_edit("TODO oracle edit"),
+    );
+    let large_observed = large.engine.assert_draft_matches_previous_derivation(
+        author(95_300, 95_300),
+        BatchOrigin::LocalMutation,
+        &large.content_edit("TODO oracle edit"),
+    );
+    assert_eq!(small_observed.refused, None);
+    assert_eq!(large_observed.refused, None);
+    assert_eq!(small_observed.oracle_catalog_copies, 1);
+    assert_eq!(large_observed.oracle_catalog_copies, 1);
+    assert_eq!(small_observed.optimized_catalog_copies, 0);
+    assert_eq!(large_observed.optimized_catalog_copies, 0);
+}
+
+#[test]
+fn every_local_author_transaction_class_derives_the_same_draft_as_the_previous_derivation() {
+    let fixture = WarmCatalogFixture::new("draft-oracle-classes", 6);
+    let inserted = crate::oplog::BlockId::from_uuid(uuid(96_000));
+    let new_page = PageId::from_uuid(uuid(96_100));
+    let new_home = DocumentId::from_uuid(uuid(96_200));
+
+    // Transaction classes that stay page-local: the catalog is only read.
+    let page_local: Vec<(&str, OperationTransaction)> = vec![
+        (
+            "content edit",
+            fixture.content_edit("TODO edited\nkey:: value\nsee [[Warm 00002]]"),
+        ),
+        (
+            "org content edit",
+            fixture.content_edit("* TODO org heading\n:PROPERTIES:\n:key: value\n:END:"),
+        ),
+        (
+            "insert block",
+            tx(vec![SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: inserted,
+                    home_document_id: fixture.home_document_id,
+                },
+                page_id: fixture.page_id,
+                parent: Some(fixture.block_id),
+                order: "c".into(),
+                content: "DONE inserted ((child))".into(),
+            }]),
+        ),
+        (
+            "reorder block",
+            tx(vec![SemanticOperation::ReorderBlock {
+                block_id: fixture.reference_block_id,
+                page_id: fixture.page_id,
+                parent: Some(fixture.block_id),
+                order: "z".into(),
+            }]),
+        ),
+        (
+            "delete subtree",
+            tx(vec![SemanticOperation::DeleteSubtree {
+                root_block_id: fixture.reference_block_id,
+                page_id: fixture.page_id,
+            }]),
+        ),
+        (
+            "move subtree across pages",
+            tx(vec![SemanticOperation::MoveSubtree {
+                root: BlockLocation {
+                    block_id: fixture.reference_block_id,
+                    home_document_id: fixture.home_document_id,
+                },
+                from_page_id: fixture.page_id,
+                to_page_id: fixture.second_page_id,
+                parent: Some(fixture.second_block_id),
+                order: "m".into(),
+            }]),
+        ),
+        (
+            "page preamble",
+            tx(vec![SemanticOperation::SetPagePreamble {
+                page_id: fixture.page_id,
+                preamble: Some("title:: Warm 00000\ntags:: alpha".into()),
+            }]),
+        ),
+        (
+            "logseq identity claim",
+            tx(vec![SemanticOperation::MutateBlockLogseqIdentity {
+                block: BlockLocation {
+                    block_id: fixture.block_id,
+                    home_document_id: fixture.home_document_id,
+                },
+                mutation: LogseqIdentityMutation::AssignExternal {
+                    logseq_uuid: LogseqUuid::from_uuid(uuid(96_300)),
+                },
+            }]),
+        ),
+        (
+            "multi-operation editor save",
+            tx(vec![
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: inserted,
+                        home_document_id: fixture.home_document_id,
+                    },
+                    page_id: fixture.page_id,
+                    parent: None,
+                    order: "d".into(),
+                    content: "NOW appended".into(),
+                },
+                SemanticOperation::EditBlockContent {
+                    block: BlockLocation {
+                        block_id: fixture.block_id,
+                        home_document_id: fixture.home_document_id,
+                    },
+                    content: "TODO rewritten [[Warm 00003]]".into(),
+                },
+                SemanticOperation::DeleteSubtree {
+                    root_block_id: fixture.reference_block_id,
+                    page_id: fixture.page_id,
+                },
+            ]),
+        ),
+    ];
+    for (index, (label, transaction)) in page_local.iter().enumerate() {
+        let observed = fixture.engine.assert_draft_matches_previous_derivation(
+            author(97_000 + index as u128, 97_000 + index as u64),
+            BatchOrigin::LocalMutation,
+            transaction,
+        );
+        assert_eq!(observed.refused, None, "{label} must draft");
+        assert_eq!(
+            observed.optimized_catalog_copies, 0,
+            "{label} is page-local and must not reproduce the catalog"
+        );
+        assert!(
+            observed.oracle_catalog_copies >= 1,
+            "{label} oracle must still reproduce the catalog"
+        );
+    }
+
+    // Catalog-changing and refusing classes keep the previous derivation,
+    // because the drafted transaction owns the prospective catalog itself.
+    let catalog_wide: Vec<(&str, OperationTransaction)> = vec![
+        (
+            "new page",
+            tx(vec![
+                SemanticOperation::CreatePage {
+                    page_id: new_page,
+                    home_document_id: new_home,
+                    name: crate::oplog::LogicalPageName::parse("Fresh Page").unwrap(),
+                    path: path("pages/研究/Fresh Page.md"),
+                    kind: ManagedTextKind::Page,
+                },
+                SemanticOperation::CreateBlock {
+                    block: BlockLocation {
+                        block_id: crate::oplog::BlockId::from_uuid(uuid(96_400)),
+                        home_document_id: new_home,
+                    },
+                    page_id: new_page,
+                    parent: None,
+                    order: "a".into(),
+                    content: "fresh".into(),
+                },
+            ]),
+        ),
+        (
+            "path change",
+            tx(vec![SemanticOperation::EditPagePath {
+                page_id: fixture.page_id,
+                path: path("pages/研究/deeper/Warm 00000.md"),
+            }]),
+        ),
+        (
+            "kind change",
+            tx(vec![SemanticOperation::SetPageKind {
+                page_id: fixture.page_id,
+                kind: ManagedTextKind::Journal,
+            }]),
+        ),
+        (
+            "namespace rename with referrer rewrites",
+            tx(vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![crate::oplog::PageRename {
+                    page_id: fixture.page_id,
+                    new_name: crate::oplog::LogicalPageName::parse("Warm/Renamed").unwrap(),
+                    new_path: path("pages/研究/Warm___Renamed.md"),
+                }],
+                block_rewrites: vec![crate::oplog::BlockContentRewrite {
+                    block: BlockLocation {
+                        block_id: fixture.reference_block_id,
+                        home_document_id: fixture.home_document_id,
+                    },
+                    new_content: "see [[Warm/Renamed]]".into(),
+                }],
+                page_preamble_rewrites: vec![crate::oplog::PagePreambleRewrite {
+                    page_id: fixture.page_id,
+                    new_preamble: Some("title:: [[Warm/Renamed]]".into()),
+                }],
+            }]),
+        ),
+        (
+            "page deletion",
+            tx(vec![SemanticOperation::DeletePage {
+                page_id: fixture.page_id,
+            }]),
+        ),
+    ];
+    for (index, (label, transaction)) in catalog_wide.iter().enumerate() {
+        let observed = fixture.engine.assert_draft_matches_previous_derivation(
+            author(98_000 + index as u128, 98_000 + index as u64),
+            BatchOrigin::LocalMutation,
+            transaction,
+        );
+        assert_eq!(observed.refused, None, "{label} must draft");
+        assert_eq!(
+            observed.optimized_catalog_copies, observed.oracle_catalog_copies,
+            "{label} changes catalog-wide identity and must keep the previous derivation"
+        );
+        assert!(
+            observed.optimized_catalog_copies >= 1,
+            "{label} must fall back to the previous derivation"
+        );
+    }
+
+    // Refusals must stay identical in both derivations.
+    let refusing: Vec<(&str, OperationTransaction)> = vec![
+        (
+            "duplicate block id",
+            tx(vec![SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: fixture.block_id,
+                    home_document_id: fixture.home_document_id,
+                },
+                page_id: fixture.page_id,
+                parent: None,
+                order: "a".into(),
+                content: "collides".into(),
+            }]),
+        ),
+        (
+            "unknown page",
+            tx(vec![SemanticOperation::SetPagePreamble {
+                page_id: PageId::from_uuid(uuid(99_999)),
+                preamble: Some("absent".into()),
+            }]),
+        ),
+        (
+            "unknown block",
+            tx(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: crate::oplog::BlockId::from_uuid(uuid(99_998)),
+                    home_document_id: fixture.home_document_id,
+                },
+                content: "absent".into(),
+            }]),
+        ),
+    ];
+    for (index, (label, transaction)) in refusing.iter().enumerate() {
+        let observed = fixture.engine.assert_draft_matches_previous_derivation(
+            author(99_000 + index as u128, 99_000 + index as u64),
+            BatchOrigin::LocalMutation,
+            transaction,
+        );
+        assert!(observed.refused.is_some(), "{label} must refuse");
+    }
+}
+
+#[test]
+fn an_ambiguous_logseq_claim_refuses_identically_in_both_derivations() {
+    let mut fixture = WarmCatalogFixture::new("draft-oracle-claim", 4);
+    let claimed = LogseqUuid::from_uuid(uuid(96_500));
+    fixture.accept(
+        96_600,
+        &tx(vec![SemanticOperation::MutateBlockLogseqIdentity {
+            block: BlockLocation {
+                block_id: fixture.block_id,
+                home_document_id: fixture.home_document_id,
+            },
+            mutation: LogseqIdentityMutation::AssignExternal {
+                logseq_uuid: claimed,
+            },
+        }]),
+    );
+
+    // A second, page-local block claiming that accepted identity is ambiguous.
+    // The refusal is raised by the prospective derivation itself, so both
+    // derivations must raise it identically.
+    let observed = fixture.engine.assert_draft_matches_previous_derivation(
+        author(96_700, 96_700),
+        BatchOrigin::LocalMutation,
+        &tx(vec![SemanticOperation::MutateBlockLogseqIdentity {
+            block: BlockLocation {
+                block_id: fixture.second_block_id,
+                home_document_id: fixture.second_home_document_id,
+            },
+            mutation: LogseqIdentityMutation::AssignExternal {
+                logseq_uuid: claimed,
+            },
+        }]),
+    );
+    assert!(
+        observed.refused.is_some(),
+        "a duplicate accepted Logseq claim must refuse"
+    );
+}
