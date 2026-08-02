@@ -3589,10 +3589,9 @@ mod tests {
         });
         let shape_capacity = 2;
         let next_capacity = 1;
-        let simultaneous_vector_bytes = (planned.capacity()
-            + replacements.capacity()
-            + next_capacity)
-            * std::mem::size_of::<PlannedStreamingPatriciaPack>();
+        let simultaneous_vector_bytes =
+            (planned.capacity() + replacements.capacity() + next_capacity)
+                * std::mem::size_of::<PlannedStreamingPatriciaPack>();
         let pending_pack_count = planned.len() + replacements.len();
         let expected_peak = simultaneous_vector_bytes
             + pending_pack_count * std::mem::size_of::<PackDescriptor>()
