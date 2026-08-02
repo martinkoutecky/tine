@@ -1218,6 +1218,293 @@ pub fn finalize_fresh_bootstrap(
     Ok(())
 }
 
+/// One bounded chunk of terminal bootstrap rows.
+///
+/// Terminal construction seeds an unpublished candidate whose materialized
+/// tables are still empty, so a chunk carries only insertions: there is no
+/// prior page row to clean up and no prior coverage row to replace.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PhysicalTerminalMaterializationChunk {
+    pub pages: Vec<PhysicalPage>,
+    pub coverage: Vec<PhysicalSourceCoverage>,
+    pub postings: Vec<PhysicalReferencePosting>,
+    pub aliases: Vec<PhysicalAliasDeclaration>,
+}
+
+/// Construction provenance for one accepted sequence of a terminal build.
+///
+/// The terminal builder applies no intermediate per-event page or reference
+/// DML, so every row it writes carries the digest of the empty change actually
+/// applied at that sequence rather than a fabricated per-event digest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalTerminalConstructionBatch {
+    pub acceptance_sequence: u64,
+    pub batch_id: [u8; 16],
+    pub input_digest: ContentDigest,
+}
+
+/// The single authenticated catalog stamp a terminal build publishes after its
+/// complete terminal rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalTerminalCatalogStamp {
+    pub acceptance_sequence: u64,
+    pub frontier_root_digest: ContentDigest,
+    pub catalog_root: Vec<u8>,
+    pub catalog_root_digest: ContentDigest,
+    pub coverage_digest: ContentDigest,
+    pub extractor_dependency_stamp_digest: ContentDigest,
+    pub source_count: u64,
+}
+
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 15] = [
+    "pages",
+    "blocks",
+    "refs",
+    "properties",
+    "tags",
+    "tasks",
+    "search_fts_owners",
+    "search_fts",
+    "reference_source_coverage",
+    "reference_postings",
+    "reference_alias_declarations",
+    "reference_alias_bindings",
+    "reference_name_bindings",
+    "reference_uuid_bindings",
+    "materialization_batches",
+];
+
+/// Refuse terminal construction unless every materialized table is still empty
+/// and the stamp has never advanced. A partially materialized candidate must
+/// take the ordinary replay path instead.
+pub(crate) fn begin_terminal_construction_in_open_candidate(
+    transaction: &Connection,
+) -> Result<(), MaterializationError> {
+    require_open_candidate(transaction)?;
+    for table in TERMINAL_CONSTRUCTION_EMPTY_TABLES {
+        let count: i64 =
+            transaction.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))?;
+        if count != 0 {
+            return Err(MaterializationError::Contradiction(format!(
+                "terminal construction requires an empty candidate but {table} has {count} rows"
+            )));
+        }
+    }
+    let stamp_sequence: i64 = transaction.query_row(
+        "SELECT acceptance_sequence FROM materialization_stamp WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if stamp_sequence != 0 {
+        return Err(MaterializationError::Contradiction(
+            "terminal construction requires an unstamped candidate".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Seed one bounded chunk of terminal pages and reference rows.
+pub(crate) fn seed_terminal_chunk_in_open_candidate(
+    transaction: &Connection,
+    chunk: &PhysicalTerminalMaterializationChunk,
+) -> Result<(), MaterializationError> {
+    require_open_candidate(transaction)?;
+    for page in &chunk.pages {
+        insert_page(transaction, page)?;
+    }
+    for facet in &chunk.coverage {
+        transaction.execute(
+            "INSERT INTO reference_source_coverage (
+                 source_page_id, source_digest, extractor_dependency_stamp_digest
+             ) VALUES (?1, ?2, ?3)",
+            params![
+                facet.source_page_id.as_slice(),
+                facet.source_digest.as_bytes().as_slice(),
+                facet
+                    .extractor_dependency_stamp_digest
+                    .as_bytes()
+                    .as_slice(),
+            ],
+        )?;
+    }
+    for posting in &chunk.postings {
+        insert_reference_posting(transaction, posting)?;
+    }
+    for alias in &chunk.aliases {
+        insert_alias_declaration(transaction, alias)?;
+    }
+    Ok(())
+}
+
+/// Close one terminal build: derive the alias bindings from the complete
+/// declarations, write the accepted-prefix construction provenance, and publish
+/// the one authenticated catalog stamp.
+pub(crate) fn finish_terminal_construction_in_open_candidate(
+    transaction: &Connection,
+    provenance: &[PhysicalTerminalConstructionBatch],
+    stamp: &PhysicalTerminalCatalogStamp,
+) -> Result<u64, MaterializationError> {
+    require_open_candidate(transaction)?;
+    transaction.execute(
+        "INSERT INTO reference_alias_bindings (
+             normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
+         )
+         SELECT normalized_alias, candidate_ordinal, source_page_id, ?1
+         FROM (
+             SELECT normalized_alias, source_page_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY normalized_alias ORDER BY source_page_id
+                    ) - 1 AS candidate_ordinal
+             FROM (
+                 SELECT DISTINCT normalized_alias, source_page_id
+                 FROM reference_alias_declarations
+             )
+         )",
+        params![stamp.catalog_root_digest.as_bytes().as_slice()],
+    )?;
+    for batch in provenance {
+        transaction.execute(
+            "INSERT INTO materialization_batches (
+                 acceptance_sequence, batch_id, input_digest
+             ) VALUES (?1, ?2, ?3)",
+            params![
+                i64::try_from(batch.acceptance_sequence).map_err(|_| {
+                    MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
+                })?,
+                batch.batch_id.as_slice(),
+                batch.input_digest.as_bytes().as_slice(),
+            ],
+        )?;
+    }
+    let coverage_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM reference_source_coverage",
+        [],
+        |row| row.get(0),
+    )?;
+    let coverage_count = u64::try_from(coverage_count).map_err(|_| {
+        MaterializationError::Corrupt("reference source coverage count is negative".into())
+    })?;
+    if coverage_count != stamp.source_count {
+        return Err(MaterializationError::Incomplete(format!(
+            "terminal SQLite reference source coverage {coverage_count} differs from authenticated catalog source count {}",
+            stamp.source_count,
+        )));
+    }
+    transaction.execute(
+        "UPDATE materialization_stamp
+         SET acceptance_sequence = ?1,
+             frontier_root_digest = ?2,
+             catalog_root = ?3,
+             catalog_root_digest = ?4,
+             coverage_digest = ?5,
+             extractor_dependency_stamp_digest = ?6
+         WHERE singleton = 1",
+        params![
+            i64::try_from(stamp.acceptance_sequence).map_err(|_| {
+                MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
+            })?,
+            stamp.frontier_root_digest.as_bytes().as_slice(),
+            &stamp.catalog_root,
+            stamp.catalog_root_digest.as_bytes().as_slice(),
+            stamp.coverage_digest.as_bytes().as_slice(),
+            stamp
+                .extractor_dependency_stamp_digest
+                .as_bytes()
+                .as_slice(),
+        ],
+    )?;
+    Ok(coverage_count)
+}
+
+fn insert_reference_posting(
+    transaction: &Connection,
+    posting: &PhysicalReferencePosting,
+) -> Result<(), MaterializationError> {
+    let (source_entity_type, source_entity_id) = posting.source_entity.sql_parts();
+    let locator = &posting.source_locator;
+    let (target_type, raw_name, normalized_name, raw_uuid_claim, resolved_page_id, resolved_block_id) =
+        match &posting.target {
+            PhysicalReferenceTarget::PageName {
+                raw_name,
+                normalized_name,
+                resolved_page_id,
+            } => (
+                0_i64,
+                Some(raw_name.as_str()),
+                Some(normalized_name.as_str()),
+                None,
+                resolved_page_id.map(|id| id.to_vec()),
+                None,
+            ),
+            PhysicalReferenceTarget::ExternalUuid {
+                raw_claim,
+                resolved_block_id,
+            } => (
+                1_i64,
+                None,
+                None,
+                Some(raw_claim.to_vec()),
+                None,
+                resolved_block_id.map(|id| id.to_vec()),
+            ),
+        };
+    transaction.execute(
+        "INSERT INTO reference_postings (
+             source_page_id, source_entity_type, source_entity_id, source_locator,
+             ordinal, reference_kind, target_type, raw_name, normalized_name,
+             raw_uuid_claim, resolved_page_id, resolved_block_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            posting.source_page_id.as_slice(),
+            source_entity_type,
+            source_entity_id.as_slice(),
+            locator,
+            i64::from(posting.ordinal),
+            posting.kind,
+            target_type,
+            raw_name,
+            normalized_name,
+            raw_uuid_claim,
+            resolved_page_id,
+            resolved_block_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_alias_declaration(
+    transaction: &Connection,
+    alias: &PhysicalAliasDeclaration,
+) -> Result<(), MaterializationError> {
+    let (source_entity_type, source_entity_id) = alias.source_entity.sql_parts();
+    let locator = &alias.source_locator;
+    transaction.execute(
+        "INSERT INTO reference_alias_declarations (
+             source_page_id, source_entity_type, source_entity_id, source_locator,
+             ordinal, raw_alias, normalized_alias
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            alias.source_page_id.as_slice(),
+            source_entity_type,
+            source_entity_id.as_slice(),
+            locator,
+            i64::from(alias.ordinal),
+            &alias.raw_alias,
+            &alias.normalized_alias,
+        ],
+    )?;
+    Ok(())
+}
+
+fn require_open_candidate(transaction: &Connection) -> Result<(), MaterializationError> {
+    if transaction.is_autocommit() {
+        return Err(MaterializationError::InvalidInput(
+            "terminal construction requires an active candidate-build transaction".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn apply_reference_catalog_change(
     transaction: &Connection,
     input: &PhysicalReferenceCatalogChange,
@@ -1306,80 +1593,10 @@ fn apply_reference_catalog_change(
         )?;
     }
     for posting in &input.postings {
-        let (source_entity_type, source_entity_id) = posting.source_entity.sql_parts();
-        let locator = &posting.source_locator;
-        let (
-            target_type,
-            raw_name,
-            normalized_name,
-            raw_uuid_claim,
-            resolved_page_id,
-            resolved_block_id,
-        ) = match &posting.target {
-            PhysicalReferenceTarget::PageName {
-                raw_name,
-                normalized_name,
-                resolved_page_id,
-            } => (
-                0_i64,
-                Some(raw_name.as_str()),
-                Some(normalized_name.as_str()),
-                None,
-                resolved_page_id.map(|id| id.to_vec()),
-                None,
-            ),
-            PhysicalReferenceTarget::ExternalUuid {
-                raw_claim,
-                resolved_block_id,
-            } => (
-                1_i64,
-                None,
-                None,
-                Some(raw_claim.to_vec()),
-                None,
-                resolved_block_id.map(|id| id.to_vec()),
-            ),
-        };
-        transaction.execute(
-            "INSERT INTO reference_postings (
-                 source_page_id, source_entity_type, source_entity_id, source_locator,
-                 ordinal, reference_kind, target_type, raw_name, normalized_name,
-                 raw_uuid_claim, resolved_page_id, resolved_block_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                posting.source_page_id.as_slice(),
-                source_entity_type,
-                source_entity_id.as_slice(),
-                locator,
-                i64::from(posting.ordinal),
-                posting.kind,
-                target_type,
-                raw_name,
-                normalized_name,
-                raw_uuid_claim,
-                resolved_page_id,
-                resolved_block_id,
-            ],
-        )?;
+        insert_reference_posting(transaction, posting)?;
     }
     for alias in &input.aliases {
-        let (source_entity_type, source_entity_id) = alias.source_entity.sql_parts();
-        let locator = &alias.source_locator;
-        transaction.execute(
-            "INSERT INTO reference_alias_declarations (
-                 source_page_id, source_entity_type, source_entity_id, source_locator,
-                 ordinal, raw_alias, normalized_alias
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                alias.source_page_id.as_slice(),
-                source_entity_type,
-                source_entity_id.as_slice(),
-                locator,
-                i64::from(alias.ordinal),
-                &alias.raw_alias,
-                &alias.normalized_alias,
-            ],
-        )?;
+        insert_alias_declaration(transaction, alias)?;
     }
     for alias in altered_aliases {
         let mut candidates = prior_alias_candidates.remove(&alias).unwrap_or_default();
