@@ -6,7 +6,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use rusqlite::{params, types::ValueRef, Connection, OptionalExtension as _, Transaction};
+use rusqlite::{
+    functions::FunctionFlags, params, types::ValueRef, Connection, OptionalExtension as _,
+    Transaction,
+};
+use sha2::{Digest as _, Sha256};
 
 use crate::ContentDigest;
 
@@ -885,10 +889,147 @@ pub fn validate_schema(connection: &Connection) -> Result<(), MaterializationErr
 /// surface. This is a harness observation only: normal reads stay on their
 /// bounded page/query APIs.
 ///
-/// Rows are sorted by their canonical byte encodings rather than SQLite's
-/// comparison rules. That distinction is load-bearing for values that compare
-/// equal but have different exact representations, notably `0.0` and `-0.0`.
+/// SQLite orders a deterministic scalar BLOB key produced from that exact
+/// encoding. That preserves distinctions SQLite's ordinary comparison rules
+/// collapse, notably `0.0` and `-0.0`, while allowing the SHA-256 input to be
+/// consumed one row at a time.
 pub fn row_digest(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
+    install_canonical_row_key_function(connection)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"tine/sqlite-materialization/rows/v2\0");
+    for (table, columns) in MATERIALIZATION_TABLE_COLUMNS
+        .into_iter()
+        .chain(std::iter::once((
+            "search_fts",
+            &["entity_type", "entity_id", "page_id", "text"] as &[&str],
+        )))
+    {
+        update_len(&mut hasher, table.len());
+        hasher.update(table.as_bytes());
+        update_len(&mut hasher, columns.len());
+        for column in columns {
+            update_len(&mut hasher, column.len());
+            hasher.update(column.as_bytes());
+        }
+        let row_count: i64 =
+            connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })?;
+        let row_count = usize::try_from(row_count).map_err(|_| {
+            MaterializationError::Corrupt(format!("{table} row count is negative or exceeds usize"))
+        })?;
+        update_len(&mut hasher, row_count);
+        let select_columns = columns.join(", ");
+        let sql = format!(
+            "SELECT {select_columns} FROM {table}
+             ORDER BY tine_materialization_canonical_row({select_columns}) COLLATE BINARY"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            update_canonical_row(&mut hasher, row, columns.len())?;
+        }
+    }
+    Ok(ContentDigest::from_bytes(hasher.finalize().into()))
+}
+
+fn install_canonical_row_key_function(connection: &Connection) -> Result<(), MaterializationError> {
+    connection.create_scalar_function(
+        "tine_materialization_canonical_row",
+        -1,
+        FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let mut bytes = Vec::new();
+            encode_len(&mut bytes, context.len());
+            for index in 0..context.len() {
+                let mut value = Vec::new();
+                encode_sqlite_value(&mut value, context.get_raw(index))
+                    .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))?;
+                encode_len(&mut bytes, value.len());
+                bytes.extend_from_slice(&value);
+            }
+            Ok(bytes)
+        },
+    )?;
+    Ok(())
+}
+
+fn update_canonical_row(
+    hasher: &mut Sha256,
+    row: &rusqlite::Row<'_>,
+    column_count: usize,
+) -> Result<(), MaterializationError> {
+    let mut row_len = 8_usize;
+    for index in 0..column_count {
+        let value_len = encoded_sqlite_value_len(row.get_ref(index)?)?;
+        row_len = row_len
+            .checked_add(8)
+            .and_then(|len| len.checked_add(value_len))
+            .ok_or_else(|| {
+                MaterializationError::Corrupt("canonical row length overflowed".into())
+            })?;
+    }
+    update_len(hasher, row_len);
+    update_len(hasher, column_count);
+    for index in 0..column_count {
+        let value = row.get_ref(index)?;
+        update_len(hasher, encoded_sqlite_value_len(value)?);
+        update_sqlite_value(hasher, value)?;
+    }
+    Ok(())
+}
+
+fn encoded_sqlite_value_len(value: ValueRef<'_>) -> Result<usize, MaterializationError> {
+    Ok(match value {
+        ValueRef::Null => 1,
+        ValueRef::Integer(_) | ValueRef::Real(_) => 9,
+        ValueRef::Text(value) | ValueRef::Blob(value) => {
+            9usize.checked_add(value.len()).ok_or_else(|| {
+                MaterializationError::Corrupt("canonical value length overflowed".into())
+            })?
+        }
+    })
+}
+
+fn update_len(hasher: &mut Sha256, len: usize) {
+    hasher.update((len as u64).to_be_bytes());
+}
+
+fn update_sqlite_value(
+    hasher: &mut Sha256,
+    value: ValueRef<'_>,
+) -> Result<(), MaterializationError> {
+    match value {
+        ValueRef::Null => hasher.update([0]),
+        ValueRef::Integer(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_be_bytes());
+        }
+        ValueRef::Real(value) => {
+            hasher.update([2]);
+            hasher.update(value.to_bits().to_be_bytes());
+        }
+        ValueRef::Text(value) => {
+            std::str::from_utf8(value).map_err(|error| {
+                MaterializationError::Corrupt(format!(
+                    "materialized TEXT contains invalid UTF-8: {error}"
+                ))
+            })?;
+            hasher.update([3]);
+            update_len(hasher, value.len());
+            hasher.update(value);
+        }
+        ValueRef::Blob(value) => {
+            hasher.update([4]);
+            update_len(hasher, value.len());
+            hasher.update(value);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn row_digest_legacy(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
     let mut bytes = b"tine/sqlite-materialization/rows/v2\0".to_vec();
     for (table, columns) in MATERIALIZATION_TABLE_COLUMNS
         .into_iter()
@@ -2920,6 +3061,207 @@ mod tests {
         .unwrap();
         transaction.commit().unwrap();
         stats
+    }
+
+    fn assert_streaming_digest_matches_legacy(connection: &Connection) {
+        assert_eq!(
+            row_digest(connection).unwrap(),
+            row_digest_legacy(connection).unwrap()
+        );
+    }
+
+    #[test]
+    fn streaming_row_digest_matches_legacy_across_materialized_surfaces() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+
+        let mut first = page(0x101, "\u{200b}\u{00e9} searchable\0 boundary");
+        first.name = "\u{00c5}ngstr\u{00f6}m \u{1f600}".into();
+        first.name_key = "\u{00e5}ngstr\u{00f6}m \u{1f600}".into();
+        first.path = "pages/\u{00c5}ngstr\u{00f6}m.md".into();
+        first.preamble = Some("\u{0} preamble \u{1f642}".into());
+        first.references = vec![PhysicalReference {
+            target: PhysicalEntityId::Page(id(0x202)),
+            kind: 3,
+        }];
+        first.properties = vec![PhysicalProperty {
+            name: "\u{00fc}nicode".into(),
+            value: "\u{0}value\u{1f680}".into(),
+        }];
+        first.tags = vec!["\u{00e9}tiquette".into()];
+        first.blocks[0].references = vec![PhysicalReference {
+            target: PhysicalEntityId::Block(id(0x1202)),
+            kind: 2,
+        }];
+        first.blocks[0].properties = vec![PhysicalProperty {
+            name: "edge".into(),
+            value: "\u{0}\u{1f9ea}".into(),
+        }];
+        first.blocks[0].tags = vec!["\u{1f3f7}\u{fe0f}".into()];
+        first.blocks[0].task = Some(PhysicalTask {
+            marker: "TODO".into(),
+            priority: Some("A".into()),
+            scheduled: Some("2026-08-02".into()),
+            deadline: Some("2026-08-03".into()),
+        });
+
+        let mut second = page(0x202, "replacement target \u{00e9}");
+        second.name = "z\u{0}".into();
+        second.name_key = "z\u{0}".into();
+        second.path = "pages/z.md".into();
+        apply_and_commit(
+            &mut connection,
+            &change(0x301, vec![second.clone(), first.clone()], Vec::new()),
+            1,
+            digest(b"frontier-1"),
+        );
+
+        connection
+            .execute(
+                "INSERT INTO reference_source_coverage (
+                     source_page_id, source_digest, extractor_dependency_stamp_digest
+                 ) VALUES (?1, ?2, ?3)",
+                params![
+                    first.page_id.as_slice(),
+                    digest(b"source").as_bytes().as_slice(),
+                    digest(b"extractor").as_bytes().as_slice(),
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO reference_postings (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, reference_kind, target_type, raw_name, normalized_name,
+                     raw_uuid_claim, resolved_page_id, resolved_block_id
+                 ) VALUES (?1, 0, ?1, ?2, 0, 0, 0, ?3, ?4, NULL, ?5, NULL)",
+                params![
+                    first.page_id.as_slice(),
+                    [0_u8, 0xff].as_slice(),
+                    "Alias \u{00c5}",
+                    "alias \u{00e5}",
+                    second.page_id.as_slice(),
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO reference_name_bindings (
+                     raw_name, normalized_name, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, ?2, 0, ?3)",
+                params![
+                    "Alias \u{00c5}",
+                    "alias \u{00e5}",
+                    second.page_id.as_slice()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO reference_uuid_bindings (
+                     raw_uuid_claim, candidate_ordinal, resolved_block_id
+                 ) VALUES (?1, 0, ?2)",
+                params![id(0x444).as_slice(), first.blocks[0].block_id.as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO reference_alias_declarations (
+                     source_page_id, source_entity_type, source_entity_id, source_locator,
+                     ordinal, raw_alias, normalized_alias
+                 ) VALUES (?1, 0, ?1, ?2, 0, ?3, ?4)",
+                params![
+                    first.page_id.as_slice(),
+                    [0xff_u8, 0].as_slice(),
+                    "\u{00c5}lias \u{0}",
+                    "\u{00e5}lias \u{0}",
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO reference_alias_bindings (
+                     normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
+                 ) VALUES (?1, 0, ?2, ?3)",
+                params![
+                    "\u{00e5}lias \u{0}",
+                    first.page_id.as_slice(),
+                    digest(b"catalog").as_bytes().as_slice(),
+                ],
+            )
+            .unwrap();
+        assert_streaming_digest_matches_legacy(&connection);
+
+        first.searchable_text = "replacement \u{1f680}".into();
+        first.blocks[0].content = "replacement block \u{0}".into();
+        first.blocks[0].searchable_text = "replacement block \u{1f680}".into();
+        first.properties[0].value = "replaced".into();
+        first.tags = vec!["replaced".into()];
+        apply_and_commit(
+            &mut connection,
+            &change(0x302, vec![first], vec![second.page_id]),
+            2,
+            digest(b"frontier-2"),
+        );
+        assert_streaming_digest_matches_legacy(&connection);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM search_fts", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn canonical_row_sql_order_matches_legacy_bytes_for_all_sqlite_value_types() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE digest_value_types (value);
+                 INSERT INTO digest_value_types (value) VALUES
+                    (NULL), (0), (-1), (9223372036854775807),
+                    (-9223372036854775808), (0.0), (-0.0),
+                    (''), ('\u{00e9}'), (X''), (X'00FF');",
+            )
+            .unwrap();
+        install_canonical_row_key_function(&connection).unwrap();
+
+        let mut legacy = Vec::new();
+        let mut statement = connection
+            .prepare("SELECT value FROM digest_value_types")
+            .unwrap();
+        let mut rows = statement.query([]).unwrap();
+        while let Some(row) = rows.next().unwrap() {
+            let mut bytes = Vec::new();
+            encode_len(&mut bytes, 1);
+            let mut value = Vec::new();
+            encode_sqlite_value(&mut value, row.get_ref(0).unwrap()).unwrap();
+            encode_len(&mut bytes, value.len());
+            bytes.extend_from_slice(&value);
+            legacy.push(bytes);
+        }
+        legacy.sort_unstable();
+        assert!(legacy
+            .iter()
+            .any(|row| row.ends_with(&[2, 0, 0, 0, 0, 0, 0, 0, 0])));
+        assert!(legacy
+            .iter()
+            .any(|row| row.ends_with(&[2, 0x80, 0, 0, 0, 0, 0, 0, 0])));
+
+        let mut statement = connection
+            .prepare(
+                "SELECT tine_materialization_canonical_row(value)
+                 FROM digest_value_types
+                 ORDER BY tine_materialization_canonical_row(value) COLLATE BINARY",
+            )
+            .unwrap();
+        let ordered = statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(ordered, legacy);
     }
 
     #[test]
