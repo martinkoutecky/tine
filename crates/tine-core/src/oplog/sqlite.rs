@@ -1653,6 +1653,20 @@ pub struct RebuildInstrumentation {
     pub final_row_digest_equivalence_proofs: usize,
     #[cfg(test)]
     pub final_row_digest_proof_micros: u128,
+    #[cfg(test)]
+    pub sqlite_owner_dml_statements: usize,
+    #[cfg(test)]
+    pub sqlite_owner_dml_micros: u128,
+    #[cfg(test)]
+    pub sqlite_virtual_fts_dml_statements: usize,
+    #[cfg(test)]
+    pub sqlite_virtual_fts_dml_micros: u128,
+    #[cfg(test)]
+    pub sqlite_other_materialization_micros: u128,
+    #[cfg(test)]
+    pub sqlite_final_fts_build_micros: u128,
+    #[cfg(test)]
+    pub sqlite_terminal_proofs_micros: u128,
     /// Accepted-event apply transactions only; schema setup and terminal file
     /// checkpoint/publication remain separately durable lifecycle boundaries.
     pub physical_candidate_transactions: u64,
@@ -3453,6 +3467,16 @@ impl SqliteFrontier {
             instrumentation.cleanup_existing_pages += apply_stats.cleanup_existing_pages;
             instrumentation.cleanup_owned_rows += apply_stats.cleanup_owned_rows;
             instrumentation.cleanup_fts_rowids += apply_stats.cleanup_fts_rowids;
+            #[cfg(test)]
+            {
+                instrumentation.sqlite_owner_dml_statements += apply_stats.owner_dml_statements;
+                instrumentation.sqlite_owner_dml_micros += apply_stats.owner_dml_micros;
+                instrumentation.sqlite_virtual_fts_dml_statements +=
+                    apply_stats.virtual_fts_dml_statements;
+                instrumentation.sqlite_virtual_fts_dml_micros += apply_stats.virtual_fts_dml_micros;
+                instrumentation.sqlite_other_materialization_micros +=
+                    apply_stats.other_materialization_micros;
+            }
             instrumentation.reference_coverage_inductive_checks +=
                 apply_stats.reference_coverage_inductive_checks;
             instrumentation.reference_coverage_full_scans +=
@@ -3492,6 +3516,8 @@ impl SqliteFrontier {
                 "fresh candidate lost its inductive reference coverage state".into(),
             )
         })?;
+        #[cfg(test)]
+        let terminal_proofs_started = std::time::Instant::now();
         self.physical.finalize_fresh_bootstrap(
             source
                 .exact_frontier_root
@@ -3515,6 +3541,8 @@ impl SqliteFrontier {
         {
             instrumentation.final_row_digest_proof_micros =
                 row_digest_started.elapsed().as_micros();
+            instrumentation.sqlite_terminal_proofs_micros =
+                terminal_proofs_started.elapsed().as_micros();
         }
         if inactive_bulk {
             self.physical.finish_candidate_build()?;

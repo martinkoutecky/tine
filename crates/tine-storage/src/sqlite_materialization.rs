@@ -191,6 +191,16 @@ pub struct ApplyChangeInstrumentation {
     pub reference_coverage_count: Option<u64>,
     pub reference_coverage_inductive_checks: usize,
     pub reference_coverage_full_scans: usize,
+    #[cfg(any(test, feature = "test-support"))]
+    pub owner_dml_statements: usize,
+    #[cfg(any(test, feature = "test-support"))]
+    pub owner_dml_micros: u128,
+    #[cfg(any(test, feature = "test-support"))]
+    pub virtual_fts_dml_statements: usize,
+    #[cfg(any(test, feature = "test-support"))]
+    pub virtual_fts_dml_micros: u128,
+    #[cfg(any(test, feature = "test-support"))]
+    pub other_materialization_micros: u128,
 }
 
 #[derive(Clone, Copy)]
@@ -1561,6 +1571,8 @@ fn apply_change_inner(
     authenticated_reference: Option<&PhysicalAuthenticatedReference>,
     coverage_validation: CoverageValidation,
 ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+    #[cfg(any(test, feature = "test-support"))]
+    let materialization_started = std::time::Instant::now();
     if change.reference_catalog.is_some() && authenticated_reference.is_none() {
         return Err(MaterializationError::Incomplete(
             "authenticated reference materialization requires accepted event evidence".into(),
@@ -1577,21 +1589,33 @@ fn apply_change_inner(
         .collect::<BTreeSet<_>>();
     let mut instrumentation = ApplyChangeInstrumentation::default();
     for page_id in &change.deletions {
-        let cleanup = delete_page(transaction, *page_id, true, &retained_blocks)?;
+        let cleanup = delete_page(
+            transaction,
+            *page_id,
+            true,
+            &retained_blocks,
+            &mut instrumentation,
+        )?;
         instrumentation.cleanup_page_attempts += 1;
         instrumentation.cleanup_existing_pages += cleanup.existing_pages;
         instrumentation.cleanup_owned_rows += cleanup.owned_rows;
         instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
     }
     for page in &change.replacements {
-        let cleanup = delete_page(transaction, page.page_id, false, &retained_blocks)?;
+        let cleanup = delete_page(
+            transaction,
+            page.page_id,
+            false,
+            &retained_blocks,
+            &mut instrumentation,
+        )?;
         instrumentation.cleanup_page_attempts += 1;
         instrumentation.cleanup_existing_pages += cleanup.existing_pages;
         instrumentation.cleanup_owned_rows += cleanup.owned_rows;
         instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
     }
     for page in &change.replacements {
-        insert_page(transaction, page)?;
+        insert_page(transaction, page, &mut instrumentation)?;
     }
     let reference_values = change
         .reference_catalog
@@ -1694,6 +1718,14 @@ fn apply_change_inner(
             params![sequence, post_frontier_digest.as_bytes().as_slice()],
         )?;
     }
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        instrumentation.other_materialization_micros = materialization_started
+            .elapsed()
+            .as_micros()
+            .saturating_sub(instrumentation.owner_dml_micros)
+            .saturating_sub(instrumentation.virtual_fts_dml_micros);
+    }
     Ok(instrumentation)
 }
 
@@ -1794,6 +1826,7 @@ fn delete_page(
     page_id: [u8; 16],
     remove_incoming_page_references: bool,
     retained_blocks: &BTreeSet<[u8; 16]>,
+    apply_instrumentation: &mut ApplyChangeInstrumentation,
 ) -> Result<PageCleanupInstrumentation, MaterializationError> {
     let page = &page_id;
     let existing: i64 = transaction.query_row(
@@ -1828,14 +1861,29 @@ fn delete_page(
     };
     instrumentation.fts_rowids = fts_rowids.len();
     for rowid in fts_rowids {
+        #[cfg(any(test, feature = "test-support"))]
+        let virtual_fts_started = std::time::Instant::now();
         transaction.execute("DELETE FROM search_fts WHERE rowid = ?1", params![rowid])?;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            apply_instrumentation.virtual_fts_dml_statements += 1;
+            apply_instrumentation.virtual_fts_dml_micros +=
+                virtual_fts_started.elapsed().as_micros();
+        }
     }
+    #[cfg(any(test, feature = "test-support"))]
+    let owner_started = std::time::Instant::now();
     instrumentation.owned_rows = instrumentation
         .owned_rows
         .saturating_add(transaction.execute(
             "DELETE FROM search_fts_owners WHERE page_id = ?1",
             params![page.as_slice()],
         )?);
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        apply_instrumentation.owner_dml_statements += 1;
+        apply_instrumentation.owner_dml_micros += owner_started.elapsed().as_micros();
+    }
     instrumentation.owned_rows = instrumentation
         .owned_rows
         .saturating_add(transaction.execute(
@@ -1890,7 +1938,11 @@ fn delete_page(
     Ok(instrumentation)
 }
 
-fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), MaterializationError> {
+fn insert_page(
+    transaction: &Connection,
+    page: &PhysicalPage,
+    instrumentation: &mut ApplyChangeInstrumentation,
+) -> Result<(), MaterializationError> {
     let page_id = &page.page_id;
     transaction.execute(
         "INSERT INTO pages (
@@ -1914,6 +1966,7 @@ fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), Mate
         page.page_id,
         page.page_id,
         &page.searchable_text,
+        instrumentation,
     )?;
     insert_references(
         transaction,
@@ -1934,7 +1987,7 @@ fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), Mate
         &page.tags,
     )?;
     for block in &page.blocks {
-        insert_block(transaction, page.page_id, block)?;
+        insert_block(transaction, page.page_id, block, instrumentation)?;
     }
     Ok(())
 }
@@ -1943,6 +1996,7 @@ fn insert_block(
     transaction: &Connection,
     page_id: [u8; 16],
     block: &PhysicalBlock,
+    instrumentation: &mut ApplyChangeInstrumentation,
 ) -> Result<(), MaterializationError> {
     let (logseq_uuid, origin) = match (block.logseq_uuid, block.logseq_identity_origin) {
         (Some(uuid), Some(origin)) => (Some(uuid.to_vec()), Some(origin)),
@@ -1980,6 +2034,7 @@ fn insert_block(
         block.block_id,
         page_id,
         &block.searchable_text,
+        instrumentation,
     )?;
     let owner = PhysicalEntityId::Block(block.block_id);
     insert_references(transaction, owner, page_id, &block.references)?;
@@ -2009,6 +2064,7 @@ fn insert_fts(
     entity_id: [u8; 16],
     page_id: [u8; 16],
     text: &str,
+    instrumentation: &mut ApplyChangeInstrumentation,
 ) -> Result<(), MaterializationError> {
     let entity_type_value = match entity_type {
         "page" => 0_i64,
@@ -2019,12 +2075,21 @@ fn insert_fts(
             ));
         }
     };
+    #[cfg(any(test, feature = "test-support"))]
+    let owner_started = std::time::Instant::now();
     transaction.execute(
         "INSERT INTO search_fts_owners (entity_type, entity_id, page_id)
          VALUES (?1, ?2, ?3)",
         params![entity_type_value, entity_id.as_slice(), page_id.as_slice(),],
     )?;
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        instrumentation.owner_dml_statements += 1;
+        instrumentation.owner_dml_micros += owner_started.elapsed().as_micros();
+    }
     let rowid = transaction.last_insert_rowid();
+    #[cfg(any(test, feature = "test-support"))]
+    let virtual_fts_started = std::time::Instant::now();
     transaction.execute(
         "INSERT INTO search_fts (rowid, entity_type, entity_id, page_id, text)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -2036,6 +2101,11 @@ fn insert_fts(
             text,
         ],
     )?;
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        instrumentation.virtual_fts_dml_statements += 1;
+        instrumentation.virtual_fts_dml_micros += virtual_fts_started.elapsed().as_micros();
+    }
     Ok(())
 }
 
