@@ -1175,6 +1175,9 @@ struct EventMaterializationInstrumentation {
     accepted_root_authentications: usize,
     exact_document_loads: usize,
     exact_catalog_loads: usize,
+    /// Catalog resolutions that paid for a whole-checkpoint decode, as opposed
+    /// to reusing the engine's retained decode of the same causal state.
+    exact_catalog_decodes: usize,
     bulk_materialization_chunks: usize,
     bulk_pages_materialized: usize,
     peak_bulk_pages: usize,
@@ -1252,6 +1255,7 @@ fn materialize_accepted_event_with_stats(
     if let Some(materializer) = materializer {
         instrumentation.exact_document_loads = materializer.exact_document_loads();
         instrumentation.exact_catalog_loads = materializer.exact_catalog_loads();
+        instrumentation.exact_catalog_decodes = materializer.exact_catalog_decodes();
     }
     let change = super::MaterializationChange::new(event.batch_id(), replacements, deletions)?;
     Ok((change, instrumentation))
@@ -1351,6 +1355,7 @@ fn materialize_inactive_bootstrap_event_bulk_with_budget(
                 .as_ref()
                 .map_or(0, |materializer| materializer.exact_document_loads()),
             exact_catalog_loads: usize::from(materializer.is_some()),
+            exact_catalog_decodes: usize::from(materializer.is_some()),
             bulk_materialization_chunks: affected_pages
                 .len()
                 .div_ceil(super::hot_engine::BOOTSTRAP_MATERIALIZATION_CHUNK_PAGES),
@@ -1929,6 +1934,7 @@ pub struct RebuildInstrumentation {
     pub accepted_root_authentications: usize,
     pub exact_document_loads: usize,
     pub exact_catalog_loads: usize,
+    pub exact_catalog_decodes: usize,
     pub bulk_materialization_chunks: usize,
     pub bulk_pages_materialized: usize,
     pub peak_bulk_pages: usize,
@@ -1965,6 +1971,7 @@ impl RebuildInstrumentation {
         self.accepted_root_authentications += stats.accepted_root_authentications;
         self.exact_document_loads += stats.exact_document_loads;
         self.exact_catalog_loads += stats.exact_catalog_loads;
+        self.exact_catalog_decodes += stats.exact_catalog_decodes;
         self.bulk_materialization_chunks += stats.bulk_materialization_chunks;
         self.bulk_pages_materialized += stats.bulk_pages_materialized;
         self.peak_bulk_pages = self.peak_bulk_pages.max(stats.peak_bulk_pages);
@@ -4367,7 +4374,8 @@ impl SqliteFrontier {
                 "rebuild did not reach the engine's accepted event count".into(),
             ));
         }
-        if instrumentation.exact_catalog_loads > instrumentation.accepted_root_authentications
+        if instrumentation.exact_catalog_decodes > instrumentation.exact_catalog_loads
+            || instrumentation.exact_catalog_loads > instrumentation.accepted_root_authentications
             || instrumentation.accepted_root_authentications
                 > instrumentation.accepted_events_applied
             || instrumentation.cleanup_fts_rowids > instrumentation.cleanup_owned_rows

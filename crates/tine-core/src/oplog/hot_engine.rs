@@ -9,7 +9,7 @@ use std::time::Instant;
 use ahash::{AHashMap, AHashSet};
 use cap_std::{ambient_authority, fs::Dir};
 use loro::{
-    Container, ContainerType, EncodedBlobMode, ExportMode, LoroDoc, LoroMap, LoroValue,
+    Container, ContainerType, EncodedBlobMode, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue,
     UpdateOptions, ValueOrContainer, VersionVector,
 };
 use serde::{Deserialize, Serialize};
@@ -3883,6 +3883,79 @@ struct AcceptedDocumentCacheKey {
     causal_state_digest: DocumentCausalDigest,
 }
 
+/// Loro version identity of one decoded document, captured when the engine
+/// retained it and reproved before every reuse.
+///
+/// A [`LoroDoc`] is a reference-counted handle with interior mutability, so
+/// "the retained decode is still the decode that was published" is not a fact
+/// the type system carries. It is, however, cheap to observe: applying a local
+/// operation or importing an update advances the oplog version, and checking
+/// the document out moves the state version or detaches it. All four
+/// observations are bounded by the document's peer count, not by its size, so
+/// reproving them costs nothing at graph scale.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DecodedDocumentVersion {
+    detached: bool,
+    oplog_vv: VersionVector,
+    state_vv: VersionVector,
+    oplog_frontiers: Frontiers,
+    state_frontiers: Frontiers,
+}
+
+impl DecodedDocumentVersion {
+    fn of(document: &LoroDoc) -> Self {
+        Self {
+            detached: document.is_detached(),
+            oplog_vv: document.oplog_vv(),
+            state_vv: document.state_vv(),
+            oplog_frontiers: document.oplog_frontiers(),
+            state_frontiers: document.state_frontiers(),
+        }
+    }
+}
+
+/// The engine's single retained decoded page catalog.
+///
+/// Decoding the catalog means reading its whole exact-state checkpoint out of
+/// scratch, hashing it, and importing it through Loro, all of which are
+/// O(total graph pages). A content-only save does not touch the catalog, so the
+/// ordinary drained save decodes a byte-identical document over and over. This
+/// retains exactly one of them.
+///
+/// The value's content identity is `(document_id, causal_state_digest)`: the
+/// exact-state scratch lane already keys the encoded checkpoint by that pair
+/// within one lane, and this value never outlives the [`ShardedHotEngine`] that
+/// owns the one workspace, lineage and scratch store that pair is resolved in.
+///
+/// It deliberately carries **no authority**. Nothing here proves which causal
+/// state an accepted root selects, that the root is authentic, or that the
+/// checkpoint behind it was intact. Those proofs stay on
+/// [`ShardedHotEngine::accepted_frontier_document`] and the full load, and they
+/// run on every single use.
+#[derive(Debug)]
+struct RetainedDecodedCatalog {
+    document_id: DocumentId,
+    causal_state_digest: DocumentCausalDigest,
+    version: DecodedDocumentVersion,
+    document: LoroDoc,
+}
+
+/// Engine-lifetime accounting for the retained catalog decode. This is the
+/// structural invariant's oracle: it distinguishes "resolved the catalog" from
+/// "read the whole catalog checkpoint again", over the whole run rather than
+/// one event.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RetainedCatalogDecodeStats {
+    /// Full catalog decodes published into the retained entry.
+    pub(crate) decodes: usize,
+    /// Retained decodes served in place of a full decode.
+    pub(crate) reuses: usize,
+    /// Retained entries dropped because the decoded document no longer
+    /// presented the Loro version it was published with.
+    pub(crate) mutation_refusals: usize,
+}
+
 /// Event-local exact-document loader for one authenticated accepted root.
 ///
 /// The root is authenticated once at construction. Every cached document is
@@ -3897,6 +3970,10 @@ pub(crate) struct AcceptedRootMaterializer<'engine> {
     document_keys: BTreeMap<DocumentId, AcceptedDocumentCacheKey>,
     exact_document_loads: usize,
     exact_catalog_loads: usize,
+    /// Catalog resolutions that actually paid for a decode. This is the one
+    /// counter that separates "this event resolved the catalog" from "this
+    /// event read the whole catalog checkpoint off disk again".
+    exact_catalog_decodes: usize,
 }
 
 /// Maximum page residency of one private bootstrap materialization step.
@@ -4374,10 +4451,19 @@ impl AcceptedRootMaterializer<'_> {
         self.exact_catalog_loads
     }
 
+    pub(crate) const fn exact_catalog_decodes(&self) -> usize {
+        self.exact_catalog_decodes
+    }
+
     fn load_document(
         &mut self,
         document_id: DocumentId,
     ) -> Result<Option<AcceptedDocumentCacheKey>, EngineError> {
+        // The accepted-frontier lookup is the authority and it runs first, on
+        // every resolution, hit or miss. It is what proves that this exact
+        // causal state is the one *this* accepted root selects for this
+        // document, and it refuses a blocked engine, an unauthenticated root
+        // and an absent document before any reuse is even considered.
         let Some(dependencies) = self
             .engine
             .accepted_frontier_document(&self.root, document_id)?
@@ -4395,16 +4481,37 @@ impl AcceptedRootMaterializer<'_> {
             }
             return Ok(Some(key));
         }
+        let is_catalog = document_id == self.engine.catalog_document_id;
+        if is_catalog {
+            if let Some(document) = self
+                .engine
+                .retained_accepted_document(document_id, key.causal_state_digest)
+            {
+                self.documents.insert(key, document);
+                self.document_keys.insert(document_id, key);
+                self.exact_document_loads = self.exact_document_loads.saturating_add(1);
+                self.exact_catalog_loads = self.exact_catalog_loads.saturating_add(1);
+                return Ok(Some(key));
+            }
+        }
         let frontier = FrontierV2::new(vec![dependencies]).map_err(EngineError::from)?;
         let mut reconstructed = self.engine.reconstruct_projection_frontier(&frontier)?;
         let document = reconstructed
             .remove(&document_id)
             .ok_or(EngineError::MissingDocument(document_id))?;
+        if is_catalog {
+            // Publication happens only here, after the full load and every
+            // integrity proof inside it succeeded. A refused or malformed
+            // checkpoint returns above and leaves any prior valid entry alone.
+            self.engine
+                .retain_accepted_document(document_id, key.causal_state_digest, &document);
+        }
         self.documents.insert(key, document);
         self.document_keys.insert(document_id, key);
         self.exact_document_loads = self.exact_document_loads.saturating_add(1);
-        if document_id == self.engine.catalog_document_id {
+        if is_catalog {
             self.exact_catalog_loads = self.exact_catalog_loads.saturating_add(1);
+            self.exact_catalog_decodes = self.exact_catalog_decodes.saturating_add(1);
         }
         Ok(Some(key))
     }
@@ -5622,6 +5729,20 @@ pub struct ShardedHotEngine {
     status_point_cache: RefCell<BTreeMap<BatchId, Option<ColdHistoryRecord>>>,
     external_anchor_point_cache:
         RefCell<BTreeSet<(DocumentId, BatchId, ContentDigest, ContentDigest)>>,
+    // At most one decoded page catalog, reused across accepted events by
+    // content identity alone. Unlike the two point caches above this is *not*
+    // cleared per operation: a content-only save leaves the catalog's causal
+    // state untouched, and reusing that decode is the whole point. It is
+    // deliberately one entry with no eviction policy to tune, holds no
+    // authority, and is consulted only after the accepted-frontier lookup has
+    // named the exact causal state the root selects.
+    retained_accepted_catalog: RefCell<Option<RetainedDecodedCatalog>>,
+    #[cfg(test)]
+    retained_catalog_decode_stats: Cell<RetainedCatalogDecodeStats>,
+    /// Restores the previous behaviour, which decoded the catalog for every
+    /// accepted event. Differential proofs run one save program both ways.
+    #[cfg(test)]
+    retained_catalog_enabled: Cell<bool>,
     history_work: Cell<HistoryWorkStats>,
     accepted_frontier: BTreeMap<DocumentId, DocumentDependencies>,
     ephemeral_causal_clocks: BTreeMap<BatchId, Vec<(CausalPeerId, u64)>>,
@@ -5770,6 +5891,11 @@ impl ShardedHotEngine {
             terminal_document_heads: BTreeMap::new(),
             status_point_cache: RefCell::new(BTreeMap::new()),
             external_anchor_point_cache: RefCell::new(BTreeSet::new()),
+            retained_accepted_catalog: RefCell::new(None),
+            #[cfg(test)]
+            retained_catalog_decode_stats: Cell::new(RetainedCatalogDecodeStats::default()),
+            #[cfg(test)]
+            retained_catalog_enabled: Cell::new(true),
             history_work: Cell::new(HistoryWorkStats::default()),
             accepted_frontier: BTreeMap::new(),
             ephemeral_causal_clocks: BTreeMap::new(),
@@ -6860,6 +6986,7 @@ impl ShardedHotEngine {
             .create_retained_engine_scratch()
             .map_err(|error| EngineError::Archive(error.to_string()))?;
         let (scratch, claim_index, identity) = fresh.into_parts();
+        self.forget_retained_accepted_documents();
         self.scratch = Some(scratch);
         self.block_claim_index = Some(Arc::new(claim_index));
         self.retained_scratch = Some(identity);
@@ -7481,6 +7608,7 @@ impl ShardedHotEngine {
                 .map_err(|error| EngineError::ReferenceCatalog(error.to_string()))?;
         }
         self.reference_catalog = recovered_reference_catalog;
+        self.forget_retained_accepted_documents();
         self.scratch_roots = snapshot.scratch_roots.clone();
         self.block_claim_root = snapshot.block_claim_root;
         self.accepted_frontier_root = snapshot.accepted_frontier_root.clone();
@@ -9258,6 +9386,7 @@ impl ShardedHotEngine {
             document_keys: BTreeMap::new(),
             exact_document_loads: 0,
             exact_catalog_loads: 0,
+            exact_catalog_decodes: 0,
         })
     }
 
@@ -16941,6 +17070,122 @@ impl ShardedHotEngine {
     fn begin_point_operation(&self) {
         self.status_point_cache.borrow_mut().clear();
         self.external_anchor_point_cache.borrow_mut().clear();
+    }
+
+    /// Reuse the retained decode of `document_id` at this exact causal state,
+    /// or `None` to take the ordinary full load.
+    ///
+    /// The caller must already have proved, against the accepted root it is
+    /// materializing, that `causal_state_digest` is the authoritative causal
+    /// state of `document_id` at that root. This grants nothing beyond skipping
+    /// a decode of bytes that the pair already names.
+    ///
+    /// Only the page catalog is ever retained. Membership and home shards are
+    /// point-sized, so caching them would buy a fixed cost and pay for it with
+    /// a resident set that grows with the pages an event touches.
+    fn retained_accepted_document(
+        &self,
+        document_id: DocumentId,
+        causal_state_digest: DocumentCausalDigest,
+    ) -> Option<LoroDoc> {
+        if document_id != self.catalog_document_id {
+            return None;
+        }
+        #[cfg(test)]
+        if !self.retained_catalog_enabled.get() {
+            return None;
+        }
+        let mut retained = self.retained_accepted_catalog.borrow_mut();
+        let entry = retained.as_ref()?;
+        if entry.document_id != document_id || entry.causal_state_digest != causal_state_digest {
+            return None;
+        }
+        if DecodedDocumentVersion::of(&entry.document) != entry.version {
+            // Something advanced or checked out the decoded document through a
+            // shared handle, so it is no longer the state that was published
+            // under this identity. Drop it and decode again rather than serve
+            // it; the ordinary path below is always available.
+            *retained = None;
+            #[cfg(test)]
+            {
+                let mut stats = self.retained_catalog_decode_stats.get();
+                stats.mutation_refusals = stats.mutation_refusals.saturating_add(1);
+                self.retained_catalog_decode_stats.set(stats);
+            }
+            return None;
+        }
+        #[cfg(test)]
+        {
+            let mut stats = self.retained_catalog_decode_stats.get();
+            stats.reuses = stats.reuses.saturating_add(1);
+            self.retained_catalog_decode_stats.set(stats);
+        }
+        Some(entry.document.clone())
+    }
+
+    /// Retain one decoded catalog under the content identity it was loaded at.
+    ///
+    /// Callers publish only after their full load and all of its integrity
+    /// proofs succeeded, so a refusal can never replace a valid entry.
+    fn retain_accepted_document(
+        &self,
+        document_id: DocumentId,
+        causal_state_digest: DocumentCausalDigest,
+        document: &LoroDoc,
+    ) {
+        if document_id != self.catalog_document_id {
+            return;
+        }
+        #[cfg(test)]
+        if !self.retained_catalog_enabled.get() {
+            return;
+        }
+        *self.retained_accepted_catalog.borrow_mut() = Some(RetainedDecodedCatalog {
+            document_id,
+            causal_state_digest,
+            version: DecodedDocumentVersion::of(document),
+            document: document.clone(),
+        });
+        #[cfg(test)]
+        {
+            let mut stats = self.retained_catalog_decode_stats.get();
+            stats.decodes = stats.decodes.saturating_add(1);
+            self.retained_catalog_decode_stats.set(stats);
+        }
+    }
+
+    /// Drop the retained decode when the store it was resolved against is
+    /// replaced. Content identity would survive such a swap on its own, since
+    /// the causal state names the same CRDT state in the same lineage, but the
+    /// bytes are no longer reachable through the run this engine now appends
+    /// to, and nothing is cheap enough about a decode to be worth that
+    /// argument.
+    fn forget_retained_accepted_documents(&self) {
+        *self.retained_accepted_catalog.borrow_mut() = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_accepted_catalog_document_for_test(&self) -> Option<LoroDoc> {
+        self.retained_accepted_catalog
+            .borrow()
+            .as_ref()
+            .map(|entry| entry.document.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_catalog_decode_stats(&self) -> RetainedCatalogDecodeStats {
+        self.retained_catalog_decode_stats.get()
+    }
+
+    /// Select the pre-cut behaviour, which decoded the catalog for every
+    /// accepted event. This is the differential oracle, so disabling it also
+    /// drops whatever was already retained.
+    #[cfg(test)]
+    pub(crate) fn set_retained_catalog_enabled_for_test(&self, enabled: bool) {
+        self.retained_catalog_enabled.set(enabled);
+        if !enabled {
+            self.forget_retained_accepted_documents();
+        }
     }
 
     #[cfg(test)]
