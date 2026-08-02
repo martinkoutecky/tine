@@ -193,6 +193,16 @@ pub struct ApplyChangeInstrumentation {
     pub reference_coverage_full_scans: usize,
 }
 
+/// How one apply establishes the post-apply `reference_source_coverage` row
+/// count it checks against the authenticated catalog's post source count.
+///
+/// `FullScan` reads the whole table and is therefore proportional to the graph,
+/// not to the change. `FreshInductive` instead starts from a count the caller
+/// already proved at the immediately preceding accepted sequence, checks it
+/// against the same authenticated catalog's *prior* source count, and moves it
+/// by the rows this apply actually replaced and inserted. Both end at the same
+/// equality check, so a caller that has no proved prior count -- a fresh open,
+/// a rebuild, a gap in the accepted chain -- selects the scan and loses nothing.
 #[derive(Clone, Copy)]
 enum CoverageValidation {
     FullScan,
