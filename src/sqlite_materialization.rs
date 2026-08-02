@@ -1313,7 +1313,8 @@ pub(crate) fn seed_terminal_chunk_in_open_candidate(
         insert_page(transaction, page)?;
     }
     for facet in &chunk.coverage {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO reference_source_coverage (
                  source_page_id, source_digest, extractor_dependency_stamp_digest
              ) VALUES (?1, ?2, ?3)",
@@ -1448,7 +1449,8 @@ fn insert_reference_posting(
                 resolved_block_id.map(|id| id.to_vec()),
             ),
         };
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO reference_postings (
              source_page_id, source_entity_type, source_entity_id, source_locator,
              ordinal, reference_kind, target_type, raw_name, normalized_name,
@@ -1478,7 +1480,8 @@ fn insert_alias_declaration(
 ) -> Result<(), MaterializationError> {
     let (source_entity_type, source_entity_id) = alias.source_entity.sql_parts();
     let locator = &alias.source_locator;
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO reference_alias_declarations (
              source_page_id, source_entity_type, source_entity_id, source_locator,
              ordinal, raw_alias, normalized_alias
@@ -1578,7 +1581,8 @@ fn apply_reference_catalog_change(
         )?;
     }
     for facet in &input.coverage {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO reference_source_coverage (
                  source_page_id, source_digest, extractor_dependency_stamp_digest
              ) VALUES (?1, ?2, ?3)",
@@ -2107,9 +2111,24 @@ fn delete_page(
     Ok(instrumentation)
 }
 
+/// Execute one materialized row insert through the connection's
+/// prepared-statement cache.
+///
+/// A graph-sized build runs the same handful of insert statements once per
+/// page, block, and facet, so re-preparing each one per row dominates it. The
+/// SQL text, parameters, and owning transaction are unchanged.
+fn execute_cached(
+    transaction: &Connection,
+    sql: &str,
+    parameters: &[&dyn rusqlite::ToSql],
+) -> Result<usize, MaterializationError> {
+    Ok(transaction.prepare_cached(sql)?.execute(parameters)?)
+}
+
 fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), MaterializationError> {
     let page_id = &page.page_id;
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO pages (
              page_id, home_document_id, name, name_key, path, text_kind,
              preamble, searchable_text
@@ -2171,7 +2190,8 @@ fn insert_block(
             )));
         }
     };
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO blocks (
              block_id, page_id, home_document_id, parent_block_id, order_key,
              content, searchable_text, heading_level, collapsed, logseq_uuid,
@@ -2203,7 +2223,8 @@ fn insert_block(
     insert_properties(transaction, owner, page_id, &block.properties)?;
     insert_tags(transaction, owner, page_id, &block.tags)?;
     if let Some(task) = &block.task {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO tasks (
                  block_id, page_id, marker, priority, scheduled, deadline
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -2236,13 +2257,15 @@ fn insert_fts(
             ));
         }
     };
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO search_fts_owners (entity_type, entity_id, page_id)
          VALUES (?1, ?2, ?3)",
         params![entity_type_value, entity_id.as_slice(), page_id.as_slice(),],
     )?;
     let rowid = transaction.last_insert_rowid();
-    transaction.execute(
+    execute_cached(
+        transaction,
         "INSERT INTO search_fts (rowid, entity_type, entity_id, page_id, text)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
@@ -2265,7 +2288,8 @@ fn insert_references(
     let (source_type, source_id) = source.sql_parts();
     for (ordinal, reference) in references.iter().enumerate() {
         let (target_type, target_id) = reference.target.sql_parts();
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO refs (
                  source_type, source_id, source_page_id, target_type, target_id,
                  reference_kind, ordinal
@@ -2294,7 +2318,8 @@ fn insert_properties(
 ) -> Result<(), MaterializationError> {
     let (owner_type, owner_id) = owner.sql_parts();
     for (ordinal, property) in properties.iter().enumerate() {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO properties (
                  owner_type, owner_id, page_id, name, value, ordinal
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -2321,7 +2346,8 @@ fn insert_tags(
 ) -> Result<(), MaterializationError> {
     let (owner_type, owner_id) = owner.sql_parts();
     for (ordinal, tag) in tags.iter().enumerate() {
-        transaction.execute(
+        execute_cached(
+            transaction,
             "INSERT INTO tags (owner_type, owner_id, page_id, tag, ordinal)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![

@@ -24,6 +24,9 @@ use crate::sqlite_materialization::{
 };
 use crate::ContentDigest;
 
+/// Prepared-statement cache size for the writable connection.
+const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
+
 /// Physical fields from the reference-catalog materialization stamp.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalReferenceCatalogStamp {
@@ -66,6 +69,10 @@ impl PhysicalSqliteDatabase {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         connection.busy_timeout(Duration::from_secs(5))?;
+        // The materialized row writers reuse a small fixed set of statements
+        // once per page, block, and facet. Keep every one of them resident so a
+        // graph-sized build does not re-prepare the same SQL per row.
+        connection.set_prepared_statement_cache_capacity(PREPARED_STATEMENT_CACHE_STATEMENTS);
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
