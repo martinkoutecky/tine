@@ -917,6 +917,22 @@ impl<'a> RebuildSource<'a> {
     }
 
     fn authenticate_exact_frontier(&self) -> Result<(), ProjectionError> {
+        self.authenticate_exact_frontier_retaining_terminal_event()
+            .map(|_| ())
+    }
+
+    /// Authenticate the bound exact frontier and hand back the terminal
+    /// accepted event this proof had to reconstruct.
+    ///
+    /// The ordinary drain applies exactly that sequence immediately afterwards.
+    /// Reconstructing the same event a second time re-reads the same archive
+    /// manifest and objects and re-derives the same bytes, so the proof's own
+    /// event is returned instead. It is `None` only where this proof never
+    /// builds one: an empty accepted history, or a bootstrap-anchored source
+    /// whose terminal proof reads indexed evidence rather than an event.
+    fn authenticate_exact_frontier_retaining_terminal_event(
+        &self,
+    ) -> Result<Option<AcceptedBatchEvent>, ProjectionError> {
         if !self
             .runtime_authority
             .matches(self.engine.runtime_authority())
@@ -929,7 +945,7 @@ impl<'a> RebuildSource<'a> {
                     "empty accepted history has a non-empty frontier".into(),
                 ));
             }
-            return Ok(());
+            return Ok(None);
         }
         if matches!(self.loader, RebuildLoader::InactiveBootstrap { .. }) {
             let (batch_id, evidence) = self
@@ -954,7 +970,7 @@ impl<'a> RebuildSource<'a> {
                     "bootstrap accepted history tail is not bound to exact frontier".into(),
                 ));
             }
-            return Ok(());
+            return Ok(None);
         }
         let event = self.accepted_event_at(self.accepted_batch_count)?;
         authenticate_event_for_engine(self.engine, &event)?;
@@ -963,7 +979,7 @@ impl<'a> RebuildSource<'a> {
                 "accepted history tail is not bound to the exact rebuild frontier".into(),
             ));
         }
-        Ok(())
+        Ok(Some(event))
     }
 
     fn cursor(&'a self) -> Result<RebuildCursor<'a>, ProjectionError> {
@@ -2543,9 +2559,14 @@ impl TailOverlay {
         }
         let authenticate_source =
             self.authenticated_source_frontier.as_ref() != Some(&source.exact_frontier_root);
-        if authenticate_source {
-            source.authenticate_exact_frontier()?;
-        }
+        // The frontier proof reconstructs the terminal accepted event, which is
+        // the one an ordinary save is about to apply. Keep it instead of
+        // rebuilding identical bytes out of the same archive objects below.
+        let mut authenticated_terminal_event = if authenticate_source {
+            source.authenticate_exact_frontier_retaining_terminal_event()?
+        } else {
+            None
+        };
         let required_frontier = database.plan_required_frontier(&source.exact_frontier_root)?;
 
         // Once the bound exact source is authenticated, keep reads gated to
@@ -2581,7 +2602,12 @@ impl TailOverlay {
             if expected_sequence > source.accepted_batch_count {
                 break;
             }
-            let event = source.accepted_event_at(expected_sequence)?;
+            let retained = authenticated_terminal_event
+                .take_if(|event| event.acceptance_sequence == expected_sequence);
+            let event = match retained {
+                Some(event) => event,
+                None => source.accepted_event_at(expected_sequence)?,
+            };
             if let Some(descriptor) = self.hot_descriptors.get(&expected_sequence) {
                 if descriptor.batch_id != event.batch_id
                     || descriptor.manifest_digest != event.manifest_digest
@@ -2603,6 +2629,34 @@ impl TailOverlay {
     }
 }
 
+/// One applier's own `reference_source_coverage` row count, bound to the exact
+/// accepted sequence it was observed at.
+///
+/// Counting that whole table is the only graph-wide read an otherwise
+/// point-sized ordinary apply performs, and after the first one it is
+/// redundant: the apply already probes every source it touches, and the
+/// authenticated catalog root it is checked against carries both the prior and
+/// the post source count. Carrying the count forward is therefore an induction,
+/// and an induction is only sound over an unbroken chain — hence the sequence.
+/// Absence means "count the table", which is what every open starts with, so no
+/// reopened, rebuilt, or interrupted database can inherit a stale count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InductiveReferenceCoverage {
+    applied_through: u64,
+    rows: u64,
+}
+
+impl InductiveReferenceCoverage {
+    /// The count to induct from when applying `acceptance_sequence`, or `None`
+    /// when this state does not immediately precede it.
+    const fn prior_rows_for(&self, acceptance_sequence: u64) -> Option<u64> {
+        match self.applied_through.checked_add(1) {
+            Some(next) if next == acceptance_sequence => Some(self.rows),
+            _ => None,
+        }
+    }
+}
+
 /// One leased device-local projection handle.
 ///
 /// The projection's database-adjacent applier lock lives exactly as long as
@@ -2621,7 +2675,7 @@ pub struct SqliteFrontier {
     runtime_authority: EngineAuthority,
     required_frontier_root: AcceptedFrontierRoot,
     checkpoint_each_apply: bool,
-    fresh_reference_coverage_count: Option<u64>,
+    reference_coverage: Option<InductiveReferenceCoverage>,
     _lease: Arc<HeldApplierLocks>,
 }
 
@@ -3132,7 +3186,7 @@ impl SqliteFrontier {
                     runtime_authority: source.runtime_authority.clone(),
                     required_frontier_root: source.exact_frontier_root.clone(),
                     checkpoint_each_apply: true,
-                    fresh_reference_coverage_count: None,
+                    reference_coverage: None,
                     _lease: lease,
                 },
                 recovery: ProjectionRecovery::OpenedExisting,
@@ -3170,7 +3224,7 @@ impl SqliteFrontier {
                                 runtime_authority: source.runtime_authority.clone(),
                                 required_frontier_root: source.exact_frontier_root.clone(),
                                 checkpoint_each_apply: true,
-                                fresh_reference_coverage_count: None,
+                                reference_coverage: None,
                                 _lease: lease,
                             },
                             recovery: ProjectionRecovery::RebuiltPreservingEvidence {
@@ -3192,7 +3246,7 @@ impl SqliteFrontier {
                             runtime_authority: source.runtime_authority.clone(),
                             required_frontier_root: source.exact_frontier_root.clone(),
                             checkpoint_each_apply: true,
-                            fresh_reference_coverage_count: None,
+                            reference_coverage: None,
                             _lease: lease,
                         },
                         recovery: ProjectionRecovery::OpenedExisting,
@@ -3356,7 +3410,7 @@ impl SqliteFrontier {
                 runtime_authority: source.runtime_authority.clone(),
                 required_frontier_root: source.exact_frontier_root.clone(),
                 checkpoint_each_apply: true,
-                fresh_reference_coverage_count: None,
+                reference_coverage: None,
                 _lease: lease,
             },
             rebuild,
@@ -3381,7 +3435,10 @@ impl SqliteFrontier {
             runtime_authority,
             required_frontier_root: AcceptedFrontierRoot::empty(),
             checkpoint_each_apply: false,
-            fresh_reference_coverage_count: Some(0),
+            reference_coverage: Some(InductiveReferenceCoverage {
+                applied_through: 0,
+                rows: 0,
+            }),
             _lease: lease,
         })
     }
@@ -3929,7 +3986,10 @@ impl SqliteFrontier {
         if std::env::var_os("TINE_ACTIVATION_TRACE").is_some() {
             eprintln!("sqlite terminal current-path cursor probe: {cursor_probe:?}");
         }
-        self.fresh_reference_coverage_count = Some(coverage_count);
+        self.reference_coverage = Some(InductiveReferenceCoverage {
+            applied_through: source.accepted_batch_count,
+            rows: coverage_count,
+        });
         if instrumentation.cleanup_page_attempts != 0
             || instrumentation.cleanup_owned_rows != 0
             || instrumentation.cleanup_fts_rowids != 0
@@ -4319,11 +4379,15 @@ impl SqliteFrontier {
                 "fresh candidate structural accounting invariant failed".into(),
             ));
         }
-        let inductive_coverage_count = self.fresh_reference_coverage_count.ok_or_else(|| {
-            ProjectionError::Rebuild(
-                "fresh candidate lost its inductive reference coverage state".into(),
-            )
-        })?;
+        let inductive_coverage_count = self
+            .reference_coverage
+            .filter(|coverage| coverage.applied_through == source.accepted_batch_count)
+            .map(|coverage| coverage.rows)
+            .ok_or_else(|| {
+                ProjectionError::Rebuild(
+                    "fresh candidate lost its inductive reference coverage state".into(),
+                )
+            })?;
         // Every preceding row transition was committed atomically with one
         // authenticated archive event, and the exact terminal frontier above
         // equals the source authority. The two complete scans below close that
@@ -4437,7 +4501,9 @@ impl SqliteFrontier {
             materialization: physical_materialization,
             materialization_input_digest: materialization_digest,
             authenticated_reference,
-            prior_reference_coverage_count: self.fresh_reference_coverage_count,
+            prior_reference_coverage_count: self
+                .reference_coverage
+                .and_then(|coverage| coverage.prior_rows_for(event.acceptance_sequence)),
             fault: storage_frontier::ApplyFault::None,
         };
         let preflight = match self.physical.preflight(&current_physical, &request) {
@@ -4533,14 +4599,35 @@ impl SqliteFrontier {
         } else {
             self.physical.apply(&current_physical, &request)?
         };
-        if self.fresh_reference_coverage_count.is_some() {
-            if let Some(next_count) = result.materialization.reference_coverage_count {
-                self.fresh_reference_coverage_count = Some(next_count);
-            }
-        }
         let disposition = match result.disposition {
             storage_frontier::ApplyDisposition::Applied => ApplyDisposition::Applied,
             storage_frontier::ApplyDisposition::Duplicate => ApplyDisposition::Duplicate,
+        };
+        // Carry the induction forward exactly one accepted sequence, and only
+        // over an apply that actually advanced this database. A full scan and
+        // an inductive step both return the post-apply row count that was just
+        // checked against the authenticated catalog's post source count, so
+        // either is a sound base for the next sequence. A change that wrote no
+        // catalog rows returns none and cannot have altered the table, so the
+        // preceding count still holds at the new sequence. Anything else -- a
+        // duplicate, a non-contiguous apply, or a first apply that had no base
+        // -- drops the state and makes the next apply count the table itself.
+        self.reference_coverage = match (
+            self.reference_coverage,
+            result.materialization.reference_coverage_count,
+            disposition,
+        ) {
+            (_, Some(rows), ApplyDisposition::Applied) => Some(InductiveReferenceCoverage {
+                applied_through: event.acceptance_sequence,
+                rows,
+            }),
+            (Some(coverage), None, ApplyDisposition::Applied) => coverage
+                .prior_rows_for(event.acceptance_sequence)
+                .map(|rows| InductiveReferenceCoverage {
+                    applied_through: event.acceptance_sequence,
+                    rows,
+                }),
+            _ => None,
         };
         if matches!(disposition, ApplyDisposition::Applied) && self.checkpoint_each_apply {
             write_projection_checkpoint(&self.path, self.claim, &event.post_frontier_root)?;
