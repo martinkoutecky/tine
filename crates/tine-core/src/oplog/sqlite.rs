@@ -12050,6 +12050,16 @@ mod tests {
         assert_eq!(database.frontier_root().unwrap().acceptance_sequence(), 2);
     }
 
+    /// Everything one run of the rich ordinary-save program observed, in a
+    /// shape two runs can be compared on directly.
+    type RichDrainObservation = (
+        AcceptedFrontierRoot,
+        ContentDigest,
+        crate::oplog::ReferenceCatalogRootV2,
+        Vec<(&'static str, ContentDigest)>,
+        Vec<String>,
+    );
+
     /// One ordinary drained save must leave exactly the database a clean
     /// archive replay of the same accepted history builds, across every shape
     /// the drain's own evidence reuse could plausibly disturb: Markdown and Org
@@ -12057,14 +12067,31 @@ mod tests {
     /// properties, a rename that moves both name and path, and a deletion. The
     /// drained database is additionally reopened and re-compared, because the
     /// inductive coverage state is deliberately not carried across an open.
+    ///
+    /// The whole program then runs a second time with the engine's retained
+    /// catalog decode disabled, which is the pre-cut path kept as an oracle,
+    /// and the two runs must publish identically. That is the differential the
+    /// retained decode has to survive: same accepted history, same rows, same
+    /// digests, same public query results, same duplicate and refusal
+    /// behaviour, with and without reuse.
     #[test]
     fn ordinary_drained_saves_match_clean_archive_replay_across_rich_shapes() {
+        let reused = rich_drain_program_observation(true);
+        let decoded_every_time = rich_drain_program_observation(false);
+        assert_eq!(
+            reused, decoded_every_time,
+            "reusing the decoded catalog must publish exactly what decoding it every time does"
+        );
+    }
+
+    fn rich_drain_program_observation(retained_catalog: bool) -> RichDrainObservation {
         let ids = TestIds::new(2_420);
-        let dir = TestDir::new("drain-differential-rich");
+        let dir = TestDir::new(&format!("drain-differential-rich-{retained_catalog}"));
         let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
         let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
         let mut engine =
             ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        engine.set_retained_catalog_enabled_for_test(retained_catalog);
         let drained_path = dir.path().join("drained.sqlite");
         let mut database = open_test_projection(
             &drained_path,
@@ -12410,6 +12437,53 @@ mod tests {
         .unwrap();
         assert_eq!(reopened.recovery, ProjectionRecovery::OpenedExisting);
         assert_eq!(observe(&reopened.database), replayed_observation);
+        let mut reopened = reopened.database;
+
+        // Retry: re-applying an accepted event this database already applied is
+        // a duplicate, and re-materializing it is byte-identical work whether
+        // its catalog was decoded or reused.
+        let source = RebuildSource::new(&engine, &store).unwrap();
+        let terminal = source
+            .accepted_event_at(source.accepted_batch_count)
+            .unwrap();
+        let first = materialize_accepted_event(&engine, &terminal).unwrap();
+        let retried = materialize_accepted_event(&engine, &terminal).unwrap();
+        assert_eq!(first, retried);
+        assert_eq!(
+            reopened
+                .apply_engine_owned_accepted(&terminal, &engine)
+                .unwrap(),
+            ApplyDisposition::Duplicate
+        );
+
+        // Refusal: an event whose declared post-frontier root is not the root
+        // its accepted history binds is refused before any document is
+        // resolved, and refusing it must leave a usable database behind.
+        let mut forged = source.accepted_event_at(1).unwrap();
+        forged.post_frontier_root = terminal.post_frontier_root().clone();
+        assert!(matches!(
+            materialize_accepted_event(&engine, &forged),
+            Err(ProjectionError::InvalidAcceptedEvent(_))
+        ));
+        let after_refusal = observe(&reopened);
+        assert_eq!(after_refusal, replayed_observation);
+
+        // Two runs that agree because neither reused anything would prove
+        // nothing, so state which run is which.
+        let stats = engine.retained_catalog_decode_stats();
+        if retained_catalog {
+            assert!(
+                stats.reuses > 0,
+                "the retained run must actually have reused a decoded catalog"
+            );
+        } else {
+            assert_eq!(
+                (stats.decodes, stats.reuses, stats.mutation_refusals),
+                (0, 0, 0),
+                "the oracle run must decode the catalog every time"
+            );
+        }
+        after_refusal
     }
 
     /// Counting `reference_source_coverage` is the only whole-table read an
@@ -12573,6 +12647,398 @@ mod tests {
         assert_eq!(apply_next(&mut database, &engine, &store, sequence), (0, 1));
         let coverage_rows = database.physical.reference_source_coverage_count().unwrap();
         (coverage_accounting[1..].to_vec(), coverage_rows)
+    }
+
+    /// Per-save catalog accounting observed through the ordinary drain.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    struct CatalogSaveAccounting {
+        /// Catalog resolutions this save's materialization performed.
+        catalog_loads: usize,
+        /// Of those, the ones that read and imported the whole catalog
+        /// checkpoint again.
+        catalog_decodes: usize,
+        /// Of those, the ones served from the engine's retained decode.
+        catalog_reuses: usize,
+    }
+
+    /// Drain one accepted sequence as an ordinary save does and report what the
+    /// catalog cost.
+    fn drain_one_save_catalog_accounting(
+        database: &mut SqliteFrontier,
+        engine: &ShardedHotEngine,
+        store: &ObjectStore,
+    ) -> CatalogSaveAccounting {
+        let before = engine.retained_catalog_decode_stats();
+        let source = RebuildSource::new(engine, store).unwrap();
+        let sequence = database.applied_batch_count().unwrap() as u64 + 1;
+        let event = source.accepted_event_at(sequence).unwrap();
+        let (disposition, materialization, _) = database
+            .apply_engine_owned_accepted_with_stats(&event, engine)
+            .unwrap();
+        assert_eq!(disposition, ApplyDisposition::Applied);
+        let after = engine.retained_catalog_decode_stats();
+        CatalogSaveAccounting {
+            catalog_loads: materialization.exact_catalog_loads,
+            catalog_decodes: materialization.exact_catalog_decodes,
+            catalog_reuses: after.reuses - before.reuses,
+        }
+    }
+
+    /// Build a graph of `unrelated_pages` pages the saves under test never
+    /// touch, then drain one page create followed by four content-only edits of
+    /// one block on that page, reporting what each save's catalog cost.
+    fn catalog_decode_accounting_for_graph(
+        seed: u128,
+        unrelated_pages: usize,
+    ) -> Vec<CatalogSaveAccounting> {
+        let ids = TestIds::new(seed);
+        let dir = TestDir::new(&format!("catalog-decode-once-{unrelated_pages}"));
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let mut database = open_test_projection(
+            &dir.path().join("frontier.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+
+        let mut bulk = Vec::new();
+        for extra in 0..unrelated_pages as u128 {
+            bulk.push(SemanticOperation::CreatePage {
+                page_id: PageId::from_uuid(uuid(seed + 100_000 + extra)),
+                home_document_id: DocumentId::from_uuid(uuid(seed + 200_000 + extra)),
+                name: crate::oplog::LogicalPageName::parse(&format!("Unrelated {extra}")).unwrap(),
+                path: ManagedPath::parse(&format!("pages/unrelated-{extra}.md")).unwrap(),
+                kind: ManagedTextKind::Page,
+            });
+            bulk.push(SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: BlockId::from_uuid(uuid(seed + 300_000 + extra)),
+                    home_document_id: DocumentId::from_uuid(uuid(seed + 200_000 + extra)),
+                },
+                page_id: PageId::from_uuid(uuid(seed + 100_000 + extra)),
+                parent: None,
+                order: "a".into(),
+                content: format!("unrelated page {extra}"),
+            });
+        }
+        if !bulk.is_empty() {
+            let prepared = engine
+                .prepare_bootstrap_transaction(
+                    author(seed + 90_000),
+                    &OperationTransaction::new(bulk).unwrap(),
+                )
+                .unwrap();
+            publish_and_stage_archive(&mut engine, &store, &prepared);
+            // Not part of the accounting under test: this one batch is what
+            // makes the catalog large.
+            drain_one_save_catalog_accounting(&mut database, &engine, &store);
+        }
+
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(seed + 1),
+                &root_transaction(ids, "pages/catalog-decode.md", "first"),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &prepared);
+        let mut accounting = vec![drain_one_save_catalog_accounting(
+            &mut database,
+            &engine,
+            &store,
+        )];
+        for (index, content) in ["second", "third", "fourth", "fifth"].iter().enumerate() {
+            edit_block_content(
+                &mut engine,
+                &store,
+                ids,
+                seed + 2 + index as u128,
+                content,
+                publish_and_stage_archive,
+            );
+            accounting.push(drain_one_save_catalog_accounting(
+                &mut database,
+                &engine,
+                &store,
+            ));
+        }
+        // The whole point is a cheaper save, not a different one.
+        database.diagnose_full_integrity().unwrap();
+        let read = database.materialized_read().unwrap();
+        assert_eq!(read.pages(None, 4096).unwrap().len(), unrelated_pages + 1);
+        assert_eq!(
+            read.blocks_on_page(ids.page, 64).unwrap()[0].content,
+            "fifth"
+        );
+        accounting
+    }
+
+    /// A content-only save does not touch the page catalog, so the catalog it
+    /// resolves is the byte-identical document this process already decoded.
+    /// Every such save must still *resolve* the catalog — that is the accepted
+    /// root's authority over which causal state is authoritative — but only the
+    /// save that actually changed the catalog may decode one.
+    ///
+    /// Asserted identical at two graph sizes, because reading the catalog
+    /// checkpoint is the one part of a one-page save that was proportional to
+    /// total graph pages.
+    #[test]
+    fn ordinary_content_saves_decode_the_unchanged_catalog_once() {
+        let small = catalog_decode_accounting_for_graph(2_700, 0);
+        let large = catalog_decode_accounting_for_graph(2_760, 40);
+        let expected = [
+            // Creating the page changes the catalog, so this one decodes.
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 1,
+                catalog_reuses: 0,
+            },
+            // Four content-only edits of one block, at unchanged catalog
+            // causal identity.
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            },
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            },
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            },
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            },
+        ];
+        assert_eq!(small, expected);
+        assert_eq!(
+            small, large,
+            "catalog accounting per ordinary save must not depend on unrelated graph pages"
+        );
+    }
+
+    /// The catalog's causal state is the whole key. A save that changes it must
+    /// decode the new state exactly once and then be reused in turn, and a
+    /// materialization at an *older* accepted root must decode that root's own
+    /// catalog rather than be served the newest one.
+    #[test]
+    fn a_changed_catalog_is_decoded_once_and_never_confused_with_another_root() {
+        let ids = TestIds::new(2_800);
+        let dir = TestDir::new("catalog-change-and-historical-root");
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let mut database = open_test_projection(
+            &dir.path().join("frontier.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(2_801),
+                &root_transaction_named(ids, "pages/original.md", "Original Name", "first"),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &prepared);
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store).catalog_decodes,
+            1,
+            "the first save of a run has nothing to reuse"
+        );
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            2_802,
+            "second",
+            publish_and_stage_archive,
+        );
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store),
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            }
+        );
+
+        // A rename moves the page's name and path, which is a catalog mutation.
+        let renamed = engine
+            .prepare_bootstrap_transaction(
+                author(2_803),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::RenamePagesAndRewriteReferrers {
+                        page_changes: vec![PageRename {
+                            page_id: ids.page,
+                            new_name: crate::oplog::LogicalPageName::parse("Renamed Name").unwrap(),
+                            new_path: ManagedPath::parse("notes/renamed.md").unwrap(),
+                        }],
+                        block_rewrites: Vec::new(),
+                        page_preamble_rewrites: Vec::new(),
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &renamed);
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store),
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 1,
+                catalog_reuses: 0,
+            },
+            "a changed catalog causal state must miss and decode the new state"
+        );
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            2_804,
+            "third",
+            publish_and_stage_archive,
+        );
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store),
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 0,
+                catalog_reuses: 1,
+            },
+            "the new catalog state is decoded once, then reused in turn"
+        );
+
+        // The retained decode is now the renamed catalog. Re-materializing the
+        // *first* accepted event asks for a root whose catalog still names the
+        // original page, and it must get that one.
+        let source = RebuildSource::new(&engine, &store).unwrap();
+        let historical = source.accepted_event_at(1).unwrap();
+        let before = engine.retained_catalog_decode_stats();
+        let (historical_change, historical_stats) =
+            materialize_accepted_event_with_stats(&engine, &historical).unwrap();
+        let after = engine.retained_catalog_decode_stats();
+        assert_eq!(
+            (historical_stats.exact_catalog_decodes, after.reuses),
+            (1, before.reuses),
+            "a historical accepted root must decode its own catalog, not reuse the newest"
+        );
+        let historical_page = historical_change
+            .replacements()
+            .iter()
+            .find(|page| page.page_id == ids.page)
+            .expect("the first accepted event materializes its page");
+        assert_eq!(historical_page.name, "Original Name");
+        assert_eq!(
+            historical_page.path,
+            ManagedPath::parse("pages/original.md").unwrap()
+        );
+
+        // And the current root, asked again, is still the renamed one.
+        let current = source.accepted_event_at(4).unwrap();
+        let (current_change, _) = materialize_accepted_event_with_stats(&engine, &current).unwrap();
+        let current_page = current_change
+            .replacements()
+            .iter()
+            .find(|page| page.page_id == ids.page)
+            .expect("the current accepted event materializes its page");
+        assert_eq!(current_page.name, "Renamed Name");
+        assert_eq!(
+            current_page.path,
+            ManagedPath::parse("notes/renamed.md").unwrap()
+        );
+    }
+
+    /// The retained value is a `LoroDoc`, which is a reference-counted handle
+    /// with interior mutability. If anything advances the retained document
+    /// behind the engine's back it is no longer the state that was published
+    /// under its content identity, and it must be refused rather than served.
+    #[test]
+    fn a_mutated_retained_catalog_is_refused_and_decoded_again() {
+        let ids = TestIds::new(2_850);
+        let dir = TestDir::new("catalog-mutation-refusal");
+        let engine_store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let store = ObjectStore::open(&dir.path().join("objects"), ids.workspace).unwrap();
+        let mut engine =
+            ShardedHotEngine::with_archive_store(engine_store, ids.lineage, ids.catalog);
+        let mut database = open_test_projection(
+            &dir.path().join("frontier.sqlite"),
+            ids.claim(),
+            RebuildSource::new(&engine, &store).unwrap(),
+        )
+        .unwrap()
+        .database;
+        let prepared = engine
+            .prepare_bootstrap_transaction(
+                author(2_851),
+                &root_transaction_named(ids, "pages/mutation.md", "Mutation Fixture", "first"),
+            )
+            .unwrap();
+        publish_and_stage_archive(&mut engine, &store, &prepared);
+        drain_one_save_catalog_accounting(&mut database, &engine, &store);
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            2_852,
+            "second",
+            publish_and_stage_archive,
+        );
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store).catalog_reuses,
+            1
+        );
+
+        let retained = engine
+            .retained_accepted_catalog_document_for_test()
+            .expect("a warm run retains one decoded catalog");
+        retained
+            .get_map("pages")
+            .insert("forged", "not the accepted catalog")
+            .unwrap();
+        retained.commit();
+
+        edit_block_content(
+            &mut engine,
+            &store,
+            ids,
+            2_853,
+            "third",
+            publish_and_stage_archive,
+        );
+        let refusals_before = engine.retained_catalog_decode_stats().mutation_refusals;
+        assert_eq!(
+            drain_one_save_catalog_accounting(&mut database, &engine, &store),
+            CatalogSaveAccounting {
+                catalog_loads: 1,
+                catalog_decodes: 1,
+                catalog_reuses: 0,
+            },
+            "a mutated retained catalog must be refused and decoded again"
+        );
+        assert_eq!(
+            engine.retained_catalog_decode_stats().mutation_refusals,
+            refusals_before + 1
+        );
+        database.diagnose_full_integrity().unwrap();
+        let read = database.materialized_read().unwrap();
+        assert_eq!(read.pages(None, 64).unwrap().len(), 1);
+        assert_eq!(
+            read.blocks_on_page(ids.page, 64).unwrap()[0].content,
+            "third"
+        );
     }
 
     #[test]
