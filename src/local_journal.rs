@@ -423,7 +423,10 @@ pub struct LocalJournalStats {
 /// What one open found in an existing segment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalJournalRecovery<K> {
-    /// Complete canonical frames adopted from the segment.
+    /// Complete canonical frames adopted from this physical segment.
+    ///
+    /// This count does not include frames represented by the segment's logical
+    /// base sequence.
     pub frames_recovered: u64,
     /// Bytes of a torn final append that were detected, ignored, and truncated.
     pub discarded_tail_bytes: u64,
@@ -441,6 +444,7 @@ pub struct LocalJournalSegment<K> {
     file: fs::File,
     name: String,
     device_id: Uuid,
+    base_sequence: u64,
     next_sequence: u64,
     committed_bytes: u64,
     poisoned: bool,
@@ -468,6 +472,22 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
         name: &str,
         device_id: Uuid,
     ) -> Result<(Self, LocalJournalRecovery<K>), LocalJournalError> {
+        Self::open_from_sequence(dir, name, device_id, 0)
+    }
+
+    /// Open (creating if absent) the segment named `name` under `dir` for
+    /// `device_id`, beginning its logical sequence at `base_sequence`.
+    ///
+    /// `base_sequence` is authenticated caller metadata, typically from a
+    /// durable checkpoint. It is deliberately never inferred from on-disk
+    /// frames: a nonempty segment must begin with exactly this sequence or the
+    /// open is refused. An empty segment's first append is `base_sequence`.
+    pub fn open_from_sequence(
+        dir: &Dir,
+        name: &str,
+        device_id: Uuid,
+        base_sequence: u64,
+    ) -> Result<(Self, LocalJournalRecovery<K>), LocalJournalError> {
         require_safe_segment_name(name)?;
         let (file, created) = open_or_create_segment_file(dir, name)?;
         if !lock_exclusive_nonblocking(&file)? {
@@ -481,7 +501,7 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
             sync_dir_required(dir)?;
             stats.directory_durability_syncs += 1;
         }
-        let scan = scan_segment::<K>(&file, device_id)?;
+        let scan = scan_segment::<K>(&file, device_id, base_sequence)?;
         if scan.discarded_tail_bytes > 0 {
             file.set_len(scan.committed_bytes)?;
             file.sync_data()?;
@@ -494,6 +514,7 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
             file,
             name: name.to_owned(),
             device_id,
+            base_sequence,
             next_sequence: scan.next_sequence,
             committed_bytes: scan.committed_bytes,
             poisoned: false,
@@ -516,6 +537,12 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
         &self.name
     }
 
+    /// Authenticated logical sequence at which this physical segment begins.
+    pub const fn base_sequence(&self) -> u64 {
+        self.base_sequence
+    }
+
+    /// Logical sequence that the next successful append will encode.
     pub const fn next_sequence(&self) -> u64 {
         self.next_sequence
     }
@@ -690,6 +717,7 @@ fn read_frame_at<K: LocalJournalPayloadKind>(
 fn scan_segment<K: LocalJournalPayloadKind>(
     file: &fs::File,
     device_id: Uuid,
+    base_sequence: u64,
 ) -> Result<SegmentScan<K>, LocalJournalError> {
     let file_len = file.metadata()?.len();
     if file_len > MAX_LOCAL_JOURNAL_SEGMENT_BYTES {
@@ -699,7 +727,7 @@ fn scan_segment<K: LocalJournalPayloadKind>(
     reader.seek(SeekFrom::Start(0))?;
     let mut offset = 0_u64;
     let mut frames_recovered = 0_u64;
-    let mut next_sequence = 0_u64;
+    let mut next_sequence = base_sequence;
     let mut last_frame = None;
     let mut buffer = Vec::new();
     while offset < file_len {
@@ -1098,6 +1126,108 @@ mod tests {
         assert_eq!(stats.directory_durability_syncs, 1);
         assert_eq!(stats.recovery_truncations, 0);
         assert_eq!(stats.bytes_appended, segment.committed_bytes());
+    }
+
+    #[test]
+    fn a_nonzero_base_segment_reopens_and_replays_its_physical_suffix() {
+        let fixture = Fixture::new("nonzero-base");
+        let device = Uuid::from_u128(0x5a);
+        let base_sequence = 41;
+        {
+            let (mut segment, recovery) = LocalJournalSegment::open_from_sequence(
+                &fixture.dir,
+                "device.journal",
+                device,
+                base_sequence,
+            )
+            .unwrap();
+            assert_eq!(recovery.frames_recovered, 0);
+            assert_eq!(segment.base_sequence(), base_sequence);
+            assert_eq!(segment.next_sequence(), base_sequence);
+
+            let first = segment.append(TestKind::Effect, b"first").unwrap();
+            let second = segment.append(TestKind::Update, b"second").unwrap();
+            assert_eq!(first.sequence, base_sequence);
+            assert_eq!(second.sequence, base_sequence + 1);
+            assert_eq!(segment.next_sequence(), base_sequence + 2);
+        }
+
+        let (segment, recovery) = LocalJournalSegment::open_from_sequence(
+            &fixture.dir,
+            "device.journal",
+            device,
+            base_sequence,
+        )
+        .unwrap();
+        assert_eq!(recovery.frames_recovered, 2);
+        assert_eq!(recovery.discarded_tail_bytes, 0);
+        assert_eq!(recovery.last_frame.unwrap().sequence(), base_sequence + 1);
+        assert_eq!(segment.base_sequence(), base_sequence);
+        assert_eq!(segment.next_sequence(), base_sequence + 2);
+        assert_eq!(segment.stats().frames_appended, 0);
+
+        let frames = replayed(&segment);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].sequence(), base_sequence);
+        assert_eq!(frames[0].payload_kind(), TestKind::Effect);
+        assert_eq!(frames[0].payload(), b"first");
+        assert_eq!(frames[1].sequence(), base_sequence + 1);
+        assert_eq!(frames[1].payload_kind(), TestKind::Update);
+        assert_eq!(frames[1].payload(), b"second");
+    }
+
+    #[test]
+    fn a_nonempty_segment_refuses_an_unauthenticated_base_mismatch() {
+        let fixture = Fixture::new("base-mismatch");
+        let device = Uuid::from_u128(0x5b);
+        let base_sequence = 73;
+        {
+            let (mut segment, _) = LocalJournalSegment::open_from_sequence(
+                &fixture.dir,
+                "device.journal",
+                device,
+                base_sequence,
+            )
+            .unwrap();
+            segment.append(TestKind::Effect, b"kept").unwrap();
+        }
+        let original_bytes = fixture.segment_bytes("device.journal");
+
+        for wrong_base in [base_sequence - 1, base_sequence + 1] {
+            match LocalJournalSegment::<TestKind>::open_from_sequence(
+                &fixture.dir,
+                "device.journal",
+                device,
+                wrong_base,
+            ) {
+                Err(LocalJournalError::SegmentSequenceGap {
+                    offset,
+                    expected,
+                    found,
+                }) => {
+                    assert_eq!(offset, 0);
+                    assert_eq!(expected, wrong_base);
+                    assert_eq!(found, base_sequence);
+                }
+                Err(error) => panic!("unexpected error: {error}"),
+                Ok(_) => panic!("opening with the wrong base must fail"),
+            }
+            assert_eq!(fixture.segment_bytes("device.journal"), original_bytes);
+        }
+
+        let (segment, recovery) = LocalJournalSegment::open_from_sequence(
+            &fixture.dir,
+            "device.journal",
+            device,
+            base_sequence,
+        )
+        .unwrap();
+        assert_eq!(recovery.frames_recovered, 1);
+        assert_eq!(segment.next_sequence(), base_sequence + 1);
+        let frames = replayed(&segment);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].sequence(), base_sequence);
+        assert_eq!(frames[0].payload(), b"kept");
     }
 
     #[test]
