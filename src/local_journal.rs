@@ -451,6 +451,8 @@ pub struct LocalJournalSegment<K> {
 /// The durable outcome of one append.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocalJournalAppend {
+    /// Device identity encoded in the durable frame by the owning segment.
+    pub device_id: Uuid,
     pub sequence: u64,
     pub frame_bytes: u64,
     pub payload_digest: ContentDigest,
@@ -567,6 +569,7 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
         self.stats.bytes_appended += frame_bytes;
         self.stats.data_durability_syncs += 1;
         Ok(LocalJournalAppend {
+            device_id: self.device_id,
             sequence,
             frame_bytes,
             payload_digest: ContentDigest::of(payload),
@@ -1085,6 +1088,7 @@ mod tests {
             let appended = segment
                 .append(TestKind::Effect, format!("effect-{index}").as_bytes())
                 .unwrap();
+            assert_eq!(appended.device_id, device);
             assert_eq!(appended.sequence, index);
             assert_eq!(appended.data_durability_syncs, 1);
         }
