@@ -137,7 +137,10 @@ impl fmt::Display for LocalJournalError {
             Self::InvalidFrameMagic => formatter.write_str("local journal frame magic is invalid"),
             Self::LengthOverflow => formatter.write_str("local journal frame length overflows"),
             Self::FrameTooLarge(length) => {
-                write!(formatter, "local journal frame is too large: {length} bytes")
+                write!(
+                    formatter,
+                    "local journal frame is too large: {length} bytes"
+                )
             }
             Self::FrameHeaderTooLarge(length) => write!(
                 formatter,
@@ -267,7 +270,12 @@ impl<K: LocalJournalPayloadKind> LocalJournalFrame<K> {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, LocalJournalError> {
-        encode_frame(self.device_id, self.sequence, self.payload_kind, &self.payload)
+        encode_frame(
+            self.device_id,
+            self.sequence,
+            self.payload_kind,
+            &self.payload,
+        )
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, LocalJournalError> {
@@ -372,8 +380,8 @@ fn encode_frame<K: LocalJournalPayloadKind>(
         payload_kind,
         payload_digest: ContentDigest::of(payload),
     };
-    let header_bytes =
-        postcard::to_allocvec(&header).map_err(|error| LocalJournalError::Encode(error.to_string()))?;
+    let header_bytes = postcard::to_allocvec(&header)
+        .map_err(|error| LocalJournalError::Encode(error.to_string()))?;
     if header_bytes.len() > MAX_LOCAL_JOURNAL_FRAME_HEADER_BYTES {
         return Err(LocalJournalError::FrameHeaderTooLarge(header_bytes.len()));
     }
@@ -571,7 +579,8 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
         &self,
         mut visit: impl FnMut(LocalJournalFrame<K>),
     ) -> Result<u64, LocalJournalError> {
-        let mut reader = BufReader::with_capacity(SEGMENT_SCAN_BUFFER_BYTES, self.file.try_clone()?);
+        let mut reader =
+            BufReader::with_capacity(SEGMENT_SCAN_BUFFER_BYTES, self.file.try_clone()?);
         reader.seek(SeekFrom::Start(0))?;
         let mut offset = 0_u64;
         let mut visited = 0_u64;
@@ -647,10 +656,11 @@ fn read_frame_at<K: LocalJournalPayloadKind>(
     // The magic and both length fields are the first bytes of the append
     // buffer. An append that reached this far wrote them from that buffer, so a
     // malformed prefix is damage to bytes that were once complete.
-    let extent = FrameExtent::parse(&prefix).map_err(|cause| LocalJournalError::CorruptSegment {
-        offset,
-        cause: cause.to_string(),
-    })?;
+    let extent =
+        FrameExtent::parse(&prefix).map_err(|cause| LocalJournalError::CorruptSegment {
+            offset,
+            cause: cause.to_string(),
+        })?;
     if (extent.total as u64) > remaining {
         return Ok(FrameRead::TornTail);
     }
@@ -859,7 +869,15 @@ fn unlock(file: &fs::File) {
     use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
 
     let mut overlapped = unsafe { std::mem::zeroed() };
-    let _ = unsafe { UnlockFileEx(file.as_raw_handle() as _, 0, u32::MAX, u32::MAX, &mut overlapped) };
+    let _ = unsafe {
+        UnlockFileEx(
+            file.as_raw_handle() as _,
+            0,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        )
+    };
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1212,9 +1230,13 @@ mod tests {
             let mut corrupt = complete.clone();
             corrupt[index] ^= 0xff;
             fixture.write_segment_bytes("device.journal", &corrupt);
-            let opened = LocalJournalSegment::<TestKind>::open(&fixture.dir, "device.journal", device);
+            let opened =
+                LocalJournalSegment::<TestKind>::open(&fixture.dir, "device.journal", device);
             assert!(
-                matches!(opened, Err(LocalJournalError::CorruptSegment { offset: 0, .. })),
+                matches!(
+                    opened,
+                    Err(LocalJournalError::CorruptSegment { offset: 0, .. })
+                ),
                 "damage at byte {index} must be refused as corruption, got {:?}",
                 opened.err()
             );
