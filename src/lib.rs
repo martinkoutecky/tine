@@ -16,6 +16,7 @@ mod content_digest;
 mod digest_sealed;
 mod durable_batch;
 mod filesystem;
+mod local_journal;
 mod packed_patricia;
 mod scratch;
 mod sqlite_database;
@@ -86,6 +87,12 @@ pub use filesystem::{
     publish_immutable_exact, read_optional_regular, read_required_regular, require_regular_entry,
     sync_dir_required, CompletedExactImmutablePublicationBatch, ExactImmutablePublicationBatch,
     FilesystemError, StagedExactImmutablePublication, ValidatedDirectorySync,
+};
+pub use local_journal::{
+    LocalJournalAppend, LocalJournalError, LocalJournalFrame, LocalJournalPayloadKind,
+    LocalJournalRecovery, LocalJournalSegment, LocalJournalStats,
+    LOCAL_JOURNAL_FRAME_SCHEMA_VERSION, MAX_LOCAL_JOURNAL_FRAME_BYTES,
+    MAX_LOCAL_JOURNAL_FRAME_HEADER_BYTES, MAX_LOCAL_JOURNAL_SEGMENT_BYTES,
 };
 #[cfg(feature = "test-support")]
 pub use packed_patricia::{
