@@ -2442,6 +2442,14 @@ pub struct PhysicalPageRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalPageInventoryRow {
+    pub page_id: [u8; 16],
+    pub name: String,
+    pub path: String,
+    pub text_kind: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalBlockRow {
     pub block_id: [u8; 16],
     pub page_id: [u8; 16],
@@ -2545,6 +2553,12 @@ fn page_row_output_bytes(row: &PhysicalPageRow) -> Result<usize, Materialization
             Some(row.searchable_text.as_str()),
         ],
     )
+}
+
+fn page_inventory_row_output_bytes(
+    row: &PhysicalPageInventoryRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(32, [Some(row.name.as_str()), Some(row.path.as_str())])
 }
 
 fn block_row_output_bytes(row: &PhysicalBlockRow) -> Result<usize, MaterializationError> {
@@ -2848,6 +2862,74 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Stable bounded page-inventory pagination. The cursor is the final
+    /// `(path, page_id)` returned by the preceding call.
+    pub fn page_inventory_after_with_header_validation(
+        &self,
+        after_path: Option<&str>,
+        after_page_id: Option<&[u8; 16]>,
+        kind: Option<i64>,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageInventoryRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        if after_path.is_some() != after_page_id.is_some() {
+            return Err(MaterializationError::InvalidQuery(
+                "page inventory cursor requires both path and page ID".into(),
+            ));
+        }
+        if let Some(path) = after_path {
+            checked_query_text(path)?;
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) =
+            match (after_path, after_page_id, kind) {
+                (None, None, None) => (
+                    "SELECT page_id, name, path, text_kind
+                     FROM pages ORDER BY path, page_id LIMIT ?1",
+                    vec![limit.into()],
+                ),
+                (None, None, Some(kind)) => (
+                    "SELECT page_id, name, path, text_kind
+                     FROM pages WHERE text_kind = ?1
+                     ORDER BY path, page_id LIMIT ?2",
+                    vec![kind.into(), limit.into()],
+                ),
+                (Some(path), Some(page_id), None) => (
+                    "SELECT page_id, name, path, text_kind
+                     FROM pages
+                     WHERE path > ?1 OR (path = ?1 AND page_id > ?2)
+                     ORDER BY path, page_id LIMIT ?3",
+                    vec![
+                        path.to_owned().into(),
+                        page_id.to_vec().into(),
+                        limit.into(),
+                    ],
+                ),
+                (Some(path), Some(page_id), Some(kind)) => (
+                    "SELECT page_id, name, path, text_kind
+                     FROM pages
+                     WHERE text_kind = ?1
+                       AND (path > ?2 OR (path = ?2 AND page_id > ?3))
+                     ORDER BY path, page_id LIMIT ?4",
+                    vec![
+                        kind.into(),
+                        path.to_owned().into(),
+                        page_id.to_vec().into(),
+                        limit.into(),
+                    ],
+                ),
+                _ => unreachable!("cursor presence was validated above"),
+            };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            page_inventory_row_with_header_validation(row, &mut validate_header)
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
+            page_inventory_row_output_bytes,
+        )
+    }
+
     fn pages_by_text_column_with_header_validation(
         &self,
         column: &str,
@@ -3137,6 +3219,24 @@ fn page_row_with_header_validation(
         text_kind: kind,
         preamble: row.get(6)?,
         searchable_text: row.get(7)?,
+    }))
+}
+
+fn page_inventory_row_with_header_validation(
+    row: &rusqlite::Row<'_>,
+    validate_header: &mut impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+) -> rusqlite::Result<Result<PhysicalPageInventoryRow, MaterializationError>> {
+    let page_id: Vec<u8> = row.get(0)?;
+    let path: String = row.get(2)?;
+    let kind: i64 = row.get(3)?;
+    if let Err(error) = validate_header(path.as_str(), kind) {
+        return Ok(Err(error));
+    }
+    Ok(Ok(PhysicalPageInventoryRow {
+        page_id: decode_id_sql(&page_id)?,
+        name: row.get(1)?,
+        path,
+        text_kind: kind,
     }))
 }
 
