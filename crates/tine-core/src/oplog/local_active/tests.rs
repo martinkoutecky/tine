@@ -3596,21 +3596,23 @@ fn a_byte_identical_copy_of_a_promoted_archive_is_refused_at_the_state_boundary(
 /// committed promotion state.
 #[test]
 fn a_promoted_archive_with_an_unauthenticated_resource_claim_is_refused_at_the_state_boundary() {
-    // Deleted outright.
-    assert_promoted_reopen_refuses_a_tampered_archive_claim("missing", |path| {
-        fs::remove_file(path).unwrap();
-    });
-    // Present and same-length-bounded, but no longer decodable.
-    assert_promoted_reopen_refuses_a_tampered_archive_claim("corrupt", |path| {
-        let mut bytes = fs::read(path).unwrap();
-        bytes.truncate(bytes.len() / 2);
-        assert!(serde_json::from_slice::<serde_json::Value>(&bytes).is_err());
-        fs::write(path, &bytes).unwrap();
-    });
-    // A perfectly well-formed, canonical claim — for a different instance.
-    assert_promoted_reopen_refuses_a_tampered_archive_claim("divergent", |path| {
-        let divergent = divergent_archive_instance_claim(&fs::read(path).unwrap());
-        fs::write(path, &divergent).unwrap();
+    crate::test_support::run_on_deep_stack(|| {
+        // Deleted outright.
+        assert_promoted_reopen_refuses_a_tampered_archive_claim("missing", |path| {
+            fs::remove_file(path).unwrap();
+        });
+        // Present and same-length-bounded, but no longer decodable.
+        assert_promoted_reopen_refuses_a_tampered_archive_claim("corrupt", |path| {
+            let mut bytes = fs::read(path).unwrap();
+            bytes.truncate(bytes.len() / 2);
+            assert!(serde_json::from_slice::<serde_json::Value>(&bytes).is_err());
+            fs::write(path, &bytes).unwrap();
+        });
+        // A perfectly well-formed, canonical claim — for a different instance.
+        assert_promoted_reopen_refuses_a_tampered_archive_claim("divergent", |path| {
+            let divergent = divergent_archive_instance_claim(&fs::read(path).unwrap());
+            fs::write(path, &divergent).unwrap();
+        });
     });
 }
 
