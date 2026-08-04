@@ -1896,10 +1896,11 @@ fn deleting_page_invalidates_uuid_claim_but_retains_participant_evidence() {
         replay.resolve_logseq_uuid(claimed),
         Ok(LogseqUuidResolution::Unclaimed)
     );
+    let deleted_page = replay.materialize_page(ids.page_a);
     assert!(matches!(
-        replay.materialize_page(ids.page_a),
+        deleted_page,
         Err(EngineError::PageDeleted(page_id)) if page_id == ids.page_a
-    ));
+    ), "fresh replay must retain the page deletion after invalidating its UUID claim; got {deleted_page:?}");
     let reference = replay.materialize_page_for_projection(ids.page_c).unwrap();
     assert_eq!(reference.claim_evidence.len(), 1);
     assert_eq!(

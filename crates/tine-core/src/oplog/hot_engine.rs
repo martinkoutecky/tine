@@ -13339,15 +13339,17 @@ impl ShardedHotEngine {
             return require_live_page(catalog, page_id);
         }
         if self.scratch.is_some() {
-            let row = self
-                .authenticated_current_page_catalog_row(page_id)?
-                .ok_or(EngineError::PageNotFound(page_id))?;
-            return Ok(PageState::Live {
-                name: row.name,
-                path: row.path,
-                kind: row.kind,
-                home_document_id: row.home_document_id,
-            });
+            if let Some(row) = self.authenticated_current_page_catalog_row(page_id)? {
+                return Ok(PageState::Live {
+                    name: row.name,
+                    path: row.path,
+                    kind: row.kind,
+                    home_document_id: row.home_document_id,
+                });
+            }
+            // The point catalog intentionally indexes live pages only. A
+            // missing row therefore needs the authenticated catalog fallback
+            // to distinguish a deleted page from one that never existed.
         }
         let catalog = self
             .current_catalog_document()?
