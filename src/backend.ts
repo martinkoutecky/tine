@@ -40,6 +40,7 @@ import type {
   QueryExportBatch,
   QueryExportSpec,
 } from "./types";
+import { measureIssue248Async } from "./issue248Probe";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
 
@@ -690,7 +691,9 @@ class TauriBackend implements Backend {
     return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
   savePage(page: PageDto, baseRev: string | null, force = false) {
-    return this.call<string>("save_page", { page, baseRev, force });
+    return measureIssue248Async("frontend.ipcSaveRoundTripMs", () =>
+      this.call<string>("save_page", { page, baseRev, force })
+    );
   }
   managedSyncStatus() {
     return this.call<ManagedSyncStatus | null>("managed_sync_status");

@@ -10,6 +10,7 @@ import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
+import { issue248Collector, issue248Now } from "./issue248Probe";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -539,7 +540,18 @@ export function bumpGraphEpoch() {
 // This is Tine's stand-in for OG's reactive-DB query invalidation.
 export const [dataRev, setDataRev] = createSignal(0);
 export function bumpDataRev() {
+  const collector = issue248Collector();
+  if (!collector) {
+    setDataRev((n) => n + 1);
+    return;
+  }
+  const started = issue248Now();
   setDataRev((n) => n + 1);
+  collector.record("frontend.dataRevSyncMs", issue248Now() - started);
+  const frameStarted = issue248Now();
+  const afterFrame = () => collector.record("frontend.dataRevToFrameMs", issue248Now() - frameStarted);
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(afterFrame);
+  else queueMicrotask(afterFrame);
 }
 // Page-name inventory changes are much rarer than ordinary content saves. Keep
 // their invalidation separate so navigation can refresh canonical names after a

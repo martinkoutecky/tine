@@ -8,7 +8,8 @@ use crate::state::{
 };
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{Manager, State, WebviewWindow};
+use std::time::Instant;
+use tauri::{Emitter, Manager, State, WebviewWindow};
 use tine_core::date::JournalDate;
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, BlockDto, PageDto, PageEntry, PageKind, RefGroup,
@@ -759,38 +760,57 @@ pub(crate) async fn save_page(
 ) -> Result<String, String> {
     let (app, label, binding_generation) = owned_graph_context(state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        match sparse_application_handle(&slot)? {
-            Some(handle) => {
-                let result =
-                    save_sparse_page_with(page, base_rev, force.unwrap_or(false), |request| {
-                        handle.save_application_page(request)
-                    });
-                // A successful managed save has already made its exact user
-                // projection durable, but archive/checkpoint derivatives are
-                // intentionally drained by actor ticks. Wake the watcher even
-                // when the OS coalesces Tine's own file event; otherwise that
-                // derivative queue can remain pending until unrelated I/O.
-                crate::state::poke_watcher(&state);
-                result
-            }
-            None => {
-                let graph = slot.legacy_graph()?;
-                let result = if force.unwrap_or(false) {
-                    graph.force_save_page(&page)
-                } else {
-                    graph.save_page(&page, base_rev.as_deref())
-                };
-                result.map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::AlreadyExists {
-                        "conflict".to_string()
+        let benchmark_started = std::env::var_os("TINE_ISSUE248_BENCH").map(|_| Instant::now());
+        let result = {
+            let state = app.state::<AppState>();
+            let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+            match sparse_application_handle(&slot)? {
+                Some(handle) => {
+                    let result =
+                        save_sparse_page_with(page, base_rev, force.unwrap_or(false), |request| {
+                            handle.save_application_page(request)
+                        });
+                    // A successful managed save has already made its exact user
+                    // projection durable, but archive/checkpoint derivatives are
+                    // intentionally drained by actor ticks. Wake the watcher even
+                    // when the OS coalesces Tine's own file event; otherwise that
+                    // derivative queue can remain pending until unrelated I/O.
+                    crate::state::poke_watcher(&state);
+                    result
+                }
+                None => {
+                    let graph = slot.legacy_graph()?;
+                    let legacy_save_started = benchmark_started.map(|_| Instant::now());
+                    let result = if force.unwrap_or(false) {
+                        graph.force_save_page(&page)
                     } else {
-                        error.to_string()
+                        graph.save_page(&page, base_rev.as_deref())
+                    };
+                    if let Some(started) = legacy_save_started {
+                        let _ = app.emit_to(
+                            &label,
+                            "issue-248-legacy-save-page-ms",
+                            started.elapsed().as_secs_f64() * 1_000.0,
+                        );
                     }
-                })
+                    result.map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::AlreadyExists {
+                            "conflict".to_string()
+                        } else {
+                            error.to_string()
+                        }
+                    })
+                }
             }
+        };
+        if let Some(started) = benchmark_started {
+            let _ = app.emit_to(
+                &label,
+                "issue-248-backend-save-ms",
+                started.elapsed().as_secs_f64() * 1_000.0,
+            );
         }
+        result
     })
     .await
     .map_err(|error| error.to_string())?

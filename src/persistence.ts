@@ -12,6 +12,7 @@ import { doc, pageByName, pageInstanceGeneration, pageToDto } from "./store";
 import { backend } from "./backend";
 import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 import type { ClipboardSourcePage } from "./clipboard";
+import { measureIssue248, measureIssue248Async } from "./issue248Probe";
 
 // ---------------------------------------------------------------------------
 // Guard state (owned here; mutated only through the accessors below)
@@ -251,7 +252,7 @@ async function doSave(
   // Stays dirty, so it writes the moment `releaseSourcesFor(dest)` frees it.
   if (heldSources.has(name) && !force) return false;
   const token = graphToken;
-  const dto = pageToDto(name);
+  const dto = measureIssue248("frontend.pageToDtoMs", () => pageToDto(name));
   if (!dto) return false;
   if (dto.guide) {
     console.warn("Refusing to persist ephemeral bundled Guide page", name);
@@ -266,7 +267,9 @@ async function doSave(
   dirty.delete(name);
   try {
     const baseline = baseRev.get(name) ?? null;
-    const rev = await backend().savePage(dto, baseline, force);
+    const rev = await measureIssue248Async("frontend.savePageAwaitMs", () =>
+      backend().savePage(dto, baseline, force)
+    );
     // A reload/rename/delete/rebind while savePage was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
