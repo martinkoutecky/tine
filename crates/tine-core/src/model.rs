@@ -14168,16 +14168,21 @@ impl Graph {
             // One inline-ref pass + one `tags::` pass per file (each computes code
             // ranges once), regardless of how many descendants are being renamed.
             let mut inline_reservation = content_budget.reserve(
-                rename_rewrite_upper_bound(&content, &rename_map)?,
+                rename_rewrite_upper_bound(&content, &rename_map, is_org)?,
                 "managed rename inline rewrite construction bound",
             )?;
-            let inline = crate::refs::rename_refs_multi(&content, &rename_map, is_org);
+            let inline = crate::refs::rename_refs_multi_with_format(
+                &content,
+                &rename_map,
+                is_org,
+                self.config.file_name_format,
+            );
             inline_reservation.resize(
                 usize_to_u64(inline.capacity())?,
                 "managed rename inline rewrite bytes",
             )?;
             let mut updated_reservation = content_budget.reserve(
-                rename_rewrite_upper_bound(&inline, &rename_map)?,
+                rename_rewrite_upper_bound(&inline, &rename_map, false)?,
                 "managed rename tags rewrite construction bound",
             )?;
             let updated = crate::refs::rename_tags_property_multi(&inline, &rename_map, is_org);
@@ -21996,23 +22001,84 @@ pub fn content_rev(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
 }
 
-/// Encode a page name to its on-disk filename stem, honoring the graph's
-/// `:file/name-format` (so Tine round-trips namespaces with OG on BOTH legacy
-/// `%2F` graphs and modern `___` graphs). Mirrors OG's `legacy-url-file-name-sanity`
-/// (legacy) and `tri-lb-file-name-sanity`/`escape-namespace-slashes-and-multilowbars`
-/// (triple-lowbar) for the high-frequency case: the namespace `/` separator and
-/// the `_`-adjacency / literal-`___` disambiguation. Exotic reserved-char and
-/// Windows-reserved-name rules are not yet mirrored (rare).
-fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
-    match fmt {
-        FileNameFormat::Legacy => name.replace('/', "%2F"),
-        FileNameFormat::TripleLowbar => name
+/// Encode one logical page title as a portable on-disk filename stem.
+///
+/// This is the shared create/rename/sparse identity boundary. It retains OG's
+/// configured namespace spellings (`%2F` for legacy, `___` for triple-lowbar)
+/// and percent syntax while making the mapping injective: a literal percent is
+/// escaped before generated escapes are introduced, and every character the
+/// matching decoder would otherwise reinterpret is escaped. New paths are safe
+/// on Windows as well as POSIX; already-loaded pages remain path-pinned and are
+/// never renamed merely because their historical spelling is non-canonical.
+pub(crate) fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
+    let trailing_windows_unsafe = name
+        .trim_end_matches(|character| character == ' ' || character == '.')
+        .len();
+    let mut escaped = String::with_capacity(name.len());
+    for (offset, character) in name.char_indices() {
+        let encode = character == '%'
+            || character <= '\u{1f}'
+            || character == '\u{7f}'
+            || matches!(character, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*' | '#')
+            || (character == '.'
+                && (fmt == FileNameFormat::Legacy
+                    || offset == 0
+                    || offset >= trailing_windows_unsafe))
+            || (character == ' ' && offset >= trailing_windows_unsafe);
+        if encode {
+            let mut bytes = [0_u8; 4];
+            for byte in character.encode_utf8(&mut bytes).as_bytes() {
+                push_percent_byte(&mut escaped, *byte);
+            }
+        } else {
+            escaped.push(character);
+        }
+    }
+
+    let mut encoded = match fmt {
+        FileNameFormat::Legacy => escaped.replace('/', "%2F"),
+        FileNameFormat::TripleLowbar => escaped
             // Disambiguate underscores that would otherwise be ambiguous after
-            // `/`→`___` (OG `fs.cljs:99-103`), THEN map the separator.
+            // `/`→`___` (OG `fs.cljs`), THEN map the namespace separator.
             .replace("___", "%5F%5F%5F")
             .replace("_/", "%5F/")
             .replace("/_", "/%5F")
             .replace('/', "___"),
+    };
+    escape_windows_device_stem(&mut encoded);
+    encoded
+}
+
+fn push_percent_byte(output: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    output.push('%');
+    output.push(char::from(HEX[usize::from(byte >> 4)]));
+    output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+}
+
+/// Win32 reserves these device bodies case-insensitively even when another
+/// extension follows. Superscript 1/2/3 are documented aliases for COM/LPT.
+fn escape_windows_device_stem(stem: &mut String) {
+    let body = stem
+        .split('.')
+        .next()
+        .unwrap_or(stem)
+        .trim_end_matches(' ')
+        .to_uppercase();
+    let reserved = matches!(body.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            body.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            })
+        });
+    if reserved {
+        let first_len = stem.chars().next().map(char::len_utf8).unwrap_or(0);
+        let mut safe = String::with_capacity(stem.len() + 2);
+        for byte in stem.as_bytes().iter().take(first_len) {
+            push_percent_byte(&mut safe, *byte);
+        }
+        safe.push_str(&stem[first_len..]);
+        *stem = safe;
     }
 }
 
@@ -22021,7 +22087,7 @@ fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
 /// Triple-lowbar: `___`→`/` FIRST, then percent-decode — the OG order
 /// (`util.cljs:153-160`), so an encoded literal `___` (stored `%5F%5F%5F`)
 /// survives instead of being turned into a separator.
-fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
+pub(crate) fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
     match fmt {
         // OG's legacy title parser predates percent-encoded namespace
         // separators: it first maps every dot to `/`, then URI-decodes. Thus a
@@ -24403,8 +24469,16 @@ fn crdt_to_page_dto_upper_bound(page: &PageDto) -> io::Result<u64> {
 fn rename_rewrite_upper_bound(
     content: &str,
     renames: &std::collections::HashMap<String, String>,
+    encode_org_file_links: bool,
 ) -> io::Result<u64> {
-    let max_name = usize_to_u64(renames.values().map(String::len).max().unwrap_or(0))?;
+    let raw_max_name = usize_to_u64(renames.values().map(String::len).max().unwrap_or(0))?;
+    // A reserved-only title can grow to three bytes per input byte in an encoded
+    // Org file-link stem. Ordinary refs/tags and the second tags:: pass stay raw.
+    let max_name = if encode_org_file_links && content.contains("[[file:") {
+        checked_mul_bytes(raw_max_name, 3)?
+    } else {
+        raw_max_name
+    };
     let candidates = checked_add_bytes(
         usize_to_u64(
             content
@@ -31044,6 +31118,274 @@ mod tests {
         assert_eq!(decode_page_name("math.algebra", tlb), "math.algebra");
         // A unicode percent-escape decodes (UTF-8 aware), like OG.
         assert_eq!(decode_page_name("caf%C3%A9", leg), "café");
+        // Reserved-character spelling follows OG's percent syntax in both modes;
+        // literal escapes are pre-escaped so decoding is single-pass and exact.
+        assert_eq!(
+            encode_page_name("2026-07-23_18:01:20", leg),
+            "2026-07-23_18%3A01%3A20"
+        );
+        assert_eq!(
+            encode_page_name("2026-07-23_18:01:20", tlb),
+            "2026-07-23_18%3A01%3A20"
+        );
+        assert_eq!(encode_page_name("%2F", leg), "%252F");
+        assert_eq!(encode_page_name("%2F", tlb), "%252F");
+    }
+
+    fn assert_windows_safe_page_stem(stem: &str) {
+        assert!(!stem.is_empty(), "page filename stem is empty");
+        assert!(
+            !stem
+                .chars()
+                .any(|character| character <= '\u{1f}' || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')),
+            "page filename stem is not Windows-safe: {stem:?}"
+        );
+        assert!(
+            !stem.ends_with([' ', '.']),
+            "page filename stem has a Windows-illegal suffix: {stem:?}"
+        );
+        let device_body = stem.split('.').next().unwrap_or(stem).to_ascii_uppercase();
+        assert!(
+            !matches!(
+                device_body.as_str(),
+                "CON"
+                    | "PRN"
+                    | "AUX"
+                    | "NUL"
+                    | "COM1"
+                    | "COM2"
+                    | "COM3"
+                    | "COM4"
+                    | "COM5"
+                    | "COM6"
+                    | "COM7"
+                    | "COM8"
+                    | "COM9"
+                    | "LPT1"
+                    | "LPT2"
+                    | "LPT3"
+                    | "LPT4"
+                    | "LPT5"
+                    | "LPT6"
+                    | "LPT7"
+                    | "LPT8"
+                    | "LPT9"
+                    | "COM¹"
+                    | "COM²"
+                    | "COM³"
+                    | "LPT¹"
+                    | "LPT²"
+                    | "LPT³"
+            ),
+            "page filename stem is a Windows DOS device name: {stem:?}"
+        );
+    }
+
+    #[test]
+    fn page_name_encoding_is_injective_reversible_and_windows_safe() {
+        let titles = [
+            "2026-07-23_18:01:20",
+            "reserved < > : \\ | ? * \" #",
+            "trailing dot.",
+            "trailing space ",
+            ".hidden",
+            ".",
+            "..",
+            "CON",
+            "con",
+            "PRN.txt",
+            "Lpt9.report",
+            "COM¹.txt",
+            "LPT³",
+            "%",
+            "%2F",
+            "%3a",
+            "%25",
+            "%ZZ",
+            "a/b",
+            "a___b",
+            "a_/b",
+            "x/_y",
+            "Release 1.0",
+            "café",
+            "cafe\u{301}",
+            "日本語 📝",
+            "control\u{1f}character",
+        ];
+        for format in [FileNameFormat::Legacy, FileNameFormat::TripleLowbar] {
+            let mut stems = std::collections::HashMap::new();
+            for title in titles {
+                let stem = encode_page_name(title, format);
+                assert_windows_safe_page_stem(&stem);
+                assert_eq!(
+                    decode_page_name(&stem, format),
+                    title,
+                    "filename codec did not round-trip {title:?} under {format:?}"
+                );
+                assert_eq!(
+                    stems.insert(stem.clone(), title),
+                    None,
+                    "distinct titles collided at {stem:?} under {format:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn direct_managed_and_sparse_new_page_paths_share_the_safe_codec() {
+        for (label, config, format) in [
+            ("legacy", "", FileNameFormat::Legacy),
+            (
+                "triple-lowbar",
+                "{:file/name-format :triple-lowbar}\n",
+                FileNameFormat::TripleLowbar,
+            ),
+        ] {
+            let dir = scratch(&format!("filename-paths-{label}"));
+            if !config.is_empty() {
+                fs::create_dir_all(dir.join("logseq")).unwrap();
+                fs::write(dir.join("logseq/config.edn"), config).unwrap();
+            }
+            let graph = Graph::open(&dir);
+            let permit = graph.admit_managed_text_writer().unwrap();
+            for title in ["2026-07-23_18:01:20", "%2F", "CON", "Release 1.0"] {
+                let stem = encode_page_name(title, format);
+                let relative = format!("pages/{stem}.md");
+                assert_eq!(graph.path_for(title, PageKind::Page), dir.join(&relative));
+                assert_eq!(
+                    graph
+                        .managed_path_for(&permit, title, PageKind::Page)
+                        .unwrap(),
+                    dir.join(&relative)
+                );
+                assert_eq!(
+                    graph
+                        .new_sparse_page_path(title, PageKind::Page)
+                        .unwrap()
+                        .as_str(),
+                    relative
+                );
+            }
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn unsafe_page_titles_save_and_reopen_through_one_safe_identity() {
+        for (label, config, format) in [
+            ("legacy", "", FileNameFormat::Legacy),
+            (
+                "triple-lowbar",
+                "{:file/name-format :triple-lowbar}\n",
+                FileNameFormat::TripleLowbar,
+            ),
+        ] {
+            let dir = scratch(&format!("unsafe-page-title-{label}"));
+            if !config.is_empty() {
+                fs::create_dir_all(dir.join("logseq")).unwrap();
+                fs::write(dir.join("logseq/config.edn"), config).unwrap();
+            }
+            let title = "2026-07-23_18:01:20";
+            let expected_stem = encode_page_name(title, format);
+            assert_windows_safe_page_stem(&expected_stem);
+            let expected_rel = format!("pages/{expected_stem}.md");
+
+            let graph = Graph::open(&dir);
+            let page = markdown_page_dto(title, title, "- created\n").unwrap();
+            graph.save_page(&page, None).unwrap();
+            assert_eq!(fs::read(dir.join(&expected_rel)).unwrap(), b"- created\n");
+            drop(graph);
+
+            let graph = Graph::open(&dir);
+            let mut reopened = graph
+                .load_named(title, PageKind::Page)
+                .unwrap()
+                .expect("safe filename page reopens by its exact logical title");
+            assert_eq!(reopened.name, title);
+            assert_eq!(reopened.path, expected_rel);
+            reopened.blocks[0].raw = "edited and durable".into();
+            let base = reopened.rev.clone().unwrap();
+            graph.save_page(&reopened, Some(&base)).unwrap();
+            drop(graph);
+
+            let graph = Graph::open(&dir);
+            let final_page = graph
+                .load_named(title, PageKind::Page)
+                .unwrap()
+                .expect("edited safe filename page reopens");
+            assert_eq!(final_page.name, title);
+            assert_eq!(final_page.path, expected_rel);
+            assert_eq!(final_page.blocks[0].raw, "edited and durable");
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn unsafe_page_titles_rename_and_rescue_use_the_same_safe_identity() {
+        let dir = scratch("unsafe-page-title-rename-rescue");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:file/name-format :triple-lowbar}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Old.md"), "- old body\n").unwrap();
+        fs::write(dir.join("journals/Loose.md"), "- rescued body\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        let renamed = "2026-07-23_18:01:20";
+        graph.rename_page("Old", renamed).unwrap();
+        let renamed_stem = encode_page_name(renamed, FileNameFormat::TripleLowbar);
+        assert_windows_safe_page_stem(&renamed_stem);
+        assert_eq!(
+            fs::read(dir.join(format!("pages/{renamed_stem}.md"))).unwrap(),
+            b"- old body\n"
+        );
+
+        let rescued = "CON";
+        graph.rename_file_to_page("journals/Loose.md", rescued).unwrap();
+        let rescued_stem = encode_page_name(rescued, FileNameFormat::TripleLowbar);
+        assert_windows_safe_page_stem(&rescued_stem);
+        assert_eq!(
+            fs::read(dir.join(format!("pages/{rescued_stem}.md"))).unwrap(),
+            b"- rescued body\n"
+        );
+        drop(graph);
+
+        let reopened = Graph::open(&dir);
+        assert_eq!(
+            reopened
+                .load_named(renamed, PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .path,
+            format!("pages/{renamed_stem}.md")
+        );
+        assert_eq!(
+            reopened
+                .load_named(rescued, PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .path,
+            format!("pages/{rescued_stem}.md")
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn safe_filename_collisions_refuse_without_overwriting_existing_bytes() {
+        let dir = scratch("safe-filename-collision");
+        let occupied = dir.join("pages/A%3AB.md");
+        let original = b"title:: Occupant\n\n- keep these exact bytes\n";
+        fs::write(&occupied, original).unwrap();
+        let graph = Graph::open(&dir);
+        let page = markdown_page_dto("A:B", "A:B", "- must not land\n").unwrap();
+
+        let error = graph.save_page(&page, None).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&occupied).unwrap(), original);
+        assert!(!dir.join("pages/A:B.md").exists());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -31054,17 +31396,35 @@ mod tests {
 
         graph.save_page(&page, None).unwrap();
 
-        let path = dir.join("pages/Release 1.0.md");
+        let path = dir.join("pages/Release 1%2E0.md");
         let bytes = fs::read_to_string(&path).unwrap();
-        assert!(bytes.starts_with("title:: Release 1.0\n"));
+        assert_eq!(bytes, "- body\n");
         let reopened = graph
             .load_named("Release 1.0", PageKind::Page)
             .unwrap()
             .expect("generated dot title remains addressable by its literal title");
         assert_eq!(reopened.name, "Release 1.0");
-        assert_eq!(reopened.path, "pages/Release 1.0.md");
+        assert_eq!(reopened.path, "pages/Release 1%2E0.md");
         assert!(graph.find_entry("Release 1/0", PageKind::Page).is_none());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn existing_legacy_dot_title_keeps_its_exact_path_and_bytes() {
+        let dir = scratch("legacy-dot-existing-title");
+        let path = dir.join("pages/Release 1.0.md");
+        let original = "title:: Release 1.0\n\n- body\n";
+        fs::write(&path, original).unwrap();
+        let graph = Graph::open(&dir);
+        let page = graph
+            .load_named("Release 1.0", PageKind::Page)
+            .unwrap()
+            .expect("existing legacy dot title remains addressable");
+        assert_eq!(page.path, "pages/Release 1.0.md");
+        graph.save_page(&page, page.rev.as_deref()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(!dir.join("pages/Release 1%2E0.md").exists());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

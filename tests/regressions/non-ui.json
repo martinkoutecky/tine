@@ -2,6 +2,34 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-PAGE-FILENAME-IDENTITY-249",
+      "title": "Page titles map injectively to Windows-safe reversible filenames and survive save and reopen without changing existing graph files",
+      "family": "filesystem-safety",
+      "sources": {
+        "issues": [
+          249
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/model.rs::page_name_encoding_is_injective_reversible_and_windows_safe",
+          "crates/tine-core/src/model.rs::direct_managed_and_sparse_new_page_paths_share_the_safe_codec",
+          "crates/tine-core/src/model.rs::unsafe_page_titles_save_and_reopen_through_one_safe_identity",
+          "crates/tine-core/src/model.rs::unsafe_page_titles_rename_and_rescue_use_the_same_safe_identity",
+          "crates/tine-core/src/model.rs::safe_filename_collisions_refuse_without_overwriting_existing_bytes"
+        ],
+        "scenario": "page-file.safe-reversible-identity",
+        "failBefore": "proven"
+      },
+      "notes": "Fail-before on 1eec95c1: the shared codec emitted 2026-07-23_18:01:20 unchanged, the create/rename journeys selected that Windows-illegal stem, and an occupied A%3AB.md did not prevent an unsafe A:B.md twin. The covered core matrix proves both filename formats, Windows-reserved characters/control bytes, trailing dot/space, DOS devices, literal percent escapes, namespace ambiguity, Unicode, create/edit/save/reopen, rename/rescue, direct/managed/sparse derivation, exact existing-path preservation, and collision refusal. Literal Windows desktop proof remains a manager-level packet gate."
+    },
+    {
       "id": "REG-PROJECTION-RECOVERY-SIDECAR-GC-001",
       "title": "Projection recovery sidecars retire fairly only after durable restart-and-grace evidence under clean one-app handoff, with changed bytes retained visibly",
       "family": "sync-data-safety",

@@ -4,6 +4,8 @@
 
 use unicode_normalization::UnicodeNormalization;
 
+use crate::config::FileNameFormat;
+
 /// The ONE page-name identity key: trimmed + **Unicode** lowercase + NFC (the
 /// OG/Logseq fold). Use this — never a bare
 /// `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
@@ -296,6 +298,17 @@ pub fn rename_refs_multi(
     renames: &std::collections::HashMap<String, String>,
     is_org: bool,
 ) -> String {
+    rename_refs_multi_with_format(raw, renames, is_org, FileNameFormat::TripleLowbar)
+}
+
+/// Config-aware form used by graph rename so Org file links derive their new
+/// target from the same filename codec as the actual transactional page move.
+pub(crate) fn rename_refs_multi_with_format(
+    raw: &str,
+    renames: &std::collections::HashMap<String, String>,
+    is_org: bool,
+    file_name_format: FileNameFormat,
+) -> String {
     let code = code_ranges_for(raw, is_org);
     let mut code_cur = 0usize; // monotone cursor into `code` (i only increases)
     let mut out = String::with_capacity(raw.len());
@@ -311,7 +324,11 @@ pub fn rename_refs_multi(
             // rename (L1). Only for org; markdown has no `file:` page links.
             if is_org && rest.starts_with("[[") {
                 if let Some(end) = rest[2..].find("]]") {
-                    if let Some(rw) = rewrite_org_file_link(&rest[2..2 + end], renames) {
+                    if let Some(rw) = rewrite_org_file_link(
+                        &rest[2..2 + end],
+                        renames,
+                        file_name_format,
+                    ) {
                         out.push_str(&rw);
                         i += 2 + end + 2;
                         continue;
@@ -367,11 +384,12 @@ pub fn rename_refs_multi(
 /// (namespace-decoded `___`→`/`, extension stripped) normalizes to a key in
 /// `renames`. Returns the full replacement `[[file:…]]` (preserving dir,
 /// extension, and any `[desc]`), or `None` if it isn't a matching file link.
-/// Mirrors the model's `encode_page_name` (`/`→`___`) so the new stem names the
-/// renamed file.
+/// Decodes and re-encodes through the graph's shared filename policy so legacy,
+/// triple-lowbar, and reserved-character targets match the transactional move.
 fn rewrite_org_file_link(
     inner: &str,
     renames: &std::collections::HashMap<String, String>,
+    file_name_format: FileNameFormat,
 ) -> Option<String> {
     let body = inner.strip_prefix("file:")?;
     let (path_part, desc) = match body.find("][") {
@@ -384,8 +402,9 @@ fn rewrite_org_file_link(
         Some((s, e)) => (s, format!(".{e}")),
         None => (file, String::new()),
     };
-    let to = renames.get(&normalize(&stem.replace("___", "/")))?;
-    let new_stem = to.replace('/', "___");
+    let decoded = crate::model::decode_page_name(stem, file_name_format);
+    let to = renames.get(&normalize(&decoded))?;
+    let new_stem = crate::model::encode_page_name(to, file_name_format);
     let desc_part = desc.map(|d| format!("][{d}")).unwrap_or_default();
     Some(format!("[[file:{dir}{new_stem}{ext}{desc_part}]]"))
 }
@@ -599,6 +618,36 @@ mod tests {
             rename_refs("[[file:./pages/Old.org]]", "Old", "New", false),
             "[[file:./pages/Old.org]]"
         );
+    }
+
+    #[test]
+    fn org_file_link_rename_uses_safe_page_filename_codec() {
+        for (format, old_title, old_stem, new_title) in [
+            (
+                FileNameFormat::Legacy,
+                "Old.Name",
+                "Old%2EName",
+                "2026-07-23_18:01:20",
+            ),
+            (
+                FileNameFormat::TripleLowbar,
+                "Old/Name",
+                "Old___Name",
+                "CON",
+            ),
+        ] {
+            let mut renames = std::collections::HashMap::new();
+            renames.insert(normalize(old_title), new_title.to_owned());
+            let raw = format!("[[file:./pages/{old_stem}.org][page]]");
+            let expected = format!(
+                "[[file:./pages/{}.org][page]]",
+                crate::model::encode_page_name(new_title, format)
+            );
+            assert_eq!(
+                rename_refs_multi_with_format(&raw, &renames, true, format),
+                expected
+            );
+        }
     }
 
     #[test]
