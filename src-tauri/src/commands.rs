@@ -792,6 +792,31 @@ pub(crate) async fn save_page(
                             "issue-248-legacy-save-page-ms",
                             started.elapsed().as_secs_f64() * 1_000.0,
                         );
+                        if let Some(profile) =
+                            tine_core::model::Graph::take_issue248_save_page_benchmark()
+                        {
+                            for measurement in profile.phase_measurements() {
+                                if measurement.segments == 0 {
+                                    continue;
+                                }
+                                let _ = app.emit_to(
+                                    &label,
+                                    format!(
+                                        "issue-248-legacy-save-page-{}-ms",
+                                        measurement.phase
+                                    ),
+                                    measurement.elapsed_ms,
+                                );
+                                let _ = app.emit_to(
+                                    &label,
+                                    format!(
+                                        "issue-248-legacy-save-page-{}-segments",
+                                        measurement.phase
+                                    ),
+                                    measurement.segments,
+                                );
+                            }
+                        }
                     }
                     result.map_err(|error| {
                         if error.kind() == std::io::ErrorKind::AlreadyExists {

@@ -184,6 +184,20 @@ async function installCollector(browser) {
       const eventMetrics = {
         "issue-248-backend-save-ms": "backend.persistenceMs",
         "issue-248-legacy-save-page-ms": "backend.legacySavePageMs",
+        "issue-248-legacy-save-page-writer-admission-identity-lock-ms": "backend.legacySavePage.writerAdmissionIdentityLockMs",
+        "issue-248-legacy-save-page-writer-admission-identity-lock-segments": "backend.legacySavePage.writerAdmissionIdentityLockSegments",
+        "issue-248-legacy-save-page-save-target-ms": "backend.legacySavePage.saveTargetMs",
+        "issue-248-legacy-save-page-save-target-segments": "backend.legacySavePage.saveTargetSegments",
+        "issue-248-legacy-save-page-page-lock-ms": "backend.legacySavePage.pageLockMs",
+        "issue-248-legacy-save-page-page-lock-segments": "backend.legacySavePage.pageLockSegments",
+        "issue-248-legacy-save-page-validate-graph-text-target-ms": "backend.legacySavePage.validateGraphTextTargetMs",
+        "issue-248-legacy-save-page-validate-graph-text-target-segments": "backend.legacySavePage.validateGraphTextTargetSegments",
+        "issue-248-legacy-save-page-pinned-owner-conflict-validation-ms": "backend.legacySavePage.pinnedOwnerConflictValidationMs",
+        "issue-248-legacy-save-page-pinned-owner-conflict-validation-segments": "backend.legacySavePage.pinnedOwnerConflictValidationSegments",
+        "issue-248-legacy-save-page-prepare-serialize-ms": "backend.legacySavePage.prepareSerializeMs",
+        "issue-248-legacy-save-page-prepare-serialize-segments": "backend.legacySavePage.prepareSerializeSegments",
+        "issue-248-legacy-save-page-durable-commit-publication-ms": "backend.legacySavePage.durableCommitPublicationMs",
+        "issue-248-legacy-save-page-durable-commit-publication-segments": "backend.legacySavePage.durableCommitPublicationSegments",
       };
       const handler = internals.transformCallback((event) => {
         const metric = eventMetrics[event.event];

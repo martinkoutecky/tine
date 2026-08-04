@@ -29,7 +29,7 @@ use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
@@ -38,6 +38,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::{Duration, Instant};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
@@ -49,6 +50,149 @@ pub enum PageKind {
 }
 
 const LOGSEQ_TEXT_EXTENSIONS: [&str; 3] = ["md", "markdown", "org"];
+
+#[derive(Clone, Copy)]
+enum Issue248SavePagePhase {
+    WriterAdmissionAndIdentityLock,
+    SaveTarget,
+    PageLock,
+    ValidateGraphTextTarget,
+    PinnedOwnerAndConflictValidation,
+    PrepareAndSerialize,
+    DurableCommitAndPublication,
+}
+
+impl Issue248SavePagePhase {
+    const COUNT: usize = 7;
+
+    const fn index(self) -> usize {
+        match self {
+            Self::WriterAdmissionAndIdentityLock => 0,
+            Self::SaveTarget => 1,
+            Self::PageLock => 2,
+            Self::ValidateGraphTextTarget => 3,
+            Self::PinnedOwnerAndConflictValidation => 4,
+            Self::PrepareAndSerialize => 5,
+            Self::DurableCommitAndPublication => 6,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::WriterAdmissionAndIdentityLock => "writer-admission-identity-lock",
+            Self::SaveTarget => "save-target",
+            Self::PageLock => "page-lock",
+            Self::ValidateGraphTextTarget => "validate-graph-text-target",
+            Self::PinnedOwnerAndConflictValidation => "pinned-owner-conflict-validation",
+            Self::PrepareAndSerialize => "prepare-serialize",
+            Self::DurableCommitAndPublication => "durable-commit-publication",
+        }
+    }
+
+    const ALL: [Self; Self::COUNT] = [
+        Self::WriterAdmissionAndIdentityLock,
+        Self::SaveTarget,
+        Self::PageLock,
+        Self::ValidateGraphTextTarget,
+        Self::PinnedOwnerAndConflictValidation,
+        Self::PrepareAndSerialize,
+        Self::DurableCommitAndPublication,
+    ];
+}
+
+#[derive(Clone, Copy, Default)]
+struct Issue248SavePagePhaseTimer {
+    elapsed: Duration,
+    segments: u32,
+}
+
+/// One opt-in, benchmark-only sample of the legacy [`Graph::save_page`] boundary.
+///
+/// `prepare-serialize` intentionally combines managed-save preparation and the
+/// shared DTO serialization boundary, so a completed save reports two segments
+/// for that phase.
+#[derive(Clone, Copy)]
+pub struct Issue248SavePagePhaseMeasurement {
+    pub phase: &'static str,
+    pub elapsed_ms: f64,
+    pub segments: u32,
+}
+
+#[derive(Clone, Default)]
+pub struct Issue248SavePageBenchmark {
+    phases: [Issue248SavePagePhaseTimer; Issue248SavePagePhase::COUNT],
+}
+
+impl Issue248SavePageBenchmark {
+    fn record(&mut self, phase: Issue248SavePagePhase, elapsed: Duration) {
+        let timer = &mut self.phases[phase.index()];
+        timer.elapsed += elapsed;
+        timer.segments = timer.segments.saturating_add(1);
+    }
+
+    pub fn phase_measurements(&self) -> [Issue248SavePagePhaseMeasurement; Issue248SavePagePhase::COUNT] {
+        Issue248SavePagePhase::ALL.map(|phase| {
+            let timer = self.phases[phase.index()];
+            Issue248SavePagePhaseMeasurement {
+                phase: phase.name(),
+                elapsed_ms: timer.elapsed.as_secs_f64() * 1_000.0,
+                segments: timer.segments,
+            }
+        })
+    }
+}
+
+thread_local! {
+    static ISSUE248_SAVE_PAGE_BENCHMARK: RefCell<Option<Issue248SavePageBenchmark>> = const { RefCell::new(None) };
+}
+
+/// Scope an opt-in GH #248 save sample to the calling thread.
+///
+/// The benchmark process sets this before launch. Ordinary runtime calls keep no
+/// timer state and emit no diagnostics.
+struct Issue248SavePageBenchmarkSession {
+    sample: Issue248SavePageBenchmark,
+}
+
+impl Issue248SavePageBenchmarkSession {
+    fn begin() -> Option<Self> {
+        if std::env::var_os("TINE_ISSUE248_BENCH").is_none() {
+            return None;
+        }
+        ISSUE248_SAVE_PAGE_BENCHMARK.with(|slot| {
+            slot.borrow_mut().take();
+        });
+        Some(Self {
+            sample: Issue248SavePageBenchmark::default(),
+        })
+    }
+
+    fn measure<T>(&mut self, phase: Issue248SavePagePhase, operation: impl FnOnce() -> T) -> T {
+        let started = Instant::now();
+        let result = operation();
+        self.sample.record(phase, started.elapsed());
+        result
+    }
+}
+
+impl Drop for Issue248SavePageBenchmarkSession {
+    fn drop(&mut self) {
+        ISSUE248_SAVE_PAGE_BENCHMARK.with(|slot| {
+            *slot.borrow_mut() = Some(self.sample.clone());
+        });
+    }
+}
+
+fn measure_issue248_save_page_phase<T>(
+    benchmark: &mut Option<Issue248SavePageBenchmarkSession>,
+    phase: Issue248SavePagePhase,
+    operation: impl FnOnce() -> T,
+) -> T {
+    match benchmark.as_mut() {
+        Some(benchmark) => benchmark.measure(phase, operation),
+        None => operation(),
+    }
+}
 
 /// On-disk file format of a page. Markdown (`.md`/`.markdown`) is the default; Logseq org
 /// graphs use `.org`. A graph may mix the two — format is decided per file by
@@ -4774,6 +4918,14 @@ fn reconciliation_scan_config_path_at_open(root: &Path) -> PathBuf {
 }
 
 impl Graph {
+    /// Consume the current thread's opt-in GH #248 legacy save profile.
+    ///
+    /// The desktop benchmark forwards these values through its existing native
+    /// event collector immediately after [`Graph::save_page`] returns.
+    pub fn take_issue248_save_page_benchmark() -> Option<Issue248SavePageBenchmark> {
+        ISSUE248_SAVE_PAGE_BENCHMARK.with(|slot| slot.borrow_mut().take())
+    }
+
     /// Open a graph for use by the application, rejecting any configured page or
     /// journal directory that can escape the selected graph. `Graph::open` stays
     /// available for the many in-crate disposable fixtures, but runtime graph
@@ -18400,10 +18552,20 @@ impl Graph {
             observation.final_reread_retained = budget.retained();
             observation.final_reread_bytes = current.reservation.bytes;
         });
+        let mut benchmark = None;
         if let Some(prepared) =
             self.prepare_managed_save(page, &path, Some(&current), cache, budget)?
         {
-            prepared.commit_and_publish(self, write, &path, Some(&current), true, None, cache)?;
+            prepared.commit_and_publish(
+                self,
+                write,
+                &path,
+                Some(&current),
+                true,
+                None,
+                cache,
+                &mut benchmark,
+            )?;
         } else {
             self.write_page(write, page, &path, Some(&current), true, None, cache)?;
         }
@@ -19261,83 +19423,114 @@ impl Graph {
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+        let mut benchmark = Issue248SavePageBenchmarkSession::begin();
         if page.guide {
             #[cfg(debug_assertions)]
             eprintln!("attempted to persist an ephemeral bundled Guide page");
             return Ok("guide-ephemeral".into());
         }
-        let write = self.admit_managed_text_writer()?;
-        let _identity = self.lock_graph_text_identity_mutation()?;
-        let (path, cache) = self.save_target(&write, page)?;
+        let write = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::WriterAdmissionAndIdentityLock,
+            || {
+                let write = self.admit_managed_text_writer()?;
+                let identity = self.lock_graph_text_identity_mutation()?;
+                Ok::<_, io::Error>((write, identity))
+            },
+        )?;
+        let (write, _identity) = write;
+        let (path, cache) = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::SaveTarget,
+            || self.save_target(&write, page),
+        )?;
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
         // read→conflict-check→write→cache_upsert, so neither can clobber the other
         // or steal its self-write marker (see `page_locks`).
         let lock = self.page_lock(&path);
-        let _guard = lock.lock().unwrap();
+        let _guard = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::PageLock,
+            || lock.lock().unwrap(),
+        );
         // Single read of the current file (the conflict baseline AND the
         // formatting source AND, with the written content, the returned rev) —
         // avoids re-reading the file 2-3× per save, which is felt on NFS.
-        let validation =
-            self.validate_graph_text_target(&write, &path, Some((page.kind, &page.name)))?;
-        self.require_pinned_save_owner(page, &path, validation.target.as_ref(), base_rev)?;
-        if validation.requested_identity_elsewhere {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "another graph document owns this effective page identity",
-            ));
-        }
-        let existing: Option<(String, ContentDigest)> = match validation.target {
-            Some(ExactGraphLoadedPage {
-                content: disk_s,
-                file_identity: current_identity,
-                ..
-            }) => {
-                // The file must still match the exact bytes the editor loaded
-                // (`base_rev`); if it changed underneath us (external edit /
-                // Syncthing pull), refuse to clobber. `base_rev == None` means the
-                // editor believed the page was new, so any existing file is an
-                // external creation → conflict.
-                if !base_rev.is_some_and(|rev| content_rev(&disk_s) == rev) {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-                let retained_matches = self
-                    .loaded_file_identities
-                    .read()
-                    .unwrap()
-                    .get(&path)
-                    .is_some_and(|(revision, identity)| {
-                        base_rev == Some(revision.as_str()) && *identity == current_identity
-                    });
-                if !retained_matches {
+        let validation = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::ValidateGraphTextTarget,
+            || self.validate_graph_text_target(&write, &path, Some((page.kind, &page.name))),
+        )?;
+        let existing: Option<(String, ContentDigest)> = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::PinnedOwnerAndConflictValidation,
+            || {
+                self.require_pinned_save_owner(page, &path, validation.target.as_ref(), base_rev)?;
+                if validation.requested_identity_elsewhere {
                     return Err(io::Error::new(
                         io::ErrorKind::AlreadyExists,
-                        "existing page identity changed since load",
+                        "another graph document owns this effective page identity",
                     ));
                 }
-                Some((disk_s, current_identity))
-            }
-            None => {
-                // The file is gone. If the editor had a baseline (page existed at
-                // load), it was deleted externally — DON'T silently resurrect it.
-                if base_rev.is_some() {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                match validation.target {
+                    Some(ExactGraphLoadedPage {
+                        content: disk_s,
+                        file_identity: current_identity,
+                        ..
+                    }) => {
+                        // The file must still match the exact bytes the editor loaded
+                        // (`base_rev`); if it changed underneath us (external edit /
+                        // Syncthing pull), refuse to clobber. `base_rev == None` means the
+                        // editor believed the page was new, so any existing file is an
+                        // external creation → conflict.
+                        if !base_rev.is_some_and(|rev| content_rev(&disk_s) == rev) {
+                            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                        }
+                        let retained_matches = self
+                            .loaded_file_identities
+                            .read()
+                            .unwrap()
+                            .get(&path)
+                            .is_some_and(|(revision, identity)| {
+                                base_rev == Some(revision.as_str()) && *identity == current_identity
+                            });
+                        if !retained_matches {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "existing page identity changed since load",
+                            ));
+                        }
+                        Ok(Some((disk_s, current_identity)))
+                    }
+                    None => {
+                        // The file is gone. If the editor had a baseline (page existed at
+                        // load), it was deleted externally — DON'T silently resurrect it.
+                        if base_rev.is_some() {
+                            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                        }
+                        Ok(None)
+                    }
                 }
-                None
-            }
-        };
+            },
+        )?;
         // recheck = true: re-verify the file hasn't changed on disk in the instant
         // before the write, to narrow the inherent race against a NON-cooperating
         // external writer (OG/Syncthing) that doesn't take our page lock.
         // M2: write to the SAME path we locked + read the baseline from — never
         // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
         // pick a different extension if a twin appears mid-save).
-        let budget = RetainedContentBudget::new(managed_text_inventory_limits());
         let existing_content = existing.as_ref().map(|(content, _)| content.as_str());
         let expected_identity = existing.as_ref().map(|(_, identity)| *identity);
-        if let Some(prepared) =
-            self.prepare_managed_save(page, &path, existing_content, cache, &budget)?
-        {
+        let prepared = measure_issue248_save_page_phase(
+            &mut benchmark,
+            Issue248SavePagePhase::PrepareAndSerialize,
+            || {
+                let budget = RetainedContentBudget::new(managed_text_inventory_limits());
+                self.prepare_managed_save(page, &path, existing_content, cache, &budget)
+            },
+        )?;
+        if let Some(prepared) = prepared {
             prepared.commit_and_publish(
                 self,
                 &write,
@@ -19346,9 +19539,10 @@ impl Graph {
                 true,
                 expected_identity,
                 cache,
+                &mut benchmark,
             )
         } else {
-            self.write_page(
+            self.write_page_with_issue248_benchmark(
                 &write,
                 page,
                 &path,
@@ -19356,6 +19550,8 @@ impl Graph {
                 true,
                 expected_identity,
                 cache,
+                &mut benchmark,
+                true,
             )
         }
     }
@@ -19411,6 +19607,7 @@ impl Graph {
         let budget = RetainedContentBudget::new(managed_text_inventory_limits());
         let existing_content = existing.as_ref().map(|(content, _)| content.as_str());
         let expected_identity = existing.as_ref().map(|(_, identity)| *identity);
+        let mut benchmark = None;
         if let Some(prepared) =
             self.prepare_managed_save(page, &path, existing_content, cache, &budget)?
         {
@@ -19422,6 +19619,7 @@ impl Graph {
                 false,
                 expected_identity,
                 cache,
+                &mut benchmark,
             )
         } else {
             self.write_page(
@@ -19449,7 +19647,41 @@ impl Graph {
         expected_identity: Option<ContentDigest>,
         cache: bool,
     ) -> io::Result<String> {
-        let (doc, content) = self.serialize_page_dto_for_path(page, path, existing)?;
+        let mut benchmark = None;
+        self.write_page_with_issue248_benchmark(
+            write,
+            page,
+            path,
+            existing,
+            recheck,
+            expected_identity,
+            cache,
+            &mut benchmark,
+            false,
+        )
+    }
+
+    fn write_page_with_issue248_benchmark(
+        &self,
+        write: &ManagedTextWritePermit,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+        recheck: bool,
+        expected_identity: Option<ContentDigest>,
+        cache: bool,
+        benchmark: &mut Option<Issue248SavePageBenchmarkSession>,
+        measure_durable_commit_and_publication: bool,
+    ) -> io::Result<String> {
+        let (doc, content) = measure_issue248_save_page_phase(
+            benchmark,
+            Issue248SavePagePhase::PrepareAndSerialize,
+            || self.serialize_page_dto_for_path(page, path, existing),
+        )?;
+        let durable_started = measure_durable_commit_and_publication
+            .then(|| benchmark.as_ref().map(|_| Instant::now()))
+            .flatten();
+        let result = (|| {
         // No-op save: identical bytes already on disk (e.g. focus/blur with no real
         // edit, or a forced flush of an unchanged page). Skip the write, the
         // watcher record, AND — crucially — the cache update below.
@@ -19526,6 +19758,14 @@ impl Graph {
         // The new baseline rev = hash of exactly what's now on disk (the content we
         // serialized, or the identical existing bytes on a no-op) — no re-read.
         Ok(rev)
+        })();
+        if let (Some(started), Some(benchmark)) = (durable_started, benchmark.as_mut()) {
+            benchmark.sample.record(
+                Issue248SavePagePhase::DurableCommitAndPublication,
+                started.elapsed(),
+            );
+        }
+        result
     }
 
     fn serialize_page_dto_for_path(
@@ -21126,6 +21366,7 @@ impl PreparedManagedSaveOperation {
         recheck: bool,
         expected_identity: Option<ContentDigest>,
         cache: bool,
+        benchmark: &mut Option<Issue248SavePageBenchmarkSession>,
     ) -> io::Result<String> {
         let Self {
             budget: _budget,
@@ -21140,9 +21381,10 @@ impl PreparedManagedSaveOperation {
             observation.pre_mutation_peak = _budget.state.peak.get();
             observation.pre_mutation_observations += 1;
         });
+        let durable_started = benchmark.as_ref().map(|_| Instant::now());
         let sync_guard = graph.managed_sync.lock().unwrap();
-        snapshot.commit_page_with_guard_then(sync_guard, || {
-            let result = graph.write_page(
+        let result = snapshot.commit_page_with_guard_then(sync_guard, || {
+            let result = graph.write_page_with_issue248_benchmark(
                 write,
                 &page.page,
                 path,
@@ -21150,12 +21392,21 @@ impl PreparedManagedSaveOperation {
                 recheck,
                 expected_identity,
                 cache,
+                benchmark,
+                false,
             );
             if result.is_ok() {
                 graph.record_managed_projection(write, path);
             }
             result
-        })
+        });
+        if let (Some(started), Some(benchmark)) = (durable_started, benchmark.as_mut()) {
+            benchmark.sample.record(
+                Issue248SavePagePhase::DurableCommitAndPublication,
+                started.elapsed(),
+            );
+        }
+        result
     }
 }
 
