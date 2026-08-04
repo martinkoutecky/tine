@@ -9,7 +9,7 @@ import {
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
-import { switchGraph, refreshAfterRename } from "../graph";
+import { ensureJournalTemplateForDay, switchGraph, refreshAfterRename } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -19,7 +19,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { pageProperties, aliasNames, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle } from "../journal";
+import { journalTitle, localDayKey, localDayRolloverDelay } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -42,10 +42,6 @@ let pendingFeedRestart = false;
 export interface JournalsFeedOwner {
   graphEpoch: number;
   isLive: () => boolean;
-}
-
-function localDayKey(now = new Date()): number {
-  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
 function feedHasActiveEdit(): boolean {
@@ -108,6 +104,66 @@ async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Pr
   }
 }
 
+let journalRefreshFlight: {
+  graphEpoch: number;
+  day: number;
+  owner: JournalsFeedOwner;
+  promise: Promise<void>;
+} | null = null;
+
+/** One lifecycle boundary for initial load, graph rebind, timer, focus,
+ * visibility/resume, watcher refresh and deferred-edit retry. A configured
+ * template is durably ensured before the feed is allowed to observe that day. */
+async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<void> {
+  if (!ownerIsLive(owner)) return;
+  const date = new Date();
+  const day = localDayKey(date);
+  const current = journalRefreshFlight;
+  if (
+    current
+    && current.graphEpoch === owner.graphEpoch
+    && current.day === day
+    && ownerIsLive(current.owner)
+  ) {
+    current.owner = owner;
+    return current.promise;
+  }
+  // Invalidate an older start/append before template work yields. This retains
+  // the existing dirty-edit rule while preventing an old-day response from
+  // landing during materialization.
+  ++feedGeneration;
+  if (feedHasActiveEdit()) {
+    pendingFeedRestart = true;
+    return;
+  }
+
+  const flight = {
+    graphEpoch: owner.graphEpoch,
+    day,
+    owner,
+    promise: Promise.resolve(),
+  };
+  flight.promise = (async () => {
+    const ensured = await ensureJournalTemplateForDay(date, () => !feedHasActiveEdit());
+    const liveOwner = flight.owner;
+    if (ensured !== "ready") {
+      if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
+      return;
+    }
+    if (!ownerIsLive(liveOwner) || localDayKey() !== day) {
+      if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
+      return;
+    }
+    await restartJournalFeed(liveOwner);
+  })();
+  journalRefreshFlight = flight;
+  try {
+    await flight.promise;
+  } finally {
+    if (journalRefreshFlight === flight) journalRefreshFlight = null;
+  }
+}
+
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
 // as "aka" chips above, and `icon` is consumed as the page icon next to the title
 // (OG hides it too). Other internal/metadata page props could be added here.
@@ -135,7 +191,7 @@ export function toLoadablePage(dto: PageDto, name: string): PageDto {
 }
 
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
-  await restartJournalFeed(owner);
+  await refreshJournalFeedForCurrentDay(owner);
 }
 
 export function PageView(): JSX.Element {
@@ -192,7 +248,7 @@ export function PageView(): JSX.Element {
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
-          await untrack(() => restartJournalFeed(journalOwner(r, epoch)));
+          await untrack(() => refreshJournalFeedForCurrentDay(journalOwner(r, epoch)));
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
         } else {
           if (isGuidePageName(r.name)) {
@@ -250,7 +306,7 @@ export function PageView(): JSX.Element {
     const owner = journalOwner(route);
     if (!ownerIsLive(owner)) return;
     if (pendingFeedRestart || journalAsOfDay !== localDayKey()) {
-      await restartJournalFeed(owner);
+      await refreshJournalFeedForCurrentDay(owner);
       return;
     }
     if (loadingGeneration !== null || feedDone || nextBeforeDay === null) return;
@@ -264,7 +320,7 @@ export function PageView(): JSX.Element {
         generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
         cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)
       ) {
-        if (generation === feedGeneration && ownerIsLive(owner)) await restartJournalFeed(owner);
+        if (generation === feedGeneration && ownerIsLive(owner)) await refreshJournalFeedForCurrentDay(owner);
         return;
       }
       if (response.pages.length) appendFeed(response.pages);
@@ -285,16 +341,15 @@ export function PageView(): JSX.Element {
     const owner = journalOwner(route);
     let timer: number | undefined;
     let disposed = false;
-    const restart = () => { void restartJournalFeed(owner); };
+    const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
     const arm = () => {
       if (disposed || !ownerIsLive(owner)) return;
       const now = new Date();
-      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
       timer = window.setTimeout(() => {
         // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
         // trigger, including a deferred/error response, while this owner lives.
-        void restartJournalFeed(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
-      }, Math.max(1, next.getTime() - now.getTime() + 25));
+        void refreshJournalFeedForCurrentDay(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
+      }, localDayRolloverDelay(now));
     };
     arm();
     const onFocus = () => {
@@ -325,7 +380,7 @@ export function PageView(): JSX.Element {
     if (pendingFeedRestart && !unsafe) {
       // This effect deliberately tracks the edit/conflict/save lifecycle.  Do
       // not untrack it with the initial route loader: it is the pending retry.
-      void restartJournalFeed(journalOwner(route));
+      void refreshJournalFeedForCurrentDay(journalOwner(route));
     }
   });
 

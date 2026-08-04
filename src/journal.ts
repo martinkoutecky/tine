@@ -20,6 +20,19 @@ let titleFormat = DEFAULT_TITLE_FORMAT;
 
 export type JournalDateParts = { y: number; m: number; d: number };
 
+/** Stable local-calendar identity. Unlike elapsed-millisecond arithmetic this
+ * remains correct across short/long DST days and month/year boundaries. */
+export function localDayKey(now = new Date()): number {
+  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+}
+
+/** Delay to the next local calendar day, including a small post-midnight margin.
+ * Constructing the next date in local time yields 23/24/25-hour days correctly. */
+export function localDayRolloverDelay(now = new Date(), marginMs = 25): number {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return Math.max(1, next.getTime() - now.getTime() + marginMs);
+}
+
 /// Set the active journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
   titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;

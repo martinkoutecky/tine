@@ -7,7 +7,7 @@ import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
-import { journalTitle, setJournalTitleFormat } from "./journal";
+import { journalTitle, localDayKey, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
@@ -156,7 +156,7 @@ export async function loadGraphPath(
   // A default journal template writes today's journal to disk. Do that before
   // invalidating graph-backed resources so the first Journals refetch observes
   // the populated file instead of caching the synthetic blank page (#73).
-  await ensureJournalTemplate();
+  await ensureJournalTemplateForDay(new Date());
   bumpGraphEpoch();
   void injectCustomCss();
   void loadAliases();
@@ -282,30 +282,59 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
   void Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
-// If config.edn sets :default-templates {:journals "X"}, create today's journal
-// from that template when it doesn't exist yet (or is empty). No-op when unset,
-// so default behaviour is unchanged.
-async function ensureJournalTemplate(): Promise<void> {
-  const tname = graphMeta()?.default_journal_template;
-  if (!tname) return;
-  const title = journalTitle(new Date());
+export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale";
+
+interface JournalTemplateOwner {
+  root: string;
+  epoch: number;
+  day: number;
+  title: string;
+  template: string;
+}
+
+let journalTemplateFlight: {
+  owner: JournalTemplateOwner;
+  promise: Promise<JournalTemplateEnsureResult>;
+} | null = null;
+
+function sameJournalTemplateOwner(a: JournalTemplateOwner, b: JournalTemplateOwner): boolean {
+  return a.root === b.root && a.epoch === b.epoch && a.day === b.day && a.template === b.template;
+}
+
+function journalTemplateOwnerIsCurrent(owner: JournalTemplateOwner): boolean {
+  const meta = graphMeta();
+  return !!meta
+    && meta.root === owner.root
+    && meta.default_journal_template === owner.template
+    && graphEpoch() === owner.epoch
+    && localDayKey() === owner.day;
+}
+
+async function materializeJournalTemplate(
+  owner: JournalTemplateOwner,
+  canWrite: () => boolean,
+): Promise<JournalTemplateEnsureResult> {
   try {
-    const existing = await backend().getPage(title, "journal");
-    if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return; // already has content
-    const tmpl = (await backend().listTemplates()).find((t) => t.name === tname);
-    if (!tmpl) return;
+    const existing = await backend().getPage(owner.title, "journal");
+    if (!journalTemplateOwnerIsCurrent(owner)) return "stale";
+    if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return "ready";
+    const tmpl = (await backend().listTemplates()).find((t) => t.name === owner.template);
+    if (!journalTemplateOwnerIsCurrent(owner)) return "stale";
+    if (!tmpl) return "ready";
     await prepareTemplateVars();
+    if (!journalTemplateOwnerIsCurrent(owner)) return "stale";
+    if (!canWrite()) return "deferred";
     const resolve = (b: BlockDto): BlockDto => ({
       id: "",
-      raw: applyTemplateVars(b.raw, title),
+      raw: applyTemplateVars(b.raw, owner.title),
       collapsed: false,
       children: b.children.map(resolve),
     });
     await backend().savePage(
       {
-        name: title,
+        name: owner.title,
         kind: "journal",
-        title,
+        title: owner.title,
         pre_block: existing?.pre_block ?? null,
         blocks: tmpl.blocks.map(resolve),
         // An empty journal may already exist on disk. Preserve its concrete file
@@ -316,8 +345,42 @@ async function ensureJournalTemplate(): Promise<void> {
       existing?.rev ?? null,
       false
     );
+    return journalTemplateOwnerIsCurrent(owner) ? "ready" : "stale";
   } catch {
-    // ignore — never block graph open on template insertion
+    return journalTemplateOwnerIsCurrent(owner) ? "deferred" : "stale";
+  }
+}
+
+/** If config.edn sets :default-templates {:journals "X"}, create the supplied
+ * local day's journal from that template when missing or empty. Concurrent
+ * timer/focus/load callers share one graph-generation/day flight. Every await
+ * revalidates graph, template identity and local day before another IPC begins.
+ * Unconfigured graphs remain lazy and never issue a page write. */
+export async function ensureJournalTemplateForDay(
+  date: Date,
+  canWrite: () => boolean = () => true,
+): Promise<JournalTemplateEnsureResult> {
+  const meta = graphMeta();
+  const template = meta?.default_journal_template;
+  if (!meta || !template) return "ready";
+  const owner: JournalTemplateOwner = {
+    root: meta.root,
+    epoch: graphEpoch(),
+    day: localDayKey(date),
+    title: journalTitle(date),
+    template,
+  };
+  if (!journalTemplateOwnerIsCurrent(owner) || !canWrite()) return "deferred";
+  if (journalTemplateFlight && sameJournalTemplateOwner(journalTemplateFlight.owner, owner)) {
+    return journalTemplateFlight.promise;
+  }
+  const promise = materializeJournalTemplate(owner, canWrite);
+  const flight = { owner, promise };
+  journalTemplateFlight = flight;
+  try {
+    return await promise;
+  } finally {
+    if (journalTemplateFlight === flight) journalTemplateFlight = null;
   }
 }
 

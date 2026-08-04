@@ -3,6 +3,7 @@ import dateGoldenRaw from "./fixtures/date-golden.json?raw";
 import {
   formatJournal,
   isJournalTitle,
+  localDayRolloverDelay,
   parseJournalWith,
   setJournalTitleFormat,
   type JournalDateParts,
@@ -79,6 +80,20 @@ describe("journal date grammar golden fixture", () => {
       expect(parseJournalWith(vector.input, vector.fmt), `${vector.fmt} <- ${vector.input}`).toEqual(
         vector.date,
       );
+    }
+  });
+});
+
+describe("local journal-day lifecycle", () => {
+  it("arms calendar midnight correctly across 23-hour and 25-hour DST days", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = "America/New_York";
+      expect(localDayRolloverDelay(new Date(2030, 2, 10), 0)).toBe(23 * 60 * 60 * 1000);
+      expect(localDayRolloverDelay(new Date(2030, 10, 3), 0)).toBe(25 * 60 * 60 * 1000);
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
     }
   });
 });

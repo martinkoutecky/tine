@@ -2,6 +2,32 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-JOURNAL-TEMPLATE-ROLLOVER-260",
+      "title": "A configured default journal template materializes exactly once when the loaded graph crosses local midnight",
+      "family": "journal-durable-materialization",
+      "sources": {
+        "issues": [
+          260
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "render-core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/components/Page.test.tsx",
+          "src/graph.test.tsx",
+          "crates/tine-core/tests/graph.rs"
+        ],
+        "scenario": "journals.configured-template-local-day-rollover",
+        "failBefore": "proven"
+      },
+      "notes": "The accepted contract requires the timer/focus/visibility lifecycle to single-flight one graph-generation/day-bound template ensure before the feed refresh; dirty content and stale graph/day work must remain inert, no-template rollover must stay lazy, and guarded native serialization must survive restart byte-for-byte."
+    },
+    {
       "id": "REG-PROJECTION-RECOVERY-SIDECAR-GC-001",
       "title": "Projection recovery sidecars retire fairly only after durable restart-and-grace evidence under clean one-app handoff, with changed bytes retained visibly",
       "family": "sync-data-safety",

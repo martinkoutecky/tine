@@ -948,6 +948,60 @@ fn search_cache_reflects_saves_and_deletes() {
 }
 
 #[test]
+fn journal_template_bytes_survive_reopen_and_idempotent_resave() {
+    use tine_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!(
+        "tine-journal-template-reopen-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let graph = Graph::open(&root);
+    let page = PageDto {
+        name: "Jul 30th, 2026".into(),
+        kind: PageKind::Journal,
+        title: "Jul 30th, 2026".into(),
+        pre_block: None,
+        blocks: ["### Meetings", "### Notes", "### Tasks"]
+            .into_iter()
+            .map(|raw| BlockDto {
+                raw: raw.into(),
+                ..Default::default()
+            })
+            .collect(),
+        rev: None,
+        format: Default::default(),
+        read_only: false,
+        path: String::new(),
+        guide: false,
+    };
+
+    graph.save_page(&page, None).unwrap();
+    let journal_path = root.join("journals/2026_07_30.md");
+    let expected = b"- ### Meetings\n- ### Notes\n- ### Tasks\n";
+    assert_eq!(std::fs::read(&journal_path).unwrap(), expected);
+    drop(graph);
+
+    let reopened = Graph::open(&root);
+    let entry = reopened
+        .find_entry("Jul 30th, 2026", PageKind::Journal)
+        .expect("templated journal must be indexed after restart");
+    let loaded = reopened.load_page(&entry).unwrap();
+    assert_eq!(
+        loaded.blocks.iter().map(|block| block.raw.as_str()).collect::<Vec<_>>(),
+        vec!["### Meetings", "### Notes", "### Tasks"]
+    );
+    reopened
+        .save_page(&loaded, loaded.rev.as_deref())
+        .unwrap();
+    assert_eq!(std::fs::read(&journal_path).unwrap(), expected);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn search_ignores_hidden_property_metadata() {
     use tine_core::model::{BlockDto, PageDto, PageKind};
 

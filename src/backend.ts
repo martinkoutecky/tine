@@ -577,9 +577,13 @@ class TauriBackend implements Backend {
   }
 
   private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    // Lease the graph binding at the synchronous call boundary. `ready` is
+    // normally already fulfilled, but awaiting even a fulfilled promise yields;
+    // a graph switch in that gap must not retarget queued work to the new graph.
+    const bindingGeneration = this.bindingGeneration;
     await this.ready;
-    const leasedArgs = this.bindingGeneration
-      ? { ...(args ?? {}), bindingGeneration: this.bindingGeneration }
+    const leasedArgs = bindingGeneration
+      ? { ...(args ?? {}), bindingGeneration }
       : args;
     return this.invoke<T>(cmd, leasedArgs);
   }

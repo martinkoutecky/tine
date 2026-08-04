@@ -32,6 +32,7 @@ async function loadHarness(
   vi.resetModules();
   const events: string[] = [];
   let meta: GraphMeta | null = null;
+  let epoch = 0;
   const api = {
     inspectGraphAccess: vi.fn(async () => access),
     approveExternalAssets: vi.fn(async () => {}),
@@ -72,8 +73,8 @@ async function loadHarness(
   vi.doMock("./ui", () => ({
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
     graphMeta: () => meta,
-    graphEpoch: () => 0,
-    bumpGraphEpoch: () => { events.push("bump-epoch"); },
+    graphEpoch: () => epoch,
+    bumpGraphEpoch: () => { epoch += 1; events.push("bump-epoch"); },
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
     setAliasMap,
@@ -112,6 +113,9 @@ async function loadHarness(
   vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn() }));
   vi.doMock("./journal", () => ({
     journalTitle: () => "Jul 10th, 2026",
+    localDayKey: (date = new Date()) =>
+      date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
+    localDayRolloverDelay: vi.fn(() => 1),
     setJournalTitleFormat: vi.fn(),
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
@@ -122,11 +126,13 @@ async function loadHarness(
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
+  const { ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
   return {
-    loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
+    ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
     applyTemplateVars, prepareTemplateVars,
+    setMeta: (next: GraphMeta | null) => { meta = next; },
+    bumpEpoch: () => { epoch += 1; },
   };
 }
 
@@ -134,6 +140,8 @@ afterEach(() => {
   document.body.innerHTML = "";
   document.head.querySelector("#test-css")?.remove();
   localStorage.clear();
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -256,6 +264,65 @@ describe("default journal template graph bind", () => {
     await loadGraphPath(META.root);
 
     expect(api.savePage).toHaveBeenCalledWith(expect.any(Object), "empty-journal-rev", false);
+  });
+
+  it("never overwrites a journal that already has content", async () => {
+    const existing: PageDto = {
+      name: "Jul 10th, 2026",
+      kind: "journal",
+      title: "Jul 10th, 2026",
+      pre_block: null,
+      blocks: [{ id: "existing", raw: "user content", collapsed: false, children: [] }],
+      rev: "existing-rev",
+    };
+    const { loadGraphPath, api } = await loadHarness(existing);
+
+    await loadGraphPath(META.root);
+
+    expect(api.listTemplates).not.toHaveBeenCalled();
+    expect(api.savePage).not.toHaveBeenCalled();
+  });
+
+  it("drops template work that becomes stale across an in-place graph switch", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.api.getPage.mockClear();
+    harness.api.listTemplates.mockClear();
+    harness.api.savePage.mockClear();
+
+    let releaseTemplates!: (templates: Awaited<ReturnType<typeof harness.api.listTemplates>>) => void;
+    harness.api.listTemplates.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseTemplates = resolve;
+    }));
+    const pending = harness.ensureJournalTemplateForDay(new Date());
+    await vi.waitFor(() => expect(harness.api.listTemplates).toHaveBeenCalledTimes(1));
+
+    harness.setMeta({ ...META, root: "/tmp/rebound-graph" });
+    harness.bumpEpoch();
+    releaseTemplates([{
+      name: "Daily",
+      page: "Templates",
+      kind: "page",
+      blocks: [{ id: "template", raw: "must stay out", collapsed: false, children: [] }],
+    }]);
+
+    await expect(pending).resolves.toBe("stale");
+    expect(harness.api.savePage).not.toHaveBeenCalled();
+  });
+
+  it("does no journal I/O when the loaded graph has no configured template", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.api.getPage.mockClear();
+    harness.api.listTemplates.mockClear();
+    harness.api.savePage.mockClear();
+    harness.setMeta({ ...META, default_journal_template: null });
+
+    await expect(harness.ensureJournalTemplateForDay(new Date())).resolves.toBe("ready");
+
+    expect(harness.api.getPage).not.toHaveBeenCalled();
+    expect(harness.api.listTemplates).not.toHaveBeenCalled();
+    expect(harness.api.savePage).not.toHaveBeenCalled();
   });
 });
 
