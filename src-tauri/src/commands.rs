@@ -799,20 +799,22 @@ pub(crate) async fn save_page(
                                 if measurement.segments == 0 {
                                     continue;
                                 }
-                                let _ = app.emit_to(
-                                    &label,
-                                    format!(
-                                        "issue-248-legacy-save-page-{}-ms",
-                                        measurement.phase
-                                    ),
-                                    measurement.elapsed_ms,
+                                let elapsed_event = format!(
+                                    "issue-248-legacy-save-page-{}-ms",
+                                    measurement.phase
                                 );
                                 let _ = app.emit_to(
                                     &label,
-                                    format!(
-                                        "issue-248-legacy-save-page-{}-segments",
-                                        measurement.phase
-                                    ),
+                                    elapsed_event.as_str(),
+                                    measurement.elapsed_ms,
+                                );
+                                let segments_event = format!(
+                                    "issue-248-legacy-save-page-{}-segments",
+                                    measurement.phase
+                                );
+                                let _ = app.emit_to(
+                                    &label,
+                                    segments_event.as_str(),
                                     measurement.segments,
                                 );
                             }
