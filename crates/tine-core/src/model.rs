@@ -13067,7 +13067,12 @@ impl Graph {
     /// exact on-disk bytes `doc` was produced from (the freshness key — see
     /// `disk_revs`).
     fn cache_upsert(&self, entry: PageEntry, doc: Document, disk_rev: String) {
-        self.cache_upsert_inner(entry, doc, disk_rev, false);
+        // An exact one-page publication must not make an ordinary warm save pay
+        // for graph-wide derived-cache maintenance. Content-only updates retain
+        // their exact candidate index delta and conservatively clear dependent
+        // query caches; an identity-changing update still rebuilds the identity
+        // index before it can be used for name-only admission.
+        self.cache_upsert_inner(entry, doc, disk_rev, true);
     }
 
     fn cache_upsert_inner(
@@ -30225,6 +30230,7 @@ mod tests {
         target: String,
         revision: String,
         proof: (String, u64),
+        append_calls: Rc<Cell<usize>>,
     }
 
     #[cfg(any(unix, windows))]
@@ -30250,17 +30256,17 @@ mod tests {
             }));
         });
         let proof = (format!("authenticated:{relative_path}"), 73_u64);
-        let calls = Cell::new(0_usize);
+        let append_calls = Rc::new(Cell::new(0_usize));
         let outcome = fixture
             .commit(|| {
-                calls.set(calls.get() + 1);
+                append_calls.set(append_calls.get() + 1);
                 Ok(proof.clone())
             })
             .unwrap();
         let JournalPageProjectionOutcome::CommittedPending(pending) = outcome else {
             panic!("synthetic append-before-publication cut was not retained")
         };
-        assert_eq!(calls.get(), 1);
+        assert_eq!(append_calls.get(), 1);
         assert_eq!(pending.append_proof(), &proof);
         assert_eq!(pending.target(), fixture.target.as_bytes());
         assert_eq!(fs::read(&fixture.path).unwrap(), fixture.base.as_bytes());
@@ -30275,6 +30281,7 @@ mod tests {
             target: fixture.target.clone(),
             revision: content_rev(&fixture.target),
             proof,
+            append_calls,
         };
         fixture.close_for_restart();
         record
@@ -30877,39 +30884,92 @@ mod tests {
         assert_eq!(fs::read(&fixture.path).unwrap(), base.as_bytes());
     }
 
+    #[cfg(any(unix, windows))]
     #[test]
     fn journal_projection_source_keeps_append_and_retry_authority_structural() {
-        let source = include_str!("model.rs");
-        let entry = source
-            .split("pub(crate) fn commit_existing_page_with_journal")
-            .nth(1)
-            .unwrap()
-            .split("pub(crate) fn retry_committed_journal_page_projection")
-            .next()
+        let fixture = JournalProjectionFixture::new(
+            "journal-projection-append-authority-retry",
+            "pages/Authority.md",
+            "- base\n",
+            "target",
+        );
+        prime_journal_projection_restart_graph(&fixture.graph);
+        JOURNAL_PROJECTION_BEFORE_PUBLISH.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|| {
+                Err(injected_journal_projection_cut(
+                    "after append before publication",
+                ))
+            }));
+        });
+        let append_calls = Cell::new(0_usize);
+        let graph_work_before = crate::fast_commit::graph_wide_commit_work();
+        let forbidden_before = crate::fast_commit::forbidden_commit_work();
+        let outcome = fixture
+            .commit(|| {
+                append_calls.set(append_calls.get() + 1);
+                Ok("opaque-retry-proof")
+            })
             .unwrap();
-        assert!(entry.contains("verified.append(append)?.publish()"));
-        assert!(!entry.contains("graph_text_inventory("));
-        assert!(!entry.contains("save_page("));
-        let retry = source
-            .split("pub(crate) fn retry_committed_journal_page_projection")
-            .nth(1)
-            .unwrap()
-            .split("pub(crate) fn recover_committed_journal_page_projection")
-            .next()
-            .unwrap();
-        assert!(!retry.contains("FnOnce"));
-        assert!(!retry.contains("append("));
-        let restart = source
-            .split("pub(crate) fn recover_committed_journal_page_projection")
-            .nth(1)
-            .unwrap()
-            .split("fn verify_existing_journal_page_projection")
-            .next()
-            .unwrap();
-        assert!(!restart.contains("FnOnce"));
-        assert!(!restart.contains("append("));
-        assert!(!restart.contains("graph_text_inventory("));
-        assert!(!restart.contains("save_page("));
+        let JournalPageProjectionOutcome::CommittedPending(pending) = outcome else {
+            panic!("append-before-publication cut was not retained for retry")
+        };
+        assert_eq!(append_calls.get(), 1);
+        let retried = fixture
+            .graph
+            .retry_committed_journal_page_projection(pending);
+        let JournalPageProjectionOutcome::Durable(durable) = retried else {
+            panic!("retry did not publish the authenticated record")
+        };
+        assert_eq!(
+            append_calls.get(),
+            1,
+            "retry appended a second journal record"
+        );
+        assert_eq!(durable.append_proof(), &"opaque-retry-proof");
+        assert_eq!(fs::read(&fixture.path).unwrap(), fixture.target.as_bytes());
+        assert_eq!(
+            crate::fast_commit::graph_wide_commit_work().since(graph_work_before),
+            crate::fast_commit::GraphWideCommitWork::default()
+        );
+        assert!(crate::fast_commit::forbidden_commit_work()
+            .since(forbidden_before)
+            .is_none());
+
+        let record = journal_projection_restart_record(
+            "journal-projection-append-authority-restart",
+            "pages/Restart Authority.md",
+            "- base\n",
+            "target",
+        );
+        let graph = Graph::open(&record.root);
+        prime_journal_projection_restart_graph(&graph);
+        let graph_work_before = crate::fast_commit::graph_wide_commit_work();
+        let forbidden_before = crate::fast_commit::forbidden_commit_work();
+        let outcome = graph.recover_committed_journal_page_projection(
+            record.proof.clone(),
+            &record.relative_path,
+            &record.base_revision,
+            record.base.as_bytes(),
+            record.target.as_bytes(),
+            &record.revision,
+        );
+        let JournalPageProjectionOutcome::Durable(durable) = outcome else {
+            panic!("restart did not publish the authenticated record")
+        };
+        assert_eq!(
+            record.append_calls.get(),
+            1,
+            "restart appended a second journal record"
+        );
+        assert_eq!(durable.append_proof(), &record.proof);
+        assert_eq!(fs::read(&record.path).unwrap(), record.target.as_bytes());
+        assert_eq!(
+            crate::fast_commit::graph_wide_commit_work().since(graph_work_before),
+            crate::fast_commit::GraphWideCommitWork::default()
+        );
+        assert!(crate::fast_commit::forbidden_commit_work()
+            .since(forbidden_before)
+            .is_none());
     }
 
     #[test]
@@ -34139,7 +34199,19 @@ mod tests {
 
         let before_warm = crate::fast_commit::graph_wide_commit_work();
         guarded_test_resave(&graph_b, &mut page_b, "b warm one").unwrap();
+        let after_warm_one = graph_b.guarded_graph_text_identity_epochs();
+        assert_eq!(after_warm_one.0, Some(after_warm_one.1));
+        assert!(
+            after_warm_one.1 > epochs.1,
+            "an ordinary save must publish its exact resource-identity transition"
+        );
         guarded_test_resave(&graph_b, &mut page_b, "b warm two").unwrap();
+        let after_warm_two = graph_b.guarded_graph_text_identity_epochs();
+        assert_eq!(after_warm_two.0, Some(after_warm_two.1));
+        assert!(
+            after_warm_two.1 > after_warm_one.1,
+            "each ordinary save must advance the shared resource epoch once"
+        );
         assert_eq!(
             crate::fast_commit::graph_wide_commit_work().since(before_warm),
             crate::fast_commit::GraphWideCommitWork::default()
