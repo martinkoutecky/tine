@@ -9189,12 +9189,14 @@ mod tests {
         );
         let page_id = fixture.intents[0].page_id();
         let path = ManagedPath::parse("pages/accepted.md").unwrap();
-        fixture.engine.replace_current_path_catalog_row_for_test(
-            page_id,
-            path,
-            ManagedTextKind::Journal,
-            ContentDigest::of(b"authenticated but semantically wrong name"),
-        );
+        fixture
+            .engine
+            .replace_current_path_catalog_row_with_name_for_test(
+                page_id,
+                path,
+                ManagedTextKind::Journal,
+                LogicalPageName::parse("authenticated but semantically wrong name").unwrap(),
+            );
         fixture.engine.reconstruct_run_local_state().unwrap();
         fs::write(
             fixture.graph_root.join("pages/accepted.md"),
@@ -10458,6 +10460,27 @@ mod tests {
             .unwrap_or(0)
     }
 
+    fn abandoned_packed_patricia_object(path: &Path) -> Option<PathBuf> {
+        std::fs::read_dir(path)
+            .ok()?
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let entry_type = entry.file_type().ok()?;
+                let path = entry.path();
+                if entry_type.is_dir() {
+                    abandoned_packed_patricia_object(&path)
+                } else if entry_type.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension == "patricia-pack-v1")
+                {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+    }
+
     #[test]
     #[ignore = "calibrated bootstrap-authoring trace"]
     fn inactive_streaming_bootstrap_authoring_trace_calibrated() {
@@ -10810,23 +10833,19 @@ mod tests {
 
         super::super::object_store::fail_next_detached_bootstrap_batch_finish();
         assert!(prepare_streaming_bootstrap_attempt(&root, "interrupted", workspace).is_err());
-        let nodes = root.path().join("archive/portable-path-index-v1");
-        let node = fs::read_dir(&nodes)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "patricia-node")
-            })
-            .expect("abandoned detached authoring left a Patricia node");
-        fs::write(&node, b"conflicting bytes").unwrap();
+        let abandoned = abandoned_packed_patricia_object(&root.path().join("archive"))
+            .expect("abandoned detached authoring left a packed Patricia object");
+        let mut conflicting_bytes = fs::read(&abandoned).unwrap();
+        assert!(!conflicting_bytes.is_empty());
+        conflicting_bytes[0] ^= 0x01;
+        fs::write(&abandoned, &conflicting_bytes).unwrap();
 
         let retry = prepare_streaming_bootstrap_attempt(&root, "retry", workspace);
         assert!(
             retry.is_err(),
             "a conflicting content-addressed immutable name must fail closed"
         );
-        assert_eq!(fs::read(node).unwrap(), b"conflicting bytes");
+        assert_eq!(fs::read(abandoned).unwrap(), conflicting_bytes);
     }
 
     #[test]

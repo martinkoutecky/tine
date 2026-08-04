@@ -9254,7 +9254,7 @@ impl ShardedHotEngine {
     }
 
     #[cfg(test)]
-    fn replace_current_path_catalog_row_with_name_for_test(
+    pub(crate) fn replace_current_path_catalog_row_with_name_for_test(
         &mut self,
         page_id: PageId,
         path: ManagedPath,
