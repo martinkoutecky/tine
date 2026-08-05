@@ -297,9 +297,10 @@ use super::enrollment::{
     VerifiedLocalCompositionError, VerifiedLocalEvidence, VerifiedLocalProofSet,
 };
 use super::hot_engine::{
+    replay_promoted_bootstrap_into_ephemeral_predecessor,
     replay_promoted_bootstrap_validating_history, EngineError, EngineOpenRetention,
-    LocalAuthorGeneration, PackedPatriciaMaintenanceReport, ProjectionStorageBinding,
-    RuntimeResumeObservation, ShardedHotEngine,
+    EphemeralBootstrapPredecessor, LocalAuthorGeneration, PackedPatriciaMaintenanceReport,
+    ProjectionStorageBinding, RuntimeResumeObservation, ShardedHotEngine,
 };
 use super::import::{
     InactiveBootstrapAcceptedAuthority, RetainedBootstrapPromotionCandidate,
@@ -390,6 +391,7 @@ pub(crate) struct PromotedRuntimeOpenInstrumentation {
     pub(crate) bootstrap_runtime_authority: Duration,
     pub(crate) resume_candidate: Duration,
     pub(crate) reconstructed_bootstrap_resume: bool,
+    pub(crate) reconstructed_ephemeral_bootstrap: bool,
     pub(crate) engine_open: Duration,
     pub(crate) sqlite_open: Duration,
     pub(crate) tail_construction: Duration,
@@ -431,6 +433,7 @@ fn record_promoted_runtime_mint(
     record.bootstrap_runtime_authority = timing.bootstrap_runtime_authority;
     record.resume_candidate = timing.resume_candidate;
     record.reconstructed_bootstrap_resume = timing.reconstructed_bootstrap_resume;
+    record.reconstructed_ephemeral_bootstrap = timing.reconstructed_ephemeral_bootstrap;
     record.engine_open = timing.engine_open;
     record.sqlite_open = timing.sqlite_open;
     record.tail_construction = timing.tail_construction;
@@ -2197,8 +2200,10 @@ pub(crate) enum ExternalImportAdmission {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeResumeOpenStatus {
     /// The pre-mint retention decision, taken before any run was created or
-    /// adopted. `Ephemeral` means this engine runs on a disposable run and
-    /// replayed in full, and that no new retained run was added.
+    /// adopted. `Ephemeral` means this engine runs on a disposable run and no
+    /// new retained run was added. It may still consume an authenticated,
+    /// one-process ephemeral bootstrap predecessor; `replay_base_generation`
+    /// in `observation` distinguishes that tail replay from a full replay.
     plan: EngineScratchRetentionPlan,
     /// `None` means a published candidate was offered to the engine. `Some`
     /// records why the accelerator was not even offered.
@@ -5158,6 +5163,7 @@ fn mint_promoted_runtime<W: PromotedWorkspaceAuthority>(
         }
         (None, _) => None,
     };
+    let mut ephemeral_predecessor: Option<Box<EphemeralBootstrapPredecessor>> = None;
     // A crash can leave no adoptable run-local resume point even though the
     // immutable bootstrap publication and its sealed history are intact. Build
     // that bootstrap once in the detached authoring engine, then migrate the
@@ -5220,15 +5226,75 @@ fn mint_promoted_runtime<W: PromotedWorkspaceAuthority>(
             }
         }
     }
-    let retention = match (retention_plan.clone(), migrated) {
-        (_, Some((retained, resume))) => EngineOpenRetention::MigratedBootstrap {
+    // The retention plan may deny creating another retained run while the
+    // immutable bootstrap and history remain fully valid. In that case full
+    // replay is still correct but need not replay the same multipart bootstrap
+    // twice: reconstruct it once directly into the exact archive-local
+    // ephemeral scratch this open will own, then revalidate that live scratch
+    // through the enrolled predecessor restore before replaying only its tail.
+    // This capability is process-local and cannot produce a resume point.
+    if snapshot.is_none()
+        && migrated.is_none()
+        && matches!(retention_plan, EngineScratchRetentionPlan::Ephemeral { .. })
+    {
+        let reconstructed = (|| {
+            let (history_store_capability, history_store) =
+                open_retained_history_control(&archive, &state)
+                    .map_err(|error| EngineError::Archive(error.to_string()))?;
+            replay_promoted_bootstrap_into_ephemeral_predecessor(
+                &history_store_capability,
+                &bootstrap_runtime_authority.publication,
+                state.workspace_id,
+                state.lineage_digest,
+                state.catalog_document_id,
+                promoted_storage_binding(&state),
+                &history_store,
+                state.anchor_history_index_root,
+                state.bootstrap,
+                EngineHistoryAuthority {
+                    generation: state.anchor_history_generation,
+                    index_root: state.anchor_history_index_root,
+                },
+            )
+        })();
+        match reconstructed {
+            Ok(predecessor) => {
+                ephemeral_predecessor = Some(predecessor);
+                #[cfg(test)]
+                {
+                    timing.reconstructed_ephemeral_bootstrap = true;
+                }
+            }
+            Err(error) => {
+                unavailable = Some(ResumeAcceleratorUnavailable::Unavailable(format!(
+                    "ephemeral bootstrap recovery refused: {error}"
+                )));
+            }
+        }
+    }
+    let retention = match (retention_plan.clone(), migrated, ephemeral_predecessor) {
+        (_, Some((retained, resume)), None) => EngineOpenRetention::MigratedBootstrap {
             retained: Box::new(retained),
             resume,
         },
-        (EngineScratchRetentionPlan::Ephemeral { .. }, None) => EngineOpenRetention::Ephemeral,
-        (EngineScratchRetentionPlan::Retained { .. }, None) => EngineOpenRetention::Retained {
-            resume: snapshot.as_deref(),
-        },
+        (EngineScratchRetentionPlan::Ephemeral { .. }, None, Some(predecessor)) => {
+            EngineOpenRetention::EphemeralBootstrap { predecessor }
+        }
+        (EngineScratchRetentionPlan::Ephemeral { .. }, None, None) => {
+            EngineOpenRetention::Ephemeral
+        }
+        (EngineScratchRetentionPlan::Retained { .. }, None, None) => {
+            EngineOpenRetention::Retained {
+                resume: snapshot.as_deref(),
+            }
+        }
+        (EngineScratchRetentionPlan::Retained { .. }, Some(_), Some(_))
+        | (EngineScratchRetentionPlan::Retained { .. }, None, Some(_)) => {
+            unreachable!("ephemeral predecessor is only constructed for ephemeral retention")
+        }
+        (EngineScratchRetentionPlan::Ephemeral { .. }, Some(_), Some(_)) => {
+            unreachable!("retained migration is only constructed for retained retention")
+        }
     };
     #[cfg(test)]
     let phase_started = Instant::now();

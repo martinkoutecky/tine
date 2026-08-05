@@ -2019,10 +2019,45 @@ pub(crate) struct DetachedBootstrapCandidate {
     // Even an empty engine is large in test/debug builds. Heap ownership keeps
     // nested direct replay and validation stack-bounded at maximum part width.
     engine: Box<ShardedHotEngine>,
-    scratch_root: DetachedBootstrapScratchRoot,
+    /// The ordinary detached-replay path owns a private temp root. The
+    /// ephemeral recovery path deliberately leaves this `None`: its scratch is
+    /// already an archive-local disposable run whose ownership transfers into
+    /// the enrolled engine rather than being copied into a retained run.
+    scratch_root: Option<DetachedBootstrapScratchRoot>,
     part_count: u32,
     last_part: Option<BootstrapPartId>,
     index_durability: DetachedBootstrapIndexDurability,
+}
+
+/// A one-process bootstrap checkpoint reconstructed directly into an
+/// archive-local **ephemeral** scratch run.
+///
+/// This is intentionally neither `Clone` nor serializable. It carries a live
+/// scratch capability and run-local roots only long enough to hand them to the
+/// same enrolled engine; it never names a retained run, cannot be published as
+/// a resume point, and cannot survive this process. The enrolled restore still
+/// re-authenticates every durable-derived root and the run-local roots before
+/// it skips the already reconstructed bootstrap prefix.
+pub(crate) struct EphemeralBootstrapPredecessor {
+    scratch: Arc<ScratchStore>,
+    block_claim_index: Arc<BlockClaimIndexStore>,
+    // Keep the graph-shaped roots off the caller's recovery frame from the
+    // instant this capability is sealed. This predecessor crosses the
+    // promoted-runtime mint/open seam, whose stack budget must stay constant
+    // for both retained and ephemeral recovery paths.
+    snapshot: Box<RuntimeResumeSnapshot>,
+}
+
+impl EphemeralBootstrapPredecessor {
+    fn into_parts(
+        self,
+    ) -> (
+        Arc<ScratchStore>,
+        Arc<BlockClaimIndexStore>,
+        Box<RuntimeResumeSnapshot>,
+    ) {
+        (self.scratch, self.block_claim_index, self.snapshot)
+    }
 }
 
 enum DetachedBootstrapIndexDurability {
@@ -2309,6 +2344,111 @@ impl DetachedBootstrapCandidate {
         });
         Ok((retained, snapshot))
     }
+
+    /// Seal an already reconstructed bootstrap as a one-process ephemeral
+    /// predecessor. Unlike `migrate_for_same_process_promotion`, this creates
+    /// no retained directory and copies no scratch bytes: the candidate was
+    /// authored directly into the archive-local disposable scratch that the
+    /// enrolled engine will consume.
+    pub(crate) fn seal_ephemeral_bootstrap_predecessor(
+        self,
+        history: super::object_store::EngineHistoryAuthority,
+        latest_batch_id: BatchId,
+        durable_binding: &super::object_store::EngineHistoryBinding,
+        expected_lineage: LineageDigest,
+        expected_catalog_document_id: DocumentId,
+    ) -> Result<Box<EphemeralBootstrapPredecessor>, EngineError> {
+        if self.scratch_root.is_some() {
+            return Err(EngineError::Archive(
+                "ephemeral bootstrap predecessor must use archive-local scratch".into(),
+            ));
+        }
+        let engine = self.engine;
+        if self.part_count == 0
+            || history.generation != u64::from(self.part_count)
+            || engine.lineage_digest != expected_lineage
+            || engine.catalog_document_id != expected_catalog_document_id
+            || !engine
+                .durable_history_binding()
+                .same_replay_authority(durable_binding)
+            || engine.history_failure.is_some()
+            || engine.is_blocked()
+            || !engine.portable_path_conflicts.is_empty()
+            || !engine.page_name_conflicts.is_empty()
+            || engine.fatal_evidence.is_some()
+            || engine.has_pending_author_work()
+            || !scratch_roots_are_stage_quiescent(&engine.scratch_roots)
+            || !engine.current_path_catalog.available
+            || engine.current_path_catalog.accepted_frontier_root != engine.accepted_frontier_root
+            || engine.next_acceptance_sequence != engine.accepted_frontier_root.acceptance_sequence
+        {
+            return Err(EngineError::Archive(
+                "ephemeral bootstrap candidate is not an exact quiescent durable predecessor"
+                    .into(),
+            ));
+        }
+        engine
+            .reference_catalog
+            .ensure_ready()
+            .map_err(|error| EngineError::ReferenceCatalog(error.to_string()))?;
+        let (terminal_batch_id, terminal_evidence) = engine
+            .accepted_batch_entry_at(u64::from(self.part_count))?
+            .ok_or_else(|| {
+                EngineError::Archive(
+                    "ephemeral bootstrap candidate has no terminal accepted entry".into(),
+                )
+            })?;
+        let terminal_evidence = terminal_evidence.ok_or_else(|| {
+            EngineError::Archive(
+                "ephemeral bootstrap candidate terminal entry has no accepted evidence".into(),
+            )
+        })?;
+        if terminal_batch_id != latest_batch_id
+            || terminal_evidence.batch_id != latest_batch_id
+            || terminal_evidence.acceptance_sequence != history.generation
+            || terminal_evidence.post_frontier_root != engine.accepted_frontier_root
+        {
+            return Err(EngineError::Archive(
+                "ephemeral bootstrap terminal frontier is not the durable history head".into(),
+            ));
+        }
+        let scratch = Arc::clone(engine.scratch.as_ref().ok_or_else(|| {
+            EngineError::Archive("ephemeral bootstrap candidate has no scratch store".into())
+        })?);
+        if scratch.workspace_id() != engine.workspace_id {
+            return Err(EngineError::Archive(
+                "ephemeral bootstrap scratch belongs to another workspace".into(),
+            ));
+        }
+        let block_claim_index = Arc::clone(engine.block_claim_index.as_ref().ok_or_else(|| {
+            EngineError::Archive("ephemeral bootstrap candidate has no block-claim index".into())
+        })?);
+        let snapshot = Box::new(RuntimeResumeSnapshot {
+            history_generation: history.generation,
+            history_index_root: history.index_root,
+            history_latest_batch_id: latest_batch_id,
+            scratch_run_id: scratch.run_id(),
+            scratch_binding_digest: scratch
+                .binding_digest()
+                .map_err(|error| EngineError::Archive(error.to_string()))?,
+            scratch_roots: engine.scratch_roots.clone(),
+            block_claim_root: engine.block_claim_root,
+            accepted_frontier_root: engine.accepted_frontier_root.clone(),
+            next_acceptance_sequence: engine.next_acceptance_sequence,
+            current_path_catalog_root: engine.current_path_catalog.root.clone(),
+            current_path_catalog_available: engine.current_path_catalog.available,
+            current_path_catalog_frontier: engine
+                .current_path_catalog
+                .accepted_frontier_root
+                .clone(),
+            catalog_checkpoint_binding: engine.catalog_checkpoint_binding(),
+        });
+        Ok(Box::new(EphemeralBootstrapPredecessor {
+            scratch,
+            block_claim_index,
+            snapshot,
+        }))
+    }
 }
 
 /// Inactive, single-use multipart bootstrap author. Every candidate mutation
@@ -2385,6 +2525,7 @@ impl DetachedBootstrapAuthoringSession {
             reference_catalog_policy,
             indexes,
             true,
+            None,
         )
     }
 
@@ -2402,6 +2543,31 @@ impl DetachedBootstrapAuthoringSession {
             reference_catalog_policy,
             indexes,
             false,
+            None,
+        )
+    }
+
+    /// Replay into an already-created archive-local ephemeral scratch run.
+    /// The caller owns the only capability that can create this run, and the
+    /// finished candidate transfers the same live scratch into the enrolled
+    /// engine; there is intentionally no clone/migration step.
+    fn new_replay_in_ephemeral_scratch(
+        workspace_id: WorkspaceId,
+        lineage_digest: LineageDigest,
+        catalog_document_id: DocumentId,
+        reference_catalog_policy: ReferenceCatalogPolicyV1,
+        indexes: &BootstrapAuthoringCapability,
+        scratch: Arc<ScratchStore>,
+        block_claim_index: Arc<BlockClaimIndexStore>,
+    ) -> Result<Self, EngineError> {
+        Self::new_with_catalog_mode(
+            workspace_id,
+            lineage_digest,
+            catalog_document_id,
+            reference_catalog_policy,
+            indexes,
+            false,
+            Some((scratch, block_claim_index)),
         )
     }
 
@@ -2412,6 +2578,7 @@ impl DetachedBootstrapAuthoringSession {
         reference_catalog_policy: ReferenceCatalogPolicyV1,
         indexes: &BootstrapAuthoringCapability,
         private_construction: bool,
+        ephemeral_scratch: Option<(Arc<ScratchStore>, Arc<BlockClaimIndexStore>)>,
     ) -> Result<Self, EngineError> {
         if indexes.workspace_id() != workspace_id {
             return Err(EngineError::Archive(
@@ -2444,11 +2611,29 @@ impl DetachedBootstrapAuthoringSession {
                 indexes.page_name_index(),
             )
         };
-        let scratch_root = DetachedBootstrapScratchRoot::create()?;
-        let scratch = Arc::new(
-            ScratchStore::create_retained(&scratch_root.root, workspace_id)
-                .map_err(|error| EngineError::Archive(error.to_string()))?,
-        );
+        let (scratch_root, scratch, block_claim_index) = match ephemeral_scratch {
+            Some((scratch, block_claim_index)) => {
+                if scratch.workspace_id() != workspace_id {
+                    return Err(EngineError::Archive(
+                        "archive-local ephemeral bootstrap scratch belongs to another workspace"
+                            .into(),
+                    ));
+                }
+                (None, scratch, block_claim_index)
+            }
+            None => {
+                let scratch_root = DetachedBootstrapScratchRoot::create()?;
+                let scratch = Arc::new(
+                    ScratchStore::create_retained(&scratch_root.root, workspace_id)
+                        .map_err(|error| EngineError::Archive(error.to_string()))?,
+                );
+                let block_claim_index = Arc::new(
+                    BlockClaimIndexStore::for_scratch(&scratch)
+                        .map_err(|error| EngineError::Archive(error.to_string()))?,
+                );
+                (Some(scratch_root), scratch, block_claim_index)
+            }
+        };
         let mut candidate = Box::new(ShardedHotEngine::new(
             workspace_id,
             lineage_digest,
@@ -2459,10 +2644,7 @@ impl DetachedBootstrapAuthoringSession {
         // exactly like an enrolled engine's. The bounded in-memory fallback is
         // a no-store test map whose fixed capacity would cap an importable
         // graph at a few thousand blocks.
-        candidate.block_claim_index = Some(Arc::new(
-            BlockClaimIndexStore::for_scratch(&scratch)
-                .map_err(|error| EngineError::Archive(error.to_string()))?,
-        ));
+        candidate.block_claim_index = Some(block_claim_index);
         candidate.scratch = Some(scratch);
         // Every authenticated root an accepted bootstrap cold record binds is
         // built here, in the target archive's durable stores. The promoted
@@ -2484,7 +2666,7 @@ impl DetachedBootstrapAuthoringSession {
         }
         Ok(Self {
             candidate: Some(candidate),
-            scratch_root: Some(scratch_root),
+            scratch_root,
             continuity: None,
             next_ordinal: 0,
             last_part: None,
@@ -2689,9 +2871,7 @@ impl DetachedBootstrapAuthoringSession {
         }
         Ok(DetachedBootstrapCandidate {
             engine: candidate,
-            scratch_root: self
-                .scratch_root
-                .expect("live candidate owns its scratch root"),
+            scratch_root: self.scratch_root,
             part_count: self.next_ordinal,
             last_part: self.last_part,
             index_durability,
@@ -2771,6 +2951,7 @@ fn replay_direct_loaded_bootstrap_with<F>(
     store: &ObjectStore,
     publication: &super::object_store::ValidatedBootstrapPublicationV1,
     preparation: &DetachedBootstrapReplayIdentity,
+    ephemeral_scratch: Option<(Arc<ScratchStore>, Arc<BlockClaimIndexStore>)>,
     mut validate_part: F,
 ) -> Result<DetachedBootstrapCandidate, EngineError>
 where
@@ -2798,13 +2979,26 @@ where
     let indexes = store
         .bootstrap_authoring_capability()
         .map_err(|error| EngineError::Archive(error.to_string()))?;
-    let mut session = DetachedBootstrapAuthoringSession::new_replay(
-        preparation.workspace_id,
-        preparation.lineage_digest,
-        preparation.catalog_document_id,
-        preparation.reference_catalog_policy.clone(),
-        &indexes,
-    )?;
+    let mut session = match ephemeral_scratch {
+        Some((scratch, block_claim_index)) => {
+            DetachedBootstrapAuthoringSession::new_replay_in_ephemeral_scratch(
+                preparation.workspace_id,
+                preparation.lineage_digest,
+                preparation.catalog_document_id,
+                preparation.reference_catalog_policy.clone(),
+                &indexes,
+                scratch,
+                block_claim_index,
+            )?
+        }
+        None => DetachedBootstrapAuthoringSession::new_replay(
+            preparation.workspace_id,
+            preparation.lineage_digest,
+            preparation.catalog_document_id,
+            preparation.reference_catalog_policy.clone(),
+            &indexes,
+        )?,
+    };
     for (ordinal, descriptor) in aggregate.parts().iter().copied().enumerate() {
         let loaded = store
             .load_bootstrap_part(publication, ordinal)
@@ -2829,7 +3023,7 @@ pub(crate) fn replay_direct_loaded_bootstrap(
     publication: &super::object_store::ValidatedBootstrapPublicationV1,
     preparation: &DetachedBootstrapReplayIdentity,
 ) -> Result<DetachedBootstrapCandidate, EngineError> {
-    replay_direct_loaded_bootstrap_with(store, publication, preparation, |_, _| Ok(()))
+    replay_direct_loaded_bootstrap_with(store, publication, preparation, None, |_, _| Ok(()))
 }
 
 pub(crate) fn replay_direct_loaded_bootstrap_validating_history(
@@ -2851,6 +3045,7 @@ pub(crate) fn replay_direct_loaded_bootstrap_validating_history(
         store,
         publication,
         preparation,
+        None,
         |descriptor, material| {
             let found = history
                 .lookup(history_root, descriptor.batch_id())
@@ -2867,6 +3062,98 @@ pub(crate) fn replay_direct_loaded_bootstrap_validating_history(
         },
     )?;
     Ok((candidate, terminal_history_binding))
+}
+
+/// Reconstruct a promoted bootstrap directly into the enrolled archive's
+/// disposable scratch namespace and seal it for one immediate enrolled open.
+///
+/// This is deliberately separate from retained resume migration: a retention
+/// policy that selected `Ephemeral` has denied permission to mint another
+/// retained run. The returned capability therefore cannot be serialized,
+/// cloned, published, or revived after this process; it only lets the current
+/// open avoid replaying an already authenticated bootstrap prefix a second
+/// time.
+pub(crate) fn replay_promoted_bootstrap_into_ephemeral_predecessor(
+    store: &ObjectStore,
+    publication: &super::object_store::ValidatedBootstrapPublicationV1,
+    workspace_id: WorkspaceId,
+    lineage_digest: LineageDigest,
+    catalog_document_id: DocumentId,
+    storage: ProjectionStorageBinding,
+    history: &super::object_store::DurableEngineHistoryStore,
+    history_root: ContentDigest,
+    bootstrap: super::object_store::BootstrapAggregateHistoryBindingV1,
+    live_history: super::object_store::EngineHistoryAuthority,
+) -> Result<Box<EphemeralBootstrapPredecessor>, EngineError> {
+    let terminal = publication
+        .aggregate()
+        .parts()
+        .last()
+        .copied()
+        .ok_or_else(|| EngineError::Archive("promoted bootstrap has no terminal part".into()))?;
+    let bytes = history
+        .lookup(history_root, terminal.batch_id())
+        .map_err(|error| EngineError::Archive(error.to_string()))?
+        .ok_or_else(|| {
+            EngineError::Archive(
+                "promoted bootstrap terminal record is absent from durable history".into(),
+            )
+        })?;
+    let record = decode_history_record(terminal.batch_id(), &bytes)?;
+    if record.generation != u64::from(bootstrap.part_count())
+        || record.bootstrap != Some(bootstrap)
+        || !matches!(record.status, ArchiveStatus::Accepted { .. })
+    {
+        return Err(EngineError::Archive(
+            "promoted bootstrap terminal record does not bind the aggregate anchor".into(),
+        ));
+    }
+    let terminal_binding = history_record_binding(&record);
+    let replay_identity = DetachedBootstrapReplayIdentity::new(
+        workspace_id,
+        lineage_digest,
+        catalog_document_id,
+        record.reference_catalog_policy,
+        storage,
+        store
+            .canonical_archive_identity()
+            .map_err(|error| EngineError::Archive(error.to_string()))?,
+    );
+    let (scratch, block_claim_index) = store
+        .start_engine_scratch()
+        .map_err(|error| EngineError::Archive(error.to_string()))?;
+    let candidate = replay_direct_loaded_bootstrap_with(
+        store,
+        publication,
+        &replay_identity,
+        Some((scratch, Arc::new(block_claim_index))),
+        |descriptor, material| {
+            let found = history
+                .lookup(history_root, descriptor.batch_id())
+                .map_err(|error| EngineError::Archive(error.to_string()))?
+                .ok_or_else(|| {
+                    EngineError::Archive(
+                        "fresh history is missing an aggregate-bound cold record".into(),
+                    )
+                })?;
+            let replayed = validate_bootstrap_history_record_against_material(
+                descriptor, &found, bootstrap, material,
+            )?;
+            if replayed != terminal_binding && descriptor == terminal {
+                return Err(EngineError::Archive(
+                    "ephemeral bootstrap replay changed the terminal history binding".into(),
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    candidate.seal_ephemeral_bootstrap_predecessor(
+        live_history,
+        terminal.batch_id(),
+        &terminal_binding,
+        lineage_digest,
+        catalog_document_id,
+    )
 }
 
 /// Reconstruct a promoted bootstrap into one detached candidate, deriving the
@@ -5214,10 +5501,13 @@ pub struct EngineInstrumentation {
 /// touched by admission, authoring, acceptance, or projection, so the standing
 /// bounded-admission tables can assert it stays at its startup value.
 ///
-/// `replayed_generations` is the whole point: a full replay reports
-/// `live_history_generation`, an adopted restart reports only the durable tail.
-/// That difference is what makes "adoption actually happened" falsifiable
-/// instead of inferred from a successful startup.
+/// `replay_base_generation` names the outcome precisely: zero means a full
+/// immutable-history replay, while a nonzero authenticated predecessor means
+/// only its durable tail was replayed. `adopted` remains narrower: it is true
+/// only when that predecessor was a retained runtime-resume run, never for a
+/// one-process ephemeral bootstrap predecessor. This keeps recovery work
+/// falsifiable without conflating an unpublishable ephemeral accelerator with
+/// retained-run adoption.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RuntimeResumeObservation {
     /// The engine resumed from a retained run named by a resume snapshot.
@@ -5613,6 +5903,38 @@ pub(crate) enum EngineOpenRetention<'a> {
         retained: Box<super::object_store::RetainedEngineScratch>,
         resume: Box<RuntimeResumeSnapshot>,
     },
+    /// A bootstrap reconstructed into the exact archive-local ephemeral scratch
+    /// run this enrolled open will own. This is one-process-only recovery
+    /// acceleration, not runtime-resume adoption: it never mints a retained
+    /// run, publishes a point, or marks the resume observation adopted.
+    EphemeralBootstrap {
+        predecessor: Box<EphemeralBootstrapPredecessor>,
+    },
+}
+
+/// The scratch construction input for one enrolled engine. This is private so
+/// only the recovery entry point can consume an ephemeral predecessor.
+enum EngineScratchOpen {
+    Fresh,
+    Retained(super::object_store::RetainedEngineScratch),
+    ExistingEphemeral {
+        scratch: Arc<ScratchStore>,
+        block_claim_index: Arc<BlockClaimIndexStore>,
+    },
+}
+
+/// Run-local state that lets one recovery skip a revalidated prefix. The
+/// ephemeral form owns its snapshot and cannot leave this call; retained
+/// snapshots remain borrowed from their authenticated resume point.
+enum RecoveryPredecessor<'a> {
+    Retained(&'a RuntimeResumeSnapshot),
+    EphemeralBootstrap(Box<RuntimeResumeSnapshot>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PredecessorKind {
+    Retained,
+    EphemeralBootstrap,
 }
 
 /// What one resuming open actually did, including why it refused.
@@ -5649,6 +5971,15 @@ pub(crate) struct EnrolledProjectionOpenInstrumentation {
 thread_local! {
     static ENROLLED_PROJECTION_OPEN_INSTRUMENTATION:
         RefCell<Option<EnrolledProjectionOpenInstrumentation>> = const { RefCell::new(None) };
+    /// One bounded restore refusal used only to prove that an ephemeral
+    /// bootstrap predecessor falls back to a fresh ephemeral full replay.
+    /// This has no production representation or persistence surface.
+    static FAIL_NEXT_EPHEMERAL_BOOTSTRAP_PREDECESSOR_RESTORE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_ephemeral_bootstrap_predecessor_restore_for_test() {
+    FAIL_NEXT_EPHEMERAL_BOOTSTRAP_PREDECESSOR_RESTORE.set(true);
 }
 
 #[cfg(test)]
@@ -6532,21 +6863,24 @@ impl ShardedHotEngine {
         lineage_digest: LineageDigest,
         catalog_document_id: DocumentId,
     ) -> Self {
-        Self::with_archive_store_scratch(store, lineage_digest, catalog_document_id, None)
+        Self::with_archive_store_scratch(
+            store,
+            lineage_digest,
+            catalog_document_id,
+            EngineScratchOpen::Fresh,
+        )
     }
 
     /// The one construction that installs this engine's run-local scratch.
     ///
-    /// `retained` is `None` for every ordinary open, which mints a disposable
-    /// ephemeral run exactly as before. A `Some` value is a retained run the
-    /// caller already created or adopted through the archive's retained entry
-    /// points, and carrying it here is what lets a later quiescent snapshot
-    /// name the run without re-deriving retention from a marker read.
+    /// A fresh open mints a disposable run. Retained and already-created
+    /// ephemeral inputs are capabilities produced by their respective narrow
+    /// lifecycle paths; neither is reconstructed from a marker or pathname.
     fn with_archive_store_scratch(
         store: ObjectStore,
         lineage_digest: LineageDigest,
         catalog_document_id: DocumentId,
-        retained: Option<super::object_store::RetainedEngineScratch>,
+        scratch_open: EngineScratchOpen,
     ) -> Self {
         let workspace_id = store.workspace_id();
         let mut engine = Self::new(workspace_id, lineage_digest, catalog_document_id);
@@ -6570,14 +6904,27 @@ impl ShardedHotEngine {
             }
             Err(error) => engine.history_failure = Some(EngineError::Archive(error.to_string())),
         }
-        match retained {
-            Some(retained) => {
+        match scratch_open {
+            EngineScratchOpen::Retained(retained) => {
                 let (scratch, index, identity) = retained.into_parts();
                 engine.scratch = Some(scratch);
                 engine.block_claim_index = Some(Arc::new(index));
                 engine.retained_scratch = Some(identity);
             }
-            None => match store.start_engine_scratch() {
+            EngineScratchOpen::ExistingEphemeral {
+                scratch,
+                block_claim_index,
+            } => {
+                if scratch.workspace_id() != workspace_id {
+                    engine.history_failure = Some(EngineError::Archive(
+                        "ephemeral bootstrap scratch belongs to another workspace".into(),
+                    ));
+                } else {
+                    engine.scratch = Some(scratch);
+                    engine.block_claim_index = Some(block_claim_index);
+                }
+            }
+            EngineScratchOpen::Fresh => match store.start_engine_scratch() {
                 Ok((scratch, index)) => {
                     engine.scratch = Some(scratch);
                     engine.block_claim_index = Some(Arc::new(index));
@@ -6735,7 +7082,7 @@ impl ShardedHotEngine {
             graph,
             receipts,
             None,
-            None,
+            EngineScratchOpen::Fresh,
             false,
         )
     }
@@ -6761,7 +7108,7 @@ impl ShardedHotEngine {
             graph,
             receipts,
             Some(promotion),
-            None,
+            EngineScratchOpen::Fresh,
             false,
         )
     }
@@ -6868,22 +7215,38 @@ impl ShardedHotEngine {
         // capability, before anything is moved into an engine. A refusal here
         // is a plain fallback, so the fresh run is minted from the same
         // capability and the candidate's bytes are never opened for writing.
-        let (retained, migrated_resume, adopted, mut refused_run_id, mut refusal) = match retention
-        {
-            EngineOpenRetention::Ephemeral => (None, None, None, None, None),
+        let (
+            scratch_open,
+            migrated_resume,
+            adopted,
+            ephemeral_predecessor,
+            mut refused_run_id,
+            mut refusal,
+        ) = match retention {
+            EngineOpenRetention::Ephemeral => {
+                (EngineScratchOpen::Fresh, None, None, None, None, None)
+            }
             EngineOpenRetention::Retained {
                 resume: Some(snapshot),
             } => match store.adopt_retained_engine_scratch(
                 snapshot.scratch_run_id,
                 snapshot.scratch_binding_digest,
             ) {
-                Ok(retained) => (Some(retained), None, Some(snapshot), None, None),
+                Ok(retained) => (
+                    EngineScratchOpen::Retained(retained),
+                    None,
+                    Some(snapshot),
+                    None,
+                    None,
+                    None,
+                ),
                 Err(error) => (
-                    Some(
+                    EngineScratchOpen::Retained(
                         store
                             .create_retained_engine_scratch()
                             .map_err(|error| EngineError::Archive(error.to_string()))?,
                     ),
+                    None,
                     None,
                     None,
                     Some(snapshot.scratch_run_id),
@@ -6891,7 +7254,7 @@ impl ShardedHotEngine {
                 ),
             },
             EngineOpenRetention::Retained { resume: None } => (
-                Some(
+                EngineScratchOpen::Retained(
                     store
                         .create_retained_engine_scratch()
                         .map_err(|error| EngineError::Archive(error.to_string()))?,
@@ -6900,12 +7263,38 @@ impl ShardedHotEngine {
                 None,
                 None,
                 None,
+                None,
             ),
-            EngineOpenRetention::MigratedBootstrap { retained, resume } => {
-                (Some(*retained), Some(resume), None, None, None)
+            EngineOpenRetention::MigratedBootstrap { retained, resume } => (
+                EngineScratchOpen::Retained(*retained),
+                Some(resume),
+                None,
+                None,
+                None,
+                None,
+            ),
+            EngineOpenRetention::EphemeralBootstrap { predecessor } => {
+                let (scratch, block_claim_index, snapshot) = predecessor.into_parts();
+                (
+                    EngineScratchOpen::ExistingEphemeral {
+                        scratch,
+                        block_claim_index,
+                    },
+                    None,
+                    None,
+                    Some(snapshot),
+                    None,
+                    None,
+                )
             }
         };
-        let adopted = migrated_resume.as_deref().or(adopted);
+        let predecessor = match ephemeral_predecessor {
+            Some(snapshot) => Some(RecoveryPredecessor::EphemeralBootstrap(snapshot)),
+            None => migrated_resume
+                .as_deref()
+                .map(RecoveryPredecessor::Retained)
+                .or(adopted.map(RecoveryPredecessor::Retained)),
+        };
         #[cfg(test)]
         let phase_started = Instant::now();
         let mut engine = Self::with_enrolled_projection_promoted(
@@ -6915,8 +7304,8 @@ impl ShardedHotEngine {
             graph,
             receipts,
             promotion,
-            retained,
-            adopted.is_some(),
+            scratch_open,
+            predecessor.is_some(),
         );
         #[cfg(test)]
         update_enrolled_projection_open_instrumentation(|timing| {
@@ -6947,8 +7336,8 @@ impl ShardedHotEngine {
                 engine.history_failure = Some(error);
             }
         }
-        let (outcomes, rotated) =
-            engine.complete_enrolled_projection_recovery_resuming(committed_manifests, adopted)?;
+        let (outcomes, rotated) = engine
+            .complete_enrolled_projection_recovery_resuming(committed_manifests, predecessor)?;
         #[cfg(test)]
         update_enrolled_projection_open_instrumentation(|timing| {
             timing.total = open_started.elapsed();
@@ -6976,7 +7365,7 @@ impl ShardedHotEngine {
         graph: &Graph,
         receipts: &ProjectionReceiptStore,
         promotion: Option<&super::object_store::PromotedRuntimeStateV1>,
-        retained: Option<super::object_store::RetainedEngineScratch>,
+        scratch_open: EngineScratchOpen,
         retain_current_authority: bool,
     ) -> Self {
         let workspace_id = store.workspace_id();
@@ -7023,7 +7412,7 @@ impl ShardedHotEngine {
                 open,
                 lineage_digest,
                 catalog_document_id,
-                retained,
+                scratch_open,
                 retain_current_authority,
             ),
             Err((store, error)) => Self::failed_archive_open(
@@ -7072,7 +7461,7 @@ impl ShardedHotEngine {
             open,
             lineage_digest,
             catalog_document_id,
-            None,
+            EngineScratchOpen::Fresh,
             false,
         )
     }
@@ -7081,7 +7470,7 @@ impl ShardedHotEngine {
         open: super::object_store::EnrolledProjectionOpen,
         lineage_digest: LineageDigest,
         catalog_document_id: DocumentId,
-        retained: Option<super::object_store::RetainedEngineScratch>,
+        scratch_open: EngineScratchOpen,
         retain_current_authority: bool,
     ) -> Self {
         let binding = open.binding();
@@ -7115,8 +7504,12 @@ impl ShardedHotEngine {
                 EngineError::ProjectionWork(error.to_string()),
             );
         }
-        let mut engine =
-            Self::with_archive_store_scratch(store, lineage_digest, catalog_document_id, retained);
+        let mut engine = Self::with_archive_store_scratch(
+            store,
+            lineage_digest,
+            catalog_document_id,
+            scratch_open,
+        );
         engine.durable_authority_mode = DurableAuthorityMode::EnrolledRequired;
         // An enrolled runtime may use the persistent page-name index only
         // after the authenticated history root and its latest record prove the
@@ -7357,8 +7750,9 @@ impl ShardedHotEngine {
             .0)
     }
 
-    /// Complete startup recovery, optionally resuming from an adopted retained
-    /// run instead of replaying immutable history from nothing.
+    /// Complete startup recovery, optionally restoring a revalidated retained
+    /// or one-process ephemeral bootstrap predecessor instead of replaying its
+    /// already authenticated prefix from nothing.
     ///
     /// `resume` is `None` on every path that existed before runtime-resume
     /// adoption. On those paths `replay_base_generation` stays zero, no batch is
@@ -7372,7 +7766,7 @@ impl ShardedHotEngine {
     fn complete_enrolled_projection_recovery_resuming(
         &mut self,
         committed_manifests: &[OperationBatch],
-        resume: Option<&RuntimeResumeSnapshot>,
+        predecessor: Option<RecoveryPredecessor<'_>>,
     ) -> Result<(Vec<StageOutcome>, Option<(Uuid, EngineError)>), EngineError> {
         if let Some(error) = &self.history_failure {
             return Err(error.clone());
@@ -7388,18 +7782,33 @@ impl ShardedHotEngine {
 
         self.prepare_operational_recovery_replay()?;
         let mut rotation = None;
-        if let Some(snapshot) = resume {
+        if let Some(predecessor) = predecessor {
+            let (snapshot, kind) = match &predecessor {
+                RecoveryPredecessor::Retained(snapshot) => (*snapshot, PredecessorKind::Retained),
+                RecoveryPredecessor::EphemeralBootstrap(snapshot) => {
+                    (snapshot.as_ref(), PredecessorKind::EphemeralBootstrap)
+                }
+            };
             #[cfg(test)]
             let phase_started = Instant::now();
-            if let Err(refusal) = self.restore_adopted_predecessor_state(snapshot) {
+            if let Err(refusal) = self.restore_predecessor_state(snapshot, kind) {
                 // The restore is all-or-nothing: it validates everything before
                 // it installs anything, so the engine is still exactly at the
                 // baseline `prepare_operational_recovery_replay` produced. All
-                // that is left is to stop writing into the run we no longer
-                // trust — its bytes stay untouched — and replay everything.
+                // that is left is to stop using the candidate scratch and replay
+                // everything. A retained refusal preserves its old run; an
+                // ephemeral predecessor is disposable and may be replaced with
+                // another ephemeral run, never a retained one.
                 self.validate_retained_bootstrap_publication()?;
-                let refused = self.rotate_to_fresh_retained_scratch()?;
-                rotation = Some((refused, refusal));
+                match kind {
+                    PredecessorKind::Retained => {
+                        let refused = self.rotate_to_fresh_retained_scratch()?;
+                        rotation = Some((refused, refusal));
+                    }
+                    PredecessorKind::EphemeralBootstrap => {
+                        self.rotate_to_fresh_ephemeral_scratch()?;
+                    }
+                }
             }
             #[cfg(test)]
             update_enrolled_projection_open_instrumentation(|timing| {
@@ -7584,6 +7993,29 @@ impl ShardedHotEngine {
         self.retained_scratch = Some(identity);
         self.resume_observation.refused = true;
         Ok(refused)
+    }
+
+    /// Discard an untrusted one-process ephemeral predecessor and rebuild the
+    /// ordinary disposable scratch baseline. Unlike retained rotation this
+    /// cannot publish, preserve, or add a retained run; the original ephemeral
+    /// run is removed with its last owner.
+    fn rotate_to_fresh_ephemeral_scratch(&mut self) -> Result<(), EngineError> {
+        if self.retained_scratch.is_some() {
+            return Err(EngineError::Archive(
+                "ephemeral bootstrap fallback cannot rotate a retained run".into(),
+            ));
+        }
+        let store = self
+            .archive_store
+            .as_ref()
+            .ok_or_else(|| EngineError::Archive("engine has no immutable archive store".into()))?;
+        let (scratch, claim_index) = store
+            .start_engine_scratch()
+            .map_err(|error| EngineError::Archive(error.to_string()))?;
+        self.forget_retained_accepted_documents();
+        self.scratch = Some(scratch);
+        self.block_claim_index = Some(Arc::new(claim_index));
+        Ok(())
     }
 
     /// Retain this promoted lineage's immutable bootstrap publication and the
@@ -8003,24 +8435,59 @@ impl ShardedHotEngine {
     /// `accepted_sequence`, every `ephemeral_*` map), so the catalog document is
     /// the whole gap between an adopted engine and the engine a full replay
     /// produces.
-    fn restore_adopted_predecessor_state(
+    fn restore_predecessor_state(
         &mut self,
         snapshot: &RuntimeResumeSnapshot,
+        kind: PredecessorKind,
     ) -> Result<(), EngineError> {
+        #[cfg(test)]
+        if matches!(kind, PredecessorKind::EphemeralBootstrap)
+            && FAIL_NEXT_EPHEMERAL_BOOTSTRAP_PREDECESSOR_RESTORE.replace(false)
+        {
+            return Err(EngineError::Archive(
+                "injected ephemeral bootstrap predecessor restore refusal".into(),
+            ));
+        }
         if !self.authenticated_history_replay || self.replay_base_generation != 0 {
             return Err(EngineError::Archive(
                 "runtime resume restore requires a fresh authenticated replay baseline".into(),
             ));
         }
-        let identity = self.retained_scratch.ok_or_else(|| {
-            EngineError::Archive("runtime resume restore requires a retained run".into())
-        })?;
-        if identity.run_id() != snapshot.scratch_run_id
-            || identity.binding_digest() != snapshot.scratch_binding_digest
-        {
-            return Err(EngineError::Archive(
-                "adopted retained run is not the run this resume snapshot names".into(),
-            ));
+        match kind {
+            PredecessorKind::Retained => {
+                let identity = self.retained_scratch.ok_or_else(|| {
+                    EngineError::Archive("runtime resume restore requires a retained run".into())
+                })?;
+                if identity.run_id() != snapshot.scratch_run_id
+                    || identity.binding_digest() != snapshot.scratch_binding_digest
+                {
+                    return Err(EngineError::Archive(
+                        "adopted retained run is not the run this resume snapshot names".into(),
+                    ));
+                }
+            }
+            PredecessorKind::EphemeralBootstrap => {
+                if self.retained_scratch.is_some() {
+                    return Err(EngineError::Archive(
+                        "ephemeral bootstrap predecessor unexpectedly owns a retained run".into(),
+                    ));
+                }
+                let scratch = self.scratch.as_ref().ok_or_else(|| {
+                    EngineError::Archive(
+                        "ephemeral bootstrap predecessor has no run-local scratch".into(),
+                    )
+                })?;
+                if scratch.run_id() != snapshot.scratch_run_id
+                    || scratch
+                        .binding_digest()
+                        .map_err(|error| EngineError::Archive(error.to_string()))?
+                        != snapshot.scratch_binding_digest
+                {
+                    return Err(EngineError::Archive(
+                        "ephemeral bootstrap scratch is not the sealed predecessor run".into(),
+                    ));
+                }
+            }
         }
         if snapshot.history_generation == 0 {
             return Err(EngineError::Archive(
@@ -8228,7 +8695,9 @@ impl ShardedHotEngine {
         self.validated_run_local_current_authority = exact_current_authority;
         self.adoptable_current_history_head =
             exact_current_authority.map(|authority| (authority, record.batch_id));
-        self.resume_observation.adopted = true;
+        if matches!(kind, PredecessorKind::Retained) {
+            self.resume_observation.adopted = true;
+        }
         Ok(())
     }
 
@@ -29366,7 +29835,7 @@ mod validation_tests {
                 .unwrap();
                 let expected = DetachedBootstrapCandidate {
                     engine: author.candidate.take().unwrap(),
-                    scratch_root: author.scratch_root.take().unwrap(),
+                    scratch_root: Some(author.scratch_root.take().unwrap()),
                     part_count: 2,
                     last_part: Some(second_descriptor.part_id()),
                     index_durability: DetachedBootstrapIndexDurability::ReplayedArchive {
@@ -29691,6 +30160,10 @@ mod validation_tests {
         assert!(engine.history_store.is_none());
         assert!(engine.projection_work_index.is_none());
         assert!(engine.projection_endpoint.is_none());
+        let scratch_root = completed
+            .scratch_root
+            .as_ref()
+            .expect("ordinary detached authoring owns its private scratch root");
         for forbidden in [
             "archive",
             "history",
@@ -29700,16 +30173,12 @@ mod validation_tests {
             "manifests",
         ] {
             assert!(
-                completed
-                    .scratch_root
-                    .root
-                    .symlink_metadata(forbidden)
-                    .is_err(),
+                scratch_root.root.symlink_metadata(forbidden).is_err(),
                 "detached authoring created forbidden live/durable path {forbidden}"
             );
         }
-        let parent = completed.scratch_root.parent.try_clone().unwrap();
-        let root_name = completed.scratch_root.name.clone();
+        let parent = scratch_root.parent.try_clone().unwrap();
+        let root_name = scratch_root.name.clone();
         drop(completed);
         assert!(
             parent.symlink_metadata(&root_name).is_err(),

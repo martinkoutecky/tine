@@ -16,9 +16,9 @@ use crate::oplog::enrollment::{
     CommitCut, EnrollmentOpen, EnrollmentReader, PreparationId,
 };
 use crate::oplog::hot_engine::{
-    take_last_admitted_local_author, AcceptedFrontierRoot, AuthenticatedPatriciaIndexKind,
-    PackedPatriciaMaintenanceOutcome, ProjectionEndpointBinding, ProjectionStorageBinding,
-    MAX_EPHEMERAL_BLOCK_CLAIMS,
+    fail_next_ephemeral_bootstrap_predecessor_restore_for_test, take_last_admitted_local_author,
+    AcceptedFrontierRoot, AuthenticatedPatriciaIndexKind, PackedPatriciaMaintenanceOutcome,
+    ProjectionEndpointBinding, ProjectionStorageBinding, MAX_EPHEMERAL_BLOCK_CLAIMS,
 };
 use crate::oplog::identity::ARCHIVE_INSTANCE_CLAIM_FILE;
 use crate::oplog::import::{
@@ -8861,10 +8861,24 @@ fn losing_the_lease_before_the_candidate_read_fails_the_open_closed() {
 #[test]
 fn the_retained_run_bound_beside_residue_opens_ephemeral_and_adds_no_run() {
     on_a_deep_stack(|| {
+        // The regression is specifically the expensive multipart bootstrap
+        // fallback, not merely selection of an ephemeral run.
+        force_next_bootstrap_part_operation_limit(1);
         let mut fixture = Fixture::new(
             "resume-bound",
             None,
-            vec![("pages/bound.md".into(), b"- bound\n".to_vec())],
+            vec![
+                (
+                    "pages/bound.md".into(),
+                    b"- bound one\n- bound two\n".to_vec(),
+                ),
+                ("pages/bound-other.md".into(), b"- bound three\n".to_vec()),
+            ],
+        );
+        let bootstrap_parts = fixture.verified.part_count() as u64;
+        assert!(
+            bootstrap_parts > 1,
+            "the ephemeral recovery regression needs a multipart bootstrap"
         );
         let root = fixture.enrollment_root("resume-bound");
         let binding = fixture.enrollment_binding();
@@ -8905,6 +8919,7 @@ fn the_retained_run_bound_beside_residue_opens_ephemeral_and_adds_no_run() {
             b"desktop residue",
         )
         .unwrap();
+        let points_before = resume_point_bytes(&fixture.archive_root);
 
         let observation = with_reopened_runtime(
             &fixture,
@@ -8920,6 +8935,37 @@ fn the_retained_run_bound_beside_residue_opens_ephemeral_and_adds_no_run() {
                 );
                 assert!(!opened.retained());
                 assert!(!opened.adopted());
+                assert!(
+                    !opened.observation().adopted,
+                    "an ephemeral bootstrap predecessor is not a publishable runtime resume"
+                );
+                assert_eq!(
+                    opened.observation().replay_base_generation,
+                    bootstrap_parts,
+                    "the enrolled engine must replay only the post-bootstrap tail"
+                );
+                assert!(
+                    opened.observation().replayed_generations
+                        < opened.observation().live_history_generation,
+                    "the bootstrap prefix must not be replayed a second time"
+                );
+                let timing = take_promoted_runtime_open_instrumentation(fixture.workspace);
+                assert!(
+                    timing.reconstructed_ephemeral_bootstrap,
+                    "fail-before: the old ephemeral fallback performed a complete enrolled bootstrap replay"
+                );
+                assert!(
+                    !timing.reconstructed_bootstrap_resume,
+                    "the ephemeral path must not create a retained migrated bootstrap"
+                );
+                assert_eq!(
+                    runtime
+                        .engine()
+                        .bootstrap_recovery_instrumentation()
+                        .bootstrap_part_reads,
+                    0,
+                    "the enrolled engine consumes the same reconstructed scratch rather than rereading parts"
+                );
                 // An ephemeral engine has nothing a resume point could name, and
                 // says so rather than attempting a publication.
                 assert_eq!(
@@ -8937,11 +8983,135 @@ fn the_retained_run_bound_beside_residue_opens_ephemeral_and_adds_no_run() {
             at_bound,
             "an ephemeral open must add no retained run and remove none"
         );
+        assert_eq!(
+            resume_point_bytes(&fixture.archive_root),
+            points_before,
+            "the ephemeral predecessor must not publish or rewrite a resume point"
+        );
         assert!(
             resume_point_entries(&fixture.archive_root).contains(&".DS_Store".to_owned()),
             "residue is reported, never deleted"
         );
-        // And the ephemeral engine is a completely ordinary full replay.
+        // And the ephemeral engine remains an ordinary operational runtime
+        // after the authenticated bootstrap-prefix reconstruction.
+        assert_eq!(observation.projection_work.len(), 1);
+        fixture.assert_graph_unchanged();
+    });
+}
+
+/// If the one-process ephemeral predecessor cannot be restored, recovery must
+/// discard that disposable scratch and replay the complete immutable history
+/// into another ephemeral run. It must never turn that refusal into permission
+/// to mint/publish a retained resume artifact beside unclassifiable residue.
+#[test]
+fn an_ephemeral_bootstrap_predecessor_refusal_falls_back_without_retained_mutation() {
+    on_a_deep_stack(|| {
+        force_next_bootstrap_part_operation_limit(1);
+        let mut fixture = Fixture::new(
+            "ephemeral-predecessor-refusal",
+            None,
+            vec![
+                (
+                    "pages/refusal.md".into(),
+                    b"- refusal one\n- refusal two\n".to_vec(),
+                ),
+                (
+                    "pages/refusal-other.md".into(),
+                    b"- refusal three\n".to_vec(),
+                ),
+            ],
+        );
+        let root = fixture.enrollment_root("ephemeral-predecessor-refusal");
+        let binding = fixture.enrollment_binding();
+        let paths = PromotedPaths::new(&fixture, "ephemeral-predecessor-refusal");
+        let session = SessionId::new();
+
+        with_promoted_runtime(
+            &mut fixture,
+            &root,
+            &paths,
+            session,
+            |fixture, authority, runtime| {
+                publish_expecting_success(fixture, authority, runtime);
+                append_local_batch(fixture, authority, runtime, 0xE501);
+            },
+        );
+        remove_every_resume_point(&fixture.archive_root);
+        with_reopened_runtime(
+            &fixture,
+            &root,
+            &binding,
+            &paths,
+            session,
+            |_, _, runtime| {
+                assert!(runtime.resume_open_status().retained());
+            },
+        );
+        let retained_before = retained_run_directories(&fixture.archive_root);
+        assert_eq!(retained_before.len(), 2);
+        fs::create_dir_all(resume_point_directory(&fixture.archive_root)).unwrap();
+        fs::write(
+            resume_point_directory(&fixture.archive_root).join(".DS_Store"),
+            b"desktop residue",
+        )
+        .unwrap();
+        let points_before = resume_point_bytes(&fixture.archive_root);
+
+        fail_next_ephemeral_bootstrap_predecessor_restore_for_test();
+        let observation = with_reopened_runtime(
+            &fixture,
+            &root,
+            &binding,
+            &paths,
+            session,
+            |fixture, authority, runtime| {
+                let opened = runtime.resume_open_status().clone();
+                assert!(matches!(
+                    opened.plan(),
+                    EngineScratchRetentionPlan::Ephemeral { .. }
+                ));
+                assert!(!opened.retained());
+                assert!(!opened.adopted());
+                assert!(!opened.observation().adopted);
+                assert_eq!(
+                    opened.observation().replay_base_generation,
+                    0,
+                    "an ephemeral predecessor refusal must replay from the durable origin"
+                );
+                assert_eq!(
+                    opened.observation().replayed_generations,
+                    opened.observation().live_history_generation,
+                    "the fallback must replay every bootstrap and operational generation"
+                );
+                let timing = take_promoted_runtime_open_instrumentation(fixture.workspace);
+                assert!(
+                    timing.reconstructed_ephemeral_bootstrap,
+                    "the injected refusal must happen after direct ephemeral reconstruction"
+                );
+                assert_eq!(
+                    runtime
+                        .engine()
+                        .bootstrap_recovery_instrumentation()
+                        .bootstrap_part_reads,
+                    fixture.verified.part_count() as usize,
+                    "the fallback must reread each immutable bootstrap part"
+                );
+                assert_eq!(
+                    runtime.publish_quiescent_resume_point(authority, &fixture.graph),
+                    ResumePublicationStatus::NotPublished(
+                        ResumePublicationRefusal::EngineNotPublishable
+                    )
+                );
+                public_runtime_observation(runtime)
+            },
+        );
+
+        assert_eq!(
+            retained_run_directories(&fixture.archive_root),
+            retained_before
+        );
+        assert_eq!(resume_point_bytes(&fixture.archive_root), points_before);
+        assert!(resume_point_entries(&fixture.archive_root).contains(&".DS_Store".to_owned()));
         assert_eq!(observation.projection_work.len(), 1);
         fixture.assert_graph_unchanged();
     });
