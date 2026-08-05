@@ -233,7 +233,7 @@ fn try_lock_packed_operation_exclusive(
     let file = open_operational_lock(dir)?;
     match file.try_lock_exclusive() {
         Ok(()) => Ok(Some(PackedOperationalGuard { file })),
-        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(None),
+        Err(error) if crate::nonblocking_lock_is_contended(&error) => Ok(None),
         Err(error) => Err(error.into()),
     }
 }

@@ -83,10 +83,11 @@ pub use durable_batch::{
     OBJECT_ENVELOPE_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use filesystem::{
-    ensure_directory_nofollow, open_dir_nofollow, open_existing_dir_nofollow, open_file_nofollow,
-    publish_immutable_exact, read_optional_regular, read_required_regular, require_regular_entry,
-    sync_dir_required, CompletedExactImmutablePublicationBatch, ExactImmutablePublicationBatch,
-    FilesystemError, StagedExactImmutablePublication, ValidatedDirectorySync,
+    ensure_directory_nofollow, nonblocking_lock_is_contended, open_dir_nofollow,
+    open_existing_dir_nofollow, open_file_nofollow, publish_immutable_exact, read_optional_regular,
+    read_required_regular, require_regular_entry, sync_dir_required,
+    CompletedExactImmutablePublicationBatch, ExactImmutablePublicationBatch, FilesystemError,
+    StagedExactImmutablePublication, ValidatedDirectorySync,
 };
 pub use local_journal::{
     LocalJournalAppend, LocalJournalError, LocalJournalFrame, LocalJournalPayloadKind,

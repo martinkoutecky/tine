@@ -115,6 +115,30 @@ impl From<io::Error> for FilesystemError {
     }
 }
 
+// `LockFileEx(..., LOCKFILE_FAIL_IMMEDIATELY, ...)` reports this Win32 code
+// when another handle owns an overlapping byte-range lock. Keep the numeric
+// value available to platform-neutral unit tests; the Windows SDK defines
+// `ERROR_LOCK_VIOLATION` as 33.
+const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
+
+/// Whether one failed nonblocking file-lock attempt means genuine contention.
+///
+/// `WouldBlock` is the portable fs2 contention kind. On Windows, fs2 uses
+/// `LockFileEx`; failed immediate acquisition surfaces `ERROR_LOCK_VIOLATION`
+/// with `ErrorKind::Uncategorized`, so the raw code is part of the classifier.
+/// `PermissionDenied` is deliberately not universal: callers that historically
+/// treated it as contention retain that policy explicitly, while other lock
+/// domains continue to fail closed. `ERROR_SHARING_VIOLATION` is likewise not
+/// contention here: it is an open/share-mode conflict before `LockFileEx` runs.
+pub fn nonblocking_lock_is_contended(error: &io::Error) -> bool {
+    nonblocking_lock_is_contended_for_platform(error, cfg!(windows))
+}
+
+fn nonblocking_lock_is_contended_for_platform(error: &io::Error, windows: bool) -> bool {
+    error.kind() == ErrorKind::WouldBlock
+        || windows && error.raw_os_error() == Some(WINDOWS_ERROR_LOCK_VIOLATION)
+}
+
 /// A directory capability validated for a durable name-operation publication.
 #[cfg(windows)]
 pub struct ValidatedDirectorySync {
@@ -1177,6 +1201,46 @@ mod tests {
         let winner = fixture.dir.read("divergent").unwrap();
         assert!(winner == b"first" || winner == b"second");
         assert!(temporary_entries(&fixture.dir).is_empty());
+    }
+
+    #[test]
+    fn nonblocking_lock_contention_classifier_is_narrow_and_platform_explicit() {
+        let would_block = io::Error::new(ErrorKind::WouldBlock, "busy");
+        let permission_denied = io::Error::new(ErrorKind::PermissionDenied, "busy");
+        assert!(nonblocking_lock_is_contended_for_platform(
+            &would_block,
+            false
+        ));
+        assert!(!nonblocking_lock_is_contended_for_platform(
+            &permission_denied,
+            false
+        ));
+        assert!(!nonblocking_lock_is_contended_for_platform(
+            &permission_denied,
+            true
+        ));
+
+        let lock_violation = io::Error::from_raw_os_error(WINDOWS_ERROR_LOCK_VIOLATION);
+        assert!(nonblocking_lock_is_contended_for_platform(
+            &lock_violation,
+            true
+        ));
+        assert!(!nonblocking_lock_is_contended_for_platform(
+            &lock_violation,
+            false
+        ));
+
+        // ERROR_SHARING_VIOLATION (32) is an open/share-mode failure, not the
+        // result of an already-open handle's nonblocking LockFileEx attempt.
+        let sharing_violation = io::Error::from_raw_os_error(32);
+        assert!(!nonblocking_lock_is_contended_for_platform(
+            &sharing_violation,
+            true
+        ));
+        let unrelated = io::Error::from_raw_os_error(87);
+        assert!(!nonblocking_lock_is_contended_for_platform(
+            &unrelated, true
+        ));
     }
 
     #[test]
