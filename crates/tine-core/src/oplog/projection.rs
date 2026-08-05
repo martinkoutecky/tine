@@ -370,9 +370,11 @@ impl From<ProjectionError> for ExactSourceProjectionError {
 /// an adoption baseline whose target and precondition both name those exact
 /// bytes. When ordinary rendering would change harmless trivia, source
 /// coordinates come from the parser-owned spans used by external import. When
-/// authenticated annotations accompany the source, they are retained only if
-/// ordinary rendering reproduces both the bytes and annotations; otherwise the
-/// exact source establishes a guarded parser-owned baseline again.
+/// authenticated annotations accompany a Markdown source, they are retained
+/// only if ordinary rendering reproduces both the bytes and annotations;
+/// otherwise the exact source establishes a guarded parser-owned baseline
+/// again. Org keeps its stricter ordinary guarded rendering when authenticated
+/// annotations are present.
 pub(crate) fn plan_projection_adopting_exact_source(
     workspace_id: WorkspaceId,
     state: &ProjectionPageState,
@@ -387,7 +389,9 @@ pub(crate) fn plan_projection_with_layout_annotations(
     expected_base: Option<&[u8]>,
     expected_base_annotations: Option<&[AnnotatedIdentity]>,
 ) -> Result<ProjectionPlan, ProjectionError> {
-    if let Some(source) = expected_base {
+    let may_adopt_exact_source = expected_base_annotations.is_none()
+        || matches!(format_for_page(&state.page)?, ProjectionFormat::Markdown);
+    if let Some(source) = expected_base.filter(|_| may_adopt_exact_source) {
         match plan_exact_source_projection(workspace_id, state, source, expected_base_annotations) {
             Ok(plan) => return Ok(plan),
             Err(ExactSourceProjectionError::Semantic(_)) => {}
@@ -3065,6 +3069,19 @@ mod tests {
                 "{name} changed source annotations"
             );
         }
+    }
+
+    #[test]
+    fn unannotated_exact_source_adoption_remains_available_for_org() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(80_005));
+        let state = structural_layout_state(
+            "journals/2026_08_05.org",
+            vec![(80_151, None, "a", "headline".into(), None)],
+        );
+        let source = b"* headline\r\n";
+        let plan = plan_projection_with_layout_annotations(workspace, &state, Some(source), None)
+            .expect("unannotated exact Org source must remain adoptable");
+        assert_eq!(plan.target(), source);
     }
 
     #[test]

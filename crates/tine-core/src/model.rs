@@ -324,6 +324,41 @@ pub(crate) fn is_projection_semantic_refusal(error: &io::Error) -> bool {
         .is_some_and(|source| source.is::<ProjectionSemanticRefusal>())
 }
 
+/// Markdown's parser deliberately omits layout trivia such as empty separator
+/// lines, but a guarded journal target may retain that trivia through its
+/// authenticated projection annotations. This comparison is intentionally
+/// stricter than `Document`'s content-only `PartialEq`: it keeps the exact
+/// preamble, block order/ancestry, raw block bodies (including `id::` lines),
+/// and parser-carried identity metadata equal.
+fn guarded_markdown_documents_match(left: &str, right: &str) -> bool {
+    fn blocks_match(left: &DocBlock, right: &DocBlock) -> bool {
+        left.raw == right.raw
+            && left.uuid == right.uuid
+            && left.is_org == right.is_org
+            && left.children.len() == right.children.len()
+            && left
+                .children
+                .iter()
+                .zip(&right.children)
+                .all(|(left, right)| blocks_match(left, right))
+    }
+
+    let Ok(left) = doc::try_parse_with_source_spans(left) else {
+        return false;
+    };
+    let Ok(right) = doc::try_parse_with_source_spans(right) else {
+        return false;
+    };
+    left.document.pre_block == right.document.pre_block
+        && left.document.roots.len() == right.document.roots.len()
+        && left
+            .document
+            .roots
+            .iter()
+            .zip(&right.document.roots)
+            .all(|(left, right)| blocks_match(left, right))
+}
+
 /// One lexical/scope validation result shared by exact points and feed events.
 ///
 /// This deliberately has no twin path. `.markdown` is one exact physical
@@ -19248,7 +19283,10 @@ impl Graph {
         }
 
         let (_, serialized) = self.serialize_page_dto_for_path(page, &path, Some(expected_base))?;
-        if serialized != exact_target {
+        let exact_target_matches_guarded_page = serialized == exact_target
+            || (Format::from_path(&path) == Format::Md
+                && guarded_markdown_documents_match(&serialized, exact_target));
+        if !exact_target_matches_guarded_page {
             return Err(projection_semantic_refusal(
                 io::ErrorKind::InvalidData,
                 "journal target differs from strict guarded page serialization",
@@ -30763,6 +30801,141 @@ mod tests {
             assert_eq!(durable.target().revision(), content_rev(&fixture.target));
             assert_eq!(fs::read(&fixture.path).unwrap(), fixture.target.as_bytes());
         }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn journal_projection_accepts_only_semantically_equal_markdown_layout_trivia() {
+        let fixture = JournalProjectionFixture::new(
+            "journal-projection-authenticated-layout",
+            "pages/Authenticated Layout.md",
+            "- first\n\n- second\n",
+            "edited",
+        );
+        let exact_target = "- edited\n\n- second\n";
+        assert_ne!(fixture.target, exact_target);
+        assert!(guarded_markdown_documents_match(
+            &fixture.target,
+            exact_target
+        ));
+        let calls = Cell::new(0_usize);
+        let outcome = fixture
+            .graph
+            .commit_existing_page_with_journal(
+                &fixture.page,
+                &fixture.base_rev,
+                fixture.base.as_bytes(),
+                exact_target.as_bytes(),
+                || {
+                    calls.set(calls.get() + 1);
+                    Ok("authenticated-layout-proof")
+                },
+            )
+            .unwrap();
+        assert!(matches!(outcome, JournalPageProjectionOutcome::Durable(_)));
+        assert_eq!(calls.get(), 1);
+        assert_eq!(fs::read(&fixture.path).unwrap(), exact_target.as_bytes());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn journal_projection_refuses_semantically_different_markdown_layout_targets_before_append() {
+        fn assert_refused(label: &str, mut fixture: JournalProjectionFixture, exact_target: &str) {
+            let before = regular_file_tree(&fixture.root);
+            let calls = Cell::new(0_usize);
+            let error = fixture
+                .graph
+                .commit_existing_page_with_journal(
+                    &fixture.page,
+                    &fixture.base_rev,
+                    fixture.base.as_bytes(),
+                    exact_target.as_bytes(),
+                    || {
+                        calls.set(calls.get() + 1);
+                        Ok(())
+                    },
+                )
+                .err()
+                .unwrap_or_else(|| panic!("{label} semantic mismatch committed"));
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{label}");
+            assert_eq!(calls.get(), 0, "{label}");
+            assert_eq!(regular_file_tree(&fixture.root), before, "{label}");
+            fixture.cleanup_root = false;
+            let _ = fs::remove_dir_all(&fixture.root);
+        }
+
+        assert_refused(
+            "content",
+            JournalProjectionFixture::new(
+                "journal-projection-mismatch-content",
+                "pages/Content.md",
+                "- first\n\n- second\n",
+                "edited",
+            ),
+            "- different\n\n- second\n",
+        );
+        assert_refused(
+            "order-and-ancestry",
+            JournalProjectionFixture::new(
+                "journal-projection-mismatch-order",
+                "pages/Order.md",
+                "- first\n  - child\n- second\n",
+                "edited",
+            ),
+            "- second\n\n- edited\n  - child\n",
+        );
+        assert_refused(
+            "page-property",
+            JournalProjectionFixture::new(
+                "journal-projection-mismatch-property",
+                "pages/Property.md",
+                "status:: accepted\n\n- first\n",
+                "edited",
+            ),
+            "status:: changed\n\n- edited\n",
+        );
+
+        let original_id = "11111111-1111-1111-1111-111111111111";
+        let replacement_id = "22222222-2222-2222-2222-222222222222";
+        let base = format!("- first\n  id:: {original_id}\n");
+        let fixture = JournalProjectionFixture::new(
+            "journal-projection-mismatch-explicit-id",
+            "pages/Explicit Id.md",
+            &base,
+            &format!("edited\nid:: {original_id}"),
+        );
+        let exact_target = format!("- edited\n  id:: {replacement_id}\n");
+        assert_refused("explicit-id", fixture, &exact_target);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn journal_projection_keeps_org_byte_exact_when_layout_only_target_differs() {
+        let fixture = JournalProjectionFixture::new(
+            "journal-projection-org-layout",
+            "journals/2026_08_05.org",
+            "* first\n* second\n",
+            "edited",
+        );
+        let exact_target = "* edited\n\n* second\n";
+        let calls = Cell::new(0_usize);
+        let error = fixture
+            .graph
+            .commit_existing_page_with_journal(
+                &fixture.page,
+                &fixture.base_rev,
+                fixture.base.as_bytes(),
+                exact_target.as_bytes(),
+                || {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                },
+            )
+            .err()
+            .expect("Org layout-only difference must remain refused before append");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(calls.get(), 0);
+        assert_eq!(fs::read(&fixture.path).unwrap(), fixture.base.as_bytes());
     }
 
     #[cfg(any(unix, windows))]

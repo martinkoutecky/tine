@@ -11,7 +11,7 @@
 //! structured views (`properties`, `marker`, `collapsed`) are computed on top.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 /// Recognized task markers (leading keyword of a block).
@@ -745,6 +745,9 @@ pub struct SerializeOpts {
     source_document: Option<Document>,
     source_blank_lines_before_blocks: Vec<usize>,
     identity_bound_blank_lines: Vec<IdentityBoundBlankLines>,
+    /// Unbulleted ATX headings whose parser-owned source layout is retained by
+    /// a stable block identity after another block changes.
+    identity_bound_unbulleted_headings: HashSet<String>,
     source_promoted_heading_layout: Option<PromotedHeadingLayout>,
     promoted_heading_identity: Option<String>,
     /// Whitespace for one level of indentation (e.g. `"\t"` or `"  "`).
@@ -760,6 +763,7 @@ impl Default for SerializeOpts {
             source_document: None,
             source_blank_lines_before_blocks: Vec::new(),
             identity_bound_blank_lines: Vec::new(),
+            identity_bound_unbulleted_headings: HashSet::new(),
             source_promoted_heading_layout: None,
             promoted_heading_identity: None,
             indent: "\t".into(),
@@ -800,6 +804,7 @@ impl SerializeOpts {
             &mut locator_indexes,
         );
         let mut identity_bound_blank_lines = Vec::with_capacity(identities.len());
+        let mut identity_bound_unbulleted_headings = HashSet::new();
         let source_promoted_heading_layout = parsed.promoted_heading_layout;
         let mut promoted_heading_identity = None;
         for identity in identities {
@@ -813,6 +818,16 @@ impl SerializeOpts {
                 block_identity: identity.block_identity.clone(),
                 blank_lines,
             });
+            if parsed
+                .block_spans
+                .get(index)
+                .and_then(|span| source.get(span.clone()))
+                .is_some_and(|block_source| {
+                    crate::outline::markdown_unbulleted_heading_line_end(block_source).is_some()
+                })
+            {
+                identity_bound_unbulleted_headings.insert(identity.block_identity.clone());
+            }
             if source_promoted_heading_layout.is_some() && identity.locator.as_slice() == [0] {
                 promoted_heading_identity = Some(identity.block_identity.clone());
             }
@@ -831,6 +846,7 @@ impl SerializeOpts {
             source_document: Some(parsed.document),
             source_blank_lines_before_blocks: parsed.blank_lines_before_blocks,
             identity_bound_blank_lines,
+            identity_bound_unbulleted_headings,
             source_promoted_heading_layout,
             promoted_heading_identity,
             indent,
@@ -975,6 +991,7 @@ pub fn serialize_with(doc: &Document, opts: &SerializeOpts) -> String {
         &opts.indent,
         &blank_lines_before_blocks,
         promoted_heading_layout,
+        &opts.identity_bound_unbulleted_headings,
     )
 }
 
@@ -986,6 +1003,7 @@ fn serialize_with_layout(
     indent: &str,
     blank_lines_before_blocks: &[usize],
     promoted_heading_layout: Option<PromotedHeadingLayout>,
+    identity_bound_unbulleted_headings: &HashSet<String>,
 ) -> String {
     let mut out: Vec<String> = Vec::new();
     if let Some(pre) = &doc.pre_block {
@@ -1007,6 +1025,7 @@ fn serialize_with_layout(
             blank_lines_before_blocks,
             &mut block_index,
             promoted_heading_layout,
+            identity_bound_unbulleted_headings,
             &mut out,
         );
     }
@@ -1022,23 +1041,21 @@ fn emit_block(
     blank_lines_before_blocks: &[usize],
     block_index: &mut usize,
     promoted_heading_layout: Option<PromotedHeadingLayout>,
+    identity_bound_unbulleted_headings: &HashSet<String>,
     out: &mut Vec<String>,
 ) {
     let unbulleted_promoted_heading = promoted_heading_layout.is_some() && *block_index == 0;
+    let unbulleted_identity_heading = identity_bound_unbulleted_headings.contains(&block.uuid)
+        && crate::outline::markdown_unbulleted_heading_line_end(&block.raw).is_some();
     let blank_lines = blank_lines_before_blocks
         .get(*block_index)
         .copied()
         .unwrap_or(0);
     out.extend(std::iter::repeat_with(String::new).take(blank_lines));
     *block_index = block_index.saturating_add(1);
-    if unbulleted_promoted_heading {
+    if unbulleted_promoted_heading || unbulleted_identity_heading {
         out.extend(block.raw.split('\n').map(ToOwned::to_owned));
-        let child_level = match promoted_heading_layout {
-            Some(PromotedHeadingLayout::UnbulletedRoot | PromotedHeadingLayout::NestedChildren) => {
-                level.saturating_add(1)
-            }
-            None => level,
-        };
+        let child_level = level.saturating_add(1);
         for child in &block.children {
             emit_block(
                 child,
@@ -1047,6 +1064,7 @@ fn emit_block(
                 blank_lines_before_blocks,
                 block_index,
                 promoted_heading_layout,
+                identity_bound_unbulleted_headings,
                 out,
             );
         }
@@ -1071,6 +1089,7 @@ fn emit_block(
             blank_lines_before_blocks,
             block_index,
             promoted_heading_layout,
+            identity_bound_unbulleted_headings,
             out,
         );
     }
@@ -1124,6 +1143,7 @@ pub(crate) fn markdown_structurally_round_trips_parsed(
         &indent,
         &parsed.blank_lines_before_blocks,
         parsed.promoted_heading_layout,
+        &HashSet::new(),
     );
     if content.contains("\r\n") {
         rendered = rendered.replace('\n', "\r\n");
@@ -1372,6 +1392,23 @@ mod promoted_heading_tests {
             serialize_with(&doc, &opts),
             "# Project\n\t- child one edited\n\t- child two\n- sibling\n\t- nested sibling child\n- later sibling"
         );
+    }
+
+    #[test]
+    fn identity_bound_nonleading_atx_headings_survive_unrelated_edits() {
+        let source = "- editable root\n## first section\n### second section\n- trailing root";
+        let mut doc = parse(source);
+        let identities = assign_layout_identities(&mut doc);
+        let opts = SerializeOpts::detect_with_layout_identities(Some(source), &identities);
+
+        doc.roots[0].raw = "edited root".into();
+
+        let rendered = serialize_with(&doc, &opts);
+        assert_eq!(
+            rendered,
+            "- edited root\n## first section\n### second section\n- trailing root"
+        );
+        assert_eq!(parse(&rendered), doc);
     }
 
     #[test]

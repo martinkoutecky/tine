@@ -20339,6 +20339,61 @@ mod tests {
     }
 
     #[test]
+    fn fresh_activation_save_preserves_nonleading_atx_headings_across_restart() {
+        let fixture = ActivationFixture::empty("managed-nonleading-atx-heading-save", 0xd1a7);
+        fs::write(
+            fixture.graph_root.join("Tine.md"),
+            b"- editable root\n## first section\n### second section\n- trailing root\n",
+        )
+        .expect("fixture source page must be written before activation");
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated
+            .handle
+            .expect("fresh activation must retain an actor");
+        drive_initial_feed(&handle);
+        let (mut page, revision) = load_application_logical(&handle, "Tine", SyncPageKind::Page);
+        page.blocks[0].raw = "edited root".into();
+        let outcome = handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: page.path.clone(),
+                    revision,
+                },
+                page,
+            })
+            .expect("an unrelated application edit must commit");
+        assert!(matches!(
+            outcome,
+            SyncApplicationPageSaveOutcome::Saved { .. }
+        ));
+        const EXPECTED: &[u8] =
+            b"- edited root\n## first section\n### second section\n- trailing root\n";
+        assert_eq!(
+            fs::read(fixture.graph_root.join("Tine.md")).unwrap(),
+            EXPECTED
+        );
+        drain_managed_local(&handle);
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+
+        let reopened = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+        drive_initial_feed(&reopened);
+        let (reloaded, _) = load_application_logical(&reopened, "Tine", SyncPageKind::Page);
+        assert_eq!(reloaded.blocks[0].raw, "edited root");
+        assert_eq!(
+            fs::read(fixture.graph_root.join("Tine.md")).unwrap(),
+            EXPECTED
+        );
+        assert!(matches!(
+            reopened.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
     fn public_queries_are_bounded_serialized_and_read_the_exact_materialized_frontier() {
         let fixture = RuntimeHostFixture::safe("sync-runtime-public-query");
         let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
