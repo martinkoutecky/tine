@@ -369,8 +369,10 @@ impl From<ProjectionError> for ExactSourceProjectionError {
 /// Prove that `source` is the complete accepted semantic page, then construct
 /// an adoption baseline whose target and precondition both name those exact
 /// bytes. When ordinary rendering would change harmless trivia, source
-/// coordinates come from the parser-owned spans used by external import;
-/// already byte-equal sources retain their established projector annotations.
+/// coordinates come from the parser-owned spans used by external import. When
+/// authenticated annotations accompany the source, they are retained only if
+/// ordinary rendering reproduces both the bytes and annotations; otherwise the
+/// exact source establishes a guarded parser-owned baseline again.
 pub(crate) fn plan_projection_adopting_exact_source(
     workspace_id: WorkspaceId,
     state: &ProjectionPageState,
@@ -385,7 +387,7 @@ pub(crate) fn plan_projection_with_layout_annotations(
     expected_base: Option<&[u8]>,
     expected_base_annotations: Option<&[AnnotatedIdentity]>,
 ) -> Result<ProjectionPlan, ProjectionError> {
-    if let Some(source) = expected_base.filter(|_| expected_base_annotations.is_none()) {
+    if let Some(source) = expected_base {
         match plan_exact_source_projection(workspace_id, state, source, expected_base_annotations) {
             Ok(plan) => return Ok(plan),
             Err(ExactSourceProjectionError::Semantic(_)) => {}
@@ -3005,6 +3007,64 @@ mod tests {
             next.intent().precondition(),
             &ProjectionPrecondition::Base(BlobDescription::of(source))
         );
+    }
+
+    #[test]
+    fn authenticated_exact_source_adoption_retains_markdown_whitespace_layouts() {
+        let workspace = WorkspaceId::from_uuid(Uuid::from_u128(80_004));
+        let cases = [
+            (
+                "empty-root-bullet",
+                "pages/empty-root.md",
+                vec![(80_111, None, "a", String::new(), None)],
+                "- \n",
+            ),
+            (
+                "empty-nested-bullet",
+                "pages/empty-nested.md",
+                vec![
+                    (80_121, None, "a", "parent".into(), None),
+                    (80_122, Some(80_121), "a", String::new(), None),
+                ],
+                "- parent\n  - \n",
+            ),
+            (
+                "empty-bullet-crlf",
+                "pages/empty-crlf.md",
+                vec![(80_131, None, "a", String::new(), None)],
+                "- \r\n",
+            ),
+            (
+                "nonempty-trailing-space",
+                "pages/nonempty-trailing.md",
+                vec![(80_141, None, "a", "keeps trailing ".into(), None)],
+                "- keeps trailing \n",
+            ),
+        ];
+
+        for (name, path, blocks, source) in cases {
+            let state = structural_layout_state(path, blocks);
+            let imported =
+                plan_projection_adopting_exact_source(workspace, &state, source.as_bytes())
+                    .unwrap_or_else(|error| panic!("{name} exact-source import failed: {error:?}"));
+            let replay = plan_projection_with_layout_annotations(
+                workspace,
+                &state,
+                Some(source.as_bytes()),
+                Some(imported.intent().annotations()),
+            )
+            .unwrap_or_else(|error| panic!("{name} authenticated replay failed: {error}"));
+            assert_eq!(
+                replay.target(),
+                source.as_bytes(),
+                "{name} changed source bytes"
+            );
+            assert_eq!(
+                replay.intent().annotations(),
+                imported.intent().annotations(),
+                "{name} changed source annotations"
+            );
+        }
     }
 
     #[test]

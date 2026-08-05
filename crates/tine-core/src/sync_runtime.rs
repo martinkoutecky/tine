@@ -20301,6 +20301,44 @@ mod tests {
     }
 
     #[test]
+    fn fresh_activation_application_save_preserves_empty_markdown_bullet_layout() {
+        let fixture = ActivationFixture::empty("managed-empty-markdown-bullet-save", 0xd1a6);
+        fs::write(fixture.graph_root.join("Tine.md"), b"- \n")
+            .expect("fixture source page must be written before activation");
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated
+            .handle
+            .expect("fresh activation must retain an actor");
+        drive_initial_feed(&handle);
+        let (mut page, revision) = load_application_logical(&handle, "Tine", SyncPageKind::Page);
+        assert_eq!(page.blocks[0].raw, "");
+        page.blocks[0].raw = "saved after empty Markdown bullet".into();
+        let outcome = handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: page.path.clone(),
+                    revision,
+                },
+                page,
+            })
+            .expect("an application save after an empty Markdown bullet must commit");
+        assert!(matches!(
+            outcome,
+            SyncApplicationPageSaveOutcome::Saved { .. }
+        ));
+        assert_eq!(
+            fs::read(fixture.graph_root.join("Tine.md")).unwrap(),
+            b"- saved after empty Markdown bullet\n"
+        );
+        drain_managed_local(&handle);
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
     fn public_queries_are_bounded_serialized_and_read_the_exact_materialized_frontier() {
         let fixture = RuntimeHostFixture::safe("sync-runtime-public-query");
         let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
