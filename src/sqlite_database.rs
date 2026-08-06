@@ -91,6 +91,13 @@ impl PhysicalSqliteDatabase {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        // Same 5s budget the writable connection gets. WAL lets readers run
+        // alongside a writer, but not through a checkpoint or the writer's
+        // exclusive moments — without a busy timeout a reader that lands on one
+        // returns SQLITE_BUSY immediately instead of waiting the moment out, and
+        // a read path fails for a reason that would have cleared itself in
+        // milliseconds.
+        connection.busy_timeout(Duration::from_secs(5))?;
         Ok(Self {
             connection,
             write_instrumentation: PhysicalWriteInstrumentation::default(),
