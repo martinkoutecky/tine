@@ -10,12 +10,18 @@
 //! SQLite implementation modules remain private. Consumers use [`sqlite`],
 //! the deliberately curated physical-storage boundary that does not expose a
 //! raw SQLite connection or schema-construction details.
+//!
+//! Every constant that describes bytes already on disk is additionally
+//! collected in [`formats`], which is the single place a release or pin receipt
+//! quotes. On-disk format versions are deliberately independent of this crate's
+//! semver; see that module for the rule and the manifest.
 
 mod authenticated_patricia;
 mod content_digest;
 mod digest_sealed;
 mod durable_batch;
 mod filesystem;
+pub mod formats;
 mod local_journal;
 mod packed_patricia;
 mod scratch;
