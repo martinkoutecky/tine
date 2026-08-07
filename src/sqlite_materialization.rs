@@ -364,6 +364,18 @@ pub const REFERENCE_ALIAS_DECLARATIONS_DDL: &str = "CREATE TABLE reference_alias
         source_page_id, source_entity_type, source_entity_id, source_locator, ordinal
     )
 ) WITHOUT ROWID, STRICT";
+/// An alias binding is the resolution itself: which pages a normalized alias
+/// currently names, in candidate order.
+///
+/// It deliberately does NOT record the catalog root it was resolved against.
+/// That stamp was written by every path and read by none, and because it sat
+/// in the primary key it made two correct builds of the same graph disagree:
+/// an incremental drain stamps the root that was current when the alias was
+/// last touched, while a rebuild stamps the root it resolved at. Same alias,
+/// same ordinal, same page, different provenance -- enough to fail a
+/// byte-equality proof for a value nothing consults. The projection's own
+/// `materialization_stamp` already records the catalog root the whole database
+/// is at, which is the question anyone actually asks.
 pub const REFERENCE_ALIAS_BINDINGS_DDL: &str = "CREATE TABLE reference_alias_bindings (
     normalized_alias TEXT NOT NULL CHECK (
         length(CAST(normalized_alias AS BLOB)) BETWEEN 1 AND 4194304
@@ -372,8 +384,7 @@ pub const REFERENCE_ALIAS_BINDINGS_DDL: &str = "CREATE TABLE reference_alias_bin
     resolved_page_id BLOB CHECK (
         resolved_page_id IS NULL OR length(resolved_page_id) = 16
     ),
-    catalog_root_digest BLOB NOT NULL CHECK (length(catalog_root_digest) = 32),
-    PRIMARY KEY (normalized_alias, candidate_ordinal, catalog_root_digest)
+    PRIMARY KEY (normalized_alias, candidate_ordinal)
 ) WITHOUT ROWID, STRICT";
 pub const PAGES_DDL: &str = "CREATE TABLE pages (
     page_id BLOB PRIMARY KEY CHECK (length(page_id) = 16),
@@ -503,7 +514,7 @@ pub const REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL: &str =
     ON reference_alias_declarations(source_page_id, source_entity_type, source_entity_id, ordinal)";
 pub const REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL: &str =
     "CREATE INDEX reference_alias_bindings_normalized_alias_idx
-    ON reference_alias_bindings(normalized_alias, catalog_root_digest, candidate_ordinal)";
+    ON reference_alias_bindings(normalized_alias, candidate_ordinal)";
 pub const PROPERTIES_LOOKUP_INDEX_DDL: &str = "CREATE INDEX properties_lookup_idx
     ON properties(name, value, page_id, owner_type, owner_id)";
 pub const PROPERTIES_PAGE_INDEX_DDL: &str = "CREATE INDEX properties_page_idx
@@ -601,12 +612,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     ),
     (
         "reference_alias_bindings",
-        &[
-            "normalized_alias",
-            "candidate_ordinal",
-            "resolved_page_id",
-            "catalog_root_digest",
-        ],
+        &["normalized_alias", "candidate_ordinal", "resolved_page_id"],
     ),
     (
         "pages",
@@ -1407,9 +1413,9 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
     require_open_candidate(transaction)?;
     transaction.execute(
         "INSERT INTO reference_alias_bindings (
-             normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
+             normalized_alias, candidate_ordinal, resolved_page_id
          )
-         SELECT normalized_alias, candidate_ordinal, source_page_id, ?1
+         SELECT normalized_alias, candidate_ordinal, source_page_id
          FROM (
              SELECT normalized_alias, source_page_id,
                     ROW_NUMBER() OVER (
@@ -1420,7 +1426,7 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
                  FROM reference_alias_declarations
              )
          )",
-        params![stamp.catalog_root_digest.as_bytes().as_slice()],
+        [],
     )?;
     for batch in provenance {
         transaction.execute(
@@ -1684,8 +1690,8 @@ fn apply_reference_catalog_change(
         for (ordinal, page_id) in candidates.into_iter().enumerate() {
             transaction.execute(
                 "INSERT INTO reference_alias_bindings (
-                     normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
-                 ) VALUES (?1, ?2, ?3, ?4)",
+                     normalized_alias, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, ?2, ?3)",
                 params![
                     &alias,
                     i64::try_from(ordinal).map_err(|_| {
@@ -1694,7 +1700,6 @@ fn apply_reference_catalog_change(
                         )
                     })?,
                     page_id.as_slice(),
-                    post_root_digest.as_bytes().as_slice(),
                 ],
             )?;
         }
@@ -3589,13 +3594,9 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO reference_alias_bindings (
-                     normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
-                 ) VALUES (?1, 0, ?2, ?3)",
-                params![
-                    "\u{00e5}lias \u{0}",
-                    first.page_id.as_slice(),
-                    digest(b"catalog").as_bytes().as_slice(),
-                ],
+                     normalized_alias, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, 0, ?2)",
+                params!["\u{00e5}lias \u{0}", first.page_id.as_slice()],
             )
             .unwrap();
         assert_streaming_digest_matches_legacy(&connection);
