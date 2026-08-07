@@ -43,3 +43,35 @@ Package-local test ownership is intentionally divided as follows:
   `sqlite_materialization::tests`.
 - SQLite facade, connection ownership, and test-support-gate invariants:
   `sqlite_database::tests`.
+
+## Public API surface
+
+`api.txt` records every publicly reachable name, its export path, and whether it
+is gated behind `test-support`. It is generated, not hand-maintained:
+
+```
+TINE_STORAGE_BLESS_API=1 cargo test -p tine-storage api_surface
+```
+
+A change to the surface fails `api_surface::tests::api_surface_matches_the_recorded_golden`
+until `api.txt` is regenerated in the same commit, so a version can be cut
+against a surface someone actually reviewed. It records names, not signatures —
+rustdoc JSON would give signatures but is nightly-only, and this crate builds on
+the pinned stable toolchain.
+
+Two rules the tests enforce, both of which exist because this crate is becoming
+an independently versioned package with an exact Tine pin:
+
+- **A persistent-format constant has exactly one export path**,
+  `tine_storage::formats::NAME`. A receipt generated from `FORMAT_MANIFEST`
+  claims to state the format surface a build commits to; a second path would let
+  a consumer bind to a constant the receipt never mentions.
+- **`test-support` never reaches a release build.** It holds today only because
+  the feature is dev-dependency-only *and* the workspace uses resolver 2;
+  `scripts/check-storage-test-support.mjs` resolves the app's real feature graph
+  rather than trusting either fact to stay true.
+
+`tests/public_boundary.rs` is compiled as a separate crate against the built
+library, so it can only reach `pub` paths with default features. Its compiling
+is the assertion: the production API is self-sufficient for someone outside this
+crate.

@@ -19,6 +19,7 @@
 //! `formats::tests::no_format_constant_has_a_second_export_path` enforces the
 //! single-path rule against this file.
 
+pub mod api_surface;
 mod authenticated_patricia;
 mod content_digest;
 mod digest_sealed;
