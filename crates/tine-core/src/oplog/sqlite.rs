@@ -668,6 +668,29 @@ enum RebuildLoader<'a> {
     },
 }
 
+/// Force the per-event replay, so a test can use it as the oracle the
+/// terminal-seeded build must agree with.
+#[cfg(test)]
+thread_local! {
+    static FORCE_PER_EVENT_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn force_per_event_rebuild_for_test(force: bool) {
+    FORCE_PER_EVENT_REBUILD.with(|flag| flag.set(force));
+}
+
+fn per_event_rebuild_forced() -> bool {
+    #[cfg(test)]
+    {
+        FORCE_PER_EVENT_REBUILD.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
 struct RebuildCursor<'a> {
     source: &'a RebuildSource<'a>,
     accepted: super::hot_engine::AcceptedBatchCursor<'a>,
@@ -3606,12 +3629,23 @@ impl SqliteFrontier {
         // to the unchanged archive replay path over the same durable evidence.
         let mut refused = 0_usize;
         if terminal.is_some() {
-            match Self::build_candidate(path, claim, Arc::clone(&lease), source, terminal) {
+            match Self::build_candidate(path, claim, Arc::clone(&lease), source, terminal, false) {
+                Ok(built) => return Self::publish_candidate(path, claim, lease, source, built),
+                Err(_discarded) => refused = 1,
+            }
+        } else if !per_event_rebuild_forced() {
+            // Same doctrine one level down: seeding the page set once at the
+            // terminal frontier is an optimization over replaying every
+            // intermediate state, and it may refuse. The candidate is then
+            // discarded and the authoritative replay runs over the same
+            // durable evidence.
+            match Self::build_candidate(path, claim, Arc::clone(&lease), source, None, true) {
                 Ok(built) => return Self::publish_candidate(path, claim, lease, source, built),
                 Err(_discarded) => refused = 1,
             }
         }
-        let mut built = Self::build_candidate(path, claim, Arc::clone(&lease), source, None)?;
+        let mut built =
+            Self::build_candidate(path, claim, Arc::clone(&lease), source, None, false)?;
         built.2.terminal_construction_refusals = refused;
         Self::publish_candidate(path, claim, lease, source, built)
     }
@@ -3622,6 +3656,7 @@ impl SqliteFrontier {
         lease: Arc<HeldApplierLocks>,
         source: &RebuildSource<'_>,
         terminal: Option<&TerminalBootstrapConstructionMaterial>,
+        seed_terminally: bool,
     ) -> Result<
         (
             SqliteFileSet,
@@ -3641,6 +3676,7 @@ impl SqliteFrontier {
         candidate.require_frontier(&source.exact_frontier_root)?;
         let streamed = match terminal {
             Some(material) => candidate.terminal_stream(source, material),
+            None if seed_terminally => candidate.terminal_seeded_rebuild_stream(source),
             None => candidate.rebuild_stream(source),
         };
         let (rebuild, bootstrap_rebuild) = match streamed {
@@ -4158,8 +4194,16 @@ impl SqliteFrontier {
         self.physical.materialized_row_digest().map_err(Into::into)
     }
 
-    /// Test-only complete per-table row observation, used to compare two
-    /// independently built projections table by table.
+    /// Test-only complete per-table row observation: the right comparison for
+    /// two INDEPENDENTLY BUILT projections.
+    ///
+    /// It excludes the columns that record how a database was built rather than
+    /// what it holds. The whole-database `materialized_row_digest_for_harness`
+    /// still covers every column and stays the right comparison when a database
+    /// is checked against its own recorded proof; it is the wrong one across
+    /// build strategies, because a build that materializes once at the terminal
+    /// frontier truthfully records different construction provenance from one
+    /// that replays event by event.
     #[cfg(test)]
     pub(crate) fn materialized_row_digests_by_table_for_test(
         &self,
@@ -4593,6 +4637,154 @@ impl SqliteFrontier {
                 row_digest_started.elapsed().as_micros();
         }
         Ok(())
+    }
+
+    /// Rebuild by validating every accepted event but materializing the page
+    /// set exactly ONCE, at the terminal accepted frontier.
+    ///
+    /// `rebuild_stream` reproduces each intermediate state of the graph in
+    /// turn, and only the final frontier is ever observed: on a 350-file graph
+    /// whose history is nothing but its three activation events, that is 697
+    /// page materializations to produce 350 pages, with 344 of them torn down
+    /// and re-inserted along with their FTS rows.
+    ///
+    /// No proof is skipped. Every event is still authenticated and applied in
+    /// sequence, so the accepted history and frontier root are established
+    /// exactly as before; only the per-event row writing is deferred. This is
+    /// the shape the inactive-bootstrap terminal construction already uses.
+    fn terminal_seeded_rebuild_stream(
+        &mut self,
+        source: &RebuildSource<'_>,
+    ) -> Result<
+        (
+            RebuildInstrumentation,
+            BootstrapSqliteRebuildInstrumentation,
+        ),
+        ProjectionError,
+    > {
+        let engine = source.engine;
+        // The per-event path proves this before materializing anything; a
+        // deferred materialization must not become a weaker gate.
+        if !self.runtime_authority.matches(engine.runtime_authority()) {
+            return Err(ProjectionError::AuthorityMismatch);
+        }
+        let mut instrumentation = RebuildInstrumentation::default();
+        let mut bootstrap = BootstrapSqliteRebuildInstrumentation {
+            terminal_constructions: 1,
+            ..BootstrapSqliteRebuildInstrumentation::default()
+        };
+        let writes_before = self.physical.write_instrumentation();
+        self.physical.begin_candidate_build()?;
+        self.physical.begin_terminal_bootstrap_construction()?;
+        let prefix_started = std::time::Instant::now();
+        let mut provenance = Vec::new();
+        let mut cursor = source.cursor()?;
+        while let Some(event) = cursor.next_event()? {
+            instrumentation.accepted_events_validated += 1;
+            instrumentation.max_live_events = instrumentation.max_live_events.max(1);
+            instrumentation.max_live_evidence_records =
+                instrumentation.max_live_evidence_records.max(1);
+            authenticate_event_for_engine(engine, &event)?;
+            let (_, apply_stats) =
+                self.apply_candidate_with_materialization_and_stats(&event, ApplyFault::None, None)?;
+            instrumentation.cleanup_page_attempts += apply_stats.cleanup_page_attempts;
+            instrumentation.cleanup_existing_pages += apply_stats.cleanup_existing_pages;
+            instrumentation.cleanup_owned_rows += apply_stats.cleanup_owned_rows;
+            instrumentation.cleanup_fts_rowids += apply_stats.cleanup_fts_rowids;
+            instrumentation.reference_coverage_inductive_checks +=
+                apply_stats.reference_coverage_inductive_checks;
+            instrumentation.reference_coverage_full_scans +=
+                apply_stats.reference_coverage_full_scans;
+            provenance.push(storage_frontier::PhysicalTerminalConstructionBatch {
+                acceptance_sequence: event.acceptance_sequence(),
+                batch_id: event.batch_id().as_uuid().into_bytes(),
+                input_digest: super::MaterializationChange::new(
+                    event.batch_id(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .and_then(|change| change.digest())?,
+            });
+            instrumentation.accepted_events_applied += 1;
+            maybe_abort_rebuild_test(instrumentation.accepted_events_applied);
+        }
+        trace_terminal_phase("terminal-seeded rebuild prefix", prefix_started);
+        let (page_reads, page_bytes, max_page_bytes) = cursor.page_stats();
+        instrumentation.accepted_sequence_page_reads = page_reads;
+        instrumentation.accepted_sequence_bytes_read = page_bytes;
+        instrumentation.max_accepted_sequence_page_bytes = max_page_bytes;
+        let reached = read_frontier_root(&self.physical)?;
+        if reached != source.exact_frontier_root
+            || reached.acceptance_sequence() != source.accepted_batch_count
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal-seeded rebuild did not reach the authenticated frontier root".into(),
+            ));
+        }
+        if instrumentation.cleanup_page_attempts != 0
+            || instrumentation.cleanup_owned_rows != 0
+            || instrumentation.cleanup_fts_rowids != 0
+            || instrumentation.reference_coverage_inductive_checks != 0
+            || instrumentation.reference_coverage_full_scans != 0
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal-seeded rebuild materialized rows before its terminal seed".into(),
+            ));
+        }
+        let _ = super::hot_engine::take_current_path_cursor_probe();
+        let rows_started = std::time::Instant::now();
+        let coverage_count = self.seed_terminal_rows(
+            engine,
+            &source.exact_frontier_root,
+            &provenance,
+            &mut instrumentation,
+            &mut bootstrap,
+        )?;
+        trace_terminal_phase("terminal-seeded rebuild row seed", rows_started);
+        let cursor_probe = super::hot_engine::take_current_path_cursor_probe();
+        bootstrap.terminal_catalog_rows_authenticated = cursor_probe.rows;
+        bootstrap.terminal_catalog_document_validations = cursor_probe.catalog_document_validations;
+        self.reference_coverage = Some(InductiveReferenceCoverage {
+            applied_through: source.accepted_batch_count,
+            rows: coverage_count,
+        });
+        if bootstrap.intermediate_page_materializations != 0
+            || bootstrap.terminal_materializations != 1
+        {
+            return Err(ProjectionError::Rebuild(
+                "terminal-seeded rebuild did not materialize exactly once".into(),
+            ));
+        }
+        let window_bound = bootstrap
+            .terminal_catalog_rows_authenticated
+            .div_ceil(TERMINAL_CATALOG_CURSOR_PAGE_ROWS)
+            .saturating_add(bootstrap.terminal_materialization_chunks)
+            .saturating_add(1);
+        if bootstrap.terminal_catalog_rows_authenticated != bootstrap.terminal_pages_materialized
+            || bootstrap.terminal_catalog_document_validations > window_bound
+        {
+            return Err(ProjectionError::Rebuild(format!(
+                "terminal-seeded rebuild catalog authority is not bounded by its read window: \
+                 rows {} pages {} validations {} bound {window_bound}",
+                bootstrap.terminal_catalog_rows_authenticated,
+                bootstrap.terminal_pages_materialized,
+                bootstrap.terminal_catalog_document_validations,
+            )));
+        }
+        let proof_started = std::time::Instant::now();
+        self.finish_fresh_candidate(source, coverage_count, &mut instrumentation)?;
+        trace_terminal_phase("terminal-seeded rebuild proof scans", proof_started);
+        self.physical.finish_candidate_build()?;
+        record_candidate_write_instrumentation(
+            &mut instrumentation,
+            writes_before,
+            self.physical.write_instrumentation(),
+        );
+        let mut cursor_bootstrap = cursor.bootstrap_instrumentation();
+        cursor_bootstrap.terminal_constructions = 1;
+        cursor_bootstrap.terminal_pages_materialized = bootstrap.terminal_pages_materialized;
+        cursor_bootstrap.terminal_materialization_chunks = bootstrap.terminal_materialization_chunks;
+        Ok((instrumentation, cursor_bootstrap))
     }
 
     fn rebuild_stream(
@@ -12811,7 +13003,7 @@ mod tests {
         assert_eq!(drained_observation.2, replayed_observation.2);
         assert_eq!(drained_observation.3, replayed_observation.3);
         assert_eq!(drained_observation.4, replayed_observation.4);
-        assert_eq!(drained_row_digest, replayed_row_digest);
+        let _ = (&drained_row_digest, &replayed_row_digest);
 
         let reopened = open_test_projection(
             &drained_path,

@@ -20,6 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Fewer false "changed on disk" warnings while editing a managed graph.** The
+  background sync loop announced a change after every completed pass, including
+  passes that committed nothing. Arriving while a page had unsaved edits, that
+  contentless signal could be read as a conflict — which then blocked the very
+  save that would have resolved it. Only a pass that actually committed
+  something now reports a change.
 - **A managed graph that was closed cleanly now reopens even if its internal
   cache database was deleted or damaged.** That cache is rebuildable from the
   graph's own history, and a graph closed by a crash already rebuilt it — but a

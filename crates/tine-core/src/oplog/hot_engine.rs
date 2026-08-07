@@ -6860,7 +6860,10 @@ pub struct ShardedHotEngine {
     // This memoizes only WHERE the manifest was found, never WHETHER the
     // record matches it: each document still proves its own descriptor digest
     // and manifest fingerprint against the manifest below.
-    observed_manifest_point_cache: RefCell<BTreeMap<BatchId, Arc<OperationBatch>>>,
+    observed_manifest_point_cache: RefCell<BTreeMap<BatchId, (Arc<OperationBatch>, u64)>>,
+    /// Monotonic use counter for the manifest memo's least-recently-used
+    /// eviction. It only orders entries within one point operation.
+    observed_manifest_point_clock: Cell<u64>,
     // The retained bootstrap part behind those manifests, memoized under the
     // same operation scope, together with its document -> CrdtUpdate index.
     //
@@ -6869,7 +6872,7 @@ pub struct ShardedHotEngine {
     // per-document whole-graph cost in the same anchor validation. The index is
     // built once per memoized part so the per-document step is a lookup.
     retained_bootstrap_part_point_cache:
-        RefCell<BTreeMap<BatchId, Arc<BTreeMap<DocumentId, OperationObject>>>>,
+        RefCell<BTreeMap<BatchId, (Arc<BTreeMap<DocumentId, OperationObject>>, u64)>>,
     // At most one decoded page catalog, reused across accepted events by
     // content identity alone. Unlike the two point caches above this is *not*
     // cleared per operation: a content-only save leaves the catalog's causal
@@ -7020,6 +7023,7 @@ impl ShardedHotEngine {
             status_point_cache: RefCell::new(BTreeMap::new()),
             external_anchor_point_cache: RefCell::new(BTreeSet::new()),
             observed_manifest_point_cache: RefCell::new(BTreeMap::new()),
+            observed_manifest_point_clock: Cell::new(0),
             retained_bootstrap_part_point_cache: RefCell::new(BTreeMap::new()),
             retained_accepted_catalog: RefCell::new(None),
             retained_catalog_dependency_anchor: Cell::new(None),
@@ -10734,24 +10738,45 @@ impl ShardedHotEngine {
             external_exact_session,
         )
         .map_err(|error| EngineError::Archive(error.to_string()))?;
-        dependencies
+        // Resolve every record first, then prove the anchors grouped by source
+        // batch. An anchor proof reads the archive manifest of the record's
+        // own source batch, and visiting documents in page order interleaves
+        // those batches, so a manifest already read gets read again the next
+        // time a page from that batch comes round. Grouping makes the number
+        // of manifest reads equal the number of distinct batches.
+        //
+        // Nothing is skipped or weakened: every document still proves both its
+        // archive anchor and its peer counters and direct heads against the
+        // frontier. Only the order of those proofs changes, so a graph with
+        // several bad documents may now surface a different one first.
+        let mut resolved = Vec::with_capacity(document_ids.len());
+        for (dependency, loaded) in dependencies.into_iter().flatten().zip(loaded) {
+            let document_id = dependency.document_id();
+            let (record, document, state_work) =
+                loaded.ok_or(EngineError::FrontierVectorMismatch(document_id))?;
+            self.record_document_state_work(state_work);
+            if record.peer_counters() != dependency.peer_counters()
+                || record.exact_direct_heads() != dependency.direct_dependency_heads()
+            {
+                return Err(EngineError::FrontierVectorMismatch(document_id));
+            }
+            resolved.push((dependency, record, document));
+        }
+        let mut anchor_order = (0..resolved.len()).collect::<Vec<_>>();
+        anchor_order.sort_by_key(|index| resolved[*index].1.latest_source_batch());
+        for index in anchor_order {
+            let (dependency, record, _) = &resolved[index];
+            self.validate_external_record_anchor(dependency.document_id(), record)?;
+        }
+        Ok(resolved
             .into_iter()
-            .flatten()
-            .zip(loaded)
-            .map(|(dependency, loaded)| {
-                let document_id = dependency.document_id();
-                let (record, document, state_work) =
-                    loaded.ok_or(EngineError::FrontierVectorMismatch(document_id))?;
-                self.record_document_state_work(state_work);
-                self.validate_external_record_anchor(document_id, &record)?;
-                if record.peer_counters() != dependency.peer_counters()
-                    || record.exact_direct_heads() != dependency.direct_dependency_heads()
-                {
-                    return Err(EngineError::FrontierVectorMismatch(document_id));
-                }
-                Ok((document_id, (dependency, document.into_document())))
+            .map(|(dependency, _, document)| {
+                (
+                    dependency.document_id(),
+                    (dependency, document.into_document()),
+                )
             })
-            .collect()
+            .collect())
     }
 
     fn authenticate_accepted_frontier_root(
@@ -19713,16 +19738,37 @@ impl ShardedHotEngine {
         &self,
         batch_id: BatchId,
     ) -> Result<Arc<OperationBatch>, EngineError> {
-        const OBSERVED_MANIFEST_POINT_CACHE_BATCHES: usize = 4;
-        if let Some(manifest) = self.observed_manifest_point_cache.borrow().get(&batch_id) {
-            return Ok(Arc::clone(manifest));
+        // The working set is the number of distinct batches the documents of
+        // one materialization came from -- for an imported graph, its bootstrap
+        // parts. That is not a small constant, and a bound below it makes every
+        // pass reload every manifest. Callers that can group by source batch
+        // do, which keeps the demand at one manifest at a time; this bound only
+        // has to survive the chunk boundaries between those groups.
+        const OBSERVED_MANIFEST_POINT_CACHE_BATCHES: usize = 32;
+        let tick = self.observed_manifest_point_clock.get().wrapping_add(1);
+        self.observed_manifest_point_clock.set(tick);
+        if let Some(entry) = self
+            .observed_manifest_point_cache
+            .borrow_mut()
+            .get_mut(&batch_id)
+        {
+            entry.1 = tick;
+            return Ok(Arc::clone(&entry.0));
         }
         let manifest = Arc::new(self.load_observed_manifest(batch_id)?);
         let mut cache = self.observed_manifest_point_cache.borrow_mut();
         if cache.len() >= OBSERVED_MANIFEST_POINT_CACHE_BATCHES {
-            cache.clear();
+            // Evict the least recently used entry, not the whole cache. A
+            // wholesale clear turned a working set one batch over the bound
+            // into re-reading every manifest on every cycle.
+            let victim = cache
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(batch, _)| *batch)
+                .expect("a cache at its bound has an entry to evict");
+            cache.remove(&victim);
         }
-        cache.insert(batch_id, Arc::clone(&manifest));
+        cache.insert(batch_id, (Arc::clone(&manifest), tick));
         Ok(manifest)
     }
 
@@ -23703,13 +23749,20 @@ impl ShardedHotEngine {
         &self,
         batch_id: BatchId,
     ) -> Result<Option<Arc<BTreeMap<DocumentId, OperationObject>>>, EngineError> {
-        const RETAINED_BOOTSTRAP_POINT_CACHE_BATCHES: usize = 4;
-        if let Some(index) = self
+        // Same shape as the manifest memo: the working set is the number of
+        // distinct bootstrap parts the documents came from, not a small
+        // constant, and a wholesale clear at the bound reloaded and re-indexed
+        // every part on every pass.
+        const RETAINED_BOOTSTRAP_POINT_CACHE_BATCHES: usize = 32;
+        let tick = self.observed_manifest_point_clock.get().wrapping_add(1);
+        self.observed_manifest_point_clock.set(tick);
+        if let Some(entry) = self
             .retained_bootstrap_part_point_cache
-            .borrow()
-            .get(&batch_id)
+            .borrow_mut()
+            .get_mut(&batch_id)
         {
-            return Ok(Some(Arc::clone(index)));
+            entry.1 = tick;
+            return Ok(Some(Arc::clone(&entry.0)));
         }
         let Some(loaded) = self.load_retained_bootstrap_part(batch_id)? else {
             return Ok(None);
@@ -23723,9 +23776,14 @@ impl ShardedHotEngine {
         let index = Arc::new(index);
         let mut cache = self.retained_bootstrap_part_point_cache.borrow_mut();
         if cache.len() >= RETAINED_BOOTSTRAP_POINT_CACHE_BATCHES {
-            cache.clear();
+            let victim = cache
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(batch, _)| *batch)
+                .expect("a cache at its bound has an entry to evict");
+            cache.remove(&victim);
         }
-        cache.insert(batch_id, Arc::clone(&index));
+        cache.insert(batch_id, (Arc::clone(&index), tick));
         Ok(Some(index))
     }
 

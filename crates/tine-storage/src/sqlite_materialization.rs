@@ -364,6 +364,18 @@ pub const REFERENCE_ALIAS_DECLARATIONS_DDL: &str = "CREATE TABLE reference_alias
         source_page_id, source_entity_type, source_entity_id, source_locator, ordinal
     )
 ) WITHOUT ROWID, STRICT";
+/// An alias binding is the resolution itself: which pages a normalized alias
+/// currently names, in candidate order.
+///
+/// It deliberately does NOT record the catalog root it was resolved against.
+/// That stamp was written by every path and read by none, and because it sat
+/// in the primary key it made two correct builds of the same graph disagree:
+/// an incremental drain stamps the root that was current when the alias was
+/// last touched, while a rebuild stamps the root it resolved at. Same alias,
+/// same ordinal, same page, different provenance -- enough to fail a
+/// byte-equality proof for a value nothing consults. The projection's own
+/// `materialization_stamp` already records the catalog root the whole database
+/// is at, which is the question anyone actually asks.
 pub const REFERENCE_ALIAS_BINDINGS_DDL: &str = "CREATE TABLE reference_alias_bindings (
     normalized_alias TEXT NOT NULL CHECK (
         length(CAST(normalized_alias AS BLOB)) BETWEEN 1 AND 4194304
@@ -372,8 +384,7 @@ pub const REFERENCE_ALIAS_BINDINGS_DDL: &str = "CREATE TABLE reference_alias_bin
     resolved_page_id BLOB CHECK (
         resolved_page_id IS NULL OR length(resolved_page_id) = 16
     ),
-    catalog_root_digest BLOB NOT NULL CHECK (length(catalog_root_digest) = 32),
-    PRIMARY KEY (normalized_alias, candidate_ordinal, catalog_root_digest)
+    PRIMARY KEY (normalized_alias, candidate_ordinal)
 ) WITHOUT ROWID, STRICT";
 pub const PAGES_DDL: &str = "CREATE TABLE pages (
     page_id BLOB PRIMARY KEY CHECK (length(page_id) = 16),
@@ -503,7 +514,7 @@ pub const REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL: &str =
     ON reference_alias_declarations(source_page_id, source_entity_type, source_entity_id, ordinal)";
 pub const REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL: &str =
     "CREATE INDEX reference_alias_bindings_normalized_alias_idx
-    ON reference_alias_bindings(normalized_alias, catalog_root_digest, candidate_ordinal)";
+    ON reference_alias_bindings(normalized_alias, candidate_ordinal)";
 pub const PROPERTIES_LOOKUP_INDEX_DDL: &str = "CREATE INDEX properties_lookup_idx
     ON properties(name, value, page_id, owner_type, owner_id)";
 pub const PROPERTIES_PAGE_INDEX_DDL: &str = "CREATE INDEX properties_page_idx
@@ -601,12 +612,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     ),
     (
         "reference_alias_bindings",
-        &[
-            "normalized_alias",
-            "candidate_ordinal",
-            "resolved_page_id",
-            "catalog_root_digest",
-        ],
+        &["normalized_alias", "candidate_ordinal", "resolved_page_id"],
     ),
     (
         "pages",
@@ -957,12 +963,27 @@ pub fn row_digest(connection: &Connection) -> Result<ContentDigest, Materializat
     Ok(ContentDigest::from_bytes(hasher.finalize().into()))
 }
 
-/// Columns that carry SQLite's insertion order rather than an authoritative
-/// observation. Two independently built databases agree on the mapping such a
-/// column expresses, not on the integers SQLite happened to assign; the FTS
-/// owner rowid is joined to `search_fts` and proved inside each database.
+/// Columns that record how a database was built rather than what it holds.
+///
+/// Two independently built databases agree on what such a column *expresses*,
+/// not on the exact value this build happened to write, so a differential
+/// comparison excludes them deliberately instead of weakening the whole-database
+/// digest, which still covers every column.
+///
+/// - `search_fts_owners.rowid` is SQLite's insertion order. It is joined to
+///   `search_fts` and proved inside each database.
+/// - `materialization_batches.input_digest` is the change a build applied for
+///   one accepted batch. A build that replays event by event writes that
+///   event's real change; one that validates every event and materializes the
+///   page set once at the terminal frontier writes the empty change it actually
+///   applied. Both are truthful records of their own construction, and the
+///   batch identity beside them -- acceptance sequence and batch id -- is
+///   content and stays compared.
 #[cfg(any(test, feature = "test-support"))]
-const CONSTRUCTION_ORDER_COLUMNS: [(&str, &str); 1] = [("search_fts_owners", "rowid")];
+const CONSTRUCTION_PROVENANCE_COLUMNS: [(&str, &str); 2] = [
+    ("search_fts_owners", "rowid"),
+    ("materialization_batches", "input_digest"),
+];
 
 /// Per-table complete row observation.
 ///
@@ -980,7 +1001,7 @@ pub fn row_digests_by_table(
             let columns = columns
                 .iter()
                 .copied()
-                .filter(|column| !CONSTRUCTION_ORDER_COLUMNS.contains(&(table, column)))
+                .filter(|column| !CONSTRUCTION_PROVENANCE_COLUMNS.contains(&(table, column)))
                 .collect::<Vec<_>>();
             let mut hasher = Sha256::new();
             hasher.update(b"tine/sqlite-materialization/table-rows/v1\0");
@@ -1407,9 +1428,9 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
     require_open_candidate(transaction)?;
     transaction.execute(
         "INSERT INTO reference_alias_bindings (
-             normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
+             normalized_alias, candidate_ordinal, resolved_page_id
          )
-         SELECT normalized_alias, candidate_ordinal, source_page_id, ?1
+         SELECT normalized_alias, candidate_ordinal, source_page_id
          FROM (
              SELECT normalized_alias, source_page_id,
                     ROW_NUMBER() OVER (
@@ -1420,7 +1441,7 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
                  FROM reference_alias_declarations
              )
          )",
-        params![stamp.catalog_root_digest.as_bytes().as_slice()],
+        [],
     )?;
     for batch in provenance {
         transaction.execute(
@@ -1684,8 +1705,8 @@ fn apply_reference_catalog_change(
         for (ordinal, page_id) in candidates.into_iter().enumerate() {
             transaction.execute(
                 "INSERT INTO reference_alias_bindings (
-                     normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
-                 ) VALUES (?1, ?2, ?3, ?4)",
+                     normalized_alias, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, ?2, ?3)",
                 params![
                     &alias,
                     i64::try_from(ordinal).map_err(|_| {
@@ -1694,7 +1715,6 @@ fn apply_reference_catalog_change(
                         )
                     })?,
                     page_id.as_slice(),
-                    post_root_digest.as_bytes().as_slice(),
                 ],
             )?;
         }
@@ -3589,13 +3609,9 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO reference_alias_bindings (
-                     normalized_alias, candidate_ordinal, resolved_page_id, catalog_root_digest
-                 ) VALUES (?1, 0, ?2, ?3)",
-                params![
-                    "\u{00e5}lias \u{0}",
-                    first.page_id.as_slice(),
-                    digest(b"catalog").as_bytes().as_slice(),
-                ],
+                     normalized_alias, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, 0, ?2)",
+                params!["\u{00e5}lias \u{0}", first.page_id.as_slice()],
             )
             .unwrap();
         assert_streaming_digest_matches_legacy(&connection);
