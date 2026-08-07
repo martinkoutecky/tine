@@ -11,10 +11,13 @@
 //! the deliberately curated physical-storage boundary that does not expose a
 //! raw SQLite connection or schema-construction details.
 //!
-//! Every constant that describes bytes already on disk is additionally
-//! collected in [`formats`], which is the single place a release or pin receipt
-//! quotes. On-disk format versions are deliberately independent of this crate's
-//! semver; see that module for the rule and the manifest.
+//! Every constant that describes bytes already on disk is exported from
+//! [`formats`] and **only** from there, so a release or pin receipt has exactly
+//! one thing to quote and a reader cannot reach a format constant by a path the
+//! receipt does not cover. On-disk format versions are deliberately independent
+//! of this crate's semver; see that module for the rule and the manifest.
+//! `formats::tests::no_format_constant_has_a_second_export_path` enforces the
+//! single-path rule against this file.
 
 mod authenticated_patricia;
 mod content_digest;
@@ -33,23 +36,23 @@ mod sqlite_materialization;
 /// Curated physical SQLite API for the disposable projection.
 ///
 /// This facade exposes typed DTOs, errors, bounded reads, instrumentation,
-/// stable physical constants, physical file-set/candidate publication, and the
-/// connection-owning database wrapper. It intentionally excludes raw DDL,
-/// direct connection access, and lower-level production implementation helpers.
+/// physical file-set/candidate publication, and the connection-owning database
+/// wrapper. It intentionally excludes raw DDL, direct connection access, and
+/// lower-level production implementation helpers. Persistent-format constants
+/// are not here either: they live in [`formats`], which owns every value a
+/// reader must agree with a writer about.
 pub mod sqlite {
     pub use crate::sqlite_database::{
         PhysicalReferenceCatalogStamp, PhysicalSqliteDatabase, PhysicalWriteInstrumentation,
     };
     pub use crate::sqlite_fileset::{
         PhysicalFileCheckpoint, PhysicalSqliteCheckpoint, SqliteFileSet, SqliteFileSetError,
-        SqliteForensicPathMapping, MAX_SQLITE_CHECKPOINT_BYTES, SQLITE_CHECKPOINT_EDGE_BYTES,
-        SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES, SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES,
+        SqliteForensicPathMapping,
     };
     pub use crate::sqlite_frontier::{
         ApplyDisposition, ApplyFault, ApplyResult, FrontierError, PhysicalAcceptedBatch,
         PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,
-        PreflightDisposition, StoredBatch, StoredFrontier, SQLITE_APPLICATION_ID,
-        SQLITE_SCHEMA_VERSION,
+        PreflightDisposition, StoredBatch, StoredFrontier,
     };
     pub use crate::sqlite_materialization::{
         ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
@@ -85,21 +88,17 @@ pub use digest_sealed::{DigestSealedError, DigestSealedPayload};
 pub use durable_batch::{
     BatchCausalDot, BatchError, CausalPeerId, DurableBatchContract, LineageDigest,
     ObjectDescriptor, ObjectKind, OperationBatch, OperationObject, SemanticEffectDigest,
-    MANIFEST_ENCODING_VERSION, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES,
-    OBJECT_ENVELOPE_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use filesystem::{
     ensure_directory_nofollow, nonblocking_lock_is_contended, open_dir_nofollow,
     open_existing_dir_nofollow, open_file_nofollow, publish_immutable_exact, read_optional_regular,
     read_required_regular, require_regular_entry, sync_dir_required,
     CompletedExactImmutablePublicationBatch, ExactImmutablePublicationBatch, FilesystemError,
-    StagedExactImmutablePublication, ValidatedDirectorySync,
+    StagedExactImmutablePublication,
 };
 pub use local_journal::{
     LocalJournalAppend, LocalJournalError, LocalJournalFrame, LocalJournalPayloadKind,
     LocalJournalRecovery, LocalJournalSegment, LocalJournalStats,
-    LOCAL_JOURNAL_FRAME_SCHEMA_VERSION, MAX_LOCAL_JOURNAL_FRAME_BYTES,
-    MAX_LOCAL_JOURNAL_FRAME_HEADER_BYTES, MAX_LOCAL_JOURNAL_SEGMENT_BYTES,
 };
 #[cfg(feature = "test-support")]
 pub use packed_patricia::{
@@ -111,7 +110,5 @@ pub use scratch::{
     RetainedRunReclamation, ScratchBlobRef, ScratchConstructionBoundary, ScratchLookupSession,
     ScratchLookupSessionStats, ScratchLsmRoot, ScratchOperationStats, ScratchPageRef,
     ScratchPageTag, ScratchRetention, ScratchRun, ScratchRunError, ScratchRunLifecycleStats,
-    ScratchSegmentRef, MAX_SCRATCH_BLOB_BYTES, MAX_SCRATCH_PAGE_BYTES, SCRATCH_BLOBS_FILE,
-    SCRATCH_DIR, SCRATCH_LEASE_FILE, SCRATCH_LSM_LEVELS, SCRATCH_MARKER_FILE, SCRATCH_PAGES_FILE,
-    SCRATCH_PAGE_SCHEMA_VERSION, SCRATCH_SCHEMA_VERSION,
+    ScratchSegmentRef,
 };

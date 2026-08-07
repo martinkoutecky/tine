@@ -446,4 +446,64 @@ mod tests {
         names.dedup();
         assert_eq!(before, names.len(), "duplicate name in FORMAT_MANIFEST");
     }
+
+    /// A persistent-format constant is reachable by exactly one path:
+    /// `tine_storage::formats::NAME`.
+    ///
+    /// This is not tidiness. A release receipt and a Tine pin receipt are
+    /// generated from [`FORMAT_MANIFEST`], and their claim is "these are the
+    /// format values this build commits to". A second export path lets a
+    /// consumer bind to a format constant the receipt never mentions, so the
+    /// receipt stops being a complete statement about the crate's format
+    /// surface. Re-exporting a manifest name from `lib.rs` therefore fails
+    /// here, and the fix is to import it from `formats` at the call site.
+    ///
+    /// Source-level rather than type-level because Rust has no way to ask
+    /// "how many public paths reach this item?" — but the check is exact
+    /// about what it inspects: the `pub use` items of `lib.rs`.
+    #[test]
+    fn no_format_constant_has_a_second_export_path() {
+        const LIB_RS: &str = include_str!("lib.rs");
+
+        let manifest_names: Vec<&str> = FORMAT_MANIFEST.iter().map(|c| c.name).collect();
+
+        // Collect the identifiers `lib.rs` re-exports, ignoring its own
+        // `pub mod formats;` declaration and any `formats::` re-export.
+        let mut exported: Vec<&str> = Vec::new();
+        let mut rest = LIB_RS;
+        while let Some(start) = rest.find("pub use ") {
+            rest = &rest[start + "pub use ".len()..];
+            let end = rest.find(';').expect("a `pub use` item must be terminated");
+            let item = &rest[..end];
+            rest = &rest[end..];
+            if item.starts_with("crate::formats") || item.starts_with("formats") {
+                continue;
+            }
+            for token in item.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+                if !token.is_empty() {
+                    exported.push(token);
+                }
+            }
+        }
+
+        let leaked: Vec<&str> = manifest_names
+            .iter()
+            .copied()
+            .filter(|name| exported.contains(name))
+            .collect();
+
+        assert!(
+            leaked.is_empty(),
+            "persistent-format constants re-exported from lib.rs as well as `formats`: {leaked:?}\n\
+             Remove them from the `lib.rs` re-exports; consumers import \
+             `tine_storage::formats::NAME`."
+        );
+
+        // Guard the guard: if the parse ever stops seeing `lib.rs`'s exports,
+        // the emptiness above would be vacuous rather than meaningful.
+        assert!(
+            exported.contains(&"ContentDigest"),
+            "the lib.rs re-export parse found nothing recognizable; this test would pass vacuously"
+        );
+    }
 }
