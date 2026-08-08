@@ -9,6 +9,8 @@ mod backup;
 mod commands;
 mod debug;
 mod graph;
+#[cfg(target_os = "ios")]
+mod ios_folder_picker;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 /// Test-only: the enumeration of what every command can do under Tine-managed
@@ -581,6 +583,8 @@ pub fn run() {
     let builder = builder.plugin(android_media::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(ios_folder_picker::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -696,7 +700,10 @@ pub fn run() {
             create_graph,
             app_platform,
             default_graph_parent,
+            #[cfg(not(target_os = "ios"))]
             android_folder_picker::pick_graph_folder,
+            #[cfg(target_os = "ios")]
+            ios_folder_picker::pick_graph_folder,
             android_media::capture_photo,
             android_media::start_recording,
             android_media::stop_recording,

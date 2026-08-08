@@ -5528,6 +5528,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tempfile",
  "tine-core",
+ "tine-ios-folder-picker-native",
  "uuid",
  "webkit2gtk",
  "x11",
@@ -5564,6 +5565,14 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tine-ios-folder-picker-native"
+version = "0.6.91"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

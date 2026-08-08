@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { GraphFolderPickResult } from "./backend";
 import type { GraphMeta, PageDto } from "./types";
 
 const META: GraphMeta = {
@@ -27,7 +28,9 @@ async function loadHarness(
   existing: PageDto | null,
   access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
   confirm = true,
-  warm = false
+  warm = false,
+  platform: "android" | "ios" | "desktop" = "desktop",
+  pickerResult: GraphFolderPickResult = { status: "cancelled" }
 ) {
   vi.resetModules();
   const events: string[] = [];
@@ -54,6 +57,7 @@ async function loadHarness(
       return "new-rev";
     }),
     readCustomCss: vi.fn(async () => ""),
+    pickGraphFolder: vi.fn(async () => pickerResult),
     pageAliases: vi.fn(async () => [["page1", "other"], ["shortcut", "other"]] as [string, string][]),
     listPages: vi.fn(async () => [
       { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
@@ -70,6 +74,7 @@ async function loadHarness(
   const retirePdfOwnership = vi.fn(() => { events.push("retire-pdf"); });
   const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
   const closePdf = vi.fn(() => { events.push("close-pdf"); });
+  const pushToast = vi.fn();
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -90,7 +95,7 @@ async function loadHarness(
     },
     seedFavorites: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
-    pushToast: vi.fn(),
+    pushToast,
     refreshJournalConflicts: vi.fn(async () => {}),
     refreshSyncConflicts: vi.fn(async () => {}),
     clearRecent: vi.fn(),
@@ -124,19 +129,55 @@ async function loadHarness(
   vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => warm) }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
-  vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
+  vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
+  const { ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, switchGraph } = await import("./graph");
   return {
-    ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
+    ensureJournalTemplateForDay, loadGraphPath, refreshAliases, refreshPageIdentities, switchGraph,
+    api, events, setAliasMap, pushToast,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
     applyTemplateVars, prepareTemplateVars,
     setMeta: (next: GraphMeta | null) => { meta = next; },
     bumpEpoch: () => { epoch += 1; },
   };
 }
+
+describe("mobile graph folder picker", () => {
+  it("opens a picked graph from Tine's iOS Documents container", async () => {
+    const harness = await loadHarness(
+      null,
+      undefined,
+      true,
+      true,
+      "ios",
+      { status: "picked", path: META.root }
+    );
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "loaded", root: META.root });
+    expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
+    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
+  });
+
+  it("shows a clear refusal when iOS returns an outside-container folder", async () => {
+    const harness = await loadHarness(
+      null,
+      undefined,
+      true,
+      false,
+      "ios",
+      { status: "refused" }
+    );
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).not.toHaveBeenCalled();
+    expect(harness.pushToast).toHaveBeenCalledWith(
+      "Tine can only open folders inside On My iPhone → Tine.",
+      "info"
+    );
+  });
+});
 
 afterEach(() => {
   document.body.innerHTML = "";

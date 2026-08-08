@@ -414,37 +414,37 @@ async function injectCustomCss(): Promise<void> {
 /** Pick a folder and open it as the graph. No-op if cancelled. */
 export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   const platform = await platformKind();
-  if (platform === "android") {
+  if (platform === "android" || platform === "ios") {
     let result;
     try {
       result = await backend().pickGraphFolder();
     } catch (e) {
-      pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
+      const platformName = platform === "android" ? "Android" : "iOS";
+      pushToast(`Couldn't open the ${platformName} folder picker. (${String(e)})`, "error");
       return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
     // an intermittent first-run stall on "Opening…" — these pin down whether the
     // native picker returned and whether the graph parse completed or hung.
-    console.info(`[tine/android] pickGraphFolder → ${result.status}`);
+    console.info(`[tine/${platform}] pickGraphFolder → ${result.status}`);
     if (result.status === "picked") {
       if (result.path) {
-        console.info("[tine/android] loadGraphPath: start");
+        console.info(`[tine/${platform}] loadGraphPath: start`);
         const outcome = await loadGraphPath(result.path);
-        console.info("[tine/android] loadGraphPath: done");
+        console.info(`[tine/${platform}] loadGraphPath: done`);
         return outcome;
       }
       return { kind: "aborted" };
     }
-    if (result.status === "permission-requested" || result.status === "permission-needed") {
+    if (
+      platform === "android" &&
+      (result.status === "permission-requested" || result.status === "permission-needed")
+    ) {
       pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
     }
-    return { kind: "aborted" };
-  }
-  if (platform === "ios") {
-    pushToast(
-      "Opening an existing graph on iOS is coming soon. For now, tap “Create a new graph” to try Tine.",
-      "info"
-    );
+    if (platform === "ios" && result.status === "refused") {
+      pushToast("Tine can only open folders inside On My iPhone → Tine.", "info");
+    }
     return { kind: "aborted" };
   }
   const path = await backend().pickFolder();

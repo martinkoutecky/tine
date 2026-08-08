@@ -105,7 +105,7 @@ export interface GraphSourceFile {
 
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
-  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
+  | { status: "permission-requested" | "permission-needed" | "cancelled" | "refused"; path?: string };
 
 export interface ClipboardAssetFile {
   path: string;
