@@ -434,6 +434,15 @@ fn sink_construction_node(
     }
 }
 
+fn digest_node(node: &Node) -> Result<ContentDigest, PatriciaError> {
+    validate_node(node)?;
+    let bytes = postcard::to_allocvec(node).map_err(|_| PatriciaError::Malformed)?;
+    if bytes.len() > CONSTRUCTION_MAX_VALID_NODE_BYTES || bytes.len() as u64 > MAX_NODE_BYTES {
+        return Err(PatriciaError::Malformed);
+    }
+    Ok(ContentDigest::of(&bytes))
+}
+
 fn construction_sink_owned_limit(
     construction: &PatriciaIndexConstruction,
     retained_mutation_bytes: usize,
@@ -902,6 +911,30 @@ impl PatriciaIndexStore {
         let (root, staged) = self.stage_many(root, records)?;
         self.verify_staged_reachable(root, &staged)?;
         Ok(root)
+    }
+
+    /// Derive the canonical root for a complete sorted record set without
+    /// publishing nodes. Bootstrap cold replay uses this to compare semantic
+    /// input with an already-published terminal index instead of rebuilding
+    /// that index through the ordinary point-update path.
+    pub fn derive_complete_root(
+        &self,
+        records: &BTreeMap<Vec<u8>, Vec<u8>>,
+    ) -> Result<PatriciaIndexRoot, PatriciaError> {
+        if records.is_empty() {
+            return Ok(PatriciaIndexRoot::empty());
+        }
+        for (key, value) in records {
+            validate_record(key, value)?;
+        }
+        let sorted = records
+            .iter()
+            .map(|(key, value)| BulkRecord {
+                key: key.as_slice(),
+                value: value.as_slice(),
+            })
+            .collect::<Vec<_>>();
+        self.derive_complete_records(&sorted).map(PatriciaIndexRoot)
     }
 
     fn stage_many(
@@ -1493,6 +1526,35 @@ impl PatriciaIndexStore {
             right,
         };
         sink_construction_node(sink, &node)
+    }
+
+    fn derive_complete_records(
+        &self,
+        records: &[BulkRecord<'_>],
+    ) -> Result<ContentDigest, PatriciaError> {
+        let first = records.first().ok_or(PatriciaError::Malformed)?;
+        if records.len() == 1 {
+            return digest_node(&Node::Leaf {
+                schema_version: NODE_SCHEMA_VERSION,
+                key: first.key.to_vec(),
+                value: first.value.to_vec(),
+            });
+        }
+        let last = records.last().ok_or(PatriciaError::Malformed)?;
+        let split = common_prefix_bits(first.key, last.key, key_bit_len(first.key)?)?;
+        let partition = bulk_partition(records, split)?;
+        if partition == 0 || partition == records.len() {
+            return Err(PatriciaError::Malformed);
+        }
+        let left = self.derive_complete_records(&records[..partition])?;
+        let right = self.derive_complete_records(&records[partition..])?;
+        digest_node(&Node::Branch {
+            schema_version: NODE_SCHEMA_VERSION,
+            prefix: masked_prefix(first.key, split),
+            prefix_bit_len: u16::try_from(split).map_err(|_| PatriciaError::Malformed)?,
+            left,
+            right,
+        })
     }
 
     fn sink_bulk_insert_at(
@@ -4492,6 +4554,20 @@ mod tests {
             reachable_node_bytes(baseline, [baseline_root]),
             "small-budget construction must retain canonical node semantics and bytes",
         );
+    }
+
+    #[test]
+    fn complete_root_derivation_matches_published_index() {
+        let records = bulk_differential_records(0, 4096, 17);
+        let (path, store) = store("complete-root-derivation");
+        let published = store
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+
+        assert_eq!(store.derive_complete_root(&records).unwrap(), published);
+
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
