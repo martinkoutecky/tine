@@ -225,7 +225,8 @@ const NODE_SUFFIX: &str = ".patricia-node";
 // complete worst-case mutation scratch reservation. Construction publication
 // streams one postorder node at a time, so its only payload duplication is one
 // bounded node encoding.
-pub const MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 512 * 1024 * 1024;
 
 // One staged entry owns an inline digest and Node, up to three Vec allocations,
 // a BTreeMap slot, and may also be named once by each authority set. On the
@@ -233,6 +234,11 @@ pub const MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 // bytes; 2 KiB per entry leaves more than 8x headroom for B-tree node slack and
 // allocator metadata. The compile-time-sized portion is asserted in tests.
 const CONSTRUCTION_ENTRY_OWNERSHIP_BYTES: usize = 2 * 1024;
+/// One sorted bulk range can create at most one leaf and one branch per
+/// record. This conservative capacity keeps the sink inside the construction
+/// residency budget without relying on a fixed graph-size threshold.
+pub const MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS: usize =
+    MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES);
 // A valid leaf is bounded by the admitted key/value sizes; a branch is smaller.
 // The extra 512 bytes covers postcard tags/lengths, and the factor of two
 // covers Vec growth/allocator rounding while the encoded bytes overlap Node.
@@ -498,7 +504,7 @@ impl Default for PatriciaIndexConstruction {
             staged: StagedNodes::default(),
             checkpoint_roots: BTreeSet::new(),
             live_roots: BTreeSet::new(),
-            resident_budget_bytes: MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
+            resident_budget_bytes: DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
             peak_resident_bytes: 0,
             peak_publication_resident_bytes: 0,
             flushes: 0,
@@ -517,6 +523,27 @@ impl Default for PatriciaIndexConstruction {
 }
 
 impl PatriciaIndexConstruction {
+    pub fn with_resident_budget(resident_budget_bytes: usize) -> Result<Self, PatriciaError> {
+        if !(DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES
+            ..=MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES)
+            .contains(&resident_budget_bytes)
+        {
+            return Err(PatriciaError::Malformed);
+        }
+        Ok(Self {
+            resident_budget_bytes,
+            ..Self::default()
+        })
+    }
+
+    pub const fn bulk_record_limit(&self) -> usize {
+        self.resident_budget_bytes / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES)
+    }
+
+    pub const fn resident_budget_bytes(&self) -> usize {
+        self.resident_budget_bytes
+    }
+
     fn can_fit_residency(&self, additional_owned_bytes: usize) -> Result<bool, PatriciaError> {
         self.staged
             .owned_bytes()
@@ -5009,12 +5036,26 @@ mod tests {
     }
 
     #[test]
-    fn construction_bulk_reservation_refuses_overflow_within_fixed_ceiling() {
+    fn construction_budget_is_explicitly_bounded_and_overflow_is_refused() {
         assert_eq!(
             PatriciaIndexConstruction::default().resident_budget_bytes,
-            MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES
+            DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES
         );
-        assert_eq!(MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES, 64 * 1024 * 1024);
+        let enlarged = PatriciaIndexConstruction::with_resident_budget(
+            MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
+        )
+        .unwrap();
+        assert!(
+            enlarged.bulk_record_limit() > PatriciaIndexConstruction::default().bulk_record_limit()
+        );
+        assert!(PatriciaIndexConstruction::with_resident_budget(
+            DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES - 1,
+        )
+        .is_err());
+        assert!(PatriciaIndexConstruction::with_resident_budget(
+            MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES + 1,
+        )
+        .is_err());
         assert!(matches!(
             construction_bulk_reservation(usize::MAX),
             Err(PatriciaError::Malformed)

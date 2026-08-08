@@ -82,7 +82,8 @@ pub use authenticated_patricia::{
     CompletedPatriciaIndexConstruction, PatriciaError, PatriciaIndexConstruction,
     PatriciaIndexConstructionStats, PatriciaIndexReclamationError, PatriciaIndexReclamationReport,
     PatriciaIndexRoot, PatriciaIndexStats, PatriciaIndexStore, PatriciaNodePublisher,
-    PatriciaPublicationError, MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
+    PatriciaPublicationError, DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
+    MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS, MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
 };
 pub use content_digest::ContentDigest;
 pub use digest_sealed::{DigestSealedError, DigestSealedPayload};
