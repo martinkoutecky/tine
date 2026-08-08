@@ -44,6 +44,7 @@ final class GraphFolderPickerPlugin: Plugin, UIDocumentPickerDelegate {
     return documents.standardizedFileURL.resolvingSymlinksInPath()
   }
 
+  @available(iOS 14.0, *)
   @objc public func pickGraphFolder(_ invoke: Invoke) {
     guard let documentsURL else {
       invoke.reject(
