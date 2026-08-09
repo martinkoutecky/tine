@@ -17,6 +17,7 @@ These are **plans, not commitments to the order** — priority still lives in
 | 1 | [rendered-copy-fidelity.md](rendered-copy-fidelity.md) | Rendered-copy fidelity — math + off-screen refs + provider macros |
 | 2 | [plugin-css-var-shim.md](plugin-css-var-shim.md) | OG `--ls-*` CSS-variable alias shim (theme compat) |
 | 3 | [theme-gallery.md](theme-gallery.md) | Built-in theme gallery (one-click themes, follow-up to #2) |
+| 4 | [new-docs.md](new-docs.md) | Living Guide/demo documentation program (GH #201) |
 
 _In progress (Now): [sheets-progress.md](sheets-progress.md) — Sheets build state
 (branch `sheets` only; spec = [../breadth-grid-spec.md](../breadth-grid-spec.md))._
