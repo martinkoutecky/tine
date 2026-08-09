@@ -1415,12 +1415,6 @@ where
         ))
     }
 
-    pub fn clone_pages_file(&self) -> Result<fs::File, ScratchRunError> {
-        let mut pages = self.pages.lock().map_err(|_| ScratchRunError::Poisoned)?;
-        pages.flush()?;
-        pages.file.try_clone().map_err(Into::into)
-    }
-
     fn copy_exact_from(&self, source: &Self) -> Result<(), ScratchRunError> {
         if self.marker != source.marker || self.binding_digest()? != source.binding_digest()? {
             return Err(ScratchRunError::UnsafeEntry(
