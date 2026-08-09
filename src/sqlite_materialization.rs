@@ -2454,6 +2454,34 @@ pub struct PhysicalPageInventoryRow {
     pub text_kind: i64,
 }
 
+/// Lightweight page row for navigation/autocomplete.  It deliberately omits
+/// searchable body text so a title lookup never retains graph-sized content.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalNavigationPageRow {
+    pub page_id: [u8; 16],
+    pub name: String,
+    pub name_key: String,
+    pub path: String,
+    pub text_kind: i64,
+    pub preamble: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalNavigationAliasRow {
+    pub source_page_id: [u8; 16],
+    pub owner_name: String,
+    pub owner_path: String,
+    pub normalized_alias: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalNavigationReferenceNameRow {
+    pub source_page_id: [u8; 16],
+    pub owner_path: String,
+    pub raw_name: String,
+    pub normalized_name: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalBlockRow {
     pub block_id: [u8; 16],
@@ -2564,6 +2592,46 @@ fn page_inventory_row_output_bytes(
     row: &PhysicalPageInventoryRow,
 ) -> Result<usize, MaterializationError> {
     checked_output_bytes(32, [Some(row.name.as_str()), Some(row.path.as_str())])
+}
+
+fn navigation_page_row_output_bytes(
+    row: &PhysicalNavigationPageRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(
+        32,
+        [
+            Some(row.name.as_str()),
+            Some(row.name_key.as_str()),
+            Some(row.path.as_str()),
+            row.preamble.as_deref(),
+        ],
+    )
+}
+
+fn navigation_alias_row_output_bytes(
+    row: &PhysicalNavigationAliasRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(
+        16,
+        [
+            Some(row.owner_name.as_str()),
+            Some(row.owner_path.as_str()),
+            Some(row.normalized_alias.as_str()),
+        ],
+    )
+}
+
+fn navigation_reference_name_row_output_bytes(
+    row: &PhysicalNavigationReferenceNameRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(
+        0,
+        [
+            Some(row.owner_path.as_str()),
+            Some(row.raw_name.as_str()),
+            Some(row.normalized_name.as_str()),
+        ],
+    )
 }
 
 fn block_row_output_bytes(row: &PhysicalBlockRow) -> Result<usize, MaterializationError> {
@@ -2935,6 +3003,161 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Stable pagination over the small page fields needed by navigation.
+    /// Body/search text is deliberately excluded.
+    pub fn navigation_pages_after_with_header_validation(
+        &self,
+        after_path: Option<&str>,
+        after_page_id: Option<&[u8; 16]>,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalNavigationPageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        if after_path.is_some() != after_page_id.is_some() {
+            return Err(MaterializationError::InvalidQuery(
+                "navigation page cursor requires both path and page ID".into(),
+            ));
+        }
+        if let Some(path) = after_path {
+            checked_query_text(path)?;
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match (after_path, after_page_id) {
+            (None, None) => (
+                "SELECT page_id, name, name_key, path, text_kind, preamble
+                     FROM pages ORDER BY path, page_id LIMIT ?1",
+                vec![limit.into()],
+            ),
+            (Some(path), Some(page_id)) => (
+                "SELECT page_id, name, name_key, path, text_kind, preamble
+                     FROM pages
+                     WHERE path > ?1 OR (path = ?1 AND page_id > ?2)
+                     ORDER BY path, page_id LIMIT ?3",
+                vec![
+                    path.to_owned().into(),
+                    page_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+            _ => unreachable!("cursor presence was validated above"),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            navigation_page_row_with_header_validation(row, &mut validate_header)
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
+            navigation_page_row_output_bytes,
+        )
+    }
+
+    /// Stable, deduplicated alias declarations joined to their owning page.
+    /// The cursor is the final `(owner_path, normalized_alias, source_page_id)`.
+    pub fn navigation_aliases_after(
+        &self,
+        after: Option<(&str, &str, &[u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalNavigationAliasRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        if let Some((path, alias, _)) = after {
+            checked_query_text(path)?;
+            checked_query_text(alias)?;
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT d.source_page_id, p.name, p.path, d.normalized_alias
+                 FROM reference_alias_declarations d
+                 JOIN pages p ON p.page_id = d.source_page_id
+                 ORDER BY p.path, d.normalized_alias, d.source_page_id LIMIT ?1",
+                vec![limit.into()],
+            ),
+            Some((path, alias, page_id)) => (
+                "SELECT DISTINCT d.source_page_id, p.name, p.path, d.normalized_alias
+                 FROM reference_alias_declarations d
+                 JOIN pages p ON p.page_id = d.source_page_id
+                 WHERE p.path > ?1
+                    OR (p.path = ?1 AND d.normalized_alias > ?2)
+                    OR (p.path = ?1 AND d.normalized_alias = ?2 AND d.source_page_id > ?3)
+                 ORDER BY p.path, d.normalized_alias, d.source_page_id LIMIT ?4",
+                vec![
+                    path.to_owned().into(),
+                    alias.to_owned().into(),
+                    page_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalNavigationAliasRow {
+                source_page_id: decode_id_sql(&page_id)?,
+                owner_name: row.get(1)?,
+                owner_path: row.get(2)?,
+                normalized_alias: row.get(3)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            navigation_alias_row_output_bytes,
+        )
+    }
+
+    /// Stable distinct page-reference spellings. Property-key pseudo pages are
+    /// excluded because the legacy navigation surface never advertised them.
+    pub fn navigation_reference_names_after(
+        &self,
+        after: Option<(&str, &str, &str, &[u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalNavigationReferenceNameRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        if let Some((path, raw, normalized, _)) = after {
+            checked_query_text(path)?;
+            checked_query_text(raw)?;
+            checked_query_text(normalized)?;
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT r.source_page_id, p.path, r.raw_name, r.normalized_name
+                 FROM reference_postings r JOIN pages p ON p.page_id = r.source_page_id
+                 WHERE r.target_type = 0 AND r.reference_kind <= 4
+                 ORDER BY p.path, r.raw_name, r.normalized_name, r.source_page_id LIMIT ?1",
+                vec![limit.into()],
+            ),
+            Some((path, raw, normalized, page_id)) => (
+                "SELECT DISTINCT r.source_page_id, p.path, r.raw_name, r.normalized_name
+                 FROM reference_postings r JOIN pages p ON p.page_id = r.source_page_id
+                 WHERE r.target_type = 0 AND r.reference_kind <= 4
+                   AND (p.path > ?1
+                     OR (p.path = ?1 AND r.raw_name > ?2)
+                     OR (p.path = ?1 AND r.raw_name = ?2 AND r.normalized_name > ?3)
+                     OR (p.path = ?1 AND r.raw_name = ?2 AND r.normalized_name = ?3
+                         AND r.source_page_id > ?4))
+                 ORDER BY p.path, r.raw_name, r.normalized_name, r.source_page_id LIMIT ?5",
+                vec![
+                    path.to_owned().into(),
+                    raw.to_owned().into(),
+                    normalized.to_owned().into(),
+                    page_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalNavigationReferenceNameRow {
+                source_page_id: decode_id_sql(&page_id)?,
+                owner_path: row.get(1)?,
+                raw_name: row.get(2)?,
+                normalized_name: row.get(3)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            navigation_reference_name_row_output_bytes,
+        )
+    }
+
     fn pages_by_text_column_with_header_validation(
         &self,
         column: &str,
@@ -3242,6 +3465,26 @@ fn page_inventory_row_with_header_validation(
         name: row.get(1)?,
         path,
         text_kind: kind,
+    }))
+}
+
+fn navigation_page_row_with_header_validation(
+    row: &rusqlite::Row<'_>,
+    validate_header: &mut impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+) -> rusqlite::Result<Result<PhysicalNavigationPageRow, MaterializationError>> {
+    let page_id: Vec<u8> = row.get(0)?;
+    let path: String = row.get(3)?;
+    let kind: i64 = row.get(4)?;
+    if let Err(error) = validate_header(path.as_str(), kind) {
+        return Ok(Err(error));
+    }
+    Ok(Ok(PhysicalNavigationPageRow {
+        page_id: decode_id_sql(&page_id)?,
+        name: row.get(1)?,
+        name_key: row.get(2)?,
+        path,
+        text_kind: kind,
+        preamble: row.get(5)?,
     }))
 }
 
