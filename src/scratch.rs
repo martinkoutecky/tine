@@ -34,6 +34,7 @@ pub const MAX_SCRATCH_PAGE_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_SCRATCH_BLOB_BYTES: usize = 256 * 1024 * 1024;
 
 const MAX_MARKER_BYTES: u64 = 4 * 1024;
+const SCRATCH_APPEND_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// Durable retention mode authenticated by a scratch run's marker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -166,6 +167,12 @@ pub struct ScratchOperationStats {
     pub point_reads: usize,
     pub range_reads: usize,
     pub scratch_syncs: usize,
+    /// Physical writes used to publish the logical append-only page records.
+    #[cfg(any(test, feature = "test-support"))]
+    pub page_append_batches: usize,
+    /// Physical writes used to publish the logical append-only blob records.
+    #[cfg(any(test, feature = "test-support"))]
+    pub blob_append_batches: usize,
 }
 
 /// Count-only diagnostics for one process-local authenticated LSM lookup
@@ -213,6 +220,10 @@ impl ScratchOperationCounters {
             point_reads: self.point_reads.load(Ordering::Relaxed),
             range_reads: self.range_reads.load(Ordering::Relaxed),
             scratch_syncs: self.scratch_syncs.load(Ordering::Relaxed),
+            #[cfg(any(test, feature = "test-support"))]
+            page_append_batches: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            blob_append_batches: 0,
         }
     }
 }
@@ -435,10 +446,87 @@ pub struct ScratchRun<Owner> {
     run_name: String,
     marker: ScratchRunMarker<Owner>,
     lease: fs::File,
-    pages: Mutex<fs::File>,
-    blobs: Mutex<fs::File>,
+    pages: Mutex<BufferedAppendFile>,
+    blobs: Mutex<BufferedAppendFile>,
     operation_counters: ScratchOperationCounters,
     lifecycle_stats: ScratchRunLifecycleStats,
+}
+
+/// A bounded userspace append buffer for one run-local scratch address space.
+///
+/// Scratch references bind byte offsets, lengths, and digests, but the scratch
+/// files themselves are append-only and deliberately have no per-record sync
+/// boundary. Buffering consecutive records preserves that contract while
+/// avoiding one filesystem call for every small authenticated node. Any
+/// operation that may observe or mutate the raw file flushes first.
+struct BufferedAppendFile {
+    file: fs::File,
+    committed_len: u64,
+    pending: Vec<u8>,
+    write_batches: usize,
+}
+
+impl BufferedAppendFile {
+    fn new(mut file: fs::File) -> Result<Self, ScratchRunError> {
+        let committed_len = file.seek(SeekFrom::End(0))?;
+        Ok(Self {
+            file,
+            committed_len,
+            pending: Vec::with_capacity(SCRATCH_APPEND_BUFFER_BYTES),
+            write_batches: 0,
+        })
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, ScratchRunError> {
+        let pending_len =
+            u64::try_from(self.pending.len()).map_err(|_| ScratchRunError::IndexCapacity)?;
+        let offset = self
+            .committed_len
+            .checked_add(pending_len)
+            .ok_or(ScratchRunError::IndexCapacity)?;
+        if !self.pending.is_empty()
+            && self.pending.len().saturating_add(bytes.len()) > SCRATCH_APPEND_BUFFER_BYTES
+        {
+            self.flush()?;
+        }
+        if bytes.len() > SCRATCH_APPEND_BUFFER_BYTES {
+            self.committed_len = self.file.seek(SeekFrom::End(0))?;
+            self.file.write_all(bytes)?;
+            self.committed_len = self
+                .committed_len
+                .checked_add(bytes.len() as u64)
+                .ok_or(ScratchRunError::IndexCapacity)?;
+            self.write_batches = self.write_batches.saturating_add(1);
+        } else {
+            self.pending.extend_from_slice(bytes);
+        }
+        Ok(offset)
+    }
+
+    fn flush(&mut self) -> Result<(), ScratchRunError> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        self.committed_len = self.file.seek(SeekFrom::End(0))?;
+        self.file.write_all(&self.pending)?;
+        self.committed_len = self
+            .committed_len
+            .checked_add(self.pending.len() as u64)
+            .ok_or(ScratchRunError::IndexCapacity)?;
+        self.pending.clear();
+        self.write_batches = self.write_batches.saturating_add(1);
+        Ok(())
+    }
+
+    fn with_file<T>(
+        &mut self,
+        operation: impl FnOnce(&mut fs::File) -> T,
+    ) -> Result<T, ScratchRunError> {
+        self.flush()?;
+        let result = operation(&mut self.file);
+        self.committed_len = self.file.seek(SeekFrom::End(0))?;
+        Ok(result)
+    }
 }
 
 impl<Owner: fmt::Debug> fmt::Debug for ScratchRun<Owner> {
@@ -573,8 +661,8 @@ where
             run_name: run_name.to_owned(),
             marker,
             lease,
-            pages: Mutex::new(pages),
-            blobs: Mutex::new(blobs),
+            pages: Mutex::new(BufferedAppendFile::new(pages)?),
+            blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
             operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
@@ -615,8 +703,8 @@ where
             run_name,
             marker,
             lease,
-            pages: Mutex::new(pages),
-            blobs: Mutex::new(blobs),
+            pages: Mutex::new(BufferedAppendFile::new(pages)?),
+            blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
             operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
@@ -650,8 +738,8 @@ where
                 run_name: run_name.clone(),
                 marker: self.marker.clone(),
                 lease,
-                pages: Mutex::new(pages),
-                blobs: Mutex::new(blobs),
+                pages: Mutex::new(BufferedAppendFile::new(pages)?),
+                blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
                 operation_counters: ScratchOperationCounters::default(),
                 lifecycle_stats: ScratchRunLifecycleStats::default(),
             };
@@ -692,8 +780,10 @@ where
         &self,
         operation: impl FnOnce(&mut fs::File) -> T,
     ) -> Result<T, ScratchRunError> {
-        let mut file = self.pages.lock().map_err(|_| ScratchRunError::Poisoned)?;
-        Ok(operation(&mut file))
+        self.pages
+            .lock()
+            .map_err(|_| ScratchRunError::Poisoned)?
+            .with_file(operation)
     }
 
     /// Execute one operation against the locked raw blob-file address space.
@@ -701,12 +791,29 @@ where
         &self,
         operation: impl FnOnce(&mut fs::File) -> T,
     ) -> Result<T, ScratchRunError> {
-        let mut file = self.blobs.lock().map_err(|_| ScratchRunError::Poisoned)?;
-        Ok(operation(&mut file))
+        self.blobs
+            .lock()
+            .map_err(|_| ScratchRunError::Poisoned)?
+            .with_file(operation)
     }
 
     pub fn operation_stats(&self) -> ScratchOperationStats {
-        self.operation_counters.snapshot()
+        #[allow(unused_mut)]
+        let mut stats = self.operation_counters.snapshot();
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            stats.page_append_batches = self
+                .pages
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .write_batches;
+            stats.blob_append_batches = self
+                .blobs
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .write_batches;
+        }
+        stats
     }
 
     /// Start an empty decoded-segment lookup session bound to this exact
@@ -754,11 +861,11 @@ where
         }
         let digest = ContentDigest::of(bytes);
         let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedBlob)?;
-        let offset = self.with_blobs(|file| -> Result<_, ScratchRunError> {
-            let offset = file.seek(SeekFrom::End(0))?;
-            file.write_all(bytes)?;
-            Ok(offset)
-        })??;
+        let offset = self
+            .blobs
+            .lock()
+            .map_err(|_| ScratchRunError::Poisoned)?
+            .append(bytes)?;
         self.operation_counters
             .blob_writes
             .fetch_add(1, Ordering::Relaxed);
@@ -824,11 +931,11 @@ where
         }
         let digest = ContentDigest::of(&bytes);
         let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedPage)?;
-        let offset = self.with_pages(|file| -> Result<_, ScratchRunError> {
-            let offset = file.seek(SeekFrom::End(0))?;
-            file.write_all(&bytes)?;
-            Ok(offset)
-        })??;
+        let offset = self
+            .pages
+            .lock()
+            .map_err(|_| ScratchRunError::Poisoned)?
+            .append(&bytes)?;
         self.operation_counters
             .page_writes
             .fetch_add(1, Ordering::Relaxed);
@@ -1309,11 +1416,9 @@ where
     }
 
     pub fn clone_pages_file(&self) -> Result<fs::File, ScratchRunError> {
-        self.pages
-            .lock()
-            .map_err(|_| ScratchRunError::Poisoned)?
-            .try_clone()
-            .map_err(Into::into)
+        let mut pages = self.pages.lock().map_err(|_| ScratchRunError::Poisoned)?;
+        pages.flush()?;
+        pages.file.try_clone().map_err(Into::into)
     }
 
     fn copy_exact_from(&self, source: &Self) -> Result<(), ScratchRunError> {
@@ -1324,25 +1429,29 @@ where
         }
 
         fn copy_file(
-            source: &Mutex<fs::File>,
-            destination: &Mutex<fs::File>,
+            source: &Mutex<BufferedAppendFile>,
+            destination: &Mutex<BufferedAppendFile>,
         ) -> Result<(), ScratchRunError> {
             let mut source = source.lock().map_err(|_| ScratchRunError::Poisoned)?;
             let mut destination = destination.lock().map_err(|_| ScratchRunError::Poisoned)?;
-            if destination.metadata()?.len() != 0 {
+            source.flush()?;
+            destination.flush()?;
+            if destination.file.metadata()?.len() != 0 {
                 return Err(ScratchRunError::UnsafeEntry(
                     "scratch migration destination is not empty".into(),
                 ));
             }
-            source.seek(SeekFrom::Start(0))?;
-            destination.seek(SeekFrom::Start(0))?;
-            let expected = source.metadata()?.len();
-            let copied = std::io::copy(&mut *source, &mut *destination)?;
-            if copied != expected || destination.metadata()?.len() != expected {
+            source.file.seek(SeekFrom::Start(0))?;
+            destination.file.seek(SeekFrom::Start(0))?;
+            let expected = source.file.metadata()?.len();
+            let copied = std::io::copy(&mut source.file, &mut destination.file)?;
+            if copied != expected || destination.file.metadata()?.len() != expected {
                 return Err(ScratchRunError::UnsafeEntry(
                     "scratch migration did not copy the exact byte extent".into(),
                 ));
             }
+            source.committed_len = expected;
+            destination.committed_len = expected;
             Ok(())
         }
 
@@ -1426,6 +1535,12 @@ where
 
 impl<Owner> Drop for ScratchRun<Owner> {
     fn drop(&mut self) {
+        if let Ok(pages) = self.pages.get_mut() {
+            let _ = pages.flush();
+        }
+        if let Ok(blobs) = self.blobs.get_mut() {
+            let _ = blobs.flush();
+        }
         match self.marker.retention {
             ScratchRetention::Ephemeral => self.cleanup_own_run_unbounded(),
             ScratchRetention::Retained => unlock(&self.lease),
@@ -2064,6 +2179,52 @@ mod tests {
     }
 
     #[test]
+    fn append_only_scratch_batches_physical_writes_and_reopens_exactly() {
+        let root = scratch_root("batched-appends");
+        let archive = archive(&root);
+        let owner = TestOwner(Uuid::from_u128(0xba7c_0001));
+        let run = ScratchRun::create_retained(&archive, owner.clone()).unwrap();
+        let run_id = run.run_id();
+        let mut first = None;
+        let mut last = None;
+        for index in 0_u64..4_096 {
+            let page = run
+                .append_page(
+                    TestPageKind::Primary,
+                    index.to_be_bytes().to_vec(),
+                    index.to_be_bytes().to_vec(),
+                    &index,
+                )
+                .unwrap();
+            let blob = run.append_blob(&index.to_be_bytes()).unwrap();
+            first.get_or_insert((page.clone(), blob.clone(), index));
+            last = Some((page, blob, index));
+        }
+
+        run.with_pages(|_| ()).unwrap();
+        run.with_blobs(|_| ()).unwrap();
+        let stats = run.operation_stats();
+        assert_eq!(stats.page_writes, 4_096);
+        assert_eq!(stats.blob_writes, 4_096);
+        assert!(stats.page_append_batches < 32, "{stats:?}");
+        assert!(stats.blob_append_batches < 32, "{stats:?}");
+        drop(run);
+
+        let reopened = ScratchRun::adopt_retained(&archive, owner, run_id).unwrap();
+        for (page, blob, expected) in [first.unwrap(), last.unwrap()] {
+            assert_eq!(
+                reopened
+                    .read_page::<_, u64>(&page, TestPageKind::Primary)
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(reopened.read_blob(&blob).unwrap(), expected.to_be_bytes());
+        }
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn page_and_blob_refusal_is_fail_closed_and_read_only() {
         let root = scratch_root("data-refusal");
         let archive = archive(&root);
@@ -2074,6 +2235,8 @@ mod tests {
             .append_page(TestPageKind::Primary, b"a".to_vec(), b"z".to_vec(), &7_u64)
             .unwrap();
         let blob_ref = run.append_blob(b"authenticated blob").unwrap();
+        run.with_pages(|_| ()).unwrap();
+        run.with_blobs(|_| ()).unwrap();
 
         let assert_unchanged = |before: &BTreeMap<&'static str, Vec<u8>>| {
             assert_eq!(run_snapshot(&root, run_id), *before);
