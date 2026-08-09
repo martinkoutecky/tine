@@ -15595,13 +15595,13 @@ impl Graph {
         fs::read(self.asset_file_for_read(name)?)
     }
 
-    /// Resolve an existing top-level regular asset through the canonical asset
-    /// capability. A symlink may point elsewhere inside that approved root, but
-    /// can never turn a read/open into access outside it.
+    /// Resolve an existing regular asset through the canonical asset capability.
+    /// A symlink may point elsewhere inside that approved root, but can never
+    /// turn a read/open into access outside it.
     pub fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
-        top_level_asset_name(name)?;
+        let relative = relative_asset_path(name)?;
         let assets = fs::canonicalize(self.assets_path())?;
-        let path = fs::canonicalize(self.assets_path().join(name))?;
+        let path = fs::canonicalize(self.assets_path().join(relative))?;
         if !path.starts_with(&assets) || !fs::metadata(&path)?.is_file() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid asset"));
         }
@@ -15612,13 +15612,16 @@ impl Graph {
     /// for audio/video so WebView range requests read at most a small chunk
     /// instead of copying a multi-gigabyte file through Rust Vec → IPC → Blob.
     pub fn stream_asset_path(&self, name: &str) -> io::Result<PathBuf> {
-        top_level_asset_name(name)?;
-        let candidate = self.assets_path().join(name);
-        if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "asset symlinks cannot be streamed",
-            ));
+        let relative = relative_asset_path(name)?;
+        let mut candidate = self.assets_path();
+        for component in relative.components() {
+            candidate.push(component);
+            if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "asset symlinks cannot be streamed",
+                ));
+            }
         }
         self.asset_file_for_read(name)
     }
@@ -15627,7 +15630,6 @@ impl Graph {
     /// The post-read check closes the metadata/read race if another process grows
     /// the file between those operations.
     pub fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
-        top_level_asset_name(name)?;
         let path = self.asset_file_for_read(name)?;
         let metadata = fs::metadata(&path)?;
         if !metadata.is_file() {
@@ -20651,6 +20653,34 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Accept a portable assets-relative path for reads. Mutation entry points keep
+/// using `top_level_asset_name`: supporting existing nested Logseq assets does
+/// not grant frontend callers a nested write capability.
+fn relative_asset_path(name: &str) -> io::Result<PathBuf> {
+    if name.contains('\\')
+        || name
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad asset path",
+        ));
+    }
+
+    let path = PathBuf::from(name);
+    if path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad asset path",
+        ));
+    }
+    Ok(path)
 }
 
 /// Preserve a file's CRLF line endings on re-write: if `existing` used Windows
@@ -36838,6 +36868,66 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("asset exceeds 4 byte limit"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_asset_reads_accept_relative_paths_but_not_traversal() {
+        let dir = scratch("nested-asset-read");
+        let graph = Graph::open(&dir);
+        let nested = dir.join("assets/screenshots/quick-capture.png");
+        fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        fs::write(&nested, b"nested image").unwrap();
+
+        assert_eq!(
+            graph.read_asset("screenshots/quick-capture.png").unwrap(),
+            b"nested image"
+        );
+        assert_eq!(
+            graph
+                .read_asset_limited("screenshots/quick-capture.png", 32)
+                .unwrap(),
+            b"nested image"
+        );
+        assert_eq!(
+            graph
+                .stream_asset_path("screenshots/quick-capture.png")
+                .unwrap(),
+            nested.canonicalize().unwrap()
+        );
+
+        for bad in [
+            "../outside.png",
+            "screenshots/../../outside.png",
+            "/outside.png",
+            "screenshots//quick-capture.png",
+            "screenshots/./quick-capture.png",
+            "screenshots\\quick-capture.png",
+            "",
+        ] {
+            assert!(graph.read_asset(bad).is_err(), "must reject {bad:?}");
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_asset_reads_cannot_follow_a_symlink_outside_assets() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("nested-asset-symlink");
+        let outside = scratch("nested-asset-symlink-outside");
+        let graph = Graph::open(&dir);
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.png"), b"private").unwrap();
+        symlink(&outside, dir.join("assets/escape")).unwrap();
+
+        assert!(graph.read_asset("escape/secret.png").is_err());
+        assert!(graph.stream_asset_path("escape/secret.png").is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

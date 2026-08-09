@@ -2806,6 +2806,29 @@
         ]
       },
       "notes": "Remaining half of the 2026-08-07 authority defect. The read half is REG-MANAGED-WHOLE-GRAPH-READS-REFUSED-001 (25f36f16); settings and the asset trash are REG-MANAGED-SETTINGS-WRITES-REFUSED-001 and REG-MANAGED-ASSET-TRASH-REFUSED-001. Still refused under managed storage, needing real oplog transactions: rename_page, delete_page, merge_pages, rename_file_to_page, resolve_sync_conflict, trash_sync_conflict, trash_journal_file, copy_guide_into_graph. The enumeration this row asked for now exists: src-tauri/src/managed_command_surface.rs lists all 141 Tauri commands with the routing each one uses, re-derives that routing from the sources, and fails when the refused set changes -- so a new command that cannot work under managed storage is a failing diff rather than a user report. That enumeration surfaced a group nobody had listed: publish_html, open_pdf, read_highlights, write_highlights, write_pdf_view_state, save_pdf_area_image, save_asset and stream_asset_path are all asset/publish-domain work, outside the oplog's document domain, still sitting on the legacy write authority. They are the cheapest remaining slice. Tracked as M5 in specs/handoffs/2026-08-06-direct-files-program.md."
+    },
+    {
+      "id": "REG-NESTED-ASSET-READ-300",
+      "title": "Images and streamed media can be read from nested assets directories",
+      "family": "assets",
+      "sources": {
+        "issues": [
+          300
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/model.rs::tests::nested_asset_reads_accept_relative_paths_but_not_traversal",
+          "crates/tine-core/src/model.rs::tests::nested_asset_reads_cannot_follow_a_symlink_outside_assets"
+        ]
+      },
+      "notes": "The frontend already reduced ./assets/dir/file.png to the assets-relative name dir/file.png, but all native read entry points applied the top-level-only validator used by asset creation. Read paths now accept ordinary nested relative components and retain canonical containment beneath the approved assets root. Absolute paths, empty/dot/parent components, portable backslash traversal and symlink escapes remain refused. Asset creation/import still accepts only a top-level filename."
     }
   ]
 }
