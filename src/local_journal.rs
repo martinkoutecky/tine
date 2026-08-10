@@ -15,11 +15,13 @@
 //!
 //! Recovery contract. Appends are ordered and each is made durable before the
 //! caller proceeds, so an interrupted process can only ever have torn the final
-//! frame. [`LocalJournalSegment::open`] scans forward, adopts the longest prefix
-//! of complete canonical frames, and truncates a torn tail. A decode failure
-//! whose declared extent lies wholly inside the file is *not* treated as a torn
-//! tail — the bytes that follow prove the region was completely written once —
-//! so it is refused as corruption instead of being silently discarded.
+//! frame. [`LocalJournalSegment::open`] scans forward and adopts the longest
+//! prefix of complete canonical frames. It truncates only a final byte tail
+//! shorter than the smallest possible frame, because those bytes objectively
+//! cannot contain a complete commit. A fully sized frame that fails validation,
+//! and a declared extent beyond EOF once enough bytes exist to hold a frame,
+//! are refused as corruption without changing the segment: either could be a
+//! previously durable commit whose bytes or length field were damaged.
 
 use std::fmt;
 use std::fs;
@@ -416,7 +418,7 @@ pub struct LocalJournalStats {
     pub data_durability_syncs: u64,
     /// Directory-entry barriers. Paid once, when the segment file is created.
     pub directory_durability_syncs: u64,
-    /// Torn-tail truncations performed while opening.
+    /// Objectively incomplete byte-tail truncations performed while opening.
     pub recovery_truncations: u64,
 }
 
@@ -428,7 +430,7 @@ pub struct LocalJournalRecovery<K> {
     /// This count does not include frames represented by the segment's logical
     /// base sequence.
     pub frames_recovered: u64,
-    /// Bytes of a torn final append that were detected, ignored, and truncated.
+    /// Final bytes too short to contain a frame that were ignored and truncated.
     pub discarded_tail_bytes: u64,
     /// The last complete frame, retained so a caller can settle its own state
     /// without a second pass.
@@ -466,7 +468,8 @@ pub struct LocalJournalAppend {
 
 impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
     /// Open (creating if absent) the segment named `name` under `dir` for
-    /// `device_id`, adopting its complete frames and truncating a torn tail.
+    /// `device_id`, adopting its complete frames and truncating only a final
+    /// byte tail too short to contain any frame.
     pub fn open(
         dir: &Dir,
         name: &str,
@@ -640,13 +643,14 @@ struct SegmentScan<K> {
     last_frame: Option<LocalJournalFrame<K>>,
 }
 
-/// One frame read attempt: either a complete frame or the torn tail boundary.
+/// One frame read attempt: either a complete frame or an objectively incomplete
+/// byte tail that is too short to contain any frame.
 enum FrameRead<K> {
     Complete {
         frame: LocalJournalFrame<K>,
         encoded_len: usize,
     },
-    TornTail,
+    IncompleteByteTail,
 }
 
 struct CompleteFrame<K> {
@@ -658,7 +662,7 @@ impl<K> FrameRead<K> {
     fn into_complete(self, offset: u64) -> Result<CompleteFrame<K>, LocalJournalError> {
         match self {
             Self::Complete { frame, encoded_len } => Ok(CompleteFrame { frame, encoded_len }),
-            Self::TornTail => Err(LocalJournalError::CorruptSegment {
+            Self::IncompleteByteTail => Err(LocalJournalError::CorruptSegment {
                 offset,
                 cause: "a committed frame is incomplete".to_owned(),
             }),
@@ -666,9 +670,8 @@ impl<K> FrameRead<K> {
     }
 }
 
-/// Read the frame that starts at `offset`, classifying failure as a torn tail
-/// only when the failure cannot be explained by anything except an interrupted
-/// final append.
+/// Read the frame that starts at `offset`, classifying a tail as safely
+/// discardable only when it is too short to contain any complete frame.
 fn read_frame_at<K: LocalJournalPayloadKind>(
     reader: &mut BufReader<fs::File>,
     offset: u64,
@@ -677,9 +680,10 @@ fn read_frame_at<K: LocalJournalPayloadKind>(
 ) -> Result<FrameRead<K>, LocalJournalError> {
     let remaining = file_len - offset;
     if remaining < MIN_FRAME_BYTES as u64 {
-        // Fewer bytes than the smallest possible frame: the append that wrote
-        // them never completed.
-        return Ok(FrameRead::TornTail);
+        // Fewer bytes than the smallest possible frame cannot contain a
+        // complete commit, regardless of whether they came from an interrupted
+        // append or later damage.
+        return Ok(FrameRead::IncompleteByteTail);
     }
     let mut prefix = [0_u8; FRAME_PREFIX_BYTES];
     reader.read_exact(&mut prefix)?;
@@ -692,26 +696,32 @@ fn read_frame_at<K: LocalJournalPayloadKind>(
             cause: cause.to_string(),
         })?;
     if (extent.total as u64) > remaining {
-        return Ok(FrameRead::TornTail);
+        // This may be an interrupted append, but it may equally be a previously
+        // complete frame whose length field was damaged. Once the on-disk tail
+        // is large enough to hold some complete frame, truncation would risk
+        // erasing a durable commit and its corruption evidence.
+        return Err(LocalJournalError::CorruptSegment {
+            offset,
+            cause: format!(
+                "declared frame length {} exceeds the {remaining} remaining segment bytes",
+                extent.total
+            ),
+        });
     }
     buffer.clear();
     buffer.extend_from_slice(&prefix);
     buffer.resize(extent.total, 0);
     reader.read_exact(&mut buffer[FRAME_PREFIX_BYTES..])?;
-    match LocalJournalFrame::<K>::decode(buffer) {
-        Ok(frame) => Ok(FrameRead::Complete {
-            frame,
-            encoded_len: extent.total,
-        }),
-        // The declared extent ends exactly at end of file: an interrupted append
-        // can leave a fully sized but partly written final frame. Anything with
-        // committed bytes after it was complete once, so it is corruption.
-        Err(_) if offset + extent.total as u64 == file_len => Ok(FrameRead::TornTail),
-        Err(cause) => Err(LocalJournalError::CorruptSegment {
+    let frame = LocalJournalFrame::<K>::decode(buffer).map_err(|cause| {
+        LocalJournalError::CorruptSegment {
             offset,
             cause: cause.to_string(),
-        }),
-    }
+        }
+    })?;
+    Ok(FrameRead::Complete {
+        frame,
+        encoded_len: extent.total,
+    })
 }
 
 fn scan_segment<K: LocalJournalPayloadKind>(
@@ -755,7 +765,7 @@ fn scan_segment<K: LocalJournalPayloadKind>(
                     .ok_or(LocalJournalError::SequenceExhausted)?;
                 frame
             }
-            FrameRead::TornTail => break,
+            FrameRead::IncompleteByteTail => break,
         };
         last_frame = Some(frame);
     }
@@ -1258,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_tail_at_every_byte_boundary_keeps_every_prior_complete_frame() {
+    fn only_objectively_incomplete_byte_tails_are_truncated() {
         let fixture = Fixture::new("torn-tail");
         let device = Uuid::from_u128(0x7);
         let (complete, prefix_len, final_len) = {
@@ -1280,41 +1290,65 @@ mod tests {
         };
         assert_eq!(complete.len(), prefix_len + final_len);
 
-        // Every truncation that cuts into the final append: the three complete
-        // frames survive and the torn bytes are discarded.
+        // A tail shorter than the smallest possible frame objectively cannot
+        // contain a complete commit. It is safe to discard, and every complete
+        // frame before it remains byte-for-byte intact.
         for torn in 0..final_len {
-            fixture.write_segment_bytes("device.journal", &complete[..prefix_len + torn]);
-            let (mut segment, recovery) = open(&fixture, device);
-            assert_eq!(
-                recovery.frames_recovered, 3,
-                "truncating the final frame to {torn} bytes must keep three frames"
-            );
-            assert_eq!(recovery.discarded_tail_bytes, torn as u64);
-            assert_eq!(segment.next_sequence(), 3);
-            assert_eq!(segment.committed_bytes(), prefix_len as u64);
-            assert_eq!(
-                segment.stats().recovery_truncations,
-                u64::from(torn > 0),
-                "an intact segment must not be truncated"
-            );
-            let frames = replayed(&segment);
-            assert_eq!(frames.len(), 3);
-            assert_eq!(frames[2].payload(), b"kept-2");
-            // The recovered segment is immediately appendable at the right
-            // sequence, and the new frame survives its own reopen.
-            let appended = segment.append(TestKind::Effect, b"after-recovery").unwrap();
-            assert_eq!(appended.sequence, 3);
-            drop(segment);
-            let (segment, recovery) = open(&fixture, device);
-            assert_eq!(recovery.frames_recovered, 4);
-            assert_eq!(recovery.last_frame.unwrap().payload(), b"after-recovery");
-            assert_eq!(replayed(&segment).len(), 4);
-            drop(segment);
+            let truncated = complete[..prefix_len + torn].to_vec();
+            fixture.write_segment_bytes("device.journal", &truncated);
+            let opened =
+                LocalJournalSegment::<TestKind>::open(&fixture.dir, "device.journal", device);
+            if torn < MIN_FRAME_BYTES {
+                let (segment, recovery) = opened.unwrap_or_else(|error| {
+                    panic!("a {torn}-byte objectively incomplete tail was refused: {error}")
+                });
+                assert_eq!(recovery.frames_recovered, 3);
+                assert_eq!(recovery.discarded_tail_bytes, torn as u64);
+                assert_eq!(segment.next_sequence(), 3);
+                assert_eq!(segment.committed_bytes(), prefix_len as u64);
+                assert_eq!(
+                    segment.stats().recovery_truncations,
+                    u64::from(torn > 0),
+                    "an intact segment must not be truncated"
+                );
+                let frames = replayed(&segment);
+                assert_eq!(frames.len(), 3);
+                assert_eq!(frames[2].payload(), b"kept-2");
+                drop(segment);
+                assert_eq!(
+                    fixture.segment_bytes("device.journal"),
+                    complete[..prefix_len]
+                );
+            } else {
+                assert!(
+                    matches!(
+                        opened,
+                        Err(LocalJournalError::CorruptSegment { offset, .. })
+                            if offset == prefix_len as u64
+                    ),
+                    "a {torn}-byte tail with an ambiguous declared extent must fail closed"
+                );
+                assert_eq!(fixture.segment_bytes("device.journal"), truncated);
+            }
         }
+
+        // Recovery from a provably incomplete append leaves the segment
+        // immediately appendable at the prior sequence.
+        let torn = MIN_FRAME_BYTES - 1;
+        fixture.write_segment_bytes("device.journal", &complete[..prefix_len + torn]);
+        let (mut segment, recovery) = open(&fixture, device);
+        assert_eq!(recovery.frames_recovered, 3);
+        let appended = segment.append(TestKind::Effect, b"after-recovery").unwrap();
+        assert_eq!(appended.sequence, 3);
+        drop(segment);
+        let (segment, recovery) = open(&fixture, device);
+        assert_eq!(recovery.frames_recovered, 4);
+        assert_eq!(recovery.last_frame.unwrap().payload(), b"after-recovery");
+        assert_eq!(replayed(&segment).len(), 4);
     }
 
     #[test]
-    fn a_fully_sized_but_damaged_final_frame_is_treated_as_a_torn_tail() {
+    fn a_fully_sized_but_damaged_final_frame_fails_closed_without_mutation() {
         let fixture = Fixture::new("damaged-tail");
         let device = Uuid::from_u128(0x8);
         let (complete, prefix_len) = {
@@ -1329,17 +1363,98 @@ mod tests {
         let mut damaged = complete.clone();
         let last = damaged.len() - FRAME_CHECKSUM_BYTES - 1;
         damaged[last] ^= 0xff;
-        fixture.write_segment_bytes("device.journal", &damaged);
 
-        let (segment, recovery) = open(&fixture, device);
-        assert_eq!(recovery.frames_recovered, 1);
-        assert_eq!(
-            recovery.discarded_tail_bytes,
-            (complete.len() - prefix_len) as u64
-        );
-        assert_eq!(recovery.last_frame.unwrap().payload(), b"kept");
-        assert_eq!(segment.committed_bytes(), prefix_len as u64);
-        assert_eq!(segment.stats().recovery_truncations, 1);
+        #[derive(Serialize)]
+        struct InvalidKindHeader {
+            frame_schema_version: u32,
+            device_id: Uuid,
+            sequence: u64,
+            payload_kind: u8,
+            payload_digest: ContentDigest,
+        }
+
+        // Keep the whole-frame checksum valid while making the typed header
+        // undecodable: TestKind has only discriminants 0 and 1.
+        let payload = b"invalid-kind";
+        let invalid_header = postcard::to_allocvec(&InvalidKindHeader {
+            frame_schema_version: LOCAL_JOURNAL_FRAME_SCHEMA_VERSION,
+            device_id: device,
+            sequence: 1,
+            payload_kind: 2,
+            payload_digest: ContentDigest::of(payload),
+        })
+        .unwrap();
+        let mut undecodable = complete[..prefix_len].to_vec();
+        let frame_start = undecodable.len();
+        undecodable.extend_from_slice(FRAME_MAGIC);
+        undecodable.extend_from_slice(&(invalid_header.len() as u32).to_be_bytes());
+        undecodable.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        undecodable.extend_from_slice(&invalid_header);
+        undecodable.extend_from_slice(payload);
+        undecodable.extend_from_slice(ContentDigest::of(&undecodable[frame_start..]).as_bytes());
+
+        for (failure, corrupt) in [("checksum", damaged), ("decode", undecodable)] {
+            fixture.write_segment_bytes("device.journal", &corrupt);
+            assert!(
+                matches!(
+                    LocalJournalSegment::<TestKind>::open(
+                        &fixture.dir,
+                        "device.journal",
+                        device
+                    ),
+                    Err(LocalJournalError::CorruptSegment { offset, .. })
+                        if offset == prefix_len as u64
+                ),
+                "a fully sized final frame with a {failure} failure must be refused"
+            );
+            assert_eq!(fixture.segment_bytes("device.journal"), corrupt);
+        }
+    }
+
+    #[test]
+    fn a_declared_extent_beyond_eof_is_refused_without_erasing_evidence() {
+        let fixture = Fixture::new("ambiguous-extent");
+        let device = Uuid::from_u128(0x8a);
+        let (complete, first_len) = {
+            let (mut segment, _) = open(&fixture, device);
+            let first = segment.append(TestKind::Effect, b"first").unwrap();
+            segment.append(TestKind::Update, b"second").unwrap();
+            drop(segment);
+            (
+                fixture.segment_bytes("device.journal"),
+                first.frame_bytes as usize,
+            )
+        };
+
+        // A damaged length can make a previously complete frame appear torn.
+        // Exercise both the final frame and its non-final sibling: neither may
+        // turn corruption into destructive recovery.
+        for (offset, added_payload_bytes) in [(first_len, 1_u64), (0, complete.len() as u64)] {
+            let mut damaged = complete.clone();
+            let length_start = offset + FRAME_MAGIC.len() + 4;
+            let length_end = length_start + 8;
+            let original_payload_len = u64::from_be_bytes(
+                damaged[length_start..length_end]
+                    .try_into()
+                    .expect("fixed payload length field"),
+            );
+            damaged[length_start..length_end]
+                .copy_from_slice(&(original_payload_len + added_payload_bytes).to_be_bytes());
+            fixture.write_segment_bytes("device.journal", &damaged);
+
+            assert!(matches!(
+                LocalJournalSegment::<TestKind>::open(
+                    &fixture.dir,
+                    "device.journal",
+                    device
+                ),
+                Err(LocalJournalError::CorruptSegment {
+                    offset: corrupt_offset,
+                    ..
+                }) if corrupt_offset == offset as u64
+            ));
+            assert_eq!(fixture.segment_bytes("device.journal"), damaged);
+        }
     }
 
     #[test]
@@ -1377,6 +1492,7 @@ mod tests {
                 "damage at byte {index} must be refused as corruption, got {:?}",
                 opened.err()
             );
+            assert_eq!(fixture.segment_bytes("device.journal"), corrupt);
         }
     }
 

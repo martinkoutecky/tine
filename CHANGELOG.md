@@ -5,6 +5,16 @@ version describes its Rust API; persistent byte formats are versioned
 independently in `src/formats.rs` and summarized in
 `FORMAT-COMPATIBILITY.md`.
 
+## [Unreleased]
+
+### Fixed
+
+- Local-journal recovery now preserves the segment and fails closed when a
+  fully sized final frame fails validation or a damaged length field makes its
+  extent beyond EOF ambiguous. Only a byte tail too short to contain any
+  complete frame is truncated, preventing corruption from silently discarding
+  a previously durable commit.
+
 ## [0.1.0] - 2026-08-10
 
 ### Added
@@ -16,4 +26,5 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/martinkoutecky/tine-storage/releases/tag/v0.1.0
