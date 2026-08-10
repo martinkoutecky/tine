@@ -1,7 +1,22 @@
 //! Integration tests against the on-disk demo graph (standard layout).
 
 use std::path::PathBuf;
-use tine_core::Graph;
+use tine_core::{ActivationIntent, Graph, PageDto};
+
+/// Make `dto` an EDITOR's DTO, the way the frontend does.
+///
+/// Since GH #254 increment 3 a loaded page and a live editor are different
+/// things: reading alone mints no identity, so a read for export, preview or
+/// hydration cannot inherit an editor's override authority. A test that
+/// force-saves is modelling a user answering a conflict banner, so it has to
+/// activate like one. Works for an absent page too — activation resolves a
+/// prospective target and writes nothing.
+fn as_editor(graph: &Graph, dto: &mut PageDto) {
+    let handle = graph
+        .activate_editor(&dto.path, ActivationIntent::Replace)
+        .expect("the target is inside the graph");
+    dto.activation = Some(handle.activation.as_u64());
+}
 
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
@@ -280,6 +295,7 @@ fn external_graph_text_save_keeps_exact_path_extension_and_rejects_stale_bytes()
             .unwrap()
             .unwrap();
         identity_bound.blocks[0].raw = "keep mine over a republished inode".into();
+        as_editor(&graph, &mut identity_bound);
         std::fs::write(&path, "- shown conflict\n").unwrap();
         graph
             .save_page(&identity_bound, identity_bound.rev.as_deref())
@@ -304,6 +320,9 @@ fn external_graph_text_save_keeps_exact_path_extension_and_rejects_stale_bytes()
             .unwrap()
             .unwrap();
         second.blocks[0].raw = "must not replace a different winner".into();
+        // A live editor too, so the refusal below is the byte-binding refusal
+        // this test is about and not merely a missing activation.
+        as_editor(&graph, &mut second);
         std::fs::write(&path, "- second shown conflict\n").unwrap();
         graph.save_page(&second, second.rev.as_deref()).unwrap_err();
         let foreign = root.join("external/deep/.foreign.markdown");
@@ -1251,7 +1270,8 @@ fn save_refuses_to_clobber_external_change() {
     let g = Graph::open(&root);
     // Build the cache (Tine now "knows" N = "- one"), then load it for editing.
     g.search("one", 10);
-    let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+    let mut dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+    as_editor(&g, &mut dto);
 
     // An external writer (another app / Syncthing) changes the file.
     std::fs::write(&path, "- EXTERNAL EDIT").unwrap();
@@ -3382,6 +3402,7 @@ mod external_atomic_replacement {
         let root = scratch("deleted");
         let (graph, mut page) = open_with(&root, "- original\n");
         let base = page.rev.clone();
+        as_editor(&graph, &mut page);
 
         std::fs::remove_file(root.join("pages/Note.md")).unwrap();
 

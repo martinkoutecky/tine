@@ -303,6 +303,25 @@ export function isTombstonedFile(name: string, path?: string): boolean {
   return deleted === path;
 }
 
+/**
+ * Does a tombstone PROVABLY cover this file? The same question as
+ * `isTombstonedFile`, with the opposite answer when the file is unknown.
+ *
+ * The two exist because "unknown path" means opposite things at the two
+ * boundaries. Deciding whether to INSTALL bytes, not knowing which file they
+ * came from must refuse — installing the deleted one is the harm. Deciding
+ * whether to WAIT, not knowing must proceed: refusing means never reading, so a
+ * request that cannot name its file waits forever behind a tombstone raised for
+ * some other file of that name. Block autocomplete supplies no path, so that is
+ * the common case, not the exotic one. (GH #254 increment 3.)
+ */
+export function tombstoneCovers(name: string, path?: string): boolean {
+  if (!deletedPages.has(name)) return false;
+  const deleted = deletedPagePaths.get(name);
+  if (!deleted) return true; // pathless delete: every file of that name
+  return deleted === path; // unknown path proves nothing — let the read decide
+}
+
 export function tombstone(name: string, path?: string) {
   deletedPages.add(name);
   // Always REPLACE the recorded file, never merge with an older tombstone's: a

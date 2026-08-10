@@ -340,6 +340,38 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(liveDoc.pages.find((p) => p.name === "Target")).toBeUndefined();
   });
 
+  it("still stamps a pathless request when a same-named stray is deleted", async () => {
+    // Block autocomplete supplies no path — it knows the page name and nothing
+    // else. A tombstone for some OTHER file of that name must not park such a
+    // request forever: "I cannot prove which file this is" is a reason to read,
+    // not a reason to refuse.
+    const { persistBlockRefTarget, deletePage, loadRoutedPage } = await import("./store");
+    const { markConflict } = await import("./ui");
+    loadRoutedPage(page("Target", "pages/stray/Target.md", "incumbent"));
+    markDirty("Target");
+    markConflict("Target"); // conflicted, so the delete does not flush it first
+
+    const survivor = page("Target", "pages/Target.md", "survivor");
+    const read = vi.spyOn(backend(), "getPage").mockResolvedValue(survivor as never);
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+    vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+
+    // No path: the request can only name the page.
+    await persistBlockRefTarget("uuid-11", "Target", "page");
+    expect(read).toHaveBeenCalledTimes(1); // refused by the conflicted incumbent
+
+    // The stray is deleted by exact path. The survivor is untouched.
+    await deletePage("Target", "page", "pages/stray/Target.md");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The read IS the observable here: the defect was the retry returning before
+    // it, so the request could never reach the survivor at all. Its own page
+    // must then be the one loaded.
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(doc.pages.find((p) => p.name === "Target")?.path).toBe("pages/Target.md");
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();
