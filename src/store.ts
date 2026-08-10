@@ -73,7 +73,7 @@ import {
   setBaseRev,
   tombstone,
   untombstone,
-  isTombstoned,
+  isTombstonedFile,
   forgetSaveState,
   resetSaveState,
   isSaving,
@@ -610,7 +610,7 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
-  tombstone(name);
+  tombstone(name, expectedPath);
   try {
     if (expectedPath) await backend().deletePage(name, kind, expectedPath);
     else await backend().deletePage(name, kind);
@@ -3190,7 +3190,10 @@ export async function persistBlockRefTarget(
     // content. Routing deletion through the store exists precisely to stop a
     // queued write resurrecting a page, and this is the same hazard arriving by
     // a different door. (GH #254 increment 3.)
-    if (isTombstoned(page)) {
+    // Path-aware, not name-level: two files legitimately share one page name, and
+    // deleting one must not refuse the other. Refusing by name loses the surviving
+    // owner's durable target — work lost rather than protected.
+    if (isTombstonedFile(page, dto?.path ?? path)) {
       pendingBlockRefStamps.delete(uuid);
       return;
     }

@@ -225,6 +225,40 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(saved).not.toHaveBeenCalled();
   });
 
+  it("still resolves the surviving file when its same-named sibling is deleted", async () => {
+    const { persistBlockRefTarget, deletePage, loadRoutedPage } = await import("./store");
+    const { markConflict } = await import("./ui");
+    loadRoutedPage(page("Target", "pages/Target.md", "incumbent"));
+    // CONFLICTED, not merely dirty. `deletePage` flushes a dirty page first, and
+    // that save frees the incumbent — so the retry would fire before the delete,
+    // install the survivor, and then be removed by `forgetPage`'s name-keyed
+    // teardown. A conflicted page is deleted without flushing, which is the
+    // ordering this guard is actually about.
+    markDirty("Target");
+    markConflict("Target");
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "survivor"));
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+    vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+
+    // The retained request targets the OTHER file of that name.
+    await persistBlockRefTarget("uuid-6", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1);
+
+    // Deleting the incumbent FILE must not refuse the survivor. A name-level
+    // tombstone dropped both, losing the committed reference's durable target.
+    await deletePage("Target", "page", "pages/Target.md");
+    // The sweep fires synchronously, but the retry then awaits its own read.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The read alone proves nothing: it happens BEFORE the tombstone guard. What
+    // must survive the sibling's deletion is the INSTALL of the surviving file.
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(doc.pages.find((p) => p.name === "Target")?.path).toBe("pages/other/Target.md");
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

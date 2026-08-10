@@ -281,12 +281,36 @@ export function setBaseRev(name: string, rev: string | null) {
 export function isTombstoned(name: string): boolean {
   return deletedPages.has(name);
 }
-export function tombstone(name: string) {
+
+/** Which FILE a tombstone was raised for, when the delete named one. */
+const deletedPagePaths = new Map<string, string>();
+
+/**
+ * Was `path` the file this tombstone was raised for?
+ *
+ * A tombstone is keyed by page name, but two files legitimately share one name
+ * (the duplicate-day stray of #21, same-titled pages in different folders). A
+ * name-level test therefore refuses the SURVIVING file as well as the deleted
+ * one — which loses work rather than protecting it. When the delete named a
+ * path, only that exact file is refused. (GH #254 increment 3.)
+ */
+export function isTombstonedFile(name: string, path?: string): boolean {
+  if (!deletedPages.has(name)) return false;
+  const deleted = deletedPagePaths.get(name);
+  // No path recorded (a never-saved page): nothing distinguishes the files, so
+  // the name is all there is to go on.
+  if (!deleted || !path) return true;
+  return deleted === path;
+}
+
+export function tombstone(name: string, path?: string) {
   deletedPages.add(name);
+  if (path) deletedPagePaths.set(name, path);
 }
 /** Lift a delete tombstone (page re-created, or the delete failed). */
 export function untombstone(name: string) {
   deletedPages.delete(name);
+  deletedPagePaths.delete(name);
 }
 /** Drop a page's dirty + baseline state — its content is leaving the working set. */
 export function forgetSaveState(name: string) {
