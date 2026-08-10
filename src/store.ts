@@ -170,8 +170,16 @@ export function editGeneration(name: string): number {
   return editGenerations.get(name) ?? 0;
 }
 
-function bumpEditGeneration(name: string): void {
+export function bumpEditGeneration(name: string): void {
   editGenerations.set(name, ++editClock);
+}
+
+/** The page-instance generation WITHOUT creating one for a page that has none.
+ *
+ *  `pageInstanceGeneration` lazily activates, so reading it as a check would mint
+ *  a generation and mutate the identity cut retirement compares. */
+export function peekPageInstanceGeneration(name: string): number | undefined {
+  return pageInstanceGenerations.get(name);
 }
 
 function activatePageInstance(name: string): number {
@@ -1648,7 +1656,6 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
         );
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
-  bumpEditGeneration(doc.byId[id].page);
   markDirty(doc.byId[id].page);
 }
 
@@ -3110,13 +3117,48 @@ export async function persistBlockRefTarget(
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
-    if (dto) ensurePageLoaded(dto);
+    if (dto && ensurePageLoaded(dto)) {
+      // RETAIN the request; do not silently drop it. The user-visible mutation has
+      // already happened — autocomplete committed `((uuid))`, or the sidebar item
+      // is already open — and this stamp is what makes those survive a restart.
+      // Skipping it leaves a reference that works only from session-local runtime
+      // identity, which looks fine until the app is reopened. Rolling back is not
+      // an option either: it would undo what the user just typed. So the request
+      // waits for the incumbent to be resolvable and is retried.
+      // (GH #254 increment 3, acceptance row C5.)
+      pendingBlockRefStamps.set(uuid, { uuid, page, kind, path });
+      return;
+    }
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
   const id = resolveBlockRef(ref);
-  if (id) ensureStableBlockId(id);
+  if (id) {
+    pendingBlockRefStamps.delete(uuid);
+    ensureStableBlockId(id);
+  }
+}
+
+/** Stamps deferred by a refused replacement, keyed by the referenced uuid. */
+const pendingBlockRefStamps = new Map<
+  string,
+  { uuid: string; page: string; kind: PageKind; path?: string }
+>();
+
+/**
+ * Retry every stamp a refusal deferred.
+ *
+ * Driven by the same release the refusal was waiting on — once the incumbent is
+ * no longer holding unsaved work, the request that was retained can complete.
+ */
+export function retryPendingBlockRefStamps(): void {
+  if (pendingBlockRefStamps.size === 0) return;
+  for (const req of [...pendingBlockRefStamps.values()]) {
+    if (!mayReplaceInstance(req.page) && !pageByName(req.page)) continue;
+    pendingBlockRefStamps.delete(req.uuid);
+    void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
+  }
 }
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.

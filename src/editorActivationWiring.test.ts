@@ -87,33 +87,84 @@ describe("editor activation wiring (GH #254 increment 3)", () => {
     expect(retire).toHaveBeenCalledWith("pages/Note.md", 5);
   });
 
-  it("does not record an identity across a graph switch", async () => {
+  it("abandons a save whose graph went away while it was acquiring", async () => {
     loadRoutedPage(page("Note", "pages/old.md"));
+
+    // WAIT until acquisition is genuinely in flight before switching graphs. An
+    // earlier version of this test reset first, so the queued save never reached
+    // acquisition and it passed VACUOUSLY — it also only excluded the token,
+    // which cannot catch the real defect: the abandoned save continued and wrote
+    // the replacement graph's bytes with `activation: undefined`.
+    let inFlight!: () => void;
+    const acquiring = new Promise<void>((r) => {
+      inFlight = r;
+    });
     let release: (h: unknown) => void = () => {};
-    vi.spyOn(backend(), "activateEditor").mockReturnValue(
-      new Promise((r) => {
-        release = r as (h: unknown) => void;
-      }) as never,
+    vi.spyOn(backend(), "activateEditor").mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = r as (h: unknown) => void;
+          inFlight();
+        }) as never,
     );
     const saved = vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
 
     const { markDirty, flushPage } = await import("./persistence");
     markDirty("Note");
     const flush = flushPage("Note");
+    await acquiring;
 
-    // The graph goes away while the activation IPC is still in flight, and a NEW
-    // graph's page arrives under the same name.
+    // Only now does the graph go away and a NEW graph's page arrive.
     resetStore();
     loadRoutedPage(page("Note", "pages/new.md"));
     release({ activation: 71, target: "pages/old.md", prospective: false });
     await flush;
 
-    // The old graph's identity must not attach to the new graph's editor, and the
-    // abandoned save must not write the replacement page.
+    // No write at all: the abandoned save must not serialize the replacement
+    // graph's page, with or without an identity.
+    expect(saved).not.toHaveBeenCalled();
     expect(editorActivationFor("Note")).not.toBe(71);
-    for (const [dto] of saved.mock.calls) {
-      expect(dto.activation).not.toBe(71);
-    }
+  });
+
+  it("does not hand a replaced instance the outgoing editor's identity", async () => {
+    loadRoutedPage(page("Note", "pages/Note.md"));
+
+    let inFlight!: () => void;
+    const acquiring = new Promise<void>((r) => {
+      inFlight = r;
+    });
+    let release: (h: unknown) => void = () => {};
+    vi.spyOn(backend(), "activateEditor").mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = r as (h: unknown) => void;
+          inFlight();
+        }) as never,
+    );
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+    vi.spyOn(backend(), "retireEditorActivation").mockResolvedValue(true);
+
+    const { markDirty, flushPage } = await import("./persistence");
+    markDirty("Note");
+    const flush = flushPage("Note");
+    await acquiring;
+
+    // A SAME-PATH content replacement — the watcher-approved reload shape. The
+    // path is unchanged, so a path-only check cannot see that this is a different
+    // editor; only the instance generation can.
+    // DIFFERENT content, or `upsertPage` treats it as a self-write echo and
+    // deliberately keeps the working copy — which is genuinely the same editor,
+    // so attaching the identity there would be correct.
+    const { reloadPage } = await import("./store");
+    reloadPage({
+      ...page("Note", "pages/Note.md"),
+      blocks: [{ raw: "external body", children: [] } as never],
+      rev: "rev-external",
+    });
+    release({ activation: 73, target: "pages/Note.md", prospective: false });
+    await flush;
+
+    expect(editorActivationFor("Note")).not.toBe(73);
   });
 
   it("carries an absent editor's prospective target on its DTO", async () => {

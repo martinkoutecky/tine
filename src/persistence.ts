@@ -10,7 +10,10 @@
 
 import {
   doc,
+  bumpEditGeneration,
   editorActivationFor,
+  peekPageInstanceGeneration,
+  retryPendingBlockRefStamps,
   setProspectiveTarget,
   pageByName,
   pageInstanceGeneration,
@@ -94,6 +97,11 @@ export function isDirty(name: string): boolean {
 export function markDirty(name: string) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
+  // Every content mutation moves the edit generation, not just `setRaw`: a paste,
+  // an outline insert, a block move are all input the user made after clicking
+  // "Use disk version", and a counter that only tracks typing lets them be
+  // destroyed. (GH #254 increment 3.)
+  bumpEditGeneration(name);
   dirty.add(name);
   scheduleSave();
 }
@@ -102,6 +110,7 @@ export function markDirty(name: string) {
 export function addDirty(name: string) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
+  bumpEditGeneration(name);
   dirty.add(name);
 }
 /** Pages with pending edits (so the working-set cap can pin them). */
@@ -475,11 +484,13 @@ async function ensureEditorActivation(name: string): Promise<void> {
   const page = pageByName(name);
   if (!page) return;
   const token = graphToken;
-  // Deliberately NOT `pageInstanceGeneration` here: that accessor lazily CREATES
-  // a generation when a page has none, so reading it would mutate the very
-  // identity the cut-retirement path compares. The page's own path is a
-  // side-effect-free stand-in for "still the editor I started from".
+  // The page's path cannot see a SAME-PATH content replacement — `reloadPage` and
+  // the watcher-approved reload both install a new editor at the same path — so
+  // the instance generation is required as well. Peeked, never read through the
+  // lazily-creating accessor: that would mint a generation where none existed and
+  // mutate the identity cut retirement compares.
   const pathAtStart = page.path ?? "";
+  const instanceAtStart = peekPageInstanceGeneration(name);
   try {
     const handle = page.path
       ? await backend().activateEditor(page.path, "reuse")
@@ -490,7 +501,8 @@ async function ensureEditorActivation(name: string): Promise<void> {
     if (
       editorActivationFor(name) === undefined &&
       graphToken === token &&
-      (pageByName(name)?.path ?? "") === pathAtStart
+      (pageByName(name)?.path ?? "") === pathAtStart &&
+      peekPageInstanceGeneration(name) === instanceAtStart
     ) {
       setEditorActivation(name, handle.activation);
       // An ABSENT editor must also carry the prospective target it is live for.
@@ -575,6 +587,12 @@ async function doSave(
   // DTO does not travel this path, never acquires an identity, and is refused on
   // the override path for presenting none. (GH #254 increment 3.)
   if (editorActivationFor(name) === undefined) await ensureEditorActivation(name);
+  // Acquisition is an awaited IPC, so the world can move under it. Refusing to
+  // RECORD a stale identity is not enough — the save must abandon too, or it
+  // serializes the replacement graph's bytes and writes them anyway (reproduced,
+  // with `activation: undefined`, which is exactly why an identity check alone
+  // could not catch it). (GH #254 increment 3.)
+  if (graphToken !== token) return false;
   const dto = measureIssue248("frontend.pageToDtoMs", () => pageToDto(name));
   if (!dto) {
     // Two very different reasons, and they must not share an outcome (audit
@@ -620,6 +638,10 @@ async function doSave(
     // the page behind a warning about a change that is now written.
     if (isConflicted(name)) clearConflict(name);
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
+    // This page just became clean, which is the release a refused replacement was
+    // waiting on. Retry any block-ref stamp that refusal deferred, so a committed
+    // `((uuid))` does not stay session-local. (GH #254 increment 3, C5.)
+    retryPendingBlockRefStamps();
     return true;
   } catch (e) {
     // The backend says "conflict" and nothing else for a real base-revision

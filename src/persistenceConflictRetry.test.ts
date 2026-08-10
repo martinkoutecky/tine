@@ -23,6 +23,10 @@ vi.mock("./store", () => ({
   // these tests keep exercising the conflict/barrier behaviour they are about.
   editorActivationFor: () => 1,
   setEditorActivation: () => {},
+  setProspectiveTarget: () => {},
+  bumpEditGeneration: () => {},
+  peekPageInstanceGeneration: () => 1,
+  retryPendingBlockRefStamps: () => {},
   pageByName: (name: string) => ({ name }),
   pageInstanceGeneration: () => 1,
   pageToDto: (name: string) => ({
