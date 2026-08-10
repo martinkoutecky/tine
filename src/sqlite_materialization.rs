@@ -2564,6 +2564,16 @@ pub struct PhysicalBlockPropertyCandidateRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalPropertyFacetRow {
+    pub owner: PhysicalEntityId,
+    pub page_id: [u8; 16],
+    pub source_name: String,
+    pub normalized_name: String,
+    pub value: String,
+    pub ordinal: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPropertyRow {
     pub owner: PhysicalEntityId,
     pub page_id: [u8; 16],
@@ -3615,6 +3625,95 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Traverse property facts in their stable primary-key order. The caller
+    /// can request block owners only (query-builder policy) or both page and
+    /// block owners (editor autocomplete policy). Values remain parser-derived
+    /// facts; policy such as hidden/internal keys belongs to the caller.
+    pub fn property_facet_rows_after(
+        &self,
+        block_owners_only: bool,
+        after: Option<(PhysicalEntityId, String, u32)>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPropertyFacetRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        if let Some((owner, name, _)) = &after {
+            checked_query_text(name)?;
+            if block_owners_only && !matches!(owner, PhysicalEntityId::Block(_)) {
+                return Err(MaterializationError::InvalidQuery(
+                    "block-only property cursor must identify a block".into(),
+                ));
+            }
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT owner_type, owner_id, page_id, name, normalized_name, value, ordinal
+                 FROM properties
+                 WHERE (?1 = 0 OR owner_type = 1)
+                 ORDER BY owner_type, owner_id, name, ordinal LIMIT ?2",
+                vec![i64::from(block_owners_only).into(), limit.into()],
+            ),
+            Some((owner, name, ordinal)) => {
+                let (owner_type, owner_id) = owner.sql_parts();
+                (
+                    "SELECT owner_type, owner_id, page_id, name, normalized_name, value, ordinal
+                     FROM properties
+                     WHERE (?1 = 0 OR owner_type = 1)
+                       AND (owner_type > ?2
+                         OR (owner_type = ?2 AND owner_id > ?3)
+                         OR (owner_type = ?2 AND owner_id = ?3 AND name > ?4)
+                         OR (owner_type = ?2 AND owner_id = ?3 AND name = ?4 AND ordinal > ?5))
+                     ORDER BY owner_type, owner_id, name, ordinal LIMIT ?6",
+                    vec![
+                        i64::from(block_owners_only).into(),
+                        owner_type.into(),
+                        owner_id.to_vec().into(),
+                        name.into(),
+                        i64::from(ordinal).into(),
+                        limit.into(),
+                    ],
+                )
+            }
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?;
+        collect_read_rows(
+            rows.map(|row| {
+                let (owner_type, owner_id, page_id, source_name, normalized_name, value, ordinal) =
+                    row?;
+                Ok(PhysicalPropertyFacetRow {
+                    owner: decode_entity(owner_type, &owner_id)?,
+                    page_id: decode_id(&page_id)?,
+                    source_name,
+                    normalized_name,
+                    value,
+                    ordinal: u32::try_from(ordinal).map_err(|_| {
+                        MaterializationError::Corrupt(
+                            "property ordinal is negative or exceeds u32".into(),
+                        )
+                    })?,
+                })
+            }),
+            |row| {
+                Ok(row
+                    .source_name
+                    .len()
+                    .saturating_add(row.normalized_name.len())
+                    .saturating_add(row.value.len())
+                    .saturating_add(96))
+            },
+        )
+    }
+
     pub fn properties(
         &self,
         owner: PhysicalEntityId,
@@ -4379,7 +4478,7 @@ mod tests {
         let second_block = second.blocks[0].block_id;
         apply_and_commit(
             &mut connection,
-            &change(0x7890, vec![first, second], Vec::new()),
+            &change(0x7890, vec![first.clone(), second.clone()], Vec::new()),
             1,
             digest(b"frontier"),
         );
@@ -4444,6 +4543,64 @@ mod tests {
             .unwrap()
             .iter()
             .any(|row| row.name == "Template" && row.value == "First"));
+
+        let all_facets = read.property_facet_rows_after(false, None, 10).unwrap();
+        assert_eq!(all_facets.len(), 6);
+        assert!(all_facets.iter().any(|row| {
+            row.owner == PhysicalEntityId::Page(first_page)
+                && row.normalized_name == "category"
+                && row.value == "test"
+        }));
+        assert!(all_facets.iter().any(|row| {
+            row.owner == PhysicalEntityId::Block(first_block)
+                && row.source_name == "Template"
+                && row.normalized_name == "template"
+                && row.value == "First"
+        }));
+        let mut paged = Vec::new();
+        let mut cursor = None;
+        loop {
+            let rows = read
+                .property_facet_rows_after(false, cursor.clone(), 2)
+                .unwrap();
+            if rows.is_empty() {
+                break;
+            }
+            let last = rows.last().unwrap();
+            cursor = Some((last.owner, last.source_name.clone(), last.ordinal));
+            paged.extend(rows);
+        }
+        assert_eq!(paged, all_facets);
+        let block_facets = read.property_facet_rows_after(true, None, 10).unwrap();
+        assert_eq!(block_facets.len(), 4);
+        assert!(block_facets
+            .iter()
+            .all(|row| matches!(row.owner, PhysicalEntityId::Block(_))));
+        assert!(matches!(
+            read.property_facet_rows_after(
+                true,
+                Some((PhysicalEntityId::Page(first_page), "category".into(), 0)),
+                10,
+            ),
+            Err(MaterializationError::InvalidQuery(_))
+        ));
+        drop(read);
+
+        first.blocks[0]
+            .properties
+            .retain(|property| property.normalized_name != "template");
+        apply_and_commit(
+            &mut connection,
+            &change(0x7891, vec![first], vec![second_page]),
+            2,
+            digest(b"frontier-2"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 2, digest(b"frontier-2")).unwrap();
+        assert!(read
+            .property_facet_rows_after(false, None, 10)
+            .unwrap()
+            .iter()
+            .all(|row| row.normalized_name != "template"));
     }
 
     #[test]
