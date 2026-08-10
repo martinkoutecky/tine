@@ -51,6 +51,16 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.143
+      - name: Windows write-through v2 journal public boundary
+        run: >
+          cargo test --locked --test public_boundary
+          journal_v2_can_be_prepared_opened_and_appended_from_the_public_api
+          -- --exact --nocapture
+      - name: Windows write-through v2 journal fault boundary
+        run: >
+          cargo test --locked --lib
+          local_journal_v2::windows_tests::injected_windows_replacement_error_reopens_to_old_or_successor_once
+          -- --exact --nocapture
       - run: cargo nextest run --locked --all-features --no-fail-fast
       - name: Timed Patricia 4096-record physical burn-in
         shell: pwsh

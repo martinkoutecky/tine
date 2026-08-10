@@ -17,8 +17,9 @@
 use serde::{Deserialize, Serialize};
 use tine_storage::formats::{self, FormatKind, FormatValue};
 use tine_storage::{
-    ContentDigest, DigestSealedError, DigestSealedPayload, LocalJournalAppendError,
-    LocalJournalError, LocalJournalSegmentV2, LocalJournalSegmentV2Selection,
+    ContentDigest, DigestSealedError, DigestSealedPayload, DurableDirectoryPublication,
+    LocalJournalAppendError, LocalJournalError, LocalJournalSegmentV2,
+    LocalJournalSegmentV2Selection,
 };
 use uuid::Uuid;
 
@@ -144,7 +145,7 @@ enum ExternalJournalKind {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn journal_v2_can_be_prepared_opened_and_appended_from_the_public_api() {
     let root = std::env::temp_dir().join(format!("tine-storage-public-v2-{}", Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
@@ -165,27 +166,33 @@ fn journal_v2_can_be_prepared_opened_and_appended_from_the_public_api() {
     assert_eq!(appended.sequence, 9);
     assert_eq!(appended.data_durability_syncs, 2);
     drop(segment);
+    drop(dir);
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-#[cfg(windows)]
-fn journal_v2_refuses_windows_activation_before_creating_artifacts() {
-    let root = std::env::temp_dir().join(format!("tine-storage-public-v2-{}", Uuid::new_v4()));
+#[cfg(any(unix, windows))]
+fn durable_publication_exposes_create_replace_and_retire_to_a_consumer() {
+    let root = std::env::temp_dir().join(format!("tine-storage-public-durable-{}", Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     let dir = cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
-    let selection = LocalJournalSegmentV2Selection::new(
-        "external.journal-v2",
-        Uuid::from_u128(3),
-        Uuid::from_u128(4),
-        9,
-    )
-    .unwrap();
-    assert!(matches!(
-        LocalJournalSegmentV2::<ExternalJournalKind>::prepare(&dir, &selection),
-        Err(LocalJournalError::UnsupportedDurableReplacement)
-    ));
-    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+    let publication = DurableDirectoryPublication::open(&dir).unwrap();
+    publication
+        .publish_new_exact("schema-2-anchor", b"old")
+        .unwrap();
+    publication
+        .replace_exact("schema-2-anchor", b"old", b"new")
+        .unwrap();
+    publication
+        .retire_exact("schema-2-anchor", ".retired-schema-2-anchor", b"new")
+        .unwrap();
+    assert!(!root.join("schema-2-anchor").exists());
+    assert_eq!(
+        std::fs::read(root.join(".retired-schema-2-anchor")).unwrap(),
+        b"new"
+    );
+    drop(publication);
+    drop(dir);
     std::fs::remove_dir_all(root).unwrap();
 }
 

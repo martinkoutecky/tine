@@ -100,8 +100,8 @@ pub use filesystem::{
     ensure_directory_nofollow, nonblocking_lock_is_contended, open_dir_nofollow,
     open_existing_dir_nofollow, open_file_nofollow, publish_immutable_exact, read_optional_regular,
     read_required_regular, require_regular_entry, sync_dir_required,
-    CompletedExactImmutablePublicationBatch, ExactImmutablePublicationBatch, FilesystemError,
-    StagedExactImmutablePublication,
+    CompletedExactImmutablePublicationBatch, DurableDirectoryPublication,
+    ExactImmutablePublicationBatch, FilesystemError, StagedExactImmutablePublication,
 };
 pub use local_journal::{
     LocalJournalAppend, LocalJournalError, LocalJournalFrame, LocalJournalPayloadKind,

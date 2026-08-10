@@ -9,7 +9,9 @@ use std::fs;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 
-use cap_std::fs::{Dir, OpenOptions};
+use cap_std::fs::Dir;
+#[cfg(unix)]
+use cap_std::fs::OpenOptions;
 use uuid::Uuid;
 
 use crate::local_journal::{
@@ -18,10 +20,13 @@ use crate::local_journal::{
     LocalJournalPayloadKind, LocalJournalRecovery, LocalJournalStats,
     MAX_LOCAL_JOURNAL_FRAME_BYTES, MAX_LOCAL_JOURNAL_SEGMENT_BYTES, MIN_FRAME_BYTES,
 };
-use crate::{
-    publish_immutable_exact, read_required_regular, sync_dir_required, ContentDigest,
-    FilesystemError,
-};
+#[cfg(not(windows))]
+use crate::publish_immutable_exact;
+#[cfg(unix)]
+use crate::sync_dir_required;
+#[cfg(windows)]
+use crate::DurableDirectoryPublication;
+use crate::{read_required_regular, ContentDigest, FilesystemError};
 
 pub const LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION: u32 = 2;
 pub const LOCAL_JOURNAL_SEGMENT_V2_MAGIC: &str = "TINEJNL2";
@@ -342,6 +347,8 @@ impl FrontierV2 {
 /// A locked v2 segment whose append cursor is selected solely by its frontier.
 pub struct LocalJournalSegmentV2<K> {
     dir: Dir,
+    #[cfg(windows)]
+    publication: DurableDirectoryPublication,
     file: fs::File,
     selection: LocalJournalSegmentV2Selection,
     frontier: FrontierV2,
@@ -357,22 +364,26 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegmentV2<K> {
         dir: &Dir,
         selection: &LocalJournalSegmentV2Selection,
     ) -> Result<(), LocalJournalError> {
+        let header = SegmentHeaderV2::for_selection(selection);
         #[cfg(windows)]
-        return Err(LocalJournalError::UnsupportedDurableReplacement);
+        let publication =
+            DurableDirectoryPublication::open(dir).map_err(durable_publication_error)?;
 
+        #[cfg(windows)]
+        create_exact_durable_with_publication(
+            &publication,
+            selection.segment_name(),
+            &header.encode(),
+        )?;
         #[cfg(not(windows))]
-        {
-            let header = SegmentHeaderV2::for_selection(selection);
-            create_exact_durable(dir, selection.segment_name(), &header.encode())?;
-            if let Err(error) = create_exact_durable(
-                dir,
-                selection.frontier_name(),
-                &FrontierV2::initial(header).encode(),
-            ) {
-                return Err(error);
-            }
-            Ok(())
-        }
+        create_exact_durable(dir, selection.segment_name(), &header.encode())?;
+
+        let frontier = FrontierV2::initial(header).encode();
+        #[cfg(windows)]
+        create_exact_durable_with_publication(&publication, selection.frontier_name(), &frontier)?;
+        #[cfg(not(windows))]
+        create_exact_durable(dir, selection.frontier_name(), &frontier)?;
+        Ok(())
     }
 
     pub fn open_selected(
@@ -380,6 +391,9 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegmentV2<K> {
         selection: &LocalJournalSegmentV2Selection,
     ) -> Result<(Self, LocalJournalRecovery<K>), LocalJournalError> {
         require_safe_segment_name(selection.segment_name())?;
+        #[cfg(windows)]
+        let publication =
+            DurableDirectoryPublication::open(dir).map_err(durable_publication_error)?;
         let mut file = open_regular_read_write_nofollow(dir, selection.segment_name())?;
         if !lock_exclusive_nonblocking(&file)? {
             return Err(LocalJournalError::SegmentAlreadyOpen(
@@ -414,6 +428,8 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegmentV2<K> {
         Ok((
             Self {
                 dir: dir.try_clone()?,
+                #[cfg(windows)]
+                publication,
                 file,
                 selection: selection.clone(),
                 frontier,
@@ -455,10 +471,6 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegmentV2<K> {
                 LocalJournalError::SegmentPoisoned,
             ));
         }
-        #[cfg(windows)]
-        return Err(LocalJournalAppendError::DefinitelyNotAppended(
-            LocalJournalError::UnsupportedDurableReplacement,
-        ));
 
         let sequence = self.frontier.next_sequence;
         let bytes = encode_frame(self.selection.device_id, sequence, payload_kind, payload)
@@ -481,9 +493,20 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegmentV2<K> {
             return Err(LocalJournalAppendError::AppendOutcomeUnknown(error));
         }
         let successor_bytes = successor.encode();
-        if let Err(error) =
-            publish_frontier_durable(&self.dir, self.selection.frontier_name(), &successor_bytes)
-        {
+        #[cfg(unix)]
+        let publish =
+            publish_frontier_durable(&self.dir, self.selection.frontier_name(), &successor_bytes);
+        #[cfg(windows)]
+        let publish = publish_frontier_durable(
+            &self.publication,
+            self.selection.frontier_name(),
+            &self.frontier.encode(),
+            &successor_bytes,
+        );
+        #[cfg(not(any(unix, windows)))]
+        let publish =
+            publish_frontier_durable(&self.dir, self.selection.frontier_name(), &successor_bytes);
+        if let Err(error) = publish {
             return Err(LocalJournalAppendError::AppendOutcomeUnknown(error));
         }
         if let Err(error) =
@@ -845,6 +868,7 @@ fn read_complete_frame<K: LocalJournalPayloadKind>(
     Ok((frame, bytes))
 }
 
+#[cfg(not(windows))]
 fn create_exact_durable(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), LocalJournalError> {
     publish_immutable_exact(dir, name, bytes).map_err(|error| match error {
         FilesystemError::ByteCollision | FilesystemError::StoredLengthMismatch { .. } => {
@@ -853,6 +877,37 @@ fn create_exact_durable(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), Local
         error => LocalJournalError::Io(format!("durable preparation of {name} failed: {error}")),
     })?;
     verify_regular_exact(dir, name, bytes)
+}
+
+#[cfg(windows)]
+fn durable_publication_error(error: FilesystemError) -> LocalJournalError {
+    match error {
+        FilesystemError::DurableNameOperationUnavailable(_) => {
+            LocalJournalError::UnsupportedDurableReplacement
+        }
+        FilesystemError::ByteCollision | FilesystemError::StoredLengthMismatch { .. } => {
+            LocalJournalError::PreparedArtifactExists("durable publication".into())
+        }
+        error => {
+            LocalJournalError::Io(format!("durable write-through publication failed: {error}"))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn create_exact_durable_with_publication(
+    publication: &DurableDirectoryPublication,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), LocalJournalError> {
+    publication
+        .publish_new_exact(name, bytes)
+        .map_err(|error| match error {
+            FilesystemError::ByteCollision | FilesystemError::StoredLengthMismatch { .. } => {
+                LocalJournalError::PreparedArtifactExists(name.to_owned())
+            }
+            error => durable_publication_error(error),
+        })
 }
 
 fn read_frontier_exact(dir: &Dir, name: &str) -> Result<Vec<u8>, LocalJournalError> {
@@ -942,14 +997,51 @@ fn publish_frontier_durable(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), L
 
 #[cfg(windows)]
 fn publish_frontier_durable(
-    _dir: &Dir,
-    _name: &str,
-    _bytes: &[u8],
+    publication: &DurableDirectoryPublication,
+    name: &str,
+    expected: &[u8],
+    replacement: &[u8],
 ) -> Result<(), LocalJournalError> {
-    // TODO(storage-journal-v2): implement MoveFileExW with
-    // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH, then reopen and
-    // byte-verify. Never substitute std::fs::rename here.
-    Err(LocalJournalError::UnsupportedDurableReplacement)
+    #[cfg(test)]
+    if take_fault(FaultPoint::BeforeFrontierTemp) {
+        return Err(injected_fault("before frontier temp creation"));
+    }
+    // The Windows primitive owns its temporary file, so these test seams are
+    // injected at the equivalent authority boundary rather than exposing its
+    // private temp name. In both cases the segment has already been synced and
+    // no successor frontier is selected; reopen must discard the suffix.
+    #[cfg(test)]
+    if take_fault(FaultPoint::AfterFrontierTempWrite) {
+        return Err(injected_fault("after frontier temp write"));
+    }
+    #[cfg(test)]
+    if take_fault(FaultPoint::AfterFrontierTempSync) {
+        return Err(injected_fault("after frontier temp sync"));
+    }
+    #[cfg(test)]
+    if let Some(outcome) = take_ambiguous_replacement_outcome() {
+        if outcome == AmbiguousReplacementOutcome::SuccessorSelected {
+            publication
+                .replace_exact(name, expected, replacement)
+                .map_err(durable_publication_error)?;
+        }
+        return Err(injected_fault("after ambiguous frontier replacement call"));
+    }
+    // `DurableDirectoryPublication` holds the directory capability that
+    // proved same-directory create/no-replace/replace/write-through/reopen/
+    // retirement before this selected v2 generation can mutate. It stages,
+    // flushes, calls MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+    // MOVEFILE_WRITE_THROUGH), and byte+identity reopens; there is no ordinary
+    // rename fallback on Windows.
+    publication
+        .replace_exact(name, expected, replacement)
+        .map_err(durable_publication_error)?;
+    #[cfg(test)]
+    if take_fault(FaultPoint::AfterFrontierVerify) {
+        return Err(injected_fault("after frontier verify"));
+    }
+    crash_after_frontier_replace_for_test();
+    Ok(())
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1539,6 +1631,98 @@ mod tests {
             LocalJournalSegmentV2::<TestKind>::open_selected(&dir, &selection).unwrap();
         let _ = segment.append(TestKind::Effect, b"crash candidate");
         panic!("requested crash point was not reached");
+    }
+}
+
+// These run on the hosted Windows worker. The larger fault/corruption matrix
+// above remains Unix-only because it directly overwrites test files to model
+// physical damage; this focused suite reaches the real Windows capability
+// probe, MoveFileExW no-replace creation, replacement, reopen verification,
+// and the two durable outcomes of the injected post-replacement error.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+    enum WindowsTestKind {
+        Effect,
+    }
+
+    fn fixture(label: &str) -> (PathBuf, Dir, LocalJournalSegmentV2Selection) {
+        let root = std::env::temp_dir().join(format!(
+            "tine-local-journal-v2-windows-{label}-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dir = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+        let selection = LocalJournalSegmentV2Selection::new(
+            "device.journal-v2",
+            Uuid::from_u128(0x5151),
+            Uuid::from_u128(0xdede),
+            41,
+        )
+        .unwrap();
+        (root, dir, selection)
+    }
+
+    fn remove_fixture(root: PathBuf, dir: Dir) {
+        drop(dir);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn v2_uses_real_windows_write_through_for_prepare_replace_and_reopen() {
+        let (root, dir, selection) = fixture("write-through");
+        LocalJournalSegmentV2::<WindowsTestKind>::prepare(&dir, &selection).unwrap();
+        let (mut segment, recovery) =
+            LocalJournalSegmentV2::<WindowsTestKind>::open_selected(&dir, &selection).unwrap();
+        assert_eq!(recovery.frames_recovered, 0);
+        let append = segment.append(WindowsTestKind::Effect, b"windows").unwrap();
+        assert_eq!(append.sequence, 41);
+        assert_eq!(append.data_durability_syncs, 2);
+        drop(segment);
+
+        let (segment, recovery) =
+            LocalJournalSegmentV2::<WindowsTestKind>::open_selected(&dir, &selection).unwrap();
+        assert_eq!(recovery.frames_recovered, 1);
+        assert_eq!(segment.next_sequence(), 42);
+        drop(segment);
+        remove_fixture(root, dir);
+    }
+
+    #[test]
+    fn injected_windows_replacement_error_reopens_to_old_or_successor_once() {
+        for (outcome, expected_frames) in [
+            (AmbiguousReplacementOutcome::OldSelected, 0),
+            (AmbiguousReplacementOutcome::SuccessorSelected, 1),
+        ] {
+            let (root, dir, selection) = fixture(&format!("ambiguous-{outcome:?}"));
+            LocalJournalSegmentV2::<WindowsTestKind>::prepare(&dir, &selection).unwrap();
+            let (mut segment, _) =
+                LocalJournalSegmentV2::<WindowsTestKind>::open_selected(&dir, &selection).unwrap();
+            AMBIGUOUS_REPLACEMENT_OUTCOME.with(|fault| {
+                assert_eq!(fault.replace(Some(outcome)), None);
+            });
+            assert!(matches!(
+                segment.append(WindowsTestKind::Effect, b"candidate"),
+                Err(LocalJournalAppendError::AppendOutcomeUnknown(_))
+            ));
+            assert!(matches!(
+                segment.append(WindowsTestKind::Effect, b"retry"),
+                Err(LocalJournalAppendError::DefinitelyNotAppended(
+                    LocalJournalError::SegmentPoisoned
+                ))
+            ));
+            drop(segment);
+            let (segment, recovery) =
+                LocalJournalSegmentV2::<WindowsTestKind>::open_selected(&dir, &selection).unwrap();
+            assert_eq!(recovery.frames_recovered, expected_frames);
+            assert_eq!(segment.next_sequence(), 41 + expected_frames);
+            drop(segment);
+            remove_fixture(root, dir);
+        }
     }
 }
 

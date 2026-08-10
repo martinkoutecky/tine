@@ -109,6 +109,9 @@ impl From<FilesystemError> for ScratchRunError {
     fn from(error: FilesystemError) -> Self {
         let error = match error {
             FilesystemError::Io(error) => error.to_string(),
+            FilesystemError::DurableNameOperationUnavailable(message) => {
+                format!("durable name operation unavailable: {message}")
+            }
             FilesystemError::UnsafeEntry(message) => format!("unsafe store entry: {message}"),
             FilesystemError::StoredLengthMismatch {
                 path,

@@ -9,7 +9,13 @@ use std::io::{self, ErrorKind, Read, Write};
 #[cfg(unix)]
 use std::os::fd::{AsFd as _, AsRawFd as _, FromRawFd as _};
 #[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+#[cfg(windows)]
 use std::os::windows::fs::MetadataExt as _;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle as _;
+#[cfg(windows)]
+use std::path::PathBuf;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -60,6 +66,11 @@ fn note_batch_durability_barrier() {
 #[derive(Debug)]
 pub enum FilesystemError {
     Io(io::Error),
+    /// The platform could not prove the documented write-through name
+    /// operations needed for a replaceable authority. Callers must leave the
+    /// caller-owned authority untouched and refuse activation instead of
+    /// silently falling back to an ordinary rename.
+    DurableNameOperationUnavailable(String),
     UnsafeEntry(String),
     StoredLengthMismatch {
         path: String,
@@ -78,6 +89,12 @@ impl fmt::Display for FilesystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(f),
+            Self::DurableNameOperationUnavailable(message) => {
+                write!(
+                    f,
+                    "durable write-through name operation unavailable: {message}"
+                )
+            }
             Self::UnsafeEntry(message) => message.fmt(f),
             Self::StoredLengthMismatch {
                 path,
@@ -246,6 +263,572 @@ impl<'a> ValidatedDirectorySync<'a> {
 /// Synchronize `dir` after a required durable directory-entry update.
 pub fn sync_dir_required(dir: &Dir) -> io::Result<()> {
     ValidatedDirectorySync::open(dir)?.sync()
+}
+
+/// A retained directory capability which has proved the platform's
+/// write-through create, replacement, reopen, and retirement operations in a
+/// private same-directory namespace.
+///
+/// This is intentionally a typed boundary rather than a boolean capability
+/// check: callers can only mutate a replaceable authority through the object
+/// that retained the exact no-follow directory capability used by the probe.
+/// On Windows, [`DurableDirectoryPublication::open`] refuses if the documented
+/// `MoveFileExW(..., MOVEFILE_WRITE_THROUGH)` protocol cannot be demonstrated;
+/// it never falls back to `std::fs::rename`.
+pub struct DurableDirectoryPublication {
+    dir: Dir,
+    #[cfg(windows)]
+    windows: WindowsWriteThroughDirectory,
+}
+
+impl DurableDirectoryPublication {
+    /// Retain `dir` and prove the durable name-operation capability before any
+    /// caller-owned authority is created, replaced, or retired.
+    pub fn open(dir: &Dir) -> Result<Self, FilesystemError> {
+        #[cfg(windows)]
+        {
+            let publication = Self {
+                dir: dir.try_clone()?,
+                windows: WindowsWriteThroughDirectory::open(dir)?,
+            };
+            publication.probe_windows_write_through()?;
+            return Ok(publication);
+        }
+
+        #[cfg(not(windows))]
+        {
+            // Preserve the pre-v2 Unix durability contract while retaining a
+            // typed API shared with the Windows implementation.
+            ValidatedDirectorySync::open(dir)?.preflight()?;
+            Ok(Self {
+                dir: dir.try_clone()?,
+            })
+        }
+    }
+
+    /// Create one previously absent authority name from exact bytes.
+    ///
+    /// If the name already names the same exact bytes, this is idempotent. A
+    /// different existing file is a collision and is never overwritten.
+    pub fn publish_new_exact(&self, name: &str, bytes: &[u8]) -> Result<(), FilesystemError> {
+        validate_single_entry_name(name)?;
+        #[cfg(windows)]
+        {
+            self.windows.validate()?;
+            return self.windows.publish_new_exact(&self.dir, name, bytes);
+        }
+        #[cfg(not(windows))]
+        {
+            publish_immutable_exact(&self.dir, name, bytes)
+        }
+    }
+
+    /// Replace `name` only when it still contains `expected`, then reopen and
+    /// verify the exact replacement.
+    ///
+    /// The caller supplies its single-writer/authority lease. A current target
+    /// already equal to `replacement` is accepted as an idempotent retry;
+    /// every other current value fails closed as [`FilesystemError::ByteCollision`].
+    pub fn replace_exact(
+        &self,
+        name: &str,
+        expected: &[u8],
+        replacement: &[u8],
+    ) -> Result<(), FilesystemError> {
+        validate_single_entry_name(name)?;
+        #[cfg(windows)]
+        {
+            self.windows.validate()?;
+            return self
+                .windows
+                .replace_exact(&self.dir, name, expected, replacement);
+        }
+        #[cfg(not(windows))]
+        {
+            replace_regular_exact_unix(&self.dir, name, expected, replacement)
+        }
+    }
+
+    /// Retire an authority by a no-replace same-directory rename to a fresh
+    /// name outside that authority's selector grammar.
+    ///
+    /// The method verifies the old authority bytes and identity, then verifies
+    /// the retired name and the active-name absence. It is deliberately not a
+    /// delete API: a failed retirement must leave a recoverable authority.
+    pub fn retire_exact(
+        &self,
+        active_name: &str,
+        retired_name: &str,
+        expected: &[u8],
+    ) -> Result<(), FilesystemError> {
+        validate_single_entry_name(active_name)?;
+        validate_single_entry_name(retired_name)?;
+        if active_name == retired_name {
+            return Err(FilesystemError::UnsafeEntry(
+                "active and retired authority names must differ".into(),
+            ));
+        }
+        #[cfg(windows)]
+        {
+            self.windows.validate()?;
+            return self
+                .windows
+                .retire_exact(&self.dir, active_name, retired_name, expected);
+        }
+        #[cfg(not(windows))]
+        {
+            retire_regular_exact_unix(&self.dir, active_name, retired_name, expected)
+        }
+    }
+}
+
+fn validate_single_entry_name(name: &str) -> Result<(), FilesystemError> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        return Err(FilesystemError::UnsafeEntry(format!(
+            "durable publication name is not one safe directory entry: {name:?}"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn read_regular_for_transition(
+    dir: &Dir,
+    name: &str,
+    expected_or_replacement_limit: usize,
+) -> Result<Option<Vec<u8>>, FilesystemError> {
+    read_optional_regular(
+        dir,
+        name,
+        expected_or_replacement_limit.saturating_add(1) as u64,
+        None,
+    )
+}
+
+#[cfg(not(windows))]
+fn replace_regular_exact_unix(
+    dir: &Dir,
+    name: &str,
+    expected: &[u8],
+    replacement: &[u8],
+) -> Result<(), FilesystemError> {
+    let limit = expected.len().max(replacement.len());
+    let current = read_regular_for_transition(dir, name, limit)?;
+    if current.as_deref() == Some(replacement) {
+        sync_dir_required(dir)?;
+        return Ok(());
+    }
+    if current.as_deref() != Some(expected) {
+        return Err(FilesystemError::ByteCollision);
+    }
+
+    let temp_name = format!(".tmp-{}", Uuid::new_v4());
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut temp = dir.open_with(&temp_name, &options)?;
+    let result = (|| {
+        temp.write_all(replacement)?;
+        temp.sync_all()?;
+        drop(temp);
+        dir.rename(&temp_name, dir, name)?;
+        sync_dir_required(dir)?;
+        verify_existing(dir, name, replacement)
+    })();
+    let cleanup = dir.remove_file(&temp_name);
+    if let Err(error) = result {
+        let _ = cleanup;
+        return Err(error);
+    }
+    if cleanup
+        .as_ref()
+        .is_err_and(|error| error.kind() != ErrorKind::NotFound)
+    {
+        cleanup?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn retire_regular_exact_unix(
+    dir: &Dir,
+    active_name: &str,
+    retired_name: &str,
+    expected: &[u8],
+) -> Result<(), FilesystemError> {
+    match read_regular_for_transition(dir, active_name, expected.len())? {
+        Some(active) if active == expected => {
+            rename_noreplace(dir, active_name, retired_name)?;
+            sync_dir_required(dir)?;
+        }
+        Some(_) => return Err(FilesystemError::ByteCollision),
+        None => {
+            // An interrupted caller may retry after the durable rename
+            // completed but before it observed the result.
+            verify_existing(dir, retired_name, expected)?;
+            sync_dir_required(dir)?;
+            return Ok(());
+        }
+    }
+    verify_existing(dir, retired_name, expected)?;
+    if read_regular_for_transition(dir, active_name, expected.len())?.is_some() {
+        return Err(FilesystemError::ByteCollision);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WindowsFileIdentity {
+    volume_serial: u32,
+    file_index: u64,
+}
+
+#[cfg(windows)]
+struct WindowsWriteThroughDirectory {
+    // This must outlive every MoveFileExW call. cap-std opens directory
+    // capabilities without FILE_SHARE_DELETE, so the validated directory
+    // object cannot be renamed/deleted between capability proof and publish.
+    capability: fs::File,
+    path: PathBuf,
+    identity: WindowsFileIdentity,
+}
+
+#[cfg(windows)]
+impl WindowsWriteThroughDirectory {
+    fn open(dir: &Dir) -> Result<Self, FilesystemError> {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+        let capability = dir.try_clone()?.into_std_file();
+        let metadata = capability.metadata()?;
+        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(FilesystemError::UnsafeEntry(
+                "directory durability handle is not a real no-follow directory".into(),
+            ));
+        }
+        let identity = windows_file_identity(&capability)?;
+        let path = windows_final_path(&capability)?;
+        Ok(Self {
+            capability,
+            path,
+            identity,
+        })
+    }
+
+    fn validate(&self) -> Result<(), FilesystemError> {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+        let metadata = self.capability.metadata()?;
+        if !metadata.is_dir()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || windows_file_identity(&self.capability)? != self.identity
+        {
+            return Err(FilesystemError::UnsafeEntry(
+                "retained durable directory capability no longer proves the same real directory"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn path_for(&self, name: &str) -> Result<Vec<u16>, FilesystemError> {
+        validate_single_entry_name(name)?;
+        let path = self.path.join(name);
+        Ok(path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect())
+    }
+
+    fn create_flushed_temp(
+        &self,
+        dir: &Dir,
+        label: &str,
+        bytes: &[u8],
+    ) -> Result<(String, WindowsFileIdentity), FilesystemError> {
+        let temp_name = format!(".tine-storage-{label}-{}", Uuid::new_v4().simple());
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        let mut temp = dir.open_with(&temp_name, &options)?.into_std();
+        let result = (|| {
+            temp.write_all(bytes)?;
+            temp.sync_all()?;
+            let metadata = temp.metadata()?;
+            if !metadata.is_file() || metadata.len() != bytes.len() as u64 {
+                return Err(FilesystemError::StoredLengthMismatch {
+                    path: temp_name.clone(),
+                    expected: bytes.len() as u64,
+                    actual: metadata.len(),
+                });
+            }
+            windows_file_identity(&temp).map_err(FilesystemError::from)
+        })();
+        drop(temp);
+        result.map(|identity| (temp_name, identity))
+    }
+
+    fn move_write_through(
+        &self,
+        from: &str,
+        to: &str,
+        replace_existing: bool,
+    ) -> Result<(), FilesystemError> {
+        use windows_sys::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        };
+
+        self.validate()?;
+        let from = self.path_for(from)?;
+        let to = self.path_for(to)?;
+        let flags = MOVEFILE_WRITE_THROUGH
+            | if replace_existing {
+                MOVEFILE_REPLACE_EXISTING
+            } else {
+                0
+            };
+        // SAFETY: both zero-terminated paths are derived from the retained
+        // no-follow directory capability and validated single-entry names.
+        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } == 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        Ok(())
+    }
+
+    fn publish_new_exact(
+        &self,
+        dir: &Dir,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<(), FilesystemError> {
+        let (temp_name, identity) = self.create_flushed_temp(dir, "new", bytes)?;
+        let result = match self.move_write_through(&temp_name, name, false) {
+            Ok(()) => verify_windows_regular_exact(dir, name, bytes, Some(identity)),
+            Err(FilesystemError::Io(error)) if error.kind() == ErrorKind::AlreadyExists => {
+                verify_windows_regular_exact(dir, name, bytes, None)
+            }
+            Err(error) => Err(error),
+        };
+        cleanup_temp(dir, &temp_name);
+        result
+    }
+
+    fn replace_exact(
+        &self,
+        dir: &Dir,
+        name: &str,
+        expected: &[u8],
+        replacement: &[u8],
+    ) -> Result<(), FilesystemError> {
+        let current =
+            read_windows_regular_with_limit(dir, name, expected.len().max(replacement.len()))?;
+        if current.as_deref() == Some(replacement) {
+            return Ok(());
+        }
+        if current.as_deref() != Some(expected) {
+            return Err(FilesystemError::ByteCollision);
+        }
+        let (temp_name, identity) = self.create_flushed_temp(dir, "replace", replacement)?;
+        // Any error after this documented replacement call is intentionally
+        // returned to the journal as outcome-ambiguous; callers must reopen.
+        let result = self
+            .move_write_through(&temp_name, name, true)
+            .and_then(|()| verify_windows_regular_exact(dir, name, replacement, Some(identity)));
+        cleanup_temp(dir, &temp_name);
+        result
+    }
+
+    fn retire_exact(
+        &self,
+        dir: &Dir,
+        active_name: &str,
+        retired_name: &str,
+        expected: &[u8],
+    ) -> Result<(), FilesystemError> {
+        match read_windows_regular_with_identity(dir, active_name, expected.len())? {
+            Some((bytes, identity)) if bytes == expected => {
+                self.move_write_through(active_name, retired_name, false)?;
+                verify_windows_regular_exact(dir, retired_name, expected, Some(identity))?;
+                if read_windows_regular_with_identity(dir, active_name, expected.len())?.is_some() {
+                    return Err(FilesystemError::ByteCollision);
+                }
+                Ok(())
+            }
+            Some(_) => Err(FilesystemError::ByteCollision),
+            None => {
+                // Idempotent retry after a successful write-through retirement.
+                verify_windows_regular_exact(dir, retired_name, expected, None)
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl DurableDirectoryPublication {
+    fn probe_windows_write_through(&self) -> Result<(), FilesystemError> {
+        self.windows.validate()?;
+        let source = format!(
+            ".tine-storage-write-through-probe-source-{}",
+            Uuid::new_v4()
+        );
+        let target = format!(
+            ".tine-storage-write-through-probe-target-{}",
+            Uuid::new_v4()
+        );
+        let retired = format!(
+            ".tine-storage-write-through-probe-retired-{}",
+            Uuid::new_v4()
+        );
+        let result = (|| {
+            let (temp, first_identity) =
+                self.windows
+                    .create_flushed_temp(&self.dir, "probe-create", b"create")?;
+            // The first write-through move is a no-replace creation proof.
+            self.windows.move_write_through(&temp, &source, false)?;
+            cleanup_temp(&self.dir, &temp);
+            verify_windows_regular_exact(&self.dir, &source, b"create", Some(first_identity))?;
+
+            // Move an independent source into the target to prove a second
+            // no-replace name operation (the target begins absent).
+            self.windows.move_write_through(&source, &target, false)?;
+            verify_windows_regular_exact(&self.dir, &target, b"create", Some(first_identity))?;
+
+            let (replacement, replacement_identity) =
+                self.windows
+                    .create_flushed_temp(&self.dir, "probe-replace", b"replace")?;
+            self.windows
+                .move_write_through(&replacement, &target, true)?;
+            cleanup_temp(&self.dir, &replacement);
+            verify_windows_regular_exact(
+                &self.dir,
+                &target,
+                b"replace",
+                Some(replacement_identity),
+            )?;
+
+            self.windows.move_write_through(&target, &retired, false)?;
+            verify_windows_regular_exact(
+                &self.dir,
+                &retired,
+                b"replace",
+                Some(replacement_identity),
+            )?;
+            if read_windows_regular_with_identity(&self.dir, &target, 7)?.is_some() {
+                return Err(FilesystemError::ByteCollision);
+            }
+            Ok(())
+        })();
+        cleanup_temp(&self.dir, &source);
+        cleanup_temp(&self.dir, &target);
+        cleanup_temp(&self.dir, &retired);
+        result.map_err(|error| match error {
+            FilesystemError::UnsafeEntry(_) => error,
+            FilesystemError::DurableNameOperationUnavailable(_) => error,
+            error => FilesystemError::DurableNameOperationUnavailable(error.to_string()),
+        })
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_temp(dir: &Dir, name: &str) {
+    let _ = dir.remove_file(name);
+}
+
+#[cfg(windows)]
+fn windows_final_path(file: &fs::File) -> io::Result<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+
+    let handle = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    // The zero-buffer call returns the required UTF-16 capacity. Allocate one
+    // additional element because providers differ on whether the terminator is
+    // included in that returned count.
+    let needed = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+    if needed == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut wide = vec![0_u16; needed as usize + 1];
+    let written =
+        unsafe { GetFinalPathNameByHandleW(handle, wide.as_mut_ptr(), wide.len() as u32, 0) };
+    if written == 0 || written as usize >= wide.len() {
+        return Err(io::Error::last_os_error());
+    }
+    wide.truncate(written as usize);
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &fs::File) -> io::Result<WindowsFileIdentity> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let handle = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `information` is valid writable storage and `handle` is owned by
+    // the live file object for the duration of the call.
+    if unsafe { GetFileInformationByHandle(handle, &mut information) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(WindowsFileIdentity {
+        volume_serial: information.dwVolumeSerialNumber,
+        file_index: ((information.nFileIndexHigh as u64) << 32) | information.nFileIndexLow as u64,
+    })
+}
+
+#[cfg(windows)]
+fn read_windows_regular_with_limit(
+    dir: &Dir,
+    name: &str,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, FilesystemError> {
+    read_windows_regular_with_identity(dir, name, limit).map(|entry| entry.map(|(bytes, _)| bytes))
+}
+
+#[cfg(windows)]
+fn read_windows_regular_with_identity(
+    dir: &Dir,
+    name: &str,
+    limit: usize,
+) -> Result<Option<(Vec<u8>, WindowsFileIdentity)>, FilesystemError> {
+    let mut file = match open_file_nofollow(dir, name) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > limit as u64 {
+        return Err(FilesystemError::ByteCollision);
+    }
+    let identity = windows_file_identity(&file)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != metadata.len() {
+        return Err(FilesystemError::StoredLengthMismatch {
+            path: name.into(),
+            expected: metadata.len(),
+            actual: bytes.len() as u64,
+        });
+    }
+    Ok(Some((bytes, identity)))
+}
+
+#[cfg(windows)]
+fn verify_windows_regular_exact(
+    dir: &Dir,
+    name: &str,
+    expected: &[u8],
+    expected_identity: Option<WindowsFileIdentity>,
+) -> Result<(), FilesystemError> {
+    let Some((bytes, identity)) = read_windows_regular_with_identity(dir, name, expected.len())?
+    else {
+        return Err(FilesystemError::Io(io::Error::new(
+            ErrorKind::NotFound,
+            format!("missing published file {name}"),
+        )));
+    };
+    if bytes != expected || expected_identity.is_some_and(|expected| expected != identity) {
+        return Err(FilesystemError::ByteCollision);
+    }
+    Ok(())
 }
 
 pub fn ensure_directory_nofollow(root: &Dir, name: &str) -> Result<(), FilesystemError> {
