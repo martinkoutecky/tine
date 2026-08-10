@@ -4602,6 +4602,10 @@ mod tests {
         assert_eq!(count_suffix(&path.join("nodes"), ".tmp"), 0);
 
         drop(reopened);
+        // On Windows the retained root capability intentionally omits
+        // FILE_SHARE_DELETE. Close it before removing the physical fixture;
+        // the publication/reopen proof above has already completed.
+        drop(authority);
         fs::remove_dir_all(path).unwrap();
     }
 
@@ -4624,6 +4628,7 @@ mod tests {
         assert_eq!(count_suffix(&path.join("nodes"), ".tmp"), 0);
 
         drop(reopened);
+        drop(authority);
         fs::remove_dir_all(path).unwrap();
     }
 
