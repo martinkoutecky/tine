@@ -480,6 +480,8 @@ pub const PAGES_NAME_KEY_INDEX_DDL: &str =
 pub const PAGES_PATH_INDEX_DDL: &str = "CREATE INDEX pages_path_idx ON pages(path, page_id)";
 pub const BLOCKS_PAGE_ORDER_INDEX_DDL: &str =
     "CREATE INDEX blocks_page_order_idx ON blocks(page_id, order_key, block_id)";
+pub const BLOCKS_LOGSEQ_UUID_INDEX_DDL: &str = "CREATE UNIQUE INDEX blocks_logseq_uuid_idx
+    ON blocks(logseq_uuid) WHERE logseq_uuid IS NOT NULL";
 pub const SEARCH_FTS_OWNERS_PAGE_INDEX_DDL: &str =
     "CREATE INDEX search_fts_owners_page_idx ON search_fts_owners(page_id, rowid)";
 pub const REFERENCES_TARGET_INDEX_DDL: &str = "CREATE INDEX references_target_idx
@@ -687,7 +689,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 39] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 40] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -735,6 +737,11 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 39] = [
         "index",
         "blocks_page_order_idx",
         BLOCKS_PAGE_ORDER_INDEX_DDL,
+    ),
+    (
+        "index",
+        "blocks_logseq_uuid_idx",
+        BLOCKS_LOGSEQ_UUID_INDEX_DDL,
     ),
     (
         "index",
@@ -838,6 +845,7 @@ pub fn initialize_schema(
          {PAGES_NAME_KEY_INDEX_DDL};
          {PAGES_PATH_INDEX_DDL};
          {BLOCKS_PAGE_ORDER_INDEX_DDL};
+         {BLOCKS_LOGSEQ_UUID_INDEX_DDL};
          {SEARCH_FTS_OWNERS_PAGE_INDEX_DDL};
          {REFERENCES_TARGET_INDEX_DDL};
          {REFERENCES_SOURCE_INDEX_DDL};
@@ -2790,6 +2798,33 @@ impl<'a> SqliteMaterializedRead<'a> {
         Ok(block)
     }
 
+    /// Point-locate the one accepted block that owns a public Logseq UUID.
+    /// The partial unique index makes ambiguity a construction error rather
+    /// than a read-time choice; semantic callers must still verify the exact
+    /// parser-owned page before exposing the candidate.
+    pub fn block_by_logseq_uuid(
+        &self,
+        logseq_uuid: [u8; 16],
+    ) -> Result<Option<PhysicalBlockRow>, MaterializationError> {
+        let block = self
+            .connection
+            .query_row(
+                "SELECT block_id, page_id, home_document_id, parent_block_id,
+                        order_key, content, searchable_text, heading_level,
+                        collapsed, logseq_uuid, logseq_identity_origin
+                 FROM blocks WHERE logseq_uuid = ?1",
+                params![logseq_uuid.as_slice()],
+                block_row,
+            )
+            .optional()
+            .map_err(MaterializationError::from)?;
+        if let Some(row) = &block {
+            let mut budget = MaterializationReadBudget::default();
+            budget.add(block_row_output_bytes(row)?)?;
+        }
+        Ok(block)
+    }
+
     pub fn pages_by_name(
         &self,
         name: &str,
@@ -3922,7 +3957,10 @@ mod tests {
         let empty = digest(b"empty");
         let frontier = digest(b"frontier-1");
         initialize_schema(&connection, empty).unwrap();
-        let page = page(1, "alpha searchable");
+        let mut page = page(1, "alpha searchable");
+        let logseq_uuid = id(0xfeed);
+        page.blocks[0].logseq_uuid = Some(logseq_uuid);
+        page.blocks[0].logseq_identity_origin = Some(0);
         let block_id = page.blocks[0].block_id;
         let stats = apply_and_commit(
             &mut connection,
@@ -3946,6 +3984,13 @@ mod tests {
             "block content"
         );
         assert_eq!(
+            read.block_by_logseq_uuid(logseq_uuid)
+                .unwrap()
+                .unwrap()
+                .block_id,
+            block_id
+        );
+        assert_eq!(
             read.properties(PhysicalEntityId::Page(page.page_id), 10)
                 .unwrap()
                 .len(),
@@ -3956,6 +4001,32 @@ mod tests {
         let hits = read.search("alpha", 10).unwrap();
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|hit| hit.page_id == page.page_id));
+    }
+
+    #[test]
+    fn logseq_uuid_index_rejects_duplicate_owners_atomically() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let claimed = id(0xbeef);
+        let mut first = page(101, "first");
+        first.blocks[0].logseq_uuid = Some(claimed);
+        first.blocks[0].logseq_identity_origin = Some(0);
+        let mut second = page(102, "second");
+        second.blocks[0].logseq_uuid = Some(claimed);
+        second.blocks[0].logseq_identity_origin = Some(0);
+        let transaction = connection.transaction().unwrap();
+        assert!(apply_change(
+            &transaction,
+            &change(0x1234, vec![first, second], Vec::new()),
+            1,
+            digest(b"input"),
+            digest(b"frontier"),
+            None,
+        )
+        .is_err());
+        transaction.rollback().unwrap();
+        let read = SqliteMaterializedRead::new(&connection, 0, digest(b"empty")).unwrap();
+        assert!(read.block_by_logseq_uuid(claimed).unwrap().is_none());
     }
 
     #[test]
