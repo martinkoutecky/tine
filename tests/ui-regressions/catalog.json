@@ -6316,6 +6316,33 @@
       "notes": "OG parity gap: OG binds :editor/follow-link to mod+o and :editor/open-link-in-sidebar to mod+shift+o (frontend/modules/shortcut/config.cljs:214/:217); Tine had no mod+o at all. The 'which link' rule is transcribed from OG's thingatpt.cljs extract-nearest-link-from-text, including its surprising part: OG collects EVERY candidate in the block and picks the one nearest the caret, so a caret anywhere in a block with one link still follows it. URLs are included for follow and deliberately excluded for the sidebar, matching OG's two call sites. Block refs are best-effort: a bare ((uuid)) in raw text carries no page, so a block outside the loaded working set is not found - the same give-up OG's open-link-in-sidebar! does when db/get-page misses. FAIL-BEFORE is an absence (no mod+o binding existed), verified by grep."
     },
     {
+      "id": "UI-ANDROID-SAFE-BACK-SHUTDOWN-001",
+      "title": "Android Back never exits after an unverified managed shutdown and remains owned before JavaScript is ready",
+      "family": "managed-storage",
+      "sources": {
+        "issues": [
+          161
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
+      "layer": "native",
+      "status": "fixing",
+      "coverage": {
+        "tests": [
+          "src/androidBack.test.ts",
+          "src/safeClose.test.ts",
+          "src-tauri/src/sync_runtime.rs",
+          "src-tauri/src/commands.rs"
+        ],
+        "scenario": "android.safe-back-typed-managed-shutdown-owner",
+        "failBefore": "proven"
+      },
+      "notes": "An Android AppPlugin listener could fall back to WebView history or activity finish before JavaScript subscribed, while the process-wide managed shutdown helper collapsed terminal and safe outcomes and could exit after a terminal runtime. The repair introduces a native SafeBack owner that consumes all Back events unless its own listener is ready, and a typed process preparation result: only Safe may exit; Refused reopens the editor only when no managed slot was verified; Partial or an unknown transport result remains shielded and retries native preparation alone. Physical Android compilation and hardware Back are hosted-CI/device gates."
+    },
+    {
       "id": "UI-MANAGED-RUNTIME-EVENT-BRIDGE-001",
       "title": "Managed-storage runtime status, progress and failure reasons update the app and open Storage & sync panel for the current graph only",
       "family": "managed-storage",
