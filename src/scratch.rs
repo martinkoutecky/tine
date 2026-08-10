@@ -1525,7 +1525,7 @@ where
         if !lock_exclusive_nonblocking(&lease)? {
             return Ok(StaleRunDisposition::LivePreserved);
         }
-        remove_stale_run(&self.namespace, &run, &name, lease)?;
+        remove_stale_run(&self.namespace, run, &name, lease)?;
         Ok(StaleRunDisposition::Reclaimed)
     }
 }
@@ -1755,7 +1755,7 @@ where
     if !lock_exclusive_nonblocking(&lease)? {
         return Ok(RetainedRunDisposition::LivePreserved);
     }
-    remove_stale_run(namespace, &run, &name, lease)?;
+    remove_stale_run(namespace, run, &name, lease)?;
     Ok(RetainedRunDisposition::Reclaimed)
 }
 
@@ -1818,17 +1818,18 @@ fn validate_run_entries(run: &Dir) -> Result<(), ScratchRunError> {
 
 fn remove_stale_run(
     namespace: &Dir,
-    run: &Dir,
+    run: Dir,
     run_name: &str,
     lease: fs::File,
 ) -> Result<(), ScratchRunError> {
-    validate_run_entries(run)?;
+    validate_run_entries(&run)?;
     for name in [SCRATCH_PAGES_FILE, SCRATCH_BLOBS_FILE, SCRATCH_MARKER_FILE] {
         run.remove_file(name)?;
     }
     unlock(&lease);
     drop(lease);
     run.remove_file(SCRATCH_LEASE_FILE)?;
+    drop(run);
     namespace.remove_dir(run_name)?;
     Ok(())
 }
