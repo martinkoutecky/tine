@@ -3177,7 +3177,6 @@ export async function persistBlockRefTarget(
   page: string,
   kind: PageKind,
   path?: string,
-  observedPath?: string,
 ): Promise<void> {
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
   const epoch = graphEpoch();
@@ -3205,9 +3204,7 @@ export async function persistBlockRefTarget(
       // that never happened. Retaining costs nothing: the retry re-checks the
       // tombstone before it reads, so while the page stays deleted this waits
       // silently, and it re-drives if the page comes back.
-      // Remember which file the read found. A pathless request cannot otherwise
-      // prove a tombstone covers it, and would re-read on every announcement.
-      retainStamp({ uuid, page, kind, path, epoch, observedPath: dto?.path ?? observedPath });
+      retainStamp({ uuid, page, kind, path, epoch });
       return;
     }
     if (dto && ensurePageLoaded(dto)) {
@@ -3222,7 +3219,7 @@ export async function persistBlockRefTarget(
       // and the liveness half is why — a request stranded whenever the incumbent
       // resolved through a route that produced no such save.
       // (GH #254 increment 3, acceptance row C5.)
-      retainStamp({ uuid, page, kind, path, epoch, observedPath: dto.path || observedPath });
+      retainStamp({ uuid, page, kind, path, epoch });
       return;
     }
   }
@@ -3248,10 +3245,6 @@ type PendingStamp = {
   kind: PageKind;
   path?: string;
   epoch: number;
-  /** The file a previous read found for this request, when the request itself
-   *  names no path (block autocomplete does not). Only ever used to prove a
-   *  tombstone covers this request, so the wait can skip a pointless read. */
-  observedPath?: string;
 };
 
 /** Stop-handles for the armed watchers, so re-retaining one request replaces its
@@ -3271,17 +3264,19 @@ function retainStamp(req: PendingStamp) {
   pendingBlockRefStamps.set(req.uuid, req);
   const stop = onPageBecameReplaceable(req.page, () => {
     // Stay armed and read nothing only when the tombstone PROVABLY covers this
-    // request. `isTombstonedFile` is the wrong test here: it refuses when the
-    // file is unknown, which is right for installing bytes and fatal for
-    // waiting — a pathless request would sit behind a tombstone raised for some
-    // other file of the same name and never read again. When coverage cannot be
-    // proved, read and let the post-read guard decide with the file's real path.
-    if (tombstoneCovers(req.page, req.path ?? req.observedPath)) return;
+    // request — which means the request itself names the deleted file. Anything
+    // weaker is unsound: a request that cannot name its file must READ, because
+    // nothing else can tell it the page came back. (Caching the file a previous
+    // read found looks like a cheap way to skip that read, and is wrong: an
+    // unloaded page recreated at a DIFFERENT path never upserts, so the
+    // tombstone is never lifted and the cached path refuses forever. Re-reading
+    // on each announcement is the price of not stranding the request.)
+    if (tombstoneCovers(req.page, req.path)) return;
     stop();
     stampWatchers.delete(req.uuid);
     pendingBlockRefStamps.delete(req.uuid);
     if (req.epoch !== graphEpoch()) return;
-    void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path, req.observedPath);
+    void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
   });
   stampWatchers.set(req.uuid, stop);
 }

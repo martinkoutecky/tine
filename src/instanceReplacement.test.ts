@@ -372,6 +372,32 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(doc.pages.find((p) => p.name === "Target")?.path).toBe("pages/Target.md");
   });
 
+  it("never lets an unknown file count as covered by a tombstone", async () => {
+    // The invariant behind removing the observedPath cache. A wait may skip its
+    // read ONLY when the request itself names the deleted file. Anything weaker
+    // strands the request: nothing announces that an UNLOADED page was recreated
+    // (no upsert, so no tombstone is ever lifted), so a request that stopped
+    // reading on the strength of a remembered path would never discover it.
+    const { tombstone, tombstoneCovers, isTombstonedFile, untombstone } = await import(
+      "./persistence"
+    );
+    tombstone("Target", "pages/Target.md");
+
+    expect(tombstoneCovers("Target", "pages/Target.md")).toBe(true);
+    expect(tombstoneCovers("Target", "pages/new/Target.md")).toBe(false);
+    // The unknown file is the case the two predicates must answer differently:
+    // refuse to INSTALL bytes that cannot be identified, but never refuse to READ.
+    expect(tombstoneCovers("Target", undefined)).toBe(false);
+    expect(isTombstonedFile("Target", undefined)).toBe(true);
+
+    // A pathless tombstone genuinely covers everything of that name.
+    untombstone("Target");
+    tombstone("Target");
+    expect(tombstoneCovers("Target", undefined)).toBe(true);
+    expect(tombstoneCovers("Target", "pages/anything.md")).toBe(true);
+    untombstone("Target");
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();
