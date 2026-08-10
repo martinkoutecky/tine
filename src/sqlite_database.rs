@@ -276,6 +276,36 @@ impl PhysicalSqliteDatabase {
         sqlite_frontier::apply_candidate(&mut self.connection, current_root, request)
     }
 
+    /// Retain one authenticated history transition for a fresh terminal
+    /// candidate without incrementally rewriting its document frontier.
+    pub fn apply_terminal_prefix_candidate(
+        &mut self,
+        current_root: &PhysicalFrontierRoot,
+        request: &PhysicalApplyRequest,
+    ) -> Result<ApplyResult, FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_frontier::apply_terminal_prefix_candidate(
+            &mut self.connection,
+            current_root,
+            request,
+        )
+    }
+
+    /// Persist and authenticate the terminal document frontier once after all
+    /// accepted-prefix history has been retained.
+    pub fn seed_terminal_frontier_documents(
+        &mut self,
+        expected_root: &PhysicalFrontierRoot,
+        documents: &[PhysicalFrontierDocument],
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_frontier::seed_terminal_frontier_documents_candidate(
+            &self.connection,
+            expected_root,
+            documents,
+        )
+    }
+
     /// Commit the fully proved candidate once. Under this connection's
     /// `synchronous=FULL` contract, the commit is the candidate apply-path
     /// durability barrier; WAL checkpoint and atomic publication remain later

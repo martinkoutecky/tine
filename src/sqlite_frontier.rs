@@ -1595,6 +1595,140 @@ fn rotate_frontier_left(
     Ok(right_node.as_link())
 }
 
+/// Persist an exact terminal document frontier once inside a fresh candidate.
+///
+/// The authenticated map is a deterministic treap: keys provide the binary
+/// search order and their domain-separated digests provide heap priority. A
+/// Cartesian-tree build therefore produces exactly the same root as repeated
+/// live upserts, but writes every terminal node once instead of rewriting an
+/// authentication path for every inserted document.
+pub fn seed_terminal_frontier_documents_candidate(
+    connection: &Connection,
+    expected_root: &PhysicalFrontierRoot,
+    documents: &[PhysicalFrontierDocument],
+) -> Result<(), FrontierError> {
+    if connection.is_autocommit() {
+        return Err(FrontierError::InvalidInput(
+            "terminal document frontier requires an active candidate-build transaction".into(),
+        ));
+    }
+    let stored_frontier = read_frontier(connection)?;
+    if stored_frontier.canonical_bytes != expected_root.canonical_bytes
+        || stored_frontier.digest != expected_root.digest()
+        || stored_frontier.applied_batch_count != expected_root.acceptance_sequence
+    {
+        return Err(FrontierError::FrontierRegression);
+    }
+    let stored_documents: i64 =
+        connection.query_row("SELECT COUNT(*) FROM frontier_documents", [], |row| {
+            row.get(0)
+        })?;
+    if stored_documents != 0 {
+        return Err(FrontierError::InvalidInput(
+            "terminal document frontier requires an empty frontier_documents table".into(),
+        ));
+    }
+    if documents
+        .windows(2)
+        .any(|pair| pair[0].document_id >= pair[1].document_id)
+    {
+        return Err(FrontierError::InvalidInput(
+            "terminal frontier documents are not sorted unique".into(),
+        ));
+    }
+    if expected_root.document_count != documents.len() as u64 {
+        return Err(FrontierError::FrontierRegression);
+    }
+    if documents.is_empty() {
+        let empty = ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty");
+        if expected_root.document_map_root_key.is_some()
+            || expected_root.document_map_root_digest != empty
+        {
+            return Err(FrontierError::FrontierRegression);
+        }
+        return Ok(());
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    struct ShapeNode {
+        left: Option<usize>,
+        right: Option<usize>,
+    }
+
+    let mut shape = vec![ShapeNode::default(); documents.len()];
+    let mut stack = Vec::<usize>::new();
+    for index in 0..documents.len() {
+        let mut last = None;
+        while stack.last().is_some_and(|prior| {
+            authenticated_map_priority_order(
+                documents[index].document_id,
+                documents[*prior].document_id,
+            )
+            .is_lt()
+        }) {
+            last = stack.pop();
+        }
+        if let Some(parent) = stack.last().copied() {
+            shape[parent].right = Some(index);
+        }
+        shape[index].left = last;
+        stack.push(index);
+    }
+    let root_index = stack[0];
+
+    let mut digests = vec![None; documents.len()];
+    let mut constructed = vec![None; documents.len()];
+    let mut pending = vec![(root_index, 0_usize, false)];
+    while let Some((index, depth, visited)) = pending.pop() {
+        ensure_depth(depth, "terminal frontier map construction")?;
+        if !visited {
+            pending.push((index, depth, true));
+            if let Some(right) = shape[index].right {
+                pending.push((right, depth + 1, false));
+            }
+            if let Some(left) = shape[index].left {
+                pending.push((left, depth + 1, false));
+            }
+            continue;
+        }
+        let link = |child: usize| -> Result<MapLink, FrontierError> {
+            Ok(MapLink {
+                key: documents[child].document_id,
+                digest: digests[child].ok_or_else(|| {
+                    FrontierError::Corrupt(
+                        "terminal frontier child digest was not constructed".into(),
+                    )
+                })?,
+            })
+        };
+        let left = shape[index].left.map(link).transpose()?;
+        let right = shape[index].right.map(link).transpose()?;
+        let mut node = FrontierMapNode {
+            document_id: documents[index].document_id,
+            encoded: documents[index].canonical_bytes.clone(),
+            value_digest: ContentDigest::of(&documents[index].canonical_bytes),
+            left,
+            right,
+            node_digest: ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty"),
+        };
+        node.node_digest = node.recompute_digest();
+        digests[index] = Some(node.node_digest);
+        constructed[index] = Some(node);
+    }
+    let root_digest = digests[root_index].ok_or_else(|| {
+        FrontierError::Corrupt("terminal frontier root digest was not constructed".into())
+    })?;
+    if expected_root.document_map_root_key != Some(documents[root_index].document_id)
+        || expected_root.document_map_root_digest != root_digest
+    {
+        return Err(FrontierError::FrontierRegression);
+    }
+    for node in constructed.into_iter().flatten() {
+        store_frontier_map_node(connection, &node)?;
+    }
+    Ok(())
+}
+
 fn write_clock_node(connection: &Connection, node: &ClockNode) -> Result<MapLink, FrontierError> {
     let value_digest = causal_clock_counter_digest(node.peer, node.counter);
     let digest = authenticated_map_node_digest(
@@ -2189,7 +2323,7 @@ pub fn apply(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
 ) -> Result<ApplyResult, FrontierError> {
-    apply_with_transaction_policy(connection, current_root, request, false)
+    apply_with_transaction_policy(connection, current_root, request, false, true)
 }
 
 /// Apply one transition inside a candidate-build transaction already owned by
@@ -2200,7 +2334,37 @@ pub fn apply_candidate(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
 ) -> Result<ApplyResult, FrontierError> {
-    apply_with_transaction_policy(connection, current_root, request, true)
+    apply_with_transaction_policy(connection, current_root, request, true, true)
+}
+
+/// Apply one authenticated accepted-prefix transition while constructing a
+/// fresh terminal candidate, without incrementally persisting its document
+/// treap. The caller must seed and authenticate the exact terminal document
+/// frontier with [`seed_terminal_frontier_documents_candidate`] before the
+/// candidate can pass its closing proof and commit.
+pub fn apply_terminal_prefix_candidate(
+    connection: &mut Connection,
+    current_root: &PhysicalFrontierRoot,
+    request: &PhysicalApplyRequest,
+) -> Result<ApplyResult, FrontierError> {
+    if request.materialization.is_some()
+        || request.materialization_input_digest.is_some()
+        || request.authenticated_reference.is_some()
+    {
+        return Err(FrontierError::InvalidInput(
+            "terminal prefix candidate accepts history without materialization".into(),
+        ));
+    }
+    let stored_documents: i64 =
+        connection.query_row("SELECT COUNT(*) FROM frontier_documents", [], |row| {
+            row.get(0)
+        })?;
+    if stored_documents != 0 {
+        return Err(FrontierError::InvalidInput(
+            "terminal prefix candidate requires an unseeded document frontier".into(),
+        ));
+    }
+    apply_with_transaction_policy(connection, current_root, request, true, false)
 }
 
 fn apply_with_transaction_policy(
@@ -2208,6 +2372,7 @@ fn apply_with_transaction_policy(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
     candidate_build: bool,
+    apply_frontier_documents: bool,
 ) -> Result<ApplyResult, FrontierError> {
     validate_request_shape(request)?;
     let batch = &request.batch;
@@ -2308,6 +2473,7 @@ fn apply_with_transaction_policy(
             current_root,
             request,
             &stored_frontier,
+            apply_frontier_documents,
         );
     }
     if !connection.is_autocommit() {
@@ -2321,6 +2487,7 @@ fn apply_with_transaction_policy(
         current_root,
         request,
         &stored_frontier,
+        true,
     )?;
     transaction.commit()?;
     Ok(result)
@@ -2345,6 +2512,7 @@ fn apply_in_open_transaction(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
     stored_frontier: &StoredFrontier,
+    apply_frontier_documents: bool,
 ) -> Result<ApplyResult, FrontierError> {
     let connection = transaction.connection();
     let batch = &request.batch;
@@ -2380,25 +2548,27 @@ fn apply_in_open_transaction(
         _ => {}
     }
 
-    let mut document_root = current_root.document_map_root_key.map(|key| MapLink {
-        key,
-        digest: current_root.document_map_root_digest,
-    });
-    let mut new_documents = 0_u64;
-    for document in &batch.affected_documents {
-        let (root, inserted) = upsert_frontier_map(connection, document_root, document, 0)?;
-        document_root = Some(root);
-        new_documents = new_documents.saturating_add(u64::from(inserted));
-    }
-    let (document_key, document_digest) = document_root
-        .map(|root| (Some(root.key), root.digest))
-        .unwrap_or((None, current_root.document_map_root_digest));
-    if batch.post_frontier_root.document_count
-        != current_root.document_count.saturating_add(new_documents)
-        || batch.post_frontier_root.document_map_root_key != document_key
-        || batch.post_frontier_root.document_map_root_digest != document_digest
-    {
-        return Err(FrontierError::FrontierRegression);
+    if apply_frontier_documents {
+        let mut document_root = current_root.document_map_root_key.map(|key| MapLink {
+            key,
+            digest: current_root.document_map_root_digest,
+        });
+        let mut new_documents = 0_u64;
+        for document in &batch.affected_documents {
+            let (root, inserted) = upsert_frontier_map(connection, document_root, document, 0)?;
+            document_root = Some(root);
+            new_documents = new_documents.saturating_add(u64::from(inserted));
+        }
+        let (document_key, document_digest) = document_root
+            .map(|root| (Some(root.key), root.digest))
+            .unwrap_or((None, current_root.document_map_root_digest));
+        if batch.post_frontier_root.document_count
+            != current_root.document_count.saturating_add(new_documents)
+            || batch.post_frontier_root.document_map_root_key != document_key
+            || batch.post_frontier_root.document_map_root_digest != document_digest
+        {
+            return Err(FrontierError::FrontierRegression);
+        }
     }
 
     let mut materialization_stats = ApplyChangeInstrumentation::default();
@@ -3101,6 +3271,60 @@ mod tests {
         assert_eq!(candidate_writes.ordinary_durability_barriers, 0);
         assert_eq!(candidate_writes.candidate_transactions, 1);
         assert_eq!(candidate_writes.candidate_durability_barriers, 1);
+    }
+
+    #[test]
+    fn terminal_prefix_bulk_frontier_matches_ordinary_document_treap() {
+        let documents = [7_u128, 11, 19, 23, 29, 31, 41]
+            .into_iter()
+            .map(|value| PhysicalFrontierDocument {
+                document_id: id(value),
+                canonical_bytes: format!("terminal-document-{value}").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+
+        let (_ordinary_path, mut ordinary, ordinary_empty) = initialized_facade();
+        let (request, _) = request(&ordinary_empty, 1, None, documents.clone(), &[], false);
+        ordinary.apply(&ordinary_empty, &request).unwrap();
+        let expected = ordinary
+            .read_frontier_documents(&request.batch.post_frontier_root)
+            .unwrap();
+
+        let (_terminal_path, mut terminal, terminal_empty) = initialized_facade();
+        terminal.begin_candidate_build().unwrap();
+        terminal
+            .apply_terminal_prefix_candidate(&terminal_empty, &request)
+            .unwrap();
+        let mut wrong = documents.clone();
+        wrong[3].canonical_bytes.push(b'!');
+        assert_eq!(
+            terminal.seed_terminal_frontier_documents(&request.batch.post_frontier_root, &wrong),
+            Err(FrontierError::FrontierRegression)
+        );
+        assert_eq!(
+            terminal.diagnostic_row_counts().unwrap().1,
+            0,
+            "a refused bulk root must not leave partial document rows"
+        );
+        terminal
+            .seed_terminal_frontier_documents(&request.batch.post_frontier_root, &documents)
+            .unwrap();
+        terminal.finish_candidate_build().unwrap();
+
+        assert_eq!(
+            terminal.read_frontier().unwrap().canonical_bytes,
+            request.batch.post_frontier_root.canonical_bytes
+        );
+        assert_eq!(
+            terminal
+                .read_frontier_documents(&request.batch.post_frontier_root)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            terminal.semantic_projection_digest().unwrap(),
+            ordinary.semantic_projection_digest().unwrap()
+        );
     }
 
     #[test]
