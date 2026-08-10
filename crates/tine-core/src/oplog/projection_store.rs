@@ -5543,10 +5543,13 @@ mod tests {
         let original = target_path.with_extension("original-provider-inode");
         let raced_target = target_path.clone();
         let raced_original = original.clone();
-        crate::model::set_projection_recovery_after_bound_capture_hook_for_test(move || {
-            fs::rename(&raced_target, &raced_original)?;
-            fs::write(&raced_target, b"- base\n")
-        });
+        crate::model::set_projection_recovery_after_bound_capture_hook_for_test(
+            target_path.clone(),
+            move || {
+                fs::rename(&raced_target, &raced_original)?;
+                fs::write(&raced_target, b"- base\n")
+            },
+        );
         let mut authority = fixture
             .store
             .begin_mutation(&fixture.intent, Some(&reservation))

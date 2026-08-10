@@ -3936,7 +3936,6 @@ thread_local! {
     static PROJECTION_AFTER_RETIRE_COLLISION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static PROJECTION_POST_PUBLISH_COLLISION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static PROJECTION_BEFORE_RESTORE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
-    static PROJECTION_RECOVERY_AFTER_BOUND_CAPTURE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static PROJECTION_RECOVERY_RETIREMENT_AFTER_VALIDATION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static PROJECTION_RECOVERY_FINAL_RETIREMENT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static PROJECTION_RECOVERY_AFTER_FINAL_REREAD: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
@@ -4324,7 +4323,6 @@ pub(crate) fn reset_projection_graph_test_hooks() {
     PROJECTION_AFTER_RETIRE_COLLISION.with(|hook| drop(hook.borrow_mut().take()));
     PROJECTION_POST_PUBLISH_COLLISION.with(|hook| drop(hook.borrow_mut().take()));
     PROJECTION_BEFORE_RESTORE.with(|hook| drop(hook.borrow_mut().take()));
-    PROJECTION_RECOVERY_AFTER_BOUND_CAPTURE.with(|hook| drop(hook.borrow_mut().take()));
     PROJECTION_RECOVERY_RETIREMENT_AFTER_VALIDATION.with(|hook| drop(hook.borrow_mut().take()));
     PROJECTION_RECOVERY_FINAL_RETIREMENT.with(|hook| drop(hook.borrow_mut().take()));
     PROJECTION_RECOVERY_AFTER_FINAL_REREAD.with(|hook| drop(hook.borrow_mut().take()));
@@ -4590,26 +4588,46 @@ fn projection_before_restore_hook() -> io::Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) fn set_projection_recovery_after_bound_capture_hook_for_test(
-    hook: impl FnOnce() -> io::Result<()> + 'static,
-) {
-    PROJECTION_RECOVERY_AFTER_BOUND_CAPTURE.with(|slot| {
-        let replaced = slot.borrow_mut().replace(Box::new(hook));
-        assert!(
-            replaced.is_none(),
-            "projection bound-capture hook already armed"
-        );
-    });
+type ProjectionRecoveryAfterBoundCaptureHook = Box<dyn FnOnce() -> io::Result<()> + Send + 'static>;
+
+#[cfg(test)]
+fn projection_recovery_after_bound_capture_hooks() -> &'static std::sync::Mutex<
+    std::collections::HashMap<PathBuf, ProjectionRecoveryAfterBoundCaptureHook>,
+> {
+    static HOOK: std::sync::OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<PathBuf, ProjectionRecoveryAfterBoundCaptureHook>,
+        >,
+    > = std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 #[cfg(test)]
-fn projection_recovery_after_bound_capture_hook() -> io::Result<()> {
-    PROJECTION_RECOVERY_AFTER_BOUND_CAPTURE
-        .with(|hook| hook.borrow_mut().take().map_or(Ok(()), |hook| hook()))
+pub(crate) fn set_projection_recovery_after_bound_capture_hook_for_test(
+    path: PathBuf,
+    hook: impl FnOnce() -> io::Result<()> + Send + 'static,
+) {
+    let replaced = projection_recovery_after_bound_capture_hooks()
+        .lock()
+        .unwrap()
+        .insert(path, Box::new(hook));
+    assert!(
+        replaced.is_none(),
+        "projection bound-capture hook already armed"
+    );
+}
+
+#[cfg(test)]
+fn projection_recovery_after_bound_capture_hook(path: &Path) -> io::Result<()> {
+    let hook = projection_recovery_after_bound_capture_hooks()
+        .lock()
+        .unwrap()
+        .remove(path);
+    hook.map_or(Ok(()), |hook| hook())
 }
 
 #[cfg(not(test))]
-fn projection_recovery_after_bound_capture_hook() -> io::Result<()> {
+fn projection_recovery_after_bound_capture_hook(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -17569,7 +17587,9 @@ impl Graph {
                                 displaced_identity,
                                 &displaced,
                             )?;
-                            projection_recovery_after_bound_capture_hook()?;
+                            projection_recovery_after_bound_capture_hook(
+                                &target_path.absolute_path,
+                            )?;
                             retire_projection_target(
                                 parent.final_dir(),
                                 &target_path.filename,
@@ -17981,7 +18001,7 @@ impl Graph {
                 displaced_identity,
                 &displaced,
             )?;
-            projection_recovery_after_bound_capture_hook()?;
+            projection_recovery_after_bound_capture_hook(&target.absolute_path)?;
             // The opened file fixed the exact removal base, but the live path
             // can still be atomically replaced before retirement. Re-open and
             // bind both bytes and physical identity after that boundary so a

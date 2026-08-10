@@ -11391,7 +11391,7 @@ impl RuntimeActor {
         let transaction =
             OperationTransaction::new(vec![SemanticOperation::DeletePage { page_id }])
                 .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_plan"))?;
-        self.execute_application_unit_transaction(transaction)
+        self.execute_application_delete_transaction(transaction)
     }
 
     fn plan_application_page_merge(
@@ -11577,6 +11577,23 @@ impl RuntimeActor {
         }
     }
 
+    /// A delete is not application-visible as applied while its exact removal
+    /// projection remains in retained recovery. In particular, settlement may
+    /// accept the semantic tombstone while correctly leaving a raced foreign
+    /// replacement live; that is still a deferred delete from the caller's
+    /// point of view.
+    fn execute_application_delete_transaction(
+        &mut self,
+        transaction: OperationTransaction,
+    ) -> Result<SyncApplicationUnitOutcome, SyncApplicationPageRequestError> {
+        match self.submit_local_mutation(transaction) {
+            SyncLocalMutationOutcome::Durable { .. } => Ok(SyncApplicationUnitOutcome::Applied),
+            outcome => Ok(SyncApplicationUnitOutcome::Deferred {
+                state: editor_deferred_from_local(outcome),
+            }),
+        }
+    }
+
     fn trash_application_journal_file(
         &mut self,
         name: &str,
@@ -11629,7 +11646,7 @@ impl RuntimeActor {
             page_id: current.editor.page.page_id,
         }])
         .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("journal_trash_plan"))?;
-        self.execute_application_unit_transaction(transaction)
+        self.execute_application_delete_transaction(transaction)
     }
 
     fn resolve_application_sync_conflict(
@@ -22419,8 +22436,22 @@ mod tests {
 
         // The ordinary DeletePage route must use the actor's semantic journal
         // kind even for a journal imported outside the configured journal root.
-        let imported_journal_path = "content/nested pages/2026_08_11.org";
+        let imported_journal_path = "2026_08_11.org";
         let imported_journal_bytes = b"layout:: CRLF\r\n\r\n- imported journal body\r\n";
+        let imported_managed_path = ManagedPath::parse(imported_journal_path).unwrap();
+        let point_graph = Graph::open_derived_read_only(fixture.graph_root());
+        assert!(
+            point_graph
+                .classify_managed_text_path(&imported_managed_path)
+                .is_err(),
+            "root-level imported journal must remain outside both configured roots"
+        );
+        assert_eq!(
+            point_graph
+                .managed_text_kind_for_managed_path(&imported_managed_path)
+                .unwrap(),
+            ManagedTextKind::Journal
+        );
         admit_external_page(
             &handle,
             &fixture,
@@ -22606,10 +22637,14 @@ mod tests {
         admit_external_page(&handle, &fixture, path, accepted);
         let (page, _) = load_application_exact(&handle, path);
 
-        crate::model::set_projection_recovery_after_bound_capture_hook_for_test({
+        let source = fixture.graph_root().join(path);
+        let (hook_sender, hook_receiver) = mpsc::channel();
+        crate::model::set_projection_recovery_after_bound_capture_hook_for_test(source.clone(), {
             let foreign = foreign.to_vec();
-            let source = fixture.graph_root().join(path);
-            move || fs::write(source, &foreign)
+            move || {
+                hook_sender.send(()).unwrap();
+                fs::write(source, &foreign)
+            }
         });
         let outcome =
             handle.mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
@@ -22617,11 +22652,12 @@ mod tests {
                 page_kind: SyncPageKind::Page,
                 expected_path: Some(page.path),
             });
+        assert_eq!(hook_receiver.try_recv(), Ok(()));
+        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
         assert!(
             !matches!(outcome, Ok(SyncApplicationUnitOutcome::Applied)),
             "late foreign replacement must not be reported Applied: {outcome:?}"
         );
-        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
         let recovery = fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/pages"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
