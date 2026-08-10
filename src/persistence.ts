@@ -13,7 +13,6 @@ import {
   bumpEditGeneration,
   editorActivationFor,
   peekPageInstanceGeneration,
-  retryPendingBlockRefStamps,
   setProspectiveTarget,
   pageByName,
   pageInstanceGeneration,
@@ -645,12 +644,6 @@ async function doSave(
     // the page behind a warning about a change that is now written.
     if (isConflicted(name)) clearConflict(name);
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
-    // This page just became clean, which is the release a refused replacement was
-    // waiting on. Deferred to a microtask because THIS save's `saveChain` entry is
-    // still present here: retrying inline sees the page as still saving, refuses
-    // the replacement again, and leaves the stamp with no later trigger.
-    // (GH #254 increment 3, C5.)
-    queueMicrotask(() => retryPendingBlockRefStamps());
     return true;
   } catch (e) {
     // The backend says "conflict" and nothing else for a real base-revision

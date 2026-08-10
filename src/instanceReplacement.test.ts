@@ -100,27 +100,6 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(editorActivationFor("Note")).toBeUndefined();
   });
 
-  it("drops deferred block-ref stamps when the graph changes", async () => {
-    const { persistBlockRefTarget, retryPendingBlockRefStamps } = await import("./store");
-    ensurePageLoaded(page("Requested", "pages/Requested.md", "incumbent"));
-    markDirty("Requested");
-    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(
-      page("Requested", "pages/other/Requested.md", "requested"),
-    );
-
-    // Refused, so the stamp is retained rather than silently dropped.
-    await persistBlockRefTarget("uuid-1", "Requested", "page", "pages/other/Requested.md");
-
-    // The graph goes away. A retained request belongs to the graph that deferred
-    // it: carried across, it re-reads its old path and stamps a block in the
-    // REPLACEMENT graph. (Reproduced by round-3 verification.)
-    resetStore();
-    const read = vi.spyOn(backend(), "getPageByPath");
-    read.mockClear();
-    retryPendingBlockRefStamps();
-    expect(read).not.toHaveBeenCalled();
-  });
-
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

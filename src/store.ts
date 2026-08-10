@@ -744,10 +744,6 @@ export function resetStore() {
   // storm of per-page retirements against a graph that is going away.
   clearAllEditorActivations();
   clearAllEditorLeases();
-  // A retained stamp belongs to the graph that deferred it. Carried across a
-  // switch it re-reads its old path, loads that page into the REPLACEMENT graph
-  // and stamps a block there — reproduced. (GH #254 increment 3.)
-  clearPendingBlockRefStamps();
   // Cancel pending/in-flight saves and clear all save guard state (timers, graph
   // token, dirty/baseline/tombstone) so nothing from the old graph can be written
   // after the switch.
@@ -3121,54 +3117,27 @@ export async function persistBlockRefTarget(
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
-    if (dto && ensurePageLoaded(dto)) {
-      // RETAIN the request; do not silently drop it. The user-visible mutation has
-      // already happened — autocomplete committed `((uuid))`, or the sidebar item
-      // is already open — and this stamp is what makes those survive a restart.
-      // Skipping it leaves a reference that works only from session-local runtime
-      // identity, which looks fine until the app is reopened. Rolling back is not
-      // an option either: it would undo what the user just typed. So the request
-      // waits for the incumbent to be resolvable and is retried.
-      // (GH #254 increment 3, acceptance row C5.)
-      pendingBlockRefStamps.set(uuid, { uuid, page, kind, path });
-      return;
-    }
+    // A refusal here is NOT resolved by this increment. Three successive retry
+    // designs were built and each was reproduced failing — retried inside the
+    // save that triggered it (page still saving, refused again), a target read
+    // in flight across a graph switch stamping into the replacement graph, and
+    // liveness tied to unrelated saves so the request stranded whenever the
+    // incumbent resolved another way. Filed as its own packet rather than
+    // redesigned a fourth time inside this candidate.
+    //
+    // Until then the stamp is skipped, which leaves the committed `((uuid))`
+    // working from session-local runtime identity only — it resolves now and is
+    // gone after a restart. That is a real, recorded limitation, not a silent
+    // one; rolling the reference back is not an alternative, because it would
+    // undo what the user just typed. (GH #254 increment 3, acceptance row C5 —
+    // NOT MET.)
+    if (dto && ensurePageLoaded(dto)) return;
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
   const id = resolveBlockRef(ref);
-  if (id) {
-    pendingBlockRefStamps.delete(uuid);
-    ensureStableBlockId(id);
-  }
-}
-
-/** Stamps deferred by a refused replacement, keyed by the referenced uuid. */
-const pendingBlockRefStamps = new Map<
-  string,
-  { uuid: string; page: string; kind: PageKind; path?: string }
->();
-
-/**
- * Retry every stamp a refusal deferred.
- *
- * Driven by the same release the refusal was waiting on — once the incumbent is
- * no longer holding unsaved work, the request that was retained can complete.
- */
-export function clearPendingBlockRefStamps(): void {
-  pendingBlockRefStamps.clear();
-}
-
-export function retryPendingBlockRefStamps(): void {
-  if (pendingBlockRefStamps.size === 0) return;
-  for (const req of [...pendingBlockRefStamps.values()]) {
-    // Only retry once the incumbent can actually be replaced. Without this every
-    // unrelated clean save re-reads a target that is still refusing.
-    if (pageByName(req.page) && !mayReplaceInstance(req.page)) continue;
-    pendingBlockRefStamps.delete(req.uuid);
-    void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
-  }
+  if (id) ensureStableBlockId(id);
 }
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.
