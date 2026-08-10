@@ -158,6 +158,7 @@ const MANAGED_COMMAND_SURFACE: &[(&str, ManagedRouting)] = &[
     ("page_aliases", ManagedRouted),
     ("page_icons", ManagedRouted),
     ("page_print_html", ManagedRouted),
+    ("prepare_tine_quit", NoGraphSlot),
     ("prepare_sparse_v2_share", NoGraphSlot),
     ("preview_block", ManagedRouted),
     ("publish_html", ManagedRouted),

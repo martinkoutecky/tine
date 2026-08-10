@@ -149,8 +149,24 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     expect(app).toContain('import("@tauri-apps/api/app")');
     expect(app.match(/onBackButtonPress\(handler\)/g)).toHaveLength(1);
     expect(app).not.toContain('addEventListener("popstate"');
-    expect(app).toContain("requestAndroidRootClose(\n    safeClose,");
+    expect(app).toContain("createAndroidRootCloseCoordinator(safeClose, {");
     expect(app).toContain('safeClose.prepare()) !== "accepted"');
     expect(app).toMatch(/catch \{\s*\/\/ The native close attempt failed[\s\S]*?allowClose = false;[\s\S]*?safeClose\.reset\(\);[\s\S]*?closeInProgress = false;/);
+  });
+
+  it("keeps managed Android root Back as prepare-native then AppPlugin activity exit", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    const backend = readFileSync("src/backend.ts", "utf8");
+    const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
+    const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
+
+    expect(backend).toContain("prepareQuit(): Promise<void>");
+    expect(backend).toContain('return this.call<void>("prepare_tine_quit");');
+    expect(app).toContain("prepareNativeClose: () => backend().prepareQuit()");
+    expect(app).toContain('await invoke("plugin:app|exit");');
+    expect(commands).toContain("fn prepare_tine_quit_all_slots");
+    expect(commands).toMatch(/pub\(crate\) fn prepare_tine_quit\([\s\S]*?prepare_tine_quit_all_slots\(&state\)/);
+    expect(commands).toMatch(/pub\(crate\) fn tine_quit\([\s\S]*?prepare_tine_quit_all_slots\(&state\)[\s\S]*?app\.exit\(0\)/);
+    expect(lib).toMatch(/generate_handler!\[[\s\S]*?prepare_tine_quit,[\s\S]*?tine_quit,/);
   });
 });

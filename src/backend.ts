@@ -220,6 +220,9 @@ export interface Backend {
    *  the caller MUST have flushed pending edits first. Does not resolve — the
    *  process exits. */
   quit(): Promise<void>;
+  /** Verify every managed runtime can stop cleanly without exiting the app.
+   * Android calls this before handing the final activity exit to AppPlugin. */
+  prepareQuit(): Promise<void>;
   closeGraphWindow(): Promise<void>;
   /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
    *  debugging. No-op on a build without devtools compiled in. */
@@ -697,6 +700,9 @@ class TauriBackend implements Backend {
   }
   quit() {
     return this.call<void>("tine_quit");
+  }
+  prepareQuit() {
+    return this.call<void>("prepare_tine_quit");
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");

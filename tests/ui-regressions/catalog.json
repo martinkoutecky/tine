@@ -2,6 +2,31 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "UI-MANAGED-ANDROID-ROOT-SHUTDOWN-001",
+      "title": "Android root Back verifies every managed runtime can stop before activity exit and preserves the safe transition if exit must retry",
+      "family": "window-lifecycle",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/androidBack.test.ts",
+          "src/safeClose.test.ts",
+          "src-tauri/src/managed_command_surface.rs",
+          "crates/tine-core/src/sync_runtime.rs"
+        ],
+        "scenario": "managed-android.root-back-prepares-before-activity-exit",
+        "failBefore": "proven"
+      },
+      "notes": "Android root Back first runs the shared frontend safe-close transaction, then the registered prepare_tine_quit all-slot native gate, then the existing AppPlugin activity exit. Frontend or native preparation refusal resets the transition and a later Back repeats the full sequence. Once native preparation resolves, the UI remains noneditable even if AppPlugin exit rejects; the next Back retries only the exit. Unit/source guards prove ordering and registration; a real Android hardware-Back run remains unverified locally."
+    },
+    {
       "id": "UI-MANAGED-SAVE-CONFLICT-RESOLUTION-001",
       "title": "Managed save conflicts retain the editor draft and offer a revision-bound Keep mine or Use current choice",
       "family": "edit-render-boundary",

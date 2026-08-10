@@ -126,7 +126,7 @@ import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 import { installBackgroundFlush } from "./backgroundFlush";
-import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { createAndroidRootCloseCoordinator, installAndroidBackHandler } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { drainPdfWork } from "./pdfOwnership";
 import { managedStorageRuntime, managedStorageRuntimeErrorMessage } from "./managedStorageRuntime";
@@ -162,15 +162,24 @@ const safeClose = createSafeCloseCoordinator({
   },
 });
 
+const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
+  prepareNativeClose: () => backend().prepareQuit(),
+  finishActivity: async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("plugin:app|exit");
+  },
+  nativePrepareFailed: () => pushToast(
+    "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status.",
+    "error",
+  ),
+  finishActivityFailed: () => pushToast(
+    "Tine safely stopped managed storage but couldn't close the Android activity. Tap Back to retry closing.",
+    "error",
+  ),
+});
+
 async function closeAndroidRootSafely(): Promise<void> {
-  await requestAndroidRootClose(
-    safeClose,
-    async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("plugin:app|exit");
-    },
-    () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
-  );
+  await androidRootClose.request();
 }
 
 /** Capture the actual live Journals surfaces that justified a watcher restart.

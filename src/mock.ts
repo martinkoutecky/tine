@@ -822,6 +822,9 @@ export function mockBackend(): Backend {
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.
     },
+    async prepareQuit(): Promise<void> {
+      // No-op in the mock/screenshot harness — there is no managed runtime.
+    },
     async closeGraphWindow(): Promise<void> {
       // No-op in the mock/screenshot harness.
     },

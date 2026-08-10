@@ -71,23 +71,118 @@ export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => v
   };
 }
 
-export type AndroidRootCloseResult = SafeClosePrepareResult | "exit_requested" | "exit_failed";
+export type AndroidRootCloseResult =
+  | SafeClosePrepareResult
+  | "native_prepare_failed"
+  | "exit_requested"
+  | "exit_failed";
 
-/** Root close shares the desktop coordinator.  A failed native invoke resets
- * the accepted transaction so the next hardware Back can safely retry. */
+/** The actor remains active through preparation, then becomes deliberately
+ * non-editable once native clean shutdown has succeeded.  Activity exit is the
+ * only operation that may retry from NativePreparedAwaitingFinish. */
+export enum AndroidRootClosePhase {
+  Idle = "Idle",
+  PreparingFrontend = "PreparingFrontend",
+  PreparingNative = "PreparingNative",
+  NativePreparedAwaitingFinish = "NativePreparedAwaitingFinish",
+}
+
+interface AndroidRootCloseState {
+  phase: AndroidRootClosePhase;
+}
+
+export interface AndroidRootCloseCoordinator {
+  request(): Promise<AndroidRootCloseResult>;
+  phase(): AndroidRootClosePhase;
+}
+
+/** Android's managed root-close path has two native operations with different
+ * retry semantics: preparation is allowed to re-arm the editor on refusal;
+ * once it succeeds, only the existing AppPlugin activity exit may retry. */
 export async function requestAndroidRootClose(
   safeClose: SafeCloseCoordinator,
-  exit: () => Promise<void>,
-  exitFailed: () => void,
+  state: AndroidRootCloseState,
+  prepareNativeClose: () => Promise<void>,
+  finishActivity: () => Promise<void>,
+  nativePrepareFailed: () => void,
+  finishActivityFailed: () => void,
 ): Promise<AndroidRootCloseResult> {
-  const prepared = await safeClose.prepare();
-  if (prepared !== "accepted") return prepared;
+  if (state.phase === AndroidRootClosePhase.NativePreparedAwaitingFinish) {
+    try {
+      await finishActivity();
+      return "exit_requested";
+    } catch {
+      // Native shutdown is already durable. Keep the transition shield in
+      // place: a later Back must only retry this AppPlugin handoff.
+      finishActivityFailed();
+      return "exit_failed";
+    }
+  }
+  if (state.phase !== AndroidRootClosePhase.Idle) return "in_flight";
+
+  state.phase = AndroidRootClosePhase.PreparingFrontend;
+  let prepared: SafeClosePrepareResult;
   try {
-    await exit();
+    prepared = await safeClose.prepare();
+  } catch {
+    // SafeClose itself releases its shield in its finally block. Keep this
+    // coordinator retryable too if a frontend dependency throws unexpectedly.
+    state.phase = AndroidRootClosePhase.Idle;
+    return "rejected";
+  }
+  if (prepared !== "accepted") {
+    state.phase = AndroidRootClosePhase.Idle;
+    return prepared;
+  }
+
+  state.phase = AndroidRootClosePhase.PreparingNative;
+  try {
+    await prepareNativeClose();
+  } catch {
+    // We have not reached the safe native point, so this is still an ordinary
+    // refusal: release the shield and let a later Back run the full sequence.
+    safeClose.reset();
+    state.phase = AndroidRootClosePhase.Idle;
+    nativePrepareFailed();
+    return "native_prepare_failed";
+  }
+
+  state.phase = AndroidRootClosePhase.NativePreparedAwaitingFinish;
+  try {
+    await finishActivity();
     return "exit_requested";
   } catch {
-    safeClose.reset();
-    exitFailed();
+    // Do not reset after native preparation. Replaying the frontend flush or
+    // clean shutdown can race the already-prepared actor; only exit retries.
+    finishActivityFailed();
     return "exit_failed";
   }
+}
+
+export function createAndroidRootCloseCoordinator(
+  safeClose: SafeCloseCoordinator,
+  {
+    prepareNativeClose,
+    finishActivity,
+    nativePrepareFailed,
+    finishActivityFailed,
+  }: {
+    prepareNativeClose: () => Promise<void>;
+    finishActivity: () => Promise<void>;
+    nativePrepareFailed: () => void;
+    finishActivityFailed: () => void;
+  },
+): AndroidRootCloseCoordinator {
+  const state: AndroidRootCloseState = { phase: AndroidRootClosePhase.Idle };
+  return {
+    request: () => requestAndroidRootClose(
+      safeClose,
+      state,
+      prepareNativeClose,
+      finishActivity,
+      nativePrepareFailed,
+      finishActivityFailed,
+    ),
+    phase: () => state.phase,
+  };
 }

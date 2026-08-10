@@ -2535,21 +2535,37 @@ pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
-/// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
-/// they don't run their buggy GL-driver atexit teardown and dump a SIGABRT core on
-/// exit (GH #28). The JS close handler calls this only AFTER `flushAll()`/
-/// `flushSession()` have resolved, so tearing the web process down hard loses no
-/// edits. Then hand off to Tauri's normal exit (the main process still tears down
-/// the way it always has — no dump there). On non-Linux this is just `app.exit(0)`.
+/// The native half of a process-wide clean quit. Kept separate from actually
+/// exiting so Android can prove every managed slot is safe before AppPlugin
+/// finishes its activity.
+fn prepare_tine_quit_all_slots(state: &crate::state::AppState) -> Result<(), String> {
+    for (_, slot) in state.graphs.read().unwrap().entries() {
+        crate::sync_runtime::clean_shutdown_slot(&slot)
+            .map_err(|error| format!("sparse-v2-shutdown-refused: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Verify that every managed runtime has stopped safely, without exiting the
+/// process. Android follows this with its existing AppPlugin activity exit.
+#[tauri::command]
+pub(crate) fn prepare_tine_quit(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<(), String> {
+    prepare_tine_quit_all_slots(&state)
+}
+
+/// Quit the app cleanly. After every managed slot has stopped safely, Linux
+/// first SIGKILLs WebKitGTK's helper subprocesses so they do not run their
+/// buggy GL-driver atexit teardown and dump a SIGABRT core on exit (GH #28).
+/// The JS close handler calls this only after `flushAll()`/`flushSession()`
+/// resolve, so tearing the web process down hard loses no edits.
 #[tauri::command]
 pub(crate) fn tine_quit(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
-    for (_, slot) in state.graphs.read().unwrap().entries() {
-        crate::sync_runtime::clean_shutdown_slot(&slot)
-            .map_err(|error| format!("sparse-v2-shutdown-refused: {error}"))?;
-    }
+    prepare_tine_quit_all_slots(&state)?;
     #[cfg(target_os = "linux")]
     crate::platform::kill_webkit_children();
     app.exit(0);
