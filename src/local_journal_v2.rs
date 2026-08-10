@@ -1553,6 +1553,14 @@ fn crash_for_test(stage: &str) {
     if std::env::var_os("TINE_STORAGE_JOURNAL_CRASH_STAGE").as_deref()
         == Some(std::ffi::OsStr::new(stage))
     {
+        #[cfg(unix)]
+        // SAFETY: this is an intentionally abrupt crash-test child. `_exit`
+        // skips destructors and stdio/allocator cleanup so reopen observes
+        // only durability work completed before this boundary.
+        unsafe {
+            libc::_exit(73);
+        }
+        #[cfg(not(unix))]
         std::process::exit(73);
     }
 }
