@@ -1976,7 +1976,7 @@ describe("save engine (persistence)", () => {
     expect(saveSpy.mock.calls.at(-1)![3]).toBe(11); // exact observed winner
   });
 
-  it("refuses a CONFLICTED page without flushing or tombstoning its retained draft", async () => {
+  it("deletes a CONFLICTED page through the backend without flushing its retained draft", async () => {
     load([blk("x")]);
     markDirty("Test");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
@@ -1984,10 +1984,26 @@ describe("save engine (persistence)", () => {
     expect(isConflicted("Test")).toBe(true);
     const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
 
-    expect(await deletePage("Test", "page")).toBe(false);
+    expect(await deletePage("Test", "page")).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1); // conflicted retained draft is never flushed
-    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(deleteSpy).toHaveBeenCalledTimes(1); // actor preserves its accepted winner in typed trash
+    expect(pageByName("Test")).toBeUndefined();
+    deleteSpy.mockRestore();
+  });
+
+  it("retains a CONFLICTED draft when its backend delete fails", async () => {
+    load([blk("retained conflict draft")]);
+    markDirty("Test");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    await flushPage("Test");
+    expect(isConflicted("Test")).toBe(true);
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockRejectedValue(new Error("delete deferred"));
+
+    expect(await deletePage("Test", "page")).toBe(false);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
     expect(pageByName("Test")).toBeDefined();
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("retained conflict draft");
     deleteSpy.mockRestore();
   });
 

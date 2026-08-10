@@ -248,10 +248,17 @@ export function setBaseRev(name: string, rev: string | null) {
  *
  * Delete calls this synchronously after its awaited drain and exact-instance
  * check. A keystroke can land in that await-to-continuation handoff, so the
- * tombstone itself must re-check dirty, saving, and conflict state in the same
- * JavaScript turn that publishes the marker. */
-export function tombstoneIfQuiescent(name: string): boolean {
-  if (dirty.has(name) || saveChain.has(name) || isConflicted(name) || deletedPages.has(name)) {
+ * tombstone itself must re-check dirty and saving state in the same JavaScript
+ * turn that publishes the marker. A caller may explicitly allow an already
+ * captured conflict-resolution delete; ordinary deletes still reject a conflict
+ * raised during their awaited drain. */
+export function tombstoneIfQuiescent(name: string, allowConflicted = false): boolean {
+  if (
+    dirty.has(name)
+    || saveChain.has(name)
+    || (!allowConflicted && isConflicted(name))
+    || deletedPages.has(name)
+  ) {
     return false;
   }
   deletedPages.add(name);

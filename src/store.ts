@@ -465,6 +465,7 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
     generation: pageInstanceGeneration(name),
   };
   if (!captured || captured.kind !== kind || captured.generation === null) return false;
+  const capturedConflicted = isConflicted(name);
   const stillCaptured = () => {
     const current = pageByName(name);
     return !!current
@@ -479,12 +480,12 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // every other page, drain through quiescence rather than one save so a keystroke
   // injected during that first save either becomes a second accepted snapshot or
   // causes this delete to refuse with the draft still live.
-  if (!isConflicted(name) && !(await flushPageToQuiescence(name))) return false;
+  if (!capturedConflicted && !(await flushPageToQuiescence(name))) return false;
   // The identity proof and persistence retirement run back-to-back without a
   // yield. tombstoneIfQuiescent re-checks dirty/saving/conflict state in the same
   // synchronous turn that publishes the marker, closing the resolved-Promise
   // handoff after flushPageToQuiescence.
-  if (!stillCaptured() || !tombstoneIfQuiescent(name)) return false;
+  if (!stillCaptured() || !tombstoneIfQuiescent(name, capturedConflicted)) return false;
   try {
     if (expectedPath) await backend().deletePage(name, kind, expectedPath);
     else await backend().deletePage(name, kind);
