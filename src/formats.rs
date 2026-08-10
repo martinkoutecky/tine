@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(SCRATCH_SCHEMA_VERSION, 13);
         assert_eq!(SCRATCH_PAGE_SCHEMA_VERSION, 1);
         assert_eq!(SQLITE_APPLICATION_ID, 0x5449_4e45);
-        assert_eq!(SQLITE_SCHEMA_VERSION, 13);
+        assert_eq!(SQLITE_SCHEMA_VERSION, 14);
 
         assert_eq!(SCRATCH_DIR, "engine-scratch-v2");
         assert_eq!(SCRATCH_MARKER_FILE, "marker");

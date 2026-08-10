@@ -17,6 +17,7 @@ use crate::ContentDigest;
 pub const MAX_MATERIALIZATION_QUERY_ROWS: usize = 10_000;
 pub const MAX_MATERIALIZATION_QUERY_BYTES: usize = 64 * 1024;
 pub const MAX_MATERIALIZATION_READ_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MATERIALIZATION_FIELD_BYTES: usize = 4 * 1024 * 1024;
 const MATERIALIZATION_STRING_OVERHEAD_BYTES: usize = 16;
 
 fn checked_budget_add(
@@ -83,6 +84,7 @@ pub struct PhysicalBlock {
     pub order: String,
     pub content: String,
     pub searchable_text: String,
+    pub normalized_searchable_text: String,
     pub heading_level: Option<u8>,
     pub collapsed: bool,
     pub logseq_uuid: Option<[u8; 16]>,
@@ -103,6 +105,7 @@ pub struct PhysicalPage {
     pub text_kind: i64,
     pub preamble: Option<String>,
     pub searchable_text: String,
+    pub normalized_searchable_text: String,
     pub references: Vec<PhysicalReference>,
     pub properties: Vec<PhysicalProperty>,
     pub tags: Vec<String>,
@@ -463,7 +466,8 @@ pub const SEARCH_FTS_DDL: &str = "CREATE VIRTUAL TABLE search_fts USING fts5(
     entity_type UNINDEXED,
     entity_id UNINDEXED,
     page_id UNINDEXED,
-    text,
+    text UNINDEXED,
+    normalized_text,
     tokenize = 'unicode61 remove_diacritics 0'
 )";
 pub const SEARCH_FTS_OWNERS_DDL: &str = "CREATE TABLE search_fts_owners (
@@ -2228,6 +2232,7 @@ fn insert_page(transaction: &Connection, page: &PhysicalPage) -> Result<(), Mate
         page.page_id,
         page.page_id,
         &page.searchable_text,
+        &page.normalized_searchable_text,
     )?;
     insert_references(
         transaction,
@@ -2295,6 +2300,7 @@ fn insert_block(
         block.block_id,
         page_id,
         &block.searchable_text,
+        &block.normalized_searchable_text,
     )?;
     let owner = PhysicalEntityId::Block(block.block_id);
     insert_references(transaction, owner, page_id, &block.references)?;
@@ -2325,7 +2331,15 @@ fn insert_fts(
     entity_id: [u8; 16],
     page_id: [u8; 16],
     text: &str,
+    normalized_text: &str,
 ) -> Result<(), MaterializationError> {
+    if normalized_text.len() > MAX_MATERIALIZATION_FIELD_BYTES {
+        return Err(resource_limit(
+            "normalized searchable text bytes",
+            normalized_text.len(),
+            MAX_MATERIALIZATION_FIELD_BYTES,
+        ));
+    }
     let entity_type_value = match entity_type {
         "page" => 0_i64,
         "block" => 1_i64,
@@ -2344,14 +2358,16 @@ fn insert_fts(
     let rowid = transaction.last_insert_rowid();
     execute_cached(
         transaction,
-        "INSERT INTO search_fts (rowid, entity_type, entity_id, page_id, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO search_fts (
+             rowid, entity_type, entity_id, page_id, text, normalized_text
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             rowid,
             entity_type,
             uuid::Uuid::from_bytes(entity_id).simple().to_string(),
             uuid::Uuid::from_bytes(page_id).simple().to_string(),
             text,
+            normalized_text,
         ],
     )?;
     Ok(())
@@ -2528,6 +2544,11 @@ pub struct PhysicalBlockReferrerCandidateRow {
 pub struct PhysicalPageReferrerCandidateRow {
     pub source_page_id: [u8; 16],
     pub source: PhysicalEntityId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalPlainTextCandidatePageRow {
+    pub page_id: [u8; 16],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3480,6 +3501,56 @@ impl<'a> SqliteMaterializedRead<'a> {
         collect_read_rows(rows, |_| Ok(32))
     }
 
+    /// Page-level candidates for one normalized literal phrase under the
+    /// indexed `unicode61` token contract. Punctuation may make this
+    /// overinclusive; the application parser decides exact membership.
+    pub fn plain_text_candidate_pages_after(
+        &self,
+        normalized_phrase: &str,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPlainTextCandidatePageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(normalized_phrase)?;
+        if normalized_phrase.trim().is_empty()
+            || !normalized_phrase.chars().any(char::is_alphanumeric)
+        {
+            return Err(MaterializationError::InvalidQuery(
+                "normalized literal phrase has no unicode61 word token".into(),
+            ));
+        }
+        let phrase = format!("\"{}\"", normalized_phrase.replace('"', "\"\""));
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT owner.page_id
+                 FROM search_fts
+                 JOIN search_fts_owners owner ON owner.rowid = search_fts.rowid
+                 WHERE normalized_text MATCH ?1
+                 ORDER BY owner.page_id LIMIT ?2",
+                vec![phrase.into(), limit.into()],
+            ),
+            Some(page_id) => (
+                "SELECT DISTINCT owner.page_id
+                 FROM search_fts
+                 JOIN search_fts_owners owner ON owner.rowid = search_fts.rowid
+                 WHERE normalized_text MATCH ?1 AND owner.page_id > ?2
+                 ORDER BY owner.page_id LIMIT ?3",
+                vec![phrase.into(), page_id.to_vec().into(), limit.into()],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalPlainTextCandidatePageRow {
+                page_id: decode_id_sql(&page_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(16),
+        )
+    }
+
     pub fn properties(
         &self,
         owner: PhysicalEntityId,
@@ -3896,6 +3967,7 @@ mod tests {
             text_kind: 0,
             preamble: Some("preamble".into()),
             searchable_text: text.into(),
+            normalized_searchable_text: text.to_lowercase(),
             references: Vec::new(),
             properties: vec![PhysicalProperty {
                 name: "category".into(),
@@ -3909,6 +3981,7 @@ mod tests {
                 order: "a".into(),
                 content: "block content".into(),
                 searchable_text: format!("{text} block"),
+                normalized_searchable_text: format!("{} block", text.to_lowercase()),
                 heading_level: None,
                 collapsed: false,
                 logseq_uuid: None,
@@ -4210,6 +4283,60 @@ mod tests {
         let hits = read.search("alpha", 10).unwrap();
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|hit| hit.page_id == page.page_id));
+    }
+
+    #[test]
+    fn normalized_fts_retains_original_payload_and_pages_literal_candidates() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let mut first = page(301, "first payload");
+        first.blocks[0].searchable_text = "Cafe\u{301} foo-bar common".into();
+        first.blocks[0].normalized_searchable_text = "café foo-bar common".into();
+        let mut second = page(302, "second payload");
+        second.blocks[0].searchable_text = "Café common".into();
+        second.blocks[0].normalized_searchable_text = "café common".into();
+        let first_page = first.page_id;
+        let second_page = second.page_id;
+        apply_and_commit(
+            &mut connection,
+            &change(0x7890, vec![first, second], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        let hits = read.search("café", 10).unwrap();
+        assert!(hits.iter().any(|hit| hit.text.contains("Cafe\u{301}")));
+        assert_eq!(
+            read.plain_text_candidate_pages_after("café", None, 10)
+                .unwrap(),
+            vec![
+                PhysicalPlainTextCandidatePageRow {
+                    page_id: first_page,
+                },
+                PhysicalPlainTextCandidatePageRow {
+                    page_id: second_page,
+                },
+            ]
+        );
+        assert_eq!(
+            read.plain_text_candidate_pages_after("foo-bar", None, 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.plain_text_candidate_pages_after("common", Some(first_page), 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: second_page,
+            }]
+        );
+        assert!(matches!(
+            read.plain_text_candidate_pages_after("++", None, 10),
+            Err(MaterializationError::InvalidQuery(_))
+        ));
     }
 
     #[test]
