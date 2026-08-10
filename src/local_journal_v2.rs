@@ -561,7 +561,16 @@ impl<K: LocalJournalPayloadKind> LockedLocalJournalV1Segment<K> {
         if !file.metadata()?.is_file() {
             return Err(LocalJournalError::UnsafeSegmentName(name.to_owned()));
         }
-        let scan = inspect_v1::<K>(&file, device_id, base_sequence)?;
+        let scan = match inspect_v1::<K>(&file, device_id, base_sequence) {
+            Ok(scan) => scan,
+            Err(error) => {
+                // Make lock release explicit on an ineligible/corrupt legacy
+                // segment. Callers may inspect multiple immutable candidates
+                // in one process and must not observe a transient self-lock.
+                unlock(&file);
+                return Err(error);
+            }
+        };
         Ok(Self {
             file,
             name: name.to_owned(),
