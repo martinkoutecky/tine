@@ -165,6 +165,29 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it("re-drives a deferred stamp when the incumbent is forgotten entirely", async () => {
+    const { persistBlockRefTarget, forgetPage } = await import("./store");
+    ensurePageLoaded(page("Target", "pages/Target.md", "incumbent"));
+    // Dirty, which is what `forgetSaveState` clears — a lease is held by a
+    // component and would legitimately survive the page being forgotten.
+    markDirty("Target");
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "requested"));
+
+    await persistBlockRefTarget("uuid-4", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1);
+
+    // The externally-deleted "Use disk version" route, and successful deletePage,
+    // both end here. Announcing at the TOP of forgetPage ran while the page was
+    // still dirty/conflicted, so the announcement was correctly dropped — and
+    // nothing swept afterwards, stranding this request forever.
+    forgetPage("Target");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

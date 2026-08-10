@@ -562,7 +562,6 @@ export function isGuidePage(name: string): boolean {
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
   retireEditorFor(name);
-  notifyPageBecameReplaceable(name);
   forgetSaveState(name);
   clearConflict(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
@@ -578,6 +577,14 @@ export function forgetPage(name: string) {
     })
   );
   retirePageInstance(name);
+  // AFTER the dirty/conflict state is cleared and the page is gone — announcing
+  // at the top ran while `mayReplaceInstance` was still false, so the
+  // announcement was correctly dropped and then nothing swept again, stranding a
+  // waiting request forever. This is the externally-deleted "Use disk version"
+  // route and the successful `deletePage` route, which share this ordering.
+  // Swept, not named: the page no longer exists, and other watchers may have been
+  // freed by the same teardown. (GH #254 increment 3.)
+  sweepReplaceable();
   invalidateAllMatrixDimensions();
 }
 

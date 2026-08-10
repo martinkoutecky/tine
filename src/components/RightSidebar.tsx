@@ -236,9 +236,16 @@ function useEnsurePage(
       // DURABLE, not one-shot: the retry can itself be refused again — a lease
       // taken during its awaited read is enough — and a listener that
       // unsubscribed before that read would strand the item on an empty body.
+      // One read at a time. Two sweeps landing while a retry read is pending
+      // otherwise fan out into several reads of the same target; the refusal gate
+      // still keeps them SAFE, but they are wasted work on a path that can be
+      // driven by any unrelated save.
+      let retryInFlight = false;
       const retryWhenFreed = (pageName: string) => {
         stopRetry?.();
         stopRetry = onPageBecameReplaceable(pageName, () => {
+          if (retryInFlight) return;
+          retryInFlight = true;
           void (p ? backend().getPageByPath(p) : backend().getPage(n, k))
             .then((fresh) => {
               if (!active || epoch !== graphEpoch() || !fresh) return;
@@ -247,7 +254,10 @@ function useEnsurePage(
                 stopRetry = null;
               }
             })
-            .catch(() => {});
+            .catch(() => {})
+            .finally(() => {
+              retryInFlight = false;
+            });
         });
       };
       const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
