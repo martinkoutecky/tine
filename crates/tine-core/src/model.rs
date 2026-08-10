@@ -2047,7 +2047,8 @@ enum ConflictSnapshot {
 /// Values are unique within one `Graph`. The registry lives on the `Graph`, so a
 /// token minted against a different graph is simply not found: the graph binding
 /// the spec requires is structural rather than a compared field.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EditorActivation(u64);
 
 impl EditorActivation {
@@ -2065,7 +2066,8 @@ impl EditorActivation {
 /// Path idempotence and same-path content replacement contradict each other
 /// without this discriminator, which is why v5 of the spec was unimplementable at
 /// the same-path row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ActivationIntent {
     /// Plain re-hydration: return the live activation and mint nothing. Does not
     /// burn the incumbent's authority.
@@ -2093,7 +2095,7 @@ struct EditorActivationState {
 }
 
 /// The outcome of activating an editor.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EditorActivationHandle {
     pub activation: EditorActivation,
     /// The exact path this activation is live for. For an absent editor this is

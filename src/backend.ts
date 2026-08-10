@@ -3,10 +3,13 @@
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
 import type {
+  ActivationIntent,
   AdvancedQueryResult,
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
+  EditorActivationHandle,
+  PageKind,
   GraphMeta,
   GuideCopyResult,
   GuidePage,
@@ -359,6 +362,18 @@ export interface Backend {
   /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
    *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
   getPageByPath(path: string): Promise<PageDto | null>;
+  /** Activate an editor over an existing file. Deliberately separate from the
+   *  mixed-purpose reads above: an activation exists exactly when a live editor
+   *  does, so a read for export/preview/hydration cannot inherit an editor's
+   *  override authority. (GH #254 increment 3.) */
+  activateEditor(path: string, intent: ActivationIntent): Promise<EditorActivationHandle>;
+  /** Activate an editor for a page with no file yet, returning the prospective
+   *  target it is live for. Reserves nothing on disk. */
+  activateAbsentEditor(name: string, kind: PageKind): Promise<EditorActivationHandle>;
+  /** Compare-and-retire: retires only if `activation` is still the live one, and
+   *  reports whether it was. A retirement racing a newer activation must not
+   *  revoke the newer editor. */
+  retireEditorActivation(path: string, activation: number): Promise<boolean>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
   mergePages(src: string, dst: string): Promise<void>;
@@ -973,6 +988,15 @@ class TauriBackend implements Backend {
   }
   getPageByPath(path: string) {
     return this.call<PageDto | null>("get_page_by_path", { path });
+  }
+  activateEditor(path: string, intent: ActivationIntent) {
+    return this.call<EditorActivationHandle>("activate_editor", { path, intent });
+  }
+  activateAbsentEditor(name: string, kind: PageKind) {
+    return this.call<EditorActivationHandle>("activate_absent_editor", { name, kind });
+  }
+  retireEditorActivation(path: string, activation: number) {
+    return this.call<boolean>("retire_editor_activation", { path, activation });
   }
   mergePages(src: string, dst: string) {
     return this.call<void>("merge_pages", { src, dst });

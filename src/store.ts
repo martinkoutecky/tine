@@ -282,6 +282,48 @@ function flatten(
   });
 }
 
+/**
+ * Live editor activations, keyed by page name.
+ *
+ * Deliberately NOT a field of `FeedPage`. `clonePages` spread-copies every field
+ * of a page into history snapshots, so a token living on the page object would be
+ * carried into every snapshot and reinstalled by `applyEntry` — handing a restored
+ * editor a RETIRED activation, whose conflicts could then never be answered. An
+ * activation identifies a live editor instance, and a copy of a page is not one.
+ * (GH #254 increment 3; the failure was reproduced against a `FeedPage` field.)
+ */
+const editorActivations = new Map<string, number>();
+
+/** The activation for `pageName`, if this page currently has a live editor. */
+export function editorActivationFor(pageName: string): number | undefined {
+  return editorActivations.get(pageName);
+}
+
+/** Record a freshly minted activation for `pageName`. */
+export function setEditorActivation(pageName: string, activation: number): void {
+  editorActivations.set(pageName, activation);
+}
+
+/**
+ * Forget `pageName`'s activation locally, but only if it is still the one named.
+ *
+ * The local half of compare-and-retire: a retirement racing a newer activation
+ * must not drop the newer one. The core is told separately, and its own
+ * compare-and-retire is the authority.
+ */
+export function clearEditorActivation(pageName: string, activation?: number): boolean {
+  const live = editorActivations.get(pageName);
+  if (live === undefined) return false;
+  if (activation !== undefined && live !== activation) return false;
+  editorActivations.delete(pageName);
+  return true;
+}
+
+/** Drop every activation — graph reset and teardown. */
+export function clearAllEditorActivations(): void {
+  editorActivations.clear();
+}
+
 function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
   const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
   return {
@@ -760,6 +802,10 @@ export function pageToDto(pageName: string): PageDto | null {
     pre_block: preBlock,
     blocks,
     format: p.format,
+    // Which live editor is issuing this save. Read from the registry rather than
+    // carried on the page, so no clone or history snapshot can claim it.
+    // (GH #254 increment 3.)
+    activation: editorActivations.get(p.name),
     // Pin the save to the exact file this page came from (#21). Absent for a
     // brand-new page → the backend resolves the file by name, as before.
     path: p.path,

@@ -643,6 +643,9 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
   };
 }
 
+let mockActivationSeq = 0;
+const mockActivations = new Map<string, number>();
+
 export function mockBackend(): Backend {
   const all = [...PAGES, ...NAMED];
   let managedSync: ManagedSyncStatus | null = null;
@@ -1558,6 +1561,29 @@ export function mockBackend(): Backend {
       return name.startsWith("Friday")
         ? "* something something\n*\n"
         : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
+    },
+    // Activation is a real identity in the app; the mock backend hands out
+    // monotonic ones so store code that stamps and retires them behaves the same
+    // way here. (GH #254 increment 3.)
+    async activateEditor(path: string, intent: "reuse" | "replace") {
+      const live = mockActivations.get(path);
+      if (intent === "reuse" && live !== undefined) {
+        return { activation: live, target: path, prospective: false };
+      }
+      const activation = ++mockActivationSeq;
+      mockActivations.set(path, activation);
+      return { activation, target: path, prospective: false };
+    },
+    async activateAbsentEditor(name: string, kind: PageDto["kind"]) {
+      const target = kind === "journal" ? `journals/${name}.md` : `pages/${name}.md`;
+      const activation = ++mockActivationSeq;
+      mockActivations.set(target, activation);
+      return { activation, target, prospective: true };
+    },
+    async retireEditorActivation(path: string, activation: number) {
+      if (mockActivations.get(path) !== activation) return false;
+      mockActivations.delete(path);
+      return true;
     },
     async getPageByPath(path: string): Promise<PageDto | null> {
       const page = all.find((p) => mockPagePath(p) === path);

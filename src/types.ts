@@ -74,9 +74,30 @@ export interface PageDto {
    *  SPECIFIC file (a duplicate-day stray, #21) saves to its own file rather than
    *  being re-resolved by name to the canonical one. Empty for a brand-new page. */
   path?: string;
+  /** Which live editor instance is issuing this save.
+   *
+   *  Stamped from the activation registry when the DTO is built, NOT carried on
+   *  `FeedPage` — a token on the page object is copied by every clone and history
+   *  snapshot, and the copy would then claim an identity it does not have.
+   *  Absent for an editor-less writer; legal on the ordinary save path, refused on
+   *  the override path. (GH #254 increment 3.) */
+  activation?: number;
   /** Bundled in-app Guide page: read-only, ephemeral, and excluded from normal
    *  graph persistence/search/reference surfaces. */
   guide?: boolean;
+}
+
+/** What an activation request means for a path that already has a live editor. */
+export type ActivationIntent = "reuse" | "replace";
+
+/** The outcome of activating an editor. */
+export interface EditorActivationHandle {
+  activation: number;
+  /** The exact path this activation is live for. For an absent editor this is the
+   *  prospective target resolved at activation time. */
+  target: string;
+  /** True when no file existed at activation time. */
+  prospective: boolean;
 }
 
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal

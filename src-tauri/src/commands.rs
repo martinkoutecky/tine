@@ -2687,6 +2687,76 @@ pub(crate) async fn get_page_by_path(
     .map_err(|error| error.to_string())?
 }
 
+/// Activate an editor over an existing file.
+///
+/// Deliberately separate from `get_page`/`get_page_by_path`. Those are
+/// mixed-purpose reads — some results become store editors, others are read-only,
+/// export, transient, or dropped because the page is already loaded — so minting
+/// there would hand an identity to things that are not editors. An activation
+/// exists exactly when a live editor does. (GH #254 increment 3.)
+#[tauri::command]
+pub(crate) async fn activate_editor(
+    path: String,
+    intent: tine_core::ActivationIntent,
+    state: GraphContext<'_>,
+) -> Result<tine_core::EditorActivationHandle, String> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        slot.legacy_graph()?
+            .activate_editor(&path, intent)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Activate an editor for a page that has no file yet, returning the prospective
+/// target it is live for. Reserves nothing on disk.
+#[tauri::command]
+pub(crate) async fn activate_absent_editor(
+    name: String,
+    kind: PageKind,
+    state: GraphContext<'_>,
+) -> Result<tine_core::EditorActivationHandle, String> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        slot.legacy_graph()?
+            .activate_absent_editor(&name, kind)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Retire an activation, but only if it is still the live one.
+///
+/// Compare-and-retire, never a bare "retire this path": a fire-and-forget
+/// retirement can arrive after a newer activation was installed and would revoke
+/// the wrong editor. Returns whether anything was retired, so a caller racing a
+/// newer activation learns it was superseded instead of silently destroying it.
+#[tauri::command]
+pub(crate) async fn retire_editor_activation(
+    path: String,
+    activation: u64,
+    state: GraphContext<'_>,
+) -> Result<bool, String> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        Ok(slot.legacy_graph()?.retire_editor_activation(
+            &path,
+            tine_core::EditorActivation::from_u64(activation),
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod application_page_authority_tests {
     use super::*;
