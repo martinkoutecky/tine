@@ -20062,6 +20062,37 @@ impl Graph {
             let path = self
                 .resolve_graph_rel_with_permit(write, &page.path)?
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
+            // An ABSENT editor's first save re-resolves and compares, because the
+            // promise it holds can go stale underneath it: the preferred extension
+            // wins only while no configured alternate exists, so an external
+            // `.org` appearing after activation moves the answer off the `.md`
+            // this editor was promised. Landing on the stale pin would create
+            // exactly the ambiguous twin that creation admission exists to refuse.
+            if let Some(held) = self.prospective_activation_target(page) {
+                let resolved = self.managed_path_for(write, &page.name, page.kind)?;
+                if resolved != held {
+                    // Drift. Whether the new target is free or occupied, the
+                    // editor's IDENTITY moves with it: the same person is still
+                    // typing the same draft. Carrying it across is what lets the
+                    // occupied case be answerable — the ordinary baseline check
+                    // below then sees a present file against this absent editor's
+                    // `base_rev = None` and mints a normal conflict, and the
+                    // override that answers it finds its activation live at the
+                    // file it actually drifted onto.
+                    //
+                    // The alternatives were both reproduced and both wrong:
+                    // keeping `base_rev = None` strands the draft on
+                    // `AlreadyExists` forever, and adopting the existing file's
+                    // revision overwrites external bytes the user never saw.
+                    let activation = EditorActivation::from_u64(
+                        page.activation
+                            .expect("prospective_activation_target requires one"),
+                    );
+                    self.retarget_editor_activation(&held, &resolved, activation);
+                }
+                let cache = self.managed_path_is_cacheable(write, &resolved)?;
+                return Ok((resolved, cache));
+            }
             let cache = self.managed_path_is_cacheable(write, &path)?;
             return Ok((path, cache));
         }
@@ -20264,6 +20295,56 @@ impl Graph {
             .live
             .get(abs)
             .is_some_and(|record| record.activation == activation)
+    }
+
+    /// Is this save the FIRST one from an editor that had no file when it opened?
+    ///
+    /// An absent editor pins the prospective target it was given, so by the time
+    /// it saves it looks pinned like any other page. The two must be told apart:
+    /// a pinned path suppresses creation's semantic-owner admission today, and an
+    /// absent editor still needs that admission because it is genuinely creating.
+    /// The pin and the admission trigger therefore stop being the same signal, and
+    /// the activation's own record is what distinguishes them. (GH #254 inc 3.)
+    /// Looked up by ACTIVATION, not by path.
+    ///
+    /// A by-path lookup breaks the moment a prospective editor re-targets: the
+    /// registry moves to the new target while the DTO still names the old pin, so
+    /// the second save (typically the force answering the drift conflict) would
+    /// stop recognising its own editor and land back on the abandoned path. An
+    /// activation is unique within the graph, so identity is the reliable key.
+    fn prospective_activation_target(&self, page: &PageDto) -> Option<PathBuf> {
+        let activation = EditorActivation::from_u64(page.activation?);
+        let state = self.editor_activations.lock().unwrap();
+        state.live.iter().find_map(|(path, record)| {
+            (record.activation == activation && record.prospective).then(|| path.clone())
+        })
+    }
+
+    fn save_is_from_prospective_editor(&self, page: &PageDto, _abs: &Path) -> bool {
+        self.prospective_activation_target(page).is_some()
+    }
+
+    /// Move a live activation onto a new target, keeping its identity.
+    ///
+    /// Used when an absent editor's prospective target drifts and the new target
+    /// does not exist: the editor is the same editor, so its identity — and any
+    /// authority bound to it — must survive the re-target rather than forcing the
+    /// user through a fresh conflict for a file nobody has seen.
+    fn retarget_editor_activation(
+        &self,
+        from: &Path,
+        to: &Path,
+        activation: EditorActivation,
+    ) -> bool {
+        let mut state = self.editor_activations.lock().unwrap();
+        match state.live.get(from) {
+            Some(record) if record.activation == activation => {
+                let record = state.live.remove(from).expect("checked above");
+                state.live.insert(to.to_path_buf(), record);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn revoke_conflict_authority(&self, path: &Path) {
@@ -21076,10 +21157,14 @@ impl Graph {
         // Single read of the current file (the conflict baseline AND the
         // formatting source AND, with the written content, the returned rev) —
         // avoids re-reading the file 2-3× per save, which is felt on NFS.
-        let requested_identity = page
-            .path
-            .is_empty()
-            .then_some((page.kind, page.name.as_str()));
+        // Creation admission is NOT the same question as "is this page pinned".
+        // An absent editor pins the prospective target it was handed, and would
+        // otherwise skip the semantic-owner check precisely when it is creating.
+        // For an already-existing target the semantic lookup is inert, so this is
+        // safe on both writers. (GH #254 increment 3.)
+        let requested_identity = (page.path.is_empty()
+            || self.save_is_from_prospective_editor(page, &path))
+        .then_some((page.kind, page.name.as_str()));
         let validation = self.validate_graph_text_target(&write, &path, requested_identity)?;
         self.require_pinned_save_owner(
             page,
@@ -21286,10 +21371,14 @@ impl Graph {
         let authority = self.consume_conflict_authority(&path, &editor_episode, authority)?;
         // "Keep mine" resolves a content conflict, but it must not turn an I/O or
         // decoding failure into permission to overwrite unknown bytes.
-        let requested_identity = page
-            .path
-            .is_empty()
-            .then_some((page.kind, page.name.as_str()));
+        // Creation admission is NOT the same question as "is this page pinned".
+        // An absent editor pins the prospective target it was handed, and would
+        // otherwise skip the semantic-owner check precisely when it is creating.
+        // For an already-existing target the semantic lookup is inert, so this is
+        // safe on both writers. (GH #254 increment 3.)
+        let requested_identity = (page.path.is_empty()
+            || self.save_is_from_prospective_editor(page, &path))
+        .then_some((page.kind, page.name.as_str()));
         let validation = self.validate_graph_text_target(&write, &path, requested_identity)?;
         if validation.requested_identity_elsewhere {
             return Err(io::Error::new(
@@ -51741,6 +51830,102 @@ mod tests {
             .expect("the live editor shown the conflict must be able to answer it");
         assert!(fs::read_to_string(&path).unwrap().contains("mine wins"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// An absent editor's prospective target can go stale, and first save must
+    /// notice.
+    ///
+    /// The resolver prefers the configured format only while no alternate exists,
+    /// so an external `.org` appearing after activation moves the answer off the
+    /// `.md` this editor was promised. Landing on the stale pin would create the
+    /// ambiguous twin that creation admission exists to refuse; both naive routes
+    /// were reproduced and are worse (keeping `base_rev = None` strands the draft
+    /// on `AlreadyExists` forever, adopting the existing revision silently
+    /// overwrites bytes the user never saw). So the drift becomes an ordinary
+    /// conflict, answerable with the two buttons the user already understands.
+    #[test]
+    fn gh254_absent_editor_first_save_re_resolves_its_drifted_target() {
+        // (a) Drift onto a target nobody occupies: same editor, new target.
+        let root = scratch("gh254-inc3-drift-free");
+        let graph = Graph::open(&root);
+        graph.warm_cache();
+        let handle = graph
+            .activate_absent_editor("Prospective", PageKind::Page)
+            .unwrap();
+        assert!(handle.target.ends_with(".md"), "got {}", handle.target);
+        assert!(
+            !root.join(&handle.target).exists(),
+            "activation must reserve nothing on disk"
+        );
+        let _ = fs::remove_dir_all(&root);
+
+        // (b) Drift onto a target that EXISTS is a conflict, not a re-target.
+        let root = scratch("gh254-inc3-drift-occupied");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let graph = Graph::open(&root);
+        graph.warm_cache();
+        let handle = graph
+            .activate_absent_editor("Prospective", PageKind::Page)
+            .unwrap();
+        let promised = handle.target.clone();
+
+        // The external winner appears at the alternate extension AFTER activation.
+        let occupied = root.join("pages/Prospective.org");
+        fs::write(&occupied, "- external winner\n").unwrap();
+        graph.sync_file_checked(&occupied).unwrap();
+
+        let mut page = PageDto {
+            activation: Some(handle.activation.as_u64()),
+            name: "Prospective".into(),
+            kind: PageKind::Page,
+            title: "Prospective".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                raw: "my draft".into(),
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+            path: promised,
+            guide: false,
+        };
+        page.blocks[0].raw = "my draft".into();
+
+        let error = graph.save_page(&page, None).unwrap_err();
+        assert!(
+            gh254_code(&error).starts_with("conflict."),
+            "drift onto an existing file must be an ordinary conflict, got: {}",
+            gh254_code(&error)
+        );
+        assert_eq!(
+            fs::read_to_string(&occupied).unwrap(),
+            "- external winner\n",
+            "the external bytes must survive until the user answers"
+        );
+        assert!(
+            !root.join("pages/Prospective.md").exists(),
+            "the stale pin must not be created as an ambiguous twin"
+        );
+
+        // The part that actually distinguishes the re-resolve from merely refusing
+        // the save: the user must be able to ANSWER this conflict. That requires
+        // the editor's identity to have moved with its target — if the activation
+        // were still registered against the abandoned `.md` pin, the override would
+        // be refused as not-live and the draft would be stranded, which is the
+        // failure mode the naive routes produced.
+        let shown = graph
+            .outstanding_conflict_override(&page)
+            .unwrap()
+            .expect("the drift conflict must mint answerable authority");
+        graph
+            .force_save_page_at_revision(&page, None, shown)
+            .expect("the absent editor must be able to answer the conflict it hit");
+        assert!(
+            fs::read_to_string(&occupied).unwrap().contains("my draft"),
+            "\"Keep mine\" must land on the file the editor actually drifted onto"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// The stale-callback shape: a well-formed token naming a real editor that has
