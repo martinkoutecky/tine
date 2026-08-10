@@ -3251,6 +3251,13 @@ type PendingStamp = {
  *  watcher instead of stacking a second one that would re-read the same page. */
 const stampWatchers = new Map<string, () => void>();
 
+/** Is a deferred stamp still waiting? The distinction that matters is "retained"
+ *  versus "dropped": a retained request will resume, a dropped one is work the
+ *  user committed and silently lost. Nothing else can observe that difference. */
+export function hasPendingBlockRefStamp(uuid: string): boolean {
+  return pendingBlockRefStamps.has(uuid);
+}
+
 /** A retained stamp belongs to the graph that deferred it. */
 export function clearPendingBlockRefStamps(): void {
   pendingBlockRefStamps.clear();
