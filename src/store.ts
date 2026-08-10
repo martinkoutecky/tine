@@ -65,6 +65,7 @@ import {
   isDirty,
   scheduleSave,
   flushPage,
+  flushPageToQuiescence,
   flushAll,
   forceSave,
   canForceSave,
@@ -454,18 +455,35 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   const loaded = pageByName(name);
   if (expectedPath && loaded?.path !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
-  // Capture the current (possibly unsaved) content first, so the recoverable trash
-  // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
-  // never flush (its save stays refused until the conflict is resolved); blocking
-  // the delete on that flush made such a page *undeletable* — the user could neither
-  // save nor discard it. Deleting is itself a resolution ("I don't want this page"),
-  // and the on-disk version still lands in .tine-trash (recoverable), so a conflict
-  // must not veto the delete. For a merely-dirty page we still flush first (to trash
-  // the latest bytes) and abort only if that genuinely fails.
-  if (isDirty(name) && !isConflicted(name) && !(await flushPage(name))) return false;
-  // Tombstone first so any queued/in-flight save no-ops during the delete, but
-  // DON'T drop the in-memory page until the backend actually deletes it — if the
-  // delete fails, the page (and its unsaved edits) must survive.
+  // Capture the exact loaded instance before awaiting.  A replacement, graph
+  // reload, or path rebind must not let this delete tombstone a later editor that
+  // happens to reuse its logical name.
+  const captured = loaded && {
+    name: loaded.name,
+    kind: loaded.kind,
+    path: loaded.path,
+    generation: pageInstanceGeneration(name),
+  };
+  if (!captured || captured.kind !== kind || captured.generation === null) return false;
+  const stillCaptured = () => {
+    const current = pageByName(name);
+    return !!current
+      && current.name === captured.name
+      && current.kind === captured.kind
+      && current.path === captured.path
+      && pageInstanceGeneration(name) === captured.generation;
+  };
+
+  // A conflicted draft is deliberately not flushed: its current actor winner,
+  // not unrecoverable draft bytes, is what the warning says reaches trash.  For
+  // every other page, drain through quiescence rather than one save so a keystroke
+  // injected during that first save either becomes a second accepted snapshot or
+  // causes this delete to refuse with the draft still live.
+  if (!isConflicted(name) && !(await flushPageToQuiescence(name))) return false;
+  if (!stillCaptured()) return false;
+  // Tombstone synchronously at the quiescent boundary, before yielding to the
+  // backend.  Any queued/in-flight save therefore becomes a no-op, while a failed
+  // backend delete simply lifts this marker and preserves the same draft.
   tombstone(name);
   try {
     if (expectedPath) await backend().deletePage(name, kind, expectedPath);

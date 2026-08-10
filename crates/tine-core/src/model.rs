@@ -3969,6 +3969,7 @@ thread_local! {
     static EDITOR_COMMIT_BEFORE_RECHECK: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static EDITOR_COMMIT_BEFORE_FINAL_REREAD: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static CONFLICT_OBSERVATION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
+    static DELETE_TRASH_AFTER_PRESERVE: std::cell::RefCell<Option<Box<dyn FnOnce(&Path) -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static MANAGED_WRITE_REPLACEMENT_HANDOFF: std::cell::RefCell<Option<HandoffSafe>> = const { std::cell::RefCell::new(None) };
     static SYNC_IDENTITY_AFTER_PREPARE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
@@ -4337,8 +4338,33 @@ pub(crate) fn reset_projection_graph_test_hooks() {
     MANAGED_INVENTORY_READ_RACE.with(|hook| drop(hook.borrow_mut().take()));
     INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| drop(hook.borrow_mut().take()));
     BOUNDED_READ_AFTER_METADATA.with(|hook| drop(hook.borrow_mut().take()));
+    DELETE_TRASH_AFTER_PRESERVE.with(|hook| drop(hook.borrow_mut().take()));
     // The corpus does not exercise rename_page, so its rename-only source
     // removal failpoint has no corpus-state lifetime.
+}
+
+#[cfg(test)]
+pub(crate) fn install_delete_trash_after_preserve_for_test(
+    hook: impl FnOnce(&Path) -> io::Result<()> + 'static,
+) {
+    DELETE_TRASH_AFTER_PRESERVE.with(|slot| {
+        assert!(
+            slot.borrow().is_none(),
+            "delete-trash test hook is already armed"
+        );
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn delete_trash_after_preserve_hook(path: &Path) -> io::Result<()> {
+    DELETE_TRASH_AFTER_PRESERVE
+        .with(|slot| slot.borrow_mut().take().map_or(Ok(()), |hook| hook(path)))
+}
+
+#[cfg(not(test))]
+fn delete_trash_after_preserve_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -8252,61 +8278,71 @@ impl Graph {
         read_projection_optional(parent.final_dir(), &target.filename)
     }
 
-    /// Preserve the actor's exact current journal projection in user-visible,
+    /// Preserve the actor's exact current managed projection in user-visible,
     /// typed recovery trash before the semantic page deletion is authored.
     /// The digest-derived name makes retries idempotent; an existing destination
     /// is accepted only when it contains the same bytes.
-    pub(crate) fn preserve_projection_journal_in_trash(
+    pub(crate) fn preserve_projection_in_trash(
         &self,
         path: &ManagedPath,
-        expected: &str,
+        kind: ManagedTextKind,
+        expected: &[u8],
     ) -> io::Result<PathBuf> {
         let target = self.projection_page_target(path.as_str())?;
-        if !target.absolute_path.starts_with(self.journals_path()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "journal trash source is outside the configured journal tree",
-            ));
-        }
-        if self.read_projection_input(path)?.as_deref() != Some(expected.as_bytes()) {
+        if self.read_projection_input(path)?.as_deref() != Some(expected) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                "journal projection changed before recovery preservation",
+                "managed projection changed before recovery preservation",
             ));
         }
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Journal);
+        // The actor-authenticated semantic kind, not the source directory,
+        // selects the recovery namespace. Imported managed text may validly
+        // live outside the configured pages/ or journals/ roots.
+        let trash = typed_trash_dir(
+            &self.root,
+            match kind {
+                ManagedTextKind::Page => TrashEntryKind::Page,
+                ManagedTextKind::Journal => TrashEntryKind::Journal,
+            },
+        );
         self.ensure_trash_write_target(&trash)?;
         fs::create_dir_all(&trash)?;
         let extension = target
             .absolute_path
             .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("txt");
+            .and_then(|value| value.to_str());
         let mut identity = Sha256::new();
         identity.update(path.as_str().as_bytes());
         identity.update([0]);
-        identity.update(expected.as_bytes());
+        identity.update(expected);
         // A valid near-limit source name plus a digest prefix could itself
         // exceed portable component limits on the recovery path.
-        let destination = trash.join(format!("managed-{:x}.{extension}", identity.finalize()));
-        match atomic_write_new(&destination, expected.as_bytes()) {
+        let destination_name = format!("managed-{:x}", identity.finalize());
+        let destination = extension
+            .filter(|extension| !extension.is_empty())
+            .map_or_else(
+                || trash.join(&destination_name),
+                |extension| trash.join(format!("{destination_name}.{extension}")),
+            );
+        match atomic_write_new(&destination, expected) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if fs::read(&destination)?.as_slice() != expected.as_bytes() {
+                if fs::read(&destination)?.as_slice() != expected {
                     return Err(io::Error::new(
                         io::ErrorKind::AlreadyExists,
-                        "journal recovery destination contains different bytes",
+                        "managed recovery destination contains different bytes",
                     ));
                 }
             }
             Err(error) => return Err(error),
         }
-        if fs::read(&destination)?.as_slice() != expected.as_bytes() {
+        if fs::read(&destination)?.as_slice() != expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "journal recovery bytes changed after publication",
+                "managed recovery bytes changed after publication",
             ));
         }
+        delete_trash_after_preserve_hook(&target.absolute_path)?;
         Ok(destination)
     }
 

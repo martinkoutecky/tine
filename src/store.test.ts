@@ -1652,6 +1652,54 @@ describe("save engine (persistence)", () => {
     expect(saveSpy.mock.calls[1][1]).toBe("rev2");
   });
 
+  it("delete drains an edit injected into its first save before tombstoning", async () => {
+    load([blk("first accepted draft")]);
+    let finishFirstSave!: (revision: string) => void;
+    saveSpy
+      .mockImplementationOnce(() => new Promise<string>((resolve) => { finishFirstSave = resolve; }))
+      .mockResolvedValueOnce("rev2");
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+
+    markDirty("Test");
+    const firstSave = flushPage("Test");
+    await vi.advanceTimersByTimeAsync(0); // let savePage enter its first await
+    const firstBlock = doc.pages[0].roots[0];
+    setRaw(firstBlock, "second accepted draft"); // typed while the first save is in flight
+    const deleting = deletePage("Test", "page");
+    finishFirstSave("rev1");
+
+    await expect(firstSave).resolves.toBe(true);
+    await expect(deleting).resolves.toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect((saveSpy.mock.calls[1][0] as PageDto).blocks[0].raw).toBe("second accepted draft");
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    deleteSpy.mockRestore();
+  });
+
+  it("retains the loaded draft when the delete quiescence barrier cannot save it", async () => {
+    load([blk("must remain editable")]);
+    saveSpy.mockRejectedValueOnce(new Error("write refused"));
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+
+    markDirty("Test");
+    await expect(deletePage("Test", "page")).resolves.toBe(false);
+    expect(pageByName("Test")).toBeDefined();
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("must remain editable");
+    expect(deleteSpy).not.toHaveBeenCalled();
+    deleteSpy.mockRestore();
+  });
+
+  it("retains the captured draft when the managed delete is deferred", async () => {
+    load([blk("still present after deferred delete")]);
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockRejectedValue(new Error("managed delete deferred"));
+
+    await expect(deletePage("Test", "page")).resolves.toBe(false);
+    expect(pageByName("Test")).toBeDefined();
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("still present after deferred delete");
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    deleteSpy.mockRestore();
+  });
+
   it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
@@ -1918,6 +1966,7 @@ describe("save engine (persistence)", () => {
     // so a conflicted page could be neither saved nor deleted. Delete IS a resolution;
     // the on-disk version still goes to .tine-trash (recoverable).
     expect(await deletePage("Test", "page")).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1); // conflicted retained draft is never flushed
     expect(pageByName("Test")).toBeUndefined();
   });
 

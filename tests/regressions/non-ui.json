@@ -1408,7 +1408,7 @@
         "all"
       ],
       "layer": "core-native",
-      "status": "fixing",
+      "status": "covered",
       "coverage": {
         "tests": [
           "crates/tine-core/src/oplog/shadow_projection.rs",
@@ -3442,6 +3442,32 @@
         ]
       },
       "notes": "GH #254 increment 2, adversarial implementation verification finding 1 (CRITICAL) and the reachable half of finding 2. A force request named its authority only by path plus loaded revision, so consume_conflict_authority could only check SELF-consistency - that the live token is the newest - never that the user had seen it. Reachable data loss with no malicious writer: an external editor or sync client publishes B after the banner showed A; two force requests are in flight under that one banner (the button is not disabled while its request is pending) and the per-page save queue serializes them; the first correctly refuses B and, being a coherent observation, mints fresh authority FOR B; the second, issued before B existed, consumed it and overwrote B. A conflict error now carries the observation epoch it minted at, direct_save_error_message emits it as 'conflict:<n>', the frontend stores it with the banner and echoes it back on force, and consumption requires the presented epoch to equal the live token's. Found while fixing: checking ownership AFTER taking would let one stray duplicate click disarm the banner permanently, so a mis-addressed override is now refused WITHOUT spending the live token - covered by its own test. A force that can name no observation is refused at the command boundary rather than allowed to consume whatever is current. Necessity: all three new core tests fail against the pre-fix check."
+    },
+    {
+      "id": "REG-MANAGED-DELETE-TRASH-20260810",
+      "title": "Managed page and journal deletion preserves the exact accepted projection bytes in typed trash before accepting the tombstone",
+      "family": "managed-storage-data-safety",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "android"
+      ],
+      "layer": "core-native",
+      "status": "fixing",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/sync_runtime.rs",
+          "src/store.test.ts"
+        ],
+        "scenario": "managed-delete.typed-trash-precedes-tombstone",
+        "failBefore": "source-proven"
+      },
+      "notes": "Accepted managed-storage safety repair, 2026-08-10. An ordinary managed delete derives its exact page ID, accepted path, kind and actor source bytes from one actor turn; durably publishes those exact bytes to logseq/.tine-trash/pages or journals with no overwrite; then re-proves the same actor source, page identity and accepted-frontier root before authoring exactly one DeletePage. The focused Rust tests cover CRLF/layout recovery for an imported page and journal, original extension, idempotent unpinned retry, the pre-existing TrashJournalFile route, malformed trash, and a source race after preservation; frontend tests cover the bounded page-local quiescence barrier, in-flight second edit, retained failure draft, and conflict no-flush behavior. Source-proven fail-before: the prior ordinary DeletePage authored its semantic tombstone without any preservation/re-proof, and its frontend path performed only one dirty flush. Direct Files backend/trash semantics remain unchanged."
     }
   ]
 }

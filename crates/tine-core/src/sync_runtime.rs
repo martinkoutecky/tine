@@ -11132,7 +11132,13 @@ impl RuntimeActor {
                 name,
                 page_kind,
                 expected_path,
-            } => self.plan_application_page_delete(&name, page_kind, expected_path.as_deref())?,
+            } => {
+                return self.delete_application_page_to_trash(
+                    &name,
+                    page_kind,
+                    expected_path.as_deref(),
+                )
+            }
             SyncApplicationGraphMutationRequest::MergePages {
                 source_path,
                 destination_path,
@@ -11276,12 +11282,17 @@ impl RuntimeActor {
         Ok(Some(plan.transaction().clone()))
     }
 
-    fn plan_application_page_delete(
-        &self,
+    /// Delete one ordinary managed page only after its exact accepted projection
+    /// bytes are durably preserved in typed recovery trash.  This is deliberately
+    /// actor-local and point-addressed: an imported managed path outside the
+    /// configured roots remains a page or journal according to its accepted
+    /// semantic kind, without a graph-wide inventory walk.
+    fn delete_application_page_to_trash(
+        &mut self,
         name: &str,
         page_kind: SyncPageKind,
         expected_path: Option<&str>,
-    ) -> Result<Option<OperationTransaction>, SyncApplicationPageRequestError> {
+    ) -> Result<SyncApplicationUnitOutcome, SyncApplicationPageRequestError> {
         let runtime = self
             .runtime
             .as_ref()
@@ -11290,7 +11301,12 @@ impl RuntimeActor {
             .map_err(map_editor_application_error)?
         {
             EditorNameState::Exact(page_id) => page_id,
-            EditorNameState::Missing { .. } if expected_path.is_none() => return Ok(None),
+            // Retrying an already accepted unpinned delete is harmless.  An
+            // expected path means the caller was deleting one precise loaded
+            // instance, so its disappearance is instead a stale-target refusal.
+            EditorNameState::Missing { .. } if expected_path.is_none() => {
+                return Ok(SyncApplicationUnitOutcome::Applied)
+            }
             EditorNameState::Missing { .. } => {
                 return Err(SyncApplicationPageRequestError::ActorRefusedAt(
                     "delete_stale_page_target",
@@ -11303,14 +11319,80 @@ impl RuntimeActor {
             }
         };
         let current = self.load_application_page_id_ready(page_id)?;
-        if expected_path.is_some_and(|path| current.page.path != path) {
+        if expected_path.is_some_and(|path| current.editor.page.path != path)
+            || current.editor.page.name != name
+            || SyncPageKind::from(current.editor.page.kind) != page_kind
+        {
             return Err(SyncApplicationPageRequestError::ActorRefusedAt(
                 "delete_stale_page_target",
             ));
         }
-        OperationTransaction::new(vec![SemanticOperation::DeletePage { page_id }])
-            .map(Some)
-            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_plan"))
+        let path = ManagedPath::parse(current.editor.page.path.clone())
+            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_page_path"))?;
+        let accepted_frontier = runtime
+            .engine()
+            .accepted_frontier_root()
+            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_frontier"))?;
+        let bytes = self
+            .graph
+            .read_projection_input(&path)
+            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_page_read"))?
+            .ok_or(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_page_missing",
+            ))?;
+        let source = std::str::from_utf8(&bytes)
+            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_page_encoding"))?;
+        if current.page.rev.as_deref() != Some(crate::model::content_rev(source).as_str()) {
+            return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_stale_projection",
+            ));
+        }
+        let expected_editor_revision = current.revision.clone();
+        let expected_page_revision = current.page.rev.clone();
+        let expected_kind = current.editor.page.kind;
+        self.graph
+            .preserve_projection_in_trash(&path, expected_kind, &bytes)
+            .map_err(|_| {
+                SyncApplicationPageRequestError::ActorRefusedAt("delete_trash_preserve")
+            })?;
+
+        // The recovery write is durable but not part of the managed projection
+        // transaction.  Do not author a tombstone against a source, page, or
+        // accepted frontier that moved while that exact-byte preservation ran.
+        let after = match self.load_application_exact_ready(path.as_str())? {
+            ApplicationExactLoad::Loaded(current) => current,
+            ApplicationExactLoad::Missing | ApplicationExactLoad::Ambiguous => {
+                return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                    "delete_recheck_identity",
+                ))
+            }
+        };
+        let after_bytes = self
+            .graph
+            .read_projection_input(&path)
+            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_recheck_read"))?
+            .ok_or(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_recheck_missing",
+            ))?;
+        let after_frontier = runtime.engine().accepted_frontier_root().map_err(|_| {
+            SyncApplicationPageRequestError::ActorRefusedAt("delete_recheck_frontier")
+        })?;
+        if after_bytes != bytes
+            || after.editor.page.page_id != page_id
+            || after.editor.page.path != path
+            || after.editor.page.kind != expected_kind
+            || after.revision != expected_editor_revision
+            || after.page.rev != expected_page_revision
+            || after_frontier != accepted_frontier
+        {
+            return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_recheck_changed",
+            ));
+        }
+        let transaction =
+            OperationTransaction::new(vec![SemanticOperation::DeletePage { page_id }])
+                .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_plan"))?;
+        self.execute_application_unit_transaction(transaction)
     }
 
     fn plan_application_page_merge(
@@ -11540,7 +11622,7 @@ impl RuntimeActor {
             ));
         }
         self.graph
-            .preserve_projection_journal_in_trash(&path, source)
+            .preserve_projection_in_trash(&path, ManagedTextKind::Journal, source.as_bytes())
             .map_err(|_| {
                 SyncApplicationPageRequestError::ActorRefusedAt("journal_trash_preserve")
             })?;
@@ -22243,7 +22325,7 @@ mod tests {
             &handle,
             &fixture,
             "content/nested pages/Stray.md",
-            b"- unchanged rescue bytes\n",
+            b"layout:: CRLF preserved\r\n\r\n- unchanged rescue bytes\r\n",
         );
         assert_eq!(
             handle
@@ -22256,6 +22338,8 @@ mod tests {
         );
         let (rescued, _) = load_application_logical(&handle, "Rescued Page", SyncPageKind::Page);
         assert_eq!(rescued.blocks[0].raw, "unchanged rescue bytes");
+        let rescued_bytes =
+            fs::read(fixture.graph_root().join("content/nested pages/Stray.md")).unwrap();
         assert_eq!(
             handle
                 .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
@@ -22266,6 +22350,29 @@ mod tests {
                 .unwrap(),
             SyncApplicationUnitOutcome::Applied
         );
+        let page_trash = fixture.graph_root().join("logseq/.tine-trash/pages");
+        let page_recovery = fs::read_dir(&page_trash)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(page_recovery.len(), 1);
+        assert_eq!(
+            page_recovery[0].extension().and_then(|ext| ext.to_str()),
+            Some("md")
+        );
+        assert_eq!(fs::read(&page_recovery[0]).unwrap(), rescued_bytes);
+        // An unpinned retry is idempotent: no second tombstone or recovery file.
+        assert_eq!(
+            handle
+                .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                    name: "Rescued Page".into(),
+                    page_kind: SyncPageKind::Page,
+                    expected_path: None,
+                })
+                .unwrap(),
+            SyncApplicationUnitOutcome::Applied
+        );
+        assert_eq!(fs::read_dir(&page_trash).unwrap().count(), 1);
         assert!(matches!(
             handle
                 .load_application_page(SyncApplicationPageLoadRequest {
@@ -22310,6 +22417,43 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(recovery.len(), 1);
         assert_eq!(fs::read_to_string(&recovery[0]).unwrap(), journal_bytes);
+
+        // The ordinary DeletePage route must use the actor's semantic journal
+        // kind even for a journal imported outside the configured journal root.
+        let imported_journal_path = "archive/imported/2026_08_11.org";
+        let imported_journal_bytes = b"layout:: CRLF\r\n\r\n- imported journal body\r\n";
+        admit_external_page(
+            &handle,
+            &fixture,
+            imported_journal_path,
+            imported_journal_bytes,
+        );
+        let (imported_journal, _) = load_application_exact(&handle, imported_journal_path);
+        assert_eq!(imported_journal.kind, PageKind::Journal);
+        assert_eq!(
+            handle
+                .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                    name: imported_journal.name,
+                    page_kind: SyncPageKind::Journal,
+                    expected_path: Some(imported_journal.path),
+                })
+                .unwrap(),
+            SyncApplicationUnitOutcome::Applied
+        );
+        let journal_recovery =
+            fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/journals"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+        assert_eq!(journal_recovery.len(), 2);
+        let imported_recovery = journal_recovery
+            .iter()
+            .find(|path| fs::read(path).unwrap() == imported_journal_bytes)
+            .expect("typed journal trash must contain the exact imported bytes");
+        assert_eq!(
+            imported_recovery.extension().and_then(|ext| ext.to_str()),
+            Some("org")
+        );
 
         let winner_path = "content/nested pages/Conflict Winner.md";
         let conflict_path =
@@ -22405,6 +22549,91 @@ mod tests {
             fs::read_to_string(&conflict_recovery[0]).unwrap(),
             "status:: theirs\n\n- shared block\n- peer wording\n"
         );
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn application_delete_refuses_a_projection_race_after_exact_trash_preservation() {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-delete-trash-projection-race");
+        let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
+        drive_initial_feed(&handle);
+        let path = "content/nested pages/Race Before Delete.md";
+        let accepted = b"layout:: accepted\r\n\r\n- first accepted body\r\n";
+        let foreign = b"layout:: foreign\r\n\r\n- must survive refusal\r\n";
+        admit_external_page(&handle, &fixture, path, accepted);
+        let (page, _) = load_application_exact(&handle, path);
+
+        crate::model::install_delete_trash_after_preserve_for_test({
+            let foreign = foreign.to_vec();
+            move |source| fs::write(source, &foreign)
+        });
+        assert!(matches!(
+            handle.mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                name: page.name,
+                page_kind: SyncPageKind::Page,
+                expected_path: Some(page.path),
+            }),
+            Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_recheck_changed"
+            ))
+        ));
+        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
+        let recovery = fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(recovery.len(), 1);
+        assert_eq!(fs::read(&recovery[0]).unwrap(), accepted);
+        // The guarded DeletePage transaction was never authored, so the
+        // accepted semantic page remains available for an explicit later retry.
+        assert!(matches!(
+            handle.load_application_page(SyncApplicationPageLoadRequest {
+                page: SyncApplicationPageSelector::ExactPath { path: path.into() },
+            }),
+            Ok(SyncApplicationPageLoadOutcome::Loaded { .. })
+        ));
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn application_delete_refuses_malformed_trash_without_losing_the_source() {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-delete-trash-malformed-target");
+        let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
+        drive_initial_feed(&handle);
+        let path = "content/nested pages/Keep When Trash Is Broken.md";
+        let accepted = b"- exact source remains when recovery target is malformed\n";
+        admit_external_page(&handle, &fixture, path, accepted);
+        let (page, _) = load_application_exact(&handle, path);
+        fs::create_dir_all(fixture.graph_root().join("logseq")).unwrap();
+        fs::write(
+            fixture.graph_root().join("logseq/.tine-trash"),
+            b"not a directory",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            handle.mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                name: page.name,
+                page_kind: SyncPageKind::Page,
+                expected_path: Some(page.path),
+            }),
+            Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_trash_preserve"
+            ))
+        ));
+        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), accepted);
+        assert!(matches!(
+            handle.load_application_page(SyncApplicationPageLoadRequest {
+                page: SyncApplicationPageSelector::ExactPath { path: path.into() },
+            }),
+            Ok(SyncApplicationPageLoadOutcome::Loaded { .. })
+        ));
         assert!(matches!(
             handle.clean_shutdown().unwrap(),
             SyncShutdownOutcome::Safe(_)

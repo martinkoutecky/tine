@@ -701,6 +701,29 @@ export async function flushPage(name: string): Promise<boolean> {
   return ok;
 }
 
+/** Drain one page's save chain until it is clean and no write remains in flight.
+ *
+ * Delete uses this rather than one flush: an edit may land while its first save
+ * awaits the backend, which makes the page dirty again after that save resolves.
+ * The next turn must durably accept that newer snapshot too, or deletion must
+ * refuse while retaining the draft.  This is deliberately page-local and
+ * bounded; graph-wide flushAll semantics (assets and unrelated drafts) are not
+ * part of deleting one page. */
+export async function flushPageToQuiescence(name: string): Promise<boolean> {
+  if (!doc.loaded || isConflicted(name) || deletedPages.has(name)) return false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (isConflicted(name) || deletedPages.has(name)) return false;
+    const inFlight = saveChain.get(name);
+    if (inFlight) {
+      if (!(await inFlight)) return false;
+      continue;
+    }
+    if (!dirty.has(name)) return true;
+    if (!(await enqueueSave(name))) return false;
+  }
+  return !dirty.has(name) && !saveChain.has(name) && !isConflicted(name) && !deletedPages.has(name);
+}
+
 /** Retire every page touched by a cut against the exact instances recorded in
  * the clipboard grant. Preflight the whole set before starting any writes, then
  * bind the same identity+generation check into each queued save at snapshot and
