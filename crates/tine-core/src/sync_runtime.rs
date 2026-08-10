@@ -12690,11 +12690,35 @@ impl RuntimeActor {
     }
 
     fn settle_startup_negative_read(&mut self) -> EditorTurnReadiness {
-        if self.clean_startup_projection_read_available() {
-            self.prepare_editor_turn()
-        } else {
-            EditorTurnReadiness::Ready
+        if !self.clean_startup_projection_read_available() {
+            return EditorTurnReadiness::Ready;
         }
+        let settled = self.prepare_editor_turn();
+        if !matches!(settled, EditorTurnReadiness::Ready) {
+            return settled;
+        }
+
+        // The Safe-open census can discover an addition immediately, but an
+        // old path absent from that census remains pending until one independent
+        // full scan confirms it. A negative read must not turn that retained old
+        // owner into a NewPage draft: it asks the actor to settle one more
+        // rescan epoch so a closed-interval rename is admitted as one batch.
+        if self
+            .observe(vec![SyncWatcherObservation::RescanRequired])
+            .is_err()
+        {
+            return match self.prepare_editor_turn() {
+                EditorTurnReadiness::Ready => {
+                    EditorTurnReadiness::Deferred(SyncEditorDeferred::BlockedRecovery {
+                        batch_id: None,
+                        phase: SyncLocalMutationPhase::Capture,
+                        retained_publication: false,
+                    })
+                }
+                deferred => deferred,
+            };
+        }
+        self.prepare_editor_turn()
     }
 
     fn clean_startup_projection_read_available(&self) -> bool {
@@ -27922,6 +27946,7 @@ mod tests {
                 fixture.graph_root().join(new_path),
             )
             .unwrap();
+            let manifests_before_reopen = fixture.manifest_count();
             let reopened = active_handle(SyncRuntimeHandle::open(request));
             assert!(
                 reopened
@@ -27938,12 +27963,51 @@ mod tests {
                     },
                 })
                 .unwrap();
-            assert!(matches!(
-                loaded,
+            match loaded {
                 SyncEditorLoadOutcome::Loaded { page }
                     if page.path == new_path
-                        && page.blocks[0].content == "external rename while Tine was closed"
+                        && page.blocks[0].content == "external rename while Tine was closed" => {}
+                other => panic!("closed-interval rename did not settle to the new page: {other:?}"),
+            }
+            assert!(matches!(
+                reopened
+                    .load_editor_page(SyncEditorLoadRequest {
+                        page: SyncEditorPageSelector::Name {
+                            name: "before closed rename".into(),
+                            page_kind: SyncPageKind::Page,
+                        },
+                    })
+                    .unwrap(),
+                SyncEditorLoadOutcome::NewPage { draft }
+                    if draft.name == "before closed rename" && draft.page_kind == SyncPageKind::Page
             ));
+            assert!(matches!(
+                reopened
+                    .load_application_page(SyncApplicationPageLoadRequest {
+                        page: SyncApplicationPageSelector::ExactPath {
+                            path: new_path.into(),
+                        },
+                    })
+                    .unwrap(),
+                SyncApplicationPageLoadOutcome::Loaded { page, .. }
+                    if page.path == new_path
+                        && page.blocks[0].raw == "external rename while Tine was closed"
+            ));
+            assert!(matches!(
+                reopened
+                    .load_application_page(SyncApplicationPageLoadRequest {
+                        page: SyncApplicationPageSelector::ExactPath {
+                            path: old_path.into(),
+                        },
+                    })
+                    .unwrap(),
+                SyncApplicationPageLoadOutcome::Missing { draft: None }
+            ));
+            assert_eq!(
+                fixture.manifest_count(),
+                manifests_before_reopen + 1,
+                "the confirmed closed-interval rename must admit one atomic replacement batch"
+            );
             assert!(!reopened.status().unwrap().watcher.pending);
             assert!(matches!(
                 reopened.clean_shutdown().unwrap(),

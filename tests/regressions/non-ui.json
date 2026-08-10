@@ -3396,6 +3396,28 @@
       "notes": "Direct Files performance audit 2026-08-09, finding F6. validate_graph_text_portable_aliases_path_local enumerates each path component's directory looking for case/NFC aliases of the target, and built a PortablePathKey for EVERY entry - a String allocation plus NFD -> default case fold -> NFC per filename. The audit's controlled experiment held graph size constant and varied only layout: 4.87 ms/save with 4,000 pages in one directory versus 0.70 ms with 40 per subdirectory, i.e. 6.9x on layout alone, growing without bound on the one directory that only ever grows (journals/) and running inside the identity-mutation lock. PortablePathKey::graph_text_components_match answers the same question without building either key when both sides are ASCII, where NFD/NFC are the identity and default case folding is exactly ASCII lowercasing. Controlled A/B on this box, same graph and build, 4,000 pages in one directory, 60 saves x 3 runs: 2.54-2.67 ms median before, 1.39-1.41 ms after (~1.8x). The both-sides-ASCII guard is load-bearing rather than redundant: folding can PRODUCE ASCII from non-ASCII (U+212A KELVIN SIGN folds to k, U+FB01 to fi), so a non-ASCII name can legitimately collide with an ASCII one and must still take the full fold. This is an identity boundary whose failure mode is admitting a collision, so the test asserts agreement with the full fold over every ordered pair of a name set that includes NFC/NFD twins, the sharp s, Cyrillic, and both fold-to-ASCII traps. Residual NOT fixed: the directory enumeration is still O(entries); removing that needs the maintained admission index to become the authority for this check, which is a data-safety boundary change and its own packet."
     },
     {
+      "id": "REG-SYNC-SAFE-REOPEN-NEGATIVE-RENAME-001",
+      "title": "A Safe reopen confirms a closed-interval rename before a negative page lookup offers a new draft",
+      "family": "sync-data-safety",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/sync_runtime.rs::clean_reopen_negative_lookup_settles_closed_interval_addition_and_rename"
+        ],
+        "scenario": "sync.safe-reopen-negative-lookup-confirms-closed-interval-rename",
+        "failBefore": "proven"
+      },
+      "notes": "Fail-before at 3158cbae: after a Safe handoff, a filesystem rename during the closed interval made the first editor name lookup return NewPage. The startup census correctly found the new file but only staged the old path absence; its post-drain scan is intentionally not independent, so it could acknowledge the queue without admitting the replacement. A negative read now requests one bounded rescan epoch before returning Missing/NewPage. The regression proves the single replacement batch removes the old name and exact path, exposes the new name and exact path with its source content, and leaves no watcher work pending."
+    },
+    {
       "id": "REG-CONFLICT-OVERRIDE-NAMES-ITS-OBSERVATION-GH254",
       "title": "A duplicated \"Keep mine\" spent authority minted for a newer winner nobody was shown",
       "family": "direct-save-fidelity",
