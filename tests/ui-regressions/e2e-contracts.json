@@ -945,6 +945,31 @@
    ],
    "stability": "new",
    "notes": "GH #304, fixed in GH #254 increment 3. Two files legitimately share one page name (the duplicate-day stray of #21, or same-titled pages in different folders). Replacing the loaded instance destroyed the unsaved edit, and the dirty mark SURVIVED to describe the replacement's content, so the next save wrote the wrong file's bytes under the user's intent. The journey deliberately continues past 'the edit survived' to prove the refusal is not a trap: a survival-only assertion would pass on an implementation that never shows the requested file at all, which is why the non-wedging half is blocking rather than advisory."
+  },
+  "scripts/e2e-conflict-keep-mine.mjs": {
+   "contracts": [
+    {
+     "class": "exact-safety",
+     "userOutcome": "Clicking \"Keep mine\" cannot overwrite an external write that landed after the banner appeared — bytes the user was never shown are never discarded by a click answering an older conflict.",
+     "blocking": true
+    },
+    {
+     "class": "stateful-ux",
+     "userOutcome": "When that click is refused, a live banner returns for the conflict the user now actually has, so they are never left holding an unsaved edit with nothing to act on.",
+     "blocking": true
+    }
+   ],
+   "acceptableVariations": [
+    "Banner wording, styling, and whether it re-renders in place or is replaced.",
+    "How long the refused override takes to surface the fresh banner.",
+    "Whether the second external write is delivered by the watcher or by a save-time re-read."
+   ],
+   "nonRequirements": [
+    "Exact banner DOM nesting, button order, or CSS classes beyond the ones this journey selects.",
+    "The precise observation-epoch numbering."
+   ],
+   "stability": "new",
+   "notes": "GH #254. This is the sequence increment 2's adversarial rounds 3 and 4 each found broken in different places, and which nothing outside a mocked backend has ever driven. The failure is silent: \"Keep mine\" appears to work, and what is lost is someone else's write that the user cannot see was ever there. The non-wedging half is blocking because a refusal that leaves no live banner strands the edit — a conflicted page is skipped by the ordinary save path, so the user has no route back."
   }
  }
 }
