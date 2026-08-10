@@ -34,7 +34,15 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
-      - run: cargo test --locked --all-features
+      # Run each physical test in its own process. Besides preventing one native
+      # Windows abort from hiding every later result, this gives certification a
+      # complete fail-before receipt instead of the libtest process's first
+      # aggregate crash code.
+      - name: Install cargo-nextest 0.9.143
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.143
+      - run: cargo nextest run --locked --all-features --no-fail-fast
 
   android-compile:
     name: Android arm64 compile
