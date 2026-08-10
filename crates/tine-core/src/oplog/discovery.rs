@@ -486,7 +486,7 @@ mod tests {
         let authority = find_named_file(&unsupported_enrollment.runtime_root, "authority-v1.claim");
         let claim = String::from_utf8(fs::read(&authority).unwrap())
             .unwrap()
-            .replacen("\"schema_version\":1", "\"schema_version\":4294967295", 1);
+            .replacen("\"schema_version\":2", "\"schema_version\":4294967295", 1);
         fs::write(&authority, claim).unwrap();
         assert_eq!(
             discover_startup(
@@ -514,11 +514,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_truncated_and_authentication_failed_enrollment_is_never_active() {
+    fn malformed_truncated_and_corrupt_enrollment_is_never_active() {
         for (label, damage) in [
             ("truncated-head", "head"),
             ("truncated-record", "record"),
-            ("authentication-failed", "authority"),
+            ("record-corrupt", "record-integrity"),
         ] {
             let world = TestWorld::new(label);
             create_active(
@@ -540,13 +540,16 @@ mod tests {
                     );
                     fs::write(record, b"{").unwrap();
                 }
-                "authority" => {
-                    let authority = find_named_file(&world.runtime_root, "authority-v1.claim");
-                    mutate_authority_key(&authority);
-                    assert!(matches!(
-                        inspect_existing_enrollment_at(&world.runtime_root, world.graph_resource()),
-                        Err(EnrollmentError::CheckpointAuthenticationFailed)
-                    ));
+                "record-integrity" => {
+                    let record = find_file_containing(&world.runtime_root, b"\"integrity_tag\":");
+                    mutate_record_integrity_tag(&record);
+                    let error =
+                        inspect_existing_enrollment_at(&world.runtime_root, world.graph_resource())
+                            .unwrap_err();
+                    assert!(
+                        matches!(error, EnrollmentError::RecordDigestMismatch(_)),
+                        "expected content-addressed record corruption failure, got {error:?}"
+                    );
                 }
                 _ => unreachable!(),
             }
@@ -675,6 +678,29 @@ mod tests {
         panic!("did not find {expected} below {}", root.display());
     }
 
+    fn find_file_containing(root: &Path, expected: &[u8]) -> PathBuf {
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    pending.push(entry.path());
+                } else if fs::read(entry.path())
+                    .unwrap()
+                    .windows(expected.len())
+                    .any(|window| window == expected)
+                {
+                    return entry.path();
+                }
+            }
+        }
+        panic!(
+            "did not find file containing {:?} below {}",
+            String::from_utf8_lossy(expected),
+            root.display()
+        );
+    }
+
     fn promoted_state_path(archive: &Path, binding: &EnrollmentBindingV1) -> PathBuf {
         archive
             .join("engine-history")
@@ -682,16 +708,16 @@ mod tests {
             .join("promoted-runtime.state")
     }
 
-    fn mutate_authority_key(path: &Path) {
-        let mut claim = String::from_utf8(fs::read(path).unwrap()).unwrap();
-        let start = claim.find("\"key\":[").unwrap() + "\"key\":[".len();
-        let end = claim[start..]
-            .find(',')
+    fn mutate_record_integrity_tag(path: &Path) {
+        let mut record = String::from_utf8(fs::read(path).unwrap()).unwrap();
+        let start = record.find("\"integrity_tag\":").unwrap() + "\"integrity_tag\":".len();
+        let end = record[start..]
+            .find('}')
             .map(|offset| start + offset)
             .unwrap();
-        let old = claim[start..end].parse::<u8>().unwrap();
-        claim.replace_range(start..end, &old.wrapping_add(1).to_string());
-        fs::write(path, claim).unwrap();
+        let old = record[start..end].parse::<u32>().unwrap();
+        record.replace_range(start..end, &(old ^ 1).to_string());
+        fs::write(path, record).unwrap();
     }
 
     fn copy_tree(from: &Path, to: &Path) {

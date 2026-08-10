@@ -21,6 +21,10 @@ pub(crate) mod discovery;
 pub(crate) mod document_state;
 #[allow(dead_code)]
 pub(crate) mod enrollment;
+// The only keyed enrollment compatibility code.  Current enrollment state is
+// integrity-checked, while immutable v1/v5 history remains verifiable.
+pub(crate) mod enrollment_legacy_hmac;
+pub(crate) use enrollment_legacy_hmac as legacy_enrollment_verifier;
 pub(crate) mod evidence_index;
 #[allow(dead_code)]
 pub(crate) mod exact_external_feed;

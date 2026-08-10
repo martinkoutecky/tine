@@ -5544,6 +5544,7 @@ dependencies = [
  "cap-std",
  "caseless",
  "chrono",
+ "crc32fast",
  "dirs",
  "fs2",
  "libc",
