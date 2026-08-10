@@ -4617,6 +4617,13 @@ impl HelperProcess {
             .arg("--nocapture")
             .env(HELPER_MODE, mode)
             .env(HELPER_WORLD, serde_json::to_string(world).unwrap())
+            // The parent runs lifecycle tests on this same deep stack. A
+            // re-exec helper instead enters through libtest's default worker,
+            // so configure that process before libtest creates its worker.
+            .env(
+                "RUST_MIN_STACK",
+                crate::test_support::TEST_DEEP_STACK_BYTES.to_string(),
+            )
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped());
         if let Some(profile) = profile {

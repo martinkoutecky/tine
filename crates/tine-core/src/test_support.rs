@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-const TEST_DEEP_STACK_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const TEST_DEEP_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 #[track_caller]
 pub(crate) fn remove_dir_all(path: impl AsRef<Path>) {
