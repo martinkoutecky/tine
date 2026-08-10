@@ -599,6 +599,10 @@ describe("tag-page table", () => {
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await flushMicrotasks();
     await flushMicrotasks();
+    // A page saving for the first time acquires its editor activation over IPC
+    // (GH #254 increment 3), which adds one await to that first save only. The
+    // assertions below are unchanged — this just lets the async work settle.
+    await flushMicrotasks();
 
     const today = pageByName(todayName)!;
     const newId = today.roots[today.roots.length - 1];

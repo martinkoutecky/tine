@@ -8,7 +8,14 @@
 // page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
 // so the store↔persistence import cycle resolves cleanly.
 
-import { doc, pageByName, pageInstanceGeneration, pageToDto } from "./store";
+import {
+  doc,
+  editorActivationFor,
+  pageByName,
+  pageInstanceGeneration,
+  pageToDto,
+  setEditorActivation,
+} from "./store";
 import { backend } from "./backend";
 import { markConflict, clearConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 import type { ClipboardSourcePage } from "./clipboard";
@@ -442,6 +449,37 @@ export function shownObservationFor(name: string): number | null {
   return conflictObservation.get(name) ?? null;
 }
 
+/**
+ * Make sure `name`'s editor has an activation, minting one if it has none.
+ *
+ * Idempotent by design: an editor that already holds an identity keeps it, so
+ * ordinary re-saves do not churn the token the live banner is bound to. A present
+ * page reuses its path's activation; a page with no file yet gets an absent
+ * activation carrying the prospective target it is live for.
+ *
+ * Failure is deliberately non-fatal. If activation cannot be obtained the save
+ * still proceeds without one — the ordinary path's base-revision guard is its
+ * authority and is unchanged — and only the override path is unavailable, which
+ * is a strictly better outcome than refusing to save the user's work.
+ */
+async function ensureEditorActivation(name: string): Promise<void> {
+  if (editorActivationFor(name) !== undefined) return;
+  const page = pageByName(name);
+  if (!page) return;
+  try {
+    const handle = page.path
+      ? await backend().activateEditor(page.path, "reuse")
+      : await backend().activateAbsentEditor(name, page.kind);
+    // Re-check after the await: another save may have acquired one meanwhile, and
+    // overwriting it would strand the identity a live banner is bound to.
+    if (editorActivationFor(name) === undefined && pageByName(name)) {
+      setEditorActivation(name, handle.activation);
+    }
+  } catch {
+    // Non-fatal, as above.
+  }
+}
+
 /** The load baseline the editor's conflict episode was minted under.
  *
  *  The episode is `{ loaded_revision, activation }`, so presenting an observation
@@ -507,6 +545,20 @@ async function doSave(
     return false;
   }
   const token = graphToken;
+  // Acquire this editor's activation before the DTO is built, so `pageToDto` can
+  // stamp it. A save is definitionally an editor acting, which is why this is the
+  // acquisition point and a plain read is not: reads are mixed-purpose and minting
+  // there would hand identities to exports, previews and hydration.
+  //
+  // Keyed through the STORE's registry, never by path alone. That is what keeps
+  // the clone defence intact: a copied DTO does not travel this path, so it never
+  // acquires an identity, and a copy that presents none is refused on the override
+  // path. (GH #254 increment 3.)
+  // Only await when there is genuinely something to acquire. Making every save
+  // yield a microtask changes ordering for callers that flush and then read focus
+  // or editing state, and an editor that already holds its identity has nothing to
+  // wait for.
+  if (editorActivationFor(name) === undefined) await ensureEditorActivation(name);
   const dto = measureIssue248("frontend.pageToDtoMs", () => pageToDto(name));
   if (!dto) {
     // Two very different reasons, and they must not share an outcome (audit

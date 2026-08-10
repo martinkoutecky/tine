@@ -15,6 +15,11 @@ const refuseGuarded = new Set<string>();
 
 vi.mock("./store", () => ({
   doc: { loaded: true, pages: [] },
+  // The save path acquires the editor's activation before building the DTO
+  // (GH #254 increment 3). These stubs say "this editor already holds one", so
+  // these tests keep exercising the conflict/barrier behaviour they are about.
+  editorActivationFor: () => 1,
+  setEditorActivation: () => {},
   pageByName: (name: string) => ({ name }),
   pageInstanceGeneration: () => 1,
   pageToDto: (name: string) => ({

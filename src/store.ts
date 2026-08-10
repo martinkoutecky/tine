@@ -324,6 +324,32 @@ export function clearAllEditorActivations(): void {
   editorActivations.clear();
 }
 
+/**
+ * Retire `pageName`'s editor identity locally AND in the core.
+ *
+ * An activation that outlives its editor is not inert: with same-path activation
+ * idempotence, a stale live token would be handed to the NEXT editor of that path,
+ * which is exactly the cross-instance authority this increment exists to prevent.
+ * So retirement is driven by the same events that retire the frontend instance —
+ * eviction, `forgetPage`, reset — and is compare-and-retire on both sides, never a
+ * bare "retire this path": a retirement racing a newer activation must not revoke
+ * the newer editor. (GH #254 increment 3.)
+ */
+export function retireEditorFor(pageName: string, path?: string): void {
+  const activation = editorActivations.get(pageName);
+  if (activation === undefined) return;
+  clearEditorActivation(pageName, activation);
+  const target = path ?? doc.pages.find((p) => p.name === pageName)?.path;
+  if (!target) return;
+  void backend()
+    .retireEditorActivation(target, activation)
+    .catch(() => {
+      // Best effort: the core's own compare-and-retire is the authority, and a
+      // lost retirement cannot promote anyone — it only leaves a token that no
+      // frontend DTO will ever present.
+    });
+}
+
 function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
   const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
   return {
@@ -469,6 +495,7 @@ export function isGuidePage(name: string): boolean {
  *  disk version"): otherwise the unsaved in-memory copy is left untracked — not
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
+  retireEditorFor(name);
   forgetSaveState(name);
   clearConflict(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
@@ -626,7 +653,13 @@ function evictIfNeeded() {
       }
     })
   );
-  for (const name of evicted) retirePageInstance(name);
+  for (const name of evicted) {
+    // Eviction retires the frontend instance, so it must retire the core's
+    // identity too — otherwise the next editor of that path inherits a live token
+    // it was never shown a conflict for.
+    retireEditorFor(name);
+    retirePageInstance(name);
+  }
   invalidateAllMatrixDimensions();
 }
 
@@ -635,6 +668,11 @@ function evictIfNeeded() {
  *  cancels pending saves and clears dirty flags so nothing from the old graph
  *  can be written after a switch. */
 export function resetStore() {
+  // Every identity belongs to the graph being left. The core drops its own
+  // registry with the Graph, so clearing locally is sufficient and avoids a
+  // storm of per-page retirements against a graph that is going away.
+  clearAllEditorActivations();
+  clearAllEditorLeases();
   // Cancel pending/in-flight saves and clear all save guard state (timers, graph
   // token, dirty/baseline/tombstone) so nothing from the old graph can be written
   // after the switch.
