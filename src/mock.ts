@@ -2,6 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
+import { notifyGraphRebound } from "./modeHooks";
 import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope, ReferencedPageNames } from "./backend";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, ManagedSyncStatus, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, SparseV2Status } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
@@ -1035,6 +1036,7 @@ export function mockBackend(): Backend {
     },
     async setGuideAnnounced(announced: boolean): Promise<void> {
       mockGuideAnnounced = announced;
+      notifyGraphRebound(); // reaches refresh_graph in the real backend
     },
     async createGraph(_dir: string): Promise<string> {
       return "/mock/new-graph"; // no real scaffolding in the browser mock
@@ -1252,23 +1254,27 @@ export function mockBackend(): Backend {
     async setPreferredWorkflow(): Promise<void> {
       // no-op in the browser mock
     },
+    // These seven reach `refresh_graph` in the real backend, which installs a
+    // FRESH Graph with an empty editor-activation registry. Not a no-op even
+    // here: a mock that silently omits a contract lets every test that uses it
+    // prove the wrong thing. (GH #254 increment 3, round 15.)
     async setTimetrackingEnabled(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setShowBrackets(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setDocModeEnterForNewBlock(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setLogicalOutdenting(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setPreferredFormat(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setJournalTitleFormat(): Promise<void> {
-      // no-op in the browser mock
+      notifyGraphRebound();
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock

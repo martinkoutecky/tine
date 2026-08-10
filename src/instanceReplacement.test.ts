@@ -505,6 +505,75 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(isDirty("Target")).toBe(true);
   });
 
+  it("drops activations minted by a graph the core has replaced", async () => {
+    // A backend reopen installs a FRESH core Graph whose activation registry is
+    // empty. Every token this side still holds then names an editor the core has
+    // never heard of, and the conflict it mints is unresolvable: the ordinary
+    // save raises a banner carrying the retained token, and the matching force
+    // is refused `conflict_authority.superseded`, so BOTH buttons only
+    // re-observe into the same dead conflict.
+    const { setEditorActivation, editorActivationFor } = await import("./store");
+    const { notifyGraphRebound } = await import("./modeHooks");
+
+    setEditorActivation("Target", 81);
+    expect(editorActivationFor("Target")).toBe(81);
+
+    notifyGraphRebound();
+
+    expect(editorActivationFor("Target")).toBeUndefined();
+  });
+
+  it("announces a rebind for every command that reopens the graph", async () => {
+    // Six of the seven `refresh_graph` producers never announced; the seventh
+    // only did because it was the one under review. Announced at the command
+    // boundary now, so a caller cannot forget.
+    const { graphBinding } = await import("./persistence");
+    const before = graphBinding();
+
+    await backend().setPreferredFormat("org");
+    expect(graphBinding(), "setPreferredFormat reopens the graph").not.toBe(before);
+
+    const afterFormat = graphBinding();
+    await backend().setLogicalOutdenting(true);
+    expect(graphBinding(), "setLogicalOutdenting reopens the graph").not.toBe(afterFormat);
+  });
+
+  it("abandons a save whose activation was minted by the previous binding", async () => {
+    // Acquisition is an awaited IPC, so a reopen can land inside it. The handle
+    // that comes back then belongs to a Graph the core has replaced; installing
+    // it and sending it to savePage writes under an identity the new core never
+    // issued. The window has to be guarded by the BINDING — the save epoch
+    // deliberately does not move on a reopen, which is what made this reachable.
+    const { loadRoutedPage, editorActivationFor } = await import("./store");
+    const { markDirty, flushPage } = await import("./persistence");
+    const { notifyGraphRebound } = await import("./modeHooks");
+
+    loadRoutedPage(page("Target", "pages/Target.md", "incumbent"));
+    markDirty("Target");
+
+    let handOver: (h: unknown) => void = () => {};
+    vi.spyOn(backend(), "activateEditor").mockReturnValue(
+      new Promise((r) => {
+        handOver = r as (h: unknown) => void;
+      }) as never,
+    );
+    const saved = vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    const saving = flushPage("Target");
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The graph is reopened while the activation IPC is outstanding.
+    notifyGraphRebound();
+    handOver({ activation: 81, target: "pages/Target.md", prospective: false });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(await saving).toBe(false);
+    expect(editorActivationFor("Target"), "a retired graph's identity must not be recorded")
+      .toBeUndefined();
+    expect(saved, "nor written under").not.toHaveBeenCalled();
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

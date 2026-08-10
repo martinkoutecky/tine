@@ -55,7 +55,7 @@ import {
   restoreHistoryEditorContext,
   type HistoryEditorContext,
 } from "./editorController";
-import { notifyModeReset, notifyOutlineSelectionStarted } from "./modeHooks";
+import { notifyModeReset, notifyOutlineSelectionStarted, onGraphRebound } from "./modeHooks";
 import { sheetConfigFromRaw } from "./sheet/config";
 import { clearMatrixDimensionCache, invalidateAllMatrixDimensions } from "./sheet/matrix";
 import { applyMarkerTransition } from "./logbook";
@@ -370,6 +370,15 @@ export function clearAllEditorActivations(): void {
   editorActivations.clear();
   prospectiveTargets.clear();
 }
+
+// A backend reopen installs a FRESH `Graph` whose activation registry is empty,
+// so every token this side still holds names an editor the core has never heard
+// of. Keeping them produced conflicts nobody could resolve: the ordinary save
+// minted a banner carrying a retained token, and the matching force was refused
+// `conflict_authority.superseded`, so BOTH banner buttons only re-observed into
+// the same dead conflict. The registry has to be dropped with the graph that
+// issued it. (GH #254 increment 3, round 15.)
+onGraphRebound(clearAllEditorActivations);
 
 /**
  * Retire `pageName`'s editor identity locally AND in the core.

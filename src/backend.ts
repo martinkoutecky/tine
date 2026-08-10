@@ -2,6 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
+import { notifyGraphRebound } from "./modeHooks";
 import type {
   ActivationIntent,
   AdvancedQueryResult,
@@ -609,6 +610,25 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * Core commands that REOPEN the graph (`refresh_graph` on the Rust side), so the
+ * frontend's graph-scoped state — editor activations, resolved paths — belongs
+ * to a `Graph` that no longer exists once they return.
+ *
+ * Kept as an explicit list because it is a claim about the backend: each of
+ * these was verified to reach `refresh_graph`. Adding a command that reopens the
+ * graph without adding it here reintroduces the round-15 blockers.
+ */
+const REBINDING_COMMANDS = new Set([
+  "set_journal_title_format",
+  "set_preferred_format",
+  "set_timetracking_enabled",
+  "set_show_brackets",
+  "set_doc_mode_enter_for_new_block",
+  "set_logical_outdenting",
+  "set_guide_announced",
+]);
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
@@ -631,7 +651,19 @@ class TauriBackend implements Backend {
     const leasedArgs = bindingGeneration
       ? { ...(args ?? {}), bindingGeneration }
       : args;
-    return this.invoke<T>(cmd, leasedArgs);
+    const result = await this.invoke<T>(cmd, leasedArgs);
+    // A command that makes the core REBIND — `refresh_graph` installs a fresh
+    // `Graph`, with a fresh (empty) editor-activation registry — must announce
+    // it, or this side keeps tokens naming editors the core has never heard of
+    // and paths that may have been migrated.
+    //
+    // Announced HERE, at the one boundary every such command crosses, rather
+    // than at each call site: the frontend entry points are fire-and-forget
+    // `void backend().setX(...)`, six of the seven never announced, and the
+    // seventh only did because it happened to be the one under review.
+    // (GH #254 increment 3, round 15.)
+    if (REBINDING_COMMANDS.has(cmd)) notifyGraphRebound();
+    return result;
   }
 
   async loadGraph(path: string) {

@@ -592,7 +592,13 @@ async function ensureEditorActivation(name: string): Promise<void> {
   if (editorActivationFor(name) !== undefined) return;
   const page = pageByName(name);
   if (!page) return;
-  const token = graphToken;
+  // The BINDING, not the save epoch. These two checks ask "is this still the
+  // same graph?", which is a different question from "is this save still valid?"
+  // — and since the two counters were split, `graphToken` deliberately does not
+  // move on an in-place reopen. Asking it here let an activation minted by the
+  // OLD `Graph` be installed and sent to `savePage` after the backend replaced
+  // it. (GH #254 increment 3, round 15.)
+  const token = graphBindingRev;
   // The page's path cannot see a SAME-PATH content replacement — `reloadPage` and
   // the watcher-approved reload both install a new editor at the same path — so
   // the instance generation is required as well. Peeked, never read through the
@@ -609,7 +615,7 @@ async function ensureEditorActivation(name: string): Promise<void> {
     // identity to another — reproduced writing a replacement graph's page.
     if (
       editorActivationFor(name) === undefined &&
-      graphToken === token &&
+      graphBindingRev === token &&
       (pageByName(name)?.path ?? "") === pathAtStart &&
       peekPageInstanceGeneration(name) === instanceAtStart
     ) {
@@ -699,6 +705,11 @@ async function doSave(
     return false;
   }
   const token = graphToken;
+  // The BINDING for the activation window, separately from the save epoch above:
+  // a reopen replaces the `Graph` (and its activation registry) without
+  // invalidating this save, so the two questions need their own counters here
+  // too. (GH #254 increment 3, round 15.)
+  const bindingAtStart = graphBindingRev;
   // Acquire this editor's identity before the DTO is built, so `pageToDto` can
   // stamp it. Keyed through the STORE's registry, never by path alone: a copied
   // DTO does not travel this path, never acquires an identity, and is refused on
@@ -709,7 +720,7 @@ async function doSave(
   // serializes the replacement graph's bytes and writes them anyway (reproduced,
   // with `activation: undefined`, which is exactly why an identity check alone
   // could not catch it). (GH #254 increment 3.)
-  if (graphToken !== token) return false;
+  if (graphToken !== token || graphBindingRev !== bindingAtStart) return false;
   const dto = measureIssue248("frontend.pageToDtoMs", () => pageToDto(name));
   if (!dto) {
     // Two very different reasons, and they must not share an outcome (audit

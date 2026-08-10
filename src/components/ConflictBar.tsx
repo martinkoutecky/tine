@@ -6,6 +6,7 @@ import {
   reobserve,
   saveBaselineFor,
   shownObservationFor,
+  graphBinding,
 } from "../persistence";
 import {
   notifyPageBecameReplaceable,
@@ -41,6 +42,13 @@ export function ConflictBar(): JSX.Element {
     // would wave through exactly the input it exists to protect.
     const generation = editGeneration(name);
     const instance = pageInstanceGeneration(name);
+    // The GRAPH BINDING, required by acceptance row D2 and never actually
+    // captured here. A reopen between the click and the read replaces the core's
+    // `Graph` and may migrate journal filenames, so bytes read against the old
+    // binding describe a file this graph may not have — installing them replaces
+    // the user's unsaved work with stale content and clears the banner.
+    // (GH #254 increment 3, round 15.)
+    const binding = graphBinding();
     // Resolve the file this editor is actually pinned to. Two files can carry
     // one page name (the duplicate-day stray of #21, or same-titled pages in
     // different folders), and resolving by name reaches the backend's CANONICAL
@@ -87,7 +95,11 @@ export function ConflictBar(): JSX.Element {
     // pre-click draft — and the page reverts to ordinary dirty-editor semantics,
     // carried by the re-observing save rather than the ordinary one, which returns
     // before the backend while the page is still conflicted.
-    if (editGeneration(name) !== generation || pageInstanceGeneration(name) !== instance) {
+    if (
+      editGeneration(name) !== generation
+      || pageInstanceGeneration(name) !== instance
+      || graphBinding() !== binding
+    ) {
       dropObservation(name);
       void reobserve(name);
       return;
