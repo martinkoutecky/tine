@@ -422,6 +422,50 @@ describe("replacing a loaded instance (GH #304)", () => {
     setToasts([]);
   });
 
+  it("resumes a deferred stamp when an unrelated block move ends", async () => {
+    // `reloadDisposition` returns "skip" while a block is being dragged, so a
+    // move refuses replacement exactly like a dirty page does. Unlike every
+    // other refusing state it announced NOTHING when it ended, so a request
+    // whose read landed mid-drag waited for a coincidental later sweep.
+    const { persistBlockRefTarget, setBlockMoving, loadRoutedPage } = await import("./store");
+    loadRoutedPage(page("Target", "pages/Target.md", "incumbent"));
+    setBlockMoving(true, "Target");
+
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "requested"));
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    await persistBlockRefTarget("uuid-13", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1);
+
+    setBlockMoving(false, "Target");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a backend graph reopen as a rebind, not a repaint", async () => {
+    // `changeJournalTitleFormat` rewrites config.edn, reopens the graph, and may
+    // MIGRATE journal filenames. Keying cross-graph guards off the render epoch
+    // covered this by accident; keying them off the binding is only correct if
+    // every real rebind moves the binding. Drives the real entry point, so the
+    // test fails if that call site stops announcing.
+    const { graphBinding } = await import("./persistence");
+    const { changeJournalTitleFormat, setGraphMeta } = await import("./ui");
+    setGraphMeta({ root: "/g", journal_page_title_format: "MMM do, yyyy" } as never);
+    const reopen = vi.spyOn(backend(), "setJournalTitleFormat").mockResolvedValue(undefined);
+
+    const before = graphBinding();
+    changeJournalTitleFormat("yyyy-MM-dd");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(reopen).toHaveBeenCalledWith("yyyy-MM-dd");
+    expect(graphBinding()).not.toBe(before);
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

@@ -3957,8 +3957,16 @@ export function isBlockMoving(page?: string): boolean {
   return blockMovingPage !== null && (page === undefined || blockMovingPage === page);
 }
 export function setBlockMoving(v: boolean, page?: string): void {
+  const ended = !v && blockMovingPage !== null;
   blockMovingPage = v ? (page ?? blockMovingPage ?? "") : null;
   setBlockMoveRev((n) => n + 1);
+  // A move in progress makes `reloadDisposition` return "skip", so it refuses
+  // replacement exactly like a dirty page does — but unlike every other refusal
+  // it announced nothing when it ended. A deferred stamp whose read landed
+  // during an unrelated drag then waited for a coincidental later sweep to
+  // resume, which may never come. Every state that can REFUSE has to announce
+  // when it stops refusing. (GH #254 increment 3, round 13.)
+  if (ended) sweepReplaceable();
 }
 
 export function moveItem(id: string, dir: 1 | -1) {

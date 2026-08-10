@@ -21,6 +21,7 @@ import {
   sweepReplaceable,
 } from "./store";
 import { backend } from "./backend";
+import { onGraphRebound } from "./modeHooks";
 import { markConflict, clearConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 import type { ClipboardSourcePage } from "./clipboard";
 import { measureIssue248, measureIssue248Async } from "./issue248Probe";
@@ -296,6 +297,27 @@ export function isTombstoned(name: string): boolean {
 export function graphBinding(): number {
   return graphToken;
 }
+
+/**
+ * Declare that the graph has been REBOUND without a full store reset.
+ *
+ * `changeJournalTitleFormat` is the case: the backend rewrites `config.edn`,
+ * reopens the graph, and may migrate journal filenames — so work in flight
+ * against the old binding is now aimed at paths that may no longer exist. The
+ * frontend only bumped the render epoch there, which is why keying anything off
+ * the epoch LOOKED equivalent: it accidentally covered this. Keying off the
+ * binding is correct, but only if every real rebind says so.
+ *
+ * Deliberately not `resetSaveState()`: this is a rebind, not a graph switch, and
+ * dropping the user's dirty state would lose edits the reopen did not touch.
+ * (GH #254 increment 3, round 13.)
+ */
+export function bumpGraphBinding(): void {
+  graphToken++;
+}
+
+// A backend reopen is a rebind; the binding must move with it.
+onGraphRebound(bumpGraphBinding);
 
 /** Which FILE a tombstone was raised for, when the delete named one. */
 const deletedPagePaths = new Map<string, string>();

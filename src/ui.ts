@@ -1,5 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
+import { notifyGraphRebound } from "./modeHooks";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend, isTauri } from "./backend";
@@ -304,6 +305,10 @@ export function changeJournalTitleFormat(fmt: string) {
     .setJournalTitleFormat(next)
     .then(() => {
       bumpGraphEpoch();
+      // The reopen may have MIGRATED journal filenames, so this is a genuine
+      // rebind and not just a repaint: anything still in flight against the old
+      // binding is now aimed at paths that may not exist.
+      notifyGraphRebound();
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
     .catch(() => {});

@@ -26,34 +26,39 @@ import type { PageDto } from "./types";
  *      the stamp's own save then recreates the file the user deleted.
  *
  * WHAT THIS ACTUALLY CATCHES. A harness nobody has tested against real defects
- * is decoration, so every historical blocker is reintroduced and replayed:
+ * is decoration, so every historical blocker is reintroduced and replayed
+ * (1,360 cases):
  *
- *   round 3/5  no retry at all, drop on refusal ............... 636 cases fail
- *   round 12b  stamp never made durable ...................... 312 cases fail
- *   round 12   render epoch treated as a graph change ........ 156 cases fail
- *   round 9    request discarded under an unresolved delete ... 76 cases fail
- *   round 8    name-level tombstone refuses the survivor ...... 56 cases fail
- *   round 10   unknown file refuses at the WAIT boundary ...... 12 cases fail
+ *   round 12b  stamp never made durable ...................... 496 cases fail
+ *   round 12   render epoch treated as a graph change ........ 248 cases fail
+ *   round 8    name-level tombstone refuses the survivor ...... 92 cases fail
+ *   round 13a  block move announces nothing when it ends ...... 32 cases fail
+ *   round 10   unknown file refuses at the WAIT boundary ...... 20 cases fail
+ *   round 3/5  no retry at all, drop on refusal ............... all cases fail
+ *   round 9    request discarded under an unresolved delete ... caught
  *   round 9b   stale tombstone path across a graph switch ..... NOT CAUGHT
+ *   round 13b  a backend reopen not announced as a rebind ..... NOT CAUGHT
  *
- * The last spans TWO graphs and this models one; it keeps its own
- * necessity-gated test in instanceReplacement.test.ts.
+ * The two misses are structural, not oversights. 9b spans TWO graphs and this
+ * models one. 13b is about WHICH CALLER announces a rebind; this covers the
+ * resulting state (`rebound`) but calls the notification directly, so it cannot
+ * see a caller that stops calling it. Both keep their own necessity-gated tests
+ * in instanceReplacement.test.ts, which drive the real entry points.
  *
  * Every correction to this file came from a replay failing, never from reading
- * it. In order: a missing TIMING dimension (round 10's defect lives in the
- * pre-read guard, and only mid-read mutations were modelled); a missing
- * RESOLUTION dimension (no case ever lifted a tombstone, so a failed delete was
- * unreachable); an oracle asserting activity instead of PROGRESS (a request that
- * reads, is refused and reads again forever passed); an oracle that accepted
- * "the page loaded" as the outcome when the outcome is a DURABLE reference; 112
- * cases whose release did not actually free the page, so the retry they claimed
- * to hold open never started; a save-chain entry leaking across cases and
- * silently skipping the progress assertion suite-wide; and an oracle that asked
- * `isTombstonedFile` whether a file was deleted — the very predicate round 8's
- * defect corrupts, which took that replay from 18 failures to zero.
+ * it. In order: a missing TIMING dimension; a missing RESOLUTION dimension; an
+ * oracle asserting activity instead of PROGRESS; an oracle accepting "the page
+ * loaded" when the outcome is a DURABLE reference; 112 cases whose release never
+ * freed the page; a save-chain entry leaking across cases and silently skipping
+ * the progress assertion suite-wide; an oracle that asked `isTombstonedFile`
+ * whether a file was deleted — the very predicate round 8's defect corrupts,
+ * which took that replay from 18 failures to zero; two whole refusal states
+ * (active edit, block move) missing, one of which turned out to announce nothing
+ * when it ended; a `blockMovingPage` leak across cases; and a missing banner
+ * answer ("Keep mine" is a force-save and frees the page by a different route).
  *
  * The lesson worth keeping: a matrix that is green proves nothing until its
- * failures have been demonstrated. Each of those seven defects made it report
+ * failures have been demonstrated. Every one of those defects made it report
  * MORE coverage, not less.
  *
  *   I2 NO SILENT LOSS. The `((uuid))` reference is ALREADY committed — the user
@@ -87,13 +92,21 @@ const UNRELATED = "pages/unrelated/Target.md";
 /** How the request names the file it wants. Block autocomplete cannot name one. */
 type Naming = "named" | "pathless";
 /** Incumbent states that REFUSE — the only ones that defer anything. */
-type Incumbent = "dirty" | "conflicted" | "leased" | "saving";
+type Incumbent = "dirty" | "conflicted" | "leased" | "saving" | "editing" | "moving";
 /** What frees the incumbent, and so drives the retry. */
-type Release = "lease" | "forget" | "save" | "resolve-conflict" | "save-lands";
+type Release =
+  | "lease"
+  | "forget"
+  | "save"
+  | "resolve-conflict"
+  | "keep-mine"
+  | "save-lands"
+  | "end-edit"
+  | "end-move";
 /** What tombstone appears WHILE the retry's read is in flight. */
 type Tomb = "none" | "pathless" | "exact-target" | "exact-other";
 /** Whether the graph survives that same window. */
-type Epoch = "same" | "switched" | "render-bumped";
+type Epoch = "same" | "switched" | "render-bumped" | "rebound";
 /**
  * WHEN the mutation lands, relative to the retry. Two different guards decide:
  * `before-release` is judged by the pre-read check (may this even read?) and
@@ -124,10 +137,19 @@ type Case = {
 };
 
 const NAMINGS: Naming[] = ["named", "pathless"];
-const INCUMBENTS: Incumbent[] = ["dirty", "conflicted", "leased", "saving"];
-const RELEASES: Release[] = ["lease", "forget", "save", "resolve-conflict", "save-lands"];
+const INCUMBENTS: Incumbent[] = ["dirty", "conflicted", "leased", "saving", "editing", "moving"];
+const RELEASES: Release[] = [
+  "lease",
+  "forget",
+  "save",
+  "resolve-conflict",
+  "keep-mine",
+  "save-lands",
+  "end-edit",
+  "end-move",
+];
 const TOMBS: Tomb[] = ["none", "pathless", "exact-target", "exact-other"];
-const EPOCHS: Epoch[] = ["same", "switched", "render-bumped"];
+const EPOCHS: Epoch[] = ["same", "switched", "render-bumped", "rebound"];
 const TIMINGS: Timing[] = ["before-release", "mid-read"];
 const RESOLUTIONS: Resolution[] = ["stays", "lifted"];
 
@@ -143,9 +165,17 @@ const RESOLUTIONS: Resolution[] = ["stays", "lifted"];
  */
 const RELEASES_FOR: Record<Incumbent, Release[]> = {
   dirty: ["save", "forget"],
-  conflicted: ["resolve-conflict", "forget"],
+  // BOTH banner answers, not just the discard. "Keep mine" is a force-save and
+  // reaches the same released state by a different route.
+  conflicted: ["resolve-conflict", "keep-mine", "forget"],
   leased: ["lease", "forget"],
   saving: ["save-lands", "forget"],
+  // `reloadDisposition` returns "skip" for an active editor and for a block
+  // move. Both refuse replacement exactly as the others do, and both were
+  // missing entirely — the move one turned out to announce nothing when it
+  // ended. (GH #254 increment 3, round 13.)
+  editing: ["end-edit", "forget"],
+  moving: ["end-move", "forget"],
 };
 function releasable(incumbent: Incumbent, release: Release): boolean {
   return RELEASES_FOR[incumbent].includes(release);
@@ -157,7 +187,10 @@ function releasable(incumbent: Incumbent, release: Release): boolean {
  * wrong one hides bugs exactly the way a missing dimension does.
  */
 function impossible(c: Case): string | null {
-  if (c.release === "save" && c.timing === "before-release" && c.tomb !== "none") {
+  // Both save-shaped releases, not just the ordinary one: "Keep mine" is a
+  // force-save, and `doSave` no-ops on a tombstoned page whatever the intent.
+  const savesToFree = c.release === "save" || c.release === "keep-mine";
+  if (savesToFree && c.timing === "before-release" && c.tomb !== "none") {
     // `doSave` no-ops on a tombstoned page by design — you do not write a page
     // the user just deleted — so "freed by saving" cannot happen once one is up.
     //
@@ -165,7 +198,14 @@ function impossible(c: Case): string | null {
     // tombstone also blocks saving a surviving file that merely shares the name.
     // That is the round-8 defect class living on in the SAVE path; it predates
     // this increment and is recorded as a follow-up rather than fixed here.
-    return "a tombstoned page's save is a no-op, so it cannot free the page";
+    // STATED GAP (round 13): the verifier is right that a lift can land before
+    // the queued `doSave` reaches its check, and that ordering IS reachable and
+    // is not covered here — this harness lifts only after the read resolves, so
+    // constructing it needs a third timing for the lift itself. Excluded rather
+    // than modelled, and named rather than silently dropped, because an
+    // exclusion is a claim about the product and a wrong one hides bugs exactly
+    // the way a missing dimension does.
+    return "a tombstoned page's save is a no-op; the lift-before-save ordering is a stated gap";
   }
   return null;
 }
@@ -190,9 +230,16 @@ const label = (c: Case) =>
 
 describe("deferred block-ref stamp — enumerated interleavings (GH #254 increment 3)", () => {
   beforeEach(async () => {
-    const { resetStore, clearAllEditorLeases } = await import("./store");
+    const { resetStore, clearAllEditorLeases, setBlockMoving } = await import("./store");
+    const { endEdit } = await import("./editorController");
     resetStore();
     clearAllEditorLeases();
+    // Module state `resetStore` does not own. A drag or an active editor left
+    // behind by one case makes `reloadDisposition` return "skip" for every case
+    // after it — the same leak the save chain caused, and just as invisible:
+    // the suite goes green-ish while asserting nothing.
+    setBlockMoving(false);
+    endEdit("blur");
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -200,7 +247,7 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
   it("enumerates a space small enough to cover exhaustively", () => {
     // If this moves, the space changed: add the dimension deliberately rather
     // than discovering it through another verification round.
-    expect(cases.length).toBe(636);
+    expect(cases.length).toBe(1360);
   });
 
   for (const c of cases) {
@@ -208,6 +255,8 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
       const store = await import("./store");
       const persistence = await import("./persistence");
       const ui = await import("./ui");
+      const editor = await import("./editorController");
+      const hooks = await import("./modeHooks");
 
       let release: (() => void) | undefined;
       let landSave: (rev: unknown) => void = () => {};
@@ -222,6 +271,13 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
         ui.markConflict("Target");
       }
       if (c.incumbent === "leased") release = store.takeEditorLease("Target");
+      if (c.incumbent === "editing") {
+        const blockId = Object.keys(store.doc.byId).find(
+          (id) => store.doc.byId[id]?.page === "Target",
+        );
+        editor.startEditing(blockId!);
+      }
+      if (c.incumbent === "moving") store.setBlockMoving(true, "Target");
 
       // The target block carries the referenced uuid AS ITS ID, so the ref can
       // actually resolve and the stamp can actually be observed. Without this
@@ -283,6 +339,13 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
           store.resetStore();
           ui.bumpGraphEpoch();
         }
+        if (c.epoch === "rebound") {
+          // The backend reopened the graph in place — `changeJournalTitleFormat`
+          // rewrites config.edn and may MIGRATE journal filenames. The store is
+          // NOT reset, so nothing clears pending work, but paths resolved against
+          // the old binding may no longer exist. Neither a switch nor a repaint.
+          hooks.notifyGraphRebound();
+        }
         if (c.epoch === "render-bumped") {
           // NOT a graph switch: `setTypographyMode`, the journal title format,
           // and several settings bump the render epoch to repaint open pages
@@ -299,6 +362,11 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
       if (c.release === "lease") release?.();
       if (c.release === "forget") {
         store.forgetPage("Target");
+        // Forgetting a page tears down its surfaces: the editor closes and any
+        // drag on it ends. Leaving either latched is the same vacuity as leaving
+        // the lease held.
+        if (c.incumbent === "editing") editor.endEdit("blur");
+        if (c.incumbent === "moving") store.setBlockMoving(false, "Target");
         if (c.incumbent === "saving") {
           // Let the in-flight save finish. Leaving it hanging leaks a save-chain
           // entry into every later case, where `isSaving` then reports true for
@@ -330,6 +398,15 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
         ui.clearConflict("Target");
         store.sweepReplaceable();
       }
+      if (c.release === "end-edit") editor.endEdit("blur");
+      if (c.release === "end-move") store.setBlockMoving(false, "Target");
+      if (c.release === "keep-mine") {
+        // The other banner answer: a force-save. Reaches the released state by a
+        // different route than "Use disk version", and was missing entirely.
+        await persistence.forceSave("Target");
+        ui.clearConflict("Target");
+        store.sweepReplaceable();
+      }
       if (c.release === "save-lands") {
         saved.mockResolvedValue("rev-2");
         landSave("rev-2");
@@ -355,7 +432,7 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
 
       // The delete resolves: it failed, or the page came back. `deletePage`'s
       // failure path lifts the tombstone and announces, so mirror both.
-      if (c.resolution === "lifted" && c.epoch !== "switched") {
+      if (c.resolution === "lifted" && c.epoch !== "switched" && c.epoch !== "rebound") {
         persistence.untombstone("Target");
         store.notifyPageBecameReplaceable("Target");
         for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
@@ -386,12 +463,12 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
       const covered = targetDeleted && c.resolution === "stays" && !liftedByReload;
 
       // ── I1 ──────────────────────────────────────────────────────────────────
-      if (covered && c.epoch !== "switched") {
+      if (covered && c.epoch !== "switched" && c.epoch !== "rebound") {
         expect(installedTarget, `I1: installed a file the tombstone covers (${label(c)})`).toBe(
           false,
         );
       }
-      if (c.epoch === "switched") {
+      if (c.epoch === "switched" || c.epoch === "rebound") {
         expect(
           installedTarget,
           `I1: installed into a graph that had already moved on (${label(c)})`,
@@ -403,7 +480,7 @@ describe("deferred block-ref stamp — enumerated interleavings (GH #254 increme
       // or its file is provably deleted.
       const stillPending = store.hasPendingBlockRefStamp(uuid);
       const satisfied = stamped();
-      if (!satisfied && c.epoch !== "switched" && !covered) {
+      if (!satisfied && c.epoch !== "switched" && c.epoch !== "rebound" && !covered) {
         expect(
           stillPending,
           `I2: dropped a committed reference's request with nothing to resume it (${label(c)})`,
