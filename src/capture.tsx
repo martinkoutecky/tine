@@ -81,6 +81,9 @@ function Capture() {
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
 
   const seed = () => {
+    // The scratch page is local-only and must never reach the graph, so it takes
+    // no core activation. It also cannot be refused: it has no path, so a
+    // re-seed matches the incumbent exactly and reuses it. (GH #254 inc 3, C9.)
     ensurePageLoaded(createCaptureScratchPage());
     const root = pageByName(SCRATCH)?.roots[0];
     if (root) startEditing(root, 0, null);

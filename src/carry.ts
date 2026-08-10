@@ -22,7 +22,11 @@ async function ensureLoaded(name: string, kind: "journal" | "page"): Promise<boo
   if (pageByName(name)) return true;
   const dto = await backend().getPage(name, kind);
   if (dto) {
-    ensurePageLoaded(dto);
+    // A refusal here used to be invisible: this returned `true` unconditionally
+    // after calling `ensurePageLoaded`, so carry went on to move blocks into
+    // whichever editor happened to be loaded under that name — the wrong file.
+    // Carry must stop instead. (GH #254 increment 3.)
+    if (ensurePageLoaded(dto)) return false;
     return true;
   }
   return false;
@@ -30,13 +34,15 @@ async function ensureLoaded(name: string, kind: "journal" | "page"): Promise<boo
 
 /** Make sure today's journal is in the working set (synthesize an empty one if
  *  it has no file yet, like the feed does). */
-async function ensureToday(): Promise<string> {
+async function ensureToday(): Promise<string | null> {
   const t = journalTitle(new Date());
   if (!pageByName(t)) {
     const dto = await backend().getPage(t, "journal");
     const page: PageDto =
       dto ?? { name: t, kind: "journal", title: t, pre_block: null, blocks: [{ id: `new-${t}`, raw: "", collapsed: false, children: [] }] };
-    ensurePageLoaded(page);
+    // Previously returned the title unconditionally, so a refused today made
+    // carry proceed against an editor it had not loaded. Null means stop.
+    if (ensurePageLoaded(page)) return null;
   }
   return t;
 }
@@ -96,6 +102,7 @@ export async function carryPrevDay(): Promise<void> {
 /** Carry one day's unfinished tasks to today (used from a day's context menu). */
 export async function carryDay(pageName: string): Promise<void> {
   const today = await ensureToday();
+  if (!today) return;
   if (pageName === today) return;
   if (!(await ensureLoaded(pageName, "journal"))) return;
   // Flush the source day (while it still holds the tasks) before the in-memory
@@ -113,6 +120,7 @@ export async function carryDay(pageName: string): Promise<void> {
  *  today, newest first. Only days that have a file are touched. */
 export async function carryDaysBack(days: number): Promise<void> {
   const today = await ensureToday();
+  if (!today) return;
   const base = new Date();
   const candidates: string[] = [];
   for (let i = 1; i <= days; i++) {

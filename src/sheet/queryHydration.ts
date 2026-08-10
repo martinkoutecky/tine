@@ -322,7 +322,11 @@ export async function hydrateVisibleQueryPages(
       const after = pageByName(group.page);
       if (after && (!group.path || after.path === group.path)) return;
       if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.path !== group.path)) return;
-      ensurePageLoaded(dto);
+      // Consume the refusal rather than assuming installation. Hydration is
+      // DTO-only and may stay so; a later interaction re-drives it. What it must
+      // not do is proceed as though the page it asked for is now loaded.
+      // (GH #254 increment 3.)
+      if (ensurePageLoaded(dto)) return;
     }).finally(() => {
       pageHydrations.delete(key);
       releaseClaim(claimKey, identity);

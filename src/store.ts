@@ -595,9 +595,17 @@ export function reloadPageIfStillSafe(name: string, dto: PageDto): boolean {
  *  those FIRST so they're on disk and merged in, rather than clobbered here. */
 export async function reloadHlsIfLoaded(name: string): Promise<void> {
   if (!pageByName(name)) return;
-  if (isDirty(name) || isConflicted(name)) return;
+  // The FULL gate, and re-evaluated after the await. The old dirty-or-conflicted
+  // check missed uncommitted input the store cannot see — an IME composition on
+  // the notes page was reproduced being destroyed here while the store was clean
+  // — and checking only before the await let the page become dirty during it,
+  // since `reloadPage` is a deliberate clobber. Declining is safe: the next
+  // highlight write re-drives this. (GH #254 increment 3.)
+  if (!mayReplaceInstance(name)) return;
   const dto = await backend().getPage(name, "page");
-  if (dto) reloadPage(dto);
+  if (!dto) return;
+  if (!mayReplaceInstance(name)) return;
+  reloadPage(dto);
 }
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
@@ -654,11 +662,15 @@ export function resetStore() {
 // nodes; the disk version would otherwise be served and the next save could write
 // it, silently dropping the edit. (reloadPage / "use disk version" still replace
 // explicitly via upsertPage.)
-function upsertUnlessDirty(dto: PageDto) {
-  // `isSaving` too — an in-flight save's edit isn't durable yet (audit H1).
-  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name) || isSaving(dto.name)))
-    return;
+/** Install `dto` unless the loaded page holds unsaved work. Reports whether it
+ *  actually installed, so publication can follow installation rather than assume
+ *  it. (GH #254 increment 3.) */
+function upsertUnlessDirty(dto: PageDto): boolean {
+  // The full gate, not the three store predicates alone: uncommitted input can
+  // live outside the store entirely (IME composition, the title-rename draft).
+  if (pageByName(dto.name) && !mayReplaceInstance(dto.name)) return false;
   upsertPage(dto);
+  return true;
 }
 
 export type ReloadDisposition = "reload" | "conflict" | "skip";
@@ -670,8 +682,9 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  - `"skip"` — a block on it is being edited (don't yank the caret) or a block
  *    move is mid-flight (the textarea is transiently blurred): leave it alone.
  *  - `"reload"` — safe to replace the loaded copy with the disk version.
- *  (Navigation/flush-first paths — upsertUnlessDirty, reloadHlsIfLoaded — use a
- *  simpler dirty-only guard on purpose and do not go through this.) */
+ *  (Both `upsertUnlessDirty` and `reloadHlsIfLoaded` now compose this with the
+ *  editor-lease set via `mayReplaceInstance`; the old deliberately-weaker
+ *  dirty-only guard was what GH #304 cost.) */
 export function reloadDisposition(name: string): ReloadDisposition {
   // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePage`, so during the
   // save IPC the page is no longer dirty but its edit isn't durable. Reloading then
@@ -767,8 +780,14 @@ export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {
 
 /** Load the journals feed as the main view. */
 export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
-  for (const d of dtos) upsertUnlessDirty(d);
-  setDoc("feed", dtos.map((d) => d.name));
+  // Publication FOLLOWS installation. When the DTO is declined the name used to
+  // be published into the feed anyway, so the feed rendered a dirty path-pinned
+  // stray as though it were the requested canonical journal — no refusal, no
+  // path warning, and an edit saved to the wrong file. A page already present
+  // under that name stays published; one that never installed does not.
+  // (GH #254 increment 3.)
+  const installed = dtos.filter((d) => upsertUnlessDirty(d) || pageByName(d.name));
+  setDoc("feed", installed.map((d) => d.name));
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
@@ -778,7 +797,8 @@ export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
 export function appendFeed(dtos: PageDto[]) {
   for (const d of dtos) {
     if (doc.feed.includes(d.name)) continue;
-    upsertUnlessDirty(d);
+    // Publication follows installation — see `loadFeed`.
+    if (!upsertUnlessDirty(d) && !pageByName(d.name)) continue;
     setDoc("feed", [...doc.feed, d.name]);
   }
   evictIfNeeded();
@@ -2172,7 +2192,11 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
     const dto: PageDto =
       (await backend().getPage(name, kind)) ??
       { name, kind, title: name, pre_block: null, blocks: [], rev: null };
-    ensurePageLoaded(dto);
+    // Stop on a refusal rather than falling through to `pageByName` for the name
+    // slot: that would append the capture into whichever editor is loaded under
+    // this name, which on a refusal is a DIFFERENT file. Returning false keeps
+    // the capture text where the caller can retry it. (GH #254 increment 3.)
+    if (ensurePageLoaded(dto)) return false;
   }
   const page = pageByName(name);
   if (!page || !pageWritable(name)) return false;
