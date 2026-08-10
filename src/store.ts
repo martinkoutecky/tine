@@ -562,6 +562,7 @@ export function isGuidePage(name: string): boolean {
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
   retireEditorFor(name);
+  notifyPageBecameReplaceable(name);
   forgetSaveState(name);
   clearConflict(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
@@ -744,6 +745,7 @@ export function resetStore() {
   // storm of per-page retirements against a graph that is going away.
   clearAllEditorActivations();
   clearAllEditorLeases();
+  clearPendingBlockRefStamps();
   // Cancel pending/in-flight saves and clear all save guard state (timers, graph
   // token, dirty/baseline/tombstone) so nothing from the old graph can be written
   // after the switch.
@@ -844,8 +846,44 @@ export function takeEditorLease(pageName: string): () => void {
     const live = editorLeases.get(pageName);
     if (!live) return;
     live.delete(handle);
-    if (live.size === 0) editorLeases.delete(pageName);
+    if (live.size === 0) {
+      editorLeases.delete(pageName);
+      notifyPageBecameReplaceable(pageName);
+    }
   };
+}
+
+/**
+ * Listeners for "this page became replaceable".
+ *
+ * Every earlier retry design polled on an UNRELATED event — some other page
+ * saving — which gave them bad timing and, independently, bad liveness: a request
+ * stranded whenever the incumbent became clean through a route that produced no
+ * such save, which the real "Use disk version" transition does. The fix is to
+ * emit the transition the refusal is actually waiting on. (GH #254 increment 3.)
+ */
+const replaceableListeners = new Set<(pageName: string) => void>();
+
+export function onPageBecameReplaceable(listener: (pageName: string) => void): () => void {
+  replaceableListeners.add(listener);
+  return () => replaceableListeners.delete(listener);
+}
+
+/**
+ * Announce that `pageName` may now be replaced.
+ *
+ * Deferred by a microtask so listeners observe SETTLED state: the save-completion
+ * caller still holds its queue entry when it fires, and a listener that ran inline
+ * would see the page as still saving and refuse all over again — reproduced three
+ * times before this existed. Verified before announcing, so a spurious call
+ * cannot wake a listener onto a page that is still holding work.
+ */
+export function notifyPageBecameReplaceable(pageName: string): void {
+  if (replaceableListeners.size === 0) return;
+  queueMicrotask(() => {
+    if (!mayReplaceInstance(pageName)) return;
+    for (const listener of [...replaceableListeners]) listener(pageName);
+  });
 }
 
 /** Does any component hold uncommitted input for this page? */
@@ -3113,32 +3151,61 @@ export async function persistBlockRefTarget(
   path?: string,
 ): Promise<void> {
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
+  const epoch = graphEpoch();
   if (!resolveBlockRef(ref)) {
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
-    // A refusal here is NOT resolved by this increment. Three successive retry
-    // designs were built and each was reproduced failing — retried inside the
-    // save that triggered it (page still saving, refused again), a target read
-    // in flight across a graph switch stamping into the replacement graph, and
-    // liveness tied to unrelated saves so the request stranded whenever the
-    // incumbent resolved another way. Filed as its own packet rather than
-    // redesigned a fourth time inside this candidate.
-    //
-    // Until then the stamp is skipped, which leaves the committed `((uuid))`
-    // working from session-local runtime identity only — it resolves now and is
-    // gone after a restart. That is a real, recorded limitation, not a silent
-    // one; rolling the reference back is not an alternative, because it would
-    // undo what the user just typed. (GH #254 increment 3, acceptance row C5 —
-    // NOT MET.)
-    if (dto && ensurePageLoaded(dto)) return;
+    // A read that crossed a graph switch must not install into the NEW graph.
+    if (epoch !== graphEpoch()) return;
+    if (dto && ensurePageLoaded(dto)) {
+      // RETAIN the request. The user-visible mutation has already happened —
+      // autocomplete committed `((uuid))`, or the sidebar item is already open —
+      // and this stamp is what makes those survive a restart. Skipping it leaves
+      // a reference that resolves now and is gone after a restart; rolling it
+      // back would undo what the user just typed.
+      //
+      // Driven by the "became replaceable" transition, NOT by polling on
+      // unrelated saves: three poll-shaped designs were each reproduced failing,
+      // and the liveness half is why — a request stranded whenever the incumbent
+      // resolved through a route that produced no such save.
+      // (GH #254 increment 3, acceptance row C5.)
+      pendingBlockRefStamps.set(uuid, { uuid, page, kind, path, epoch });
+      return;
+    }
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
   const id = resolveBlockRef(ref);
-  if (id) ensureStableBlockId(id);
+  if (id) {
+    pendingBlockRefStamps.delete(uuid);
+    ensureStableBlockId(id);
+  }
 }
+
+/** Stamps deferred by a refused replacement, keyed by the referenced uuid. */
+const pendingBlockRefStamps = new Map<
+  string,
+  { uuid: string; page: string; kind: PageKind; path?: string; epoch: number }
+>();
+
+/** A retained stamp belongs to the graph that deferred it. */
+export function clearPendingBlockRefStamps(): void {
+  pendingBlockRefStamps.clear();
+}
+
+onPageBecameReplaceable((pageName) => {
+  for (const req of [...pendingBlockRefStamps.values()]) {
+    if (req.page !== pageName) continue;
+    if (req.epoch !== graphEpoch()) {
+      pendingBlockRefStamps.delete(req.uuid);
+      continue;
+    }
+    pendingBlockRefStamps.delete(req.uuid);
+    void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
+  }
+});
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.
  *  - `stripId`: drop the internal `id::` property line (fence-aware) — OG does this

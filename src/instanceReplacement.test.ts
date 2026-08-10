@@ -100,6 +100,47 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(editorActivationFor("Note")).toBeUndefined();
   });
 
+  it("stamps a deferred block ref once the page actually becomes replaceable", async () => {
+    const { persistBlockRefTarget, takeEditorLease } = await import("./store");
+    ensurePageLoaded(page("Target", "pages/Target.md", "incumbent"));
+    const release = takeEditorLease("Target");
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "requested"));
+
+    await persistBlockRefTarget("uuid-1", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1);
+
+    // The incumbent is freed by a LEASE RELEASE — a route that produces no save at
+    // all. Every earlier design polled on unrelated saves and stranded here. The
+    // signal is NOT emitted by hand: the release itself must emit it, or this
+    // would pass on a build where nothing is wired.
+    release();
+    await new Promise((r) => queueMicrotask(() => queueMicrotask(() => r(null))));
+
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a deferred stamp whose graph went away", async () => {
+    const { persistBlockRefTarget, takeEditorLease } = await import("./store");
+    ensurePageLoaded(page("Target", "pages/Target.md", "incumbent"));
+    const releaseB = takeEditorLease("Target");
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(
+      page("Target", "pages/other/Target.md", "requested"),
+    );
+    await persistBlockRefTarget("uuid-2", "Target", "page", "pages/other/Target.md");
+
+    resetStore();
+    const read = vi.spyOn(backend(), "getPageByPath");
+    read.mockClear();
+    releaseB();
+    await new Promise((r) => queueMicrotask(() => queueMicrotask(() => r(null))));
+
+    // A retained request belongs to the graph that deferred it; carried across it
+    // would load the old path's page into the replacement graph.
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

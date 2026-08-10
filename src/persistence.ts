@@ -12,6 +12,7 @@ import {
   doc,
   bumpEditGeneration,
   editorActivationFor,
+  notifyPageBecameReplaceable,
   peekPageInstanceGeneration,
   setProspectiveTarget,
   pageByName,
@@ -644,6 +645,10 @@ async function doSave(
     // the page behind a warning about a change that is now written.
     if (isConflicted(name)) clearConflict(name);
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
+    // This page may now be replaceable. The announcement is deferred inside
+    // `notifyPageBecameReplaceable`, so listeners see state AFTER this save's
+    // queue entry is gone rather than while it still reads as saving.
+    notifyPageBecameReplaceable(name);
     return true;
   } catch (e) {
     // The backend says "conflict" and nothing else for a real base-revision

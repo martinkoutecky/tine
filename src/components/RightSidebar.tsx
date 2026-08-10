@@ -25,7 +25,7 @@ import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell"
 import { openPageTarget, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName, resolveBlockRef } from "../store";
+import { doc, ensurePageLoaded, onPageBecameReplaceable, pageByName, resolveBlockRef } from "../store";
 import { visibleBody } from "../render/block";
 import { Block, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -244,11 +244,27 @@ function useEnsurePage(
             // (GH #254 increment 3.)
             const refusal = ensurePageLoaded(dto);
             if (refusal) {
+              // Say why, AND resume automatically. Relying on the user collapsing
+              // and re-expanding happened to work but was never a contract; the
+              // item otherwise sits on an empty loading body observing nothing.
+              // (GH #254 increment 3, acceptance row E2.)
               pushToast(
                 `“${refusal.page}” has unsaved changes, so the other file with that name ` +
-                  `can't be shown in the sidebar yet. Save or resolve it, then re-open it.`,
+                  `can't be shown in the sidebar yet. It will appear once that is resolved.`,
                 "error",
               );
+              const stop = onPageBecameReplaceable((freed) => {
+                if (!active || freed !== refusal.page) return;
+                stop();
+                if (epoch !== graphEpoch()) return;
+                void (p ? backend().getPageByPath(p) : backend().getPage(n, k))
+                  .then((fresh) => {
+                    if (!active || epoch !== graphEpoch() || !fresh) return;
+                    ensurePageLoaded(fresh);
+                  })
+                  .catch(() => {});
+              });
+              onCleanup(stop);
             }
           }
         })
