@@ -2535,23 +2535,66 @@ pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
-/// The native half of a process-wide clean quit. Kept separate from actually
-/// exiting so Android can prove every managed slot is safe before AppPlugin
-/// finishes its activity.
-fn prepare_tine_quit_all_slots(state: &crate::state::AppState) -> Result<(), String> {
-    for (_, slot) in state.graphs.read().unwrap().entries() {
-        crate::sync_runtime::clean_shutdown_slot(&slot)
-            .map_err(|error| format!("sparse-v2-shutdown-refused: {error}"))?;
+/// The process-wide managed-shutdown result. `Partial` is intentionally a
+/// successful IPC response: native preparation has made durable progress, so
+/// Android must keep its editor shielded and retry only preparation rather than
+/// treating it as an ordinary refusal and replaying the frontend flush.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum TineQuitPreparation {
+    Safe,
+    Refused {
+        detail: String,
+    },
+    Partial {
+        safe_slots: Vec<String>,
+        detail: String,
+    },
+}
+
+/// Snapshot labels before invoking any actor, sort them so the observed partial
+/// prefix is stable, then stop at the first refusal. The cleaner is injected so
+/// the sequencing contract has a small deterministic test independent of the
+/// real actor setup.
+fn prepare_tine_quit_slots<S, F>(mut slots: Vec<(String, S)>, mut clean: F) -> TineQuitPreparation
+where
+    F: FnMut(&S) -> Result<crate::sync_runtime::CleanShutdownSlot, String>,
+{
+    slots.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut safe_slots = Vec::new();
+    for (label, slot) in slots {
+        match clean(&slot) {
+            // Direct Files needs no managed shutdown proof and must not be
+            // represented as a managed safe slot.
+            Ok(crate::sync_runtime::CleanShutdownSlot::Direct) => {}
+            Ok(crate::sync_runtime::CleanShutdownSlot::Safe) => safe_slots.push(label),
+            Err(error) => {
+                let detail = format!("sparse-v2-shutdown-refused: {error}");
+                return if safe_slots.is_empty() {
+                    TineQuitPreparation::Refused { detail }
+                } else {
+                    TineQuitPreparation::Partial { safe_slots, detail }
+                };
+            }
+        }
     }
-    Ok(())
+    TineQuitPreparation::Safe
+}
+
+/// The native half of a process-wide clean quit. Kept separate from actually
+/// exiting so Android can prove every managed slot is safe before handing the
+/// final activity exit to its native SafeBack owner.
+fn prepare_tine_quit_all_slots(state: &crate::state::AppState) -> TineQuitPreparation {
+    let slots = state.graphs.read().unwrap().entries();
+    prepare_tine_quit_slots(slots, |slot| crate::sync_runtime::clean_shutdown_slot(slot))
 }
 
 /// Verify that every managed runtime has stopped safely, without exiting the
-/// process. Android follows this with its existing AppPlugin activity exit.
+/// process. Android follows this with its SafeBack-owned activity exit.
 #[tauri::command]
 pub(crate) fn prepare_tine_quit(
     state: tauri::State<'_, crate::state::AppState>,
-) -> Result<(), String> {
+) -> TineQuitPreparation {
     prepare_tine_quit_all_slots(&state)
 }
 
@@ -2565,7 +2608,12 @@ pub(crate) fn tine_quit(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
-    prepare_tine_quit_all_slots(&state)?;
+    match prepare_tine_quit_all_slots(&state) {
+        TineQuitPreparation::Safe => {}
+        TineQuitPreparation::Refused { detail } | TineQuitPreparation::Partial { detail, .. } => {
+            return Err(detail);
+        }
+    }
     #[cfg(target_os = "linux")]
     crate::platform::kill_webkit_children();
     app.exit(0);
@@ -2591,6 +2639,79 @@ pub(crate) fn close_graph_window(
         return Ok(());
     }
     window.destroy().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod prepare_tine_quit_tests {
+    use super::*;
+    use crate::sync_runtime::CleanShutdownSlot;
+    use std::cell::RefCell;
+
+    #[test]
+    fn partial_shutdown_is_sorted_stops_at_refusal_and_never_becomes_safe() {
+        let calls = RefCell::new(Vec::new());
+        let result = prepare_tine_quit_slots(
+            vec![
+                ("B".into(), "refuse"),
+                ("direct".into(), "direct"),
+                ("A".into(), "safe"),
+            ],
+            |outcome| {
+                calls.borrow_mut().push(*outcome);
+                match *outcome {
+                    "safe" => Ok(CleanShutdownSlot::Safe),
+                    "direct" => Ok(CleanShutdownSlot::Direct),
+                    "refuse" => Err("retained local publication".into()),
+                    other => panic!("unexpected fixture outcome {other}"),
+                }
+            },
+        );
+
+        assert_eq!(calls.into_inner(), vec!["safe", "refuse"]);
+        assert_eq!(
+            result,
+            TineQuitPreparation::Partial {
+                safe_slots: vec!["A".into()],
+                detail: "sparse-v2-shutdown-refused: retained local publication".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn retry_accepts_an_already_safe_slot_once_every_slot_is_safe() {
+        let first =
+            prepare_tine_quit_slots(vec![("A".into(), true), ("B".into(), false)], |safe| {
+                safe.then_some(CleanShutdownSlot::Safe)
+                    .ok_or_else(|| "B refused".into())
+            });
+        assert!(matches!(first, TineQuitPreparation::Partial { .. }));
+
+        let retry = prepare_tine_quit_slots(vec![("B".into(), true), ("A".into(), true)], |safe| {
+            safe.then_some(CleanShutdownSlot::Safe)
+                .ok_or_else(|| "B refused".into())
+        });
+        assert_eq!(retry, TineQuitPreparation::Safe);
+    }
+
+    #[test]
+    fn zero_progress_refusal_is_typed_and_serializable() {
+        let result = prepare_tine_quit_slots(vec![("B".into(), false)], |safe| {
+            safe.then_some(CleanShutdownSlot::Safe)
+                .ok_or_else(|| "terminal runtime".into())
+        });
+        assert_eq!(
+            result,
+            TineQuitPreparation::Refused {
+                detail: "sparse-v2-shutdown-refused: terminal runtime".into(),
+            }
+        );
+        let encoded = serde_json::to_value(result).unwrap();
+        assert_eq!(encoded["status"], "refused");
+        assert_eq!(
+            encoded["detail"],
+            "sparse-v2-shutdown-refused: terminal runtime"
+        );
+    }
 }
 
 /// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS

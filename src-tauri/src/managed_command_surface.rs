@@ -73,6 +73,7 @@ const UNSCANNED_SOURCES: &[(&str, &str)] = &[
         include_str!("android_folder_picker.rs"),
     ),
     ("android_media.rs", include_str!("android_media.rs")),
+    ("android_safe_back.rs", include_str!("android_safe_back.rs")),
     (
         "android_system_bars.rs",
         include_str!("android_system_bars.rs"),

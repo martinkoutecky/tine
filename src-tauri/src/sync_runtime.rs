@@ -1716,17 +1716,78 @@ pub(crate) async fn sparse_v2_clean_shutdown(
     .map_err(|error| error.to_string())?
 }
 
+/// A graph slot can authorize a process/window exit only after its managed
+/// runtime has reached the specific `Safe` shutdown outcome. A terminal actor
+/// has stopped accepting work, but it did not prove the clean-stop invariant;
+/// collapsing both outcomes because they expose a status snapshot would let an
+/// exit discard the recovery path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CleanShutdownSlot {
+    Direct,
+    Safe,
+}
+
+fn clean_shutdown_outcome(outcome: SyncShutdownOutcome) -> Result<CleanShutdownSlot, String> {
+    match outcome {
+        SyncShutdownOutcome::Safe(_) => Ok(CleanShutdownSlot::Safe),
+        SyncShutdownOutcome::Terminal(snapshot) => Err(format!(
+            "Tine-managed storage reached a terminal state and cannot authorize process exit: {}",
+            snapshot
+                .detail
+                .unwrap_or_else(|| "no terminal detail was recorded".into())
+        )),
+    }
+}
+
 pub(crate) fn clean_shutdown_slot(
     slot: &crate::state::GraphSlot,
-) -> Result<Option<SparseV2RuntimeStatusDto>, String> {
+) -> Result<CleanShutdownSlot, String> {
     let Some(handle) = slot.sparse_runtime() else {
-        return Ok(None);
+        return Ok(CleanShutdownSlot::Direct);
     };
     handle
         .clean_shutdown()
-        .map(shutdown_status)
-        .map(Some)
         .map_err(|error| error.to_string())
+        .and_then(clean_shutdown_outcome)
+}
+
+#[cfg(test)]
+mod clean_shutdown_slot_tests {
+    use super::*;
+
+    fn snapshot(
+        lifecycle: SyncRuntimeLifecycle,
+        detail: Option<&str>,
+    ) -> SyncRuntimeStatusSnapshot {
+        SyncRuntimeStatusSnapshot {
+            lifecycle,
+            recovery: None,
+            watcher: Default::default(),
+            last_tick: None,
+            detail: detail.map(str::to_owned),
+            shared_role: None,
+            shared_phase: None,
+            provider_pending: 0,
+            managed_local_pending: 0,
+            managed_local_checkpointed_sequence: 0,
+            managed_local_next_sequence: 0,
+            managed_local_stage: None,
+        }
+    }
+
+    #[test]
+    fn terminal_shutdown_outcome_cannot_authorize_an_exit() {
+        let terminal = SyncShutdownOutcome::Terminal(snapshot(
+            SyncRuntimeLifecycle::Terminal,
+            Some("authority lease was revoked"),
+        ));
+        assert!(clean_shutdown_outcome(terminal)
+            .unwrap_err()
+            .contains("cannot authorize process exit"));
+
+        let safe = SyncShutdownOutcome::Safe(snapshot(SyncRuntimeLifecycle::StoppedSafe, None));
+        assert_eq!(clean_shutdown_outcome(safe), Ok(CleanShutdownSlot::Safe));
+    }
 }
 
 #[cfg(test)]
@@ -2767,7 +2828,7 @@ mod tests {
 
         assert!(matches!(
             clean_shutdown_slot(&slot).unwrap(),
-            Some(status) if status.lifecycle == "stopped_safe"
+            CleanShutdownSlot::Safe
         ));
         let stopped = slot
             .sparse_binding()
@@ -2800,7 +2861,7 @@ mod tests {
         ));
         assert!(matches!(
             clean_shutdown_slot(&reopened_slot).unwrap(),
-            Some(status) if status.lifecycle == "stopped_safe"
+            CleanShutdownSlot::Safe
         ));
         let _ = std::fs::remove_dir_all(root);
     }

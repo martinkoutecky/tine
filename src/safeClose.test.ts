@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { AndroidRootClosePhase, createAndroidRootCloseCoordinator } from "./androidBack";
+import {
+  AndroidRootClosePhase,
+  createAndroidRootCloseCoordinator,
+  type AndroidNativePrepareFailure,
+  type AndroidNativePrepareResult,
+} from "./androidBack";
 import { createSafeCloseCoordinator, type DiscardReason, type SafeCloseDeps } from "./safeClose";
 
 function deferred<T>() {
@@ -32,13 +37,13 @@ function androidRootClose(
   safeClose: ReturnType<typeof createSafeCloseCoordinator>,
   finishActivity: () => Promise<void>,
   overrides: Partial<{
-    prepareNativeClose: () => Promise<void>;
-    nativePrepareFailed: (error: unknown) => void;
+    prepareNativeClose: () => Promise<AndroidNativePrepareResult>;
+    nativePrepareFailed: (failure: AndroidNativePrepareFailure) => void;
     finishActivityFailed: () => void;
   }> = {},
 ) {
   const deps = {
-    prepareNativeClose: vi.fn(async () => {}),
+    prepareNativeClose: vi.fn(async () => ({ status: "safe" as const })),
     finishActivity,
     nativePrepareFailed: vi.fn(),
     finishActivityFailed: vi.fn(),
@@ -58,7 +63,7 @@ describe("GH #161 shared safe-close transaction", () => {
     });
     const exit = vi.fn(async () => { order.push("activity"); });
     const { deps: closeDeps, rootClose } = androidRootClose(safeClose, exit, {
-      prepareNativeClose: vi.fn(async () => { order.push("native"); }),
+      prepareNativeClose: vi.fn(async () => { order.push("native"); return { status: "safe" as const }; }),
     });
 
     await expect(rootClose.request()).resolves.toBe("exit_requested");
@@ -226,36 +231,26 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(exit).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    [
-      "a managed safety refusal",
-      new Error("sparse-v2-shutdown-refused: retained local publication"),
-      "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status.",
-    ],
-    [
-      "a generic native failure",
-      new Error("native bridge unavailable"),
-      "Couldn't close the app. Your graph remains open.",
-    ],
-  ])("resets after %s so a later Back retries the full close", async (_case, refusal, expectedToast) => {
+  it("resets after a typed zero-progress refusal so a later Back retries the full close", async () => {
     const { deps, safeClose, transitions } = harness();
+    const refusal = { status: "refused" as const, detail: "retained local publication" };
     const prepareNativeClose = vi.fn()
-      .mockRejectedValueOnce(refusal)
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(refusal)
+      .mockResolvedValueOnce({ status: "safe" as const });
     const exit = vi.fn(async () => {});
     const toasts: string[] = [];
-    const nativePrepareFailed = vi.fn((error: unknown) => {
+    const nativePrepareFailed = vi.fn((failure: AndroidNativePrepareFailure) => {
       toasts.push(
-        String(error).includes("sparse-v2-shutdown-refused")
+        failure.status === "refused" || failure.status === "partial"
           ? "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status."
           : "Couldn't close the app. Your graph remains open.",
       );
     });
     const { rootClose } = androidRootClose(safeClose, exit, { prepareNativeClose, nativePrepareFailed });
 
-    await expect(rootClose.request()).resolves.toBe("native_prepare_failed");
+    await expect(rootClose.request()).resolves.toBe("native_prepare_refused");
     expect(nativePrepareFailed).toHaveBeenCalledExactlyOnceWith(refusal);
-    expect(toasts).toEqual([expectedToast]);
+    expect(toasts).toEqual(["Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status."]);
     expect(safeClose.inFlight()).toBe(false);
     expect(rootClose.phase()).toBe(AndroidRootClosePhase.Idle);
     expect(exit).not.toHaveBeenCalled();
@@ -266,9 +261,89 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(transitions).toEqual([true, false, true]);
   });
 
+  it("keeps a partial managed shutdown shielded and retries only native preparation", async () => {
+    const { deps, safeClose, transitions } = harness();
+    const partial = { status: "partial" as const, safe_slots: ["A"], detail: "B refused" };
+    const prepareNativeClose = vi.fn()
+      .mockResolvedValueOnce(partial)
+      // A was already stopped safely; the retry is idempotent for it and B now
+      // reaches Safe, so exactly one activity exit is requested.
+      .mockResolvedValueOnce({ status: "safe" as const });
+    const exit = vi.fn(async () => {});
+    const nativePrepareFailed = vi.fn();
+    const { rootClose } = androidRootClose(safeClose, exit, { prepareNativeClose, nativePrepareFailed });
+
+    await expect(rootClose.request()).resolves.toBe("native_prepare_partial");
+    expect(nativePrepareFailed).toHaveBeenCalledExactlyOnceWith(partial);
+    expect(rootClose.phase()).toBe(AndroidRootClosePhase.NativePartiallyPrepared);
+    expect(safeClose.inFlight()).toBe(true);
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(prepareNativeClose).toHaveBeenCalledOnce();
+    expect(exit).not.toHaveBeenCalled();
+
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(prepareNativeClose).toHaveBeenCalledTimes(2);
+    expect(exit).toHaveBeenCalledOnce();
+    expect(transitions).toEqual([true]);
+  });
+
+  it("keeps an unknown native transport result shielded and retries only native preparation", async () => {
+    const { deps, safeClose, transitions } = harness();
+    const unavailable = new Error("native bridge unavailable");
+    const prepareNativeClose = vi.fn()
+      .mockRejectedValueOnce(unavailable)
+      .mockResolvedValueOnce({ status: "safe" as const });
+    const exit = vi.fn(async () => {});
+    const failures: AndroidNativePrepareFailure[] = [];
+    const nativePrepareFailed = vi.fn((failure: AndroidNativePrepareFailure) => failures.push(failure));
+    const { rootClose } = androidRootClose(safeClose, exit, { prepareNativeClose, nativePrepareFailed });
+
+    await expect(rootClose.request()).resolves.toBe("native_prepare_uncertain");
+    expect(failures).toEqual([{ status: "transport_unknown", detail: String(unavailable) }]);
+    expect(rootClose.phase()).toBe(AndroidRootClosePhase.NativePartiallyPrepared);
+    expect(safeClose.inFlight()).toBe(true);
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(exit).not.toHaveBeenCalled();
+
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(prepareNativeClose).toHaveBeenCalledTimes(2);
+    expect(exit).toHaveBeenCalledOnce();
+    expect(transitions).toEqual([true]);
+  });
+
+  it("keeps an unrecognized native result shielded and retries only native preparation", async () => {
+    const { deps, safeClose } = harness();
+    const prepareNativeClose = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ status: "safe" as const });
+    const exit = vi.fn(async () => {});
+    const failures: AndroidNativePrepareFailure[] = [];
+    const nativePrepareFailed = vi.fn((failure: AndroidNativePrepareFailure) => failures.push(failure));
+    const { rootClose } = androidRootClose(safeClose, exit, {
+      prepareNativeClose: prepareNativeClose as () => Promise<AndroidNativePrepareResult>,
+      nativePrepareFailed,
+    });
+
+    await expect(rootClose.request()).resolves.toBe("native_prepare_uncertain");
+    expect(failures).toEqual([{
+      status: "transport_unknown",
+      detail: "Error: native shutdown returned an unrecognized result",
+    }]);
+    expect(rootClose.phase()).toBe(AndroidRootClosePhase.NativePartiallyPrepared);
+    expect(safeClose.inFlight()).toBe(true);
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(prepareNativeClose).toHaveBeenCalledTimes(2);
+    expect(exit).toHaveBeenCalledOnce();
+  });
+
   it("keeps the shield after activity exit rejection and retries only the exit", async () => {
     const { deps, safeClose, transitions } = harness();
-    const prepareNativeClose = vi.fn(async () => {});
+    const prepareNativeClose = vi.fn(async () => ({ status: "safe" as const }));
     const exit = vi.fn()
       .mockRejectedValueOnce(new Error("plugin unavailable"))
       .mockResolvedValueOnce(undefined);

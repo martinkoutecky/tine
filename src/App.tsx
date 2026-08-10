@@ -168,8 +168,8 @@ const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("plugin:app|exit");
   },
-  nativePrepareFailed: (error) => pushToast(
-    String(error).includes("sparse-v2-shutdown-refused")
+  nativePrepareFailed: (failure) => pushToast(
+    failure.status === "refused" || failure.status === "partial"
       ? "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status."
       : "Couldn't close the app. Your graph remains open.",
     "error",
@@ -609,24 +609,26 @@ export function App(): JSX.Element {
     { defer: true },
   ));
 
-  // AppPlugin is the single Android native Back owner.  A drawer/transient is
-  // never represented by synthetic history; route history remains the fallback.
+  // SafeBackPlugin is the single Android native Back owner. A drawer/transient
+  // is never represented by synthetic history; route history remains the JS
+  // dispatch fallback once the native listener is explicitly ready.
   onMount(() => {
     if (!isTauri()) return;
     const uninstall = installAndroidBackHandler({
       platform: () => backend().appPlatform(),
       subscribe: async (handler) => {
-        const { onBackButtonPress } = await import("@tauri-apps/api/app");
-        return onBackButtonPress(handler);
+        const { addPluginListener } = await import("@tauri-apps/api/core");
+        return addPluginListener("safe-back", "android-safe-back", handler);
       },
       dismissTransient: () => dismissTopTransient("back"),
       dismissDrawer: () => dismissMobileDrawer("back"),
       restoreDrawerFocus: () => restoreDrawerFocus("back"),
       historyBack: () => window.history.back(),
       closeRoot: () => { void closeAndroidRootSafely(); },
-      // No JS listener means the inspected AppPlugin retains its native WebView
-      // history/activity fallback. Do not install a competing recovery owner.
-      setupFailed: (error) => console.warn("Android Back listener unavailable; using native fallback", error),
+      // Listener absence/rejection remains owned by the native SafeBackPlugin,
+      // which consumes Back rather than delegating to AppPlugin's unsafe
+      // WebView/activity fallback.
+      setupFailed: (error) => console.warn("Android SafeBack listener unavailable; native owner remains blocking", error),
     });
     onCleanup(uninstall);
   });

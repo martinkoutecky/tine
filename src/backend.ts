@@ -138,6 +138,14 @@ export interface MediaCaptureResult {
   ext?: string | null;
 }
 
+/** Result of the process-wide native shutdown preparation. Android may request
+ * an Activity exit only after `safe`; partial native progress must remain
+ * shielded so retrying does not replay the frontend persistence transaction. */
+export type TineQuitPreparation =
+  | { status: "safe" }
+  | { status: "refused"; detail: string }
+  | { status: "partial"; safe_slots: string[]; detail: string };
+
 export interface KnownGraph {
   path: string;
   name: string;
@@ -221,8 +229,8 @@ export interface Backend {
    *  process exits. */
   quit(): Promise<void>;
   /** Verify every managed runtime can stop cleanly without exiting the app.
-   * Android calls this before handing the final activity exit to AppPlugin. */
-  prepareQuit(): Promise<void>;
+   * Android calls this before handing the final activity exit to SafeBack. */
+  prepareQuit(): Promise<TineQuitPreparation>;
   closeGraphWindow(): Promise<void>;
   /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
    *  debugging. No-op on a build without devtools compiled in. */
@@ -702,7 +710,7 @@ class TauriBackend implements Backend {
     return this.call<void>("tine_quit");
   }
   prepareQuit() {
-    return this.call<void>("prepare_tine_quit");
+    return this.call<TineQuitPreparation>("prepare_tine_quit");
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");

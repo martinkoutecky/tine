@@ -4,6 +4,7 @@
 
 mod android_folder_picker;
 mod android_media;
+mod android_safe_back;
 mod android_system_bars;
 mod backup;
 mod commands;
@@ -591,6 +592,8 @@ pub fn run() {
     let builder = builder.plugin(android_media::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_safe_back::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(ios_folder_picker::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens

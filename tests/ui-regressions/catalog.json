@@ -6329,18 +6329,19 @@
         "android"
       ],
       "layer": "native",
-      "status": "fixing",
+      "status": "covered",
       "coverage": {
         "tests": [
           "src/androidBack.test.ts",
           "src/safeClose.test.ts",
           "src-tauri/src/sync_runtime.rs",
-          "src-tauri/src/commands.rs"
+          "src-tauri/src/commands.rs",
+          "src-tauri/gen/android/app/src/main/java/page/tine/app/SafeBackPlugin.kt"
         ],
         "scenario": "android.safe-back-typed-managed-shutdown-owner",
         "failBefore": "proven"
       },
-      "notes": "An Android AppPlugin listener could fall back to WebView history or activity finish before JavaScript subscribed, while the process-wide managed shutdown helper collapsed terminal and safe outcomes and could exit after a terminal runtime. The repair introduces a native SafeBack owner that consumes all Back events unless its own listener is ready, and a typed process preparation result: only Safe may exit; Refused reopens the editor only when no managed slot was verified; Partial or an unknown transport result remains shielded and retries native preparation alone. Physical Android compilation and hardware Back are hosted-CI/device gates."
+      "notes": "An Android AppPlugin listener could fall back to WebView history or activity finish before JavaScript subscribed, while the process-wide managed shutdown helper collapsed terminal and safe outcomes and could exit after a terminal runtime. The repair introduces a native SafeBack owner that consumes all Back events unless its own listener is ready, and a typed process preparation result: only Safe may exit; Refused reopens the editor only when no managed slot was verified; Partial or an unknown transport result remains shielded and retries native preparation alone. JS tests cover listener lifecycle and the zero-progress/partial/unknown retry matrix; Rust tests cover sorted stop-at-first-refusal aggregation, terminal rejection and Safe retry. Physical Android compilation and hardware Back remain hosted-CI/device gates."
     },
     {
       "id": "UI-MANAGED-RUNTIME-EVENT-BRIDGE-001",
