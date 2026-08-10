@@ -10946,7 +10946,11 @@ impl RuntimeActor {
                         reason: SyncApplicationPageConflict::ReadOnly,
                     });
                 }
-                validate_existing_application_page_shape(&request.page, &current.page)?;
+                if resolve_conflict {
+                    validate_conflict_resolution_page_shape(&request.page, &current.page)?;
+                } else {
+                    validate_existing_application_page_shape(&request.page, &current.page)?;
+                }
                 let blocks = match application_editor_blocks_existing(
                     &request.page,
                     &current,
@@ -18195,6 +18199,25 @@ fn validate_existing_application_page_shape(
     Ok(())
 }
 
+fn validate_conflict_resolution_page_shape(
+    requested: &PageDto,
+    current: &PageDto,
+) -> Result<(), SyncApplicationPageRequestError> {
+    if requested.name != current.name
+        || requested.kind != current.kind
+        || requested.title != current.title
+        || requested.format != current.format
+        || requested.read_only != current.read_only
+        || (!requested.path.is_empty() && requested.path != current.path)
+        || requested.guide
+    {
+        return Err(SyncApplicationPageRequestError::InvalidRequest(
+            SyncApplicationPageInvalidRequest::MalformedPage,
+        ));
+    }
+    Ok(())
+}
+
 fn validate_new_application_page_shape(
     page: &PageDto,
     name: &str,
@@ -23244,6 +23267,128 @@ mod tests {
             SyncApplicationPageSaveOutcome::Conflict {
                 reason: SyncApplicationPageConflict::MissingPage
             }
+        ));
+
+        drain_managed_local(&handle);
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn managed_new_page_conflict_resolution_uses_the_identifiable_winner_path_and_revision() {
+        let fixture = ActivationFixture::empty("managed-new-page-conflict", 0xa130);
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated.handle.expect("activation retains a runtime");
+        drive_initial_feed(&handle);
+
+        let name = "Concurrent New Ω";
+        let mut retained = new_application_page(
+            name,
+            SyncPageKind::Page,
+            None,
+            vec![BlockDto {
+                raw: "mine from the retained new-page editor".into(),
+                ..BlockDto::default()
+            }],
+        );
+        assert!(retained.path.is_empty());
+        let mut winner_a = retained.clone();
+        winner_a.blocks[0].raw = "winner A created the page".into();
+        let (winner_a, winner_a_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::New {
+                    name: name.into(),
+                    page_kind: SyncPageKind::Page,
+                },
+                page: winner_a,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("winner A did not create the page: {other:?}"),
+        };
+        assert!(!winner_a.path.is_empty());
+        assert!(matches!(
+            handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::New {
+                        name: name.into(),
+                        page_kind: SyncPageKind::Page,
+                    },
+                    page: retained.clone(),
+                })
+                .unwrap(),
+            SyncApplicationPageSaveOutcome::Conflict {
+                reason: SyncApplicationPageConflict::PageAlreadyExists
+            }
+        ));
+
+        let mut winner_b = winner_a.clone();
+        winner_b.blocks[0].raw = "winner B arrived before Keep mine".into();
+        let (winner_b, winner_b_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: winner_a.path.clone(),
+                    revision: winner_a_revision.clone(),
+                },
+                page: winner_b,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("winner B was not accepted: {other:?}"),
+        };
+        assert!(matches!(
+            handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::ResolveConflict {
+                        path: winner_a.path.clone(),
+                        observed_revision: winner_a_revision,
+                    },
+                    page: retained.clone(),
+                })
+                .unwrap(),
+            SyncApplicationPageSaveOutcome::Conflict {
+                reason: SyncApplicationPageConflict::StaleBase
+            }
+        ));
+        assert_eq!(
+            load_application_exact(&handle, &winner_a.path).0.blocks[0].raw,
+            winner_b.blocks[0].raw
+        );
+
+        let (resolved, resolved_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::ResolveConflict {
+                    path: winner_a.path.clone(),
+                    observed_revision: winner_b_revision,
+                },
+                page: retained.clone(),
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("retained new-page draft did not replace winner B: {other:?}"),
+        };
+        assert_eq!(resolved.path, winner_a.path);
+        assert_eq!(resolved.name, retained.name);
+        assert_eq!(resolved.kind, retained.kind);
+        assert_eq!(resolved.blocks[0].raw, retained.blocks[0].raw);
+        retained.name = "Wrong owner".into();
+        assert!(matches!(
+            handle.save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::ResolveConflict {
+                    path: resolved.path.clone(),
+                    observed_revision: resolved_revision,
+                },
+                page: retained,
+            }),
+            Err(SyncApplicationPageRequestError::InvalidRequest(
+                SyncApplicationPageInvalidRequest::MalformedPage
+            ))
         ));
 
         drain_managed_local(&handle);

@@ -66,7 +66,7 @@ const heldSources = new Set<string>();
 // click belongs to a winner the user never saw.
 type ConflictObservation =
   | { kind: "direct"; epoch: number | null }
-  | { kind: "managed"; revision: string | null };
+  | { kind: "managed"; observation: { path: string; revision: string } | null };
 
 const heldForcedSaves = new Map<string, ConflictObservation | null>();
 const heldByDest = new Map<string, string[]>();
@@ -445,7 +445,7 @@ export function canForceSave(name: string): boolean {
   if (!observation) return true;
   return observation.kind === "direct"
     ? observation.epoch !== null
-    : observation.revision !== null;
+    : observation.observation !== null;
 }
 
 function enqueueSave(
@@ -525,7 +525,7 @@ async function doSave(
         baseline,
         force,
         observation?.kind === "direct" ? observation.epoch : null,
-        observation?.kind === "managed" ? observation.revision : null,
+        observation?.kind === "managed" ? observation.observation : null,
       )
     );
     // A reload/rename/delete/rebind while savePage was in flight invalidates the
@@ -570,24 +570,22 @@ async function doSave(
       // chooses Use current. Keep mine returns this revision to one serialized
       // actor turn, which re-proves it before authoring anything.
       clearTransientRetry(name);
-      let revision: string | null = null;
-      if (baseline !== null) {
-        try {
-          const current = dto.path
-            ? await backend().getPageByPath(dto.path)
-            : await backend().getPage(name, dto.kind);
-          if (token !== graphToken) return false;
-          if (current?.rev && (!dto.path || current.path === dto.path)) {
-            revision = current.rev;
-          }
-        } catch {
-          if (token !== graphToken) return false;
-          // Missing, renamed, ambiguous, or temporarily unobservable owners do
-          // not get replacement authority. The non-destructive draft remains
-          // parked and Use current remains available.
+      let managedObservation: { path: string; revision: string } | null = null;
+      try {
+        const current = dto.path
+          ? await backend().getPageByPath(dto.path)
+          : await backend().getPage(name, dto.kind);
+        if (token !== graphToken) return false;
+        if (current?.path && current.rev && (!dto.path || current.path === dto.path)) {
+          managedObservation = { path: current.path, revision: current.rev };
         }
+      } catch {
+        if (token !== graphToken) return false;
+        // Missing, renamed, ambiguous, or temporarily unobservable owners do
+        // not get replacement authority. The non-destructive draft remains
+        // parked and Use current remains available.
       }
-      conflictObservation.set(name, { kind: "managed", revision });
+      conflictObservation.set(name, { kind: "managed", observation: managedObservation });
       // Re-notify an already visible banner so its Keep mine enabled state
       // reflects this newly observed (or now unobservable) managed owner.
       if (isConflicted(name)) clearConflict(name);

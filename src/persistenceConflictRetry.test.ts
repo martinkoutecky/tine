@@ -17,18 +17,19 @@ const calls: {
   name: string;
   force: boolean;
   conflictEpoch: number | null;
-  managedConflictRevision: string | null;
+  managedConflictObservation: { path: string; revision: string } | null;
 }[] = [];
 let nextResult: (() => Promise<string>) | null = null;
 let observedManagedPage: { rev: string; path: string } | null = null;
+let draftPath = "pages/Notes.md";
 
 vi.mock("./store", () => ({
   doc: { loaded: true, pages: [] },
-  pageByName: (name: string) => ({ name }),
+  pageByName: (name: string) => ({ name, kind: "page", path: draftPath }),
   pageInstanceGeneration: () => 1,
   pageToDto: (name: string) => ({
     name, kind: "page", title: name, pre_block: null, blocks: [],
-    format: "markdown", path: `pages/${name}.md`, guide: false, read_only: false,
+    format: "markdown", path: draftPath, guide: false, read_only: false,
   }),
 }));
 
@@ -39,14 +40,15 @@ vi.mock("./backend", () => ({
       _baseRev: string | null,
       force: boolean,
       conflictEpoch: number | null,
-      managedConflictRevision: string | null,
+      managedConflictObservation: { path: string; revision: string } | null,
     ) => {
-      calls.push({ name: page.name, force, conflictEpoch, managedConflictRevision });
+      calls.push({ name: page.name, force, conflictEpoch, managedConflictObservation });
       const result = nextResult;
       nextResult = null;
       return result ? result() : Promise.resolve("rev-after");
     },
     getPageByPath: () => Promise.resolve(observedManagedPage),
+    getPage: () => Promise.resolve(observedManagedPage),
   }),
 }));
 
@@ -86,6 +88,7 @@ describe("a failure is classified by its code, not by the page's name", () => {
     conflicted.clear();
     nextResult = null;
     observedManagedPage = null;
+    draftPath = "pages/Notes.md";
     resetSaveState();
   });
 
@@ -134,6 +137,7 @@ describe("a tokenless force does not strand the page behind a spent banner", () 
     conflicted.clear();
     nextResult = null;
     observedManagedPage = null;
+    draftPath = "pages/Notes.md";
     resetSaveState();
   });
 
@@ -188,6 +192,7 @@ describe("managed save conflict resolution", () => {
     conflicted.clear();
     nextResult = null;
     observedManagedPage = null;
+    draftPath = "pages/Notes.md";
     resetSaveState();
   });
 
@@ -206,7 +211,10 @@ describe("managed save conflict resolution", () => {
     expect(calls[1]).toMatchObject({
       force: true,
       conflictEpoch: null,
-      managedConflictRevision: "managed-winner-a",
+      managedConflictObservation: {
+        path: "pages/Notes.md",
+        revision: "managed-winner-a",
+      },
     });
   });
 
@@ -222,14 +230,42 @@ describe("managed save conflict resolution", () => {
     expect(await forceSave("Notes")).toBe(false);
     expect(calls[1]).toMatchObject({
       force: true,
-      managedConflictRevision: "managed-winner-a",
+      managedConflictObservation: {
+        path: "pages/Notes.md",
+        revision: "managed-winner-a",
+      },
     });
 
     nextResult = () => Promise.resolve("managed-mine");
     expect(await forceSave("Notes")).toBe(true);
     expect(calls[2]).toMatchObject({
       force: true,
-      managedConflictRevision: "managed-winner-b",
+      managedConflictObservation: {
+        path: "pages/Notes.md",
+        revision: "managed-winner-b",
+      },
+    });
+  });
+
+  it("binds a losing new-page draft to the identifiable winner's exact path and revision", async () => {
+    draftPath = "";
+    observedManagedPage = { rev: "managed-created-winner", path: "pages/Notes.md" };
+    nextResult = () => Promise.reject(new Error("managed.conflict: page_already_exists"));
+    markDirty("Notes");
+
+    expect(await flushPage("Notes")).toBe(false);
+    expect(conflicted.has("Notes")).toBe(true);
+    expect(canForceSave("Notes")).toBe(true);
+
+    nextResult = () => Promise.resolve("managed-new-draft-won");
+    expect(await forceSave("Notes")).toBe(true);
+    expect(calls[1]).toMatchObject({
+      force: true,
+      conflictEpoch: null,
+      managedConflictObservation: {
+        path: "pages/Notes.md",
+        revision: "managed-created-winner",
+      },
     });
   });
 

@@ -19,12 +19,13 @@
           "crates/tine-core/src/sync_runtime.rs",
           "src-tauri/src/commands.rs",
           "src/persistenceConflictRetry.test.ts",
-          "src/components/ConflictBar.test.tsx"
+          "src/components/ConflictBar.test.tsx",
+          "scripts/e2e-sparse-v2-recovery.mjs"
         ],
         "scenario": "managed-save.conflict-resolution-is-explicit-and-revision-bound",
         "failBefore": "proven"
       },
-      "notes": "Necessity gate proven: the managed native gateway rejected every force before actor invocation and mapped stale saves to a permanent toast, so the retained draft had no in-app authoring path. The covered path observes the exact pinned managed revision without loading it into the editor, binds Keep mine to that observation, serializes the replacement through one actor turn, re-conflicts after a second accepted change, recreates remotely deleted retained blocks under fresh durable IDs, and disables replacement for missing, renamed, ambiguous, or otherwise unobservable owners. Use current does not reload or discard the retained draft until the user explicitly selects it."
+      "notes": "Necessity gate proven: the managed native gateway rejected every force before actor invocation and mapped stale saves to a permanent toast, so the retained draft had no in-app authoring path. The covered path observes the exact pinned managed path and revision without loading it into the editor, binds Keep mine to that observation, serializes the replacement through one actor turn, re-conflicts after a second accepted change, recreates remotely deleted retained blocks under fresh durable IDs, and disables replacement for missing, renamed, ambiguous, or otherwise unobservable owners. A baseRev-null draft that loses a concurrent create observes the winner independently by logical name and kind, then resolves against that exact winner path and revision. Use current does not reload or discard the retained draft until the user explicitly selects it."
     },
     {
       "id": "UI-MANAGED-CRASH-STARTUP-RECOVERY-001",

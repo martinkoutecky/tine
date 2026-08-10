@@ -640,6 +640,12 @@
      "class": "core-operation",
      "userOutcome": "Users can edit an existing UTF-named page and create a new page in sparse v2, then reopen both saved edits after restart and after returning to standard Markdown mode.",
      "blocking": true
+    },
+    {
+     "class": "exact-safety-interoperability",
+     "userOutcome": "A managed save conflict keeps the editor draft, refuses Keep mine after a newer winner, resolves against the re-observed exact revision, and also resolves a concurrent new-page creator by the winner's exact path without losing the retained draft.",
+     "blocking": true,
+     "authority": "Tine managed application save, Tauri IPC, serialized actor conflict-resolution, and durable Markdown continuity contract"
     }
    ],
    "acceptableVariations": [

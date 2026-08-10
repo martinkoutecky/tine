@@ -373,24 +373,28 @@ fn load_sparse_page(
     map_sparse_page_load(outcome)
 }
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ManagedConflictObservation {
+    path: String,
+    revision: String,
+}
+
 fn sparse_save_request(
     page: PageDto,
     base_rev: Option<String>,
     force: bool,
-    managed_conflict_revision: Option<String>,
+    managed_conflict_observation: Option<ManagedConflictObservation>,
 ) -> Result<SyncApplicationPageSaveRequest, String> {
     let target = match (force, base_rev) {
-        (true, Some(_)) => SyncApplicationPageSaveTarget::ResolveConflict {
-            path: page.path.clone(),
-            observed_revision: managed_conflict_revision.ok_or_else(|| {
-                "managed.conflict_unobserved: Keep mine needs a current managed revision. Use current or wait for the page to become identifiable.".to_owned()
-            })?,
-        },
-        (true, None) => {
-            return Err(
-                "managed.conflict_unobserved: Keep mine cannot replace a page that has no prior managed revision."
-                    .into(),
-            )
+        (true, _) => {
+            let observation = managed_conflict_observation.ok_or_else(|| {
+                "managed.conflict_unobserved: Keep mine needs an identifiable current managed page. Use current or wait for the page to become identifiable.".to_owned()
+            })?;
+            SyncApplicationPageSaveTarget::ResolveConflict {
+                path: observation.path,
+                observed_revision: observation.revision,
+            }
         }
         (false, Some(revision)) => SyncApplicationPageSaveTarget::Existing {
             path: page.path.clone(),
@@ -426,13 +430,13 @@ fn save_sparse_page_with<E>(
     page: PageDto,
     base_rev: Option<String>,
     force: bool,
-    managed_conflict_revision: Option<String>,
+    managed_conflict_observation: Option<ManagedConflictObservation>,
     save: impl FnOnce(SyncApplicationPageSaveRequest) -> Result<SyncApplicationPageSaveOutcome, E>,
 ) -> Result<String, String>
 where
     E: std::fmt::Display,
 {
-    let request = sparse_save_request(page, base_rev, force, managed_conflict_revision)?;
+    let request = sparse_save_request(page, base_rev, force, managed_conflict_observation)?;
     let outcome = save(request).map_err(|error| error.to_string())?;
     map_sparse_page_save(outcome)
 }
@@ -979,9 +983,9 @@ pub(crate) async fn save_page(
     // consume whatever authority happens to be current (GH #254 increment 2,
     // adversarial implementation verification, finding 1).
     conflict_epoch: Option<u64>,
-    // Exact managed revision observed after a stale-save refusal. Direct Files
-    // ignores this; managed Keep mine cannot proceed without it.
-    managed_conflict_revision: Option<String>,
+    // Exact managed owner observed after a conflict refusal. Direct Files
+    // ignores this; managed Keep mine cannot proceed without both path and rev.
+    managed_conflict_observation: Option<ManagedConflictObservation>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let (app, label, binding_generation) = owned_graph_context(state)?;
@@ -996,7 +1000,7 @@ pub(crate) async fn save_page(
                         page,
                         base_rev,
                         force.unwrap_or(false),
-                        managed_conflict_revision,
+                        managed_conflict_observation,
                         |request| {
                             let saved = handle.save_application_page(request);
                             if crate::debug::debug_enabled() {
@@ -3591,7 +3595,10 @@ mod application_page_authority_tests {
             page("Saved", PageKind::Page, "pages/Saved.md", "- body"),
             Some("stale".into()),
             true,
-            Some("observed-current".into()),
+            Some(ManagedConflictObservation {
+                path: "pages/Saved.md".into(),
+                revision: "observed-current".into(),
+            }),
             |request| -> Result<SyncApplicationPageSaveOutcome, &'static str> {
                 called.set(true);
                 assert!(matches!(
@@ -3611,6 +3618,32 @@ mod application_page_authority_tests {
         .unwrap();
         assert_eq!(replaced, "replacement-revision");
         assert!(called.get());
+
+        let new_page_replaced = save_sparse_page_with(
+            page("Raced new", PageKind::Page, "", "- retained draft"),
+            None,
+            true,
+            Some(ManagedConflictObservation {
+                path: "pages/Raced new.md".into(),
+                revision: "created-winner".into(),
+            }),
+            |request| -> Result<SyncApplicationPageSaveOutcome, &'static str> {
+                assert!(matches!(
+                    request.target,
+                    SyncApplicationPageSaveTarget::ResolveConflict {
+                        ref path,
+                        ref observed_revision,
+                    } if path == "pages/Raced new.md" && observed_revision == "created-winner"
+                ));
+                Ok(SyncApplicationPageSaveOutcome::Saved {
+                    batch_id: "new-page-replacement".into(),
+                    page: request.page,
+                    revision: "new-page-replacement-revision".into(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(new_page_replaced, "new-page-replacement-revision");
 
         let unobserved = save_sparse_page_with(
             page("Saved", PageKind::Page, "pages/Saved.md", "- body"),

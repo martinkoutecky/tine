@@ -35,7 +35,10 @@ const NEW_PAGE = "Sparse V2 Recovery New";
 const NORMAL_MARKER = "ordinary legacy page remains visible";
 const NESTED_ORIGINAL = "nested UTF original content — café 日本語";
 const NESTED_EDIT = "sparse v2 saved existing UTF page";
+const NESTED_WINNER_A = "managed conflict winner A";
+const NESTED_WINNER_B = "managed conflict winner B before Keep mine";
 const NEW_EDIT = "sparse v2 saved newly created page";
+const NEW_WINNER = "concurrent creator won the new page race";
 const STANDARD_EDIT = "standard Markdown saved after rollback";
 const JOURNAL_MARKER = "today canonical journal remains visible";
 const NORMAL_FILE = path.join(GRAPH, "pages", `${NORMAL_PAGE}.md`);
@@ -242,7 +245,9 @@ async function waitForFileText(file, text, label) {
   });
 }
 
-async function editCurrentPage(marker, file, label) {
+async function focusCurrentEditor() {
+  let editor = await browser.$(".page-blocks textarea.block-editor, textarea.block-editor");
+  if (await editor.isExisting()) return editor;
   let target = await browser.$(".page-blocks .ls-block .block-content-wrapper, .page-blocks .ls-block .block-content");
   if (await target.isExisting()) {
     await target.click();
@@ -251,8 +256,147 @@ async function editCurrentPage(marker, file, label) {
     await target.waitForExist({ timeout: 10_000 });
     await target.click();
   }
-  const editor = await browser.$(".page-blocks textarea.block-editor, textarea.block-editor");
+  editor = await browser.$(".page-blocks textarea.block-editor, textarea.block-editor");
   await editor.waitForExist({ timeout: 10_000 });
+  return editor;
+}
+
+async function raceExistingDraftWithManagedWinner(path, retained, winner) {
+  const result = await browser.executeAsync((managedPath, retainedText, winnerText, done) => {
+    const editor = document.querySelector(".page-blocks textarea.block-editor, textarea.block-editor");
+    if (!(editor instanceof HTMLTextAreaElement)) {
+      done({ error: "existing-page editor was not mounted" });
+      return;
+    }
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(editor, retainedText);
+    editor.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "insertText",
+      data: retainedText,
+    }));
+    const invoke = globalThis.__TAURI_INTERNALS__.invoke.bind(globalThis.__TAURI_INTERNALS__);
+    invoke("get_page_by_path", { path: managedPath }).then((page) => {
+      if (!page?.rev || !page.blocks?.[0]) throw new Error("managed winner could not load exact page");
+      page.blocks[0].raw = winnerText;
+      return invoke("save_page", {
+        page,
+        baseRev: page.rev,
+        force: false,
+        conflictEpoch: null,
+        managedConflictObservation: null,
+      });
+    }).then(
+      (revision) => done({ revision }),
+      (error) => done({ error: String(error) }),
+    );
+  }, path, retained, winner);
+  if (result?.error || typeof result?.revision !== "string") {
+    throw new Error(`existing managed race setup failed: ${JSON.stringify(result)}`);
+  }
+  return result.revision;
+}
+
+async function raceNewDraftWithManagedCreator(name, retained, winner) {
+  const result = await browser.executeAsync((pageName, retainedText, winnerText, done) => {
+    const editor = document.querySelector(".page-blocks textarea.block-editor, textarea.block-editor");
+    if (!(editor instanceof HTMLTextAreaElement)) {
+      done({ error: "new-page editor was not mounted" });
+      return;
+    }
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(editor, retainedText);
+    editor.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: "insertText",
+      data: retainedText,
+    }));
+    globalThis.__TAURI_INTERNALS__.invoke("save_page", {
+      page: {
+        name: pageName,
+        kind: "page",
+        title: pageName,
+        pre_block: null,
+        blocks: [{ id: "e2e-concurrent-new", raw: winnerText, collapsed: false, children: [], properties: [] }],
+        rev: null,
+        format: "md",
+        read_only: false,
+        path: "",
+        guide: false,
+      },
+      baseRev: null,
+      force: false,
+      conflictEpoch: null,
+      managedConflictObservation: null,
+    }).then(
+      (revision) => done({ revision }),
+      (error) => done({ error: String(error) }),
+    );
+  }, name, retained, winner);
+  if (result?.error || typeof result?.revision !== "string") {
+    throw new Error(`new-page managed race setup failed: ${JSON.stringify(result)}`);
+  }
+  return result.revision;
+}
+
+async function assertRetainedConflictDraft(text, label) {
+  await assertVisible("changed outside this editor", `${label} conflict banner`);
+  await browser.waitUntil(async () => browser.execute((expected) => {
+    const editor = document.querySelector("textarea.block-editor");
+    const keep = document.querySelector(".conflict-btn.keep");
+    return editor instanceof HTMLTextAreaElement
+      && editor.value.includes(expected)
+      && keep instanceof HTMLButtonElement
+      && !keep.disabled;
+  }, text), {
+    timeout: 15_000,
+    timeoutMsg: `${label} did not retain its draft behind an actionable conflict`,
+  });
+}
+
+async function saveManagedWinnerAndClickVisibleKeepMine(path, winner) {
+  const result = await browser.executeAsync((managedPath, winnerText, done) => {
+    const invoke = globalThis.__TAURI_INTERNALS__.invoke.bind(globalThis.__TAURI_INTERNALS__);
+    invoke("get_page_by_path", { path: managedPath }).then((page) => {
+      if (!page?.rev || !page.blocks?.[0]) throw new Error("newer winner could not load exact page");
+      page.blocks[0].raw = winnerText;
+      return invoke("save_page", {
+        page,
+        baseRev: page.rev,
+        force: false,
+        conflictEpoch: null,
+        managedConflictObservation: null,
+      });
+    }).then((revision) => {
+      const keep = [...document.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Keep mine");
+      if (!(keep instanceof HTMLButtonElement) || keep.disabled) {
+        throw new Error("visible Keep mine was not actionable before the newer winner");
+      }
+      keep.click();
+      return revision;
+    }).then(
+      (revision) => done({ revision }),
+      (error) => done({ error: String(error) }),
+    );
+  }, path, winner);
+  if (result?.error || typeof result?.revision !== "string") {
+    throw new Error(`newer-winner click race failed: ${JSON.stringify(result)}`);
+  }
+  return result.revision;
+}
+
+async function clickKeepMine() {
+  const keep = await waitFor(() => buttonContaining("Keep mine"), 15_000, "Keep mine action was not visible");
+  await browser.waitUntil(async () => !(await keep.getAttribute("disabled")), {
+    timeout: 15_000,
+    timeoutMsg: "Keep mine did not regain revision-bound authority",
+  });
+  await keep.click();
+}
+
+async function editCurrentPage(marker, file, label) {
+  const editor = await focusCurrentEditor();
   await editor.addValue(marker);
   // Leaving the ordinary editor is the real user save path; the Markdown file
   // is then the durable semantic oracle, not an implementation sidecar.
@@ -454,13 +598,45 @@ try {
   await assertVisible("Tine-managed storage active", "active Tine-managed storage status");
   await closeSettings();
 
-  phase = "sparse v2 inventory and existing-page save";
+  phase = "sparse v2 existing-page conflict resolution";
   await openPageFromInventory(NESTED_PAGE);
   await assertVisible(NESTED_ORIGINAL, "nested UTF content after sparse-v2 activation without reload");
-  await editCurrentPage(NESTED_EDIT, NESTED_FILE, "existing nested page under sparse v2");
-  receipt.milestones.sparseV2ExistingPage = { inventoryVisible: true, originalVisible: true, saved: NESTED_EDIT };
+  await focusCurrentEditor();
+  const retainedExisting = `${NESTED_ORIGINAL} ${NESTED_EDIT}`;
+  await raceExistingDraftWithManagedWinner(
+    "pages/研究/Résumé 日本語.md",
+    retainedExisting,
+    NESTED_WINNER_A,
+  );
+  await waitForFileText(NESTED_FILE, NESTED_WINNER_A, "existing-page winner A");
+  await assertRetainedConflictDraft(NESTED_EDIT, "existing-page winner A");
 
-  phase = "sparse v2 new-page save";
+  // Winner B lands after the banner observed A. Its actor save and the visible
+  // Keep mine click are issued in one browser task, before a watcher refresh can
+  // silently upgrade that click to B's authority. The first click must refuse,
+  // preserve B, and re-arm the same retained draft against B.
+  await saveManagedWinnerAndClickVisibleKeepMine(
+    "pages/研究/Résumé 日本語.md",
+    NESTED_WINNER_B,
+  );
+  await waitForFileText(NESTED_FILE, NESTED_WINNER_B, "newer existing-page winner B");
+  await assertVisible("Couldn't overwrite", "newer-winner Keep mine refusal");
+  await assertRetainedConflictDraft(NESTED_EDIT, "newer existing-page winner B");
+  if (!fs.readFileSync(NESTED_FILE, "utf8").includes(NESTED_WINNER_B)) {
+    throw new Error("the first Keep mine crossed a newer managed winner instead of conflicting again");
+  }
+  await clickKeepMine();
+  await waitForFileText(NESTED_FILE, NESTED_EDIT, "revision-bound existing Keep mine");
+  await browser.$(".conflict-banner").waitForExist({ reverse: true, timeout: 15_000 });
+  receipt.milestones.sparseV2ExistingPage = {
+    inventoryVisible: true,
+    retainedDraft: NESTED_EDIT,
+    firstWinner: NESTED_WINNER_A,
+    newerWinnerRefused: NESTED_WINNER_B,
+    saved: NESTED_EDIT,
+  };
+
+  phase = "sparse v2 concurrent new-page conflict resolution";
   const newPage = await browser.$("button.new-page-btn");
   await newPage.waitForExist({ timeout: 10_000 });
   await newPage.click();
@@ -475,8 +651,19 @@ try {
   }, 12_000, `Create page result was not visible for ${JSON.stringify(NEW_PAGE)}`);
   await createRow.click();
   await assertTitle(NEW_PAGE);
-  await editCurrentPage(NEW_EDIT, NEW_FILE, "new page under sparse v2");
-  receipt.milestones.sparseV2NewPage = { createdThroughVisibleUi: true, saved: NEW_EDIT };
+  await focusCurrentEditor();
+  await raceNewDraftWithManagedCreator(NEW_PAGE, NEW_EDIT, NEW_WINNER);
+  await waitForFileText(NEW_FILE, NEW_WINNER, "concurrent new-page winner");
+  await assertRetainedConflictDraft(NEW_EDIT, "concurrent new-page winner");
+  await clickKeepMine();
+  await waitForFileText(NEW_FILE, NEW_EDIT, "concurrent new-page Keep mine");
+  await browser.$(".conflict-banner").waitForExist({ reverse: true, timeout: 15_000 });
+  receipt.milestones.sparseV2NewPage = {
+    createdThroughVisibleUi: true,
+    retainedDraft: NEW_EDIT,
+    concurrentWinner: NEW_WINNER,
+    saved: NEW_EDIT,
+  };
 
   phase = "restart sparse v2 authority";
   await closeThroughTineControl("sparse-v2-restart");
