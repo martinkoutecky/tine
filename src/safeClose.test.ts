@@ -33,7 +33,7 @@ function androidRootClose(
   finishActivity: () => Promise<void>,
   overrides: Partial<{
     prepareNativeClose: () => Promise<void>;
-    nativePrepareFailed: () => void;
+    nativePrepareFailed: (error: unknown) => void;
     finishActivityFailed: () => void;
   }> = {},
 ) {
@@ -226,17 +226,36 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(exit).toHaveBeenCalledOnce();
   });
 
-  it("resets after native preparation refusal so a later Back retries the full close", async () => {
+  it.each([
+    [
+      "a managed safety refusal",
+      new Error("sparse-v2-shutdown-refused: retained local publication"),
+      "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status.",
+    ],
+    [
+      "a generic native failure",
+      new Error("native bridge unavailable"),
+      "Couldn't close the app. Your graph remains open.",
+    ],
+  ])("resets after %s so a later Back retries the full close", async (_case, refusal, expectedToast) => {
     const { deps, safeClose, transitions } = harness();
     const prepareNativeClose = vi.fn()
-      .mockRejectedValueOnce(new Error("managed shutdown refused"))
+      .mockRejectedValueOnce(refusal)
       .mockResolvedValueOnce(undefined);
     const exit = vi.fn(async () => {});
-    const nativePrepareFailed = vi.fn();
+    const toasts: string[] = [];
+    const nativePrepareFailed = vi.fn((error: unknown) => {
+      toasts.push(
+        String(error).includes("sparse-v2-shutdown-refused")
+          ? "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status."
+          : "Couldn't close the app. Your graph remains open.",
+      );
+    });
     const { rootClose } = androidRootClose(safeClose, exit, { prepareNativeClose, nativePrepareFailed });
 
     await expect(rootClose.request()).resolves.toBe("native_prepare_failed");
-    expect(nativePrepareFailed).toHaveBeenCalledOnce();
+    expect(nativePrepareFailed).toHaveBeenCalledExactlyOnceWith(refusal);
+    expect(toasts).toEqual([expectedToast]);
     expect(safeClose.inFlight()).toBe(false);
     expect(rootClose.phase()).toBe(AndroidRootClosePhase.Idle);
     expect(exit).not.toHaveBeenCalled();

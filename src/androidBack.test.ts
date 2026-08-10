@@ -156,6 +156,7 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
 
   it("keeps managed Android root Back as prepare-native then AppPlugin activity exit", () => {
     const app = readFileSync("src/App.tsx", "utf8");
+    const androidBack = readFileSync("src/androidBack.ts", "utf8");
     const backend = readFileSync("src/backend.ts", "utf8");
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
@@ -163,6 +164,10 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     expect(backend).toContain("prepareQuit(): Promise<void>");
     expect(backend).toContain('return this.call<void>("prepare_tine_quit");');
     expect(app).toContain("prepareNativeClose: () => backend().prepareQuit()");
+    expect(app).toContain('String(error).includes("sparse-v2-shutdown-refused")');
+    expect(app).toContain("Tine-managed storage could not verify a clean stop.");
+    expect(app).toContain("Couldn't close the app. Your graph remains open.");
+    expect(androidBack).toContain("nativePrepareFailed(error)");
     expect(app).toContain('await invoke("plugin:app|exit");');
     expect(commands).toContain("fn prepare_tine_quit_all_slots");
     expect(commands).toMatch(/pub\(crate\) fn prepare_tine_quit\([\s\S]*?prepare_tine_quit_all_slots\(&state\)/);

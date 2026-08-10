@@ -168,8 +168,10 @@ const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("plugin:app|exit");
   },
-  nativePrepareFailed: () => pushToast(
-    "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status.",
+  nativePrepareFailed: (error) => pushToast(
+    String(error).includes("sparse-v2-shutdown-refused")
+      ? "Tine-managed storage could not verify a clean stop. The app remains open so you can retry or inspect recovery status."
+      : "Couldn't close the app. Your graph remains open.",
     "error",
   ),
   finishActivityFailed: () => pushToast(

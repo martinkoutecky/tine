@@ -53,8 +53,10 @@ function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): P
 }
 
 /** One persistence transaction shared by desktop window-close and Android root
- * Back.  Accepted transactions deliberately stay in-flight until the native
- * close succeeds; a failed native close must call reset() before retrying. */
+ * Back. A pre-safe native preparation refusal resets this transition so a
+ * later Back repeats the full close; after Android reaches the native-safe
+ * state, an activity-exit failure deliberately remains shielded and retries
+ * only that final handoff. */
 export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordinator {
   let closing = false;
   const bounded = deps.runBounded ?? runBounded;

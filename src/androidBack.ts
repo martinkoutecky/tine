@@ -104,7 +104,7 @@ export async function requestAndroidRootClose(
   state: AndroidRootCloseState,
   prepareNativeClose: () => Promise<void>,
   finishActivity: () => Promise<void>,
-  nativePrepareFailed: () => void,
+  nativePrepareFailed: (error: unknown) => void,
   finishActivityFailed: () => void,
 ): Promise<AndroidRootCloseResult> {
   if (state.phase === AndroidRootClosePhase.NativePreparedAwaitingFinish) {
@@ -138,12 +138,12 @@ export async function requestAndroidRootClose(
   state.phase = AndroidRootClosePhase.PreparingNative;
   try {
     await prepareNativeClose();
-  } catch {
+  } catch (error) {
     // We have not reached the safe native point, so this is still an ordinary
     // refusal: release the shield and let a later Back run the full sequence.
     safeClose.reset();
     state.phase = AndroidRootClosePhase.Idle;
-    nativePrepareFailed();
+    nativePrepareFailed(error);
     return "native_prepare_failed";
   }
 
@@ -169,7 +169,7 @@ export function createAndroidRootCloseCoordinator(
   }: {
     prepareNativeClose: () => Promise<void>;
     finishActivity: () => Promise<void>;
-    nativePrepareFailed: () => void;
+    nativePrepareFailed: (error: unknown) => void;
     finishActivityFailed: () => void;
   },
 ): AndroidRootCloseCoordinator {
