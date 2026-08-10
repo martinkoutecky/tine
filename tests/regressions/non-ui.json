@@ -3490,12 +3490,16 @@
           "crates/tine-core/src/oplog/enrollment.rs::current_enrollment_claim_record_and_checkpoint_are_keyless_canonical_crc_v2_v6_v3",
           "crates/tine-core/src/oplog/enrollment.rs::legacy_v1_v5_reopens_byte_exactly_then_lazily_appends_v6_without_rewriting_authority",
           "crates/tine-core/src/oplog/enrollment.rs::legacy_v1_v5_mixed_suffix_opens_at_every_boundary_and_full_audit_pages_verify_both_codecs",
+          "crates/tine-core/src/oplog/enrollment.rs::legacy_v1_v5_initial_publication_resumes_every_durable_cross_version_cut",
+          "crates/tine-core/src/oplog/enrollment.rs::legacy_initial_recovery_rejects_wrong_names_and_invalid_hmac_without_cleanup",
+          "crates/tine-core/src/oplog/enrollment.rs::frozen_legacy_v1_v5_codec_golden_digests_remain_exact",
+          "crates/tine-core/src/oplog/discovery.rs::legacy_hmac_failure_is_explicitly_corrupt_and_never_discovered_active",
           "crates/tine-core/src/oplog/enrollment.rs::enrollment_keyed_auth_source_guard_isolated_to_legacy_verification_and_simulator_formats"
         ],
         "scenario": "sync.enrollment-keyless-integrity-with-frozen-legacy-suffix",
         "failBefore": "source-proven"
       },
-      "notes": "Fresh schema-v2 authority claims omit secret material and schema-v6 records use schema-v3 CRC-32/ISO-HDLC checkpoints. The permanent mixed-history fixture constructs exact v1 authority/v5 HMAC bytes using a test-only legacy signer, proves their bytes and OS identity survive reopen, opens every mixed-chain suffix boundary, appends current v6 records without rewriting the claim, and pages a complete audit across both codecs. Structural mismatch, noncanonical encodings, illegal record/checkpoint pairs, and altered CRCs refuse before lifecycle admission. A source guard permits production HMAC only in the frozen verifier module and permits signing only under cfg(test)."
+      "notes": "Fresh schema-v2 authority claims omit secret material and schema-v6 records use schema-v3 CRC-32/ISO-HDLC checkpoints. The permanent mixed-history fixture constructs exact v1 authority/v5 HMAC bytes using a test-only legacy signer, proves their bytes and OS identity survive reopen, opens every mixed-chain suffix boundary, appends current v6 records without rewriting the claim, and pages a complete audit across both codecs. A cross-version publication matrix additionally resumes byte-exact legacy generation-one state from a full record temp, linked final/temp pair, final record plus HEAD temp, and committed HEAD; the first successor is v6, while fresh v2 authority remains v6-only. Wrong names, ambiguity, invalid legacy HMAC, structural mismatch, noncanonical encodings, illegal record/checkpoint pairs, and altered CRCs refuse before lifecycle admission without cleanup. Frozen v1/v5 golden digests and explicit read-only discovery classification keep the verifier byte-exact. A source guard permits production HMAC only in the frozen verifier module and permits signing only under cfg(test)."
     }
   ]
 }

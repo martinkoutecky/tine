@@ -41,6 +41,29 @@ pub(crate) fn verify(key: &[u8; 32], message: &[u8], tag: ContentDigest) -> bool
     hmac::verify(&key, message, tag.as_bytes()).is_ok()
 }
 
+#[cfg(test)]
+impl LegacyAuthorityClaimV1 {
+    pub(crate) fn new_for_test(
+        schema_version: u32,
+        authority_id: Uuid,
+        lease_resource_id: ContentDigest,
+        binding: EnrollmentBindingV1,
+        initial_preparation_id: PreparationId,
+        initial_source_inventory_digest: ContentDigest,
+        key_byte: u8,
+    ) -> Self {
+        Self {
+            schema_version,
+            authority_id,
+            lease_resource_id,
+            binding,
+            initial_preparation_id,
+            initial_source_inventory_digest,
+            key: [key_byte; LEGACY_AUTHORITY_KEY_BYTES],
+        }
+    }
+}
+
 /// Test fixtures deliberately retain the historical signer so byte-exact v1/v5
 /// histories can be created and reopened.  Production has no HMAC signing
 /// surface.

@@ -34,10 +34,14 @@ used for process-local audit cursors.
 The legacy v1 authority claim, v5 record, and v2 HMAC checkpoint are frozen
 verification-only codecs. A v1 authority can therefore reopen an existing v5
 history and lazily append v6 successors; it never mints another HMAC
-checkpoint. Readers accept a mixed chain only when each record/checkpoint pair
-uses its exact matching codec. Generation 1 and each 64-record boundary remain
-the required checkpoints, so bounded open and paged complete audit keep their
-existing limits.
+checkpoint. If an old binary crashed before publishing the first HEAD, a
+current writer may finish exactly one canonical, correctly bound and
+HMAC-verified v5 generation-one candidate under the existing capability and
+link-count rules, without rewriting its authority or record bytes. Readers
+accept a mixed chain only when each record/checkpoint pair uses its exact
+matching codec. Generation 1 and each 64-record boundary remain the required
+checkpoints, so bounded open and paged complete audit keep their existing
+limits.
 
 ## Consequences
 

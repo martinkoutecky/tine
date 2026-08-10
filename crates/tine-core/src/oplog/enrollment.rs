@@ -2490,6 +2490,88 @@ pub(crate) fn create_discovery_enrollment_for_test(
     }
 }
 
+/// Install the frozen v1 authority / v5 generation-one bytes used by
+/// cross-version recovery and discovery tests. The historical signer is
+/// available only under `cfg(test)`; production can verify these bytes but can
+/// never mint them.
+#[cfg(test)]
+pub(crate) fn create_legacy_initial_enrollment_for_test(
+    root_path: &Path,
+    binding: EnrollmentBindingV1,
+) -> Result<(), EnrollmentError> {
+    let root = prepare_application_root(root_path)?;
+    let shadow = ShadowImportV1 {
+        preparation_id: PreparationId::from_uuid(Uuid::from_u128(8)),
+        source_inventory_digest: ContentDigest::from_bytes([9; 32]),
+    };
+    let writer = EnrollmentWriter::create(&root, binding.clone(), shadow.clone())?;
+    let lease_resource_id = writer.lease.resource_id;
+    drop(writer);
+
+    let directories = open_directories(&root, binding.graph_resource_id, false)?
+        .ok_or(EnrollmentError::AmbiguousInitialCreation)?;
+    if let Some(head) = read_head(&directories.enrollment)? {
+        directories.enrollment.remove_file(HEAD_FILE)?;
+        directories
+            .records
+            .remove_file(&format!("{head}{RECORD_SUFFIX}"))?;
+    }
+    let legacy_claim =
+        EnrollmentAuthorityClaim::LegacyV1(EnrollmentAuthorityClaimV1::new_for_test(
+            ENROLLMENT_AUTHORITY_SCHEMA_V1,
+            Uuid::from_u128(0x1e9ac),
+            lease_resource_id,
+            binding.clone(),
+            shadow.preparation_id,
+            shadow.source_inventory_digest,
+            0x5a,
+        ));
+    let authority_bytes = canonical_authority_claim_bytes(&legacy_claim)?;
+    directories.enrollment.remove_file(AUTHORITY_FILE)?;
+    let mut authority_file = create_new_regular(&directories.enrollment, AUTHORITY_FILE)?;
+    authority_file.write_all(&authority_bytes)?;
+    authority_file.sync_all()?;
+    let authority_identity = authoritative_file_identity(&authority_file)?;
+    let material = EnrollmentAuthorityMaterial::from_claim(
+        legacy_claim,
+        authority_resource_id(&authority_identity),
+        &binding,
+        lease_resource_id,
+    )?;
+    let lifecycle = EnrollmentLifecycleV1::ShadowImport(shadow);
+    let mut record = EnrollmentRecordV1 {
+        schema_version: ENROLLMENT_RECORD_SCHEMA_V5,
+        generation: 1,
+        previous: None,
+        history_accumulator: compute_history_accumulator(1, None, None, &binding, &lifecycle)?,
+        lease_resource_id,
+        binding,
+        lifecycle,
+        checkpoint: None,
+    };
+    record.checkpoint = Some(material.legacy_checkpoint_for_test(
+        record.generation,
+        record.previous,
+        record.history_accumulator,
+        record.lease_resource_id,
+        &record.binding,
+        &record.lifecycle,
+    )?);
+    let record_bytes = canonical_record_bytes(&record)?;
+    let digest = ContentDigest::of(&record_bytes);
+    let mut record_file =
+        create_new_regular(&directories.records, &format!("{digest}{RECORD_SUFFIX}"))?;
+    record_file.write_all(&record_bytes)?;
+    record_file.sync_all()?;
+    let mut head_file = create_new_regular(&directories.enrollment, HEAD_FILE)?;
+    head_file.write_all(format!("{digest}\n").as_bytes())?;
+    head_file.sync_all()?;
+    sync_dir_required(&directories.records)
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    sync_dir_required(&directories.enrollment)
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))
+}
+
 #[derive(Debug)]
 struct EnrollmentDirectories {
     enrollment: Dir,
@@ -2705,8 +2787,9 @@ impl EnrollmentWriter {
         let lease = acquire_lease(&directories, true)?;
         let authority =
             provision_or_resume_enrollment_authority(&directories, &lease, &binding, &shadow)?;
-        let record =
+        let current_record =
             EnrollmentRecordV1::initial(binding, shadow, lease.resource_id, &authority.material)?;
+        let record = select_initial_record_for_recovery(&directories, &authority, &current_record)?;
         let snapshot =
             resume_or_persist_initial_record(&directories, &lease, &authority, &record, cut)?;
         Ok(Self {
@@ -6419,6 +6502,92 @@ fn resume_or_persist_initial_record(
     persist_record_and_head(directories, lease, record, cut)
 }
 
+/// A current binary never mints a legacy checkpoint, but it must be able to
+/// finish an old binary's initial publication after the v1 authority became
+/// durable. Select an existing v5 generation-one candidate only when its
+/// canonical bytes, deterministic name, binding, lease, initial intent, and
+/// frozen HMAC all verify. The ordinary initial-publication recovery below
+/// then applies the retained-capability and link-count rules to those exact
+/// bytes. With no valid legacy candidate, the current v6 initial record remains
+/// the only record this binary can publish.
+fn select_initial_record_for_recovery(
+    directories: &EnrollmentDirectories,
+    authority: &EnrollmentAuthority,
+    current_record: &EnrollmentRecordV1,
+) -> Result<EnrollmentRecordV1, EnrollmentError> {
+    if !matches!(
+        &authority.material.claim,
+        EnrollmentAuthorityClaim::LegacyV1(_)
+    ) {
+        return Ok(current_record.clone());
+    }
+    let EnrollmentLifecycleV1::ShadowImport(expected_shadow) = &current_record.lifecycle else {
+        unreachable!("an initial record always carries ShadowImport")
+    };
+
+    let mut candidate: Option<(ContentDigest, EnrollmentRecordV1)> = None;
+    let mut count = 0usize;
+    for entry in directories.records.entries()? {
+        let entry = entry?;
+        count += 1;
+        if count > MAX_ENROLLMENT_NAMESPACE_ENTRIES {
+            return Err(EnrollmentError::NamespaceBoundExceeded);
+        }
+        if !regular_entry(&entry)? {
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| EnrollmentError::UnsupportedArtifact("non-UTF-8 record name".into()))?;
+        let (bytes, _) = read_bounded_authoritative_file(
+            &directories.records,
+            &name,
+            MAX_ENROLLMENT_RECORD_BYTES,
+            "legacy initial enrollment recovery candidate",
+            true,
+        )?;
+        if bytes.is_empty() {
+            continue;
+        }
+        let Ok(record) = decode_record(&bytes) else {
+            continue;
+        };
+        if record.schema_version != ENROLLMENT_RECORD_SCHEMA_V5 {
+            continue;
+        }
+        let digest = ContentDigest::of(&bytes);
+        let target = format!("{digest}{RECORD_SUFFIX}");
+        let temp = format!("{RECORD_TEMP_PREFIX}{digest}");
+        if name != target && name != temp {
+            return Err(EnrollmentError::AmbiguousInitialCreation);
+        }
+        validate_record_authority(
+            &record,
+            &current_record.binding,
+            current_record.lease_resource_id,
+            &authority.material,
+        )?;
+        validate_initial_record(&record)?;
+        if !matches!(
+            &record.lifecycle,
+            EnrollmentLifecycleV1::ShadowImport(shadow) if shadow == expected_shadow
+        ) {
+            return Err(EnrollmentError::InitialPreparationMismatch);
+        }
+        if candidate
+            .as_ref()
+            .is_some_and(|(found_digest, _)| *found_digest != digest)
+        {
+            return Err(EnrollmentError::AmbiguousInitialCreation);
+        }
+        candidate = Some((digest, record));
+    }
+    Ok(candidate
+        .map(|(_, record)| record)
+        .unwrap_or_else(|| current_record.clone()))
+}
+
 fn reject_unsafe_head_target(directory: &Dir) -> Result<(), EnrollmentError> {
     match directory.symlink_metadata(HEAD_FILE) {
         Ok(metadata) if !cap_metadata_is_authoritative_file(&metadata) => {
@@ -7787,74 +7956,16 @@ mod tests {
         root: &TestRoot,
         binding: EnrollmentBindingV1,
     ) -> (Vec<u8>, AuthoritativeFileIdentity) {
-        let writer = EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
-        let lease_resource_id = writer.lease.resource_id;
-        drop(writer);
-
+        create_legacy_initial_enrollment_for_test(&root.path, binding.clone()).unwrap();
         let enrollment = enrollment_directory(root, &binding);
-        let records = enrollment.join(RECORDS_DIRECTORY);
-        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
-        for entry in fs::read_dir(&records).unwrap() {
-            fs::remove_file(entry.unwrap().path()).unwrap();
-        }
-        let legacy_claim = EnrollmentAuthorityClaim::LegacyV1(EnrollmentAuthorityClaimV1 {
-            schema_version: ENROLLMENT_AUTHORITY_SCHEMA_V1,
-            authority_id: Uuid::from_u128(0x1e9ac),
-            lease_resource_id,
-            binding: binding.clone(),
-            initial_preparation_id: shadow().preparation_id,
-            initial_source_inventory_digest: shadow().source_inventory_digest,
-            key: [0x5a; legacy_checkpoint::LEGACY_AUTHORITY_KEY_BYTES],
-        });
-        let authority_bytes = canonical_authority_claim_bytes(&legacy_claim).unwrap();
         let authority_path = enrollment.join(AUTHORITY_FILE);
-        fs::remove_file(&authority_path).unwrap();
-        fs::write(&authority_path, &authority_bytes).unwrap();
+        let authority_bytes = fs::read(&authority_path).unwrap();
         let file = open_regular_readonly(
             &Dir::open_ambient_dir(&enrollment, ambient_authority()).unwrap(),
             AUTHORITY_FILE,
         )
         .unwrap();
         let identity = authoritative_file_identity(&file).unwrap();
-        let material = EnrollmentAuthorityMaterial::from_claim(
-            legacy_claim,
-            authority_resource_id(&identity),
-            &binding,
-            lease_resource_id,
-        )
-        .unwrap();
-        let lifecycle = EnrollmentLifecycleV1::ShadowImport(shadow());
-        let mut record = EnrollmentRecordV1 {
-            schema_version: ENROLLMENT_RECORD_SCHEMA_V5,
-            generation: 1,
-            previous: None,
-            history_accumulator: compute_history_accumulator(1, None, None, &binding, &lifecycle)
-                .unwrap(),
-            lease_resource_id,
-            binding: binding.clone(),
-            lifecycle,
-            checkpoint: None,
-        };
-        record.checkpoint = Some(
-            material
-                .legacy_checkpoint_for_test(
-                    record.generation,
-                    record.previous,
-                    record.history_accumulator,
-                    record.lease_resource_id,
-                    &record.binding,
-                    &record.lifecycle,
-                )
-                .unwrap(),
-        );
-        let record_bytes = canonical_record_bytes(&record).unwrap();
-        let digest = ContentDigest::of(&record_bytes);
-        fs::write(
-            records.join(format!("{digest}{RECORD_SUFFIX}")),
-            record_bytes,
-        )
-        .unwrap();
-        fs::write(enrollment.join(HEAD_FILE), format!("{digest}\n")).unwrap();
         (authority_bytes, identity)
     }
 
@@ -8299,6 +8410,181 @@ mod tests {
         }
         assert_eq!(total, MAX_ENROLLMENT_OPEN_CHAIN_RECORDS * 2 + 2);
         assert!(saw_legacy_v5 && saw_current_v6);
+    }
+
+    #[test]
+    fn legacy_v1_v5_initial_publication_resumes_every_durable_cross_version_cut() {
+        for state in ["record-temp", "linked-final", "head-temp", "committed-head"] {
+            let root = TestRoot::new(state);
+            let binding = test_binding();
+            let (authority_bytes, authority_identity) =
+                install_legacy_v1_v5_enrollment(&root, binding.clone());
+            let enrollment = enrollment_directory(&root, &binding);
+            let records = enrollment.join(RECORDS_DIRECTORY);
+            let head_bytes = fs::read(enrollment.join(HEAD_FILE)).unwrap();
+            let digest = ContentDigest::from_bytes(
+                parse_digest(std::str::from_utf8(&head_bytes[..64]).unwrap()).unwrap(),
+            );
+            let target = records.join(format!("{digest}{RECORD_SUFFIX}"));
+            let record_bytes = fs::read(&target).unwrap();
+            let temp = records.join(format!("{RECORD_TEMP_PREFIX}{digest}"));
+
+            match state {
+                "record-temp" => {
+                    fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+                    fs::rename(&target, &temp).unwrap();
+                }
+                "linked-final" => {
+                    fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+                    fs::hard_link(&target, &temp).unwrap();
+                }
+                "head-temp" => {
+                    fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+                    fs::write(
+                        enrollment.join(format!("{HEAD_TEMP_PREFIX}legacy")),
+                        &head_bytes,
+                    )
+                    .unwrap();
+                }
+                "committed-head" => {}
+                _ => unreachable!(),
+            }
+
+            let mut resumed =
+                EnrollmentWriter::create(&root.app(), binding.clone(), shadow()).unwrap();
+            assert_eq!(resumed.current().digest, digest, "state={state}");
+            assert_eq!(
+                resumed.current().record.schema_version,
+                ENROLLMENT_RECORD_SCHEMA_V5,
+                "state={state}"
+            );
+            assert_eq!(fs::read(&target).unwrap(), record_bytes, "state={state}");
+            assert_eq!(
+                fs::read(enrollment.join(AUTHORITY_FILE)).unwrap(),
+                authority_bytes,
+                "state={state}"
+            );
+            let directory = Dir::open_ambient_dir(&enrollment, ambient_authority()).unwrap();
+            assert_eq!(
+                authoritative_file_identity(
+                    &open_regular_readonly(&directory, AUTHORITY_FILE).unwrap()
+                )
+                .unwrap(),
+                authority_identity,
+                "state={state}"
+            );
+
+            let successor = resumed
+                .transition(digest, EnrollmentLifecycleV1::VerifiedLocal(verified()))
+                .unwrap();
+            assert_eq!(
+                successor.record.schema_version, ENROLLMENT_RECORD_SCHEMA_VERSION,
+                "the first post-recovery successor must migrate lazily; state={state}"
+            );
+            assert_eq!(fs::read(&target).unwrap(), record_bytes, "state={state}");
+        }
+
+        let fresh = TestRoot::new("fresh-v2-v6-only");
+        let binding = test_binding();
+        let writer = EnrollmentWriter::create(&fresh.app(), binding, shadow()).unwrap();
+        assert!(matches!(
+            writer.reader.authority.material.claim,
+            EnrollmentAuthorityClaim::CurrentV2(_)
+        ));
+        assert_eq!(
+            writer.current().record.schema_version,
+            ENROLLMENT_RECORD_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn legacy_initial_recovery_rejects_wrong_names_and_invalid_hmac_without_cleanup() {
+        let ambiguous = TestRoot::new("legacy-initial-wrong-name");
+        let binding = test_binding();
+        install_legacy_v1_v5_enrollment(&ambiguous, binding.clone());
+        let enrollment = enrollment_directory(&ambiguous, &binding);
+        let records = enrollment.join(RECORDS_DIRECTORY);
+        let head = fs::read_to_string(enrollment.join(HEAD_FILE)).unwrap();
+        let legacy_digest = ContentDigest::from_bytes(parse_digest(head.trim()).unwrap());
+        let target = records.join(format!("{legacy_digest}{RECORD_SUFFIX}"));
+        let wrong = records.join(format!("{RECORD_TEMP_PREFIX}wrong-digest"));
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        fs::rename(&target, &wrong).unwrap();
+        let wrong_bytes = fs::read(&wrong).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&ambiguous.app(), binding.clone(), shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::AmbiguousInitialCreation
+        );
+        assert_eq!(fs::read(&wrong).unwrap(), wrong_bytes);
+
+        let corrupt = TestRoot::new("legacy-initial-invalid-hmac");
+        install_legacy_v1_v5_enrollment(&corrupt, binding.clone());
+        let enrollment = enrollment_directory(&corrupt, &binding);
+        let records = enrollment.join(RECORDS_DIRECTORY);
+        let head = fs::read_to_string(enrollment.join(HEAD_FILE)).unwrap();
+        let legacy_digest = ContentDigest::from_bytes(parse_digest(head.trim()).unwrap());
+        let old_target = records.join(format!("{legacy_digest}{RECORD_SUFFIX}"));
+        let mut record = decode_record(&fs::read(&old_target).unwrap()).unwrap();
+        let Some(EnrollmentCheckpoint::LegacyV2(checkpoint)) = record.checkpoint.as_mut() else {
+            panic!("legacy fixture must carry its v2 HMAC checkpoint")
+        };
+        checkpoint.authentication_tag = digest(0xee);
+        let corrupt_bytes = canonical_record_bytes(&record).unwrap();
+        let corrupt_digest = ContentDigest::of(&corrupt_bytes);
+        fs::remove_file(enrollment.join(HEAD_FILE)).unwrap();
+        fs::remove_file(old_target).unwrap();
+        let corrupt_target = records.join(format!("{corrupt_digest}{RECORD_SUFFIX}"));
+        fs::write(&corrupt_target, &corrupt_bytes).unwrap();
+        assert_eq!(
+            EnrollmentWriter::create(&corrupt.app(), binding, shadow())
+                .err()
+                .unwrap(),
+            EnrollmentError::CheckpointLegacyAuthenticationFailed
+        );
+        assert_eq!(fs::read(corrupt_target).unwrap(), corrupt_bytes);
+    }
+
+    #[test]
+    fn frozen_legacy_v1_v5_codec_golden_digests_remain_exact() {
+        let binding = test_binding();
+        let material = test_authority(binding.clone(), test_lease_resource());
+        let authority_bytes = canonical_authority_claim_bytes(&material.claim).unwrap();
+        assert_eq!(
+            ContentDigest::of(&authority_bytes).to_string(),
+            "03abcb532ff1e270a5b41c6bf9d3b970cab69eb4360590bc17a006959ee586e4"
+        );
+
+        let lifecycle = EnrollmentLifecycleV1::ShadowImport(shadow());
+        let mut record = EnrollmentRecordV1 {
+            schema_version: ENROLLMENT_RECORD_SCHEMA_V5,
+            generation: 1,
+            previous: None,
+            history_accumulator: compute_history_accumulator(1, None, None, &binding, &lifecycle)
+                .unwrap(),
+            lease_resource_id: test_lease_resource(),
+            binding,
+            lifecycle,
+            checkpoint: None,
+        };
+        record.checkpoint = Some(
+            material
+                .legacy_checkpoint_for_test(
+                    record.generation,
+                    record.previous,
+                    record.history_accumulator,
+                    record.lease_resource_id,
+                    &record.binding,
+                    &record.lifecycle,
+                )
+                .unwrap(),
+        );
+        let record_bytes = canonical_record_bytes(&record).unwrap();
+        assert_eq!(
+            ContentDigest::of(&record_bytes).to_string(),
+            "b4e4b5b5b3f8b80f7fea9fb16ed5858c721f3d146b8834d3828bacc8b3d4858a"
+        );
     }
 
     #[test]
@@ -10984,12 +11270,7 @@ mod tests {
         let mut keyed = Vec::new();
         for path in files {
             let source = fs::read_to_string(&path).unwrap();
-            let production =
-                if path.file_name().and_then(|name| name.to_str()) == Some("enrollment.rs") {
-                    source.split("#[cfg(test)]\nmod tests").next().unwrap()
-                } else {
-                    &source
-                };
+            let production = source.split("#[cfg(test)]\nmod tests").next().unwrap();
             if production.contains("hmac::") || production.contains("hmac_") {
                 keyed.push(path);
             }

@@ -243,8 +243,8 @@ mod tests {
     use super::*;
     use crate::model::Graph;
     use crate::oplog::enrollment::{
-        create_discovery_enrollment_for_test, EnrollmentBindingV1,
-        EnrollmentDiscoveryFixtureLifecycle, EnrollmentDiscoveryLifecycle,
+        create_discovery_enrollment_for_test, create_legacy_initial_enrollment_for_test,
+        EnrollmentBindingV1, EnrollmentDiscoveryFixtureLifecycle, EnrollmentDiscoveryLifecycle,
         EnrollmentDiscoveryLocalActive,
     };
     use crate::oplog::object_store::{
@@ -561,6 +561,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_hmac_failure_is_explicitly_corrupt_and_never_discovered_active() {
+        let world = TestWorld::new("legacy-hmac-failed");
+        let binding = binding_with_archive(&world, 0x4050);
+        create_legacy_initial_enrollment_for_test(&world.runtime_root, binding).unwrap();
+        let authority = find_named_file(&world.runtime_root, "authority-v1.claim");
+        mutate_legacy_authority_key(&authority);
+        assert!(matches!(
+            inspect_existing_enrollment_at(&world.runtime_root, world.graph_resource()),
+            Err(EnrollmentError::CheckpointLegacyAuthenticationFailed)
+        ));
+        assert_eq!(
+            discover_startup(&world.request(StartupStorageProfile::ExperimentalSparse)),
+            DiscoveryClassification::CorruptOrUnreadable(DiscoveryComponent::Enrollment)
+        );
+    }
+
+    #[test]
     fn malformed_promoted_state_is_never_classified_active() {
         let world = TestWorld::new("malformed-promoted-state");
         let (binding, _) = create_active(
@@ -718,6 +735,18 @@ mod tests {
         let old = record[start..end].parse::<u32>().unwrap();
         record.replace_range(start..end, &(old ^ 1).to_string());
         fs::write(path, record).unwrap();
+    }
+
+    fn mutate_legacy_authority_key(path: &Path) {
+        let mut claim = String::from_utf8(fs::read(path).unwrap()).unwrap();
+        let start = claim.find("\"key\":[").unwrap() + "\"key\":[".len();
+        let end = claim[start..]
+            .find(',')
+            .map(|offset| start + offset)
+            .unwrap();
+        let old = claim[start..end].parse::<u8>().unwrap();
+        claim.replace_range(start..end, &old.wrapping_add(1).to_string());
+        fs::write(path, claim).unwrap();
     }
 
     fn copy_tree(from: &Path, to: &Path) {
