@@ -470,9 +470,24 @@ export function ensurePageLoaded(dto: PageDto): InstanceRefusal | null {
  * scratch editor can never write the graph. A successfully resolved main route,
  * however, is sufficient to arm ordinary persistence even when an invalidated
  * Journals reload has not landed yet. */
-export function loadRoutedPage(dto: PageDto) {
-  ensurePageLoaded(dto);
+export function loadRoutedPage(dto: PageDto): InstanceRefusal | null {
+  const refusal = ensurePageLoaded(dto);
+  if (refusal) {
+    // A refused route must not leave the surface silently blank — that is a trap,
+    // not a safeguard. The route currently marks itself loaded after this call and
+    // its loader effect watches route/graph identity rather than the incumbent's
+    // save lifecycle, so nothing would retry on its own. Say what is holding the
+    // file and what resolves it, so the user can act and ask again.
+    // (GH #254 increment 3.)
+    pushToast(
+      `“${refusal.page}” has unsaved changes, so the other file with that name can't be shown yet. ` +
+        `Save or resolve it, then open the file again.`,
+      "error",
+    );
+    return refusal;
+  }
   setDoc("loaded", true);
+  return null;
 }
 
 /** Load/reload bundled Guide pages into the working set without making them the

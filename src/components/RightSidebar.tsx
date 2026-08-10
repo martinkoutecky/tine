@@ -15,6 +15,7 @@ import {
   renamePageInNavigation,
   registerRightSidebarClosePreparation,
   moveRightSidebarItem,
+  pushToast,
   type SidebarItem,
 } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
@@ -236,7 +237,19 @@ function useEnsurePage(
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
             if (!p && k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
-            ensurePageLoaded(dto);
+            // A refusal must not leave this item on an empty loading body with
+            // nothing observing the incumbent's save lifecycle — collapsing and
+            // re-expanding happening to retrigger it is not a contract. Say what
+            // is holding the file, so the user can resolve it and re-open.
+            // (GH #254 increment 3.)
+            const refusal = ensurePageLoaded(dto);
+            if (refusal) {
+              pushToast(
+                `“${refusal.page}” has unsaved changes, so the other file with that name ` +
+                  `can't be shown in the sidebar yet. Save or resolve it, then re-open it.`,
+                "error",
+              );
+            }
           }
         })
         .catch(() => {
