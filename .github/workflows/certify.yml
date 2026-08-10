@@ -83,7 +83,7 @@ jobs:
             echo "Initial release: no semver baseline exists yet."
             exit 0
           fi
-          cargo install cargo-semver-checks --locked --version 0.42.0
+          cargo install cargo-semver-checks --locked --version 0.50.0
           cargo semver-checks check-release --baseline-rev "$baseline"
 
   receipt:
