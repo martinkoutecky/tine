@@ -16,6 +16,10 @@
 
 use serde::{Deserialize, Serialize};
 use tine_storage::formats::{self, FormatKind, FormatValue};
+use tine_storage::sqlite::{
+    MaterializationError, PhysicalBlockStructureRow, PhysicalTaskCandidateBlockRow,
+    SqliteMaterializedRead,
+};
 use tine_storage::{
     ContentDigest, DigestSealedError, DigestSealedPayload, DurableDirectoryPublication,
     LocalJournalAppendError, LocalJournalError, LocalJournalSegmentV2,
@@ -61,6 +65,22 @@ fn content_digests_are_usable_from_outside_the_crate() {
     assert_eq!(digest.as_bytes().len(), 32);
     assert_eq!(digest, ContentDigest::of(b"bytes"));
     assert_ne!(digest, ContentDigest::of(b"other bytes"));
+}
+
+/// Compile-use the exact production signatures from an external crate without
+/// requiring a test-only connection constructor.
+#[test]
+fn sparse_task_candidate_reads_are_publicly_typed() {
+    fn compile_use(read: &SqliteMaterializedRead<'_>) {
+        let _: Result<Vec<PhysicalTaskCandidateBlockRow>, MaterializationError> =
+            read.task_candidate_blocks_after("TODO", None, 64);
+        let _: Result<Vec<PhysicalTaskCandidateBlockRow>, MaterializationError> = read
+            .task_candidate_blocks_after_with_header_validation("TODO", None, 64, |_, _| Ok(()));
+        let _: Result<Option<PhysicalBlockStructureRow>, MaterializationError> =
+            read.block_structure([0; 16]);
+    }
+
+    let _compile_use: for<'a> fn(&SqliteMaterializedRead<'a>) = compile_use;
 }
 
 /// The whole point of `formats`: a release or pin receipt is *generated* from

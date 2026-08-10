@@ -7,6 +7,15 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-10
+
+### Added
+
+- Bounded SQLite reads for exact-marker task-candidate blocks and block-only
+  structure. Candidate pagination seeks by `(page_id, block_id)` and returns
+  only the raw block/page fields needed for application-owned parsing;
+  structural point reads exclude content, search text, and public UUIDs.
+
 ## [0.2.0] - 2026-08-10
 
 ### Added
@@ -51,7 +60,8 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/martinkoutecky/tine-storage/releases/tag/v0.1.0

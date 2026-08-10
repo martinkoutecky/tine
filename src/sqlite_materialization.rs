@@ -2527,6 +2527,19 @@ pub struct PhysicalBlockRow {
     pub logseq_identity_origin: Option<i64>,
 }
 
+/// The structural fields required for a bounded block ancestor walk.
+///
+/// Deliberately excludes content, search text, UUIDs, and parser-owned
+/// semantic facets so callers cannot accidentally turn a structural point
+/// lookup into a page-body transfer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalBlockStructureRow {
+    pub block_id: [u8; 16],
+    pub page_id: [u8; 16],
+    pub parent: Option<[u8; 16]>,
+    pub order: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalReferrerRow {
     pub source: PhysicalEntityId,
@@ -2576,6 +2589,24 @@ pub struct PhysicalPropertyFacetRow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalTaskCandidatePageRow {
     pub page_id: [u8; 16],
+}
+
+/// One physical task-index candidate with the raw block and page transport
+/// fields needed for parser-owned task re-evaluation.
+///
+/// Priority, planning, heading, and other semantic facets are intentionally
+/// absent: the application parser remains the authority for those meanings.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalTaskCandidateBlockRow {
+    pub block_id: [u8; 16],
+    pub page_id: [u8; 16],
+    pub parent: Option<[u8; 16]>,
+    pub order: String,
+    pub content: String,
+    pub logseq_uuid: Option<[u8; 16]>,
+    pub page_name: String,
+    pub page_path: String,
+    pub page_text_kind: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2719,6 +2750,26 @@ fn block_row_output_bytes(row: &PhysicalBlockRow) -> Result<usize, Materializati
     )
 }
 
+fn block_structure_row_output_bytes(
+    row: &PhysicalBlockStructureRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(48, [Some(row.order.as_str())])
+}
+
+fn task_candidate_block_row_output_bytes(
+    row: &PhysicalTaskCandidateBlockRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(
+        72,
+        [
+            Some(row.order.as_str()),
+            Some(row.content.as_str()),
+            Some(row.page_name.as_str()),
+            Some(row.page_path.as_str()),
+        ],
+    )
+}
+
 fn referrer_row_output_bytes(_: &PhysicalReferrerRow) -> Result<usize, MaterializationError> {
     checked_output_bytes(64, [])
 }
@@ -2781,6 +2832,27 @@ pub struct SqliteMaterializedRead<'a> {
 fn allow_any_page_header(_path: &str, _kind: i64) -> Result<(), MaterializationError> {
     Ok(())
 }
+
+const TASK_CANDIDATE_BLOCKS_SQL: &str =
+    "SELECT t.block_id, t.page_id, b.parent_block_id, b.order_key,
+            b.content, b.logseq_uuid, p.name, p.path, p.text_kind
+     FROM tasks AS t
+     JOIN blocks AS b
+       ON b.block_id = t.block_id AND b.page_id = t.page_id
+     JOIN pages AS p ON p.page_id = t.page_id
+     WHERE t.marker = ?1
+     ORDER BY t.page_id, t.block_id LIMIT ?2";
+
+const TASK_CANDIDATE_BLOCKS_AFTER_SQL: &str =
+    "SELECT t.block_id, t.page_id, b.parent_block_id, b.order_key,
+            b.content, b.logseq_uuid, p.name, p.path, p.text_kind
+     FROM tasks AS t
+     JOIN blocks AS b
+       ON b.block_id = t.block_id AND b.page_id = t.page_id
+     JOIN pages AS p ON p.page_id = t.page_id
+     WHERE t.marker = ?1
+       AND (t.page_id, t.block_id) > (?2, ?3)
+     ORDER BY t.page_id, t.block_id LIMIT ?4";
 
 impl<'a> SqliteMaterializedRead<'a> {
     pub(crate) fn new(
@@ -2860,6 +2932,32 @@ impl<'a> SqliteMaterializedRead<'a> {
         if let Some(row) = &block {
             let mut budget = MaterializationReadBudget::default();
             budget.add(block_row_output_bytes(row)?)?;
+        }
+        Ok(block)
+    }
+
+    /// Read only the structural fields needed to walk one block's ancestors.
+    ///
+    /// This intentionally omits body/search text and public UUIDs. It follows
+    /// the same point-read error and aggregate-output budget behavior as
+    /// [`Self::block`].
+    pub fn block_structure(
+        &self,
+        block_id: [u8; 16],
+    ) -> Result<Option<PhysicalBlockStructureRow>, MaterializationError> {
+        let block = self
+            .connection
+            .query_row(
+                "SELECT block_id, page_id, parent_block_id, order_key
+                 FROM blocks WHERE block_id = ?1",
+                params![block_id.as_slice()],
+                block_structure_row,
+            )
+            .optional()
+            .map_err(MaterializationError::from)?;
+        if let Some(row) = &block {
+            let mut budget = MaterializationReadBudget::default();
+            budget.add(block_structure_row_output_bytes(row)?)?;
         }
         Ok(block)
     }
@@ -3903,6 +4001,67 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Raw block candidates for one canonical task marker in strict
+    /// `(page_id, block_id)` order.
+    ///
+    /// The task index is only a physical prefilter. The marker comparison is
+    /// deliberately exact: callers canonicalize marker case before crossing
+    /// this storage boundary, then re-evaluate parser-owned task semantics.
+    pub fn task_candidate_blocks_after(
+        &self,
+        marker: &str,
+        after: Option<([u8; 16], [u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalTaskCandidateBlockRow>, MaterializationError> {
+        self.task_candidate_blocks_after_with_header_validation(
+            marker,
+            after,
+            limit,
+            allow_any_page_header,
+        )
+    }
+
+    /// [`Self::task_candidate_blocks_after`] with application-owned page
+    /// header validation for every joined candidate page.
+    pub fn task_candidate_blocks_after_with_header_validation(
+        &self,
+        marker: &str,
+        after: Option<([u8; 16], [u8; 16])>,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalTaskCandidateBlockRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(marker)?;
+        if marker.trim().is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "task marker must be non-empty".into(),
+            ));
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                TASK_CANDIDATE_BLOCKS_SQL,
+                vec![marker.to_owned().into(), limit.into()],
+            ),
+            Some((page_id, block_id)) => (
+                TASK_CANDIDATE_BLOCKS_AFTER_SQL,
+                vec![
+                    marker.to_owned().into(),
+                    page_id.to_vec().into(),
+                    block_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            task_candidate_block_row_with_header_validation(row, &mut validate_header)
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
+            task_candidate_block_row_output_bytes,
+        )
+    }
+
     pub fn search(
         &self,
         query: &str,
@@ -4040,6 +4199,44 @@ fn block_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhysicalBlockRow> {
         logseq_uuid: logseq_uuid.as_deref().map(decode_id_sql).transpose()?,
         logseq_identity_origin: origin,
     })
+}
+
+fn block_structure_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhysicalBlockStructureRow> {
+    let block_id: Vec<u8> = row.get(0)?;
+    let page_id: Vec<u8> = row.get(1)?;
+    let parent: Option<Vec<u8>> = row.get(2)?;
+    Ok(PhysicalBlockStructureRow {
+        block_id: decode_id_sql(&block_id)?,
+        page_id: decode_id_sql(&page_id)?,
+        parent: parent.as_deref().map(decode_id_sql).transpose()?,
+        order: row.get(3)?,
+    })
+}
+
+fn task_candidate_block_row_with_header_validation(
+    row: &rusqlite::Row<'_>,
+    validate_header: &mut impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+) -> rusqlite::Result<Result<PhysicalTaskCandidateBlockRow, MaterializationError>> {
+    let block_id: Vec<u8> = row.get(0)?;
+    let page_id: Vec<u8> = row.get(1)?;
+    let parent: Option<Vec<u8>> = row.get(2)?;
+    let logseq_uuid: Option<Vec<u8>> = row.get(5)?;
+    let page_path: String = row.get(7)?;
+    let page_text_kind: i64 = row.get(8)?;
+    if let Err(error) = validate_header(page_path.as_str(), page_text_kind) {
+        return Ok(Err(error));
+    }
+    Ok(Ok(PhysicalTaskCandidateBlockRow {
+        block_id: decode_id_sql(&block_id)?,
+        page_id: decode_id_sql(&page_id)?,
+        parent: parent.as_deref().map(decode_id_sql).transpose()?,
+        order: row.get(3)?,
+        content: row.get(4)?,
+        logseq_uuid: logseq_uuid.as_deref().map(decode_id_sql).transpose()?,
+        page_name: row.get(6)?,
+        page_path,
+        page_text_kind,
+    }))
 }
 
 fn property_tuple(
@@ -4675,6 +4872,285 @@ mod tests {
             vec![PhysicalTaskCandidatePageRow {
                 page_id: first_page,
             }]
+        );
+    }
+
+    #[test]
+    fn task_candidate_blocks_are_ordered_and_cursor_paged() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+
+        let mut first = page(0x10, "first page");
+        first.name = "First".into();
+        first.path = "pages/first.md".into();
+        let mut parent = first.blocks[0].clone();
+        parent.block_id = id(0x1001);
+        parent.order = "parent".into();
+        parent.content = "parent content".into();
+        parent.task = None;
+        let parent_block_id = parent.block_id;
+        let mut earlier = first.blocks[0].clone();
+        earlier.block_id = id(0x1002);
+        earlier.order = "earlier".into();
+        earlier.content = "earlier task".into();
+        earlier.parent = None;
+        earlier.logseq_uuid = None;
+        earlier.logseq_identity_origin = None;
+        let mut child = first.blocks[0].clone();
+        child.block_id = id(0x1003);
+        child.order = "child".into();
+        child.content = "child task".into();
+        child.parent = Some(parent_block_id);
+        child.logseq_uuid = Some(id(0xaaaa));
+        child.logseq_identity_origin = Some(0);
+        first.blocks = vec![child.clone(), parent, earlier.clone()];
+
+        let mut second = page(0x11, "second page");
+        second.name = "Second".into();
+        second.path = "journals/second.org".into();
+        second.text_kind = 1;
+        second.blocks[0].block_id = id(0x2001);
+        second.blocks[0].order = "only".into();
+        second.blocks[0].content = "second task".into();
+        let second_block_id = second.blocks[0].block_id;
+        apply_and_commit(
+            &mut connection,
+            &change(0x100, vec![second.clone(), first.clone()], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        let all = read.task_candidate_blocks_after("TODO", None, 10).unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|row| (row.page_id, row.block_id))
+                .collect::<Vec<_>>(),
+            vec![
+                (first.page_id, earlier.block_id),
+                (first.page_id, child.block_id),
+                (second.page_id, second_block_id),
+            ]
+        );
+        assert_eq!(all[1].parent, Some(parent_block_id));
+        assert_eq!(all[1].content, "child task");
+        assert_eq!(all[1].logseq_uuid, Some(id(0xaaaa)));
+        assert_eq!(all[1].page_name, "First");
+        assert_eq!(all[1].page_path, "pages/first.md");
+        assert_eq!(all[1].page_text_kind, 0);
+        assert_eq!(all[2].page_name, "Second");
+        assert_eq!(all[2].page_path, "journals/second.org");
+        assert_eq!(all[2].page_text_kind, 1);
+
+        let mut paged = Vec::new();
+        let mut after = None;
+        loop {
+            let rows = read.task_candidate_blocks_after("TODO", after, 1).unwrap();
+            let Some(last) = rows.last() else { break };
+            after = Some((last.page_id, last.block_id));
+            paged.extend(rows);
+        }
+        assert_eq!(paged, all);
+        assert!(read
+            .task_candidate_blocks_after("todo", None, 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn task_candidate_blocks_validate_joined_page_headers() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let mut input = page(0x20, "candidate");
+        input.name = "Journal".into();
+        input.path = "journals/2026_08_10.org".into();
+        input.text_kind = 1;
+        apply_and_commit(
+            &mut connection,
+            &change(0x200, vec![input.clone()], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        let mut headers = Vec::new();
+        let rows = read
+            .task_candidate_blocks_after_with_header_validation("TODO", None, 10, |path, kind| {
+                headers.push((path.to_owned(), kind));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(headers, vec![(input.path.clone(), input.text_kind)]);
+        assert_eq!(rows[0].page_name, input.name);
+        assert_eq!(rows[0].page_path, input.path);
+        assert_eq!(rows[0].page_text_kind, input.text_kind);
+        assert!(matches!(
+            read.task_candidate_blocks_after_with_header_validation(
+                "TODO",
+                None,
+                10,
+                |_, _| Err(MaterializationError::InvalidQuery("rejected page header".into())),
+            ),
+            Err(MaterializationError::InvalidQuery(message)) if message == "rejected page header"
+        ));
+    }
+
+    #[test]
+    fn block_structure_is_bounded_and_omits_text() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let mut input = page(0x30, "structural");
+        let block_id = input.blocks[0].block_id;
+        let parent_id = id(0x3001);
+        input.blocks[0].parent = Some(parent_id);
+        input.blocks[0].order = "structural-order".into();
+        input.blocks[0].content = "must not cross the structure boundary".into();
+        input.blocks[0].searchable_text = "must not cross the structure boundary either".into();
+        apply_and_commit(
+            &mut connection,
+            &change(0x300, vec![input.clone()], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        let PhysicalBlockStructureRow {
+            block_id: returned_block_id,
+            page_id,
+            parent,
+            order,
+        } = read.block_structure(block_id).unwrap().unwrap();
+        assert_eq!(returned_block_id, block_id);
+        assert_eq!(page_id, input.page_id);
+        assert_eq!(parent, Some(parent_id));
+        assert_eq!(order, "structural-order");
+        assert_eq!(read.block_structure(id(0x30ff)).unwrap(), None);
+    }
+
+    #[test]
+    fn task_candidate_blocks_reject_malformed_inputs_and_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let input = page(0x40, "corruptible");
+        let block_id = input.blocks[0].block_id;
+        apply_and_commit(
+            &mut connection,
+            &change(0x400, vec![input], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        assert!(matches!(
+            read.task_candidate_blocks_after("", None, 1),
+            Err(MaterializationError::InvalidQuery(_))
+        ));
+        assert!(matches!(
+            read.task_candidate_blocks_after(
+                &"x".repeat(MAX_MATERIALIZATION_QUERY_BYTES + 1),
+                None,
+                1,
+            ),
+            Err(MaterializationError::ResourceLimit {
+                resource: "materialization query bytes",
+                ..
+            })
+        ));
+        assert!(matches!(
+            read.task_candidate_blocks_after("TODO", None, MAX_MATERIALIZATION_QUERY_ROWS + 1),
+            Err(MaterializationError::InvalidQuery(_))
+        ));
+
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints = ON")
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE blocks SET parent_block_id = ?1 WHERE block_id = ?2",
+                params![[0_u8].as_slice(), block_id.as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints = OFF")
+            .unwrap();
+        assert!(matches!(
+            read.task_candidate_blocks_after("TODO", None, 1),
+            Err(MaterializationError::Sqlite(_))
+        ));
+        assert!(matches!(
+            read.block_structure(block_id),
+            Err(MaterializationError::Sqlite(_))
+        ));
+    }
+
+    #[test]
+    fn task_candidate_blocks_enforce_the_existing_read_byte_budget() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let mut input = page(0x50, "large candidates");
+        let content = "x".repeat(MAX_MATERIALIZATION_FIELD_BYTES);
+        let mut blocks = Vec::new();
+        for offset in 0..17_u128 {
+            let mut block = input.blocks[0].clone();
+            block.block_id = id(0x5000 + offset);
+            block.order = format!("{offset:02}");
+            block.content = content.clone();
+            blocks.push(block);
+        }
+        input.blocks = blocks;
+        apply_and_commit(
+            &mut connection,
+            &change(0x500, vec![input], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+
+        assert!(matches!(
+            read.task_candidate_blocks_after("TODO", None, 17),
+            Err(MaterializationError::ResourceLimit {
+                resource: "materialization read output bytes",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn task_candidate_block_cursor_query_seeks_existing_indexes() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        apply_and_commit(
+            &mut connection,
+            &change(0x600, vec![page(0x60, "indexed")], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let explain_sql = format!("EXPLAIN QUERY PLAN {TASK_CANDIDATE_BLOCKS_AFTER_SQL}");
+        let mut statement = connection.prepare(&explain_sql).unwrap();
+        let plan = statement
+            .query_map(params!["TODO", id(0), id(0), 10], |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|detail| {
+                detail.contains("tasks_marker_idx")
+                    && detail.contains("marker=?")
+                    && detail.contains("(page_id,block_id)>(?,?)")
+            }),
+            "cursor scan did not seek marker/page/block in tasks_marker_idx: {plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("sqlite_autoindex_blocks_1")),
+            "block join did not use its primary key: {plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("sqlite_autoindex_pages_1")),
+            "page join did not use its primary key: {plan:?}"
         );
     }
 
