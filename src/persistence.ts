@@ -305,7 +305,12 @@ export function isTombstonedFile(name: string, path?: string): boolean {
 
 export function tombstone(name: string, path?: string) {
   deletedPages.add(name);
+  // Always REPLACE the recorded file, never merge with an older tombstone's: a
+  // pathless delete means "every file with this name", and inheriting a stale
+  // path from a previous tombstone would silently narrow it to one file — the
+  // wrong one, letting the others be resurrected. (GH #254 increment 3.)
   if (path) deletedPagePaths.set(name, path);
+  else deletedPagePaths.delete(name);
 }
 /** Lift a delete tombstone (page re-created, or the delete failed). */
 export function untombstone(name: string) {
@@ -336,6 +341,7 @@ export function resetSaveState() {
   baseRev.clear();
   conflictObservation.clear();
   deletedPages.clear();
+  deletedPagePaths.clear();
   heldSources.clear();
   heldByDest.clear();
   transientFailures.clear();

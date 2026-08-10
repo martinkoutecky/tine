@@ -960,6 +960,7 @@ fn search_cache_reflects_saves_and_deletes() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     g.save_page(&page, None).unwrap();
@@ -1006,6 +1007,7 @@ fn journal_template_bytes_survive_reopen_and_idempotent_resave() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
 
@@ -1059,6 +1061,7 @@ fn search_ignores_hidden_property_metadata() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     g.save_page(&page, None).unwrap();
@@ -1341,6 +1344,7 @@ fn consecutive_self_saves_do_not_conflict() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
@@ -1425,6 +1429,7 @@ fn noop_save_does_not_bump_cache_generation() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     let r1 = g.save_page(&mk("hello"), None).unwrap();
@@ -1475,6 +1480,7 @@ fn self_write_marker_does_not_outlive_its_save() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
@@ -1518,6 +1524,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
@@ -1576,6 +1583,7 @@ fn self_write_is_not_reported_as_external_change() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        activation: None,
         guide: false,
     };
     g.save_page(&page, None).unwrap();

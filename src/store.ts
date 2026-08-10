@@ -616,6 +616,8 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
     else await backend().deletePage(name, kind);
   } catch {
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
+    // Anything that parked itself while this page looked deleted may proceed now.
+    notifyPageBecameReplaceable(name);
     return false;
   }
   forgetPage(name); // success — now drop it from the working set + feed
@@ -3194,7 +3196,14 @@ export async function persistBlockRefTarget(
     // deleting one must not refuse the other. Refusing by name loses the surviving
     // owner's durable target — work lost rather than protected.
     if (isTombstonedFile(page, dto?.path ?? path)) {
-      pendingBlockRefStamps.delete(uuid);
+      // RETAIN, don't discard. A tombstone is raised BEFORE the backend delete
+      // and lifted again if that delete fails (an ambiguous by-name delete of a
+      // duplicated page name is rejected by core). Dropping the request here
+      // threw away an already-committed reference's durable target on a delete
+      // that never happened. Retaining costs nothing: the retry re-checks the
+      // tombstone before it reads, so while the page stays deleted this waits
+      // silently, and it re-drives if the page comes back.
+      retainStamp({ uuid, page, kind, path, epoch });
       return;
     }
     if (dto && ensurePageLoaded(dto)) {
@@ -3209,9 +3218,7 @@ export async function persistBlockRefTarget(
       // and the liveness half is why — a request stranded whenever the incumbent
       // resolved through a route that produced no such save.
       // (GH #254 increment 3, acceptance row C5.)
-      const req = { uuid, page, kind, path, epoch };
-      pendingBlockRefStamps.set(uuid, req);
-      watchForStamp(req);
+      retainStamp({ uuid, page, kind, path, epoch });
       return;
     }
   }
@@ -3231,19 +3238,36 @@ const pendingBlockRefStamps = new Map<
   { uuid: string; page: string; kind: PageKind; path?: string; epoch: number }
 >();
 
+type PendingStamp = { uuid: string; page: string; kind: PageKind; path?: string; epoch: number };
+
+/** Stop-handles for the armed watchers, so re-retaining one request replaces its
+ *  watcher instead of stacking a second one that would re-read the same page. */
+const stampWatchers = new Map<string, () => void>();
+
 /** A retained stamp belongs to the graph that deferred it. */
 export function clearPendingBlockRefStamps(): void {
   pendingBlockRefStamps.clear();
+  stampWatchers.clear();
   clearReplaceableWatchers();
 }
 
-function watchForStamp(req: { uuid: string; page: string; kind: PageKind; path?: string; epoch: number }) {
+/** Hold a deferred stamp and (re-)arm exactly one watcher for it. */
+function retainStamp(req: PendingStamp) {
+  stampWatchers.get(req.uuid)?.();
+  pendingBlockRefStamps.set(req.uuid, req);
   const stop = onPageBecameReplaceable(req.page, () => {
+    // Still deleted: stay armed and read nothing. The tombstone is lifted if the
+    // delete fails or the page is recreated, and this resumes then; treating a
+    // replaceability announcement as permission to re-read would poll the
+    // backend for a page that is not there.
+    if (isTombstonedFile(req.page, req.path)) return;
     stop();
+    stampWatchers.delete(req.uuid);
     pendingBlockRefStamps.delete(req.uuid);
     if (req.epoch !== graphEpoch()) return;
     void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
   });
+  stampWatchers.set(req.uuid, stop);
 }
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.

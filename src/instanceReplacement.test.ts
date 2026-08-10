@@ -259,6 +259,87 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(doc.pages.find((p) => p.name === "Target")?.path).toBe("pages/other/Target.md");
   });
 
+  it("keeps a deferred stamp when the delete it parked behind fails", async () => {
+    const { persistBlockRefTarget, deletePage, takeEditorLease, doc: liveDoc } = await import(
+      "./store"
+    );
+    ensurePageLoaded(page("Target", "pages/Target.md", "incumbent"));
+    const release = takeEditorLease("Target");
+
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "survivor"));
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    await persistBlockRefTarget("uuid-9", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1); // refused by the lease, request retained
+
+    // Retry read 2 in flight.
+    let releaseRead: (dto: unknown) => void = () => {};
+    read.mockReturnValue(
+      new Promise((r) => {
+        releaseRead = r as (dto: unknown) => void;
+      }) as never,
+    );
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A by-name delete of a DUPLICATED page name: core rejects it as ambiguous,
+    // so the tombstone goes up and comes back down with nothing deleted.
+    let rejectDelete: (e: unknown) => void = () => {};
+    vi.spyOn(backend(), "deletePage").mockReturnValue(
+      new Promise((_, rej) => {
+        rejectDelete = rej;
+      }) as never,
+    );
+    const deleting = deletePage("Target", "page");
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The retry resolves while that tombstone is up.
+    read.mockResolvedValue(page("Target", "pages/other/Target.md", "survivor"));
+    releaseRead(page("Target", "pages/other/Target.md", "survivor"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Only now does the delete fail. Discarding the request under a tombstone
+    // that is about to be lifted throws away an already-committed reference's
+    // durable target for a deletion that never happened.
+    rejectDelete(new Error("ambiguous page name"));
+    expect(await deleting).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(liveDoc.pages.find((p) => p.name === "Target")?.path).toBe("pages/other/Target.md");
+  });
+
+  it("does not carry a deleted file's path into the next graph", async () => {
+    const { persistBlockRefTarget, deletePage, resetStore, doc: liveDoc } = await import("./store");
+    ensurePageLoaded(page("Target", "pages/old/Target.md", "old"));
+    vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+    await deletePage("Target", "page", "pages/old/Target.md");
+
+    resetStore();
+
+    // New graph, same page name, different file. A read is in flight...
+    let releaseRead: (dto: unknown) => void = () => {};
+    vi.spyOn(backend(), "getPageByPath").mockReturnValue(
+      new Promise((r) => {
+        releaseRead = r as (dto: unknown) => void;
+      }) as never,
+    );
+    void persistBlockRefTarget("uuid-10", "Target", "page", "pages/new/Target.md");
+    await new Promise((r) => setTimeout(r, 0));
+
+    // ...when the user deletes this page by NAME, which means every file of that
+    // name. A path left over from the previous graph's tombstone would make the
+    // guard compare against the wrong file and admit these pre-delete bytes.
+    await deletePage("Target", "page");
+    releaseRead(page("Target", "pages/new/Target.md", "new"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(liveDoc.pages.find((p) => p.name === "Target")).toBeUndefined();
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();
