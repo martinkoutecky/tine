@@ -8,6 +8,7 @@ import {
   shownObservationFor,
 } from "../persistence";
 import {
+  editGeneration,
   editorActivationFor,
   forceSave,
   forgetPage,
@@ -33,8 +34,12 @@ export function ConflictBar(): JSX.Element {
     const shown = shownObservationFor(name);
     const activation = editorActivationFor(name);
     // Captured AT THE CLICK, so later input can be told apart from what the user
-    // was actually looking at when they chose to discard it.
-    const generation = pageInstanceGeneration(name);
+    // was actually looking at when they chose to discard it. This must be the
+    // CONTENT-edit counter: `pageInstanceGeneration` advances only on page
+    // install/retire, so typing leaves it unchanged and the final check below
+    // would wave through exactly the input it exists to protect.
+    const generation = editGeneration(name);
+    const instance = pageInstanceGeneration(name);
     // Resolve the file this editor is actually pinned to. Two files can carry
     // one page name (the duplicate-day stray of #21, or same-titled pages in
     // different folders), and resolving by name reaches the backend's CANONICAL
@@ -62,16 +67,26 @@ export function ConflictBar(): JSX.Element {
         return;
       }
     }
-    const dto = page?.path
-      ? await backend().getPageByPath(page.path)
-      : await backend().getPage(name, page?.kind ?? "page");
+    let dto;
+    try {
+      dto = page?.path
+        ? await backend().getPageByPath(page.path)
+        : await backend().getPage(name, page?.kind ?? "page");
+    } catch {
+      // The observation was already consumed by the presentation above, so an
+      // unhandled read failure here would leave a dead banner with nothing
+      // scheduled — the silent no-op the contract forbids.
+      dropObservation(name);
+      void reobserve(name);
+      return;
+    }
     // Re-check at the FINAL boundary, not only before the awaited read. The click
     // authorised discarding what was on screen when it was clicked; typing during
     // the await is not that. Typing cancels the whole discard — including the
     // pre-click draft — and the page reverts to ordinary dirty-editor semantics,
     // carried by the re-observing save rather than the ordinary one, which returns
     // before the backend while the page is still conflicted.
-    if (pageInstanceGeneration(name) !== generation) {
+    if (editGeneration(name) !== generation || pageInstanceGeneration(name) !== instance) {
       dropObservation(name);
       void reobserve(name);
       return;

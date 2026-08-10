@@ -239,6 +239,17 @@ function releaseSourcesFor(dest: string) {
       continue;
     }
     dirty.add(s); // its removal (and any held edit) can write now
+    if (isConflicted(s)) {
+      // A conflicted source cannot travel the ORDINARY route: `doSave` returns at
+      // the conflicted-page guard before reaching the backend, so scheduling one
+      // leaves the page dirty behind a banner whose authority may already be dead,
+      // with nothing to clear it — the retry timer requires `!isConflicted` too.
+      // Re-observe instead: that intent exists precisely to bypass the guard, and
+      // it either lands or mints a fresh banner the user can answer.
+      // (GH #254 increment 3, D5.)
+      void enqueueSave(s, { kind: "reobserve" });
+      continue;
+    }
     any = true;
   }
   if (any) scheduleSave();
@@ -452,28 +463,42 @@ export function shownObservationFor(name: string): number | null {
 /**
  * Make sure `name`'s editor has an activation, minting one if it has none.
  *
- * Idempotent by design: an editor that already holds an identity keeps it, so
- * ordinary re-saves do not churn the token the live banner is bound to. A present
- * page reuses its path's activation; a page with no file yet gets an absent
- * activation carrying the prospective target it is live for.
- *
- * Failure is deliberately non-fatal. If activation cannot be obtained the save
- * still proceeds without one — the ordinary path's base-revision guard is its
- * authority and is unchanged — and only the override path is unavailable, which
- * is a strictly better outcome than refusing to save the user's work.
+ * Idempotent, so ordinary re-saves never churn the token a live banner is bound
+ * to. Failure is deliberately non-fatal: the ordinary path's base-revision guard
+ * is unchanged and remains its own authority, so a user never loses a save
+ * because an identity could not be minted — only the override path is
+ * unavailable.
  */
 async function ensureEditorActivation(name: string): Promise<void> {
   if (editorActivationFor(name) !== undefined) return;
   const page = pageByName(name);
   if (!page) return;
+  const token = graphToken;
+  // Deliberately NOT `pageInstanceGeneration` here: that accessor lazily CREATES
+  // a generation when a page has none, so reading it would mutate the very
+  // identity the cut-retirement path compares. The page's own path is a
+  // side-effect-free stand-in for "still the editor I started from".
+  const pathAtStart = page.path ?? "";
   try {
     const handle = page.path
       ? await backend().activateEditor(page.path, "reuse")
       : await backend().activateAbsentEditor(name, page.kind);
-    // Re-check after the await: another save may have acquired one meanwhile, and
-    // overwriting it would strand the identity a live banner is bound to.
-    if (editorActivationFor(name) === undefined && pageByName(name)) {
+    // Re-check across the await. A graph switch or a re-install makes this a
+    // DIFFERENT editor, and recording the handle then would hand one editor's
+    // identity to another — reproduced writing a replacement graph's page.
+    if (
+      editorActivationFor(name) === undefined &&
+      graphToken === token &&
+      (pageByName(name)?.path ?? "") === pathAtStart
+    ) {
       setEditorActivation(name, handle.activation);
+      // NOT YET DONE — an absent editor's prospective target still does not reach
+      // its DTO, so the core's drift/re-resolve branch (which only runs for a
+      // pinned path) never sees it. Writing the target onto the store page here
+      // was tried and reverted: it changes the DTO mid-save and broke the
+      // cut-retirement identity path, which is authority-bound to the exact loaded
+      // instance. The fix belongs at the DTO boundary, not in the page.
+      // (GH #254 increment 3, verifier blocker 5.)
     }
   } catch {
     // Non-fatal, as above.
@@ -545,19 +570,10 @@ async function doSave(
     return false;
   }
   const token = graphToken;
-  // Acquire this editor's activation before the DTO is built, so `pageToDto` can
-  // stamp it. A save is definitionally an editor acting, which is why this is the
-  // acquisition point and a plain read is not: reads are mixed-purpose and minting
-  // there would hand identities to exports, previews and hydration.
-  //
-  // Keyed through the STORE's registry, never by path alone. That is what keeps
-  // the clone defence intact: a copied DTO does not travel this path, so it never
-  // acquires an identity, and a copy that presents none is refused on the override
-  // path. (GH #254 increment 3.)
-  // Only await when there is genuinely something to acquire. Making every save
-  // yield a microtask changes ordering for callers that flush and then read focus
-  // or editing state, and an editor that already holds its identity has nothing to
-  // wait for.
+  // Acquire this editor's identity before the DTO is built, so `pageToDto` can
+  // stamp it. Keyed through the STORE's registry, never by path alone: a copied
+  // DTO does not travel this path, never acquires an identity, and is refused on
+  // the override path for presenting none. (GH #254 increment 3.)
   if (editorActivationFor(name) === undefined) await ensureEditorActivation(name);
   const dto = measureIssue248("frontend.pageToDtoMs", () => pageToDto(name));
   if (!dto) {

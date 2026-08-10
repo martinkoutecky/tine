@@ -156,6 +156,24 @@ function docHasBlockIdentity(id: string): boolean {
 let pageInstanceClock = 0;
 const pageInstanceGenerations = new Map<string, number>();
 
+// Advances on every CONTENT edit, which `pageInstanceGeneration` deliberately
+// does not: that counter tracks page instances (install/retire), so `setRaw`
+// leaves it unchanged. An authority captured at a click therefore cannot use it
+// to tell "the user typed while my read was in flight" from "nothing happened" —
+// which is the difference between honouring a discard and destroying text the
+// user entered after asking for it. (GH #254 increment 3.)
+let editClock = 0;
+const editGenerations = new Map<string, number>();
+
+/** Current content-edit generation for a page. */
+export function editGeneration(name: string): number {
+  return editGenerations.get(name) ?? 0;
+}
+
+function bumpEditGeneration(name: string): void {
+  editGenerations.set(name, ++editClock);
+}
+
 function activatePageInstance(name: string): number {
   const generation = ++pageInstanceClock;
   pageInstanceGenerations.set(name, generation);
@@ -406,6 +424,13 @@ function upsertPage(dto: PageDto) {
   // is stale — replaying it would clobber the just-loaded (external) version, so
   // drop those entries. (A first load has no prior entries → no-op.)
   const replacing = !!existing;
+  // A genuine replacement is a NEW editor instance, so the outgoing one must give
+  // up its identity — captured from the page being replaced, before it is gone.
+  // Leaving it live means the incoming editor inherits, under same-path Reuse, a
+  // token minted for an editor that was shown a different conflict: exactly the
+  // cross-instance authority this increment exists to prevent.
+  // (GH #254 increment 3.)
+  if (replacing) retireEditorFor(dto.name, existing?.path);
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
   setDoc(
@@ -625,6 +650,10 @@ export function reloadPage(dto: PageDto) {
  *
  *  Returns false when the reload was declined. */
 export function reloadPageIfStillSafe(name: string, dto: PageDto): boolean {
+  // The full gate, not `reloadDisposition` alone: component-local uncommitted
+  // input (the title-rename draft, IME composition) is invisible to every store
+  // predicate, and this path deliberately replaces the working instance.
+  if (!mayReplaceInstance(name)) return false;
   if (reloadDisposition(name) !== "reload") return false;
   upsertPage(dto);
   return true;
@@ -652,7 +681,7 @@ export async function reloadHlsIfLoaded(name: string): Promise<void> {
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
-  const evicted: string[] = [];
+  const evicted: { name: string; path?: string }[] = [];
   setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
@@ -662,17 +691,18 @@ function evictIfNeeded() {
           i++;
           continue;
         }
+        // Capture the path BEFORE the page leaves the working set. A retirement
+        // that has to look the page up afterwards finds nothing and silently
+        // retires nothing, leaking the native activation — which the next editor
+        // of that path would then inherit under same-path Reuse.
+        evicted.push({ name, path: s.pages[i].path });
         purgePageNodes(s, name);
         s.pages.splice(i, 1);
-        evicted.push(name);
       }
     })
   );
-  for (const name of evicted) {
-    // Eviction retires the frontend instance, so it must retire the core's
-    // identity too — otherwise the next editor of that path inherits a live token
-    // it was never shown a conflict for.
-    retireEditorFor(name);
+  for (const { name, path } of evicted) {
+    retireEditorFor(name, path);
     retirePageInstance(name);
   }
   invalidateAllMatrixDimensions();
@@ -839,7 +869,12 @@ export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
   // path warning, and an edit saved to the wrong file. A page already present
   // under that name stays published; one that never installed does not.
   // (GH #254 increment 3.)
-  const installed = dtos.filter((d) => upsertUnlessDirty(d) || pageByName(d.name));
+  // Publication follows INSTALLATION. An earlier draft fell back to
+  // `|| pageByName(d.name)`, which reintroduced the exact defect: a dirty
+  // path-pinned stray already occupying the name made the declined canonical DTO
+  // publish anyway, so the feed rendered the stray as though it were the
+  // requested journal.
+  const installed = dtos.filter((d) => upsertUnlessDirty(d));
   setDoc("feed", installed.map((d) => d.name));
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
@@ -851,7 +886,7 @@ export function appendFeed(dtos: PageDto[]) {
   for (const d of dtos) {
     if (doc.feed.includes(d.name)) continue;
     // Publication follows installation — see `loadFeed`.
-    if (!upsertUnlessDirty(d) && !pageByName(d.name)) continue;
+    if (!upsertUnlessDirty(d)) continue;
     setDoc("feed", [...doc.feed, d.name]);
   }
   evictIfNeeded();
@@ -1593,6 +1628,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
         );
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
+  bumpEditGeneration(doc.byId[id].page);
   markDirty(doc.byId[id].page);
 }
 
