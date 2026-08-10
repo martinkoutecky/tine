@@ -433,6 +433,36 @@ function forceIntent(name: string): SaveIntent {
   return { kind: "force", observation: conflictObservation.get(name) ?? null };
 }
 
+/** The exact observation the banner for `name` is showing, captured AT THE CLICK.
+ *
+ *  Read at click time, never later: a re-observation running ahead of a queued
+ *  request replaces the entry with an epoch minted for a winner the user never
+ *  saw, and answering with that would discard exactly that winner. */
+export function shownObservationFor(name: string): number | null {
+  return conflictObservation.get(name) ?? null;
+}
+
+/** The load baseline the editor's conflict episode was minted under.
+ *
+ *  The episode is `{ loaded_revision, activation }`, so presenting an observation
+ *  has to name the same revision the refused save did or the episode equality
+ *  refuses the very editor whose banner it is. */
+export function saveBaselineFor(name: string): string | null {
+  return baseRev.get(name) ?? null;
+}
+
+/** Forget a spent or dead observation without touching the banner. */
+export function dropObservation(name: string): void {
+  conflictObservation.delete(name);
+}
+
+/** Re-observe `name`: the guarded save that bypasses the conflicted-page early
+ *  return, so a page whose authority died still reaches the backend and either
+ *  lands or raises a fresh banner. */
+export function reobserve(name: string): Promise<boolean> {
+  return enqueueSave(name, { kind: "reobserve" });
+}
+
 function enqueueSave(
   name: string,
   intent: SaveIntent = ORDINARY,

@@ -2078,6 +2078,21 @@ pub enum ActivationIntent {
     Replace,
 }
 
+/// What presenting a conflict observation established. No arm writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConflictPresentation {
+    /// This editor's observation was live and is now spent: the discard proceeds.
+    Authorised,
+    /// A newer observation exists. There is a live banner to answer, so the user
+    /// answers it again rather than being told nothing happened.
+    Superseded,
+    /// The authority is gone with no successor — typically the raw-watcher path,
+    /// which revokes without emitting any page event. The banner must be
+    /// re-observed rather than left dead.
+    Withdrawn,
+}
+
 /// A live editor instance registered against a path.
 #[derive(Clone, Debug)]
 struct ActivationRecord {
@@ -20267,6 +20282,58 @@ impl Graph {
             target: rel,
             prospective: true,
         })
+    }
+
+    /// Present a conflict observation WITHOUT writing anything.
+    ///
+    /// "Use disk version" is an authority-answering action just like "Keep mine",
+    /// and it has to be decided by the same single source of truth. The frontend
+    /// cannot decide it: the raw-watcher path revokes an observation with no page
+    /// event to react to, so a locally recorded epoch can be dead while every
+    /// local value still compares equal. A map maintained by eventual
+    /// notifications cannot prove live membership, so it is not asked to.
+    ///
+    /// This consumes the authority exactly as a force would — so a stale callback
+    /// cannot answer a banner twice — but performs no write at all, in every arm.
+    /// The three outcomes are what the caller needs to distinguish: the discard may
+    /// proceed, a newer observation superseded it, or the authority is simply gone.
+    /// (GH #254 increment 3.)
+    pub fn present_conflict_override(
+        &self,
+        rel: &str,
+        base_rev: Option<&str>,
+        activation: u64,
+        observation_epoch: u64,
+    ) -> io::Result<ConflictPresentation> {
+        let Some(abs) = self.resolve_rel(rel) else {
+            return Ok(ConflictPresentation::Withdrawn);
+        };
+        let activation = EditorActivation::from_u64(activation);
+        if !self.editor_activation_is_live(&abs, activation) {
+            return Ok(ConflictPresentation::Superseded);
+        }
+        let episode = ConflictEditorEpisode {
+            loaded_revision: base_rev.map(str::to_owned),
+            activation: Some(activation),
+        };
+        match self.consume_conflict_authority(
+            &abs,
+            &episode,
+            ConflictOverride { observation_epoch },
+        ) {
+            Ok(_) => Ok(ConflictPresentation::Authorised),
+            Err(error) => {
+                let message = error.to_string();
+                // A newer live token exists — there is a banner to answer.
+                if message.contains("newer than the conflict this request answers") {
+                    Ok(ConflictPresentation::Superseded)
+                } else {
+                    // Missing, already consumed, or a different episode: whatever
+                    // the banner named is gone.
+                    Ok(ConflictPresentation::Withdrawn)
+                }
+            }
+        }
     }
 
     /// Retire `activation` from `rel`, but only if it is still the live one.
@@ -51955,6 +52022,74 @@ mod tests {
             "\"Keep mine\" must land on the file the editor actually drifted onto"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// "Use disk version" is an authority-answering action, decided by the same
+    /// source of truth as "Keep mine" — and it must decide without writing.
+    ///
+    /// The frontend cannot make this decision itself. The raw-watcher path revokes
+    /// an observation with no page event to react to, so a locally recorded epoch
+    /// can be dead while every local value still compares equal; a map maintained
+    /// by eventual notifications cannot prove live membership. Presenting is the
+    /// only way to learn the truth, and the three outcomes are exactly what the
+    /// caller must tell apart: proceed, answer a newer banner, or re-observe a
+    /// dead one.
+    #[test]
+    fn gh254_presenting_an_observation_decides_without_writing() {
+        for arm in ["authorised", "superseded", "withdrawn"] {
+            let (root, path, graph, page) = gh254_loaded(arm);
+            fs::write(&path, "- external winner\n").unwrap();
+            graph.save_page(&page, page.rev.as_deref()).unwrap_err();
+            let shown = graph
+                .outstanding_conflict_override(&page)
+                .unwrap()
+                .expect("the refused save mints the banner's authority");
+            let before = fs::read_to_string(&path).unwrap();
+
+            let presented = match arm {
+                "authorised" => shown.observation_epoch,
+                // A stale callback naming the observation it was shown, while a
+                // newer winner has been observed since.
+                "superseded" => {
+                    fs::write(&path, "- newer external winner\n").unwrap();
+                    graph.save_page(&page, page.rev.as_deref()).unwrap_err();
+                    shown.observation_epoch
+                }
+                // The raw-watcher shape: authority revoked with no page event.
+                "withdrawn" => {
+                    graph.revoke_conflict_authority(&path);
+                    shown.observation_epoch
+                }
+                _ => unreachable!(),
+            };
+            let before = if arm == "superseded" {
+                fs::read_to_string(&path).unwrap()
+            } else {
+                before
+            };
+
+            let outcome = graph
+                .present_conflict_override(
+                    "pages/Note.md",
+                    page.rev.as_deref(),
+                    page.activation.unwrap(),
+                    presented,
+                )
+                .unwrap();
+
+            let expected = match arm {
+                "authorised" => ConflictPresentation::Authorised,
+                "superseded" => ConflictPresentation::Superseded,
+                _ => ConflictPresentation::Withdrawn,
+            };
+            assert_eq!(outcome, expected, "arm {arm}");
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                before,
+                "presenting must never write, in any arm ({arm})"
+            );
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     /// The stale-callback shape: a well-formed token naming a real editor that has

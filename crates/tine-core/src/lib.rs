@@ -42,7 +42,7 @@ pub use graph_text_scope::{
     GRAPH_TEXT_SCOPE_VERSION,
 };
 pub use model::{
-    ActivationIntent, BlockDto, BlockPreview, ConflictOverride, EditorActivation,
-    EditorActivationHandle, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup,
-    ReferencedPageNames,
+    ActivationIntent, BlockDto, BlockPreview, ConflictOverride, ConflictPresentation,
+    EditorActivation, EditorActivationHandle, Graph, GraphMeta, PageDto, PageEntry, PageKind,
+    RefGroup, ReferencedPageNames,
 };

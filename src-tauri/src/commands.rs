@@ -2732,6 +2732,32 @@ pub(crate) async fn activate_absent_editor(
     .map_err(|error| error.to_string())?
 }
 
+/// Present a conflict observation and learn its fate WITHOUT writing.
+///
+/// The "Use disk version" half of the authority contract. The frontend cannot
+/// decide this locally: an observation can be revoked with no page event to react
+/// to, so every local value still compares equal while the authority is already
+/// gone. (GH #254 increment 3.)
+#[tauri::command]
+pub(crate) async fn present_conflict_override(
+    path: String,
+    base_rev: Option<String>,
+    activation: u64,
+    conflict_epoch: u64,
+    state: GraphContext<'_>,
+) -> Result<tine_core::ConflictPresentation, String> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        slot.legacy_graph()?
+            .present_conflict_override(&path, base_rev.as_deref(), activation, conflict_epoch)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Retire an activation, but only if it is still the live one.
 ///
 /// Compare-and-retire, never a bare "retire this path": a fire-and-forget
@@ -2748,10 +2774,9 @@ pub(crate) async fn retire_editor_activation(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
-        Ok(slot.legacy_graph()?.retire_editor_activation(
-            &path,
-            tine_core::EditorActivation::from_u64(activation),
-        ))
+        Ok(slot
+            .legacy_graph()?
+            .retire_editor_activation(&path, tine_core::EditorActivation::from_u64(activation)))
     })
     .await
     .map_err(|error| error.to_string())?

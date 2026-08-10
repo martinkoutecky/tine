@@ -374,6 +374,14 @@ export interface Backend {
    *  reports whether it was. A retirement racing a newer activation must not
    *  revoke the newer editor. */
   retireEditorActivation(path: string, activation: number): Promise<boolean>;
+  /** Present a conflict observation and learn its fate WITHOUT writing. The
+   *  "Use disk version" half of the authority contract. */
+  presentConflictOverride(
+    path: string,
+    baseRev: string | null,
+    activation: number,
+    conflictEpoch: number,
+  ): Promise<"authorised" | "superseded" | "withdrawn">;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
   mergePages(src: string, dst: string): Promise<void>;
@@ -997,6 +1005,19 @@ class TauriBackend implements Backend {
   }
   retireEditorActivation(path: string, activation: number) {
     return this.call<boolean>("retire_editor_activation", { path, activation });
+  }
+  presentConflictOverride(
+    path: string,
+    baseRev: string | null,
+    activation: number,
+    conflictEpoch: number,
+  ) {
+    return this.call<"authorised" | "superseded" | "withdrawn">("present_conflict_override", {
+      path,
+      baseRev,
+      activation,
+      conflictEpoch,
+    });
   }
   mergePages(src: string, dst: string) {
     return this.call<void>("merge_pages", { src, dst });
