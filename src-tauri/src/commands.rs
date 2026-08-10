@@ -377,16 +377,26 @@ fn sparse_save_request(
     page: PageDto,
     base_rev: Option<String>,
     force: bool,
+    managed_conflict_revision: Option<String>,
 ) -> Result<SyncApplicationPageSaveRequest, String> {
-    if force {
-        return Err("Force save is unavailable while Tine-managed storage is active. Reload the page and resolve the conflict.".into());
-    }
-    let target = match base_rev {
-        Some(revision) => SyncApplicationPageSaveTarget::Existing {
+    let target = match (force, base_rev) {
+        (true, Some(_)) => SyncApplicationPageSaveTarget::ResolveConflict {
+            path: page.path.clone(),
+            observed_revision: managed_conflict_revision.ok_or_else(|| {
+                "managed.conflict_unobserved: Keep mine needs a current managed revision. Use current or wait for the page to become identifiable.".to_owned()
+            })?,
+        },
+        (true, None) => {
+            return Err(
+                "managed.conflict_unobserved: Keep mine cannot replace a page that has no prior managed revision."
+                    .into(),
+            )
+        }
+        (false, Some(revision)) => SyncApplicationPageSaveTarget::Existing {
             path: page.path.clone(),
             revision,
         },
-        None => SyncApplicationPageSaveTarget::New {
+        (false, None) => SyncApplicationPageSaveTarget::New {
             name: page.name.clone(),
             page_kind: page.kind.into(),
         },
@@ -398,27 +408,13 @@ fn map_sparse_page_save(outcome: SyncApplicationPageSaveOutcome) -> Result<Strin
     match outcome {
         SyncApplicationPageSaveOutcome::Saved { revision, .. }
         | SyncApplicationPageSaveOutcome::Unchanged { revision, .. } => Ok(revision),
-        // NOT the bare `"conflict"` the frontend matches to raise the keep-mine
-        // banner, and deliberately so: `save_sparse_page_with` hard-refuses
-        // `force` while managed storage is active, so that banner's "Keep mine"
-        // button cannot do anything here. Offering it would repeat the Direct
-        // mode trap of a prompt whose only working option discards the user's
-        // edits.
-        //
-        // What this DOES fix is the silent loop. `"conflict: {reason}"` matched
-        // neither the banner (which compares exactly) nor any bounded code, so
-        // it landed in the transient-retry path and retried forever without
-        // ever telling the user their save was refused — they could quit
-        // believing the page was written. A managed conflict is permanent until
-        // the page is reloaded, so it now carries a code the frontend knows is
-        // not worth retrying, and says what to do.
-        //
-        // Giving managed mode a real resolution path is a product decision
-        // (what "keep mine" means when the oplog is the source of truth) and is
-        // tracked as audit M2's remaining half.
+        // This bounded family tells the frontend to retain the draft, observe
+        // the exact current managed page through the actor, and raise the same
+        // explicit resolution surface as Direct Files. No revision is embedded
+        // in this error: the follow-up exact-path load is the observation, and
+        // the actor re-proves its revision in the replacement turn.
         SyncApplicationPageSaveOutcome::Conflict { reason } => Err(format!(
-            "managed.conflict: this page changed in Tine-managed storage ({reason:?}). \
-             Reload the page to see the current version, then reapply your edit."
+            "managed.conflict: this page changed in Tine-managed storage ({reason:?})"
         )),
         SyncApplicationPageSaveOutcome::Deferred { state: _ } => Err(
             "Tine-managed storage is updating this page. Try saving again when it finishes.".into(),
@@ -430,12 +426,13 @@ fn save_sparse_page_with<E>(
     page: PageDto,
     base_rev: Option<String>,
     force: bool,
+    managed_conflict_revision: Option<String>,
     save: impl FnOnce(SyncApplicationPageSaveRequest) -> Result<SyncApplicationPageSaveOutcome, E>,
 ) -> Result<String, String>
 where
     E: std::fmt::Display,
 {
-    let request = sparse_save_request(page, base_rev, force)?;
+    let request = sparse_save_request(page, base_rev, force, managed_conflict_revision)?;
     let outcome = save(request).map_err(|error| error.to_string())?;
     map_sparse_page_save(outcome)
 }
@@ -982,6 +979,9 @@ pub(crate) async fn save_page(
     // consume whatever authority happens to be current (GH #254 increment 2,
     // adversarial implementation verification, finding 1).
     conflict_epoch: Option<u64>,
+    // Exact managed revision observed after a stale-save refusal. Direct Files
+    // ignores this; managed Keep mine cannot proceed without it.
+    managed_conflict_revision: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let (app, label, binding_generation) = owned_graph_context(state)?;
@@ -992,8 +992,12 @@ pub(crate) async fn save_page(
             let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
             match sparse_application_handle(&slot)? {
                 Some(handle) => {
-                    let result =
-                        save_sparse_page_with(page, base_rev, force.unwrap_or(false), |request| {
+                    let result = save_sparse_page_with(
+                        page,
+                        base_rev,
+                        force.unwrap_or(false),
+                        managed_conflict_revision,
+                        |request| {
                             let saved = handle.save_application_page(request);
                             if crate::debug::debug_enabled() {
                                 if let Err(error) = &saved {
@@ -1003,7 +1007,8 @@ pub(crate) async fn save_page(
                                 }
                             }
                             saved
-                        });
+                        },
+                    );
                     // A successful managed save has already made its exact user
                     // projection durable, but archive/checkpoint derivatives are
                     // intentionally drained by actor ticks. Wake the watcher even
@@ -3530,6 +3535,7 @@ mod application_page_authority_tests {
             page("Crème brûlée", PageKind::Page, nested_utf_path, "- edited"),
             Some("actor-base".into()),
             false,
+            None,
         )
         .unwrap();
         match existing.target {
@@ -3540,9 +3546,13 @@ mod application_page_authority_tests {
             other => panic!("expected exact existing target, got {other:?}"),
         }
 
-        let new_page =
-            sparse_save_request(page("New page", PageKind::Page, "", "- new"), None, false)
-                .unwrap();
+        let new_page = sparse_save_request(
+            page("New page", PageKind::Page, "", "- new"),
+            None,
+            false,
+            None,
+        )
+        .unwrap();
         match &new_page.target {
             SyncApplicationPageSaveTarget::New { name, page_kind } => {
                 assert_eq!(name, "New page");
@@ -3556,7 +3566,7 @@ mod application_page_authority_tests {
     }
 
     #[test]
-    fn sparse_save_maps_saved_unchanged_conflict_and_refuses_force_before_actor() {
+    fn sparse_save_maps_saved_unchanged_conflict_and_routes_observed_force_to_actor() {
         let saved = map_sparse_page_save(SyncApplicationPageSaveOutcome::Saved {
             batch_id: "batch".into(),
             page: page("Saved", PageKind::Page, "pages/Saved.md", "- body"),
@@ -3577,18 +3587,42 @@ mod application_page_authority_tests {
         assert!(conflict.contains("conflict"));
 
         let called = Cell::new(false);
-        let refused = save_sparse_page_with(
+        let replaced = save_sparse_page_with(
             page("Saved", PageKind::Page, "pages/Saved.md", "- body"),
             Some("stale".into()),
             true,
-            |_request| -> Result<SyncApplicationPageSaveOutcome, &'static str> {
+            Some("observed-current".into()),
+            |request| -> Result<SyncApplicationPageSaveOutcome, &'static str> {
                 called.set(true);
-                unreachable!("force must be refused before actor invocation")
+                assert!(matches!(
+                    request.target,
+                    SyncApplicationPageSaveTarget::ResolveConflict {
+                        ref path,
+                        ref observed_revision,
+                    } if path == "pages/Saved.md" && observed_revision == "observed-current"
+                ));
+                Ok(SyncApplicationPageSaveOutcome::Saved {
+                    batch_id: "replacement".into(),
+                    page: request.page,
+                    revision: "replacement-revision".into(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(replaced, "replacement-revision");
+        assert!(called.get());
+
+        let unobserved = save_sparse_page_with(
+            page("Saved", PageKind::Page, "pages/Saved.md", "- body"),
+            Some("stale".into()),
+            true,
+            None,
+            |_request| -> Result<SyncApplicationPageSaveOutcome, &'static str> {
+                unreachable!("an unobserved replacement must fail before actor invocation")
             },
         )
         .unwrap_err();
-        assert!(refused.contains("Force save is unavailable"));
-        assert!(!called.get());
+        assert!(unobserved.contains("managed.conflict_unobserved"));
     }
 
     #[test]

@@ -2,6 +2,31 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "UI-MANAGED-SAVE-CONFLICT-RESOLUTION-001",
+      "title": "Managed save conflicts retain the editor draft and offer a revision-bound Keep mine or Use current choice",
+      "family": "edit-render-boundary",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/sync_runtime.rs",
+          "src-tauri/src/commands.rs",
+          "src/persistenceConflictRetry.test.ts",
+          "src/components/ConflictBar.test.tsx"
+        ],
+        "scenario": "managed-save.conflict-resolution-is-explicit-and-revision-bound",
+        "failBefore": "proven"
+      },
+      "notes": "Necessity gate proven: the managed native gateway rejected every force before actor invocation and mapped stale saves to a permanent toast, so the retained draft had no in-app authoring path. The covered path observes the exact pinned managed revision without loading it into the editor, binds Keep mine to that observation, serializes the replacement through one actor turn, re-conflicts after a second accepted change, recreates remotely deleted retained blocks under fresh durable IDs, and disables replacement for missing, renamed, ambiguous, or otherwise unobservable owners. Use current does not reload or discard the retained draft until the user explicitly selects it."
+    },
+    {
       "id": "UI-MANAGED-CRASH-STARTUP-RECOVERY-001",
       "title": "Restarting after interrupted managed-storage activation reveals the app and reports bounded recovery progress without weakening validation",
       "family": "window-lifecycle",

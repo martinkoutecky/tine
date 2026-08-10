@@ -13,8 +13,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // the transient retry refuses to run while a page is conflicted, and the only
 // live button — "Use disk version" — discards their unsaved edits.
 
-const calls: { name: string; force: boolean }[] = [];
+const calls: {
+  name: string;
+  force: boolean;
+  conflictEpoch: number | null;
+  managedConflictRevision: string | null;
+}[] = [];
 let nextResult: (() => Promise<string>) | null = null;
+let observedManagedPage: { rev: string; path: string } | null = null;
 
 vi.mock("./store", () => ({
   doc: { loaded: true, pages: [] },
@@ -28,12 +34,19 @@ vi.mock("./store", () => ({
 
 vi.mock("./backend", () => ({
   backend: () => ({
-    savePage: (page: { name: string }, _baseRev: string | null, force: boolean) => {
-      calls.push({ name: page.name, force });
+    savePage: (
+      page: { name: string },
+      _baseRev: string | null,
+      force: boolean,
+      conflictEpoch: number | null,
+      managedConflictRevision: string | null,
+    ) => {
+      calls.push({ name: page.name, force, conflictEpoch, managedConflictRevision });
       const result = nextResult;
       nextResult = null;
       return result ? result() : Promise.resolve("rev-after");
     },
+    getPageByPath: () => Promise.resolve(observedManagedPage),
   }),
 }));
 
@@ -49,7 +62,14 @@ vi.mock("./ui", () => ({
   pushToast: (message: string) => toasts.push(message),
 }));
 
-const { forceSave, markDirty, resetSaveState } = await import("./persistence");
+const {
+  canForceSave,
+  flushPage,
+  forceSave,
+  markDirty,
+  resetSaveState,
+  setBaseRev,
+} = await import("./persistence");
 
 // GH #254 increment 2, fourth correction-delta re-verification, HIGH. A Direct
 // save error is "{bounded code}: {raw error}", and raw errors carry graph
@@ -65,6 +85,7 @@ describe("a failure is classified by its code, not by the page's name", () => {
     toasts.length = 0;
     conflicted.clear();
     nextResult = null;
+    observedManagedPage = null;
     resetSaveState();
   });
 
@@ -112,6 +133,7 @@ describe("a tokenless force does not strand the page behind a spent banner", () 
     toasts.length = 0;
     conflicted.clear();
     nextResult = null;
+    observedManagedPage = null;
     resetSaveState();
   });
 
@@ -128,7 +150,7 @@ describe("a tokenless force does not strand the page behind a spent banner", () 
     // …and the retry actually calls the backend, which the conflicted gate
     // would otherwise forbid.
     await vi.waitFor(() => expect(calls.length).toBe(2));
-    expect(calls[0]).toEqual({ name: "Notes", force: true });
+    expect(calls[0]).toMatchObject({ name: "Notes", force: true });
     expect(calls[1].force).toBe(false);
   });
 
@@ -154,6 +176,74 @@ describe("a tokenless force does not strand the page behind a spent banner", () 
     expect(await forceSave("Notes")).toBe(false);
 
     expect(conflicted.has("Notes")).toBe(true);
+    expect(canForceSave("Notes")).toBe(false);
     expect(calls.length).toBe(1);
+  });
+});
+
+describe("managed save conflict resolution", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    toasts.length = 0;
+    conflicted.clear();
+    nextResult = null;
+    observedManagedPage = null;
+    resetSaveState();
+  });
+
+  it("retains the draft and binds Keep mine to the exact managed revision it observed", async () => {
+    observedManagedPage = { rev: "managed-winner-a", path: "pages/Notes.md" };
+    nextResult = () => Promise.reject(new Error("managed.conflict: stale_base"));
+    setBaseRev("Notes", "managed-editor-base");
+    markDirty("Notes");
+
+    expect(await flushPage("Notes")).toBe(false);
+    expect(conflicted.has("Notes")).toBe(true);
+    expect(canForceSave("Notes")).toBe(true);
+
+    nextResult = () => Promise.resolve("managed-mine");
+    expect(await forceSave("Notes")).toBe(true);
+    expect(calls[1]).toMatchObject({
+      force: true,
+      conflictEpoch: null,
+      managedConflictRevision: "managed-winner-a",
+    });
+  });
+
+  it("re-observes after a second managed winner and never upgrades an earlier click", async () => {
+    observedManagedPage = { rev: "managed-winner-a", path: "pages/Notes.md" };
+    nextResult = () => Promise.reject(new Error("managed.conflict: stale_base"));
+    setBaseRev("Notes", "managed-editor-base");
+    markDirty("Notes");
+    await flushPage("Notes");
+
+    observedManagedPage = { rev: "managed-winner-b", path: "pages/Notes.md" };
+    nextResult = () => Promise.reject(new Error("managed.conflict: stale_base"));
+    expect(await forceSave("Notes")).toBe(false);
+    expect(calls[1]).toMatchObject({
+      force: true,
+      managedConflictRevision: "managed-winner-a",
+    });
+
+    nextResult = () => Promise.resolve("managed-mine");
+    expect(await forceSave("Notes")).toBe(true);
+    expect(calls[2]).toMatchObject({
+      force: true,
+      managedConflictRevision: "managed-winner-b",
+    });
+  });
+
+  it("fails closed when the exact managed owner was deleted or renamed", async () => {
+    observedManagedPage = null;
+    nextResult = () => Promise.reject(new Error("managed.conflict: missing_page"));
+    setBaseRev("Notes", "managed-editor-base");
+    markDirty("Notes");
+
+    await flushPage("Notes");
+    expect(conflicted.has("Notes")).toBe(true);
+    expect(canForceSave("Notes")).toBe(false);
+    const before = calls.length;
+    expect(await forceSave("Notes")).toBe(false);
+    expect(calls).toHaveLength(before);
   });
 });

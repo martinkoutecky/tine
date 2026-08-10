@@ -2076,6 +2076,13 @@ pub enum SyncApplicationPageSaveTarget {
         path: String,
         revision: String,
     },
+    /// Explicitly replace the exact managed page state the user observed after
+    /// a stale-save refusal. The actor re-proves this revision in the same turn
+    /// that authors the retained outline; it is not standing force authority.
+    ResolveConflict {
+        path: String,
+        observed_revision: String,
+    },
     New {
         name: String,
         page_kind: SyncPageKind,
@@ -3456,9 +3463,9 @@ impl SyncRuntimeHandle {
 
     /// Save one complete frontend page through the actor's existing semantic
     /// transaction writer. Caller block IDs are only matching labels; the
-    /// actor allocates every genuinely new durable block identity. This
-    /// boundary deliberately has no force-overwrite mode: stale, missing,
-    /// occupied, foreign-identity, and read-only cases return typed refusal.
+    /// actor allocates every genuinely new durable block identity. Ordinary
+    /// saves fail closed on stale state. `ResolveConflict` is the only explicit
+    /// replacement path and remains bound to one exact observed revision.
     pub fn save_application_page(
         &self,
         request: SyncApplicationPageSaveRequest,
@@ -4987,7 +4994,11 @@ fn validate_application_save_request(
 ) -> Result<(), SyncApplicationPageRequestError> {
     let mut size = validate_application_page_bounds(&request.page)?;
     match &request.target {
-        SyncApplicationPageSaveTarget::Existing { path, revision } => {
+        SyncApplicationPageSaveTarget::Existing { path, revision }
+        | SyncApplicationPageSaveTarget::ResolveConflict {
+            path,
+            observed_revision: revision,
+        } => {
             if path.len() > MAX_LOCAL_MUTATION_PATH_BYTES {
                 editor_charge_text(&mut size, path.len());
                 return Err(SyncApplicationPageRequestError::RequestTooLarge(size));
@@ -10876,7 +10887,15 @@ impl RuntimeActor {
         #[cfg(test)]
         let request_started = Instant::now();
         let (editor_request, reload_target, prepared_existing) = match &request.target {
-            SyncApplicationPageSaveTarget::Existing { path, revision } => {
+            SyncApplicationPageSaveTarget::Existing { path, revision }
+            | SyncApplicationPageSaveTarget::ResolveConflict {
+                path,
+                observed_revision: revision,
+            } => {
+                let resolve_conflict = matches!(
+                    &request.target,
+                    SyncApplicationPageSaveTarget::ResolveConflict { .. }
+                );
                 #[cfg(test)]
                 let load_started = Instant::now();
                 let load = self.load_application_save_exact_ready(path)?;
@@ -10928,7 +10947,11 @@ impl RuntimeActor {
                     });
                 }
                 validate_existing_application_page_shape(&request.page, &current.page)?;
-                let blocks = match application_editor_blocks_existing(&request.page, &current) {
+                let blocks = match application_editor_blocks_existing(
+                    &request.page,
+                    &current,
+                    resolve_conflict,
+                ) {
                     Ok(blocks) => blocks,
                     Err(reason) => return Ok(SyncApplicationPageSaveOutcome::Conflict { reason }),
                 };
@@ -11338,7 +11361,7 @@ impl RuntimeActor {
         let mut appended = source.page.blocks.clone();
         relabel_application_blocks_for_merge(&mut appended, &mut 0);
         merged.blocks.extend(appended);
-        let blocks = application_editor_blocks_existing(&merged, &destination)
+        let blocks = application_editor_blocks_existing(&merged, &destination, false)
             .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("merge_block_identity"))?;
         let request = SyncEditorSaveRequest {
             target: SyncEditorSaveTarget::Existing {
@@ -18199,6 +18222,7 @@ fn validate_new_application_page_shape(
 fn application_editor_blocks_existing(
     page: &PageDto,
     current: &ApplicationCurrentPage,
+    recreate_missing: bool,
 ) -> Result<Vec<SyncEditorBlockDto>, SyncApplicationPageConflict> {
     let current_blocks = flatten_application_blocks(&current.page.blocks);
     let exposed = current_blocks
@@ -18216,7 +18240,11 @@ fn application_editor_blocks_existing(
                 .id
                 .starts_with(SYNC_APPLICATION_INTERNAL_BLOCK_PREFIX) =>
             {
-                return Err(SyncApplicationPageConflict::UnknownOrForeignBlock)
+                if recreate_missing {
+                    SyncEditorBlockKey::Temporary(format!("gateway-{index}"))
+                } else {
+                    return Err(SyncApplicationPageConflict::UnknownOrForeignBlock);
+                }
             }
             None => SyncEditorBlockKey::Temporary(format!("gateway-{index}")),
         };
@@ -23053,6 +23081,170 @@ mod tests {
         let visible_org = load_application_exact(&handle, org_path);
         assert_parser_dto_semantics(&org, &visible_org.0);
         assert_eq!(org_revision, visible_org.1);
+
+        drain_managed_local(&handle);
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn managed_application_conflict_resolution_reauthors_retained_outline_at_one_observed_revision()
+    {
+        let fixture = ActivationFixture::nested_unicode("managed-conflict-resolution", 0xa12f);
+        let path = "notes/層/žluťoučký/nested/Déjà 計画.md";
+        fs::write(
+            fixture.graph_root.join(path),
+            b"title:: D\xc3\xa9j\xc3\xa0 \xe8\xa8\x88\xe7\x94\xbb\n\n- editable\n- retained block\n",
+        )
+        .unwrap();
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated.handle.expect("activation retains a runtime");
+        drive_initial_feed(&handle);
+
+        let (original, original_revision) = load_application_exact(&handle, path);
+        assert!(
+            original.blocks.len() >= 2,
+            "fixture needs a removable retained root"
+        );
+        let mut retained = original.clone();
+        retained.blocks[0].raw = "mine survives the managed conflict".into();
+
+        // Winner A removes a block the retained editor still carries. Conflict
+        // resolution must author the complete retained outline without claiming
+        // the deleted durable ID: that block is recreated under a fresh ID.
+        let mut winner_a = original.clone();
+        winner_a.blocks[0].raw = "winner A".into();
+        winner_a.blocks.pop();
+        let (winner_a, winner_a_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: path.into(),
+                    revision: original_revision.clone(),
+                },
+                page: winner_a,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("winner A was not accepted: {other:?}"),
+        };
+        assert_eq!(winner_a.blocks.len() + 1, retained.blocks.len());
+        assert!(matches!(
+            handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::Existing {
+                        path: path.into(),
+                        revision: original_revision,
+                    },
+                    page: retained.clone(),
+                })
+                .unwrap(),
+            SyncApplicationPageSaveOutcome::Conflict {
+                reason: SyncApplicationPageConflict::StaleBase
+            }
+        ));
+
+        let (resolved, resolved_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::ResolveConflict {
+                    path: path.into(),
+                    observed_revision: winner_a_revision,
+                },
+                page: retained.clone(),
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("retained outline was not resolved atomically: {other:?}"),
+        };
+        assert_eq!(resolved.blocks.len(), retained.blocks.len());
+        assert_eq!(resolved.blocks[0].raw, "mine survives the managed conflict");
+        assert_ne!(
+            resolved.blocks.last().unwrap().id,
+            retained.blocks.last().unwrap().id,
+            "a remotely deleted durable block must be recreated, not reclaimed"
+        );
+
+        // The observation is state, not standing overwrite authority. Winner B
+        // is what the user observed; winner C lands before the click reaches the
+        // actor, so the same resolution request must conflict again.
+        let mut winner_b = resolved.clone();
+        winner_b.blocks[0].raw = "winner B".into();
+        let (winner_b, winner_b_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: path.into(),
+                    revision: resolved_revision,
+                },
+                page: winner_b,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("winner B was not accepted: {other:?}"),
+        };
+        let mut winner_c = winner_b;
+        winner_c.blocks[0].raw = "winner C".into();
+        let (winner_c, winner_c_revision) = match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: path.into(),
+                    revision: winner_b_revision.clone(),
+                },
+                page: winner_c,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { page, revision, .. } => (page, revision),
+            other => panic!("winner C was not accepted: {other:?}"),
+        };
+        assert!(matches!(
+            handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::ResolveConflict {
+                        path: path.into(),
+                        observed_revision: winner_b_revision,
+                    },
+                    page: retained,
+                })
+                .unwrap(),
+            SyncApplicationPageSaveOutcome::Conflict {
+                reason: SyncApplicationPageConflict::StaleBase
+            }
+        ));
+        assert_eq!(
+            load_application_exact(&handle, path).0.blocks[0].raw,
+            winner_c.blocks[0].raw
+        );
+
+        drain_managed_local(&handle);
+        assert_eq!(
+            handle
+                .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                    name: "Déjà 計画".into(),
+                    page_kind: SyncPageKind::Page,
+                    expected_path: Some(path.into()),
+                })
+                .unwrap(),
+            SyncApplicationUnitOutcome::Applied
+        );
+        assert!(matches!(
+            handle
+                .save_application_page(SyncApplicationPageSaveRequest {
+                    target: SyncApplicationPageSaveTarget::ResolveConflict {
+                        path: path.into(),
+                        observed_revision: winner_c_revision,
+                    },
+                    page: original,
+                })
+                .unwrap(),
+            SyncApplicationPageSaveOutcome::Conflict {
+                reason: SyncApplicationPageConflict::MissingPage
+            }
+        ));
 
         drain_managed_local(&handle);
         assert!(matches!(

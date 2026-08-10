@@ -1899,12 +1899,13 @@ describe("save engine (persistence)", () => {
   it("forceSave overwrites even a conflicted page (force=true)", async () => {
     load([blk("x")]);
     markDirty("Test");
-    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    saveSpy.mockRejectedValueOnce(new Error("conflict:11"));
     await flushPage("Test");
     expect(isConflicted("Test")).toBe(true);
     saveSpy.mockResolvedValue("rev3");
     expect(await forceSave("Test")).toBe(true);
     expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
+    expect(saveSpy.mock.calls.at(-1)![3]).toBe(11); // exact observed winner
   });
 
   it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {

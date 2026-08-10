@@ -1,7 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
 import { conflicts, clearConflict } from "../ui";
 import { backend } from "../backend";
-import { reloadPage, forceSave, pageByName, forgetPage } from "../store";
+import { reloadPage, forceSave, canForceSave, pageByName, forgetPage } from "../store";
 
 // Global save-conflict surface. A save is refused (not clobbered) when the file
 // changed on disk under us (external edit / Syncthing). Such a page is parked in
@@ -44,15 +44,22 @@ export function ConflictBar(): JSX.Element {
           {(name) => (
             <div class="conflict-banner">
               <span class="conflict-msg">
-                <strong>“{name}” changed on disk</strong> (edited elsewhere or synced in). Your
+                <strong>“{name}” changed outside this editor</strong> (edited elsewhere or synced in). Your
                 unsaved changes weren't written.
               </span>
               <span class="conflict-actions">
                 <button class="conflict-btn" onClick={() => void reload(name)}>
-                  Use disk version
+                  Use current version
                 </button>
-                <button class="conflict-btn keep" onClick={() => void keepMine(name)}>
-                  Keep mine (overwrite)
+                <button
+                  class="conflict-btn keep"
+                  disabled={!canForceSave(name)}
+                  title={canForceSave(name)
+                    ? "Replace the current version with your retained draft"
+                    : "Keep mine is unavailable because the current managed page could not be identified"}
+                  onClick={() => void keepMine(name)}
+                >
+                  Keep mine
                 </button>
               </span>
             </div>

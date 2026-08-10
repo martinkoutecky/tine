@@ -60,11 +60,15 @@ const heldSources = new Set<string>();
 // override of the first must not override the second. Dropping the resolution
 // would strand the page (a conflicted page is skipped by the ordinary save
 // path), so remember it and re-issue it the moment the dest is durable.
-// A "keep mine" the move barrier deferred, WITH the observation epoch the user
-// clicked under. Re-issuing it later must present that epoch and not whatever is
-// current by then: an epoch minted after the click belongs to a winner the user
-// never saw. (GH #254 increment 2, third correction-delta re-verification.)
-const heldForcedSaves = new Map<string, number | null>();
+// A "keep mine" the move barrier deferred, WITH the Direct epoch or managed
+// revision the user clicked under. Re-issuing it later must present that exact
+// observation and not whatever is current by then: authority observed after the
+// click belongs to a winner the user never saw.
+type ConflictObservation =
+  | { kind: "direct"; epoch: number | null }
+  | { kind: "managed"; revision: string | null };
+
+const heldForcedSaves = new Map<string, ConflictObservation | null>();
 const heldByDest = new Map<string, string[]>();
 // Which conflict observation each banner is showing. "Keep mine" presents this
 // back so the override answers the conflict the USER SAW. Without it, a second
@@ -72,7 +76,7 @@ const heldByDest = new Map<string, string[]>();
 // disabled while its request is pending — consumes authority the first request
 // minted for a NEWER external winner, and overwrites bytes nobody was shown.
 // (GH #254 increment 2, adversarial implementation verification, finding 1.)
-const conflictObservation = new Map<string, number>();
+const conflictObservation = new Map<string, ConflictObservation>();
 
 // ---------------------------------------------------------------------------
 // Accessors — store.ts mutations call these instead of touching the guards.
@@ -219,9 +223,9 @@ function releaseSourcesFor(dest: string) {
       // A "keep mine" the barrier deferred. Re-issue it now rather than letting
       // `scheduleSave` pick it up: the page is still marked conflicted, and the
       // ordinary path skips a conflicted page, so this resolution would
-      // otherwise be silently lost. It carries the epoch the user clicked under,
-      // so if the disk moved while the barrier held it, the backend refuses and
-      // the refusal below re-raises a banner the user can decide on again.
+      // otherwise be silently lost. It carries the observation the user clicked
+      // under, so if storage moved while the barrier held it, the backend
+      // refuses and the refusal below re-raises a banner the user can decide on.
       const observation = heldForcedSaves.get(s) ?? null;
       heldForcedSaves.delete(s);
       dirty.add(s); // a force writes the store's state; keep it visible as unsaved
@@ -420,7 +424,7 @@ function cutSourceUsable(expected: ClipboardSourcePage): boolean {
 type SaveIntent =
   | { kind: "ordinary" }
   | { kind: "reobserve" }
-  | { kind: "force"; observation: number | null };
+  | { kind: "force"; observation: ConflictObservation | null };
 
 const ORDINARY: SaveIntent = { kind: "ordinary" };
 
@@ -431,6 +435,17 @@ const ORDINARY: SaveIntent = { kind: "ordinary" };
  *  then be authorised to discard exactly that. */
 function forceIntent(name: string): SaveIntent {
   return { kind: "force", observation: conflictObservation.get(name) ?? null };
+}
+
+/** Whether the visible conflict has a safe Keep mine path. A managed page that
+ * disappeared, was renamed, or could not be identified keeps Use current live
+ * while refusing to invent replacement authority. */
+export function canForceSave(name: string): boolean {
+  const observation = conflictObservation.get(name);
+  if (!observation) return true;
+  return observation.kind === "direct"
+    ? observation.epoch !== null
+    : observation.revision !== null;
 }
 
 function enqueueSave(
@@ -501,10 +516,17 @@ async function doSave(
     return false;
   }
   dirty.delete(name);
+  const baseline = baseRev.get(name) ?? null;
   try {
-    const baseline = baseRev.get(name) ?? null;
+    const observation = intent.kind === "force" ? intent.observation : null;
     const rev = await measureIssue248Async("frontend.savePageAwaitMs", () =>
-      backend().savePage(dto, baseline, force, intent.kind === "force" ? intent.observation : null)
+      backend().savePage(
+        dto,
+        baseline,
+        force,
+        observation?.kind === "direct" ? observation.epoch : null,
+        observation?.kind === "managed" ? observation.revision : null,
+      )
     );
     // A reload/rename/delete/rebind while savePage was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
@@ -535,8 +557,40 @@ async function doSave(
     const observed = conflictObservationEpoch(e);
     if (observed !== null) {
       clearTransientRetry(name);
-      if (observed >= 0) conflictObservation.set(name, observed);
-      else conflictObservation.delete(name);
+      if (observed >= 0) {
+        conflictObservation.set(name, { kind: "direct", epoch: observed });
+      } else {
+        conflictObservation.set(name, { kind: "direct", epoch: null });
+      }
+      markConflict(name);
+    } else if (directSaveFailureCode(e) === "managed.conflict") {
+      // The refusal itself carries no overwrite authority. Observe the exact
+      // pinned managed page through the actor, but do not load it into the
+      // store: the retained draft stays intact until the user explicitly
+      // chooses Use current. Keep mine returns this revision to one serialized
+      // actor turn, which re-proves it before authoring anything.
+      clearTransientRetry(name);
+      let revision: string | null = null;
+      if (baseline !== null) {
+        try {
+          const current = dto.path
+            ? await backend().getPageByPath(dto.path)
+            : await backend().getPage(name, dto.kind);
+          if (token !== graphToken) return false;
+          if (current?.rev && (!dto.path || current.path === dto.path)) {
+            revision = current.rev;
+          }
+        } catch {
+          if (token !== graphToken) return false;
+          // Missing, renamed, ambiguous, or temporarily unobservable owners do
+          // not get replacement authority. The non-destructive draft remains
+          // parked and Use current remains available.
+        }
+      }
+      conflictObservation.set(name, { kind: "managed", revision });
+      // Re-notify an already visible banner so its Keep mine enabled state
+      // reflects this newly observed (or now unobservable) managed owner.
+      if (isConflicted(name)) clearConflict(name);
       markConflict(name);
     } else if (directSaveFailureCode(e).startsWith("conflict_authority.")) {
       // The force named an observation the disk has since moved past — a later
@@ -715,6 +769,7 @@ export async function flushAll(): Promise<boolean> {
  *  version ("keep mine"). Returns whether the overwrite succeeded — the caller
  *  must not clear the conflict unless it did. */
 export async function forceSave(name: string): Promise<boolean> {
+  if (!canForceSave(name)) return false;
   dirty.add(name); // ensure doSave writes even though it's parked as conflicted
   const ok = await enqueueSave(name, forceIntent(name));
   if (!ok) pushToast(`Couldn't overwrite “${name}”.`, "error");

@@ -163,6 +163,8 @@ describe("Journals feed generation lifecycle", () => {
         false,
         // Not a forced save, so it presents no conflict observation (GH #254).
         null,
+        // Managed replacement authority is likewise absent on an ordinary save.
+        null,
       );
     } finally {
       mounted.dispose();

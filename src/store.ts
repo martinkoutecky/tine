@@ -67,6 +67,7 @@ import {
   flushPage,
   flushAll,
   forceSave,
+  canForceSave,
   addDirty,
   dirtyPages,
   savingPages,
@@ -83,7 +84,17 @@ import {
 } from "./persistence";
 // The debounced persistence engine lives in persistence.ts; re-exported here so
 // the rest of the app keeps importing the save API from the store.
-export { markDirty, isDirty, isSaving, scheduleSave, flushPage, flushAll, forceSave, trackAssetWrite };
+export {
+  markDirty,
+  isDirty,
+  isSaving,
+  scheduleSave,
+  flushPage,
+  flushAll,
+  forceSave,
+  canForceSave,
+  trackAssetWrite,
+};
 
 export interface Node {
   id: string;

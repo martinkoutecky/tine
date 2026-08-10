@@ -53,7 +53,11 @@ describe("resolving a conflict on a page pinned to a specific file", () => {
       .mockResolvedValue(page(canonicalPath, "the CANONICAL day, a different file"));
 
     const { root, dispose } = mountWithStrayLoaded();
-    root.querySelectorAll<HTMLButtonElement>(".conflict-btn")[0].click();
+    const actions = root.querySelectorAll<HTMLButtonElement>(".conflict-btn");
+    expect(actions[0].textContent?.trim()).toBe("Use current version");
+    expect(actions[1].textContent?.trim()).toBe("Keep mine");
+    expect(actions[1].disabled).toBe(false);
+    actions[0].click();
 
     await vi.waitFor(() => expect(conflicts()).toEqual([]));
     expect(getPageByPath).toHaveBeenCalledWith(strayPath);

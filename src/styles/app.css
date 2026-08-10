@@ -3608,8 +3608,12 @@ textarea {
   font-size: 12px;
   cursor: pointer;
 }
-.conflict-btn:hover {
+.conflict-btn:hover:not(:disabled) {
   background: var(--bg-tertiary);
+}
+.conflict-btn:disabled {
+  cursor: default;
+  opacity: .5;
 }
 .conflict-btn.keep {
   border-color: var(--marker-todo, #e5484d);

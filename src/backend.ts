@@ -239,10 +239,16 @@ export interface Backend {
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
   graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
-  /** Save a page. `baseRev` is the file hash the editor loaded; the backend
-   *  rejects with "conflict" if the file changed on disk since then (unless
-   *  `force`). Returns the new on-disk rev to use as the next baseline. */
-  savePage(page: PageDto, baseRev: string | null, force?: boolean, conflictEpoch?: number | null): Promise<string>;
+  /** Save a page. `baseRev` is the revision the editor loaded. Direct Files
+   *  binds `force` to `conflictEpoch`; managed storage binds it to the exact
+   *  `managedConflictRevision` observed after refusal. */
+  savePage(
+    page: PageDto,
+    baseRev: string | null,
+    force?: boolean,
+    conflictEpoch?: number | null,
+    managedConflictRevision?: string | null,
+  ): Promise<string>;
   managedSyncStatus(): Promise<ManagedSyncStatus | null>;
   managedSyncIdentityPlan(): Promise<SyncIdentityPlan>;
   enableManagedSync(): Promise<ManagedSyncEnableResult>;
@@ -718,9 +724,21 @@ class TauriBackend implements Backend {
   graphSourceFiles(includeJournals: boolean) {
     return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
-  savePage(page: PageDto, baseRev: string | null, force = false, conflictEpoch: number | null = null) {
+  savePage(
+    page: PageDto,
+    baseRev: string | null,
+    force = false,
+    conflictEpoch: number | null = null,
+    managedConflictRevision: string | null = null,
+  ) {
     return measureIssue248Async("frontend.ipcSaveRoundTripMs", () =>
-      this.call<string>("save_page", { page, baseRev, force, conflictEpoch })
+      this.call<string>("save_page", {
+        page,
+        baseRev,
+        force,
+        conflictEpoch,
+        managedConflictRevision,
+      })
     );
   }
   managedSyncStatus() {
