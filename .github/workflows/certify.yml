@@ -24,6 +24,15 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --locked
       - run: cargo test --locked --all-features
+      - name: Timed Patricia 4096-record physical burn-in
+        shell: bash
+        run: |
+          started=$SECONDS
+          cargo test --locked -p tine-storage \
+            authenticated_patricia::tests::physical_publication_reopens_exactly_for_4096_records_burn_in \
+            -- --exact --ignored --nocapture
+          elapsed=$((SECONDS - started))
+          echo "Linux Patricia 4096-record physical burn-in: ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
 
   windows-complete:
     name: Windows complete physical suite
@@ -43,6 +52,18 @@ jobs:
         with:
           tool: nextest@0.9.143
       - run: cargo nextest run --locked --all-features --no-fail-fast
+      - name: Timed Patricia 4096-record physical burn-in
+        shell: pwsh
+        run: |
+          $started = Get-Date
+          cargo test --locked -p tine-storage `
+            authenticated_patricia::tests::physical_publication_reopens_exactly_for_4096_records_burn_in `
+            -- --exact --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $elapsed = [math]::Round(((Get-Date) - $started).TotalSeconds, 2)
+          $summary = "Windows Patricia 4096-record physical burn-in: ${elapsed}s"
+          Write-Host $summary
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
   android-compile:
     name: Android arm64 compile

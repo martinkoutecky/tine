@@ -927,16 +927,16 @@ fn publish_frontier_durable(dir: &Dir, name: &str, bytes: &[u8]) -> Result<(), L
         return Err(injected_fault("after frontier temp sync"));
     }
     #[cfg(test)]
-    if take_fault(FaultPoint::BeforeFrontierReplace) {
-        return Err(injected_fault("before frontier replacement"));
+    if let Some(outcome) = take_ambiguous_replacement_outcome() {
+        if outcome == AmbiguousReplacementOutcome::SuccessorSelected {
+            dir.rename(&temp, dir, name)?;
+            sync_dir_required(dir)?;
+        }
+        return Err(injected_fault("after ambiguous frontier replacement call"));
     }
     dir.rename(&temp, dir, name)?;
     sync_dir_required(dir)?;
     crash_after_frontier_replace_for_test();
-    #[cfg(test)]
-    if take_fault(FaultPoint::AfterFrontierReplace) {
-        return Err(injected_fault("after frontier replacement"));
-    }
     Ok(())
 }
 
@@ -989,7 +989,7 @@ fn fail_after_frontier_verify_for_test() -> Result<(), LocalJournalError> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
@@ -1057,6 +1057,12 @@ mod tests {
     fn arm(point: FaultPoint) {
         FAULT.with(|fault| {
             assert_eq!(fault.replace(Some(point)), None);
+        });
+    }
+
+    fn arm_ambiguous_replacement(outcome: AmbiguousReplacementOutcome) {
+        AMBIGUOUS_REPLACEMENT_OUTCOME.with(|fault| {
+            assert_eq!(fault.replace(Some(outcome)), None);
         });
     }
 
@@ -1168,8 +1174,6 @@ mod tests {
             (FaultPoint::BeforeFrontierTemp, 0),
             (FaultPoint::AfterFrontierTempWrite, 0),
             (FaultPoint::AfterFrontierTempSync, 0),
-            (FaultPoint::BeforeFrontierReplace, 0),
-            (FaultPoint::AfterFrontierReplace, 1),
             (FaultPoint::AfterFrontierVerify, 1),
         ];
         for (point, expected_frames) in cases {
@@ -1189,6 +1193,51 @@ mod tests {
                 assert_eq!(segment.stats().recovery_truncations, 1);
             }
         }
+    }
+
+    #[test]
+    fn one_ambiguous_replacement_error_reopens_to_old_or_successor_without_retry_or_duplication() {
+        let mut reported_causes = Vec::new();
+        for (outcome, expected_frames) in [
+            (AmbiguousReplacementOutcome::OldSelected, 0),
+            (AmbiguousReplacementOutcome::SuccessorSelected, 1),
+        ] {
+            let fixture = Fixture::new(&format!("ambiguous-replacement-{outcome:?}"));
+            let selection = fixture.prepare();
+            let (mut segment, _) = open(&fixture, &selection);
+            arm_ambiguous_replacement(outcome);
+            let error = segment
+                .append(TestKind::Effect, b"ambiguous candidate")
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                LocalJournalAppendError::AppendOutcomeUnknown(_)
+            ));
+            reported_causes.push(error.cause().clone());
+            assert!(matches!(
+                segment.append(TestKind::Effect, b"forbidden retry"),
+                Err(LocalJournalAppendError::DefinitelyNotAppended(
+                    LocalJournalError::SegmentPoisoned
+                ))
+            ));
+            drop(segment);
+
+            let (segment, recovery) = open(&fixture, &selection);
+            let mut replayed = Vec::new();
+            segment
+                .replay(|frame| replayed.push((frame.sequence(), frame.into_payload())))
+                .unwrap();
+            assert_eq!(recovery.frames_recovered, expected_frames);
+            assert_eq!(replayed.len() as u64, expected_frames);
+            assert_eq!(segment.next_sequence(), 41 + expected_frames);
+            if expected_frames == 1 {
+                assert_eq!(replayed, vec![(41, b"ambiguous candidate".to_vec())]);
+            }
+        }
+        assert_eq!(
+            reported_causes[0], reported_causes[1],
+            "the same reported publication-call error must cover both durable outcomes"
+        );
     }
 
     #[test]
@@ -1503,14 +1552,21 @@ enum FaultPoint {
     BeforeFrontierTemp,
     AfterFrontierTempWrite,
     AfterFrontierTempSync,
-    BeforeFrontierReplace,
-    AfterFrontierReplace,
     AfterFrontierVerify,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AmbiguousReplacementOutcome {
+    OldSelected,
+    SuccessorSelected,
 }
 
 #[cfg(test)]
 thread_local! {
     static FAULT: std::cell::Cell<Option<FaultPoint>> = const { std::cell::Cell::new(None) };
+    static AMBIGUOUS_REPLACEMENT_OUTCOME: std::cell::Cell<Option<AmbiguousReplacementOutcome>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
@@ -1523,6 +1579,11 @@ fn take_fault(point: FaultPoint) -> bool {
             false
         }
     })
+}
+
+#[cfg(test)]
+fn take_ambiguous_replacement_outcome() -> Option<AmbiguousReplacementOutcome> {
+    AMBIGUOUS_REPLACEMENT_OUTCOME.with(std::cell::Cell::take)
 }
 
 #[cfg(test)]

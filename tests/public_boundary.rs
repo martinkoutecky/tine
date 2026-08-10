@@ -144,6 +144,7 @@ enum ExternalJournalKind {
 }
 
 #[test]
+#[cfg(unix)]
 fn journal_v2_can_be_prepared_opened_and_appended_from_the_public_api() {
     let root = std::env::temp_dir().join(format!("tine-storage-public-v2-{}", Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
@@ -164,6 +165,27 @@ fn journal_v2_can_be_prepared_opened_and_appended_from_the_public_api() {
     assert_eq!(appended.sequence, 9);
     assert_eq!(appended.data_durability_syncs, 2);
     drop(segment);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(windows)]
+fn journal_v2_refuses_windows_activation_before_creating_artifacts() {
+    let root = std::env::temp_dir().join(format!("tine-storage-public-v2-{}", Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let dir = cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+    let selection = LocalJournalSegmentV2Selection::new(
+        "external.journal-v2",
+        Uuid::from_u128(3),
+        Uuid::from_u128(4),
+        9,
+    )
+    .unwrap();
+    assert!(matches!(
+        LocalJournalSegmentV2::<ExternalJournalKind>::prepare(&dir, &selection),
+        Err(LocalJournalError::UnsupportedDurableReplacement)
+    ));
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
     std::fs::remove_dir_all(root).unwrap();
 }
 
