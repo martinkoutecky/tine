@@ -40413,38 +40413,50 @@ mod validation_tests {
     }
 
     #[test]
-    fn no_store_local_page_name_duplicates_never_produce_a_prepared_batch() {
+    fn no_store_local_page_name_duplicates_are_rejected_without_mutation_at_acceptance() {
         let workspace = WorkspaceId::from_uuid(Uuid::from_u128(8_300));
         let catalog = DocumentId::from_uuid(Uuid::from_u128(8_301));
         let lineage = LineageDigest::of(b"no-store-page-name-author-preflight");
-        let mut engine = ShardedHotEngine::new(workspace, lineage, catalog);
+        let mut intra_engine = ShardedHotEngine::new(workspace, lineage, catalog);
 
-        let intra_batch = engine.prepare_bootstrap_transaction(
-            test_author(8_310, 8_310),
-            &OperationTransaction::new(vec![
-                SemanticOperation::CreatePage {
-                    page_id: PageId::from_uuid(Uuid::from_u128(8_311)),
-                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_312)),
-                    name: LogicalPageName::parse("Duplicate").unwrap(),
-                    path: ManagedPath::parse("pages/left.md").unwrap(),
-                    kind: ManagedTextKind::Page,
-                },
-                SemanticOperation::CreatePage {
-                    page_id: PageId::from_uuid(Uuid::from_u128(8_313)),
-                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_314)),
-                    name: LogicalPageName::parse("duplicate").unwrap(),
-                    path: ManagedPath::parse("pages/right.md").unwrap(),
-                    kind: ManagedTextKind::Page,
-                },
-            ])
-            .unwrap(),
-        );
+        let intra_batch = intra_engine
+            .prepare_bootstrap_transaction(
+                test_author(8_310, 8_310),
+                &OperationTransaction::new(vec![
+                    SemanticOperation::CreatePage {
+                        page_id: PageId::from_uuid(Uuid::from_u128(8_311)),
+                        home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_312)),
+                        name: LogicalPageName::parse("Duplicate").unwrap(),
+                        path: ManagedPath::parse("pages/left.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                    SemanticOperation::CreatePage {
+                        page_id: PageId::from_uuid(Uuid::from_u128(8_313)),
+                        home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_314)),
+                        name: LogicalPageName::parse("duplicate").unwrap(),
+                        path: ManagedPath::parse("pages/right.md").unwrap(),
+                        kind: ManagedTextKind::Page,
+                    },
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        let prior_page_names = intra_engine.ephemeral_page_names.clone();
         assert!(matches!(
-            intra_batch,
-            Err(EngineError::InvalidTransaction(_))
+            intra_engine
+                .stage_ready(ValidatedBatch::new(intra_batch))
+                .disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::InvalidTransaction(_),
+            }
         ));
-        assert_eq!(engine.ephemeral_page_names.record_count(), 0);
+        assert_eq!(intra_engine.ephemeral_page_names, prior_page_names);
+        assert_eq!(
+            intra_engine.workspace_status(),
+            WorkspaceStatus::Operational
+        );
 
+        let mut engine = ShardedHotEngine::new(workspace, lineage, catalog);
         let first = engine
             .prepare_bootstrap_transaction(
                 test_author(8_320, 8_320),
@@ -40464,19 +40476,29 @@ mod validation_tests {
         ));
         assert_eq!(engine.ephemeral_page_names.record_count(), 1);
         let prior_page_names = engine.ephemeral_page_names.clone();
-        let duplicate = engine.prepare_bootstrap_transaction(
-            test_author(8_323, 8_323),
-            &OperationTransaction::new(vec![SemanticOperation::CreatePage {
-                page_id: PageId::from_uuid(Uuid::from_u128(8_324)),
-                home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_325)),
-                name: LogicalPageName::parse("OWNED").unwrap(),
-                path: ManagedPath::parse("pages/other.md").unwrap(),
-                kind: ManagedTextKind::Page,
-            }])
-            .unwrap(),
-        );
-        assert!(matches!(duplicate, Err(EngineError::InvalidTransaction(_))));
+        let duplicate = engine
+            .prepare_bootstrap_transaction(
+                test_author(8_323, 8_323),
+                &OperationTransaction::new(vec![SemanticOperation::CreatePage {
+                    page_id: PageId::from_uuid(Uuid::from_u128(8_324)),
+                    home_document_id: DocumentId::from_uuid(Uuid::from_u128(8_325)),
+                    name: LogicalPageName::parse("OWNED").unwrap(),
+                    path: ManagedPath::parse("pages/other.md").unwrap(),
+                    kind: ManagedTextKind::Page,
+                }])
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine
+                .stage_ready(ValidatedBatch::new(duplicate))
+                .disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::InvalidTransaction(_),
+            }
+        ));
         assert_eq!(engine.ephemeral_page_names, prior_page_names);
+        assert_eq!(engine.workspace_status(), WorkspaceStatus::Operational);
     }
 
     #[test]
@@ -40713,7 +40735,7 @@ mod validation_tests {
                 current: 0,
             }
         );
-        assert!(engine
+        let refused = engine
             .prepare_bootstrap_transaction(
                 test_author(8_516, 8_510),
                 &OperationTransaction::new(vec![
@@ -40725,12 +40747,25 @@ mod validation_tests {
                         }],
                         block_rewrites: Vec::new(),
                         page_preamble_rewrites: Vec::new(),
-                    }
+                    },
                 ])
                 .unwrap(),
             )
-            .is_err());
+            .unwrap();
+        writer
+            .publish_bootstrap_prepared_for_test(&refused)
+            .unwrap();
+        assert!(matches!(
+            engine
+                .stage_archive_batch(refused.manifest().batch_id())
+                .unwrap()
+                .disposition(),
+            BatchDisposition::Rejected {
+                error: EngineError::Archive(_),
+            }
+        ));
         assert_eq!(engine.page_name_root, authoritative_root);
+        assert_eq!(engine.workspace_status(), WorkspaceStatus::Operational);
         engine.scratch_roots.external_document_state_root = exact_root;
 
         drop(engine);
@@ -40872,7 +40907,8 @@ mod validation_tests {
         assert_eq!(ENGINE_HISTORY_SCHEMA_VERSION, 13);
         assert_eq!(
             super::super::page_name_index::PAGE_NAME_OWNERSHIP_ROOT_SCHEMA_VERSION,
-            1
+            2,
+            "the delivery-order evidence deliberately pins the current page-name root schema"
         );
         let reopened = ShardedHotEngine::with_archive_store(
             ObjectStore::open(&archive_path, workspace).unwrap(),

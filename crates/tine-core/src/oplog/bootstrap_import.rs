@@ -4406,11 +4406,19 @@ mod tests {
                 .source_count(),
             1
         );
+        let path_width = MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART
+            .saturating_sub(1)
+            .to_string()
+            .len();
         let many_leaves = (0..MAX_SOURCE_SPANS_PER_BOOTSTRAP_PART)
             .map(|index| {
                 let mut digest = [0; 32];
                 digest[28..].copy_from_slice(&index.to_be_bytes());
-                source(&format!("pages/{index:04}.md"), digest, u64::from(index))
+                source(
+                    &format!("pages/{index:0path_width$}.md"),
+                    digest,
+                    u64::from(index),
+                )
             })
             .collect::<Vec<_>>();
         let materialized_inventory = SourceInventoryRootV1::from_leaves(&many_leaves).unwrap();

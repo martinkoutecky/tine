@@ -2038,29 +2038,30 @@ fn one_accepted_pending_page_uses_authenticated_work_without_touching_bootstrap_
 
 #[test]
 fn corrupt_bootstrap_payload_is_refused_without_crdt_fallback() {
-    let mut fixture = Fixture::new(
+    let fixture = Fixture::new(
         "corrupt-bootstrap-reconciliation",
         None,
         vec![("pages/corrupt.md".into(), b"- exact bootstrap\n".to_vec())],
     );
-    let payload = fixture.shadow.directory().join("payload/pages/corrupt.md");
-    let root = fixture.enrollment_root("corrupt-bootstrap-reconciliation");
-    let paths = PromotedPaths::new(&fixture, "corrupt-bootstrap-reconciliation");
-    let (mut authority, mut runtime) = promote(&mut fixture, &root, SessionId::new(), &paths);
-    fs::write(payload, b"- unauthenticated replacement\n").unwrap();
+    let pack_name = fixture.prepared.aggregate().parts()[0]
+        .part_id()
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let payload = fixture
+        .archive_root
+        .join("bootstrap-v1/part-object-packs")
+        .join(pack_name);
+    fs::write(payload, b"unauthenticated replacement pack").unwrap();
 
-    let mut window = runtime
-        .admit_promoted_mutation(&mut authority, &fixture.graph)
-        .unwrap();
-    let (_admission, engine, database, _tail, bootstrap) = window.parts_with_bootstrap().unwrap();
-    engine.reconcile_expected_path_history().unwrap();
-    let projection = engine.projection_work_index().unwrap();
-    let source = JoinedAuthenticatedExpectedPathSource::with_bootstrap(
-        engine, projection, bootstrap, database,
-    );
     take_bootstrap_page_materializations_for_test();
-    assert!(scan_graph_text(&fixture.graph, &source, GraphTextScanLimits::default()).is_err());
+    assert!(
+        reopen_inactive_bootstrap_accepted_authority(&fixture.verified, fixture.archive(),)
+            .is_err()
+    );
     assert_eq!(take_bootstrap_page_materializations_for_test(), 0);
+    fixture.assert_graph_unchanged();
 }
 
 #[test]
@@ -3466,6 +3467,7 @@ fn a_non_empty_bootstrap_catalog_root_opens_from_a_fresh_archive_before_and_afte
         // catalog walk here is not an accidental 4096-target benchmark.
         multipart.push_str(&format!("- operation {ordinal:04}\n"));
     }
+    force_next_bootstrap_part_operation_limit(4_096);
     let mut fixture = Fixture::new(
         "promote-catalog-root",
         None,

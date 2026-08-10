@@ -12297,11 +12297,29 @@ mod tests {
                 ("pages/z-second.md", "Second Authority"),
             ]
         );
-        let first_material = &prepared.engine_materials[page_transitions[0].0];
-        let second_material = &prepared.engine_materials[page_transitions[1].0];
-        assert_ne!(
-            first_material.reference_catalog_root(),
-            second_material.reference_catalog_root()
+        let parts = prepared.aggregate().parts();
+        assert_eq!(prepared.engine_materials.len(), parts.len());
+        for (descriptor, material) in parts.iter().zip(&prepared.engine_materials) {
+            assert_eq!(
+                material.accepted_evidence().batch_id(),
+                descriptor.batch_id()
+            );
+            assert_eq!(
+                material.accepted_evidence().acceptance_sequence(),
+                u64::from(descriptor.acceptance_sequence())
+            );
+        }
+        let terminal = prepared.engine_materials.last().unwrap();
+        let terminal_frontier = prepared.candidate().accepted_frontier_root().unwrap();
+        assert_eq!(
+            terminal.reference_catalog_root(),
+            terminal_frontier.reference_catalog_root(),
+            "the terminal accepted record must bind the complete catalog"
+        );
+        assert_eq!(
+            terminal.reference_catalog_root().source_count(),
+            page_transitions.len() as u64,
+            "the terminal catalog must contain both reference-bearing sources"
         );
         (root, prepared, workspace)
     }
@@ -14009,14 +14027,12 @@ mod tests {
             "archive",
         );
         drop(object_authority);
-        let mut part = object_prepared.open_part(0).unwrap();
-        let manifest = OperationBatch::decode(part.manifest_bytes()).unwrap();
-        assert!(part.next_object_bytes().unwrap().is_some());
-        let object_name = format!("{}.object", manifest.required_objects()[0].content_digest());
+        let part_name =
+            hex_bootstrap_digest(object_prepared.aggregate().parts()[0].part_id().as_bytes());
         fs::remove_file(
             object_archive
-                .join("bootstrap-v1/objects")
-                .join(object_name),
+                .join("bootstrap-v1/part-object-packs")
+                .join(part_name),
         )
         .unwrap();
         assert_authority_reopen_rejected(&object_verified, &object_archive, workspace);

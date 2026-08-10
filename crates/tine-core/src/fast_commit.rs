@@ -1015,12 +1015,21 @@ mod tests {
             "the journal spine must do identical work at every graph size"
         );
         assert_eq!(
-            small_index.0, 1,
-            "the lazy complete build runs exactly once"
+            small_index.0, 0,
+            "managed fast commits must not build the whole-graph cache"
         );
-        assert_eq!(large_index.0, 1, "graph size cannot change build count");
-        assert_eq!(small_index.1, 3, "each Tine save advances one exact delta");
-        assert_eq!(large_index.1, 3, "exact delta count is size-independent");
+        assert_eq!(
+            large_index.0, 0,
+            "graph size cannot introduce a whole-graph cache build"
+        );
+        assert_eq!(
+            small_index.1, 0,
+            "managed saves must not maintain a whole-graph cache delta index"
+        );
+        assert_eq!(
+            large_index.1, 0,
+            "graph size cannot introduce whole-graph cache delta work"
+        );
         assert!(small_work.iter().all(|(forbidden, graph_wide)| {
             forbidden.is_none() && *graph_wide == GraphWideCommitWork::default()
         }));

@@ -33236,7 +33236,10 @@ mod tests {
             "- first\n\n- second\n",
             "edited",
         );
-        let exact_target = "- edited\n\n- second\n";
+        // The serializer preserves the fixture's one blank separator. Supply
+        // a genuinely byte-distinct authenticated layout with one additional
+        // separator while keeping every parsed block and its raw body equal.
+        let exact_target = "- edited\n\n\n- second\n";
         assert_ne!(fixture.target, exact_target);
         assert!(guarded_markdown_documents_match(
             &fixture.target,

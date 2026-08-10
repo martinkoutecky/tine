@@ -5336,22 +5336,38 @@ fn durable_page_name_latch_restores_typed_evidence_without_legacy_fatal_evidence
 }
 
 #[test]
-fn sequential_duplicates_reject_before_batch_and_atomic_swap_and_causal_reuse_succeed() {
+fn sequential_duplicates_reject_at_acceptance_and_atomic_swap_and_causal_reuse_succeed() {
     let ids = Ids::new();
     let dir = TestDir::new("portable-sequential-swap-reuse");
     let archive = store(&dir, ids);
-    let (mut engine, _) = seed_engine(ids, &archive);
+    let (mut engine, baseline) = seed_engine(ids, &archive);
 
-    assert!(matches!(
-        engine.prepare_bootstrap_transaction(
+    let duplicate = engine
+        .prepare_bootstrap_transaction(
             author(40_200, 40_200),
             &tx(vec![SemanticOperation::EditPagePath {
                 page_id: ids.page_b,
                 path: path("pages/a.md"),
             }]),
-        ),
-        Err(EngineError::InvalidTransaction(_))
+        )
+        .unwrap();
+    let mut refusal = ids.engine();
+    assert!(matches!(
+        refusal.stage_ready(baseline).disposition,
+        BatchDisposition::Accepted { .. }
     ));
+    assert!(matches!(
+        refusal.stage_ready(ready(&archive, &duplicate)).disposition,
+        BatchDisposition::Rejected {
+            error: EngineError::InvalidTransaction(_),
+        }
+    ));
+    assert_eq!(refusal.status().workspace(), &WorkspaceStatus::Operational);
+    assert_eq!(
+        refusal.materialize_page(ids.page_b).unwrap().path.as_str(),
+        "pages/B.md",
+        "the rejected duplicate must not mutate accepted state"
+    );
 
     let swap = engine
         .prepare_bootstrap_transaction(
@@ -5462,16 +5478,31 @@ fn store_backed_portable_index_is_affected_only_and_missing_root_fails_closed() 
     );
 
     std::fs::remove_dir_all(archive_path.join("portable-path-index-v1")).unwrap();
-    assert!(matches!(
-        engine.prepare_bootstrap_transaction(
+    let prior_path = engine.materialize_page(ids.page_a).unwrap().path;
+    let refused = engine
+        .prepare_bootstrap_transaction(
             author(40_301, 40_301),
             &tx(vec![SemanticOperation::EditPagePath {
                 page_id: ids.page_a,
                 path: path("pages/Must Fail Closed.md"),
             }]),
-        ),
-        Err(EngineError::Archive(_))
+        )
+        .unwrap();
+    publish_fixture(&writer, &refused);
+    assert!(matches!(
+        engine
+            .stage_archive_batch(refused.manifest().batch_id())
+            .unwrap()
+            .disposition(),
+        BatchDisposition::Rejected {
+            error: EngineError::Archive(_),
+        }
     ));
+    assert_eq!(
+        engine.materialize_page(ids.page_a).unwrap().path,
+        prior_path
+    );
+    assert_eq!(engine.status().workspace(), &WorkspaceStatus::Operational);
 }
 
 #[test]
