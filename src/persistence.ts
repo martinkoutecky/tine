@@ -276,6 +276,11 @@ export function setBaseRev(name: string, rev: string | null) {
   baseRev.set(name, rev);
 }
 /** Tombstone a page so any pending/in-flight save can't recreate its file. */
+/** Has this page been deleted? A deleted page must never be recreated by anything
+ *  that was already in flight when the deletion landed. */
+export function isTombstoned(name: string): boolean {
+  return deletedPages.has(name);
+}
 export function tombstone(name: string) {
   deletedPages.add(name);
 }

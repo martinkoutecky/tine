@@ -73,6 +73,7 @@ import {
   setBaseRev,
   tombstone,
   untombstone,
+  isTombstoned,
   forgetSaveState,
   resetSaveState,
   isSaving,
@@ -3182,6 +3183,17 @@ export async function persistBlockRefTarget(
       : await backend().getPage(page, kind);
     // A read that crossed a graph switch must not install into the NEW graph.
     if (epoch !== graphEpoch()) return;
+    // Nor may one that crossed a DELETION. This read may have been issued before
+    // the user deleted the page; installing its pre-delete bytes puts the page
+    // back, and `upsertPage` lifts the tombstone as it does so, after which the
+    // stamp's own save recreates the file the user just deleted — with stale
+    // content. Routing deletion through the store exists precisely to stop a
+    // queued write resurrecting a page, and this is the same hazard arriving by
+    // a different door. (GH #254 increment 3.)
+    if (isTombstoned(page)) {
+      pendingBlockRefStamps.delete(uuid);
+      return;
+    }
     if (dto && ensurePageLoaded(dto)) {
       // RETAIN the request. The user-visible mutation has already happened —
       // autocomplete committed `((uuid))`, or the sidebar item is already open —

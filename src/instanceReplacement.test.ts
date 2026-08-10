@@ -188,6 +188,43 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it("never lets an in-flight retry resurrect a page the user deleted", async () => {
+    const { persistBlockRefTarget, deletePage, takeEditorLease, doc: liveDoc } = await import(
+      "./store"
+    );
+    ensurePageLoaded(page("Target", "pages/Target.md", "incumbent"));
+    const release = takeEditorLease("Target");
+
+    let releaseRead: (dto: unknown) => void = () => {};
+    vi.spyOn(backend(), "getPageByPath").mockReturnValueOnce(
+      Promise.resolve(page("Target", "pages/other/Target.md", "requested")) as never,
+    );
+    await persistBlockRefTarget("uuid-5", "Target", "page", "pages/other/Target.md");
+
+    // Retry read 2 starts...
+    vi.spyOn(backend(), "getPageByPath").mockReturnValue(
+      new Promise((r) => {
+        releaseRead = r as (dto: unknown) => void;
+      }) as never,
+    );
+    const saved = vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+    vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // ...and the user deletes the page WHILE it is pending.
+    await deletePage("Target", "page");
+
+    // The read now resolves with PRE-DELETE bytes. Installing them puts the page
+    // back, `upsertPage` lifts the tombstone as it does so, and the stamp's own
+    // save then recreates the file the user just deleted, with stale content.
+    releaseRead(page("Target", "pages/other/Target.md", "requested"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(liveDoc.pages.find((p) => p.name === "Target")).toBeUndefined();
+    expect(saved).not.toHaveBeenCalled();
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();
