@@ -4557,16 +4557,73 @@ mod tests {
     }
 
     #[test]
-    fn complete_root_derivation_matches_published_index() {
+    fn complete_root_derivation_matches_in_memory_point_semantics_for_4096_records() {
         let records = bulk_differential_records(0, 4096, 17);
         let (path, store) = store("complete-root-derivation");
-        let published = store
-            .insert_many(PatriciaIndexRoot::empty(), &records)
+        let (staged_root, staged) = store
+            .stage_many(PatriciaIndexRoot::empty(), &records)
             .unwrap();
+        let construction = PatriciaIndexConstruction {
+            staged,
+            ..PatriciaIndexConstruction::default()
+        };
 
-        assert_eq!(store.derive_complete_root(&records).unwrap(), published);
+        assert_eq!(store.derive_complete_root(&records).unwrap(), staged_root);
+        assert_eq!(
+            all_construction_records(&store, &construction, staged_root),
+            records
+        );
+        assert_eq!(
+            fs::read_dir(path.join("nodes")).unwrap().count(),
+            0,
+            "the routine 4096-record semantic check must not perform physical publication"
+        );
 
         drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn physical_publication_reopens_with_exact_bytes_for_96_records() {
+        let records = bulk_differential_records(0, 96, 23);
+        let (path, store) = store("physical-reopen-96");
+        let root = store
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        let exact_before = reachable_node_bytes(&store, [root]);
+        drop(store);
+
+        let authority = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let nodes = open_dir_nofollow(&authority, "nodes").unwrap();
+        let reopened = PatriciaIndexStore::new(nodes, ExactPublisher);
+        assert_eq!(all_records(&reopened, root), records);
+        assert_eq!(reachable_node_bytes(&reopened, [root]), exact_before);
+        assert_eq!(reopened.derive_complete_root(&records).unwrap(), root);
+        assert_eq!(count_suffix(&path.join("nodes"), ".tmp"), 0);
+
+        drop(reopened);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "certification burn-in: physically publishes and reopens 4096 records"]
+    fn physical_publication_reopens_exactly_for_4096_records_burn_in() {
+        let records = bulk_differential_records(0, 4096, 17);
+        let (path, store) = store("physical-reopen-4096-burn-in");
+        let root = store
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        let exact_before = reachable_node_bytes(&store, [root]);
+        drop(store);
+
+        let authority = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        let nodes = open_dir_nofollow(&authority, "nodes").unwrap();
+        let reopened = PatriciaIndexStore::new(nodes, ExactPublisher);
+        assert_eq!(all_records(&reopened, root), records);
+        assert_eq!(reachable_node_bytes(&reopened, [root]), exact_before);
+        assert_eq!(count_suffix(&path.join("nodes"), ".tmp"), 0);
+
+        drop(reopened);
         fs::remove_dir_all(path).unwrap();
     }
 
