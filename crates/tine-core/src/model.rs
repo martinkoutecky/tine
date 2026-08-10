@@ -38,6 +38,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
+use tine_storage::{
+    ensure_directory_nofollow, open_dir_nofollow, publish_immutable_exact, FilesystemError,
+};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
@@ -4631,6 +4634,51 @@ fn projection_recovery_after_bound_capture_hook(_path: &Path) -> io::Result<()> 
     Ok(())
 }
 
+// Keep the test fault at the narrow core Result boundary rather than adding a
+// test-only control surface to tine-storage.  Keying it by the deterministic
+// ambient return path keeps parallel runtime fixtures independent.
+#[cfg(test)]
+type ProjectionTrashAfterPublicationHook = Box<dyn FnOnce() -> io::Result<()> + Send + 'static>;
+
+#[cfg(test)]
+fn projection_trash_after_publication_hooks() -> &'static std::sync::Mutex<
+    std::collections::HashMap<PathBuf, ProjectionTrashAfterPublicationHook>,
+> {
+    static HOOK: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, ProjectionTrashAfterPublicationHook>>,
+    > = std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn set_projection_trash_after_publication_hook_for_test(
+    destination: PathBuf,
+    hook: impl FnOnce() -> io::Result<()> + Send + 'static,
+) {
+    let replaced = projection_trash_after_publication_hooks()
+        .lock()
+        .unwrap()
+        .insert(destination, Box::new(hook));
+    assert!(
+        replaced.is_none(),
+        "projection trash after-publication hook already armed"
+    );
+}
+
+#[cfg(test)]
+fn projection_trash_after_publication_hook(destination: &Path) -> io::Result<()> {
+    let hook = projection_trash_after_publication_hooks()
+        .lock()
+        .unwrap()
+        .remove(destination);
+    hook.map_or(Ok(()), |hook| hook())
+}
+
+#[cfg(not(test))]
+fn projection_trash_after_publication_hook(_destination: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn set_projection_recovery_retirement_hook_for_test(
     hook: impl FnOnce() -> io::Result<()> + 'static,
@@ -8290,15 +8338,12 @@ impl Graph {
         // The actor-authenticated semantic kind, not the source directory,
         // selects the recovery namespace. Imported managed text may validly
         // live outside the configured pages/ or journals/ roots.
-        let trash = typed_trash_dir(
-            &self.root,
-            match kind {
-                ManagedTextKind::Page => TrashEntryKind::Page,
-                ManagedTextKind::Journal => TrashEntryKind::Journal,
-            },
-        );
+        let trash_kind = match kind {
+            ManagedTextKind::Page => TrashEntryKind::Page,
+            ManagedTextKind::Journal => TrashEntryKind::Journal,
+        };
+        let trash = typed_trash_dir(&self.root, trash_kind);
         self.ensure_trash_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
         let extension = target
             .absolute_path
             .extension()
@@ -8310,31 +8355,49 @@ impl Graph {
         // A valid near-limit source name plus a digest prefix could itself
         // exceed portable component limits on the recovery path.
         let destination_name = format!("managed-{:x}", identity.finalize());
-        let destination = extension
+        let leaf = extension
             .filter(|extension| !extension.is_empty())
             .map_or_else(
-                || trash.join(&destination_name),
-                |extension| trash.join(format!("{destination_name}.{extension}")),
+                || destination_name.clone(),
+                |extension| format!("{destination_name}.{extension}"),
             );
-        match atomic_write_new(&destination, expected) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if fs::read(&destination)?.as_slice() != expected {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "managed recovery destination contains different bytes",
-                    ));
-                }
-            }
-            Err(error) => return Err(error),
-        }
-        if fs::read(&destination)?.as_slice() != expected {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "managed recovery bytes changed after publication",
-            ));
-        }
+        let typed_dir = self.open_typed_projection_trash_dir(trash_kind)?;
+        let destination = trash.join(&leaf);
+        publish_projection_trash_leaf(&typed_dir, &leaf, expected, &destination)?;
         Ok(destination)
+    }
+
+    /// Open a durable no-follow capability for one typed recovery namespace.
+    ///
+    /// The ambient path is deliberately only a user-visible return value.  The
+    /// directory creation and immutable publication themselves remain bound to
+    /// the graph's retained projection-root capability, component by component.
+    fn open_typed_projection_trash_dir(&self, kind: TrashEntryKind) -> io::Result<Dir> {
+        require_projection_platform()?;
+        self.ensure_projection_root_binding()?;
+        let mut directory = self
+            .projection_root
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "graph has no retained no-follow projection capability",
+                )
+            })?
+            .try_clone()?;
+        let kind = kind.dir_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "managed recovery trash requires a typed namespace",
+            )
+        })?;
+        for component in ["logseq", ".tine-trash", kind] {
+            ensure_directory_nofollow(&directory, component)
+                .map_err(managed_trash_filesystem_error)?;
+            directory =
+                open_dir_nofollow(&directory, component).map_err(managed_trash_filesystem_error)?;
+        }
+        Ok(directory)
     }
 
     /// Configured managed roots visible to the sparse importer.
@@ -24381,6 +24444,50 @@ impl TrashEntryKind {
     }
 }
 
+/// Translate the storage crate's physical boundary into the Graph API's I/O
+/// boundary without losing the collision distinction needed by delete retries.
+fn managed_trash_filesystem_error(error: FilesystemError) -> io::Error {
+    match error {
+        FilesystemError::Io(error) => error,
+        FilesystemError::UnsafeEntry(message) => io::Error::new(io::ErrorKind::InvalidData, message),
+        FilesystemError::StoredLengthMismatch {
+            path,
+            expected,
+            actual,
+        } => io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "managed recovery stored length mismatch for {path}: expected {expected}, got {actual}"
+            ),
+        ),
+        FilesystemError::StoredFileTooLarge { path, length, limit } => io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "managed recovery stored file is too large for {path}: {length} bytes exceeds {limit}"
+            ),
+        ),
+        FilesystemError::ByteCollision => io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "managed recovery destination contains different bytes",
+        ),
+    }
+}
+
+/// Publish a recovery leaf through tine-storage's exact immutable protocol.
+///
+/// On Windows that protocol retains and validates the actual directory
+/// capability.  It deliberately exposes the certified validated-directory
+/// ceiling there; it does not claim an undocumented power-loss directory fsync.
+fn publish_projection_trash_leaf(
+    typed_dir: &Dir,
+    leaf: &str,
+    expected: &[u8],
+    destination: &Path,
+) -> io::Result<()> {
+    publish_immutable_exact(typed_dir, leaf, expected).map_err(managed_trash_filesystem_error)?;
+    projection_trash_after_publication_hook(destination)
+}
+
 fn trash_root(root: &Path) -> PathBuf {
     root.join("logseq").join(".tine-trash")
 }
@@ -34930,6 +35037,102 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         dir
+    }
+
+    #[test]
+    fn managed_projection_trash_publication_walks_the_typed_nofollow_chain() {
+        let root = scratch("managed-projection-trash-capability");
+        let relative = "pages/Typed Recovery.org";
+        let expected = b"#+TITLE: Typed Recovery\r\n\r\n* exact bytes\r\n";
+        fs::write(root.join(relative), expected).unwrap();
+        let graph = Graph::open(&root);
+        let path = ManagedPath::parse(relative.to_owned()).unwrap();
+
+        assert!(
+            !root.join("logseq/.tine-trash/journals").exists(),
+            "the recovery chain begins absent"
+        );
+        let destination = graph
+            .preserve_projection_in_trash(&path, ManagedTextKind::Journal, expected)
+            .unwrap();
+        assert_eq!(
+            destination.parent(),
+            Some(root.join("logseq/.tine-trash/journals").as_path())
+        );
+        assert_eq!(
+            destination
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("org")
+        );
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+
+        // Exact retries retain one immutable recovery leaf, while a divergent
+        // occupant is a refusal rather than an overwrite.
+        assert_eq!(
+            graph
+                .preserve_projection_in_trash(&path, ManagedTextKind::Journal, expected)
+                .unwrap(),
+            destination
+        );
+        fs::write(&destination, b"foreign recovery bytes").unwrap();
+        assert_eq!(
+            graph
+                .preserve_projection_in_trash(&path, ManagedTextKind::Journal, expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+
+        // A malformed intermediate component is rejected through the same
+        // no-follow chain, before it can authorize a semantic deletion.
+        let malformed_root = scratch("managed-projection-trash-malformed-chain");
+        fs::write(malformed_root.join(relative), expected).unwrap();
+        fs::create_dir_all(malformed_root.join("logseq")).unwrap();
+        fs::write(
+            malformed_root.join("logseq/.tine-trash"),
+            b"not a recovery directory",
+        )
+        .unwrap();
+        let malformed = Graph::open(&malformed_root);
+        let error = malformed
+            .preserve_projection_in_trash(&path, ManagedTextKind::Journal, expected)
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(malformed_root.join(relative)).unwrap(), expected);
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&malformed_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_projection_trash_refuses_a_missing_typed_kind_that_cannot_be_created() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = scratch("managed-projection-trash-kind-create-refusal");
+        let relative = "pages/Kind Creation Refusal.md";
+        let expected = b"- source survives an unavailable recovery kind\n";
+        fs::write(root.join(relative), expected).unwrap();
+        let trash_root = root.join("logseq/.tine-trash");
+        fs::create_dir_all(&trash_root).unwrap();
+        let original_permissions = fs::metadata(&trash_root).unwrap().permissions();
+        let mut no_create_permissions = original_permissions.clone();
+        no_create_permissions.set_mode(0o555);
+        fs::set_permissions(&trash_root, no_create_permissions).unwrap();
+
+        let graph = Graph::open(&root);
+        let path = ManagedPath::parse(relative.to_owned()).unwrap();
+        let result = graph.preserve_projection_in_trash(&path, ManagedTextKind::Page, expected);
+        fs::set_permissions(&trash_root, original_permissions).unwrap();
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(root.join(relative)).unwrap(), expected);
+        assert!(
+            !trash_root.join("pages").exists(),
+            "a failed typed-kind creation must not leave a partial namespace"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn arm_present_conflict_for_force(graph: &Graph, page: &PageDto, path: &Path) {

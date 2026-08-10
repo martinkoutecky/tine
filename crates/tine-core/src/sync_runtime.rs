@@ -22724,6 +22724,95 @@ mod tests {
     }
 
     #[test]
+    fn application_delete_refuses_before_tombstone_when_typed_trash_publication_fails() {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-delete-trash-publication-failure");
+        let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
+        drive_initial_feed(&handle);
+        let path = "content/nested pages/Retry Typed Trash.md";
+        let accepted = b"layout:: accepted\r\n\r\n- retain exact source on failure\r\n";
+        admit_external_page(&handle, &fixture, path, accepted);
+        let (page, _) = load_application_exact(&handle, path);
+
+        let mut identity = Sha256::new();
+        identity.update(path.as_bytes());
+        identity.update([0]);
+        identity.update(accepted);
+        let destination = fixture
+            .graph_root()
+            .join("logseq/.tine-trash/pages")
+            .join(format!("managed-{:x}.md", identity.finalize()));
+        crate::model::set_projection_trash_after_publication_hook_for_test(
+            destination.clone(),
+            || {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "injected typed trash publication result failure",
+                ))
+            },
+        );
+        let before = handle.status().unwrap();
+
+        assert!(matches!(
+            handle.mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                name: page.name.clone(),
+                page_kind: SyncPageKind::Page,
+                expected_path: Some(page.path.clone()),
+            }),
+            Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                "delete_trash_preserve"
+            ))
+        ));
+
+        // The helper has optionally published the exact recovery leaf, but its
+        // error prevents submission of DeletePage: the accepted projection and
+        // actor sequence remain exactly where they were.
+        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), accepted);
+        assert_eq!(fs::read(&destination).unwrap(), accepted);
+        assert!(matches!(
+            handle.load_application_page(SyncApplicationPageLoadRequest {
+                page: SyncApplicationPageSelector::ExactPath { path: path.into() },
+            }),
+            Ok(SyncApplicationPageLoadOutcome::Loaded { .. })
+        ));
+        let after_refusal = handle.status().unwrap();
+        assert_eq!(
+            after_refusal.managed_local_next_sequence, before.managed_local_next_sequence,
+            "a refused preservation must not author a tombstone"
+        );
+        assert_eq!(
+            after_refusal.managed_local_checkpointed_sequence,
+            before.managed_local_checkpointed_sequence,
+            "a refused preservation must not advance the accepted local frontier"
+        );
+
+        // The keyed test fault is consumed.  An exact-existing retry reopens
+        // the already-published leaf through the capability directory and only
+        // then authors the tombstone.
+        assert_eq!(
+            handle
+                .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                    name: page.name,
+                    page_kind: SyncPageKind::Page,
+                    expected_path: Some(page.path),
+                })
+                .unwrap(),
+            SyncApplicationUnitOutcome::Applied
+        );
+        assert!(!fixture.graph_root().join(path).exists());
+        assert_eq!(fs::read(&destination).unwrap(), accepted);
+        assert!(matches!(
+            handle.load_application_page(SyncApplicationPageLoadRequest {
+                page: SyncApplicationPageSelector::ExactPath { path: path.into() },
+            }),
+            Ok(SyncApplicationPageLoadOutcome::Missing { .. })
+        ));
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
     fn application_navigation_observes_the_immediately_committed_frontier() {
         let fixture = RuntimeHostFixture::safe("sync-runtime-application-navigation-frontier");
         let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
