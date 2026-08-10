@@ -2574,6 +2574,11 @@ pub struct PhysicalPropertyFacetRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalTaskCandidatePageRow {
+    pub page_id: [u8; 16],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPropertyRow {
     pub owner: PhysicalEntityId,
     pub page_id: [u8; 16],
@@ -3852,6 +3857,52 @@ impl<'a> SqliteMaterializedRead<'a> {
         collect_read_rows(rows, task_row_output_bytes)
     }
 
+    /// Distinct pages containing one exact task marker, in stable page-ID order.
+    /// The task index supplies candidates only; application policy re-evaluates
+    /// parser-owned current pages before exposing results.
+    pub fn task_candidate_pages_after(
+        &self,
+        marker: &str,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalTaskCandidatePageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(marker)?;
+        if marker.trim().is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "task marker must be non-empty".into(),
+            ));
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT page_id FROM tasks
+                 WHERE marker = ?1 ORDER BY page_id LIMIT ?2",
+                vec![marker.to_owned().into(), limit.into()],
+            ),
+            Some(page_id) => (
+                "SELECT DISTINCT page_id FROM tasks
+                 WHERE marker = ?1 AND page_id > ?2
+                 ORDER BY page_id LIMIT ?3",
+                vec![
+                    marker.to_owned().into(),
+                    page_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalTaskCandidatePageRow {
+                page_id: decode_id_sql(&page_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(16),
+        )
+    }
+
     pub fn search(
         &self,
         query: &str,
@@ -4584,11 +4635,25 @@ mod tests {
             ),
             Err(MaterializationError::InvalidQuery(_))
         ));
+        assert_eq!(
+            read.task_candidate_pages_after("TODO", None, 1).unwrap(),
+            vec![PhysicalTaskCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.task_candidate_pages_after("TODO", Some(first_page), 10)
+                .unwrap(),
+            vec![PhysicalTaskCandidatePageRow {
+                page_id: second_page,
+            }]
+        );
         drop(read);
 
         first.blocks[0]
             .properties
             .retain(|property| property.normalized_name != "template");
+        first.blocks[0].task.as_mut().unwrap().marker = "DONE".into();
         apply_and_commit(
             &mut connection,
             &change(0x7891, vec![first], vec![second_page]),
@@ -4601,6 +4666,16 @@ mod tests {
             .unwrap()
             .iter()
             .all(|row| row.normalized_name != "template"));
+        assert!(read
+            .task_candidate_pages_after("TODO", None, 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            read.task_candidate_pages_after("DONE", None, 10).unwrap(),
+            vec![PhysicalTaskCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
     }
 
     #[test]
