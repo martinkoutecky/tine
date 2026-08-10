@@ -442,12 +442,12 @@ impl<Tag: ScratchPageTag> ScratchLsmRoot<Tag> {
 /// One exclusively leased physical scratch run and its raw address spaces.
 pub struct ScratchRun<Owner> {
     namespace: Dir,
-    run: Dir,
+    run: Option<Dir>,
     run_name: String,
     marker: ScratchRunMarker<Owner>,
-    lease: fs::File,
-    pages: Mutex<BufferedAppendFile>,
-    blobs: Mutex<BufferedAppendFile>,
+    lease: Option<fs::File>,
+    pages: Option<Mutex<BufferedAppendFile>>,
+    blobs: Option<Mutex<BufferedAppendFile>>,
     operation_counters: ScratchOperationCounters,
     lifecycle_stats: ScratchRunLifecycleStats,
 }
@@ -657,12 +657,12 @@ where
         observer(ScratchConstructionBoundary::AfterBlobsCreate)?;
         Ok(Self {
             namespace: namespace.try_clone()?,
-            run,
+            run: Some(run),
             run_name: run_name.to_owned(),
             marker,
-            lease,
-            pages: Mutex::new(BufferedAppendFile::new(pages)?),
-            blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
+            lease: Some(lease),
+            pages: Some(Mutex::new(BufferedAppendFile::new(pages)?)),
+            blobs: Some(Mutex::new(BufferedAppendFile::new(blobs)?)),
             operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
@@ -699,12 +699,12 @@ where
         let blobs = open_regular_read_write_nofollow(&run, SCRATCH_BLOBS_FILE)?;
         Ok(Self {
             namespace,
-            run,
+            run: Some(run),
             run_name,
             marker,
-            lease,
-            pages: Mutex::new(BufferedAppendFile::new(pages)?),
-            blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
+            lease: Some(lease),
+            pages: Some(Mutex::new(BufferedAppendFile::new(pages)?)),
+            blobs: Some(Mutex::new(BufferedAppendFile::new(blobs)?)),
             operation_counters: ScratchOperationCounters::default(),
             lifecycle_stats: ScratchRunLifecycleStats::default(),
         })
@@ -734,12 +734,12 @@ where
             let blobs = create_new_regular(&run, SCRATCH_BLOBS_FILE)?;
             let migrated = Self {
                 namespace: namespace.try_clone()?,
-                run,
+                run: Some(run),
                 run_name: run_name.clone(),
                 marker: self.marker.clone(),
-                lease,
-                pages: Mutex::new(BufferedAppendFile::new(pages)?),
-                blobs: Mutex::new(BufferedAppendFile::new(blobs)?),
+                lease: Some(lease),
+                pages: Some(Mutex::new(BufferedAppendFile::new(pages)?)),
+                blobs: Some(Mutex::new(BufferedAppendFile::new(blobs)?)),
                 operation_counters: ScratchOperationCounters::default(),
                 lifecycle_stats: ScratchRunLifecycleStats::default(),
             };
@@ -757,6 +757,18 @@ where
 
     pub const fn run_id(&self) -> Uuid {
         self.marker.run_id
+    }
+
+    fn pages(&self) -> &Mutex<BufferedAppendFile> {
+        self.pages
+            .as_ref()
+            .expect("scratch pages remain open while the run is live")
+    }
+
+    fn blobs(&self) -> &Mutex<BufferedAppendFile> {
+        self.blobs
+            .as_ref()
+            .expect("scratch blobs remain open while the run is live")
     }
 
     pub const fn retention(&self) -> ScratchRetention {
@@ -780,7 +792,7 @@ where
         &self,
         operation: impl FnOnce(&mut fs::File) -> T,
     ) -> Result<T, ScratchRunError> {
-        self.pages
+        self.pages()
             .lock()
             .map_err(|_| ScratchRunError::Poisoned)?
             .with_file(operation)
@@ -791,7 +803,7 @@ where
         &self,
         operation: impl FnOnce(&mut fs::File) -> T,
     ) -> Result<T, ScratchRunError> {
-        self.blobs
+        self.blobs()
             .lock()
             .map_err(|_| ScratchRunError::Poisoned)?
             .with_file(operation)
@@ -803,12 +815,12 @@ where
         #[cfg(any(test, feature = "test-support"))]
         {
             stats.page_append_batches = self
-                .pages
+                .pages()
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .write_batches;
             stats.blob_append_batches = self
-                .blobs
+                .blobs()
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .write_batches;
@@ -862,7 +874,7 @@ where
         let digest = ContentDigest::of(bytes);
         let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedBlob)?;
         let offset = self
-            .blobs
+            .blobs()
             .lock()
             .map_err(|_| ScratchRunError::Poisoned)?
             .append(bytes)?;
@@ -932,7 +944,7 @@ where
         let digest = ContentDigest::of(&bytes);
         let encoded_len = u32::try_from(bytes.len()).map_err(|_| ScratchRunError::MalformedPage)?;
         let offset = self
-            .pages
+            .pages()
             .lock()
             .map_err(|_| ScratchRunError::Poisoned)?
             .append(&bytes)?;
@@ -1449,8 +1461,8 @@ where
             Ok(())
         }
 
-        copy_file(&source.pages, &self.pages)?;
-        copy_file(&source.blobs, &self.blobs)
+        copy_file(source.pages(), self.pages())?;
+        copy_file(source.blobs(), self.blobs())
     }
 
     fn reclaim_stale_runs(
@@ -1516,40 +1528,63 @@ where
         remove_stale_run(&self.namespace, &run, &name, lease)?;
         Ok(StaleRunDisposition::Reclaimed)
     }
+}
 
-    fn cleanup_own_run(&self) {
-        for name in [SCRATCH_PAGES_FILE, SCRATCH_BLOBS_FILE, SCRATCH_MARKER_FILE] {
-            let _ = self.run.remove_file(name);
+impl<Owner> ScratchRun<Owner> {
+    fn cleanup_own_run(&mut self) {
+        if let Some(pages) = self.pages.as_mut() {
+            if let Ok(pages) = pages.get_mut() {
+                let _ = pages.flush();
+            }
         }
-        unlock(&self.lease);
-        let _ = self.run.remove_file(SCRATCH_LEASE_FILE);
+        if let Some(blobs) = self.blobs.as_mut() {
+            if let Ok(blobs) = blobs.get_mut() {
+                let _ = blobs.flush();
+            }
+        }
+        drop(self.pages.take());
+        drop(self.blobs.take());
+
+        let Some(run) = self.run.as_ref() else {
+            return;
+        };
+        for name in [SCRATCH_PAGES_FILE, SCRATCH_BLOBS_FILE, SCRATCH_MARKER_FILE] {
+            let _ = run.remove_file(name);
+        }
+        if let Some(lease) = self.lease.take() {
+            unlock(&lease);
+            drop(lease);
+        }
+        let _ = run.remove_file(SCRATCH_LEASE_FILE);
+        drop(self.run.take());
         let _ = self.namespace.remove_dir(&self.run_name);
     }
 }
 
 impl<Owner> Drop for ScratchRun<Owner> {
     fn drop(&mut self) {
-        if let Ok(pages) = self.pages.get_mut() {
-            let _ = pages.flush();
-        }
-        if let Ok(blobs) = self.blobs.get_mut() {
-            let _ = blobs.flush();
-        }
         match self.marker.retention {
-            ScratchRetention::Ephemeral => self.cleanup_own_run_unbounded(),
-            ScratchRetention::Retained => unlock(&self.lease),
+            ScratchRetention::Ephemeral => self.cleanup_own_run(),
+            ScratchRetention::Retained => {
+                if let Some(pages) = self.pages.as_mut() {
+                    if let Ok(pages) = pages.get_mut() {
+                        let _ = pages.flush();
+                    }
+                }
+                if let Some(blobs) = self.blobs.as_mut() {
+                    if let Ok(blobs) = blobs.get_mut() {
+                        let _ = blobs.flush();
+                    }
+                }
+                drop(self.pages.take());
+                drop(self.blobs.take());
+                if let Some(lease) = self.lease.take() {
+                    unlock(&lease);
+                    drop(lease);
+                }
+                drop(self.run.take());
+            }
         }
-    }
-}
-
-impl<Owner> ScratchRun<Owner> {
-    fn cleanup_own_run_unbounded(&self) {
-        for name in [SCRATCH_PAGES_FILE, SCRATCH_BLOBS_FILE, SCRATCH_MARKER_FILE] {
-            let _ = self.run.remove_file(name);
-        }
-        unlock(&self.lease);
-        let _ = self.run.remove_file(SCRATCH_LEASE_FILE);
-        let _ = self.namespace.remove_dir(&self.run_name);
     }
 }
 
@@ -2097,7 +2132,18 @@ mod tests {
             SCRATCH_BLOBS_FILE,
         ]
         .into_iter()
-        .map(|name| (name, fs::read(run.join(name)).unwrap()))
+        .map(|name| {
+            let path = run.join(name);
+            let bytes = if name == SCRATCH_LEASE_FILE {
+                let metadata = fs::metadata(path).unwrap();
+                assert!(metadata.is_file());
+                assert_eq!(metadata.len(), 0);
+                Vec::new()
+            } else {
+                fs::read(path).unwrap()
+            };
+            (name, bytes)
+        })
         .collect()
     }
 
