@@ -23,10 +23,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo test --locked
-      # The v1 tail matrix has shown parallel-only Linux failures while its
-      # exact and serial runs remain stable. Keep this physical certification
-      # pass serial: it preserves every assertion and isolates protocol checks
-      # from suite-wide I/O scheduling.
+      # Unix crash tests spawn the current test binary. In a parallel libtest
+      # run, the fork/exec window can transiently inherit another test's locked
+      # journal descriptor and cause a spurious SegmentAlreadyOpen. Serializing
+      # the physical suite removes that harness interaction without weakening
+      # any protocol assertion.
       - run: cargo test --locked --all-features -- --test-threads=1
       - name: Timed Patricia 4096-record physical burn-in
         shell: bash
