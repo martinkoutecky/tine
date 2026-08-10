@@ -23,7 +23,11 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo test --locked
-      - run: cargo test --locked --all-features
+      # The v1 tail matrix has shown parallel-only Linux failures while its
+      # exact and serial runs remain stable. Keep this physical certification
+      # pass serial: it preserves every assertion and isolates protocol checks
+      # from suite-wide I/O scheduling.
+      - run: cargo test --locked --all-features -- --test-threads=1
       - name: Timed Patricia 4096-record physical burn-in
         shell: bash
         run: |

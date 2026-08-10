@@ -1340,14 +1340,19 @@ mod tests {
                     complete[..prefix_len]
                 );
             } else {
-                assert!(
-                    matches!(
-                        opened,
-                        Err(LocalJournalError::CorruptSegment { offset, .. })
-                            if offset == prefix_len as u64
+                match opened {
+                    Err(LocalJournalError::CorruptSegment { offset, .. })
+                        if offset == prefix_len as u64 => {}
+                    Err(error) => panic!(
+                        "a {torn}-byte tail with an ambiguous declared extent returned the wrong error: {error}"
                     ),
-                    "a {torn}-byte tail with an ambiguous declared extent must fail closed"
-                );
+                    Ok((segment, recovery)) => panic!(
+                        "a {torn}-byte tail with an ambiguous declared extent reopened at sequence {}, {} committed bytes, and {} discarded tail bytes",
+                        segment.next_sequence(),
+                        segment.committed_bytes(),
+                        recovery.discarded_tail_bytes,
+                    ),
+                }
                 assert_eq!(fixture.segment_bytes("device.journal"), truncated);
             }
         }
