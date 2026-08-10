@@ -1,6 +1,6 @@
 # 0050. Private enrollment checkpoint authority
 
-- **Status:** Accepted
+- **Status:** Superseded by [0053](0053-enrollment-checkpoint-integrity.md)
 - **Date:** 2026-07-26
 
 ## Context
@@ -40,3 +40,11 @@ Filesystem atomicity and directory-sync guarantees remain platform dependent.
 The record format advances to schema version 3. History remains immutable, open
 work has a fixed 64-record bound with no finite lifetime, and the new authority
 claim becomes required after enrollment publication.
+
+## Supersession
+
+This decision described a private HMAC key as a trust authority. That stronger
+claim does not hold against the local same-user rewrite boundary and is no
+longer used for newly written enrollment state. ADR 0053 preserves byte-exact
+v1/v5 verification for existing stores, while replacing new authority and
+checkpoint records with explicit versioned integrity codecs.

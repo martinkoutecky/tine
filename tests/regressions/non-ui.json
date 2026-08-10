@@ -3471,6 +3471,31 @@
         "failBefore": "source-proven"
       },
       "notes": "Accepted managed-storage safety repair, 2026-08-10. An ordinary managed delete derives its exact page ID, accepted path, kind and actor source bytes from one actor turn; durably publishes those exact bytes to logseq/.tine-trash/pages or journals with no overwrite; then re-proves the same actor source, page identity and accepted-frontier root before authoring exactly one DeletePage. H4 adds a retained capability walk from the projection root through logseq, .tine-trash and the typed kind directory: every component is created with ensure_directory_nofollow and reopened with open_dir_nofollow, then tine-storage v0.1.1 publish_immutable_exact publishes or exact-verifies the leaf. On Windows the storage contract is its certified, validated-directory ceiling; it does not claim undocumented power-loss directory fsync. Focused Rust tests cover managed application save followed by exact projected-byte recovery, imported page and journal CRLF/layout, original extension, idempotent unpinned retry, the fresh/malformed typed chain, and a publication failure after optional leaf creation: it refuses before a tombstone or frontier/author advance, leaves the source, and an exact retry converges. Frontend tests cover the bounded page-local quiescence barrier, in-flight second edit, an edit in the resolved-helper handoff, retained save/deferred drafts, and the explicit conflicted-delete path: no draft flush, backend actor invocation, removal only on success, and draft retention on failure. Source-proven fail-before: the prior ordinary DeletePage authored its semantic tombstone without any preservation/re-proof, and its frontend path performed only one dirty flush with no synchronous retirement recheck. Direct Files backend/trash semantics remain unchanged."
+    },
+    {
+      "id": "REG-SYNC-ENROLLMENT-CHECKPOINT-INTEGRITY-MIGRATION-001",
+      "title": "Enrollment opens byte-exact v1/v5 histories, then lazily appends and audits canonical keyless v6/v3 integrity checkpoints",
+      "family": "sync-data-safety",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/oplog/enrollment.rs::current_enrollment_claim_record_and_checkpoint_are_keyless_canonical_crc_v2_v6_v3",
+          "crates/tine-core/src/oplog/enrollment.rs::legacy_v1_v5_reopens_byte_exactly_then_lazily_appends_v6_without_rewriting_authority",
+          "crates/tine-core/src/oplog/enrollment.rs::legacy_v1_v5_mixed_suffix_opens_at_every_boundary_and_full_audit_pages_verify_both_codecs",
+          "crates/tine-core/src/oplog/enrollment.rs::enrollment_keyed_auth_source_guard_isolated_to_legacy_verification_and_simulator_formats"
+        ],
+        "scenario": "sync.enrollment-keyless-integrity-with-frozen-legacy-suffix",
+        "failBefore": "source-proven"
+      },
+      "notes": "Fresh schema-v2 authority claims omit secret material and schema-v6 records use schema-v3 CRC-32/ISO-HDLC checkpoints. The permanent mixed-history fixture constructs exact v1 authority/v5 HMAC bytes using a test-only legacy signer, proves their bytes and OS identity survive reopen, opens every mixed-chain suffix boundary, appends current v6 records without rewriting the claim, and pages a complete audit across both codecs. Structural mismatch, noncanonical encodings, illegal record/checkpoint pairs, and altered CRCs refuse before lifecycle admission. A source guard permits production HMAC only in the frozen verifier module and permits signing only under cfg(test)."
     }
   ]
 }

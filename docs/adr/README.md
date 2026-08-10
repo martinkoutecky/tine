@@ -76,6 +76,7 @@ see the project `CLAUDE.md`.
 | [0047](0047-android-plugin-platform-at-launch.md) | Android joins the initial plugin-platform launch through explicit opt-in | Accepted |
 | [0048](0048-compatible-managed-sync.md) | Managed sync uses operation truth with an optional shared Markdown projection | Superseded by 0049 |
 | [0049](0049-oplog-first-sparse-storage.md) | Oplog-first sparse storage uses catalog and stable home-page shards | Accepted — implementation/LocalActive gated |
-| [0050](0050-private-enrollment-checkpoint-authority.md) | Private enrollment authority authenticates bounded immutable checkpoints | Accepted |
+| [0050](0050-private-enrollment-checkpoint-authority.md) | Private enrollment authority authenticates bounded immutable checkpoints | Superseded by 0053 |
 | [0051](0051-single-user-multipart-bootstrap-authority.md) | Single-user multipart bootstrap authority is one commit-last V1 publication | Accepted — inactive format contract |
 | [0052](0052-ios-plugin-platform-apple-4-7-2.md) | The plugin API may never re-export native surface (Apple 4.7.2); read before widening `PLUGIN_CAPABILITIES` | Accepted |
+| [0053](0053-enrollment-checkpoint-integrity.md) | Current enrollment checkpoints provide versioned integrity; legacy HMAC is verification-only | Accepted |
