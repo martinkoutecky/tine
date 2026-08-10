@@ -466,6 +466,45 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(graphBinding()).not.toBe(before);
   });
 
+  it("keeps a failed save's edit tracked across a graph reopen", async () => {
+    // `doSave` clears the dirty mark BEFORE awaiting, and its failure path
+    // restores it only if the save-invalidation epoch has not moved. So making a
+    // graph reopen move that epoch means a save that fails during the reopen
+    // leaves the edit neither written nor pending: silently discarded at close.
+    // The binding identity therefore has to be a different counter from the save
+    // epoch, which is what this pins.
+    const { loadRoutedPage } = await import("./store");
+    const { markDirty, flushPage, isDirty } = await import("./persistence");
+    const { changeJournalTitleFormat, setGraphMeta } = await import("./ui");
+
+    loadRoutedPage(page("Target", "pages/Target.md", "incumbent"));
+    markDirty("Target");
+    setGraphMeta({ root: "/g", journal_page_title_format: "MMM do, yyyy" } as never);
+    vi.spyOn(backend(), "setJournalTitleFormat").mockResolvedValue(undefined);
+
+    let failSave: (e: unknown) => void = () => {};
+    vi.spyOn(backend(), "savePage").mockReturnValue(
+      new Promise((_, rej) => {
+        failSave = rej;
+      }) as never,
+    );
+
+    const saving = flushPage("Target");
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The graph is reopened while that save is in flight.
+    changeJournalTitleFormat("yyyy-MM-dd");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    failSave(new Error("disk went away"));
+    expect(await saving).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Not saved — so it MUST still be pending. The alternative is a lost edit.
+    expect(isDirty("Target")).toBe(true);
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

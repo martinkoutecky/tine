@@ -44,6 +44,16 @@ const deletedPages = new Set<string>();
 // baseline update if the graph changed under it; resetSaveState also clears
 // `dirty` so a stray queued save becomes a no-op.
 let graphToken = 0;
+// Which GRAPH the app is bound to — a different question from `graphToken`, and
+// deliberately a different counter.
+//
+// `graphToken` is the SAVE-INVALIDATION epoch: `doSave` captures it, and on
+// failure restores the dirty mark only if it still matches. Moving it therefore
+// does not merely invalidate a save, it makes a FAILED save stop tracking the
+// edit as unsaved — neither written nor pending, and silently discarded at
+// close. Reusing it as the binding identity turned an in-place graph reopen into
+// exactly that data loss. (GH #254 increment 3, round 14.)
+let graphBindingRev = 0;
 // Per-page save queue: writes for one page run strictly one-after-another (never
 // concurrently) and each runs against the LATEST store state.
 const saveChain = new Map<string, Promise<boolean>>();
@@ -295,7 +305,7 @@ export function isTombstoned(name: string): boolean {
  * (GH #254 increment 3, round 12.)
  */
 export function graphBinding(): number {
-  return graphToken;
+  return graphBindingRev;
 }
 
 /**
@@ -313,7 +323,7 @@ export function graphBinding(): number {
  * (GH #254 increment 3, round 13.)
  */
 export function bumpGraphBinding(): void {
-  graphToken++;
+  graphBindingRev++;
 }
 
 // A backend reopen is a rebind; the binding must move with it.
@@ -393,6 +403,7 @@ export function resetSaveState() {
     dataRevTimer = null;
   }
   graphToken++;
+  graphBindingRev++; // a switch is also a rebind
   dirty.clear();
   baseRev.clear();
   conflictObservation.clear();
