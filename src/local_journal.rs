@@ -60,7 +60,7 @@ const FRAME_MAGIC: &[u8; 8] = b"TINEJRN1";
 const FRAME_CHECKSUM_BYTES: usize = 32;
 /// magic + big-endian `u32` header length + big-endian `u64` payload length.
 const FRAME_PREFIX_BYTES: usize = FRAME_MAGIC.len() + 4 + 8;
-const MIN_FRAME_BYTES: usize = FRAME_PREFIX_BYTES + FRAME_CHECKSUM_BYTES;
+pub(crate) const MIN_FRAME_BYTES: usize = FRAME_PREFIX_BYTES + FRAME_CHECKSUM_BYTES;
 const SEGMENT_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 /// Bound on the create/open race between two processes reaching a segment name
 /// that does not exist yet. Each iteration makes progress or observes a
@@ -105,6 +105,12 @@ pub enum LocalJournalError {
         found: u32,
     },
     UnsafeSegmentName(String),
+    AmbiguousLegacySuffix {
+        offset: u64,
+        length: u64,
+    },
+    UnsupportedDurableReplacement,
+    PreparedArtifactExists(String),
     SegmentAlreadyOpen(String),
     SegmentTooLarge(u64),
     /// A complete, fully written region failed validation. Prior frames are
@@ -167,6 +173,17 @@ impl fmt::Display for LocalJournalError {
             Self::UnsafeSegmentName(name) => {
                 write!(formatter, "unsafe local journal segment name: {name}")
             }
+            Self::AmbiguousLegacySuffix { offset, length } => write!(
+                formatter,
+                "legacy local journal has an ambiguous {length}-byte suffix at offset {offset}"
+            ),
+            Self::UnsupportedDurableReplacement => formatter.write_str(
+                "durable local-journal frontier replacement is unsupported on this target",
+            ),
+            Self::PreparedArtifactExists(name) => write!(
+                formatter,
+                "local-journal preparation artifact already exists: {name}"
+            ),
             Self::SegmentAlreadyOpen(name) => write!(
                 formatter,
                 "local journal segment {name} is already open elsewhere"
@@ -369,7 +386,7 @@ impl FrameExtent {
 
 /// Encode one frame without owning its payload, so the append path copies the
 /// payload exactly once (into the frame buffer it writes).
-fn encode_frame<K: LocalJournalPayloadKind>(
+pub(crate) fn encode_frame<K: LocalJournalPayloadKind>(
     device_id: Uuid,
     sequence: u64,
     payload_kind: K,
@@ -414,11 +431,12 @@ fn encode_frame<K: LocalJournalPayloadKind>(
 pub struct LocalJournalStats {
     pub frames_appended: u64,
     pub bytes_appended: u64,
-    /// `fdatasync`-class barriers. Steady-state commits pay exactly one each.
+    /// `fdatasync`-class barriers. V1 appends pay one; v2 appends pay two.
     pub data_durability_syncs: u64,
     /// Directory-entry barriers. Paid once, when the segment file is created.
     pub directory_durability_syncs: u64,
-    /// Objectively incomplete byte-tail truncations performed while opening.
+    /// Recovery truncations performed while opening: objectively incomplete
+    /// v1 byte tails or v2 bytes beyond a valid older frontier.
     pub recovery_truncations: u64,
 }
 
@@ -431,6 +449,8 @@ pub struct LocalJournalRecovery<K> {
     /// base sequence.
     pub frames_recovered: u64,
     /// Final bytes too short to contain a frame that were ignored and truncated.
+    /// Physical bytes excluded by recovery: a provably incomplete v1 tail or
+    /// a v2 suffix not selected by the validated frontier.
     pub discarded_tail_bytes: u64,
     /// The last complete frame, retained so a caller can settle its own state
     /// without a second pass.
@@ -462,7 +482,7 @@ pub struct LocalJournalAppend {
     pub sequence: u64,
     pub frame_bytes: u64,
     pub payload_digest: ContentDigest,
-    /// Durability barriers this append performed. Always exactly one.
+    /// Durability barriers this append performed: one for v1, two for v2.
     pub data_durability_syncs: u64,
 }
 
@@ -778,7 +798,7 @@ fn scan_segment<K: LocalJournalPayloadKind>(
     })
 }
 
-fn require_safe_segment_name(name: &str) -> Result<(), LocalJournalError> {
+pub(crate) fn require_safe_segment_name(name: &str) -> Result<(), LocalJournalError> {
     let unsafe_name = name.is_empty()
         || name == "."
         || name == ".."
@@ -817,7 +837,7 @@ fn open_or_create_segment_file(
 }
 
 #[cfg(unix)]
-fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
+pub(crate) fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
     use std::ffi::CString;
     use std::os::fd::AsFd as _;
 
@@ -840,7 +860,7 @@ fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::Fil
 }
 
 #[cfg(windows)]
-fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
+pub(crate) fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::File> {
     use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
 
     let mut options = OpenOptions::new();
@@ -850,7 +870,7 @@ fn open_regular_read_write_nofollow(dir: &Dir, name: &str) -> io::Result<fs::Fil
 }
 
 #[cfg(not(any(unix, windows)))]
-fn open_regular_read_write_nofollow(_dir: &Dir, _name: &str) -> io::Result<fs::File> {
+pub(crate) fn open_regular_read_write_nofollow(_dir: &Dir, _name: &str) -> io::Result<fs::File> {
     Err(io::Error::new(
         ErrorKind::Unsupported,
         "no-follow journal opens are unsupported on this target",
@@ -858,7 +878,7 @@ fn open_regular_read_write_nofollow(_dir: &Dir, _name: &str) -> io::Result<fs::F
 }
 
 #[cfg(unix)]
-fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError> {
+pub(crate) fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError> {
     // SAFETY: `file` owns a live descriptor for the duration of the call.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
@@ -872,13 +892,13 @@ fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError
 }
 
 #[cfg(unix)]
-fn unlock(file: &fs::File) {
+pub(crate) fn unlock(file: &fs::File) {
     // SAFETY: `file` owns a live descriptor for the duration of the call.
     let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
 }
 
 #[cfg(windows)]
-fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError> {
+pub(crate) fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError> {
     use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, FALSE};
     use windows_sys::Win32::Storage::FileSystem::{
         LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
@@ -906,7 +926,7 @@ fn lock_exclusive_nonblocking(file: &fs::File) -> Result<bool, LocalJournalError
 }
 
 #[cfg(windows)]
-fn unlock(file: &fs::File) {
+pub(crate) fn unlock(file: &fs::File) {
     use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
 
     let mut overlapped = unsafe { std::mem::zeroed() };
@@ -922,14 +942,14 @@ fn unlock(file: &fs::File) {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn lock_exclusive_nonblocking(_file: &fs::File) -> Result<bool, LocalJournalError> {
+pub(crate) fn lock_exclusive_nonblocking(_file: &fs::File) -> Result<bool, LocalJournalError> {
     Err(LocalJournalError::Io(
         "exclusive journal segment locking is unsupported on this target".to_owned(),
     ))
 }
 
 #[cfg(not(any(unix, windows)))]
-fn unlock(_file: &fs::File) {}
+pub(crate) fn unlock(_file: &fs::File) {}
 
 #[cfg(test)]
 mod tests {

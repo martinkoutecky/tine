@@ -27,6 +27,7 @@ mod durable_batch;
 mod filesystem;
 pub mod formats;
 mod local_journal;
+mod local_journal_v2;
 mod packed_patricia;
 mod scratch;
 mod sqlite_database;
@@ -105,6 +106,10 @@ pub use filesystem::{
 pub use local_journal::{
     LocalJournalAppend, LocalJournalError, LocalJournalFrame, LocalJournalPayloadKind,
     LocalJournalRecovery, LocalJournalSegment, LocalJournalStats,
+};
+pub use local_journal_v2::{
+    LocalJournalAppendError, LocalJournalSegmentV2, LocalJournalSegmentV2Selection,
+    LockedLocalJournalV1Segment,
 };
 #[cfg(feature = "test-support")]
 pub use packed_patricia::{

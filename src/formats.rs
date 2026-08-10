@@ -41,6 +41,11 @@ pub use crate::durable_batch::{
     MANIFEST_ENCODING_VERSION, OBJECT_ENVELOPE_SCHEMA_VERSION, OPLOG_PROTOCOL_VERSION,
 };
 pub use crate::local_journal::LOCAL_JOURNAL_FRAME_SCHEMA_VERSION;
+pub use crate::local_journal_v2::{
+    LOCAL_JOURNAL_FRONTIER_BYTES, LOCAL_JOURNAL_FRONTIER_SUFFIX, LOCAL_JOURNAL_FRONTIER_V2_MAGIC,
+    LOCAL_JOURNAL_SEGMENT_HEADER_BYTES, LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION,
+    LOCAL_JOURNAL_SEGMENT_V2_MAGIC,
+};
 pub use crate::scratch::{SCRATCH_PAGE_SCHEMA_VERSION, SCRATCH_SCHEMA_VERSION};
 pub use crate::sqlite_frontier::{SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION};
 
@@ -159,6 +164,24 @@ pub const FORMAT_MANIFEST: &[FormatConstant] = &[
         LOCAL_JOURNAL_FRAME_SCHEMA_VERSION as u64,
     ),
     num(
+        "LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION",
+        "local journal v2 segment and frontier",
+        FormatKind::Identity,
+        LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION as u64,
+    ),
+    name_of(
+        "LOCAL_JOURNAL_SEGMENT_V2_MAGIC",
+        "local journal v2 segment header",
+        FormatKind::Identity,
+        LOCAL_JOURNAL_SEGMENT_V2_MAGIC,
+    ),
+    name_of(
+        "LOCAL_JOURNAL_FRONTIER_V2_MAGIC",
+        "local journal v2 frontier",
+        FormatKind::Identity,
+        LOCAL_JOURNAL_FRONTIER_V2_MAGIC,
+    ),
+    num(
         "SCRATCH_SCHEMA_VERSION",
         "engine scratch run",
         FormatKind::Identity,
@@ -183,6 +206,24 @@ pub const FORMAT_MANIFEST: &[FormatConstant] = &[
         SQLITE_SCHEMA_VERSION as u64,
     ),
     // layout
+    num(
+        "LOCAL_JOURNAL_SEGMENT_HEADER_BYTES",
+        "local journal v2 segment header",
+        FormatKind::Layout,
+        LOCAL_JOURNAL_SEGMENT_HEADER_BYTES as u64,
+    ),
+    num(
+        "LOCAL_JOURNAL_FRONTIER_BYTES",
+        "local journal v2 frontier",
+        FormatKind::Layout,
+        LOCAL_JOURNAL_FRONTIER_BYTES as u64,
+    ),
+    name_of(
+        "LOCAL_JOURNAL_FRONTIER_SUFFIX",
+        "local journal v2 frontier",
+        FormatKind::Layout,
+        LOCAL_JOURNAL_FRONTIER_SUFFIX,
+    ),
     name_of(
         "SCRATCH_DIR",
         "engine scratch directory",
@@ -303,11 +344,17 @@ mod tests {
         assert_eq!(OBJECT_ENVELOPE_SCHEMA_VERSION, 2);
         assert_eq!(MANIFEST_ENCODING_VERSION, 4);
         assert_eq!(LOCAL_JOURNAL_FRAME_SCHEMA_VERSION, 1);
+        assert_eq!(LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION, 2);
+        assert_eq!(LOCAL_JOURNAL_SEGMENT_V2_MAGIC, "TINEJNL2");
+        assert_eq!(LOCAL_JOURNAL_FRONTIER_V2_MAGIC, "TINEFRT2");
         assert_eq!(SCRATCH_SCHEMA_VERSION, 13);
         assert_eq!(SCRATCH_PAGE_SCHEMA_VERSION, 1);
         assert_eq!(SQLITE_APPLICATION_ID, 0x5449_4e45);
         assert_eq!(SQLITE_SCHEMA_VERSION, 15);
 
+        assert_eq!(LOCAL_JOURNAL_SEGMENT_HEADER_BYTES, 136);
+        assert_eq!(LOCAL_JOURNAL_FRONTIER_BYTES, 240);
+        assert_eq!(LOCAL_JOURNAL_FRONTIER_SUFFIX, ".frontier-v2");
         assert_eq!(SCRATCH_DIR, "engine-scratch-v2");
         assert_eq!(SCRATCH_MARKER_FILE, "marker");
         assert_eq!(SCRATCH_LEASE_FILE, "lease");
@@ -352,6 +399,18 @@ mod tests {
                 FormatValue::Number(LOCAL_JOURNAL_FRAME_SCHEMA_VERSION as u64),
             ),
             (
+                "LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION",
+                FormatValue::Number(LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION as u64),
+            ),
+            (
+                "LOCAL_JOURNAL_SEGMENT_V2_MAGIC",
+                FormatValue::Name(LOCAL_JOURNAL_SEGMENT_V2_MAGIC),
+            ),
+            (
+                "LOCAL_JOURNAL_FRONTIER_V2_MAGIC",
+                FormatValue::Name(LOCAL_JOURNAL_FRONTIER_V2_MAGIC),
+            ),
+            (
                 "SCRATCH_SCHEMA_VERSION",
                 FormatValue::Number(SCRATCH_SCHEMA_VERSION as u64),
             ),
@@ -366,6 +425,18 @@ mod tests {
             (
                 "SQLITE_SCHEMA_VERSION",
                 FormatValue::Number(SQLITE_SCHEMA_VERSION as u64),
+            ),
+            (
+                "LOCAL_JOURNAL_SEGMENT_HEADER_BYTES",
+                FormatValue::Number(LOCAL_JOURNAL_SEGMENT_HEADER_BYTES as u64),
+            ),
+            (
+                "LOCAL_JOURNAL_FRONTIER_BYTES",
+                FormatValue::Number(LOCAL_JOURNAL_FRONTIER_BYTES as u64),
+            ),
+            (
+                "LOCAL_JOURNAL_FRONTIER_SUFFIX",
+                FormatValue::Name(LOCAL_JOURNAL_FRONTIER_SUFFIX),
             ),
             ("SCRATCH_DIR", FormatValue::Name(SCRATCH_DIR)),
             (

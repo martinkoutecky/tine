@@ -14,8 +14,13 @@
 //! This is the fixture `tine-core` would become after extraction, in miniature:
 //! when the crate moves out of tree, its consumers see exactly this much.
 
+use serde::{Deserialize, Serialize};
 use tine_storage::formats::{self, FormatKind, FormatValue};
-use tine_storage::{ContentDigest, DigestSealedError, DigestSealedPayload};
+use tine_storage::{
+    ContentDigest, DigestSealedError, DigestSealedPayload, LocalJournalAppendError,
+    LocalJournalError, LocalJournalSegmentV2, LocalJournalSegmentV2Selection,
+};
+use uuid::Uuid;
 
 /// A durable payload survives a canonical encode/decode round trip, using only
 /// public paths. Not a redundant unit test: the unit suite proves the codec,
@@ -104,6 +109,62 @@ fn format_constants_are_reachable_through_formats() {
     assert_eq!(formats::SCRATCH_DIR, "engine-scratch-v2");
     assert!(formats::MAX_OBJECT_BYTES > 0);
     assert!(formats::SQLITE_SCHEMA_VERSION > 0);
+    assert_eq!(formats::LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION, 2);
+    assert_eq!(formats::LOCAL_JOURNAL_SEGMENT_HEADER_BYTES, 136);
+    assert_eq!(formats::LOCAL_JOURNAL_FRONTIER_BYTES, 240);
+}
+
+#[test]
+fn journal_v2_selection_and_append_certainty_are_publicly_typed() {
+    let selection = LocalJournalSegmentV2Selection::new(
+        "device.journal-v2",
+        Uuid::from_u128(1),
+        Uuid::from_u128(2),
+        17,
+    )
+    .unwrap();
+    assert_eq!(selection.segment_name(), "device.journal-v2");
+    assert_eq!(selection.segment_id(), Uuid::from_u128(1));
+    assert_eq!(selection.device_id(), Uuid::from_u128(2));
+    assert_eq!(selection.base_sequence(), 17);
+    assert_eq!(
+        selection.segment_name_digest(),
+        ContentDigest::of(b"device.journal-v2")
+    );
+
+    let failure =
+        LocalJournalAppendError::DefinitelyNotAppended(LocalJournalError::SequenceExhausted);
+    assert!(!failure.outcome_is_unknown());
+    assert_eq!(failure.cause(), &LocalJournalError::SequenceExhausted);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+enum ExternalJournalKind {
+    Effect,
+}
+
+#[test]
+fn journal_v2_can_be_prepared_opened_and_appended_from_the_public_api() {
+    let root = std::env::temp_dir().join(format!("tine-storage-public-v2-{}", Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let dir = cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+    let selection = LocalJournalSegmentV2Selection::new(
+        "external.journal-v2",
+        Uuid::from_u128(3),
+        Uuid::from_u128(4),
+        9,
+    )
+    .unwrap();
+    LocalJournalSegmentV2::<ExternalJournalKind>::prepare(&dir, &selection).unwrap();
+    let (mut segment, recovery) = LocalJournalSegmentV2::open_selected(&dir, &selection).unwrap();
+    assert_eq!(recovery.frames_recovered, 0);
+    let appended = segment
+        .append(ExternalJournalKind::Effect, b"public")
+        .unwrap();
+    assert_eq!(appended.sequence, 9);
+    assert_eq!(appended.data_durability_syncs, 2);
+    drop(segment);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// The recorded surface is itself public, so a consumer or a release process
