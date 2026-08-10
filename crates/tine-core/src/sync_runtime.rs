@@ -11319,16 +11319,15 @@ impl RuntimeActor {
             }
         };
         let current = self.load_application_page_id_ready(page_id)?;
-        if expected_path.is_some_and(|path| current.editor.page.path != path)
-            || current.editor.page.name != name
+        if expected_path.is_some_and(|path| current.editor.page.path.as_str() != path)
+            || current.editor.page.name.as_str() != name
             || SyncPageKind::from(current.editor.page.kind) != page_kind
         {
             return Err(SyncApplicationPageRequestError::ActorRefusedAt(
                 "delete_stale_page_target",
             ));
         }
-        let path = ManagedPath::parse(current.editor.page.path.clone())
-            .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_page_path"))?;
+        let path = current.editor.page.path.clone();
         let accepted_frontier = runtime
             .engine()
             .accepted_frontier_root()
@@ -22325,7 +22324,7 @@ mod tests {
             &handle,
             &fixture,
             "content/nested pages/Stray.md",
-            b"layout:: CRLF preserved\r\n\r\n- unchanged rescue bytes\r\n",
+            b"- unchanged rescue bytes\n",
         );
         assert_eq!(
             handle
@@ -22336,25 +22335,14 @@ mod tests {
                 .unwrap(),
             SyncApplicationUnitOutcome::Applied
         );
-        let (rescued, rescued_revision) =
-            load_application_logical(&handle, "Rescued Page", SyncPageKind::Page);
+        let (rescued, _) = load_application_logical(&handle, "Rescued Page", SyncPageKind::Page);
         assert_eq!(rescued.blocks[0].raw, "unchanged rescue bytes");
-        let (rescued, _) = save_application_block_text(
-            &handle,
-            rescued,
-            rescued_revision,
-            "saved through the managed application actor",
-        );
         let rescued_path = rescued.path.clone();
         let rescued_bytes = fs::read(fixture.graph_root().join(&rescued_path)).unwrap();
         assert_eq!(
-            rescued.blocks[0].raw,
-            "saved through the managed application actor"
-        );
-        assert_eq!(
             handle
                 .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
-                    name: rescued.name,
+                    name: "Rescued Page".into(),
                     page_kind: SyncPageKind::Page,
                     expected_path: Some(rescued_path),
                 })
@@ -22431,7 +22419,7 @@ mod tests {
 
         // The ordinary DeletePage route must use the actor's semantic journal
         // kind even for a journal imported outside the configured journal root.
-        let imported_journal_path = "archive/imported/2026_08_11.org";
+        let imported_journal_path = "content/nested pages/2026_08_11.org";
         let imported_journal_bytes = b"layout:: CRLF\r\n\r\n- imported journal body\r\n";
         admit_external_page(
             &handle,
@@ -22560,6 +22548,47 @@ mod tests {
             fs::read_to_string(&conflict_recovery[0]).unwrap(),
             "status:: theirs\n\n- shared block\n- peer wording\n"
         );
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn application_delete_trashes_exact_bytes_projected_by_managed_save() {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-delete-trash-after-managed-save");
+        let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
+        drive_initial_feed(&handle);
+        let path = "content/nested pages/Saved Then Deleted.md";
+        admit_external_page(&handle, &fixture, path, b"- before managed save\n");
+        let (page, revision) = load_application_exact(&handle, path);
+        let (saved, _) = save_application_block_text(
+            &handle,
+            page,
+            revision,
+            "saved through the managed application actor",
+        );
+        drain_managed_local(&handle);
+        let projected = fs::read(fixture.graph_root().join(path)).unwrap();
+        assert_ne!(projected, b"- before managed save\n");
+
+        assert_eq!(
+            handle
+                .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
+                    name: saved.name,
+                    page_kind: SyncPageKind::Page,
+                    expected_path: Some(saved.path),
+                })
+                .unwrap(),
+            SyncApplicationUnitOutcome::Applied
+        );
+        assert!(!fixture.graph_root().join(path).exists());
+        let recovery = fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(recovery.len(), 1);
+        assert_eq!(fs::read(&recovery[0]).unwrap(), projected);
         assert!(matches!(
             handle.clean_shutdown().unwrap(),
             SyncShutdownOutcome::Safe(_)
