@@ -2525,6 +2525,12 @@ pub struct PhysicalBlockReferrerCandidateRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalPageReferrerCandidateRow {
+    pub source_page_id: [u8; 16],
+    pub source: PhysicalEntityId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPropertyRow {
     pub owner: PhysicalEntityId,
     pub page_id: [u8; 16],
@@ -3411,6 +3417,69 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Stable source candidates for one normalized explicit page-reference
+    /// target. Property-key pseudo pages are not backlinks. Duplicate syntax
+    /// occurrences collapse to one source entity; the parser-owned application
+    /// page verifies exact membership before exposure.
+    pub fn page_referrer_candidates_after(
+        &self,
+        normalized_name: &str,
+        after: Option<([u8; 16], PhysicalEntityId)>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPageReferrerCandidateRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(normalized_name)?;
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT source_page_id, source_entity_type, source_entity_id
+                 FROM reference_postings
+                 WHERE target_type = 0 AND reference_kind <= 4
+                   AND normalized_name = ?1
+                 ORDER BY source_page_id, source_entity_type, source_entity_id LIMIT ?2",
+                vec![normalized_name.to_owned().into(), limit.into()],
+            ),
+            Some((page_id, source)) => {
+                let (source_type, source_id) = source.sql_parts();
+                (
+                    "SELECT DISTINCT source_page_id, source_entity_type, source_entity_id
+                     FROM reference_postings
+                     WHERE target_type = 0 AND reference_kind <= 4
+                       AND normalized_name = ?1
+                       AND (source_page_id > ?2
+                         OR (source_page_id = ?2 AND source_entity_type > ?3)
+                         OR (source_page_id = ?2 AND source_entity_type = ?3
+                             AND source_entity_id > ?4))
+                     ORDER BY source_page_id, source_entity_type, source_entity_id LIMIT ?5",
+                    vec![
+                        normalized_name.to_owned().into(),
+                        page_id.to_vec().into(),
+                        source_type.into(),
+                        source_id.to_vec().into(),
+                        limit.into(),
+                    ],
+                )
+            }
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let rows = rows.map(
+            |row| -> Result<PhysicalPageReferrerCandidateRow, MaterializationError> {
+                let (page_id, source_type, source_id) = row.map_err(MaterializationError::from)?;
+                Ok(PhysicalPageReferrerCandidateRow {
+                    source_page_id: decode_id(&page_id)?,
+                    source: decode_entity(source_type, &source_id)?,
+                })
+            },
+        );
+        collect_read_rows(rows, |_| Ok(32))
+    }
+
     pub fn properties(
         &self,
         owner: PhysicalEntityId,
@@ -4246,6 +4315,74 @@ mod tests {
             vec![PhysicalBlockReferrerCandidateRow {
                 source_page_id: second_page,
                 source_block_id: second_block,
+            }]
+        );
+
+        for (page_id, source_type, source_id, locator, ordinal, kind) in [
+            (first_page, 0, first_page, b"page-alias".as_slice(), 0, 4),
+            (first_page, 1, first_block, b"block-link-a".as_slice(), 0, 0),
+            (first_page, 1, first_block, b"block-link-b".as_slice(), 1, 1),
+            (
+                second_page,
+                1,
+                second_block,
+                b"block-embed".as_slice(),
+                0,
+                2,
+            ),
+            (
+                second_page,
+                1,
+                second_block,
+                b"property-key".as_slice(),
+                1,
+                5,
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO reference_postings (
+                         source_page_id, source_entity_type, source_entity_id,
+                         source_locator, ordinal, reference_kind, target_type,
+                         raw_name, normalized_name
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 'Target', 'target')",
+                    params![
+                        page_id.as_slice(),
+                        source_type,
+                        source_id.as_slice(),
+                        locator,
+                        ordinal,
+                        kind,
+                    ],
+                )
+                .unwrap();
+        }
+        let first_page_candidates = read
+            .page_referrer_candidates_after("target", None, 2)
+            .unwrap();
+        assert_eq!(
+            first_page_candidates,
+            vec![
+                PhysicalPageReferrerCandidateRow {
+                    source_page_id: first_page,
+                    source: PhysicalEntityId::Page(first_page),
+                },
+                PhysicalPageReferrerCandidateRow {
+                    source_page_id: first_page,
+                    source: PhysicalEntityId::Block(first_block),
+                },
+            ]
+        );
+        assert_eq!(
+            read.page_referrer_candidates_after(
+                "target",
+                Some((first_page, PhysicalEntityId::Block(first_block))),
+                10,
+            )
+            .unwrap(),
+            vec![PhysicalPageReferrerCandidateRow {
+                source_page_id: second_page,
+                source: PhysicalEntityId::Block(second_block),
             }]
         );
     }
