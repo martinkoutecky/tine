@@ -7,6 +7,8 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-10
+
 ### Fixed
 
 - Local-journal recovery now preserves the segment and fails closed when a
@@ -26,5 +28,6 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/martinkoutecky/tine-storage/releases/tag/v0.1.0
