@@ -34904,7 +34904,10 @@ mod tests {
         graph.mint_conflict_authority(
             path,
             &ConflictEditorEpisode {
-                activation: None,
+                // The conflict is minted FOR this editor, so it must name it —
+                // otherwise the episode equality that increment 3 strengthened
+                // would refuse the very editor the banner belongs to.
+                activation: page.activation.map(EditorActivation::from_u64),
                 loaded_revision: page.rev.clone(),
             },
             ConflictSnapshot::Present {
@@ -35596,6 +35599,7 @@ mod tests {
         fs::write(&path, "- loaded baseline\n").unwrap();
         let graph = Graph::open(&dir);
         let mut page = graph.load_by_path("external/Exact.md").unwrap().unwrap();
+        as_editor(&graph, &mut page);
         page.blocks[0].raw = format!("{mode} editor bytes");
 
         let replacement = dir.join("external/.foreign-replacement");
@@ -37663,6 +37667,7 @@ mod tests {
         let base_rev = dto.rev.clone().unwrap();
         assert!(!dto.path.is_empty(), "a loaded page is path-pinned");
         dto.blocks[0].raw = "mine".into();
+        as_editor(&g, &mut dto);
         // The wire shape: the working store has no revision to send.
         dto.rev = None;
         fs::write(&path, "- theirs\n").unwrap();
@@ -37688,6 +37693,7 @@ mod tests {
         let mut dto = g.load_named("A", PageKind::Page).unwrap().unwrap();
         let base_rev = dto.rev.clone().unwrap();
         dto.blocks[0].raw = "mine".into();
+        as_editor(&g, &mut dto);
         dto.rev = None;
         fs::write(&path, "- theirs\n").unwrap();
         let shown = g.save_page(&dto, Some(&base_rev)).unwrap_err();
@@ -38594,6 +38600,7 @@ mod tests {
             fs::write(&path, original).unwrap();
             let g = Graph::open(&dir);
             let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            as_editor(&g, &mut dto);
             let normalized = original.replace("\r\n", "\n");
             let normalized = normalized.trim_end_matches('\n');
             assert_eq!(dto.pre_block.as_deref(), Some(normalized));
@@ -38671,6 +38678,7 @@ mod tests {
                 let g = Graph::open(&dir);
                 g.warm_cache();
                 let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+                as_editor(&g, &mut dto);
                 let cached_before = dto.clone();
                 let generation_before = g.cache_generation();
                 dto.pre_block = kept.map(str::to_string);
@@ -38758,6 +38766,7 @@ mod tests {
             fs::write(&path, original).unwrap();
             let g = Graph::open(&dir);
             let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            as_editor(&g, &mut dto);
             dto.pre_block = Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX".into());
             g.save_page(&dto, dto.rev.as_deref()).unwrap();
             assert_eq!(fs::read_to_string(&path).unwrap(), expected);
@@ -38952,6 +38961,7 @@ mod tests {
                 ..Default::default()
             },
         );
+        as_editor(&g, &mut dto);
         for forced in [false, true] {
             let err = if forced {
                 arm_present_conflict_for_force(&g, &dto, &path);
@@ -49356,6 +49366,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let probe_rev = probe_page.rev.clone().unwrap();
+        as_editor(&probe_graph, &mut probe_page);
         probe_page.blocks[0].raw = format!("after\nid:: {id}");
         if forced {
             fs::write(
@@ -49381,6 +49392,7 @@ mod tests {
             .enable_managed_sync(Uuid::from_u128(91_050_003), Uuid::from_u128(91_050_004))
             .unwrap();
         let mut page = graph.load_named("Exact", PageKind::Page).unwrap().unwrap();
+        as_editor(&graph, &mut page);
         let rev = page.rev.clone().unwrap();
         page.blocks[0].raw = format!("after\nid:: {id}");
         if forced {
@@ -50351,6 +50363,7 @@ mod tests {
         let graph = Graph::open(&dir);
         let mut page = graph.load_named("Target", PageKind::Page).unwrap().unwrap();
         let base_rev = page.rev.clone().unwrap();
+        as_editor(&graph, &mut page);
         page.path.clear();
         page.blocks[0].raw = "saved A".to_owned();
         MANAGED_WRITE_AFTER_ADMISSION.with(|hook| {
@@ -51660,6 +51673,20 @@ mod tests {
         page.activation = Some(handle.activation.as_u64());
         page.blocks[0].raw = "mine".into();
         (root, path, graph, page)
+    }
+
+    /// Make `dto` an EDITOR's DTO, the way the frontend does.
+    ///
+    /// Since increment 3 a loaded page and a live editor are different things: a
+    /// read alone mints no identity, precisely so a read for export, preview or
+    /// hydration cannot inherit an editor's override authority. A test that
+    /// force-saves is modelling a user answering a banner, so it has to activate
+    /// like one.
+    fn as_editor(graph: &Graph, dto: &mut PageDto) {
+        let handle = graph
+            .activate_editor(&dto.path, ActivationIntent::Replace)
+            .expect("a loaded page is path-pinned and inside the graph");
+        dto.activation = Some(handle.activation.as_u64());
     }
 
     fn gh254_code(error: &io::Error) -> &'static str {
