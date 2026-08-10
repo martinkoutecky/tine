@@ -913,7 +913,8 @@
   "scripts/e2e-dirty-editor-replacement.mjs": {
    "contracts": [
     {
-     "class": "exact-safety",
+     "class": "exact-safety-interoperability",
+     "authority": "GH #254 increment 3 spec v24, contract rule 2 (Preservation): a loaded instance holding unsaved work is never replaced. Losing it is silent data loss in the user's own graph.",
      "userOutcome": "Unsaved edits survive when a different file with the same page name is opened; the edit is never destroyed to show the other file.",
      "blocking": true
     },
@@ -928,7 +929,8 @@
      "blocking": true
     },
     {
-     "class": "exact-safety",
+     "class": "exact-safety-interoperability",
+     "authority": "GH #254 increment 3 spec v24, contract rule 1 (Authority): a save belongs to the file its editor was activated for. Writing it elsewhere corrupts a file the user never edited.",
      "userOutcome": "The unsaved edit is written to the file it belonged to, never to the file that was requested instead.",
      "blocking": true
     }
@@ -944,12 +946,14 @@
     "Which of the two same-named files the router treats as canonical."
    ],
    "stability": "quarantined",
-   "notes": "GH #304, fixed in GH #254 increment 3. Two files legitimately share one page name (the duplicate-day stray of #21, or same-titled pages in different folders). Replacing the loaded instance destroyed the unsaved edit, and the dirty mark SURVIVED to describe the replacement's content, so the next save wrote the wrong file's bytes under the user's intent. The journey deliberately continues past 'the edit survived' to prove the refusal is not a trap: a survival-only assertion would pass on an implementation that never shows the requested file at all, which is why the non-wedging half is blocking rather than advisory. QUARANTINED 2026-08-10, harness debt. The first two assertions run green against the branch binary — the unsaved edit survives — but the journey drives the second file through an invented `#/page-path/...` hash route that the router does not implement, so the navigation never happens and the survival assertion passes VACUOUSLY. It is quarantined rather than deleted because the journey shape is right; what is missing is a real UI affordance for opening a same-named file by path (the duplicate-day journal conflicts list is the honest candidate). Until then the composition-level regressions in src/instanceReplacement.test.ts carry this contract; they drive the real store and both fail against the pre-fix code."
+   "quarantineReason": "Harness debt, not a product defect. No user gesture opens a chosen file by path: the Quick Switcher row renders kind and name only, so two files sharing a page name are indistinguishable, and positional selection would be the brittle oracle the semantic-E2E contract forbids. See notes for the source-level confirmation.",
+   "notes": "GH #304, fixed in GH #254 increment 3. Two files legitimately share one page name (the duplicate-day stray of #21, or same-titled pages in different folders). Replacing the loaded instance destroyed the unsaved edit, and the dirty mark SURVIVED to describe the replacement's content, so the next save wrote the wrong file's bytes under the user's intent. The journey deliberately continues past 'the edit survived' to prove the refusal is not a trap: a survival-only assertion would pass on an implementation that never shows the requested file at all, which is why the non-wedging half is blocking rather than advisory. QUARANTINED 2026-08-10, harness debt. The first two assertions run green against the branch binary — the unsaved edit survives — but the journey drives the second file through an invented `#/page-path/...` hash route that the router does not implement, so the navigation never happens and the survival assertion passes VACUOUSLY. It is quarantined rather than deleted because the journey shape is right; what is missing is a real UI affordance for opening a same-named file by path (the duplicate-day journal conflicts list is the honest candidate). ROOT CAUSE CONFIRMED AT SOURCE 2026-08-10: no user gesture opens a chosen file by path. The router does support a path-pinned route (Page.tsx uses r.path -> getPageByPath), and the Quick Switcher is the only UI carrying a per-file path into openFile, but its row renders kind and name ONLY (QuickSwitcher.tsx Row), so two files sharing a page name are visually identical and a user cannot choose between them; selecting positionally would be exactly the brittle oracle the semantic-E2E contract forbids. No duplicates/conflicts list exists, and the router is not exposed on window, so browser.execute cannot reach openFile without adding a production test hook. The journey stays quarantined until such an affordance exists - which is itself the product gap GH #304's scenario implies. Until then the composition-level regressions in src/instanceReplacement.test.ts carry this contract; they drive the real store and both fail against the pre-fix code."
   },
   "scripts/e2e-conflict-keep-mine.mjs": {
    "contracts": [
     {
-     "class": "exact-safety",
+     "class": "exact-safety-interoperability",
+     "authority": "GH #254 increment 2, conflict-override authority: an override is bound to the exact bytes the user was shown. Discarding an unseen external write is irrecoverable loss of another writer's work.",
      "userOutcome": "Clicking \"Keep mine\" cannot overwrite an external write that landed after the banner appeared — bytes the user was never shown are never discarded by a click answering an older conflict.",
      "blocking": true
     },
@@ -969,6 +973,7 @@
     "The precise observation-epoch numbering."
    ],
    "stability": "quarantined",
+   "quarantineReason": "Harness debt, not a product defect. The forbidden shape is a force that RACES the watcher re-observation; this journey waits 8s first, so it observes increment 2's designed outcome instead. Constructing the race needs a deterministic hook the harness lacks; gh254_a_second_force_under_one_banner_cannot_spend_authority_for_an_unseen_winner covers it at the core boundary.",
    "notes": "GH #254. This is the sequence increment 2's adversarial rounds 3 and 4 each found broken in different places, and which nothing outside a mocked backend has ever driven. The failure is silent: \"Keep mine\" appears to work, and what is lost is someone else's write that the user cannot see was ever there. The non-wedging half is blocking because a refusal that leaves no live banner strands the edit — a conflicted page is skipped by the ordinary save path, so the user has no route back. QUARANTINED 2026-08-10, harness debt, NOT a product defect. Run against the branch binary it reproducibly showed \"Keep mine\" overwriting the second external winner. That is increment 2's DESIGNED outcome for this timing: a conflicted page is skipped by the ordinary save path, so the only thing that mints authority for a newer winner is the watcher's re-observation — and once that runs, the banner is re-armed and the click legitimately answers the CURRENT conflict. The harm the contract actually forbids is answering with authority minted for a DIFFERENT winner, i.e. a click that RACES the re-observation, which this journey does not construct: it waits 8s first. Fixing it means driving the stale-click shape (issue the force while a re-observation is in flight), which needs a deterministic hook the harness does not have. gh254_a_second_force_under_one_banner_cannot_spend_authority_for_an_unseen_winner covers that shape at the core boundary meanwhile."
   }
  }
