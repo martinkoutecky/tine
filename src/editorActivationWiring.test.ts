@@ -87,6 +87,54 @@ describe("editor activation wiring (GH #254 increment 3)", () => {
     expect(retire).toHaveBeenCalledWith("pages/Note.md", 5);
   });
 
+  it("does not record an identity across a graph switch", async () => {
+    loadRoutedPage(page("Note", "pages/old.md"));
+    let release: (h: unknown) => void = () => {};
+    vi.spyOn(backend(), "activateEditor").mockReturnValue(
+      new Promise((r) => {
+        release = r as (h: unknown) => void;
+      }) as never,
+    );
+    const saved = vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    const { markDirty, flushPage } = await import("./persistence");
+    markDirty("Note");
+    const flush = flushPage("Note");
+
+    // The graph goes away while the activation IPC is still in flight, and a NEW
+    // graph's page arrives under the same name.
+    resetStore();
+    loadRoutedPage(page("Note", "pages/new.md"));
+    release({ activation: 71, target: "pages/old.md", prospective: false });
+    await flush;
+
+    // The old graph's identity must not attach to the new graph's editor, and the
+    // abandoned save must not write the replacement page.
+    expect(editorActivationFor("Note")).not.toBe(71);
+    for (const [dto] of saved.mock.calls) {
+      expect(dto.activation).not.toBe(71);
+    }
+  });
+
+  it("carries an absent editor's prospective target on its DTO", async () => {
+    // No file yet: the core cannot recognise its own absent editor when the
+    // target drifts unless the DTO is pinned to what it was promised.
+    loadRoutedPage({ ...page("New", ""), path: "", rev: null });
+    vi.spyOn(backend(), "activateAbsentEditor").mockResolvedValue({
+      activation: 72,
+      target: "pages/New.md",
+      prospective: true,
+    });
+    const saved = vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    const { markDirty, flushPage } = await import("./persistence");
+    markDirty("New");
+    await flushPage("New");
+
+    expect(saved.mock.calls[0]?.[0]?.activation).toBe(72);
+    expect(saved.mock.calls[0]?.[0]?.path).toBe("pages/New.md");
+  });
+
   it("retiring an editor that holds none is a no-op", () => {
     ensurePageLoaded(page("Note", "pages/Note.md"));
     const retire = vi.spyOn(backend(), "retireEditorActivation");

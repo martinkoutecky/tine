@@ -334,12 +334,30 @@ export function clearEditorActivation(pageName: string, activation?: number): bo
   if (live === undefined) return false;
   if (activation !== undefined && live !== activation) return false;
   editorActivations.delete(pageName);
+  prospectiveTargets.delete(pageName);
   return true;
+}
+
+/**
+ * Prospective targets for editors activated with no file yet.
+ *
+ * Kept beside the activation registry rather than written onto the page: writing
+ * it into the store mid-save was tried and reverted, because mutating the page
+ * while a save is building its snapshot disturbs cut retirement, which is
+ * authority-bound to the exact loaded instance. This is read at the DTO boundary
+ * instead, which is where the core actually needs it — its drift/re-resolve
+ * branch only runs for a pinned path. (GH #254 increment 3.)
+ */
+const prospectiveTargets = new Map<string, string>();
+
+export function setProspectiveTarget(pageName: string, target: string): void {
+  prospectiveTargets.set(pageName, target);
 }
 
 /** Drop every activation — graph reset and teardown. */
 export function clearAllEditorActivations(): void {
   editorActivations.clear();
+  prospectiveTargets.clear();
 }
 
 /**
@@ -997,9 +1015,11 @@ export function pageToDto(pageName: string): PageDto | null {
     // carried on the page, so no clone or history snapshot can claim it.
     // (GH #254 increment 3.)
     activation: editorActivations.get(p.name),
-    // Pin the save to the exact file this page came from (#21). Absent for a
-    // brand-new page → the backend resolves the file by name, as before.
-    path: p.path,
+    // Pin the save to the exact file this page came from (#21). For an editor
+    // activated with no file yet, this is the prospective target it is live for —
+    // without it the DTO goes out unpinned and the core cannot recognise its own
+    // absent editor when the target drifts underneath it.
+    path: p.path || prospectiveTargets.get(p.name) || "",
     guide: p.guide,
     read_only: p.readOnly,
   };

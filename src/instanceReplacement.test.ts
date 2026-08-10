@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
   clearAllEditorLeases,
   ensurePageLoaded,
@@ -9,6 +9,7 @@ import {
   takeEditorLease,
   doc,
 } from "./store";
+import { backend } from "./backend";
 import type { PageDto } from "./types";
 
 /**
@@ -82,6 +83,21 @@ describe("replacing a loaded instance (GH #304)", () => {
 
     b();
     expect(hasEditorLease("Note")).toBe(false);
+  });
+
+  it("retires the identity it replaces, and the one it evicts", async () => {
+    const { setEditorActivation, editorActivationFor } = await import("./store");
+    ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"));
+    setEditorActivation("Note", 17);
+    const retire = vi.spyOn(backend(), "retireEditorActivation").mockResolvedValue(true);
+
+    // A genuine replacement is a NEW editor. Leaving the old identity live means
+    // the incoming editor inherits, under same-path Reuse, a token minted for an
+    // editor that was shown a different conflict.
+    ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"));
+
+    expect(retire).toHaveBeenCalledWith("pages/Note.md", 17);
+    expect(editorActivationFor("Note")).toBeUndefined();
   });
 
   it("allows the replacement when the incumbent is clean", () => {

@@ -33,12 +33,13 @@ function node(id: string, raw: string, pageName: string, parent: string | null =
 
 /** The DTO's CONTENT, without the editor identity it now also carries.
  *
- *  `activation` names the live editor instance, not the page's contents, and an
- *  editor legitimately acquires one when it first saves. These assertions are
- *  about a content round-trip, so including identity would report an editor
- *  acquiring its own name as though the undo had failed. (GH #254 increment 3.) */
+ *  `activation` names the live editor instance and `path` names where that editor
+ *  will live — an absent page learns its prospective target when it first saves.
+ *  Neither is what the page CONTAINS, and these assertions are about an outline
+ *  round-tripping through undo, so including them would report an editor learning
+ *  its own address as though the undo had failed. (GH #254 increment 3.) */
 const content = (dto: unknown) => {
-  const { activation: _activation, ...rest } = (dto ?? {}) as Record<string, unknown>;
+  const { activation: _activation, path: _path, ...rest } = (dto ?? {}) as Record<string, unknown>;
   return rest;
 };
 

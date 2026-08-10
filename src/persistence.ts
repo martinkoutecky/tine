@@ -11,6 +11,7 @@
 import {
   doc,
   editorActivationFor,
+  setProspectiveTarget,
   pageByName,
   pageInstanceGeneration,
   pageToDto,
@@ -492,13 +493,12 @@ async function ensureEditorActivation(name: string): Promise<void> {
       (pageByName(name)?.path ?? "") === pathAtStart
     ) {
       setEditorActivation(name, handle.activation);
-      // NOT YET DONE — an absent editor's prospective target still does not reach
-      // its DTO, so the core's drift/re-resolve branch (which only runs for a
-      // pinned path) never sees it. Writing the target onto the store page here
-      // was tried and reverted: it changes the DTO mid-save and broke the
-      // cut-retirement identity path, which is authority-bound to the exact loaded
-      // instance. The fix belongs at the DTO boundary, not in the page.
-      // (GH #254 increment 3, verifier blocker 5.)
+      // An ABSENT editor must also carry the prospective target it is live for.
+      // Recorded beside the activation and read at the DTO boundary — NOT written
+      // onto the store page, which was tried and reverted: mutating the page while
+      // a save builds its snapshot disturbs cut retirement, which is
+      // authority-bound to the exact loaded instance. (GH #254 increment 3.)
+      if (handle.prospective && handle.target) setProspectiveTarget(name, handle.target);
     }
   } catch {
     // Non-fatal, as above.

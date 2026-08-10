@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, loadRoutedPage, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, loadRoutedPage, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, takeEditorLease, type FeedPage } from "../store";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -645,6 +645,21 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       ensureEmptyBlock(props.page.name, { afterProperties: true });
     }
   });
+  // The title draft lives in a component-local signal and an <input>, so it is
+  // invisible to every store predicate: not dirty, not conflicted, not saving.
+  // Without a lease, replacing the page unmounts the input and the typed title is
+  // gone with nothing having looked unsaved. The lease is what makes that state
+  // declare itself. (GH #254 increment 3.)
+  let releaseTitleLease: (() => void) | null = null;
+  const dropTitleLease = () => {
+    releaseTitleLease?.();
+    releaseTitleLease = null;
+  };
+  // Driven by the component lifecycle, not only by commit and cancel: disposing a
+  // mounted page removes this section without running either, and a lease that
+  // outlived its component would refuse every later replacement forever.
+  onCleanup(dropTitleLease);
+
   const startRename = () => {
     if (renameInFlight) return;
     if (props.page.guide || props.page.readOnly) return;
@@ -653,12 +668,15 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     renameCancelled = false;
     setNewName(props.page.name);
     setRenaming(true);
+    dropTitleLease();
+    releaseTitleLease = takeEditorLease(props.page.name);
   };
   const commitRename = async () => {
     if (renameSubmitted || renameCancelled || renameInFlight) return;
     const next = newName().trim();
     renameSubmitted = true;
     setRenaming(false);
+    dropTitleLease();
     if (!next || next === props.page.name) return;
     renameInFlight = true;
     try {
@@ -703,6 +721,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 else if (e.key === "Escape") {
                   renameCancelled = true;
                   setRenaming(false);
+                  dropTitleLease();
                 }
               }}
               onBlur={() => void commitRename()}
