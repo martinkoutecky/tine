@@ -57,7 +57,8 @@ pub mod sqlite {
     };
     pub use crate::sqlite_materialization::{
         ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
-        PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockRow, PhysicalEntityId,
+        PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockReferenceCountRow,
+        PhysicalBlockReferrerCandidateRow, PhysicalBlockRow, PhysicalEntityId,
         PhysicalMaterializationChange, PhysicalNavigationAliasRow, PhysicalNavigationPageRow,
         PhysicalNavigationReferenceNameRow, PhysicalPage, PhysicalPageInventoryRow,
         PhysicalPageRow, PhysicalProperty, PhysicalPropertyRow, PhysicalReference,

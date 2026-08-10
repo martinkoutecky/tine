@@ -2513,6 +2513,18 @@ pub struct PhysicalReferrerRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalBlockReferenceCountRow {
+    pub raw_uuid_claim: [u8; 16],
+    pub distinct_source_blocks: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalBlockReferrerCandidateRow {
+    pub source_page_id: [u8; 16],
+    pub source_block_id: [u8; 16],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPropertyRow {
     pub owner: PhysicalEntityId,
     pub page_id: [u8; 16],
@@ -3271,6 +3283,134 @@ impl<'a> SqliteMaterializedRead<'a> {
         collect_read_rows(rows, referrer_row_output_bytes)
     }
 
+    /// Aggregate raw UUID postings by distinct source block. Raw claims are
+    /// used deliberately: a dangling `((uuid))` still drives a badge if a
+    /// matching block later appears.
+    pub fn block_reference_counts_after(
+        &self,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockReferenceCountRow>, MaterializationError> {
+        self.block_reference_counts_query(None, after, limit)
+    }
+
+    pub fn block_reference_counts_for_source_page_after(
+        &self,
+        source_page_id: [u8; 16],
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockReferenceCountRow>, MaterializationError> {
+        self.block_reference_counts_query(Some(source_page_id), after, limit)
+    }
+
+    fn block_reference_counts_query(
+        &self,
+        source_page_id: Option<[u8; 16]>,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockReferenceCountRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match (source_page_id, after) {
+            (None, None) => (
+                "SELECT raw_uuid_claim, COUNT(DISTINCT source_entity_id)
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                 GROUP BY raw_uuid_claim ORDER BY raw_uuid_claim LIMIT ?1",
+                vec![limit.into()],
+            ),
+            (None, Some(after)) => (
+                "SELECT raw_uuid_claim, COUNT(DISTINCT source_entity_id)
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                   AND raw_uuid_claim > ?1
+                 GROUP BY raw_uuid_claim ORDER BY raw_uuid_claim LIMIT ?2",
+                vec![after.to_vec().into(), limit.into()],
+            ),
+            (Some(page_id), None) => (
+                "SELECT raw_uuid_claim, COUNT(DISTINCT source_entity_id)
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                   AND source_page_id = ?1
+                 GROUP BY raw_uuid_claim ORDER BY raw_uuid_claim LIMIT ?2",
+                vec![page_id.to_vec().into(), limit.into()],
+            ),
+            (Some(page_id), Some(after)) => (
+                "SELECT raw_uuid_claim, COUNT(DISTINCT source_entity_id)
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                   AND source_page_id = ?1 AND raw_uuid_claim > ?2
+                 GROUP BY raw_uuid_claim ORDER BY raw_uuid_claim LIMIT ?3",
+                vec![page_id.to_vec().into(), after.to_vec().into(), limit.into()],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let uuid: Vec<u8> = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            Ok(PhysicalBlockReferenceCountRow {
+                raw_uuid_claim: decode_id_sql(&uuid)?,
+                distinct_source_blocks: u64::try_from(count).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Integer,
+                        "negative block-reference count".into(),
+                    )
+                })?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(32),
+        )
+    }
+
+    pub fn block_referrer_candidates_after(
+        &self,
+        raw_uuid_claim: [u8; 16],
+        after: Option<([u8; 16], [u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockReferrerCandidateRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT source_page_id, source_entity_id
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                   AND raw_uuid_claim = ?1
+                 ORDER BY source_page_id, source_entity_id LIMIT ?2",
+                vec![raw_uuid_claim.to_vec().into(), limit.into()],
+            ),
+            Some((page_id, block_id)) => (
+                "SELECT DISTINCT source_page_id, source_entity_id
+                 FROM reference_postings
+                 WHERE target_type = 1 AND source_entity_type = 1
+                   AND raw_uuid_claim = ?1
+                   AND (source_page_id > ?2
+                     OR (source_page_id = ?2 AND source_entity_id > ?3))
+                 ORDER BY source_page_id, source_entity_id LIMIT ?4",
+                vec![
+                    raw_uuid_claim.to_vec().into(),
+                    page_id.to_vec().into(),
+                    block_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            let block_id: Vec<u8> = row.get(1)?;
+            Ok(PhysicalBlockReferrerCandidateRow {
+                source_page_id: decode_id_sql(&page_id)?,
+                source_block_id: decode_id_sql(&block_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(32),
+        )
+    }
+
     pub fn properties(
         &self,
         owner: PhysicalEntityId,
@@ -4027,6 +4167,87 @@ mod tests {
         transaction.rollback().unwrap();
         let read = SqliteMaterializedRead::new(&connection, 0, digest(b"empty")).unwrap();
         assert!(read.block_by_logseq_uuid(claimed).unwrap().is_none());
+    }
+
+    #[test]
+    fn raw_block_reference_queries_count_distinct_sources_and_page_cursors() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let first = page(201, "first");
+        let second = page(202, "second");
+        let first_page = first.page_id;
+        let first_block = first.blocks[0].block_id;
+        let second_page = second.page_id;
+        let second_block = second.blocks[0].block_id;
+        apply_and_commit(
+            &mut connection,
+            &change(0x6789, vec![first, second], Vec::new()),
+            1,
+            digest(b"frontier"),
+        );
+        let target = id(0xaaaa);
+        let other = id(0xbbbb);
+        for (page_id, block_id, locator, ordinal, claim) in [
+            (first_page, first_block, b"first-a".as_slice(), 0, target),
+            (first_page, first_block, b"first-b".as_slice(), 1, target),
+            (second_page, second_block, b"second-a".as_slice(), 0, target),
+            (second_page, second_block, b"second-b".as_slice(), 1, other),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO reference_postings (
+                         source_page_id, source_entity_type, source_entity_id,
+                         source_locator, ordinal, reference_kind, target_type,
+                         raw_uuid_claim
+                     ) VALUES (?1, 1, ?2, ?3, ?4, 6, 1, ?5)",
+                    params![
+                        page_id.as_slice(),
+                        block_id.as_slice(),
+                        locator,
+                        ordinal,
+                        claim.as_slice(),
+                    ],
+                )
+                .unwrap();
+        }
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+        assert_eq!(
+            read.block_reference_counts_after(None, 10).unwrap(),
+            vec![
+                PhysicalBlockReferenceCountRow {
+                    raw_uuid_claim: target,
+                    distinct_source_blocks: 2,
+                },
+                PhysicalBlockReferenceCountRow {
+                    raw_uuid_claim: other,
+                    distinct_source_blocks: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            read.block_reference_counts_for_source_page_after(first_page, None, 10)
+                .unwrap(),
+            vec![PhysicalBlockReferenceCountRow {
+                raw_uuid_claim: target,
+                distinct_source_blocks: 1,
+            }]
+        );
+        let first_candidate = read
+            .block_referrer_candidates_after(target, None, 1)
+            .unwrap();
+        assert_eq!(first_candidate.len(), 1);
+        let cursor = (
+            first_candidate[0].source_page_id,
+            first_candidate[0].source_block_id,
+        );
+        assert_eq!(
+            read.block_referrer_candidates_after(target, Some(cursor), 10)
+                .unwrap(),
+            vec![PhysicalBlockReferrerCandidateRow {
+                source_page_id: second_page,
+                source_block_id: second_block,
+            }]
+        );
     }
 
     #[test]
