@@ -796,42 +796,42 @@
    "stability": "stable"
   },
   "scripts/e2e-windows-direct-large-open.mjs": {
-    "contracts": [
-      {
-        "class": "core-operation",
-        "userOutcome": "A reporter-scale Direct Files graph opens through the real Windows WebView2 and native backend without the severe 45-second load-call delay.",
-        "blocking": true
-      }
-    ],
-    "acceptableVariations": [
-      "Hosted Windows storage throughput and individual phase timings may vary below the severe-regression ceiling."
-    ],
-    "nonRequirements": [
-      "Matching the reporter's physical disk, antivirus configuration, or 24.6 GB of asset payload bytes."
-    ],
-    "stability": "burn-in"
+   "contracts": [
+    {
+     "class": "core-operation",
+     "userOutcome": "A reporter-scale Direct Files graph opens through the real Windows WebView2 and native backend without the severe 45-second load-call delay.",
+     "blocking": true
+    }
+   ],
+   "acceptableVariations": [
+    "Hosted Windows storage throughput and individual phase timings may vary below the severe-regression ceiling."
+   ],
+   "nonRequirements": [
+    "Matching the reporter's physical disk, antivirus configuration, or 24.6 GB of asset payload bytes."
+   ],
+   "stability": "burn-in"
   },
   "scripts/e2e-windows-managed-storage.mjs": {
-    "contracts": [
-      {
-        "class": "exact-safety-interoperability",
-        "userOutcome": "On Windows, explicit managed-storage activation and return to Direct Files preserve every captured Markdown and Org source byte.",
-        "blocking": true,
-        "authority": "Tine managed-storage authority transition and Direct Files interoperability contract"
-      },
-      {
-        "class": "core-operation",
-        "userOutcome": "A reporter-scale Windows graph with nested Unicode paths remains readable after managed-storage activation and after returning to Direct Files.",
-        "blocking": true
-      }
-    ],
-    "acceptableVariations": [
-      "Hosted Windows filesystem speed, WebView2 startup timing, and managed-storage activation duration may vary."
-    ],
-    "nonRequirements": [
-      "Exact native confirmation-dialog appearance, internal private-storage layout, or exact progress wording."
-    ],
-    "stability": "burn-in"
+   "contracts": [
+    {
+     "class": "exact-safety-interoperability",
+     "userOutcome": "On Windows, explicit managed-storage activation and return to Direct Files preserve every captured Markdown and Org source byte.",
+     "blocking": true,
+     "authority": "Tine managed-storage authority transition and Direct Files interoperability contract"
+    },
+    {
+     "class": "core-operation",
+     "userOutcome": "A reporter-scale Windows graph with nested Unicode paths remains readable after managed-storage activation and after returning to Direct Files.",
+     "blocking": true
+    }
+   ],
+   "acceptableVariations": [
+    "Hosted Windows filesystem speed, WebView2 startup timing, and managed-storage activation duration may vary."
+   ],
+   "nonRequirements": [
+    "Exact native confirmation-dialog appearance, internal private-storage layout, or exact progress wording."
+   ],
+   "stability": "burn-in"
   },
   "scripts/e2e-windows-smoke.mjs": {
    "contracts": [
@@ -909,6 +909,42 @@
    ],
    "stability": "stable",
    "notes": "Added 2026-08-09 after a generated graph linked 29 papers by filename while every file declared a different title::; every link opened a blank page with nothing on screen to explain it. Logseq does NOT dim unresolved links (components/block.cljs:548 dims only untitled-page?, meaning a page existing under a uuid name), so the dimming is a deliberate, Martin-approved divergence and this journey is its contract."
+  },
+  "scripts/e2e-dirty-editor-replacement.mjs": {
+   "contracts": [
+    {
+     "class": "exact-safety",
+     "userOutcome": "Unsaved edits survive when a different file with the same page name is opened; the edit is never destroyed to show the other file.",
+     "blocking": true
+    },
+    {
+     "class": "stateful-ux",
+     "userOutcome": "The user is told which page's unsaved changes are holding the requested file back, rather than being left on a blank or unchanged surface.",
+     "blocking": true
+    },
+    {
+     "class": "core-operation",
+     "userOutcome": "After resolving the incumbent, the originally requested file actually arrives — refusal is never a dead end.",
+     "blocking": true
+    },
+    {
+     "class": "exact-safety",
+     "userOutcome": "The unsaved edit is written to the file it belonged to, never to the file that was requested instead.",
+     "blocking": true
+    }
+   ],
+   "acceptableVariations": [
+    "How the message is presented (toast, inline banner, empty-state text) and its exact wording, as long as it names the page holding the unsaved changes.",
+    "Whether the incumbent is resolved by saving, discarding, or answering a conflict banner — any of them must release the requested file.",
+    "Whether the requested file arrives on re-navigation or automatically once the incumbent is clean."
+   ],
+   "nonRequirements": [
+    "Exact toast styling, position, duration, or DOM nesting.",
+    "The precise number of ticks between resolving the incumbent and the requested file appearing.",
+    "Which of the two same-named files the router treats as canonical."
+   ],
+   "stability": "new",
+   "notes": "GH #304, fixed in GH #254 increment 3. Two files legitimately share one page name (the duplicate-day stray of #21, or same-titled pages in different folders). Replacing the loaded instance destroyed the unsaved edit, and the dirty mark SURVIVED to describe the replacement's content, so the next save wrote the wrong file's bytes under the user's intent. The journey deliberately continues past 'the edit survived' to prove the refusal is not a trap: a survival-only assertion would pass on an implementation that never shows the requested file at all, which is why the non-wedging half is blocking rather than advisory."
   }
  }
 }
