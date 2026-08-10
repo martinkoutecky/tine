@@ -9054,7 +9054,7 @@ fn an_ephemeral_bootstrap_predecessor_refusal_falls_back_without_retained_mutati
             vec![
                 (
                     "pages/refusal.md".into(),
-                    b"- refusal one\n- refusal two\n".to_vec(),
+                    b"- refusal one [[refusal-other]]\n- refusal two\n".to_vec(),
                 ),
                 (
                     "pages/refusal-other.md".into(),
@@ -9136,6 +9136,31 @@ fn an_ephemeral_bootstrap_predecessor_refusal_falls_back_without_retained_mutati
                         .bootstrap_part_reads,
                     fixture.verified.part_count() as usize,
                     "the fallback must reread each immutable bootstrap part"
+                );
+                let read = runtime.database().materialized_read().unwrap();
+                let pages = read.pages(None, 16).unwrap();
+                assert_eq!(
+                    pages.len(),
+                    runtime.engine().canonical_snapshot().unwrap().pages.len(),
+                    "the fallback must install every page from the terminal engine view"
+                );
+                let reference_names = read.navigation_reference_names_after(None, 16).unwrap();
+                assert!(
+                    reference_names.iter().any(|reference| {
+                        reference.owner_path.as_str() == "pages/refusal.md"
+                            && reference.normalized_name == "refusal-other"
+                    }),
+                    "the fallback must install the terminal reference-source view: {reference_names:?}"
+                );
+                let sqlite_reference_root = runtime
+                    .database()
+                    .authenticated_reference_catalog_root()
+                    .unwrap();
+                assert_eq!(sqlite_reference_root.source_count(), pages.len() as u64);
+                assert_eq!(
+                    &sqlite_reference_root,
+                    runtime.engine().reference_catalog_root().unwrap(),
+                    "SQLite and the fallback engine must expose one terminal reference authority"
                 );
                 assert_eq!(
                     runtime.publish_quiescent_resume_point(authority, &fixture.graph),

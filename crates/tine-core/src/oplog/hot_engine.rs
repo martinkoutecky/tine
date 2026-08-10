@@ -8549,15 +8549,23 @@ impl ShardedHotEngine {
         plan: &BootstrapRecoveryPlan,
         ordinal: usize,
     ) -> Result<StageOutcome, EngineError> {
-        let expected = plan
+        let descriptor = plan
             .publication
             .aggregate()
             .parts()
             .get(ordinal)
             .ok_or_else(|| {
                 EngineError::Archive("retained bootstrap publication lost a part ordinal".into())
-            })?
-            .batch_id();
+            })?;
+        let expected = descriptor.batch_id();
+        // Detached bootstrap authoring may defer every graph-wide index until
+        // the terminal part. Full archive replay must select that same
+        // authenticated construction profile before it derives this part's
+        // candidate roots; otherwise the first intermediate part is compared
+        // against a durable record that deliberately commits the deferred
+        // root, and the unconditional predecessor-refusal fallback cannot
+        // reproduce its existing authority.
+        self.configure_detached_bootstrap_reference_catalog(descriptor.evidence())?;
         let loaded = self.bootstrap_residency.own_loaded_part(
             plan.store
                 .load_bootstrap_part(&plan.publication, ordinal)
