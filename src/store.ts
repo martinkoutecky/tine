@@ -416,16 +416,27 @@ function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
  *  satellite surfaces — sidebar / query results / embeds — so they render the
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
  *  already-loaded page's in-progress edits. */
-export function ensurePageLoaded(dto: PageDto) {
+export function ensurePageLoaded(dto: PageDto): InstanceRefusal | null {
   const existing = doc.pages.find((p) => p.name === dto.name);
-  if (existing && (existing.path ?? "") === (dto.path ?? "")) return;
+  if (existing && (existing.path ?? "") === (dto.path ?? "")) return null;
   // A path-pinned route may intentionally load a duplicate-day stray with the
   // same logical title as the canonical journal. Replace the name slot with the
   // exact requested file instead of silently keeping (and then editing/saving)
   // the canonical file. Full simultaneous duplicate identity is tracked by the
   // file-identity ADR; this closes the wrong-target write immediately.
+  //
+  // But never over unsaved work (GH #304, reproduced). Replacing an incumbent
+  // that holds an edit purges its nodes while the DIRTY MARK SURVIVES and starts
+  // describing the replacement's content, and any live banner survives describing
+  // a file the editor no longer holds. Nothing is written to make a replacement
+  // possible: the request is refused and the surface that asked says why, so the
+  // user can resolve the incumbent and ask again.
+  if (existing && !mayReplaceInstance(dto.name)) {
+    return { reason: "unsaved-changes", page: dto.name };
+  }
   upsertPage(dto);
   evictIfNeeded();
+  return null;
 }
 
 /** Load a page selected by the main graph router. `ensurePageLoaded` also serves
@@ -672,6 +683,78 @@ export function reloadDisposition(name: string): ReloadDisposition {
   if ((ed && doc.byId[ed]?.page === name) || isBlockMoving()) return "skip";
   return "reload";
 }
+
+/**
+ * Component-local editors that currently hold uncommitted input.
+ *
+ * `reloadDisposition` only sees state that lives in the store, and not all
+ * uncommitted user input does. The page-title rename keeps its draft in local
+ * signals and an `<input>`, so replacing the page unmounts the input and the typed
+ * title is gone with nothing ever having been dirty. IME composition has the same
+ * shape. Enumerating those cases kept losing — each round of review found another
+ * one — so a component that holds uncommitted input DECLARES itself instead.
+ *
+ * The registry is keyed by page, then by a unique per-component handle, because
+ * one page can be mounted on several surfaces: cancelling transaction A must not
+ * clear transaction B's. (GH #254 increment 3.)
+ */
+const editorLeases = new Map<string, Set<symbol>>();
+
+/**
+ * Take a lease for uncommitted input on `pageName`. Returns its release, which is
+ * idempotent and MUST be wired to the component lifecycle (`onCleanup`), not only
+ * to commit and cancel: disposing a mounted page removes the title section without
+ * running either, and a literal registration would then outlive its component and
+ * its draft and refuse every later replacement forever.
+ */
+export function takeEditorLease(pageName: string): () => void {
+  const handle = Symbol("editor-lease");
+  let leases = editorLeases.get(pageName);
+  if (!leases) {
+    leases = new Set();
+    editorLeases.set(pageName, leases);
+  }
+  leases.add(handle);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const live = editorLeases.get(pageName);
+    if (!live) return;
+    live.delete(handle);
+    if (live.size === 0) editorLeases.delete(pageName);
+  };
+}
+
+/** Does any component hold uncommitted input for this page? */
+export function hasEditorLease(pageName: string): boolean {
+  return (editorLeases.get(pageName)?.size ?? 0) > 0;
+}
+
+/** Drop every lease — graph reset and teardown. */
+export function clearAllEditorLeases(): void {
+  editorLeases.clear();
+}
+
+/**
+ * May this page's loaded instance be REPLACED right now?
+ *
+ * The composed gate: the store's own disposition plus the component-local leases
+ * it cannot see. Both halves are required, and both must be re-evaluated
+ * synchronously at the final replacement boundary — every caller awaits a backend
+ * read first, and the incumbent can become dirty, start saving, or begin an
+ * uncommitted rename during that await. (GH #254 increment 3.)
+ */
+export function mayReplaceInstance(name: string): boolean {
+  return reloadDisposition(name) === "reload" && !hasEditorLease(name);
+}
+
+/** Why a replacement was refused, for the surface that asked for it. */
+export type InstanceRefusal = {
+  reason: "unsaved-changes";
+  /** The page holding the unsaved work — what the surface tells the user. */
+  page: string;
+};
 
 /** Load a single page and make it the main view. */
 export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {

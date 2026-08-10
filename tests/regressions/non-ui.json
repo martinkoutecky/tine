@@ -3420,6 +3420,32 @@
         ]
       },
       "notes": "GH #254 increment 2, adversarial implementation verification finding 1 (CRITICAL) and the reachable half of finding 2. A force request named its authority only by path plus loaded revision, so consume_conflict_authority could only check SELF-consistency - that the live token is the newest - never that the user had seen it. Reachable data loss with no malicious writer: an external editor or sync client publishes B after the banner showed A; two force requests are in flight under that one banner (the button is not disabled while its request is pending) and the per-page save queue serializes them; the first correctly refuses B and, being a coherent observation, mints fresh authority FOR B; the second, issued before B existed, consumed it and overwrote B. A conflict error now carries the observation epoch it minted at, direct_save_error_message emits it as 'conflict:<n>', the frontend stores it with the banner and echoes it back on force, and consumption requires the presented epoch to equal the live token's. Found while fixing: checking ownership AFTER taking would let one stray duplicate click disarm the banner permanently, so a mis-addressed override is now refused WITHOUT spending the live token - covered by its own test. A force that can name no observation is refused at the command boundary rather than allowed to consume whatever is current. Necessity: all three new core tests fail against the pre-fix check."
+    },
+    {
+      "id": "REG-DIRTY-EDITOR-SURVIVES-SAME-NAME-REPLACEMENT-GH304",
+      "title": "Unsaved edits were destroyed when a same-named file at a different path was loaded",
+      "family": "direct-save-fidelity",
+      "sources": {
+        "issues": [
+          304,
+          254
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "linux",
+        "windows",
+        "macos",
+        "android"
+      ],
+      "layer": "frontend",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/instanceReplacement.test.ts"
+        ]
+      },
+      "notes": "GH #254 increment 3, contract rule 2. ensurePageLoaded replaced the loaded instance whenever the requested path differed from the incumbent's, with no check that the incumbent held unsaved work. Reproduced: the incumbent's nodes are purged, the dirty mark SURVIVES and now belongs to the replacement's content, and a live conflict banner survives describing a file the editor no longer holds. The gate is the existing reloadDisposition predicate AND an empty editor-lease set - enumerating dirty/conflicted/saving kept losing, because IME composition holds text in the textarea until compositionend and the page-title rename holds its draft in component-local signals, so neither is visible to any store predicate. A component holding uncommitted input now declares itself with a lease keyed by a unique per-component handle, released idempotently from the component lifecycle rather than only from commit/cancel - a lease that outlives its component would refuse every later replacement forever. The gate is re-evaluated synchronously at the final replacement boundary because every caller awaits a backend read first and the incumbent can become dirty during that await. Necessity: both behavioural tests fail against the pre-fix code; the lease-hygiene and clean-replacement cases pass both ways by design and are not regression guards for the refusal itself."
     }
   ]
 }
