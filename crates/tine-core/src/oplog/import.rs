@@ -5436,6 +5436,17 @@ fn capture_import_scope(
         let page_id = match current_owner {
             CurrentPageAtPath::ExactOwner(occupied) => occupied.page_id(),
             CurrentPageAtPath::Released(release) => {
+                let observed = inventory
+                    .entries()
+                    .get(path)
+                    .and_then(RawObservation::description)
+                    .ok_or_else(|| {
+                        authority_block(
+                            ImportBlockReason::StaleScope,
+                            Some(path),
+                            "released path no longer has the observed replacement bytes",
+                        )
+                    })?;
                 let (_, work_index) = engine.enrolled_projection_runtime().map_err(|error| {
                     authority_block(
                         ImportBlockReason::AuthorityUnavailable,
@@ -5443,8 +5454,8 @@ fn capture_import_scope(
                         error.to_string(),
                     )
                 })?;
-                let completed = engine
-                    .authorize_projected_release(&work_index, &release)
+                let release_authority = engine
+                    .authorize_projected_release(&work_index, &release, observed)
                     .map_err(|error| {
                         authority_block(
                             ImportBlockReason::ConflictingLocalTail,
@@ -5452,37 +5463,84 @@ fn capture_import_scope(
                             format!("released path lacks completed durable work: {error}"),
                         )
                     })?;
-                let mut completion_id = None;
-                for entry in catalog_entries {
-                    if entry.intent.workspace_id() != engine.workspace_id()
-                        || entry.intent.page_id() != release.prior_page_id()
-                        || entry.intent.path() != path
-                        || entry.intent.frontier() != completed.frontier()
-                        || entry.intent.target() != BlobDescription::of(&[])
-                        || entry.completed.as_ref().is_none_or(|entry| {
-                            entry.page_id() != completed.page_id()
-                                || entry.frontier() != completed.frontier()
-                                || entry.target() != super::ProjectionWorkTarget::Absent
-                        })
-                    {
-                        continue;
+                let completion_id = match release_authority {
+                    super::hot_engine::ProjectedReleaseAuthority::GuardedConflict {
+                        work,
+                        intent_id,
+                    } => {
+                        let intent = receipts
+                            .load_intent(intent_id)
+                            .map_err(|error| {
+                                authority_block(
+                                    ImportBlockReason::CorruptBase,
+                                    Some(path),
+                                    format!("guarded conflict intent is invalid: {error}"),
+                                )
+                            })?
+                            .ok_or_else(|| {
+                                authority_block(
+                                    ImportBlockReason::CorruptBase,
+                                    Some(path),
+                                    "guarded conflict lacks its immutable projection intent",
+                                )
+                            })?;
+                        if intent.id().ok() != Some(intent_id)
+                            || intent.workspace_id() != engine.workspace_id()
+                            || intent.page_id() != release.prior_page_id()
+                            || intent.path() != path
+                            || intent.frontier() != work.post_frontier()
+                            || intent.target() != BlobDescription::of(&[])
+                        {
+                            return Err(authority_block(
+                                ImportBlockReason::CorruptBase,
+                                Some(path),
+                                "guarded conflict intent does not match the released path",
+                            ));
+                        }
+                        ProjectionCompletion::for_intent(&intent, &[])
+                            .map_err(|error| {
+                                authority_block(
+                                    ImportBlockReason::CorruptBase,
+                                    Some(path),
+                                    format!("guarded conflict dependency is invalid: {error}"),
+                                )
+                            })?
+                            .logical_completion_id()
                     }
-                    let logical = entry.completion.logical_completion_id();
-                    if completion_id.replace(logical).is_some() {
-                        return Err(authority_block(
-                            ImportBlockReason::CorruptBase,
-                            Some(path),
-                            "multiple completed receipts claim one authenticated path release",
-                        ));
+                    super::hot_engine::ProjectedReleaseAuthority::Completed(completed) => {
+                        let mut completion_id = None;
+                        for entry in catalog_entries {
+                            if entry.intent.workspace_id() != engine.workspace_id()
+                                || entry.intent.page_id() != release.prior_page_id()
+                                || entry.intent.path() != path
+                                || entry.intent.frontier() != completed.frontier()
+                                || entry.intent.target() != BlobDescription::of(&[])
+                                || entry.completed.as_ref().is_none_or(|entry| {
+                                    entry.page_id() != completed.page_id()
+                                        || entry.frontier() != completed.frontier()
+                                        || entry.target() != super::ProjectionWorkTarget::Absent
+                                })
+                            {
+                                continue;
+                            }
+                            let logical = entry.completion.logical_completion_id();
+                            if completion_id.replace(logical).is_some() {
+                                return Err(authority_block(
+                                    ImportBlockReason::CorruptBase,
+                                    Some(path),
+                                    "multiple completed receipts claim one authenticated path release",
+                                ));
+                            }
+                        }
+                        completion_id.ok_or_else(|| {
+                            authority_block(
+                                ImportBlockReason::ConflictingLocalTail,
+                                Some(path),
+                                "authenticated path release has no exact completed receipt",
+                            )
+                        })?
                     }
-                }
-                let completion_id = completion_id.ok_or_else(|| {
-                    authority_block(
-                        ImportBlockReason::ConflictingLocalTail,
-                        Some(path),
-                        "authenticated path release has no exact completed receipt",
-                    )
-                })?;
+                };
                 paths.insert(path.clone(), ScopedPathEvidence::Released(completion_id));
                 continue;
             }
@@ -6268,17 +6326,29 @@ fn build_desired_page_transition(
                     existing: true,
                 }
             }
-            None => DesiredImportPage {
-                page_id: import_id.unmatched_page_id(&ImportLocator::page(path.clone())),
-                home_document_id: DocumentId::for_unmatched_import_page(
-                    scope.workspace_id,
-                    path.as_str().as_bytes(),
-                ),
-                name: path_identity.name.clone(),
-                path: path.clone(),
-                kind: path_identity.kind,
-                existing: false,
-            },
+            None => {
+                let home_document_id = match scope.paths.get(path) {
+                    Some(ScopedPathEvidence::Released(completion_id)) => {
+                        DocumentId::for_released_import_page(
+                            scope.workspace_id,
+                            path.as_str().as_bytes(),
+                            *completion_id,
+                        )
+                    }
+                    _ => DocumentId::for_unmatched_import_page(
+                        scope.workspace_id,
+                        path.as_str().as_bytes(),
+                    ),
+                };
+                DesiredImportPage {
+                    page_id: import_id.unmatched_page_id(&ImportLocator::page(path.clone())),
+                    home_document_id,
+                    name: path_identity.name.clone(),
+                    path: path.clone(),
+                    kind: path_identity.kind,
+                    existing: false,
+                }
+            }
         };
         if let Some(prior_path) = desired_paths_by_page.insert(desired.page_id, path.clone()) {
             return Err(ImportBlock {

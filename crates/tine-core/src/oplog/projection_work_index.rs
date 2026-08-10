@@ -713,6 +713,7 @@ pub(crate) struct ProjectionWorkBlockAuthority {
     path: ManagedPath,
     target: ProjectionWorkTarget,
     observed: Option<BlobDescription>,
+    intent_id: Option<ProjectionIntentId>,
 }
 
 impl ProjectionWorkBlockAuthority {
@@ -731,7 +732,19 @@ impl ProjectionWorkBlockAuthority {
             path: work.path().clone(),
             target: work.target(),
             observed,
+            intent_id: None,
         }
+    }
+
+    pub(super) fn guarded_conflict_for_intent(
+        work: &ProjectionWork,
+        receipt_store_id: super::ProjectionReceiptStoreId,
+        observed: Option<BlobDescription>,
+        intent_id: ProjectionIntentId,
+    ) -> Self {
+        let mut authority = Self::guarded_conflict(work, receipt_store_id, observed);
+        authority.intent_id = Some(intent_id);
+        authority
     }
 }
 
@@ -1824,6 +1837,59 @@ impl ProjectionWorkIndex {
         }
     }
 
+    /// Authenticate the one blocked absent work item whose guarded writer
+    /// observed these exact replacement bytes at a released path. This is not
+    /// an absent completion: it authorizes external reconciliation of the
+    /// retained replacement while preserving that distinction.
+    pub(crate) fn blocked_release_for_observation(
+        &self,
+        batch_id: BatchId,
+        page_id: PageId,
+        path: &ManagedPath,
+        observed: BlobDescription,
+    ) -> Result<Option<(ProjectionWork, ProjectionIntentId)>, ProjectionWorkError> {
+        let (_, root) = self.load_head_root()?;
+        let Some(bytes) = self.tree_lookup(root.accepted_root, &batch_key(batch_id))? else {
+            return Ok(None);
+        };
+        let witness: AcceptedBatchWitness = decode_canonical(&bytes)?;
+        if witness.schema_version != INDEX_SCHEMA_VERSION
+            || witness.workspace_id != self.workspace_id
+            || witness.endpoint_id != self.endpoint_id
+            || witness.batch_id != batch_id
+            || !strictly_sorted(&witness.work_ids)
+        {
+            return Err(ProjectionWorkError::AcceptedWitnessMismatch);
+        }
+        let mut matched = None;
+        for work_id in witness.work_ids {
+            let state = self
+                .load_state(&root, work_id)?
+                .ok_or(ProjectionWorkError::MissingWork(work_id))?;
+            if state.work.batch_id() != batch_id
+                || state.work.page_id() != page_id
+                || state.work.path() != path
+                || state.work.target() != ProjectionWorkTarget::Absent
+            {
+                continue;
+            }
+            let StoredWorkStatus::Blocked {
+                observed: Some(blocked),
+                intent_id: Some(intent_id),
+            } = state.status
+            else {
+                continue;
+            };
+            if blocked != observed {
+                continue;
+            }
+            if matched.replace((state.work, intent_id)).is_some() {
+                return Err(ProjectionWorkError::BindingMismatch);
+            }
+        }
+        Ok(matched)
+    }
+
     /// Pin one authenticated head for a bounded reconciliation join.
     pub(crate) fn pin_expected_path_head(
         &self,
@@ -2381,6 +2447,7 @@ impl ProjectionWorkIndex {
             index.require_block_authority(&state.work, &authority)?;
             let terminal = StoredWorkStatus::Blocked {
                 observed: authority.observed,
+                intent_id: authority.intent_id,
             };
             if state.status == terminal {
                 return Ok(root);
@@ -3699,6 +3766,8 @@ enum StoredWorkStatus {
     },
     Blocked {
         observed: Option<BlobDescription>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent_id: Option<ProjectionIntentId>,
     },
     Superseded {
         by: ProjectionWorkId,

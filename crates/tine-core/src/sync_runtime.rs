@@ -11391,7 +11391,7 @@ impl RuntimeActor {
         let transaction =
             OperationTransaction::new(vec![SemanticOperation::DeletePage { page_id }])
                 .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("delete_plan"))?;
-        self.execute_application_delete_transaction(transaction)
+        self.execute_application_unit_transaction(transaction)
     }
 
     fn plan_application_page_merge(
@@ -11577,23 +11577,6 @@ impl RuntimeActor {
         }
     }
 
-    /// A delete is not application-visible as applied while its exact removal
-    /// projection remains in retained recovery. In particular, settlement may
-    /// accept the semantic tombstone while correctly leaving a raced foreign
-    /// replacement live; that is still a deferred delete from the caller's
-    /// point of view.
-    fn execute_application_delete_transaction(
-        &mut self,
-        transaction: OperationTransaction,
-    ) -> Result<SyncApplicationUnitOutcome, SyncApplicationPageRequestError> {
-        match self.submit_local_mutation(transaction) {
-            SyncLocalMutationOutcome::Durable { .. } => Ok(SyncApplicationUnitOutcome::Applied),
-            outcome => Ok(SyncApplicationUnitOutcome::Deferred {
-                state: editor_deferred_from_local(outcome),
-            }),
-        }
-    }
-
     fn trash_application_journal_file(
         &mut self,
         name: &str,
@@ -11646,7 +11629,7 @@ impl RuntimeActor {
             page_id: current.editor.page.page_id,
         }])
         .map_err(|_| SyncApplicationPageRequestError::ActorRefusedAt("journal_trash_plan"))?;
-        self.execute_application_delete_transaction(transaction)
+        self.execute_application_unit_transaction(transaction)
     }
 
     fn resolve_application_sync_conflict(
@@ -22638,11 +22621,14 @@ mod tests {
         let (page, _) = load_application_exact(&handle, path);
 
         let source = fixture.graph_root().join(path);
+        let displaced = source.with_extension("accepted-before-delete");
         let (hook_sender, hook_receiver) = mpsc::channel();
         crate::model::set_projection_recovery_after_bound_capture_hook_for_test(source.clone(), {
             let foreign = foreign.to_vec();
+            let source = source.clone();
             move || {
                 hook_sender.send(()).unwrap();
+                fs::rename(&source, &displaced)?;
                 fs::write(source, &foreign)
             }
         });
@@ -22654,16 +22640,48 @@ mod tests {
             });
         assert_eq!(hook_receiver.try_recv(), Ok(()));
         assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
-        assert!(
-            !matches!(outcome, Ok(SyncApplicationUnitOutcome::Applied)),
-            "late foreign replacement must not be reported Applied: {outcome:?}"
-        );
+        assert!(matches!(
+            outcome,
+            Ok(SyncApplicationUnitOutcome::Deferred {
+                state: SyncEditorDeferred::BlockedRecovery {
+                    batch_id: Some(_),
+                    phase: SyncLocalMutationPhase::ProjectionDrain,
+                    retained_publication: true,
+                },
+            })
+        ));
         let recovery = fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/pages"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .collect::<Vec<_>>();
         assert_eq!(recovery.len(), 1);
         assert_eq!(fs::read(&recovery[0]).unwrap(), accepted);
+
+        // The retained continuation may finish its non-conflicting bookkeeping,
+        // but it must never regain authority to remove the replacement.
+        for _ in 0..8 {
+            handle.tick().unwrap();
+            assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
+        }
+        handle
+            .observe_watcher(vec![SyncWatcherObservation::managed_path(path).unwrap()])
+            .unwrap();
+        let ticks = drain_until_settled(&handle);
+        assert!(
+            ticks
+                .iter()
+                .any(|tick| matches!(tick, SyncRuntimeTick::AdmittedComplete { .. })),
+            "foreign replacement was not semantically re-admitted: {ticks:?}"
+        );
+        let (re_admitted, _) = load_application_exact(&handle, path);
+        assert_eq!(re_admitted.pre_block.as_deref(), Some("layout:: foreign"));
+        assert_eq!(re_admitted.blocks[0].raw, "must survive refusal");
+        assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
+        drain_managed_local(&handle);
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
     }
 
     #[test]

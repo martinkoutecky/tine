@@ -1305,6 +1305,7 @@ fn block_manifested_projection_work(
     receipts: &ProjectionReceiptStore,
     work_index: &ProjectionWorkIndex,
     work: &ProjectionWork,
+    intent_id: super::ProjectionIntentId,
 ) -> Result<(), ProjectionError> {
     let observed = graph
         .read_projection_input(work.path())
@@ -1312,10 +1313,11 @@ fn block_manifested_projection_work(
         .as_deref()
         .map(super::BlobDescription::of);
     work_index
-        .mark_blocked(ProjectionWorkBlockAuthority::guarded_conflict(
+        .mark_blocked(ProjectionWorkBlockAuthority::guarded_conflict_for_intent(
             work,
             receipts.store_id(),
             observed,
+            intent_id,
         ))
         .map_err(|error| ProjectionError::Work(error.to_string()))
 }
@@ -1536,8 +1538,14 @@ fn execute_manifested_projection_work_with_runtime(
             None
         }
         Some((Err(error), _)) if crate::model::is_projection_semantic_refusal(&error) => {
-            block_manifested_projection_work(graph, receipts, work_index, work)?;
-            return Err(error.into());
+            block_manifested_projection_work(
+                graph,
+                receipts,
+                work_index,
+                work,
+                local_attempt_intent.id()?,
+            )?;
+            return Err(ProjectionError::GuardedConflict(error));
         }
         Some((Err(error), _)) => return Err(error.into()),
         None => None,
@@ -1648,8 +1656,14 @@ fn execute_manifested_projection_work_with_runtime(
                         io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
                     ) || crate::model::is_projection_semantic_refusal(&error) =>
                 {
-                    block_manifested_projection_work(graph, receipts, work_index, work)?;
-                    return Err(error.into());
+                    block_manifested_projection_work(
+                        graph,
+                        receipts,
+                        work_index,
+                        work,
+                        local_attempt_intent.id()?,
+                    )?;
+                    return Err(ProjectionError::GuardedConflict(error));
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -2678,6 +2692,11 @@ fn find_bytes(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 #[derive(Debug)]
 pub enum ProjectionError {
     Io(io::Error),
+    /// The singular guarded writer found that the live projection no longer
+    /// matches the immutable work item after publication. The work is durably
+    /// blocked for external reconciliation, so coordinator retry cannot make
+    /// this same projection job progress.
+    GuardedConflict(io::Error),
     Engine(EngineError),
     Receipt(ReceiptError),
     Store(Box<ProjectionStoreError>),
@@ -2721,6 +2740,7 @@ impl fmt::Display for ProjectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(f),
+            Self::GuardedConflict(error) => error.fmt(f),
             Self::Engine(error) => error.fmt(f),
             Self::Receipt(error) => error.fmt(f),
             Self::Store(error) => error.fmt(f),
@@ -2792,6 +2812,7 @@ impl std::error::Error for ProjectionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::GuardedConflict(error) => Some(error),
             Self::Engine(error) => Some(error),
             Self::Receipt(error) => Some(error),
             Self::Store(error) => Some(error),

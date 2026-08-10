@@ -67,16 +67,16 @@ use super::shadow_projection::BootstrapProjectionAuthority;
 use super::uuid_claim_index::{LogseqClaimIndexRoot, LogseqClaimIndexStore};
 use super::{
     AnnotatedIdentity, AnnotatedProjectionBase, BatchCausalDot, BatchId, BatchInspection,
-    BatchOrigin, BlockDelta, BlockId, BlockOwner, BlockState, CausalPeerId, ContentDigest,
-    CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentCausalDigest, DocumentDependencies, DocumentId,
-    FrontierV2, LineageDigest, LogicalPageName, LogseqUuid, ManagedPath, ManagedTextKind,
-    ManifestObjectRef, ManifestProjectionPrecondition, ManifestProjectionTarget,
-    ManifestedProjectionIntent, MembershipClaim, MembershipDelta, ObjectKind, ObjectStore,
-    OperationBatch, OperationObject, PageDelta, PageId, PageState, PortablePathKeyDigest,
-    PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant, ProjectionCompletedReceipt,
-    ProjectionCompletion, ProjectionEndpointId, ProjectionIntent, ProjectionReceiptStore,
-    ProjectionWork, ProjectionWorkIndex, ProjectionWorkTarget, SemanticEffect,
-    SemanticEffectDigest, SemanticError, SessionId, ValidatedBatch, WorkspaceId,
+    BatchOrigin, BlobDescription, BlockDelta, BlockId, BlockOwner, BlockState, CausalPeerId,
+    ContentDigest, CrdtPeerCounter, CrdtPeerId, DeviceId, DocumentCausalDigest,
+    DocumentDependencies, DocumentId, FrontierV2, LineageDigest, LogicalPageName, LogseqUuid,
+    ManagedPath, ManagedTextKind, ManifestObjectRef, ManifestProjectionPrecondition,
+    ManifestProjectionTarget, ManifestedProjectionIntent, MembershipClaim, MembershipDelta,
+    ObjectKind, ObjectStore, OperationBatch, OperationObject, PageDelta, PageId, PageState,
+    PortablePathKeyDigest, PreparedBatch, ProjectionClaimEvidence, ProjectionClaimParticipant,
+    ProjectionCompletedReceipt, ProjectionCompletion, ProjectionEndpointId, ProjectionIntent,
+    ProjectionReceiptStore, ProjectionWork, ProjectionWorkIndex, ProjectionWorkTarget,
+    SemanticEffect, SemanticEffectDigest, SemanticError, SessionId, ValidatedBatch, WorkspaceId,
 };
 use crate::{Graph, GraphTextScopeBinding};
 
@@ -3406,6 +3406,14 @@ pub enum CurrentPageAtPath {
     Unowned,
     PortableCollision(PortablePathOccupied),
     ReleasedPortableCollision(PortablePathReleased),
+}
+
+pub(crate) enum ProjectedReleaseAuthority {
+    Completed(ProjectionCompletedReceipt),
+    GuardedConflict {
+        work: ProjectionWork,
+        intent_id: super::ProjectionIntentId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18081,7 +18089,8 @@ impl ShardedHotEngine {
         &self,
         index: &ProjectionWorkIndex,
         release: &PortablePathReleased,
-    ) -> Result<super::ProjectionCompletedReceipt, EngineError> {
+        observed: BlobDescription,
+    ) -> Result<ProjectedReleaseAuthority, EngineError> {
         self.begin_point_operation();
         self.ensure_not_blocked()?;
         let endpoint = self.projection_endpoint.ok_or_else(|| {
@@ -18151,22 +18160,49 @@ impl ShardedHotEngine {
                 && receipt.path() == release.prior_exact_path()
                 && receipt.target() == ProjectionWorkTarget::Absent
         });
-        let completed = exact.next().ok_or_else(|| {
-            EngineError::ProjectionWork(
-                "projection release has no authenticated absent completion".into(),
-            )
-        })?;
-        if exact.next().is_some()
-            || !self.projection_frontier_contains_path_acquisition(
-                completed.frontier(),
-                release.release_batch(),
-            )?
-        {
+        let completed = exact.next();
+        if exact.next().is_some() {
             return Err(EngineError::ProjectionWork(
                 "projection release completion is not exact".into(),
             ));
         }
-        Ok(completed)
+        if let Some(completed) = completed {
+            if !self.projection_frontier_contains_path_acquisition(
+                completed.frontier(),
+                release.release_batch(),
+            )? {
+                return Err(EngineError::ProjectionWork(
+                    "projection release completion is not exact".into(),
+                ));
+            }
+            return Ok(ProjectedReleaseAuthority::Completed(completed));
+        }
+        let blocked = index
+            .blocked_release_for_observation(
+                release.release_batch(),
+                release.prior_page_id(),
+                release.prior_exact_path(),
+                observed,
+            )
+            .map_err(|error| EngineError::ProjectionWork(error.to_string()))?
+            .ok_or_else(|| {
+                EngineError::ProjectionWork(
+                    "projection release has neither an absent completion nor an exact guarded conflict"
+                        .into(),
+                )
+            })?;
+        if !self.projection_frontier_contains_path_acquisition(
+            blocked.0.post_frontier(),
+            release.release_batch(),
+        )? {
+            return Err(EngineError::ProjectionWork(
+                "guarded projection conflict is not exact for the release".into(),
+            ));
+        }
+        Ok(ProjectedReleaseAuthority::GuardedConflict {
+            work: blocked.0,
+            intent_id: blocked.1,
+        })
     }
 
     fn projection_frontier_dominates(

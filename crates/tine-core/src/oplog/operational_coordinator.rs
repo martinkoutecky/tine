@@ -27,8 +27,9 @@ use super::shadow_projection::BootstrapProjectionAuthority;
 use super::{
     AcceptedBatchEvent, AuthorBatch, BatchDisposition, BatchId, BatchInspection, BatchOrigin,
     ContentDigest, CrdtPeerId, ImportId, ImportPlan, ImportPlanStatus, ObjectStore,
-    OperationTransaction, PreparedBatch, ProjectionEndpointBinding, ProjectionReceiptStore,
-    RebuildSource, SessionId, ShardedHotEngine, SqliteFrontier, TailOverlay, TailReservation,
+    OperationTransaction, PreparedBatch, ProjectionEndpointBinding, ProjectionError,
+    ProjectionReceiptStore, RebuildSource, SessionId, ShardedHotEngine, SqliteFrontier,
+    TailOverlay, TailReservation,
 };
 
 const CRDT_PEER_PROBE_BUDGET: u64 = 8;
@@ -155,6 +156,7 @@ pub(crate) enum RetainedBlockReason {
     Quarantined,
     PublishedAuthentication,
     StableBinding,
+    GuardedProjectionConflict,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -814,11 +816,18 @@ impl PublishedContinuationCore {
                     started.elapsed().as_secs_f64() * 1000.0,
                 );
             }
-            executed.map_err(|error| {
-                OperationalCoordinatorError::new(
+            executed.map_err(|error| match error {
+                ProjectionError::GuardedConflict(error) => {
+                    OperationalCoordinatorError::retained_block(
+                        OperationalPhase::ProjectionDrain,
+                        error.to_string(),
+                        RetainedBlockReason::GuardedProjectionConflict,
+                    )
+                }
+                error => OperationalCoordinatorError::new(
                     OperationalPhase::ProjectionDrain,
                     error.to_string(),
-                )
+                ),
             })?;
             budget.consume(1, OperationalPhase::ProjectionDrain)?;
             fault(OperationalFaultPoint::AfterProjection)?;

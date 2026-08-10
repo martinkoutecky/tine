@@ -891,6 +891,25 @@ impl DocumentId {
         ))
     }
 
+    /// A path released by an accepted deletion cannot reuse the path-stable
+    /// home document of its prior page. Bind the replacement shard to the
+    /// authenticated release dependency so replicas derive the same fresh
+    /// document without colliding with the deleted owner's shard.
+    pub(crate) fn for_released_import_page(
+        workspace_id: WorkspaceId,
+        managed_relative_path: &[u8],
+        release: super::LogicalCompletionId,
+    ) -> Self {
+        Self(derived_uuid(
+            b"tine/import/released-page-home-document-id/v1\0",
+            &[
+                workspace_id.as_uuid().as_bytes(),
+                managed_relative_path,
+                release.as_bytes(),
+            ],
+        ))
+    }
+
     /// Derive the external-observation document for one import transaction.
     pub(crate) fn for_external_import_observation(
         workspace_id: WorkspaceId,
