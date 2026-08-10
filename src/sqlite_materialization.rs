@@ -65,6 +65,7 @@ pub struct PhysicalReference {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalProperty {
     pub name: String,
+    pub normalized_name: String,
     pub value: String,
 }
 
@@ -442,6 +443,9 @@ pub const PROPERTIES_DDL: &str = "CREATE TABLE properties (
     owner_id BLOB NOT NULL CHECK (length(owner_id) = 16),
     page_id BLOB NOT NULL CHECK (length(page_id) = 16),
     name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 4194304),
+    normalized_name TEXT NOT NULL CHECK (
+        length(CAST(normalized_name AS BLOB)) BETWEEN 1 AND 4194304
+    ),
     value TEXT NOT NULL CHECK (length(CAST(value AS BLOB)) <= 4194304),
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     PRIMARY KEY (owner_type, owner_id, name, ordinal)
@@ -522,7 +526,7 @@ pub const REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL: &str =
     "CREATE INDEX reference_alias_bindings_normalized_alias_idx
     ON reference_alias_bindings(normalized_alias, candidate_ordinal)";
 pub const PROPERTIES_LOOKUP_INDEX_DDL: &str = "CREATE INDEX properties_lookup_idx
-    ON properties(name, value, page_id, owner_type, owner_id)";
+    ON properties(normalized_name, value, page_id, owner_type, owner_id)";
 pub const PROPERTIES_PAGE_INDEX_DDL: &str = "CREATE INDEX properties_page_idx
     ON properties(page_id, owner_type, owner_id, name, ordinal)";
 pub const TAGS_LOOKUP_INDEX_DDL: &str =
@@ -668,6 +672,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
             "owner_id",
             "page_id",
             "name",
+            "normalized_name",
             "value",
             "ordinal",
         ],
@@ -2415,13 +2420,14 @@ fn insert_properties(
         execute_cached(
             transaction,
             "INSERT INTO properties (
-                 owner_type, owner_id, page_id, name, value, ordinal
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 owner_type, owner_id, page_id, name, normalized_name, value, ordinal
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 owner_type,
                 owner_id.as_slice(),
                 page_id.as_slice(),
                 &property.name,
+                &property.normalized_name,
                 &property.value,
                 i64::try_from(ordinal).map_err(|_| {
                     MaterializationError::InvalidInput("property ordinal overflowed".into())
@@ -2549,6 +2555,12 @@ pub struct PhysicalPageReferrerCandidateRow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPlainTextCandidatePageRow {
     pub page_id: [u8; 16],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalBlockPropertyCandidateRow {
+    pub page_id: [u8; 16],
+    pub block_id: [u8; 16],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3551,6 +3563,58 @@ impl<'a> SqliteMaterializedRead<'a> {
         )
     }
 
+    /// Stable block owners for one canonical property key. Rows are candidates:
+    /// callers retain semantic ownership of property parsing and subtree shape.
+    pub fn block_property_candidates_after(
+        &self,
+        normalized_name: &str,
+        after: Option<([u8; 16], [u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockPropertyCandidateRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(normalized_name)?;
+        if normalized_name.trim().is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "normalized property name must be non-empty".into(),
+            ));
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT page_id, owner_id
+                 FROM properties
+                 WHERE owner_type = 1 AND normalized_name = ?1
+                 ORDER BY page_id, owner_id LIMIT ?2",
+                vec![normalized_name.to_owned().into(), limit.into()],
+            ),
+            Some((page_id, block_id)) => (
+                "SELECT DISTINCT page_id, owner_id
+                 FROM properties
+                 WHERE owner_type = 1 AND normalized_name = ?1
+                   AND (page_id > ?2 OR (page_id = ?2 AND owner_id > ?3))
+                 ORDER BY page_id, owner_id LIMIT ?4",
+                vec![
+                    normalized_name.to_owned().into(),
+                    page_id.to_vec().into(),
+                    block_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            let block_id: Vec<u8> = row.get(1)?;
+            Ok(PhysicalBlockPropertyCandidateRow {
+                page_id: decode_id_sql(&page_id)?,
+                block_id: decode_id_sql(&block_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(32),
+        )
+    }
+
     pub fn properties(
         &self,
         owner: PhysicalEntityId,
@@ -3584,7 +3648,7 @@ impl<'a> SqliteMaterializedRead<'a> {
         let (sql, args): (&str, Vec<rusqlite::types::Value>) = match value {
             Some(value) => (
                 "SELECT owner_type, owner_id, page_id, name, value
-                 FROM properties WHERE name = ?1 AND value = ?2
+                 FROM properties WHERE normalized_name = ?1 AND value = ?2
                  ORDER BY page_id, owner_type, owner_id, ordinal LIMIT ?3",
                 vec![
                     rusqlite::types::Value::Text(name.to_owned()),
@@ -3594,7 +3658,7 @@ impl<'a> SqliteMaterializedRead<'a> {
             ),
             None => (
                 "SELECT owner_type, owner_id, page_id, name, value
-                 FROM properties WHERE name = ?1
+                 FROM properties WHERE normalized_name = ?1
                  ORDER BY page_id, owner_type, owner_id, ordinal LIMIT ?2",
                 vec![rusqlite::types::Value::Text(name.to_owned()), limit.into()],
             ),
@@ -3971,6 +4035,7 @@ mod tests {
             references: Vec::new(),
             properties: vec![PhysicalProperty {
                 name: "category".into(),
+                normalized_name: "category".into(),
                 value: "test".into(),
             }],
             tags: vec!["storage".into()],
@@ -3989,6 +4054,7 @@ mod tests {
                 references: Vec::new(),
                 properties: vec![PhysicalProperty {
                     name: "block-property".into(),
+                    normalized_name: "block-property".into(),
                     value: "value".into(),
                 }],
                 tags: vec!["block-tag".into()],
@@ -4059,6 +4125,7 @@ mod tests {
         }];
         first.properties = vec![PhysicalProperty {
             name: "\u{00fc}nicode".into(),
+            normalized_name: "\u{00fc}nicode".into(),
             value: "\u{0}value\u{1f680}".into(),
         }];
         first.tags = vec!["\u{00e9}tiquette".into()];
@@ -4068,6 +4135,7 @@ mod tests {
         }];
         first.blocks[0].properties = vec![PhysicalProperty {
             name: "edge".into(),
+            normalized_name: "edge".into(),
             value: "\u{0}\u{1f9ea}".into(),
         }];
         first.blocks[0].tags = vec!["\u{1f3f7}\u{fe0f}".into()];
@@ -4292,11 +4360,23 @@ mod tests {
         let mut first = page(301, "first payload");
         first.blocks[0].searchable_text = "Cafe\u{301} foo-bar common".into();
         first.blocks[0].normalized_searchable_text = "café foo-bar common".into();
+        first.blocks[0].properties.push(PhysicalProperty {
+            name: "Template".into(),
+            normalized_name: "template".into(),
+            value: "First".into(),
+        });
         let mut second = page(302, "second payload");
         second.blocks[0].searchable_text = "Café common".into();
         second.blocks[0].normalized_searchable_text = "café common".into();
+        second.blocks[0].properties.push(PhysicalProperty {
+            name: "template".into(),
+            normalized_name: "template".into(),
+            value: "Second".into(),
+        });
         let first_page = first.page_id;
+        let first_block = first.blocks[0].block_id;
         let second_page = second.page_id;
+        let second_block = second.blocks[0].block_id;
         apply_and_commit(
             &mut connection,
             &change(0x7890, vec![first, second], Vec::new()),
@@ -4337,6 +4417,33 @@ mod tests {
             read.plain_text_candidate_pages_after("++", None, 10),
             Err(MaterializationError::InvalidQuery(_))
         ));
+        assert_eq!(
+            read.block_property_candidates_after("template", None, 10)
+                .unwrap(),
+            vec![
+                PhysicalBlockPropertyCandidateRow {
+                    page_id: first_page,
+                    block_id: first_block,
+                },
+                PhysicalBlockPropertyCandidateRow {
+                    page_id: second_page,
+                    block_id: second_block,
+                },
+            ]
+        );
+        assert_eq!(
+            read.block_property_candidates_after("template", Some((first_page, first_block)), 10,)
+                .unwrap(),
+            vec![PhysicalBlockPropertyCandidateRow {
+                page_id: second_page,
+                block_id: second_block,
+            }]
+        );
+        assert!(read
+            .properties_named("template", None, 10)
+            .unwrap()
+            .iter()
+            .any(|row| row.name == "Template" && row.value == "First"));
     }
 
     #[test]

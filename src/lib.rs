@@ -57,17 +57,17 @@ pub mod sqlite {
     };
     pub use crate::sqlite_materialization::{
         ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
-        PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockReferenceCountRow,
-        PhysicalBlockReferrerCandidateRow, PhysicalBlockRow, PhysicalEntityId,
-        PhysicalMaterializationChange, PhysicalNavigationAliasRow, PhysicalNavigationPageRow,
-        PhysicalNavigationReferenceNameRow, PhysicalPage, PhysicalPageInventoryRow,
-        PhysicalPageReferrerCandidateRow, PhysicalPageRow, PhysicalPlainTextCandidatePageRow,
-        PhysicalProperty, PhysicalPropertyRow, PhysicalReference, PhysicalReferenceCatalogChange,
-        PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalReferrerRow, PhysicalSearchHit,
-        PhysicalSourceCoverage, PhysicalTagRow, PhysicalTask, PhysicalTaskRow,
-        PhysicalTerminalCatalogStamp, PhysicalTerminalConstructionBatch,
-        PhysicalTerminalMaterializationChunk, SqliteMaterializedRead,
-        MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
+        PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockPropertyCandidateRow,
+        PhysicalBlockReferenceCountRow, PhysicalBlockReferrerCandidateRow, PhysicalBlockRow,
+        PhysicalEntityId, PhysicalMaterializationChange, PhysicalNavigationAliasRow,
+        PhysicalNavigationPageRow, PhysicalNavigationReferenceNameRow, PhysicalPage,
+        PhysicalPageInventoryRow, PhysicalPageReferrerCandidateRow, PhysicalPageRow,
+        PhysicalPlainTextCandidatePageRow, PhysicalProperty, PhysicalPropertyRow,
+        PhysicalReference, PhysicalReferenceCatalogChange, PhysicalReferencePosting,
+        PhysicalReferenceTarget, PhysicalReferrerRow, PhysicalSearchHit, PhysicalSourceCoverage,
+        PhysicalTagRow, PhysicalTask, PhysicalTaskRow, PhysicalTerminalCatalogStamp,
+        PhysicalTerminalConstructionBatch, PhysicalTerminalMaterializationChunk,
+        SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
         MAX_MATERIALIZATION_READ_BYTES,
     };
 
