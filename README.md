@@ -1,5 +1,7 @@
 # tine-storage
 
+[![certify](https://github.com/martinkoutecky/tine-storage/actions/workflows/certify.yml/badge.svg)](https://github.com/martinkoutecky/tine-storage/actions/workflows/certify.yml)
+
 `tine-storage` owns physical persistence mechanisms. The dependency direction
 is `src-tauri -> tine-core -> tine-storage`: core supplies policy, authority,
 validation, and domain meaning, while this crate supplies storage operations.
