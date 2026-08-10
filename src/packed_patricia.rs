@@ -3356,9 +3356,20 @@ mod tests {
         }
     }
 
+    struct CleanupPath(std::path::PathBuf);
+
+    impl Drop for CleanupPath {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
     struct Fixture {
-        path: std::path::PathBuf,
+        // Field order is deliberate: close the directory capability before the
+        // cleanup guard removes its namespace on Windows.
         dir: Dir,
+        path: std::path::PathBuf,
+        _cleanup: CleanupPath,
     }
 
     impl Fixture {
@@ -3367,13 +3378,11 @@ mod tests {
                 .join(format!("tine-packed-patricia-{name}-{}", Uuid::new_v4()));
             fs::create_dir(&path).unwrap();
             let dir = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
-            Self { path, dir }
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.path).unwrap();
+            Self {
+                dir,
+                path: path.clone(),
+                _cleanup: CleanupPath(path),
+            }
         }
     }
 

@@ -1270,10 +1270,12 @@ mod tests {
             }
             let prefix_len = segment.committed_bytes() as usize;
             let appended = segment.append(TestKind::Update, b"torn").unwrap();
+            let final_len = appended.frame_bytes as usize;
+            drop(segment);
             (
                 fixture.segment_bytes("device.journal"),
                 prefix_len,
-                appended.frame_bytes as usize,
+                final_len,
             )
         };
         assert_eq!(complete.len(), prefix_len + final_len);
@@ -1307,6 +1309,7 @@ mod tests {
             assert_eq!(recovery.frames_recovered, 4);
             assert_eq!(recovery.last_frame.unwrap().payload(), b"after-recovery");
             assert_eq!(replayed(&segment).len(), 4);
+            drop(segment);
         }
     }
 
@@ -1319,6 +1322,7 @@ mod tests {
             segment.append(TestKind::Effect, b"kept").unwrap();
             let prefix_len = segment.committed_bytes() as usize;
             segment.append(TestKind::Update, b"damaged").unwrap();
+            drop(segment);
             (fixture.segment_bytes("device.journal"), prefix_len)
         };
         // Damage a payload byte of the final frame without changing its length.
@@ -1347,10 +1351,9 @@ mod tests {
             let first = segment.append(TestKind::Effect, b"first").unwrap();
             segment.append(TestKind::Effect, b"second").unwrap();
             segment.append(TestKind::Effect, b"third").unwrap();
-            (
-                fixture.segment_bytes("device.journal"),
-                first.frame_bytes as usize,
-            )
+            let first_len = first.frame_bytes as usize;
+            drop(segment);
+            (fixture.segment_bytes("device.journal"), first_len)
         };
 
         // A non-final frame that later bytes prove was written completely is

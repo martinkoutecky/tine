@@ -2168,6 +2168,8 @@ mod tests {
         let reopened = ScratchRun::adopt_retained(&source, owner, run_id).unwrap();
         assert_eq!(run_snapshot(&source_root, run_id), baseline);
         drop(reopened);
+        drop(source);
+        drop(destination);
         fs::remove_dir_all(source_root).unwrap();
         fs::remove_dir_all(destination_root).unwrap();
     }
@@ -2215,6 +2217,7 @@ mod tests {
             assert_eq!(reopened.read_blob(&blob).unwrap(), expected.to_be_bytes());
         }
         drop(reopened);
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2350,6 +2353,7 @@ mod tests {
         assert_unchanged(&truncated);
 
         drop(run);
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2448,6 +2452,7 @@ mod tests {
 
         drop(run);
         assert!(!root.join(SCRATCH_DIR).exists() || namespace_names(&root).is_empty());
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2619,6 +2624,7 @@ mod tests {
 
         drop(run);
         assert!(!root.join(SCRATCH_DIR).exists() || namespace_names(&root).is_empty());
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2663,6 +2669,7 @@ mod tests {
         assert_eq!(session.stats().misses, 1);
         assert_eq!(session.stats().resident_bytes, 0);
         drop(run);
+        drop(tamper_archive);
         fs::remove_dir_all(tamper_root).unwrap();
 
         let truncate_root = scratch_root("lookup-session-truncate-before");
@@ -2690,6 +2697,7 @@ mod tests {
         assert_eq!(result, Err(ScratchRunError::MalformedPage));
         assert_eq!(session.stats().resident_bytes, 0);
         drop(run);
+        drop(truncate_archive);
         fs::remove_dir_all(truncate_root).unwrap();
 
         let uncached_root = scratch_root("lookup-session-tamper-uncached");
@@ -2753,6 +2761,7 @@ mod tests {
         ));
         assert_eq!(session.stats().resident_bytes, resident_before);
         drop(run);
+        drop(uncached_archive);
         fs::remove_dir_all(uncached_root).unwrap();
 
         let cached_root = scratch_root("lookup-session-tamper-cached");
@@ -2801,6 +2810,7 @@ mod tests {
         ));
         assert_eq!(fresh.stats().resident_bytes, 0);
         drop(run);
+        drop(cached_archive);
         fs::remove_dir_all(cached_root).unwrap();
     }
 
@@ -2862,6 +2872,7 @@ mod tests {
         assert_eq!(session.stats(), ScratchLookupSessionStats::default());
         drop(other_run);
         drop(run);
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2938,6 +2949,7 @@ mod tests {
 
         drop(ephemeral);
         drop(live);
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 }

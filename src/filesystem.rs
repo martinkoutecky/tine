@@ -396,6 +396,20 @@ pub fn read_optional_regular(
     limit: u64,
     expected_length: Option<u64>,
 ) -> Result<Option<Vec<u8>>, FilesystemError> {
+    // Windows refuses to open a directory through the file-only capability
+    // before we can classify its handle. Preclassify an existing non-file,
+    // then still validate the opened handle below so a concurrent replacement
+    // cannot turn this check into authority.
+    match dir.symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(FilesystemError::UnsafeEntry(format!(
+                "stored path is not a regular no-follow file: {path}"
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
     let mut file = match open_file_nofollow(dir, path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
