@@ -901,6 +901,21 @@ pub struct PageDto {
     /// yet; then save resolves the path by name, exactly as before.
     #[serde(default)]
     pub path: String,
+    /// Which live editor instance is issuing this save, if any.
+    ///
+    /// The wire half of the editor-activation boundary. It is carried on the DTO
+    /// rather than on the frontend's `FeedPage` deliberately: a token stored in a
+    /// page value is copied by every clone, snapshot and history round-trip, and
+    /// the copy would then claim an identity it does not have. The frontend keeps
+    /// activations in a registry keyed by page identity and stamps this field when
+    /// it builds the DTO.
+    ///
+    /// `None` is an editor-less writer (managed projection, external import,
+    /// sync-id migration, PDF-highlight write) or a pre-increment-3 caller. Legal
+    /// on the ordinary path, where the base-revision guard is the authority;
+    /// refused on the override path. (GH #254 increment 3.)
+    #[serde(default)]
+    pub activation: Option<u64>,
     /// True for bundled in-app Guide pages. Guide pages are ephemeral/read-only
     /// virtual pages and must never be persisted into the user's graph by the
     /// normal save/writeback path.
@@ -2021,9 +2036,85 @@ enum ConflictSnapshot {
     Absent,
 }
 
+/// Identity for one LIVE editor instance over a path.
+///
+/// Opaque to the frontend: it is minted by [`Graph::activate_editor`], carried
+/// across the save transport, and compared for exact equality. It is deliberately
+/// NOT derived from the page's content, revision or path, because the defect this
+/// exists to close is precisely two different editors that agree on all three — a
+/// cloned `PageDto` with the same `base_rev` spending the live editor's epoch.
+///
+/// Values are unique within one `Graph`. The registry lives on the `Graph`, so a
+/// token minted against a different graph is simply not found: the graph binding
+/// the spec requires is structural rather than a compared field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct EditorActivation(u64);
+
+impl EditorActivation {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    pub fn from_u64(raw: u64) -> Self {
+        Self(raw)
+    }
+}
+
+/// What an activation request means for a path that already has a live editor.
+///
+/// Path idempotence and same-path content replacement contradict each other
+/// without this discriminator, which is why v5 of the spec was unimplementable at
+/// the same-path row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivationIntent {
+    /// Plain re-hydration: return the live activation and mint nothing. Does not
+    /// burn the incumbent's authority.
+    Reuse,
+    /// The working instance is genuinely being replaced (`reloadPage`,
+    /// `reloadPageIfStillSafe`, PDF-notes refresh). Mints a new activation and
+    /// retires the one it replaced.
+    Replace,
+}
+
+/// A live editor instance registered against a path.
+#[derive(Clone, Debug)]
+struct ActivationRecord {
+    activation: EditorActivation,
+    /// Present editors are live for an existing file. Absent editors are live for
+    /// a prospective target that does not exist yet; the target is re-resolved and
+    /// compared at first save.
+    prospective: bool,
+}
+
+#[derive(Default)]
+struct EditorActivationState {
+    next: u64,
+    live: std::collections::HashMap<PathBuf, ActivationRecord>,
+}
+
+/// The outcome of activating an editor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditorActivationHandle {
+    pub activation: EditorActivation,
+    /// The exact path this activation is live for. For an absent editor this is
+    /// the prospective target resolved at activation time, which first save
+    /// re-resolves and compares.
+    pub target: String,
+    /// True when the target did not exist at activation time. Holding it reserves
+    /// nothing on disk, so activation creates no unrequested write.
+    pub prospective: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ConflictEditorEpisode {
     loaded_revision: Option<String>,
+    /// The editor activation that observed the conflict.
+    ///
+    /// `None` is the editor-less writer (managed projection, external import,
+    /// sync-id migration, PDF-highlight write) and the pre-increment-3 caller.
+    /// Those are legal on the ordinary path — the base-revision guard is their
+    /// authority — and refused on the override path.
+    activation: Option<EditorActivation>,
 }
 
 /// Which conflict a "Keep mine" is answering.
@@ -2249,6 +2340,13 @@ pub struct Graph {
     /// This is deliberately separate from `loaded_file_identities`: ordinary
     /// loads are evidence for ordinary saves, never permission to overwrite.
     conflict_authority: std::sync::Mutex<ConflictAuthorityState>,
+    /// Live editor activations, keyed by the exact path each is live for.
+    ///
+    /// Deliberately a registry on the `Graph` rather than a field of any page
+    /// value: a token stored inside a page object is copied by every clone,
+    /// snapshot and DTO round-trip, and a copy would then claim an identity it
+    /// does not have (see the frontend's `clonePages`/history snapshots).
+    editor_activations: std::sync::Mutex<EditorActivationState>,
     /// All page names referenced anywhere — `[[link]]`/`#tag`/`#[[..]]` plus
     /// `tags::`/`alias::` property values — in their as-written display case,
     /// keyed by `cache_gen`. Like OG, a page that is only referenced (never given
@@ -5317,6 +5415,7 @@ impl Graph {
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             loaded_file_identities: RwLock::new(std::collections::HashMap::new()),
             conflict_authority: std::sync::Mutex::new(ConflictAuthorityState::default()),
+            editor_activations: std::sync::Mutex::new(EditorActivationState::default()),
             referenced_names_cache: RwLock::new(None),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             managed_sync: std::sync::Mutex::new(None),
@@ -13837,7 +13936,12 @@ impl Graph {
     /// disk parse for a page not yet in the cache (e.g. just created externally).
     pub fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
         crate::fast_commit::note_application_page_load();
-        self.revoke_conflict_authority(&entry.path);
+        // A read is NOT an activation, and must not revoke one. Re-hydrating a
+        // page that is already open — which this path does constantly — would
+        // otherwise disarm a live banner the user can still see. The genuine
+        // disk-move boundaries revoke explicitly elsewhere
+        // (`observe_graph_text_external_paths`, `sync_file_checked`,
+        // `forget_file`), so nothing is lost here. (GH #254 increment 3.)
         let permit = self.admit_retained_managed_text_writer()?;
         let Some(ExactGraphLoadedPage {
             entry: effective,
@@ -13881,7 +13985,7 @@ impl Graph {
         let Some(abs) = self.resolve_rel(rel) else {
             return Ok(None);
         };
-        self.revoke_conflict_authority(&abs);
+        // A read is NOT an activation — see `load_page`. (GH #254 increment 3.)
         if self.entry_for_path(&abs).is_none() {
             return Ok(None);
         }
@@ -20038,6 +20142,130 @@ impl Graph {
         *epoch
     }
 
+    /// Activate an editor over `rel`, minting or reusing an activation.
+    ///
+    /// This is deliberately NOT a read. `load_page`/`load_by_path` are
+    /// mixed-purpose: some results become store editors and others are read-only,
+    /// export, transient, or discarded because the page is already loaded. Minting
+    /// on every DTO hand-out would mint for non-editors; minting here means an
+    /// activation exists exactly when a live editor does.
+    ///
+    /// `Reuse` on a path that already has a live activation returns it unchanged
+    /// and does not burn it — plain re-hydration is idempotent. `Replace` mints a
+    /// new activation and retires the incumbent, which is what `reloadPage`,
+    /// `reloadPageIfStillSafe` and the PDF-notes refresh genuinely do.
+    ///
+    /// An **absent** page (no file at `rel` yet) activates against a prospective
+    /// target resolved now and returned to the caller. Holding it reserves nothing
+    /// on disk, so activation never performs an unrequested write. First save
+    /// re-resolves and compares, because the resolver's answer can drift when an
+    /// alternate extension appears.
+    pub fn activate_editor(
+        &self,
+        rel: &str,
+        intent: ActivationIntent,
+    ) -> io::Result<EditorActivationHandle> {
+        let abs = self.resolve_rel(rel).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "editor activation target is outside the graph",
+            )
+        })?;
+        let prospective = self.entry_for_path(&abs).is_none();
+        let mut state = self.editor_activations.lock().unwrap();
+        if intent == ActivationIntent::Reuse {
+            if let Some(record) = state.live.get(&abs) {
+                return Ok(EditorActivationHandle {
+                    activation: record.activation,
+                    target: rel.to_owned(),
+                    prospective: record.prospective,
+                });
+            }
+        }
+        state.next += 1;
+        let activation = EditorActivation(state.next);
+        state.live.insert(
+            abs,
+            ActivationRecord {
+                activation,
+                prospective,
+            },
+        );
+        Ok(EditorActivationHandle {
+            activation,
+            target: rel.to_owned(),
+            prospective,
+        })
+    }
+
+    /// Activate an editor for a page that has no file yet.
+    ///
+    /// The frontend creates real editors that never receive a core DTO — a missing
+    /// routed page via `emptyPage`, quick capture, carry-to-today, the feed's
+    /// absent "today" journal. Each can take a first edit and be saved, and each
+    /// can meet an external-create conflict on that very first save, so "no token"
+    /// cannot be allowed to mean "not an editor".
+    ///
+    /// The prospective target is resolved now and returned, because
+    /// "live for that path" is otherwise undefined for a page with no path. It
+    /// reserves nothing on disk. First save re-resolves and compares, since the
+    /// resolver's answer can drift when an alternate extension appears
+    /// underneath it.
+    pub fn activate_absent_editor(
+        &self,
+        name: &str,
+        kind: PageKind,
+    ) -> io::Result<EditorActivationHandle> {
+        let permit = self.admit_managed_text_writer()?;
+        let abs = self.managed_path_for(&permit, name, kind)?;
+        let rel = self.rel_path(&abs);
+        let mut state = self.editor_activations.lock().unwrap();
+        state.next += 1;
+        let activation = EditorActivation(state.next);
+        state.live.insert(
+            abs,
+            ActivationRecord {
+                activation,
+                prospective: true,
+            },
+        );
+        Ok(EditorActivationHandle {
+            activation,
+            target: rel,
+            prospective: true,
+        })
+    }
+
+    /// Retire `activation` from `rel`, but only if it is still the live one.
+    ///
+    /// Compare-and-retire, never a bare "retire this path": a fire-and-forget path
+    /// retirement can arrive after a newer activation was installed and would then
+    /// revoke the wrong editor. Returns whether anything was retired, so a caller
+    /// racing a newer activation learns it was already superseded rather than
+    /// silently destroying it.
+    pub fn retire_editor_activation(&self, rel: &str, activation: EditorActivation) -> bool {
+        let Some(abs) = self.resolve_rel(rel) else {
+            return false;
+        };
+        let mut state = self.editor_activations.lock().unwrap();
+        match state.live.get(&abs) {
+            Some(record) if record.activation == activation => {
+                state.live.remove(&abs);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `activation` the live editor for `abs` right now?
+    fn editor_activation_is_live(&self, abs: &Path, activation: EditorActivation) -> bool {
+        let state = self.editor_activations.lock().unwrap();
+        state
+            .live
+            .get(abs)
+            .is_some_and(|record| record.activation == activation)
+    }
+
     fn revoke_conflict_authority(&self, path: &Path) {
         let mut state = self.conflict_authority.lock().unwrap();
         Self::advance_conflict_observation_epoch(&mut state, path);
@@ -20843,6 +21071,7 @@ impl Graph {
         let _guard = lock.lock().unwrap();
         let editor_episode = ConflictEditorEpisode {
             loaded_revision: base_rev.map(str::to_owned),
+            activation: page.activation.map(EditorActivation::from_u64),
         };
         // Single read of the current file (the conflict baseline AND the
         // formatting source AND, with the written content, the returned rev) —
@@ -21028,7 +21257,30 @@ impl Graph {
         let _guard = lock.lock().unwrap();
         let editor_episode = ConflictEditorEpisode {
             loaded_revision: base_rev.map(str::to_owned),
+            activation: page.activation.map(EditorActivation::from_u64),
         };
+        // The override path demands a LIVE editor activation. Rule 1 of the
+        // contract: an override may only be spent by the exact editor activation
+        // that was shown the conflict. A request with no activation, or one that
+        // is no longer live for this path, cannot be that editor — it is a stale
+        // callback, a cloned DTO, or an editor-less writer that has no business
+        // forcing. Checked BEFORE the atomic consume so a refusal does not burn
+        // the token the real editor still needs. (GH #254 increment 3.)
+        match editor_episode.activation {
+            Some(activation) if self.editor_activation_is_live(&path, activation) => {}
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "conflict_authority.superseded: the editor activation answering this conflict is no longer live",
+                ));
+            }
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "conflict_authority.spent: a conflict override requires a live editor activation",
+                ));
+            }
+        }
         // Atomic take happens before every fallible validation below. A failed or
         // replayed attempt therefore cannot reuse the authority it started with.
         let authority = self.consume_conflict_authority(&path, &editor_episode, authority)?;
@@ -22621,6 +22873,10 @@ fn clone_block_dtos_checked(blocks: &[BlockDto]) -> io::Result<Vec<BlockDto>> {
 
 fn clone_page_dto_checked(page: &PageDto) -> io::Result<PageDto> {
     Ok(PageDto {
+        // A CLONE is never the live editor. Copying the activation here is
+        // exactly the defect increment 3 exists to close: a cloned DTO carrying
+        // the same identity could spend the real editor's override authority.
+        activation: None,
         name: page.name.clone(),
         kind: page.kind,
         title: page.title.clone(),
@@ -23614,6 +23870,7 @@ fn page_dto_from_crdt(snapshot: &CrdtPageSnapshot) -> io::Result<PageDto> {
         runtime_owner_namespace("file-block-runtime-v1", &snapshot.path),
     )?;
     Ok(PageDto {
+        activation: None,
         name: snapshot.name.clone(),
         kind,
         title: snapshot.name.clone(),
@@ -23712,6 +23969,7 @@ fn doc_blocks_to_dto_checked(blocks: &[DocBlock]) -> io::Result<Vec<BlockDto>> {
 
 fn page_dto_checked(entry: &PageEntry, doc: &Document) -> io::Result<PageDto> {
     Ok(PageDto {
+        activation: None,
         name: entry.name.clone(),
         kind: entry.kind,
         title: entry.name.clone(),
@@ -23733,6 +23991,7 @@ pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> io::Result<
     assign_virtual_doc_runtime_ids(&mut doc.roots, "bundled-markdown-v1", name)?;
     let blocks = doc_blocks_to_dto_checked(&doc.roots)?;
     Ok(PageDto {
+        activation: None,
         name: name.to_string(),
         kind: PageKind::Page,
         title: title.to_string(),
@@ -34554,6 +34813,7 @@ mod tests {
         graph.mint_conflict_authority(
             path,
             &ConflictEditorEpisode {
+                activation: None,
                 loaded_revision: page.rev.clone(),
             },
             ConflictSnapshot::Present {
@@ -36732,6 +36992,7 @@ mod tests {
         let dir = scratch("guide-no-save");
         let g = Graph::open(&dir);
         let page = PageDto {
+            activation: None,
             name: "Tine-guide/Features/Sheets".into(),
             kind: PageKind::Page,
             title: "Features/Sheets".into(),
@@ -37379,6 +37640,7 @@ mod tests {
         let g = Graph::open(&dir);
         g.warm_cache();
         let page = PageDto {
+            activation: None,
             name: "Foo".into(),
             kind: PageKind::Page,
             title: "Foo".into(),
@@ -38162,6 +38424,7 @@ mod tests {
         assert_eq!(g.preferred_format(), Format::Org);
         // Create a brand-new page via save (no baseline) — it must land as .org.
         let page = PageDto {
+            activation: None,
             name: "Fresh".into(),
             kind: PageKind::Page,
             title: "Fresh".into(),
@@ -38428,6 +38691,7 @@ mod tests {
         let g = Graph::open(&dir);
         g.warm_cache();
         let page = PageDto {
+            activation: None,
             name: "Property Authoring".into(),
             kind: PageKind::Page,
             title: "Property Authoring".into(),
@@ -38505,6 +38769,7 @@ mod tests {
         assert!(loaded.blocks.is_empty());
 
         let dto = PageDto {
+            activation: None,
             name: "The Nazi Mind".into(),
             kind: PageKind::Page,
             title: "The Nazi Mind".into(),
@@ -38704,6 +38969,7 @@ mod tests {
             }
             let g = Graph::open(&dir);
             let page = PageDto {
+                activation: None,
                 name: format!("Negative {label}"),
                 kind: PageKind::Page,
                 title: format!("Negative {label}"),
@@ -39334,6 +39600,7 @@ mod tests {
 
     fn jdto(name: &str) -> PageDto {
         PageDto {
+            activation: None,
             name: name.into(),
             kind: PageKind::Journal,
             title: name.into(),
@@ -41774,6 +42041,7 @@ mod tests {
 
     fn direct_save_bench_new_page(name: &str) -> PageDto {
         PageDto {
+            activation: None,
             name: name.to_owned(),
             kind: PageKind::Page,
             title: name.to_owned(),
@@ -46553,6 +46821,7 @@ mod tests {
         .unwrap();
         let g = Graph::open_checked(&dir).unwrap();
         let page = PageDto {
+            activation: None,
             name: "Jul 10th, 2026".into(),
             kind: PageKind::Journal,
             title: "Jul 10th, 2026".into(),
@@ -49412,6 +49681,7 @@ mod tests {
                 blocks.extend(nested_blocks(seed + breadth * 64));
             }
             PageDto {
+                activation: None,
                 name: name.to_owned(),
                 kind: PageKind::Page,
                 title: name.to_owned(),
@@ -51289,6 +51559,14 @@ mod tests {
         let graph = Graph::open(&root);
         graph.warm_cache();
         let mut page = graph.load_by_path("pages/Note.md").unwrap().unwrap();
+        // A loaded EDITOR, which since increment 3 means an activation as well as
+        // a DTO: reading alone no longer implies one, precisely so that a read for
+        // export/preview/hydration cannot inherit an editor's override authority.
+        // The frontend does exactly this — activate, then stamp the DTO it saves.
+        let handle = graph
+            .activate_editor("pages/Note.md", ActivationIntent::Replace)
+            .unwrap();
+        page.activation = Some(handle.activation.as_u64());
         page.blocks[0].raw = "mine".into();
         (root, path, graph, page)
     }
@@ -51359,15 +51637,15 @@ mod tests {
     }
 
     #[test]
-    fn gh254_reload_watcher_and_forget_each_revoke_authority() {
-        for action in ["reload", "watcher", "forget"] {
+    fn gh254_watcher_and_forget_each_revoke_authority() {
+        // The disk-move boundaries. These keep their original assertions: the file
+        // underneath the editor genuinely moved, so the snapshot the banner
+        // described is gone and its authority must go with it.
+        for action in ["watcher", "forget"] {
             let (root, path, graph, page) = gh254_loaded(action);
             fs::write(&path, "- external winner\n").unwrap();
             graph.save_page(&page, page.rev.as_deref()).unwrap_err();
             match action {
-                "reload" => {
-                    graph.load_by_path("pages/Note.md").unwrap().unwrap();
-                }
                 "watcher" => {
                     graph.sync_file_checked(&path).unwrap();
                 }
@@ -51385,6 +51663,154 @@ mod tests {
         }
     }
 
+    /// The other half of the split (GH #254 increment 3).
+    ///
+    /// A plain read is NOT an activation and must no longer revoke. Re-hydrating
+    /// an already-open page happens constantly — the sidebar, live references,
+    /// query hydration — and revoking there disarms a banner the user can still
+    /// see, leaving them a conflict whose only working button destroys their edit.
+    ///
+    /// This asserts the read is inert, NOT that the force then succeeds: under
+    /// increment 3 a force also needs a live editor activation, which this
+    /// read-only path deliberately never mints. The two conditions are separate
+    /// and `gh254_override_requires_a_live_editor_activation` covers the other.
+    #[test]
+    fn gh254_a_plain_read_does_not_revoke_authority() {
+        let (root, path, graph, page) = gh254_loaded("reload");
+        fs::write(&path, "- external winner\n").unwrap();
+        graph.save_page(&page, page.rev.as_deref()).unwrap_err();
+        let before = graph.outstanding_conflict_override(&page).unwrap();
+        assert!(
+            before.is_some(),
+            "the refused save must have minted authority for this test to mean anything"
+        );
+
+        graph.load_by_path("pages/Note.md").unwrap().unwrap();
+
+        let after = graph.outstanding_conflict_override(&page).unwrap();
+        assert_eq!(
+            before, after,
+            "a plain read must leave the live observation exactly as it found it"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "- external winner\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Rule 1 of the increment-3 contract: an override may only be spent by the
+    /// exact editor activation that was shown the conflict.
+    ///
+    /// The reproduced defect this closes is a *clone*. Two DTOs agreeing on path,
+    /// name and `base_rev` were indistinguishable to the old episode equality, so
+    /// a copy could spend the live editor's one-shot authority and overwrite the
+    /// external winner the real editor still had a banner for. Identity therefore
+    /// cannot be derived from content, revision or path — the copy matches on all
+    /// three — which is why the activation is minted, opaque, and compared exactly.
+    #[test]
+    fn gh254_override_requires_a_live_editor_activation() {
+        let (root, path, graph, page) = gh254_loaded("activation");
+        fs::write(&path, "- external winner\n").unwrap();
+        graph.save_page(&page, page.rev.as_deref()).unwrap_err();
+        let shown = graph
+            .outstanding_conflict_override(&page)
+            .unwrap()
+            .expect("the refused save mints the authority the banner shows");
+
+        // (a) No activation at all — an editor-less writer, or a pre-increment-3
+        // caller. Legal on the ordinary path; never authority to overwrite.
+        let mut tokenless = page.clone();
+        tokenless.activation = None;
+        let refused = graph
+            .force_save_page_at_revision(&tokenless, page.rev.as_deref(), shown)
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("conflict_authority."),
+            "refusal must carry a bounded authority code, got: {refused}"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "- external winner\n",
+            "a refused override must not write"
+        );
+
+        // (b) The live editor that was shown this conflict may spend it. Without
+        // this arm the test would pass on a build that refuses every override.
+        let mut mine = page.clone();
+        mine.blocks[0].raw = "mine wins".into();
+        graph
+            .force_save_page_at_revision(&mine, page.rev.as_deref(), shown)
+            .expect("the live editor shown the conflict must be able to answer it");
+        assert!(fs::read_to_string(&path).unwrap().contains("mine wins"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The stale-callback shape: a well-formed token naming a real editor that has
+    /// since been retired. It must be refused even though every other field —
+    /// path, name, revision, observation epoch — still matches.
+    #[test]
+    fn gh254_a_retired_activation_cannot_answer_its_old_conflict() {
+        let (root, path, graph, page) = gh254_loaded("retired");
+        fs::write(&path, "- external winner\n").unwrap();
+        graph.save_page(&page, page.rev.as_deref()).unwrap_err();
+        let shown = graph
+            .outstanding_conflict_override(&page)
+            .unwrap()
+            .expect("the refused save mints the authority the banner shows");
+
+        // Retire the exact editor the conflict was minted under — what clean
+        // eviction, `forgetPage` and a genuine replacement each do.
+        let activation = EditorActivation::from_u64(page.activation.unwrap());
+        assert!(graph.retire_editor_activation("pages/Note.md", activation));
+
+        assert!(
+            graph
+                .force_save_page_at_revision(&page, page.rev.as_deref(), shown)
+                .is_err(),
+            "a retired activation is no longer the live editor"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "- external winner\n",
+            "a refused override must not write"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Reuse is idempotent; replace mints a new identity and retires the old one.
+    ///
+    /// Both halves are load-bearing. Without idempotence, ordinary re-hydration of
+    /// an open page would burn the live editor's identity. Without replacement,
+    /// `reloadPage` would hand the disk snapshot the outgoing editor's identity.
+    #[test]
+    fn gh254_activation_reuse_is_idempotent_and_replace_is_not() {
+        let (root, _path, graph, _page) = gh254_loaded("intent");
+        let first = graph
+            .activate_editor("pages/Note.md", ActivationIntent::Replace)
+            .unwrap();
+        let reused = graph
+            .activate_editor("pages/Note.md", ActivationIntent::Reuse)
+            .unwrap();
+        assert_eq!(
+            first.activation, reused.activation,
+            "plain re-hydration must return the live activation, not mint one"
+        );
+
+        let replaced = graph
+            .activate_editor("pages/Note.md", ActivationIntent::Replace)
+            .unwrap();
+        assert_ne!(
+            first.activation, replaced.activation,
+            "a genuine content replacement is a new editor instance"
+        );
+        assert!(
+            !graph.retire_editor_activation("pages/Note.md", first.activation),
+            "compare-and-retire must refuse to retire an activation that is no \
+             longer live — a late retirement of the OLD editor must not destroy \
+             the NEW one"
+        );
+        assert!(graph.retire_editor_activation("pages/Note.md", replaced.activation));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn gh254_token_cannot_cross_graph_instance_or_editor_episode() {
         let (root, path, graph, page) = gh254_loaded("scope");
@@ -51397,10 +51823,15 @@ mod tests {
         transplanted.blocks[0].raw = "transplanted mine".into();
         assert!(reopened.force_save_page(&transplanted).is_err());
 
-        // Loading again in the original Graph starts a newer editor episode and
-        // revokes the earlier episode's token even when the path is unchanged.
+        // Re-reading the same path no longer revokes, and that is the point of
+        // increment 3's read/activation split: re-hydration happens constantly
+        // (sidebar, live references, query hydration) and used to disarm a banner
+        // the user could still see. The editor that was shown the conflict is
+        // still live, so it can still answer it.
         graph.load_by_path("pages/Note.md").unwrap().unwrap();
-        assert!(graph.force_save_page(&page).is_err());
+        graph
+            .force_save_page(&page)
+            .expect("an unrelated read must not cost the live editor its answer");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -51741,7 +52172,8 @@ mod tests {
         let root = scratch("gh254-increment2-s7");
         let path = root.join("pages/New.md");
         let graph = Graph::open(&root);
-        let page = PageDto {
+        let mut page = PageDto {
+            activation: None,
             name: "New".into(),
             kind: PageKind::Page,
             title: "New".into(),
@@ -51756,6 +52188,12 @@ mod tests {
             path: String::new(),
             guide: false,
         };
+        // An ABSENT editor: no file, no revision. Increment 3 gives it a real
+        // activation anyway, because it can meet an external-create conflict on
+        // its very first save — which is exactly what this test then does.
+        let handle = graph.activate_absent_editor("New", PageKind::Page).unwrap();
+        assert!(handle.prospective, "no file exists for New yet");
+        page.activation = Some(handle.activation.as_u64());
         MANAGED_WRITE_BEFORE_MUTATION.with(|hook| {
             let path = path.clone();
             *hook.borrow_mut() = Some(Box::new(move || fs::write(path, "- s7 winner\n")));
