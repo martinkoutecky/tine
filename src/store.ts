@@ -744,6 +744,10 @@ export function resetStore() {
   // storm of per-page retirements against a graph that is going away.
   clearAllEditorActivations();
   clearAllEditorLeases();
+  // A retained stamp belongs to the graph that deferred it. Carried across a
+  // switch it re-reads its old path, loads that page into the REPLACEMENT graph
+  // and stamps a block there — reproduced. (GH #254 increment 3.)
+  clearPendingBlockRefStamps();
   // Cancel pending/in-flight saves and clear all save guard state (timers, graph
   // token, dirty/baseline/tombstone) so nothing from the old graph can be written
   // after the switch.
@@ -3152,10 +3156,16 @@ const pendingBlockRefStamps = new Map<
  * Driven by the same release the refusal was waiting on — once the incumbent is
  * no longer holding unsaved work, the request that was retained can complete.
  */
+export function clearPendingBlockRefStamps(): void {
+  pendingBlockRefStamps.clear();
+}
+
 export function retryPendingBlockRefStamps(): void {
   if (pendingBlockRefStamps.size === 0) return;
   for (const req of [...pendingBlockRefStamps.values()]) {
-    if (!mayReplaceInstance(req.page) && !pageByName(req.page)) continue;
+    // Only retry once the incumbent can actually be replaced. Without this every
+    // unrelated clean save re-reads a target that is still refusing.
+    if (pageByName(req.page) && !mayReplaceInstance(req.page)) continue;
     pendingBlockRefStamps.delete(req.uuid);
     void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
   }

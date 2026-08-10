@@ -186,6 +186,25 @@ describe("editor activation wiring (GH #254 increment 3)", () => {
     expect(saved.mock.calls[0]?.[0]?.path).toBe("pages/New.md");
   });
 
+  it("does not count bookkeeping as post-click input", async () => {
+    // Clearing a false-positive banner re-arms the existing draft. That changes
+    // nothing the user wrote, so it must NOT read as input made after clicking
+    // "Use disk version" — counting it cancels a discard the user never
+    // interrupted, and the local draft gets written where the disk winner was
+    // requested. (Reproduced by round-3 verification.)
+    const { editGeneration } = await import("./store");
+    const { markDirty } = await import("./persistence");
+    loadRoutedPage(page("Note", "pages/Note.md"));
+
+    const before = editGeneration("Note");
+    markDirty("Note", { content: false });
+    expect(editGeneration("Note")).toBe(before);
+
+    // Real input still moves it, or the check protects nothing.
+    markDirty("Note");
+    expect(editGeneration("Note")).not.toBe(before);
+  });
+
   it("retiring an editor that holds none is a no-op", () => {
     ensurePageLoaded(page("Note", "pages/Note.md"));
     const retire = vi.spyOn(backend(), "retireEditorActivation");

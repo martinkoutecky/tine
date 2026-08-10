@@ -94,14 +94,20 @@ export function isDirty(name: string): boolean {
   return dirty.has(name);
 }
 /** Mark a page dirty and schedule a debounced save. */
-export function markDirty(name: string) {
+export function markDirty(name: string, opts: { content?: boolean } = {}) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
   // Every content mutation moves the edit generation, not just `setRaw`: a paste,
   // an outline insert, a block move are all input the user made after clicking
   // "Use disk version", and a counter that only tracks typing lets them be
-  // destroyed. (GH #254 increment 3.)
-  bumpEditGeneration(name);
+  // destroyed.
+  //
+  // But BOOKKEEPING must not move it. Re-arming an existing draft after clearing
+  // a false-positive banner changes nothing the user wrote, and counting it as
+  // post-click input cancels a discard the user never interrupted — reproduced
+  // writing the local draft where the disk winner was requested.
+  // (GH #254 increment 3.)
+  if (opts.content !== false) bumpEditGeneration(name);
   dirty.add(name);
   scheduleSave();
 }
@@ -198,7 +204,8 @@ export async function applyDivergenceVerdict(name: string, stored: StoredPageSta
   // will ever write, and `flushAll` (which consults only `dirty`, in-flight
   // saves and `conflicts`) would then report the graph as safely landed and let
   // a close discard it.
-  markDirty(name);
+  // Bookkeeping, not input: this re-arms an existing draft, it does not change it.
+  markDirty(name, { content: false });
 }
 /** Hold `sources`' saves until `dest` is durably written (cross-page move barrier,
  *  audit C#1). `releaseSourcesFor(dest)` fires from doSave's success path. */
@@ -639,9 +646,11 @@ async function doSave(
     if (isConflicted(name)) clearConflict(name);
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
     // This page just became clean, which is the release a refused replacement was
-    // waiting on. Retry any block-ref stamp that refusal deferred, so a committed
-    // `((uuid))` does not stay session-local. (GH #254 increment 3, C5.)
-    retryPendingBlockRefStamps();
+    // waiting on. Deferred to a microtask because THIS save's `saveChain` entry is
+    // still present here: retrying inline sees the page as still saving, refuses
+    // the replacement again, and leaves the stamp with no later trigger.
+    // (GH #254 increment 3, C5.)
+    queueMicrotask(() => retryPendingBlockRefStamps());
     return true;
   } catch (e) {
     // The backend says "conflict" and nothing else for a real base-revision
