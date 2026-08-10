@@ -12,13 +12,13 @@ import {
   doc,
   bumpEditGeneration,
   editorActivationFor,
-  notifyPageBecameReplaceable,
   peekPageInstanceGeneration,
   setProspectiveTarget,
   pageByName,
   pageInstanceGeneration,
   pageToDto,
   setEditorActivation,
+  sweepReplaceable,
 } from "./store";
 import { backend } from "./backend";
 import { markConflict, clearConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
@@ -558,6 +558,14 @@ function enqueueSave(
   saveChain.set(name, next);
   void next.finally(() => {
     if (saveChain.get(name) === next) saveChain.delete(name);
+    // Announce only once this save is genuinely out of the queue. Announcing from
+    // the success path instead — even deferred a microtask — still ran while the
+    // entry was present, so the re-verification correctly dropped the event and
+    // the waiting request was never re-driven. (GH #254 increment 3.)
+    // Sweep rather than announce one name: a save frees the page it wrote AND can
+    // release others (the cross-page move barrier), and the sweep re-verifies each
+    // watched page anyway, so it cannot announce something that is not ready.
+    sweepReplaceable();
   });
   return next;
 }
@@ -645,10 +653,6 @@ async function doSave(
     // the page behind a warning about a change that is now written.
     if (isConflicted(name)) clearConflict(name);
     releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
-    // This page may now be replaceable. The announcement is deferred inside
-    // `notifyPageBecameReplaceable`, so listeners see state AFTER this save's
-    // queue entry is gone rather than while it still reads as saving.
-    notifyPageBecameReplaceable(name);
     return true;
   } catch (e) {
     // The backend says "conflict" and nothing else for a real base-revision

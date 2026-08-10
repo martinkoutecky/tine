@@ -225,7 +225,31 @@ function useEnsurePage(
     const loaded = pageByName(n);
     if (n && (!loaded || (p && loaded.path !== p))) {
       let active = true;
-      onCleanup(() => { active = false; });
+      // Registered from the SYNCHRONOUS effect body, never from an awaited
+      // `.then`: an `onCleanup` created outside the Solid owner never runs, so a
+      // disposed refusal would leak a permanently inactive listener.
+      let stopRetry: (() => void) | null = null;
+      onCleanup(() => {
+        active = false;
+        stopRetry?.();
+      });
+      // DURABLE, not one-shot: the retry can itself be refused again — a lease
+      // taken during its awaited read is enough — and a listener that
+      // unsubscribed before that read would strand the item on an empty body.
+      const retryWhenFreed = (pageName: string) => {
+        stopRetry?.();
+        stopRetry = onPageBecameReplaceable(pageName, () => {
+          void (p ? backend().getPageByPath(p) : backend().getPage(n, k))
+            .then((fresh) => {
+              if (!active || epoch !== graphEpoch() || !fresh) return;
+              if (!ensurePageLoaded(fresh)) {
+                stopRetry?.();
+                stopRetry = null;
+              }
+            })
+            .catch(() => {});
+        });
+      };
       const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
       void request
         .then((dto) => {
@@ -253,18 +277,11 @@ function useEnsurePage(
                   `can't be shown in the sidebar yet. It will appear once that is resolved.`,
                 "error",
               );
-              const stop = onPageBecameReplaceable((freed) => {
-                if (!active || freed !== refusal.page) return;
-                stop();
-                if (epoch !== graphEpoch()) return;
-                void (p ? backend().getPageByPath(p) : backend().getPage(n, k))
-                  .then((fresh) => {
-                    if (!active || epoch !== graphEpoch() || !fresh) return;
-                    ensurePageLoaded(fresh);
-                  })
-                  .catch(() => {});
-              });
-              onCleanup(stop);
+              // DURABLE, not one-shot: the retry can itself be refused again —
+              // a lease taken during its awaited read is enough — and a listener
+              // that unsubscribed before that read would strand the item on an
+              // empty body. It stops only when the load actually succeeds.
+              retryWhenFreed(refusal.page);
             }
           }
         })

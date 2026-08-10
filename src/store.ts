@@ -854,36 +854,53 @@ export function takeEditorLease(pageName: string): () => void {
 }
 
 /**
- * Listeners for "this page became replaceable".
+ * Watchers waiting for a specific page to become replaceable.
  *
- * Every earlier retry design polled on an UNRELATED event — some other page
- * saving — which gave them bad timing and, independently, bad liveness: a request
- * stranded whenever the incumbent became clean through a route that produced no
- * such save, which the real "Use disk version" transition does. The fix is to
- * emit the transition the refusal is actually waiting on. (GH #254 increment 3.)
+ * Keyed BY PAGE, so liveness does not depend on my enumeration of emission sites
+ * being complete — which is what kept failing. Explicit announcements make the
+ * common transitions prompt; `sweepReplaceable()` is the net that re-checks every
+ * watched page, so a route nobody thought to instrument delays a resume rather
+ * than stranding it forever. (GH #254 increment 3.)
  */
-const replaceableListeners = new Set<(pageName: string) => void>();
+const replaceableWatchers = new Map<string, Set<(pageName: string) => void>>();
 
-export function onPageBecameReplaceable(listener: (pageName: string) => void): () => void {
-  replaceableListeners.add(listener);
-  return () => replaceableListeners.delete(listener);
+export function onPageBecameReplaceable(
+  pageName: string,
+  listener: (pageName: string) => void,
+): () => void {
+  let set = replaceableWatchers.get(pageName);
+  if (!set) {
+    set = new Set();
+    replaceableWatchers.set(pageName, set);
+  }
+  set.add(listener);
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    const live = replaceableWatchers.get(pageName);
+    if (!live) return;
+    live.delete(listener);
+    if (live.size === 0) replaceableWatchers.delete(pageName);
+  };
 }
 
-/**
- * Announce that `pageName` may now be replaced.
- *
- * Deferred by a microtask so listeners observe SETTLED state: the save-completion
- * caller still holds its queue entry when it fires, and a listener that ran inline
- * would see the page as still saving and refuse all over again — reproduced three
- * times before this existed. Verified before announcing, so a spurious call
- * cannot wake a listener onto a page that is still holding work.
- */
+/** Announce `pageName` if it is genuinely replaceable now. */
 export function notifyPageBecameReplaceable(pageName: string): void {
-  if (replaceableListeners.size === 0) return;
-  queueMicrotask(() => {
-    if (!mayReplaceInstance(pageName)) return;
-    for (const listener of [...replaceableListeners]) listener(pageName);
-  });
+  const set = replaceableWatchers.get(pageName);
+  if (!set || set.size === 0) return;
+  if (!mayReplaceInstance(pageName)) return;
+  for (const listener of [...set]) listener(pageName);
+}
+
+/** Re-check every watched page. The safety net behind the explicit sites. */
+export function sweepReplaceable(): void {
+  if (replaceableWatchers.size === 0) return;
+  for (const name of [...replaceableWatchers.keys()]) notifyPageBecameReplaceable(name);
+}
+
+export function clearReplaceableWatchers(): void {
+  replaceableWatchers.clear();
 }
 
 /** Does any component hold uncommitted input for this page? */
@@ -3170,7 +3187,9 @@ export async function persistBlockRefTarget(
       // and the liveness half is why — a request stranded whenever the incumbent
       // resolved through a route that produced no such save.
       // (GH #254 increment 3, acceptance row C5.)
-      pendingBlockRefStamps.set(uuid, { uuid, page, kind, path, epoch });
+      const req = { uuid, page, kind, path, epoch };
+      pendingBlockRefStamps.set(uuid, req);
+      watchForStamp(req);
       return;
     }
   }
@@ -3193,19 +3212,17 @@ const pendingBlockRefStamps = new Map<
 /** A retained stamp belongs to the graph that deferred it. */
 export function clearPendingBlockRefStamps(): void {
   pendingBlockRefStamps.clear();
+  clearReplaceableWatchers();
 }
 
-onPageBecameReplaceable((pageName) => {
-  for (const req of [...pendingBlockRefStamps.values()]) {
-    if (req.page !== pageName) continue;
-    if (req.epoch !== graphEpoch()) {
-      pendingBlockRefStamps.delete(req.uuid);
-      continue;
-    }
+function watchForStamp(req: { uuid: string; page: string; kind: PageKind; path?: string; epoch: number }) {
+  const stop = onPageBecameReplaceable(req.page, () => {
+    stop();
     pendingBlockRefStamps.delete(req.uuid);
+    if (req.epoch !== graphEpoch()) return;
     void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
-  }
-});
+  });
+}
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.
  *  - `stripId`: drop the internal `id::` property line (fence-aware) — OG does this

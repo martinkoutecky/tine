@@ -141,6 +141,30 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("re-drives a deferred stamp after a save, once the queue entry is gone", async () => {
+    const { persistBlockRefTarget } = await import("./store");
+    const { markDirty, flushPage } = await import("./persistence");
+    const { loadRoutedPage } = await import("./store");
+    // `flushPage` returns early unless the store is armed for persistence.
+    loadRoutedPage(page("Target", "pages/Target.md", "incumbent"));
+    markDirty("Target");
+    const read = vi
+      .spyOn(backend(), "getPageByPath")
+      .mockResolvedValue(page("Target", "pages/other/Target.md", "requested"));
+    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-2");
+
+    await persistBlockRefTarget("uuid-3", "Target", "page", "pages/other/Target.md");
+    expect(read).toHaveBeenCalledTimes(1);
+
+    // Announcing from the save's success path — even deferred a microtask — ran
+    // while its `saveChain` entry was still present, so the re-verification
+    // correctly dropped the event and this stayed at one read.
+    await flushPage("Target");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();

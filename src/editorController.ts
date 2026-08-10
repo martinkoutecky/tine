@@ -1,6 +1,6 @@
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
-import { clearSelection } from "./store";
+import { clearSelection, sweepReplaceable } from "./store";
 import { notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
@@ -228,6 +228,12 @@ export function endEdit(_reason: EndEditReason) {
     setEditingOwner(null);
     setEditingSurface(null);
   });
+  // Ending an edit can make a page replaceable — `reloadDisposition` returns
+  // "skip" while a block of it is being edited — and produces no save, so nothing
+  // else announces it. Swept rather than named, because this module does not know
+  // which page was being edited by the time the signals are cleared.
+  // (GH #254 increment 3.)
+  sweepReplaceable();
 }
 
 export function endEditForSurface(reason: EndEditReason, surfaceKey: string) {
