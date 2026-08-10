@@ -73,6 +73,18 @@ const bannerText = async (browser) => {
   return (await el.isExisting()) ? await el.getText() : "";
 };
 
+// The visible editor text. A block being edited swaps its rendered div for a
+// textarea, whose value is NOT part of the element's text, so reading the block
+// alone reports an empty string for exactly the state these journeys care about.
+const editorText = async (browser) => {
+  const ta = await browser.$("textarea");
+  if (await ta.isExisting()) {
+    const value = await ta.getValue();
+    if (value) return value;
+  }
+  return await browser.$(".ls-block").getText();
+};
+
 let browser;
 let failure = null;
 try {
@@ -105,19 +117,19 @@ try {
   if (!opened) throw new Error("no [[Note]] link found in the journal feed");
   await sleep(1500);
 
-  // Edit, so the page has unsaved work worth conflicting over.
   const block = await browser.$(".ls-block");
   await block.click();
   await sleep(400);
   await browser.keys(["End"]);
   await browser.keys(" MINE".split(""));
-  await sleep(400);
 
-  // First external winner: the save that follows is refused and raises the banner.
+  // The first external winner must land while the edit is still PENDING — the
+  // save debounce is 400 ms and restarts on each keystroke. Writing before the
+  // edit instead lets the watcher reload the still-clean page and the save simply
+  // succeeds, with no conflict to answer.
   fs.writeFileSync(`${G}/pages/Note.md`, "- first external winner\n");
-  await browser.execute(() => window.dispatchEvent(new CustomEvent("tine:flush-all")));
 
-  await browser.$(".conflict-banner").waitForExist({ timeout: 15000 });
+  await browser.$(".conflict-banner").waitForExist({ timeout: 20000 });
   const first = await bannerText(browser);
   if (!first.toLowerCase().includes("note")) {
     throw new Error(`the banner must name the page, saw: ${JSON.stringify(first)}`);
@@ -126,7 +138,11 @@ try {
   // SECOND external winner, landing while that banner is still up. This is the
   // one the user has never been shown.
   fs.writeFileSync(`${G}/pages/Note.md`, "- second external winner\n");
-  await sleep(2500);
+  // A conflicted page is skipped by the ordinary save path, so the ONLY thing
+  // that can mint authority for this newer winner is the re-observation the
+  // watcher drives. Give it real time: if this needs longer than a user would
+  // wait before clicking, that is itself the finding.
+  await sleep(8000);
 
   // Answer the banner the user can see.
   const keep = await browser.$(".conflict-btn.keep");

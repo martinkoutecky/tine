@@ -72,6 +72,18 @@ const td = spawn(
 );
 await sleep(3000);
 
+// The visible editor text. A block being edited swaps its rendered div for a
+// textarea, whose value is NOT part of the element's text, so reading the block
+// alone reports an empty string for exactly the state these journeys care about.
+const editorText = async (browser) => {
+  const ta = await browser.$("textarea");
+  if (await ta.isExisting()) {
+    const value = await ta.getValue();
+    if (value) return value;
+  }
+  return await browser.$(".ls-block").getText();
+};
+
 let browser;
 let failure = null;
 try {
@@ -110,10 +122,19 @@ try {
   await sleep(400);
   await browser.keys(["End"]);
   await browser.keys(" UNSAVED".split(""));
-  await sleep(400);
 
-  const edited = await browser.$(".ls-block").getText();
-  if (!edited.includes("UNSAVED")) throw new Error(`the edit did not land in the editor: ${edited}`);
+  // The external write must land while the edit is still PENDING. The save
+  // debounce is 400 ms and restarts on each keystroke, so writing immediately
+  // after the last one puts this inside that window; the queued save is then
+  // refused against a baseline that moved, and the page stays dirty and
+  // conflicted until the user answers. Writing before the edit instead lets the
+  // watcher reload the still-clean page, and the save simply succeeds.
+  fs.writeFileSync(`${G}/pages/Note.md`, "- external winner\n");
+
+  await browser.$(".conflict-banner").waitForExist({ timeout: 20000 });
+
+  const edited = await editorText(browser);
+  if (!edited.includes("UNSAVED")) throw new Error(`the edit did not survive to the banner: ${edited}`);
 
   // Now ask for the OTHER file with the same name, by path, while that edit is
   // still unsaved. This is the exact user action GH #304 reported.
@@ -125,7 +146,7 @@ try {
   await sleep(2000);
 
   // 1. The edit must still be here. This is the whole point.
-  const afterText = await browser.$(".ls-block").getText();
+  const afterText = await editorText(browser);
   if (!afterText.includes("UNSAVED")) {
     throw new Error(`the unsaved edit was destroyed by the replacement: ${afterText}`);
   }
@@ -134,25 +155,33 @@ try {
   }
 
   // 2. The user must be told why they are not seeing the file they asked for.
-  const toast = await browser.$(".toast, .toast-error, [role='alert']");
-  const told = (await toast.isExisting()) ? await toast.getText() : "";
-  if (!told.toLowerCase().includes("note")) {
-    throw new Error(`no message naming the page holding the file back, saw: ${JSON.stringify(told)}`);
+  // Scan every transient message, not the first one: unrelated announcements
+  // (the Guide banner) share the container, and asserting on whichever happens to
+  // be first would make this journey fail for reasons that have nothing to do
+  // with the contract.
+  const toasts = await browser.$$(".toast, .toast-error, [role='alert']");
+  const messages = [];
+  for (const t of toasts) messages.push(await t.getText());
+  const told = messages.find((m) => m.toLowerCase().includes("unsaved changes"));
+  if (!told || !told.includes("Note")) {
+    throw new Error(
+      `no message naming the page holding the file back, saw: ${JSON.stringify(messages)}`,
+    );
   }
 
   // 3. Non-wedging: resolve the incumbent, then the requested file must arrive.
   // A survival-only test would pass on an implementation that never shows it.
-  await browser.keys(["Escape"]);
-  await sleep(300);
-  await browser.execute(() => window.dispatchEvent(new CustomEvent("tine:flush-all")));
-  await sleep(2500);
+  const keep = await browser.$(".conflict-btn.keep");
+  if (!(await keep.isExisting())) throw new Error("no \"Keep mine\" button to resolve the incumbent");
+  await keep.click();
+  await sleep(3500);
 
   await browser.execute((path) => {
     window.location.hash = `#/page-path/${encodeURIComponent(path)}`;
   }, "pages/archive/Note.md");
   await sleep(2500);
 
-  const arrived = await browser.$(".ls-block").getText();
+  const arrived = await editorText(browser);
   if (!arrived.includes("archived body")) {
     throw new Error(
       `after resolving the incumbent the requested file must arrive, got: ${JSON.stringify(arrived)}`,
