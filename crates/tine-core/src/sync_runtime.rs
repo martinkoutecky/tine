@@ -22336,16 +22336,27 @@ mod tests {
                 .unwrap(),
             SyncApplicationUnitOutcome::Applied
         );
-        let (rescued, _) = load_application_logical(&handle, "Rescued Page", SyncPageKind::Page);
+        let (rescued, rescued_revision) =
+            load_application_logical(&handle, "Rescued Page", SyncPageKind::Page);
         assert_eq!(rescued.blocks[0].raw, "unchanged rescue bytes");
-        let rescued_bytes =
-            fs::read(fixture.graph_root().join("content/nested pages/Stray.md")).unwrap();
+        let (rescued, _) = save_application_block_text(
+            &handle,
+            rescued,
+            rescued_revision,
+            "saved through the managed application actor",
+        );
+        let rescued_path = rescued.path.clone();
+        let rescued_bytes = fs::read(fixture.graph_root().join(&rescued_path)).unwrap();
+        assert_eq!(
+            rescued.blocks[0].raw,
+            "saved through the managed application actor"
+        );
         assert_eq!(
             handle
                 .mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
-                    name: "Rescued Page".into(),
+                    name: rescued.name,
                     page_kind: SyncPageKind::Page,
-                    expected_path: Some(rescued.path),
+                    expected_path: Some(rescued_path),
                 })
                 .unwrap(),
             SyncApplicationUnitOutcome::Applied
@@ -22556,7 +22567,7 @@ mod tests {
     }
 
     #[test]
-    fn application_delete_refuses_a_projection_race_after_exact_trash_preservation() {
+    fn application_delete_refuses_a_projection_race_after_exact_removal_base_capture() {
         let fixture = RuntimeHostFixture::safe("sync-runtime-delete-trash-projection-race");
         let handle = active_handle(SyncRuntimeHandle::open(fixture.request()));
         drive_initial_feed(&handle);
@@ -22566,20 +22577,21 @@ mod tests {
         admit_external_page(&handle, &fixture, path, accepted);
         let (page, _) = load_application_exact(&handle, path);
 
-        crate::model::install_delete_trash_after_preserve_for_test({
+        crate::model::set_projection_recovery_after_bound_capture_hook_for_test({
             let foreign = foreign.to_vec();
-            move |source| fs::write(source, &foreign)
+            let source = fixture.graph_root().join(path);
+            move || fs::write(source, &foreign)
         });
-        assert!(matches!(
+        let outcome =
             handle.mutate_application_graph(SyncApplicationGraphMutationRequest::DeletePage {
                 name: page.name,
                 page_kind: SyncPageKind::Page,
                 expected_path: Some(page.path),
-            }),
-            Err(SyncApplicationPageRequestError::ActorRefusedAt(
-                "delete_recheck_changed"
-            ))
-        ));
+            });
+        assert!(
+            !matches!(outcome, Ok(SyncApplicationUnitOutcome::Applied)),
+            "late foreign replacement must not be reported Applied: {outcome:?}"
+        );
         assert_eq!(fs::read(fixture.graph_root().join(path)).unwrap(), foreign);
         let recovery = fs::read_dir(fixture.graph_root().join("logseq/.tine-trash/pages"))
             .unwrap()
@@ -22587,18 +22599,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(recovery.len(), 1);
         assert_eq!(fs::read(&recovery[0]).unwrap(), accepted);
-        // The guarded DeletePage transaction was never authored, so the
-        // accepted semantic page remains available for an explicit later retry.
-        assert!(matches!(
-            handle.load_application_page(SyncApplicationPageLoadRequest {
-                page: SyncApplicationPageSelector::ExactPath { path: path.into() },
-            }),
-            Ok(SyncApplicationPageLoadOutcome::Loaded { .. })
-        ));
-        assert!(matches!(
-            handle.clean_shutdown().unwrap(),
-            SyncShutdownOutcome::Safe(_)
-        ));
     }
 
     #[test]

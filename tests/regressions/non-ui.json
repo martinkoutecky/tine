@@ -1408,7 +1408,7 @@
         "all"
       ],
       "layer": "core-native",
-      "status": "covered",
+      "status": "fixing",
       "coverage": {
         "tests": [
           "crates/tine-core/src/oplog/shadow_projection.rs",
@@ -3458,7 +3458,7 @@
         "android"
       ],
       "layer": "core-native",
-      "status": "fixing",
+      "status": "covered",
       "coverage": {
         "tests": [
           "crates/tine-core/src/sync_runtime.rs",
@@ -3467,7 +3467,7 @@
         "scenario": "managed-delete.typed-trash-precedes-tombstone",
         "failBefore": "source-proven"
       },
-      "notes": "Accepted managed-storage safety repair, 2026-08-10. An ordinary managed delete derives its exact page ID, accepted path, kind and actor source bytes from one actor turn; durably publishes those exact bytes to logseq/.tine-trash/pages or journals with no overwrite; then re-proves the same actor source, page identity and accepted-frontier root before authoring exactly one DeletePage. The focused Rust tests cover CRLF/layout recovery for an imported page and journal, original extension, idempotent unpinned retry, the pre-existing TrashJournalFile route, malformed trash, and a source race after preservation; frontend tests cover the bounded page-local quiescence barrier, in-flight second edit, retained failure draft, and conflict no-flush behavior. Source-proven fail-before: the prior ordinary DeletePage authored its semantic tombstone without any preservation/re-proof, and its frontend path performed only one dirty flush. Direct Files backend/trash semantics remain unchanged."
+      "notes": "Accepted managed-storage safety repair, 2026-08-10. An ordinary managed delete derives its exact page ID, accepted path, kind and actor source bytes from one actor turn; durably publishes those exact bytes to logseq/.tine-trash/pages or journals with no overwrite; then re-proves the same actor source, page identity and accepted-frontier root before authoring exactly one DeletePage. Focused Rust tests cover managed application save followed by exact projected-byte recovery, imported page and journal CRLF/layout, original extension, idempotent unpinned retry, the pre-existing TrashJournalFile route, malformed trash, and a foreign write after exact removal-base capture at the projection coordinator boundary. Frontend tests cover the bounded page-local quiescence barrier, in-flight second edit, an edit in the resolved-helper handoff, retained save/deferred drafts, and conflicted-page refusal without flushing or tombstoning. Source-proven fail-before: the prior ordinary DeletePage authored its semantic tombstone without any preservation/re-proof, and its frontend path performed only one dirty flush with no synchronous retirement recheck. Direct Files backend/trash semantics remain unchanged."
     }
   ]
 }

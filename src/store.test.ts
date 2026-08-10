@@ -1676,6 +1676,26 @@ describe("save engine (persistence)", () => {
     deleteSpy.mockRestore();
   });
 
+  it("refuses an edit injected after the quiescence helper resolves but before tombstoning", async () => {
+    load([blk("clean before delete")]);
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+
+    const deleting = deletePage("Test", "page");
+    // flushPageToQuiescence has synchronously found the page clean and returned
+    // a resolved promise; deletePage is suspended on its await continuation.
+    setRaw(doc.pages[0].roots[0], "typed in the quiescence handoff");
+
+    await expect(deleting).resolves.toBe(false);
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(pageByName("Test")).toBeDefined();
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("typed in the quiescence handoff");
+    expect(isDirty("Test")).toBe(true);
+    // The refused delete retained a normal writable draft which can still land.
+    await expect(flushPage("Test")).resolves.toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    deleteSpy.mockRestore();
+  });
+
   it("retains the loaded draft when the delete quiescence barrier cannot save it", async () => {
     load([blk("must remain editable")]);
     saveSpy.mockRejectedValueOnce(new Error("write refused"));
@@ -1956,18 +1976,19 @@ describe("save engine (persistence)", () => {
     expect(saveSpy.mock.calls.at(-1)![3]).toBe(11); // exact observed winner
   });
 
-  it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {
+  it("refuses a CONFLICTED page without flushing or tombstoning its retained draft", async () => {
     load([blk("x")]);
     markDirty("Test");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
     await flushPage("Test"); // the save is now refused until the conflict is resolved
     expect(isConflicted("Test")).toBe(true);
-    // Regression: deletePage used to flush-first and abort on the (impossible) flush,
-    // so a conflicted page could be neither saved nor deleted. Delete IS a resolution;
-    // the on-disk version still goes to .tine-trash (recoverable).
-    expect(await deletePage("Test", "page")).toBe(true);
+    const deleteSpy = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+
+    expect(await deletePage("Test", "page")).toBe(false);
     expect(saveSpy).toHaveBeenCalledTimes(1); // conflicted retained draft is never flushed
-    expect(pageByName("Test")).toBeUndefined();
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(pageByName("Test")).toBeDefined();
+    deleteSpy.mockRestore();
   });
 
   it("bumps dataRev on delete so live queries drop the deleted page's rows", async () => {

@@ -244,9 +244,18 @@ function releaseSourcesFor(dest: string) {
 export function setBaseRev(name: string, rev: string | null) {
   baseRev.set(name, rev);
 }
-/** Tombstone a page so any pending/in-flight save can't recreate its file. */
-export function tombstone(name: string) {
+/** Atomically retire one quiescent page from persistence.
+ *
+ * Delete calls this synchronously after its awaited drain and exact-instance
+ * check. A keystroke can land in that await-to-continuation handoff, so the
+ * tombstone itself must re-check dirty, saving, and conflict state in the same
+ * JavaScript turn that publishes the marker. */
+export function tombstoneIfQuiescent(name: string): boolean {
+  if (dirty.has(name) || saveChain.has(name) || isConflicted(name) || deletedPages.has(name)) {
+    return false;
+  }
   deletedPages.add(name);
+  return true;
 }
 /** Lift a delete tombstone (page re-created, or the delete failed). */
 export function untombstone(name: string) {

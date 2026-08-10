@@ -73,7 +73,7 @@ import {
   dirtyPages,
   savingPages,
   setBaseRev,
-  tombstone,
+  tombstoneIfQuiescent,
   untombstone,
   forgetSaveState,
   resetSaveState,
@@ -480,11 +480,11 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // injected during that first save either becomes a second accepted snapshot or
   // causes this delete to refuse with the draft still live.
   if (!isConflicted(name) && !(await flushPageToQuiescence(name))) return false;
-  if (!stillCaptured()) return false;
-  // Tombstone synchronously at the quiescent boundary, before yielding to the
-  // backend.  Any queued/in-flight save therefore becomes a no-op, while a failed
-  // backend delete simply lifts this marker and preserves the same draft.
-  tombstone(name);
+  // The identity proof and persistence retirement run back-to-back without a
+  // yield. tombstoneIfQuiescent re-checks dirty/saving/conflict state in the same
+  // synchronous turn that publishes the marker, closing the resolved-Promise
+  // handoff after flushPageToQuiescence.
+  if (!stillCaptured() || !tombstoneIfQuiescent(name)) return false;
   try {
     if (expectedPath) await backend().deletePage(name, kind, expectedPath);
     else await backend().deletePage(name, kind);

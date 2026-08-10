@@ -3969,7 +3969,6 @@ thread_local! {
     static EDITOR_COMMIT_BEFORE_RECHECK: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static EDITOR_COMMIT_BEFORE_FINAL_REREAD: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static CONFLICT_OBSERVATION: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
-    static DELETE_TRASH_AFTER_PRESERVE: std::cell::RefCell<Option<Box<dyn FnOnce(&Path) -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static MANAGED_WRITE_REPLACEMENT_HANDOFF: std::cell::RefCell<Option<HandoffSafe>> = const { std::cell::RefCell::new(None) };
     static SYNC_IDENTITY_AFTER_PREPARE: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
     static MANAGED_SYNC_ENABLE_AFTER_SNAPSHOT: std::cell::RefCell<Option<Box<dyn FnOnce() -> io::Result<()>>>> = std::cell::RefCell::new(None);
@@ -4338,33 +4337,8 @@ pub(crate) fn reset_projection_graph_test_hooks() {
     MANAGED_INVENTORY_READ_RACE.with(|hook| drop(hook.borrow_mut().take()));
     INITIAL_SHADOW_REVALIDATION_RACE.with(|hook| drop(hook.borrow_mut().take()));
     BOUNDED_READ_AFTER_METADATA.with(|hook| drop(hook.borrow_mut().take()));
-    DELETE_TRASH_AFTER_PRESERVE.with(|hook| drop(hook.borrow_mut().take()));
     // The corpus does not exercise rename_page, so its rename-only source
     // removal failpoint has no corpus-state lifetime.
-}
-
-#[cfg(test)]
-pub(crate) fn install_delete_trash_after_preserve_for_test(
-    hook: impl FnOnce(&Path) -> io::Result<()> + 'static,
-) {
-    DELETE_TRASH_AFTER_PRESERVE.with(|slot| {
-        assert!(
-            slot.borrow().is_none(),
-            "delete-trash test hook is already armed"
-        );
-        *slot.borrow_mut() = Some(Box::new(hook));
-    });
-}
-
-#[cfg(test)]
-fn delete_trash_after_preserve_hook(path: &Path) -> io::Result<()> {
-    DELETE_TRASH_AFTER_PRESERVE
-        .with(|slot| slot.borrow_mut().take().map_or(Ok(()), |hook| hook(path)))
-}
-
-#[cfg(not(test))]
-fn delete_trash_after_preserve_hook(_path: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -8342,7 +8316,6 @@ impl Graph {
                 "managed recovery bytes changed after publication",
             ));
         }
-        delete_trash_after_preserve_hook(&target.absolute_path)?;
         Ok(destination)
     }
 
@@ -18009,6 +17982,22 @@ impl Graph {
                 &displaced,
             )?;
             projection_recovery_after_bound_capture_hook()?;
+            // The opened file fixed the exact removal base, but the live path
+            // can still be atomically replaced before retirement. Re-open and
+            // bind both bytes and physical identity after that boundary so a
+            // foreign replacement remains live rather than being displaced by
+            // a tombstone authored against the old inode.
+            let (live_file, live) =
+                sync_open_and_read_projection_regular(parent.final_dir(), &target.filename)?;
+            let live_identity = canonical_projection_file_resource_id(&live_file)?;
+            if live != expected_base || live_identity != displaced_identity {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "projection removal base changed after exact capture",
+                ));
+            }
+            live_file.sync_all()?;
+            drop(live_file);
             retire_projection_target(parent.final_dir(), &target.filename, &retired)?;
             retirement_occurred = true;
             recovery_expected = Some((displaced.clone(), displaced_identity, captured));
