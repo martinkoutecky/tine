@@ -398,6 +398,30 @@ describe("replacing a loaded instance (GH #304)", () => {
     untombstone("Target");
   });
 
+  it("tells the user which page is holding the file back", async () => {
+    // A refused route that leaves the surface unchanged is a trap, not a
+    // safeguard: the user asked for a file, got no file and no explanation, and
+    // has nothing to act on. The native journey was carrying this contract
+    // alone, and it is quarantined (no UI opens a chosen file by path, so it
+    // cannot drive the refusal), which left the promise untested.
+    const { loadRoutedPage } = await import("./store");
+    const { toasts, setToasts } = await import("./ui");
+    setToasts([]);
+
+    expect(loadRoutedPage(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
+    markDirty("Note");
+    expect(toasts()).toHaveLength(0);
+
+    const refusal = loadRoutedPage(page("Note", "pages/other/Note.md", "requested"));
+
+    expect(refusal).toEqual({ reason: "unsaved-changes", page: "Note" });
+    const said = toasts().map((t) => t.message);
+    // Names the page, and says what resolves it — an error with neither is not
+    // actionable. The wording itself is free to change.
+    expect(said.some((m) => m.includes("Note") && /save or resolve/i.test(m))).toBe(true);
+    setToasts([]);
+  });
+
   it("allows the replacement when the incumbent is clean", () => {
     expect(ensurePageLoaded(page("Note", "pages/Note.md", "incumbent"))).toBeNull();
     expect(ensurePageLoaded(page("Note", "pages/other/Note.md", "replacement"))).toBeNull();
