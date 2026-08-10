@@ -75,6 +75,7 @@ import {
   untombstone,
   isTombstonedFile,
   tombstoneCovers,
+  graphBinding,
   forgetSaveState,
   resetSaveState,
   isSaving,
@@ -3179,13 +3180,17 @@ export async function persistBlockRefTarget(
   path?: string,
 ): Promise<void> {
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
-  const epoch = graphEpoch();
+  // The GRAPH BINDING, not the render epoch: toggling typography or the journal
+  // format bumps the epoch without the graph moving, and dropping a committed
+  // reference's request because the user changed a display preference is loss
+  // with no safety benefit at all. (GH #254 increment 3, round 12.)
+  const epoch = graphBinding();
   if (!resolveBlockRef(ref)) {
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
     // A read that crossed a graph switch must not install into the NEW graph.
-    if (epoch !== graphEpoch()) return;
+    if (epoch !== graphBinding()) return;
     // Nor may one that crossed a DELETION. This read may have been issued before
     // the user deleted the page; installing its pre-delete bytes puts the page
     // back, and `upsertPage` lifts the tombstone as it does so, after which the
@@ -3282,7 +3287,7 @@ function retainStamp(req: PendingStamp) {
     stop();
     stampWatchers.delete(req.uuid);
     pendingBlockRefStamps.delete(req.uuid);
-    if (req.epoch !== graphEpoch()) return;
+    if (req.epoch !== graphBinding()) return;
     void persistBlockRefTarget(req.uuid, req.page, req.kind, req.path);
   });
   stampWatchers.set(req.uuid, stop);

@@ -282,6 +282,21 @@ export function isTombstoned(name: string): boolean {
   return deletedPages.has(name);
 }
 
+/**
+ * Which GRAPH the app is bound to. Changes only when the binding actually
+ * changes (`resetSaveState`, i.e. a graph switch or reload).
+ *
+ * Deliberately not `graphEpoch()`, which is a RENDER epoch: changing typography
+ * mode, the journal title format, or a setting bumps it to repaint open pages,
+ * without the graph moving at all. Work that must not cross a graph switch has
+ * to key off the binding — keying off the render epoch means a user toggling a
+ * display preference invalidates in-flight work that was perfectly valid.
+ * (GH #254 increment 3, round 12.)
+ */
+export function graphBinding(): number {
+  return graphToken;
+}
+
 /** Which FILE a tombstone was raised for, when the delete named one. */
 const deletedPagePaths = new Map<string, string>();
 
