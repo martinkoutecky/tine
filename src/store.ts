@@ -60,6 +60,7 @@ import { sheetConfigFromRaw } from "./sheet/config";
 import { clearMatrixDimensionCache, invalidateAllMatrixDimensions } from "./sheet/matrix";
 import { applyMarkerTransition } from "./logbook";
 import { cycleMarkerSmart } from "./editor/repeat";
+import { recordClipboardWorkForTest } from "./clipboardWorkProbe";
 import {
   markDirty as markDirtyInner,
   isDirty,
@@ -179,19 +180,81 @@ export const setDoc: typeof setDocInner = import.meta.env.MODE === "test"
     }) as typeof setDocInner
   : setDocInner;
 
-function docHasBlockIdentity(id: string): boolean {
-  if (doc.byId[id]) return true;
-  const normalized = id.toLowerCase();
-  if (Object.keys(doc.byId).some((key) => key.toLowerCase() === normalized && !!doc.byId[key])) return true;
-  // setRaw updates a loaded node's raw synchronously without re-keying by a
-  // newly typed/pasted id property. Treat either Markdown or Org id syntax as
-  // live ownership so the final paste/redo checks fail closed in that window.
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rawIdentity = new RegExp(
-    `(?:^|\\r?\\n)[ \\t]*(?:id[ \\t]*::|:id:)[ \\t]*${escaped}(?=[ \\t]*(?:\\r?\\n|$))`,
-    "i",
-  );
-  return Object.values(doc.byId).some((node) => rawIdentity.test(node.raw));
+export interface LoadedIdentityWorkForTest {
+  loaded_identity_passes: number;
+  loaded_identity_nodes_scanned: number;
+  loaded_identity_raw_bytes_scanned: number;
+  incoming_identity_ids_checked: number;
+}
+
+const loadedIdentityWorkForTest: LoadedIdentityWorkForTest = {
+  loaded_identity_passes: 0,
+  loaded_identity_nodes_scanned: 0,
+  loaded_identity_raw_bytes_scanned: 0,
+  incoming_identity_ids_checked: 0,
+};
+
+/** Reset the F3 identity-work receipt. Test-only branches in the collision
+ * helper are dead-code-eliminated from production builds. */
+export function __resetLoadedIdentityWorkForTest(): void {
+  if (import.meta.env.MODE !== "test") return;
+  loadedIdentityWorkForTest.loaded_identity_passes = 0;
+  loadedIdentityWorkForTest.loaded_identity_nodes_scanned = 0;
+  loadedIdentityWorkForTest.loaded_identity_raw_bytes_scanned = 0;
+  loadedIdentityWorkForTest.incoming_identity_ids_checked = 0;
+}
+
+/** Snapshot the resettable F3 identity-work receipt for focused tests. */
+export function __loadedIdentityWorkForTest(): LoadedIdentityWorkForTest {
+  return { ...loadedIdentityWorkForTest };
+}
+
+// Keep the existing fail-closed coverage for a Markdown `id::` line and an Org
+// `:id:` property line. In particular, do not require an Org drawer here: the
+// previous safety check refused any matching loaded raw line, including one
+// introduced by setRaw before the byId key can be reconciled.
+const RAW_BLOCK_ID_PROPERTY_RE = /(?:^|\r?\n)[ \t]*(?:id[ \t]*::|:id:)[ \t]*([^\r\n]*?)[ \t]*(?=\r?\n|$)/gi;
+
+/**
+ * Does one candidate list collide with a live identity in the loaded document?
+ *
+ * The old per-id predicate re-scanned all loaded keys and raws for every
+ * candidate. Preserved cut paste and redo now build the loaded identity set
+ * once, then check the moving IDs in O(moved IDs). Raw properties remain part
+ * of the set so a synchronous setRaw cannot open a duplicate-id window.
+ */
+function hasLoadedIdentityCollision(incomingIds: readonly string[]): boolean {
+  if (import.meta.env.MODE === "test") {
+    loadedIdentityWorkForTest.incoming_identity_ids_checked += incomingIds.length;
+  }
+
+  // Reject an internally duplicated moved payload before consulting the loaded
+  // document. paste normally catches this earlier, but redo history can carry
+  // preserved IDs from an older snapshot and must be equally fail-closed.
+  const incoming = new Set<string>();
+  for (const id of incomingIds) {
+    const normalized = id.toLowerCase();
+    if (incoming.has(normalized)) return true;
+    incoming.add(normalized);
+  }
+
+  if (import.meta.env.MODE === "test") loadedIdentityWorkForTest.loaded_identity_passes++;
+  const loaded = new Set<string>();
+  for (const [key, node] of Object.entries(doc.byId)) {
+    loaded.add(key.toLowerCase());
+    const raw = node.raw;
+    if (import.meta.env.MODE === "test") {
+      loadedIdentityWorkForTest.loaded_identity_nodes_scanned++;
+      loadedIdentityWorkForTest.loaded_identity_raw_bytes_scanned += new TextEncoder().encode(raw).byteLength;
+    }
+    RAW_BLOCK_ID_PROPERTY_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = RAW_BLOCK_ID_PROPERTY_RE.exec(raw)) !== null) {
+      const identity = match[1].trim();
+      if (identity) loaded.add(identity.toLowerCase());
+    }
+  }
+  return incomingIds.some((id) => loaded.has(id.toLowerCase()));
 }
 
 // A generation identifies one exact loaded page instance. It is deliberately
@@ -2149,7 +2212,7 @@ export function redo() {
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
   if (!entryIsReplayable(entry)) return discardStaleHistory(entry);
-  if (entry.preservedIds?.some(docHasBlockIdentity)) {
+  if (entry.preservedIds && hasLoadedIdentityCollision(entry.preservedIds)) {
     // The selected prerequisite is already popped. A later redo snapshot cannot
     // remain valid without it, including in page-only mode where the tagged
     // entry may have been selected from the middle of the global stack.
@@ -2731,6 +2794,7 @@ function insertClipboardBlocksSync(
     collapsed: boolean;
     children: ReturnType<typeof prepare>[];
   } {
+    if (import.meta.env.MODE === "test") recordClipboardWorkForTest("prepared_destination_nodes");
     const sourceIds = clipboardIdsForBlock(block);
     return {
       id: preserveIds && sourceIds.length === 1 ? sourceIds[0].toLowerCase() : freshId(),
@@ -2748,9 +2812,11 @@ function insertClipboardBlocksSync(
   const pageName = target.page;
   let lastId: string | null = null;
 
+  if (import.meta.env.MODE === "test") recordClipboardWorkForTest("target_insertion_phases");
   pushUndo("clipboard-paste", [pageName], preserveIds ? preservedIds : []);
   setDoc(produce((state) => {
     const create = (block: typeof prepared[number], blockParent: string | null): string => {
+      if (import.meta.env.MODE === "test") recordClipboardWorkForTest("allocated_destination_nodes");
       const children = block.children.map((child) => create(child, block.id));
       state.byId[block.id] = {
         id: block.id,
@@ -2809,11 +2875,13 @@ export function pasteClipboardPayload(
       && slot.graph === authority.root;
 
     if (preserveIds) {
+      if (import.meta.env.MODE === "test") recordClipboardWorkForTest("source_retirement_phases");
       preserveIds = await flushCutSourcePages(grant!.sourcePages);
       if (preserveIds && !clipboardPasteAuthorityCurrent(authority)) return null;
     }
     if (preserveIds) {
       try {
+        if (import.meta.env.MODE === "test") recordClipboardWorkForTest("resolve_blocks_phases");
         const resolved = await backend().resolveBlocks(normalizedIds);
         preserveIds = resolved.length === normalizedIds.length && resolved.every((block) => block === null);
       } catch {
@@ -2825,8 +2893,9 @@ export function pasteClipboardPayload(
     // synchronous and insertion follows immediately with no await boundary.
     if (!clipboardPasteAuthorityCurrent(authority)) return null;
     if (preserveIds) {
+      if (import.meta.env.MODE === "test") recordClipboardWorkForTest("final_identity_guard_phases");
       preserveIds = cutSourcePagesRetired(grant!.sourcePages)
-        && normalizedIds.every((id) => !docHasBlockIdentity(id));
+        && !hasLoadedIdentityCollision(normalizedIds);
     }
     return insertClipboardBlocksSync(targetId, slot.blocks, preserveIds, preserveIds ? normalizedIds : []);
   })();
@@ -3801,6 +3870,10 @@ export function blockSubtreeMarkdown(
 ): string {
   const n = doc.byId[id];
   if (!n) return "";
+  if (import.meta.env.MODE === "test") {
+    recordClipboardWorkForTest("public_markdown_visits");
+    recordClipboardWorkForTest("public_markdown_raw_bytes", new TextEncoder().encode(n.raw).byteLength);
+  }
   const format = formatForBlock(id);
   const strip = stripId || stripCollapsed;
   const raw = strip
@@ -3852,6 +3925,10 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
   const build = (id: string): ClipboardBlock | null => {
     const node = doc.byId[id];
     if (!node) return null;
+    if (import.meta.env.MODE === "test") {
+      recordClipboardWorkForTest("private_payload_visits");
+      recordClipboardWorkForTest("private_payload_raw_bytes", new TextEncoder().encode(node.raw).byteLength);
+    }
     blockCount++;
     rawBytes += encoder.encode(node.raw).byteLength;
     if (blockCount > CLIPBOARD_PAYLOAD_MAX_BLOCKS || rawBytes > CLIPBOARD_PAYLOAD_MAX_RAW_BYTES) return null;
