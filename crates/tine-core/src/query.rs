@@ -433,7 +433,7 @@ fn collect_bounded(
         // reference groups by the referring page's journal day DESCENDING — newest journal
         // day first, non-journal pages (date_key None → i64::MIN) last. The graph cache
         // inherits filesystem enumeration order, so use the page name as a deterministic
-        // tie-breaker. Without it, static Guide/demo exports differed across machines.
+        // tie-breaker. Without it, static Guide exports differed across machines.
         groups.sort_by(|a, b| {
             b.0.unwrap_or(i64::MIN)
                 .cmp(&a.0.unwrap_or(i64::MIN))

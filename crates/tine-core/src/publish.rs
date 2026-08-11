@@ -3855,14 +3855,17 @@ li.ol-item::before{display:none}
 .namespace-macro{margin:.3rem 0}
 .namespace-macro .ns-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
 .macro-raw{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
-/* sheets: read-only renderings of tine.view blocks (app semantics, static form) */
-.sheet-scroll{max-width:100%;overflow-x:auto;margin:.5rem 0}
+/* sheets: read-only renderings of tine.view blocks (app semantics, static form).
+   The scroll wrapper must cap against the viewport as well as its container —
+   the Guide's phone layout lets content widen the flex-stretched main column,
+   which a bare max-width:100% would trust. */
+.sheet-scroll{max-width:min(100%,calc(100vw - 72px));overflow-x:auto;margin:.5rem 0;contain:inline-size}
 table.sheet-table,table.sheet-grid{border-collapse:collapse;font-size:.94em;margin:0}
 table.sheet-table th,table.sheet-table td,table.sheet-grid th,table.sheet-grid td{border:1px solid var(--line);padding:.3em .6em;text-align:left;vertical-align:top}
 table.sheet-table thead th,table.sheet-grid thead th{background:var(--code);font-weight:650}
 table.sheet-table tfoot td{color:var(--muted);font-size:.92em;white-space:nowrap}
 .sheet-agg-label{font-weight:650;letter-spacing:.02em;margin-right:.35em}
-.sheet-board{display:flex;align-items:stretch;gap:.8rem;overflow-x:auto;margin:.5rem 0}
+.sheet-board{display:flex;align-items:stretch;gap:.8rem;overflow-x:auto;margin:.5rem 0;max-width:min(100%,calc(100vw - 72px));contain:inline-size}
 .sheet-board-col{flex:1 1 11rem;min-width:10rem;border:1px solid var(--line);border-radius:8px}
 .sheet-board-col>h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--code);margin:0;padding:.3em .7em;border-radius:8px 8px 0 0;font-weight:650}
 .sheet-board-col>ul{list-style:none;margin:0;padding:.3rem .7rem}

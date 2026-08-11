@@ -665,7 +665,7 @@ within a column; merged cells are still v2+.
   links, and **sanitized raw HTML**. Dynamic content is resolved **at publish time** against your graph, too:
   `{{query …}}` runs and lists its results, `{{embed}}` inlines the target block/page,
   `{{namespace}}` lists child pages, and `{{video}}` embeds the player. (No interactive
-  graph view yet.) See the live **[Feature showcase](../website/demo/)** demo page.
+  graph view yet.) See the **[Feature showcase](../website/guide/)** in the public Guide.
 - **Export a page to PDF** — right-click a page title → **Export to PDF…** (or the
   **Export current page to PDF…** command). A small dialog offers **collapsed blocks:
   expand / keep folded**, **font size**, and **margins**; then Tine renders the *whole*

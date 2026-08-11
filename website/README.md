@@ -6,10 +6,13 @@ The static landing page for Tine, served by **GitHub Pages** from this folder.
   no trackers; everything is self-contained and loads from relative paths (so it
   works both at `https://<user>.github.io/tine/` and at a custom apex domain).
 - `img/` — screenshots, copied from `docs/img/` (the same curated set the README uses).
-- `demo/` — a **demo**: the onboarding demo graph published with Tine's *own*
-  HTML export (so the demo dogfoods the publish feature). Generated, not hand-edited —
-  see "Regenerating the demo" below. Linked from the nav/hero as a relative `demo/`
-  path so it works on either Pages domain.
+- `guide/` — the public **Guide**: the onboarding demo graph published with
+  Tine's *own* HTML export as a read-only reference (so the Guide dogfoods the
+  publish feature). Generated, not hand-edited — see "Regenerating the Guide"
+  below. Linked from the nav/hero as a relative `guide/` path so it works on
+  either Pages domain.
+- `demo/` — only a small hand-written redirect page remains here, forwarding
+  old `/demo/` links to `../guide/`. Not generated content.
 - `favicon.svg` — the app-icon mark.
 - `.nojekyll` — tells Pages to serve the files as-is (no Jekyll processing).
 - `CNAME` — present only once a custom domain is chosen (see below).
@@ -39,21 +42,22 @@ by integration" failure), so this toggle must be flipped by hand once.
    - **`www`/sub-domain**: one `CNAME` → `<user>.github.io`.
 4. In repo Settings → Pages, tick **Enforce HTTPS** once the certificate provisions.
 
-## Regenerating the demo
+## Regenerating the Guide
 
-`website/demo/` is built from the onboarding demo templates
+`website/guide/` is built from the onboarding demo templates
 (`crates/tine-core/src/templates/`) via Tine's HTML export. Re-run after changing
 those templates:
 
 ```sh
 source scripts/env.sh
-cargo run -q -p tine-core --example build-demo-site -- website/demo
+cargo run -q -p tine-core --example build-guide-site -- website/guide
 ```
 
 The example scaffolds the demo graph in a temp dir, publishes **all** its pages
 (forcing all-pages-public in memory only — the shipped onboarding config stays
 private-by-default), rewrites asset paths to be self-contained, and writes the site
-into `website/demo/` (overwriting it).
+into `website/guide/` (overwriting it). `npm run docs:build` / `docs:check` wrap
+the same generator with the freshness + link checks.
 
 ## Regenerating screenshots
 

@@ -19,8 +19,8 @@ may tag, publish, comment, and close issues.
    in the non-UI inventory). Public Fixed entries reference their GitHub issue;
    internal reports use a stable catalog ID. An exemption needs substitute
    evidence and a reason.
-4. Regenerate the canonical Guide/demo site and prove the checked-in
-   `website/demo/` output, bundled Guide pages, links, block references, and
+4. Regenerate the canonical Guide site and prove the checked-in
+   `website/guide/` output, bundled Guide pages, links, block references, and
    assets are current.
 5. Run the complete Linux release E2E catalog (`npm run e2e:linux:release`)
    against the production-protocol candidate binary. Retain screenshots, DOM,

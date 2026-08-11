@@ -1,4 +1,4 @@
-# Living Guide/demo documentation program
+# Living Guide documentation program
 
 Status: implementation plan for branch `docs/new-docs`.
 
@@ -8,14 +8,14 @@ Turn Tine's existing bundled Guide graph into the canonical user documentation:
 
 1. the first-run demo graph;
 2. the read-only in-app Guide, with an explicit copy-to-graph sandbox;
-3. the public HTML export at `https://tine.page/demo/`.
+3. the public HTML export at `https://tine.page/guide/`.
 
 The result should help a new user succeed quickly, help an experienced user find
 precise behavior and combinations, and stay current as Tine changes. It should
 not become a second maintainer-memory system or a prose copy of Logseq's manual.
 
 GH #201 asks for a Wiki. Its needs are valid; a separate Wiki is not the chosen
-storage mechanism because it would duplicate the Guide/demo source already
+storage mechanism because it would duplicate the Guide source already
 protected by ADR 0036.
 
 ## 2. Product principles
@@ -24,7 +24,7 @@ protected by ADR 0036.
 
 `crates/tine-core/src/templates/*.md`, registered in `GUIDE_TEMPLATES` in
 `crates/tine-core/src/onboarding.rs`, remain canonical. A content change is not
-complete until it works in all three surfaces and `website/demo/` is regenerated.
+complete until it works in all three surfaces and `website/guide/` is regenerated.
 
 ### 2.2 Teach tasks before syntax
 
@@ -72,11 +72,11 @@ anonymized, test, or recovery graphs into public templates.
 
 | Concern | Current owner |
 |---|---|
-| Canonical Guide/demo Markdown | `crates/tine-core/src/templates/*.md` |
+| Canonical Guide Markdown | `crates/tine-core/src/templates/*.md` |
 | Page and asset manifest | `GUIDE_TEMPLATES` / `GUIDE_ASSETS` in `crates/tine-core/src/onboarding.rs` |
 | Read-only virtual Guide and copy semantics | ADR 0036 plus `src/guide.ts` and onboarding tests |
-| Public generated docs | `website/demo/` |
-| Generator and freshness/link check | `scripts/build-guide-demo.mjs`; `npm run docs:build`, `npm run docs:check` |
+| Public generated docs | `website/guide/` |
+| Generator and freshness/link check | `scripts/build-guide-site.mjs`; `npm run docs:build`, `npm run docs:check` |
 | Full feature inventory | `docs/FEATURES.md` |
 | Settings/default inventory | `docs/SETTINGS-INVENTORY.md` and current Settings source/tests |
 | Accepted release changes and docs dispositions | `CHANGELOG.md`, `docs/releases/*-impact.json` |
@@ -101,14 +101,14 @@ outrank older prose. Record a discrepancy rather than silently choosing a story.
   records but does not implement them.
 - Managed-storage/sync status copy is frozen unless Martin separately provides
   current wording. The documentation worker must not infer status from code.
-- Kimi may edit Markdown templates and generated `website/demo/` output. It may
+- Kimi may edit Markdown templates and generated `website/guide/` output. It may
   append a manager-approved entry to `GUIDE_TEMPLATES`, but may not otherwise
   edit Rust production logic.
 - `crates/tine-core/src/publish.rs`, onboarding/copy logic outside the manifest,
-  `scripts/build-guide-demo.mjs` validation semantics, and
+  `scripts/build-guide-site.mjs` validation semantics, and
   `crates/tine-core/src/templates/config.edn` are manager-owned. A worker reports
   a defect there instead of repairing or weakening it.
-- Generated `website/demo/` files are committed with their template source.
+- Generated `website/guide/` files are committed with their template source.
   Reviewers treat them as derived output and review the source plus rendered
   pages, not thousands of generated lines as independent authorship.
 
@@ -260,7 +260,7 @@ Review the whole graph as a user journey:
 
 Visual acceptance, in-app probe execution, and the GH #201 response are manager
 work. Only after this review should the manager explain that the living
-Guide/demo fulfills the Wiki need through one canonical source.
+the living Guide fulfills the Wiki need through one canonical source.
 
 ## 7. Worker loop and stop conditions
 
@@ -304,7 +304,7 @@ For every coherent content slice:
 - run `source scripts/env.sh && npm run docs:check`;
 - mechanically check changed generated pages exist, contain their expected
   heading/links/examples, and introduce no missing local asset/Guide target;
-- keep `website/demo/` checked in and synchronized.
+- keep `website/guide/` checked in and synchronized.
 
 If Rust manifest formatting changed, run `source scripts/env.sh && cargo fmt
 --all -- --check`. Run `npm test` or `npx tsc --noEmit` only if TypeScript/TSX
@@ -323,7 +323,7 @@ Pure content edits do not justify the full release E2E corpus or hosted CI.
 ## 9. Deliverables
 
 1. Revised/new canonical templates and narrowly authorized manifest entries.
-2. Regenerated `website/demo/` with link/freshness checks green.
+2. Regenerated `website/guide/` with link/freshness checks green.
 3. A concise progress ledger listing completed journeys, quoted sources, checks,
    contradictions and deliberate deferrals.
 4. One commit per coherent slice, followed by a final integration report.
@@ -333,7 +333,7 @@ Pure content edits do not justify the full release E2E corpus or hosted CI.
 ## 10. Acceptance criteria
 
 - One canonical template set still feeds onboarding, in-app Guide, copied
-  sandbox, and public demo.
+  sandbox, and public Guide.
 - `Welcome to Tine` remains a short successful onboarding path.
 - Existing page titles and public URLs remain stable.
 - `Tine Guide` exposes clear Start, Workflows, Reference, and showcase lenses

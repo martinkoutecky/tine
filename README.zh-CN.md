@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <b>▶ <a href="https://tine.page/demo/">查看演示图谱</a></b> —— 使用 Tine 自身的 HTML 导出功能发布的入门图谱。
+  <b>▶ <a href="https://tine.page/guide/">浏览使用指南</a></b> —— 使用 Tine 自身的 HTML 导出功能发布的入门指南图谱。
 </p>
 
 ---
@@ -102,7 +102,7 @@ Tine 是一款大纲笔记软件，外观和操作体验与 [Logseq](https://log
 
 ## 功能
 
-下面是现有功能的快速概览——完整功能列表见 **[docs/FEATURES.md](docs/FEATURES.md)**；也可在浏览器中通过**[演示](https://tine.page/demo/)**查看内容的实际渲染效果。
+下面是现有功能的快速概览——完整功能列表见 **[docs/FEATURES.md](docs/FEATURES.md)**；也可在浏览器中通过**[使用指南](https://tine.page/guide/)**查看内容的实际渲染效果。
 
 | 领域 | 主要功能 |
 |------|-----------|

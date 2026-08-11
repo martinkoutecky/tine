@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <b>▶ <a href="https://tine.page/demo/">Browse a demo graph</a></b> — the onboarding graph, published with Tine's own HTML export.
+  <b>▶ <a href="https://tine.page/guide/">Explore the Guide</a></b> — the onboarding Guide graph, published with Tine's own HTML export.
 </p>
 
 ---
@@ -138,7 +138,7 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 ## Features
 
 A quick map of what's in the box — the **[full feature list lives in docs/FEATURES.md](docs/FEATURES.md)**,
-and the **[demo](https://tine.page/demo/)** shows the rendered-content side of it in your browser.
+and the **[Guide](https://tine.page/guide/)** shows the rendered-content side of it in your browser.
 
 | Area | Highlights |
 |------|-----------|

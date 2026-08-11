@@ -1,18 +1,18 @@
-//! Build the static "live demo" site from Tine's onboarding demo graph, using
-//! Tine's OWN HTML export — so the public demo dogfoods the publish feature.
+//! Build the static public Guide site from Tine's onboarding demo graph, using
+//! Tine's OWN HTML export — so the public Guide dogfoods the publish feature.
 //!
 //! Scaffolds the demo graph in a temp dir, publishes ALL its pages, and writes a
-//! self-contained site into the given output dir (e.g. `website/demo`). The demo
+//! self-contained site into the given output dir (e.g. `website/guide`). The demo
 //! pages carry no `public::` markers, so all-pages-public is forced **in memory
 //! for this export only** — the shipped onboarding config stays
 //! `all-pages-public=false`, so a real user's new graph never silently publishes.
 //!
 //! `publish_graph` emits asset embeds as `../assets/<file>` (it assumes the site
 //! is served from `<graph>/publish` next to `<graph>/assets`). To keep the hosted
-//! demo self-contained under one directory, the emitted HTML is rewritten to
+//! Guide self-contained under one directory, the emitted HTML is rewritten to
 //! `assets/<file>` and the graph's `assets/` is copied in alongside the pages.
 //!
-//! Usage: cargo run -q -p tine-core --example build-demo-site -- website/demo
+//! Usage: cargo run -q -p tine-core --example build-guide-site -- website/guide
 //! (Re-run after changing the demo templates in src/templates/.)
 
 use std::fs;
@@ -41,10 +41,10 @@ fn main() {
     let out = PathBuf::from(
         std::env::args()
             .nth(1)
-            .expect("usage: build-demo-site <out_dir>   (e.g. website/demo)"),
+            .expect("usage: build-guide-site <out_dir>   (e.g. website/guide)"),
     );
 
-    let tmp = std::env::temp_dir().join("tine-demo-site-build");
+    let tmp = std::env::temp_dir().join("tine-guide-site-build");
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("create temp graph dir");
 

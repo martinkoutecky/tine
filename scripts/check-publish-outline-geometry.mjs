@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const PAGE = path.join(ROOT, "website/demo/index.html");
+const PAGE = path.join(ROOT, "website/guide/index.html");
 const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu"] });
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } });

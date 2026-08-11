@@ -156,7 +156,7 @@ jobs:
           npm run check:regressions
           npm run check:release-readiness
 
-      - name: Canonical Guide/demo is generated and current
+      - name: Canonical Guide is generated and current
         run: npm run docs:check
 
       # The pin guard otherwise only runs inside `npm run build`, which fast CI

@@ -2727,7 +2727,7 @@
       "coverage": {
         "tests": [
           "crates/tine-core/src/publish.rs",
-          "website/demo/project-roadmap.html"
+          "website/guide/project-roadmap.html"
         ],
         "scenario": "publish.block-referrers",
         "failBefore": "proven"
@@ -2751,8 +2751,8 @@
       "coverage": {
         "tests": [
           "crates/tine-core/src/publish.rs",
-          "website/demo/index.html",
-          "website/demo/pages.html"
+          "website/guide/index.html",
+          "website/guide/pages.html"
         ],
         "scenario": "publish.welcome-home",
         "failBefore": "proven"
@@ -2773,10 +2773,56 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs"
+          "crates/tine-core/src/publish.rs",
+          "website/guide/features-sheets.html",
+          "website/guide/workflows-structure-repeated-information.html"
         ],
         "scenario": "publish.sheet-views",
         "failBefore": "proven"
+      }
+    },
+    {
+      "id": "UI-PUBLISH-ORDERED-LIST-001",
+      "title": "Own-numbered blocks keep their ordinal markers in the static HTML export",
+      "family": "publishing",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "browser",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/publish.rs",
+          "website/guide/feature-showcase.html"
+        ],
+        "scenario": "publish.ordered-list-markers",
+        "failBefore": "reconstructed"
+      }
+    },
+    {
+      "id": "UI-PUBLISH-LOGBOOK-SUMMARY-001",
+      "title": "LOGBOOK clock rows keep their elapsed-time badge while the drawer stays hidden in the static HTML export",
+      "family": "publishing",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "browser",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/publish.rs",
+          "website/guide/feature-showcase.html"
+        ],
+        "scenario": "publish.logbook-summary",
+        "failBefore": "reconstructed"
       }
     },
     {
@@ -2967,7 +3013,7 @@
         "tests": [
           "crates/tine-core/src/publish.rs",
           "scripts/check-publish-outline-geometry.mjs",
-          "website/demo/index.html"
+          "website/guide/index.html"
         ],
         "scenario": "publish.outline-guide-geometry",
         "failBefore": "proven"

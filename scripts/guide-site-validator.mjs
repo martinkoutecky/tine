@@ -23,7 +23,7 @@ function isDeliberateStubTarget(dir, resolved) {
   return !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) && deliberateStubTargets.has(relative);
 }
 
-export function validateGuideDemoLinks(dir) {
+export function validateGuideSiteLinks(dir) {
   const failures = [];
   const siteRoot = path.resolve(dir);
   for (const relative of filesUnder(dir).filter((file) => file.endsWith(".html"))) {
@@ -43,5 +43,5 @@ export function validateGuideDemoLinks(dir) {
       }
     }
   }
-  if (failures.length) throw new Error(`Guide/demo link validation failed:\n${failures.join("\n")}`);
+  if (failures.length) throw new Error(`Guide link validation failed:\n${failures.join("\n")}`);
 }
