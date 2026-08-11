@@ -4299,6 +4299,324 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    // ===== Sheets: a `tine.view::` block must publish as a meaningful read-only
+    // sheet (table / board / grid), not as bare nested bullets. =====
+
+    fn publish_sheet_fixture(name: &str, config: &str, pages: &[(&str, &str)]) -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("tine-publish-sheet-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), config).unwrap();
+        for (file, body) in pages {
+            fs::write(dir.join("pages").join(file), body).unwrap();
+        }
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, pages.len(), "every fixture page publishes");
+        (dir, outdir)
+    }
+
+    fn read_out(outdir: &str, file: &str) -> String {
+        fs::read_to_string(std::path::Path::new(outdir).join(file)).unwrap()
+    }
+
+    /// Order-sensitive: the text mentions every sheet facet in prose, so
+    /// assertions run against the rendered sheet region only.
+    fn sheet_table_html() -> (PathBuf, String) {
+        let (dir, outdir) = publish_sheet_fixture(
+            "table",
+            "{:preferred-workflow :todo}\n",
+            &[(
+                "SheetTable.md",
+                "public:: true\n\
+                 - # Sheet table cases\n\
+                 - ## Task table\n  \
+                   tine.view:: table\n  \
+                   tine.col-aggregates:: prop:estimate=sum\n\
+                 \t- TODO [#A] Draft the sheet docs #sheets-demo\n\t  \
+                   SCHEDULED: <2026-07-08 Wed>\n\t  \
+                   owner:: Martin\n\t  \
+                   estimate:: 2\n\
+                 \t- DOING Polish cell menus #sheets-demo\n\t  \
+                   owner:: Codex\n\t  \
+                   estimate:: 5\n\
+                 \t- DONE Add aggregate footer #sheets-demo\n\t  \
+                   owner:: Codex\n\t  \
+                   estimate:: 1\n\
+                 - ## Typed reading list\n  \
+                   tine.view:: table\n  \
+                   tine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox;owner=ref\n  \
+                   tine.formula.effort:: rating * 2\n\
+                 \t- Bases study\n\t  \
+                   status:: reading\n\t  \
+                   rating:: 5\n\t  \
+                   done:: false\n\t  \
+                   owner:: [[Martin]]\n\
+                 \t- CSV import notes\n\t  \
+                   status:: todo\n\t  \
+                   rating:: 3\n\t  \
+                   done:: false\n\t  \
+                   owner:: [[Codex]]\n\
+                 - A plain parent\n\
+                 \t- plain child bullet\n",
+            )],
+        );
+        (dir, read_out(&outdir, "sheettable.html"))
+    }
+
+    #[test]
+    fn publish_sheet_table_columns_aggregate_links() {
+        let (dir, html) = sheet_table_html();
+        assert_eq!(
+            html.matches("<table class=\"sheet-table\">").count(),
+            2,
+            "each tine.view:: table block publishes one table: {html}"
+        );
+        // Declared + observed columns surface with their labels.
+        for label in [">State<", ">Priority<", ">Tags<", ">owner<", ">estimate<"] {
+            assert!(html.contains(label), "column label {label}: {html}");
+        }
+        // Row content + property values are cells, including page-ref links.
+        assert!(html.contains("Draft the sheet docs"), "{html}");
+        assert!(
+            html.contains("<a class=\"ref\" href=\"martin.html\">Martin</a>"),
+            "owner value keeps its [[Martin]] link: {html}"
+        );
+        // The aggregate footer computes the estimate sum (2 + 5 + 1).
+        let foot = html.split("<tfoot>").nth(1).unwrap_or("");
+        let foot = foot.split("</tfoot>").next().unwrap_or("");
+        assert!(foot.contains("Sum"), "aggregate label: {foot}");
+        assert!(foot.contains(">8<"), "aggregate value: {foot}");
+        // View configuration is chrome, not published prose.
+        assert!(!html.contains("tine.view::"), "view prop hidden: {html}");
+        assert!(
+            !html.contains("tine.col-aggregates::"),
+            "aggregate prop hidden: {html}"
+        );
+        // Checkbox-typed fields render as checkbox cells.
+        assert!(
+            html.contains("<td><span class=\"task-checkbox\"></span></td>"),
+            "done=false checkbox cell: {html}"
+        );
+        // Formula column evaluates over each row's rating (5*2, 3*2).
+        assert!(html.contains(">effort<"), "formula column label: {html}");
+        assert!(html.contains(">10</td>"), "rating 5 * 2: {html}");
+        assert!(html.contains(">6</td>"), "rating 3 * 2: {html}");
+        // Rows keep stable anchors, and a non-sheet block still nests as an outline.
+        assert!(html.contains("<tr id=\""), "row anchor: {html}");
+        assert!(html.contains("plain child bullet"), "{html}");
+        assert!(!html.contains("<td>plain child bullet"), "{html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_sheet_table_rows_stay_searchable() {
+        let (dir, outdir) = publish_sheet_fixture(
+            "table-index",
+            "{:preferred-workflow :todo}\n",
+            &[(
+                "IndexSheet.md",
+                "public:: true\n\
+                 - ## Indexed table\n  \
+                   tine.view:: table\n\
+                 \t- uniqueterm zebra\n\t  \
+                   owner:: Martin\n",
+            )],
+        );
+        let sidx = read_out(&outdir, "search-index.js");
+        assert!(
+            sidx.contains("uniqueterm zebra"),
+            "sheet rows stay in the block search index: {sidx}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_sheet_boards_group_children() {
+        let (dir, outdir) = publish_sheet_fixture(
+            "board",
+            "{:preferred-workflow :todo}\n",
+            &[(
+                "Boards.md",
+                "public:: true\n\
+                 - # Board cases\n\
+                 - ## Task board\n  \
+                   tine.view:: board\n  \
+                   tine.group-by:: state\n\
+                 \t- TODO First task\n\
+                 \t- DOING Second task\n\
+                 \t- DONE Third task\n\
+                 \t- Unlabeled card\n\
+                 - ## Topic board\n  \
+                   tine.view:: board\n  \
+                   tine.group-by:: tags\n\
+                 \t- Schema menu polish #schema\n\
+                 \t- CSV drop walkthrough #interop #schema\n",
+            )],
+        );
+        let html = read_out(&outdir, "boards.html");
+        assert_eq!(
+            html.matches("<div class=\"sheet-board\">").count(),
+            2,
+            "each board block publishes one board: {html}"
+        );
+        for col in [">TODO</h3>", ">DOING</h3>", ">DONE</h3>", ">(none)</h3>"] {
+            assert!(html.contains(col), "board column {col}: {html}");
+        }
+        // State columns follow the workflow order, unlabeled cards last.
+        let pos = |needle: &str| html.find(needle).unwrap_or(usize::MAX);
+        assert!(pos(">TODO</h3>") < pos(">DOING</h3>"), "{html}");
+        assert!(pos(">DOING</h3>") < pos(">DONE</h3>"), "{html}");
+        assert!(pos(">DONE</h3>") < pos(">(none)</h3>"), "{html}");
+        assert!(pos(">TODO</h3>") < pos("First task"), "{html}");
+        assert!(pos("First task") < pos(">DOING</h3>"), "{html}");
+        assert!(pos(">(none)</h3>") < pos("Unlabeled card"), "{html}");
+        // A multi-tag card sits in every matching column.
+        assert!(html.contains(">schema</h3>"), "{html}");
+        assert!(html.contains(">interop</h3>"), "{html}");
+        assert_eq!(
+            html.matches("CSV drop walkthrough").count(),
+            2,
+            "multi-tag card is duplicated across its columns: {html}"
+        );
+        assert_eq!(html.matches("Schema menu polish").count(), 1, "{html}");
+        assert!(!html.contains("tine.view::"), "view prop hidden: {html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_sheet_query_board_groups_results() {
+        let (dir, outdir) = publish_sheet_fixture(
+            "query-board",
+            "{:preferred-workflow :todo}\n",
+            &[
+                (
+                    "QueryBoards.md",
+                    "public:: true\n\
+                     - # Query board cases\n\
+                     - {{query (property owner Avery)}}\n  \
+                       tine.view:: board\n  \
+                       tine.group-by:: status\n",
+                ),
+                (
+                    "Tracker.md",
+                    "public:: true\n\
+                     - Refresh Guide examples\n  \
+                       status:: active\n  \
+                       owner:: Avery\n\
+                     - Publish the updated demo\n  \
+                       status:: planned\n  \
+                       owner:: Avery\n\
+                     - Other thing\n  \
+                       owner:: Jules\n  \
+                       status:: active\n",
+                ),
+            ],
+        );
+        let html = read_out(&outdir, "queryboards.html");
+        assert!(
+            html.contains("<div class=\"sheet-board\">"),
+            "query results render grouped as a board: {html}"
+        );
+        assert!(
+            !html.contains("<div class=\"query\">"),
+            "the flat query list is replaced by the sheet view: {html}"
+        );
+        for col in [">active</h3>", ">planned</h3>"] {
+            assert!(html.contains(col), "status column {col}: {html}");
+        }
+        assert!(html.contains("Refresh Guide examples"), "{html}");
+        assert!(html.contains("Publish the updated demo"), "{html}");
+        assert!(
+            !html.contains("Other thing"),
+            "non-matching blocks stay out of the board: {html}"
+        );
+        assert!(!html.contains("tine.view::"), "view prop hidden: {html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_sheet_grid_positional_nested_ragged() {
+        let (dir, outdir) = publish_sheet_fixture(
+            "grid",
+            "{:preferred-workflow :todo}\n",
+            &[(
+                "Grids.md",
+                "public:: true\n\
+                 - # Grid cases\n\
+                 - ## Positional grid\n  \
+                   tine.view:: grid\n  \
+                   tine.header:: true\n\
+                 \t-\n\t\t- Area\n\t\t- Owner\n\t\t- Notes\n\
+                 \t-\n\t\t- Spec\n\t\t- Martin\n\t\t- Nested grid\n\t\t  \
+                   tine.view:: grid\n\t\t\
+                   \t-\n\t\t\t\t- Risk\n\t\t\t\t- Mitigation\n\
+                 \t-\n\t\t- Build\n\t\t-\n\t\t- Ragged rows are fine\n",
+            )],
+        );
+        let html = read_out(&outdir, "grids.html");
+        assert_eq!(
+            html.matches("<table class=\"sheet-grid\">").count(),
+            2,
+            "outer grid plus the grid nested in a cell: {html}"
+        );
+        for head in ["<th>Area</th>", "<th>Owner</th>", "<th>Notes</th>"] {
+            assert!(html.contains(head), "header cell {head}: {html}");
+        }
+        for cell in ["<td>Spec</td>", "<td>Risk</td>", "<td>Mitigation</td>"] {
+            assert!(html.contains(cell), "cell {cell}: {html}");
+        }
+        // An empty cell stays an empty cell; ragged rows keep their cells.
+        assert!(html.contains("<td></td>"), "empty middle cell: {html}");
+        assert!(html.contains("<td>Build</td>"), "{html}");
+        assert!(
+            html.matches("<td>Ragged rows are fine</td>").count() == 1,
+            "{html}"
+        );
+        // The nested grid renders inside its host cell.
+        let pos = |needle: &str| html.find(needle).unwrap_or(usize::MAX);
+        assert!(pos("Nested grid") < pos("<td>Risk</td>"), "{html}");
+        assert!(!html.contains("tine.view::"), "view prop hidden: {html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_sheet_print_renders_table() {
+        // The single-page print/PDF export shares render_block with the site
+        // export — sheets must appear there too.
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-sheet-print-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), "{:preferred-workflow :todo}\n").unwrap();
+        fs::write(
+            dir.join("pages").join("PrintSheet.md"),
+            "public:: true\n\
+             - ## Print table\n  \
+               tine.view:: table\n  \
+               tine.col-aggregates:: prop:estimate=sum\n\
+             \t- TODO Priced row\n\t  \
+               estimate:: 4\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        let print = graph
+            .page_print_html("PrintSheet", PrintOpts::default())
+            .unwrap()
+            .unwrap();
+        assert!(
+            print.contains("<table class=\"sheet-table\">"),
+            "the print/PDF export carries the sheet too: {print}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// Dev utility (not run by default): materialize a richer sample export at a
     /// stable path so the published sidebar + search can be screenshot-verified.
     /// `cargo test -p tine-core --lib -- --ignored gen_sample_export --nocapture`

@@ -2759,6 +2759,27 @@
       }
     },
     {
+      "id": "UI-PUBLISH-SHEET-VIEWS-001",
+      "title": "Published tine.view sheets render as read-only tables, boards, and grids instead of bare nested bullets",
+      "family": "publishing",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "browser",
+      "status": "fixing",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/publish.rs"
+        ],
+        "scenario": "publish.sheet-views",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "UI-PAGE-TRAILING-BLOCK-TARGET-001",
       "title": "The quiet target below writable content always adds a new writable trailing block, even when the page ends in an empty (possibly indented) bullet",
       "family": "page-editing",
