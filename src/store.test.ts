@@ -1984,6 +1984,376 @@ describe("selection indent/outdent batches one shared-store command (F1)", () =>
   });
 });
 
+describe("selection move burst history (F2)", () => {
+  let saveSpy: MockInstance<Backend["savePage"]>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue("move-burst-rev");
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    saveSpy.mockRestore();
+  });
+
+  function selectRange(first: string, last: string) {
+    selectBlock(first);
+    extendSelectionTo(last);
+  }
+
+  function loadMovableSelection(selectedCount: number) {
+    const before = Array.from({ length: 40 }, (_, i) => blk(`before-${i}`));
+    const selected = Array.from({ length: selectedCount }, (_, i) => blk(`selected-${i}`));
+    const after = Array.from({ length: 40 }, (_, i) => blk(`after-${i}`));
+    load([...before, ...selected, ...after]);
+    selectRange(selected[0].id, selected.at(-1)!.id);
+    return { before, selected, after };
+  }
+
+  function expectSavedPageEqualsCurrent(callIndex: number, pageName: string) {
+    expect(saveSpy.mock.calls[callIndex]?.[0]).toEqual(pageToDto(pageName));
+  }
+
+  async function observeMoveBurst(run: () => Promise<void>): Promise<{
+    publications: number;
+    dirtyMarks: number;
+    snapshots: number;
+  }> {
+    const counts = { publications: 0, dirtyMarks: 0, snapshots: 0 };
+    __setStoreMutationObserverForTest((observation) => {
+      if (observation.kind === "publication") counts.publications++;
+      else if (observation.kind === "dirty") counts.dirtyMarks++;
+      else if (observation.kind === "undo-snapshot") counts.snapshots++;
+    });
+    try {
+      await run();
+    } finally {
+      __setStoreMutationObserverForTest(null);
+    }
+    return counts;
+  }
+
+  it.each([
+    [50, -1],
+    [50, 1],
+    [200, -1],
+    [200, 1],
+  ])("keeps %i-root 20-nudge direction-%i bursts visibly immediate but one Undo/Redo unit", async (count, direction) => {
+    const { selected } = loadMovableSelection(count);
+    const before = pageState("Test");
+
+    const counts = await observeMoveBurst(async () => {
+      for (let i = 0; i < 20; i++) {
+        await moveSelectionItems(direction as 1 | -1);
+        await vi.advanceTimersByTimeAsync(50);
+      }
+    });
+    const after = pageState("Test");
+
+    // Every visible nudge still publishes and refreshes the ordinary dirty
+    // generation/debounce. Only the page snapshot is shared.
+    expect(counts).toEqual({ publications: 20, dirtyMarks: 20, snapshots: 1 });
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(selectedIds()).toEqual(selected.map((block) => block.id));
+
+    // The final mark's existing debounce is allowed to persist the current
+    // document before history replay; no later mark is suppressed by F2.
+    await vi.advanceTimersByTimeAsync(350);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expectSavedPageEqualsCurrent(0, "Test");
+
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    expect(pageState("Test")).toEqual(after);
+  });
+
+  it("starts a fresh unit after Undo or Redo", async () => {
+    loadMovableSelection(2);
+    const before = pageState("Test");
+
+    await moveSelectionItems(1);
+    const afterFirst = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    expect(pageState("Test")).toEqual(afterFirst);
+
+    await moveSelectionItems(1);
+    const afterSecond = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(afterFirst);
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    redo();
+    expect(pageState("Test")).toEqual(afterSecond);
+  });
+
+  it("keeps mixed Up/Down repeats in one selection-move command family", async () => {
+    loadMovableSelection(3);
+    const before = pageState("Test");
+    const counts = await observeMoveBurst(async () => {
+      await moveSelectionItems(1);
+      await vi.advanceTimersByTimeAsync(50);
+      await moveSelectionItems(1);
+      await vi.advanceTimersByTimeAsync(50);
+      await moveSelectionItems(-1);
+      await vi.advanceTimersByTimeAsync(50);
+      await moveSelectionItems(1);
+    });
+    const after = pageState("Test");
+
+    expect(counts).toEqual({ publications: 4, dirtyMarks: 4, snapshots: 1 });
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    expect(pageState("Test")).toEqual(after);
+  });
+
+  it("starts a fresh unit when the selected root set changes inside the idle window", async () => {
+    const { selected } = loadMovableSelection(3);
+    const before = pageState("Test");
+
+    await moveSelectionItems(1);
+    const afterFirst = pageState("Test");
+    await vi.advanceTimersByTimeAsync(100);
+    selectBlock(selected[0].id); // [selected-0..2] -> [selected-0]
+    await moveSelectionItems(1);
+    const afterSecond = pageState("Test");
+
+    undo();
+    expect(pageState("Test")).toEqual(afterFirst);
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    redo();
+    expect(pageState("Test")).toEqual(afterSecond);
+  });
+
+  it("ends page A's burst when unrelated loaded page B is reloaded", async () => {
+    const { selected } = loadMovableSelection(2);
+    const pageB: PageDto = {
+      name: "B", kind: "page", title: "B", pre_block: null, rev: "b1",
+      blocks: [blk("B before reload")],
+    };
+    await ensurePageLoaded(pageB);
+    selectRange(selected[0].id, selected.at(-1)!.id);
+    const before = pageState("Test");
+
+    await moveSelectionItems(1);
+    const afterFirst = pageState("Test");
+    await vi.advanceTimersByTimeAsync(100);
+    await reloadPage({
+      ...pageB,
+      rev: "b2",
+      blocks: [blk("B after reload")],
+    });
+    expect(pageToDto("B")?.blocks[0]?.raw).toBe("B after reload");
+
+    await moveSelectionItems(1);
+    const afterSecond = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(afterFirst);
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    redo();
+    expect(pageState("Test")).toEqual(afterSecond);
+  });
+
+  it.each([-1, 1] as const)("moves three 100-descendant roots one slot direction %i in an exact 511-block page", async (direction) => {
+    const selected = Array.from({ length: 3 }, (_, rootIndex) => blk(
+      `selected-root-${rootIndex}`,
+      Array.from({ length: 100 }, (_, childIndex) => blk(`descendant-${rootIndex}-${childIndex}`)),
+    ));
+    const displacedBefore = blk("displaced-before");
+    const padding = Array.from({ length: 207 }, (_, index) => blk(`padding-${index}`));
+    load([displacedBefore, ...selected, ...padding]);
+    const countBlocks = (blocks: BlockDto[]): number => blocks.reduce(
+      (total, block) => total + 1 + countBlocks(block.children),
+      0,
+    );
+    expect(countBlocks(pageToDto("Test")!.blocks)).toBe(511);
+
+    const before = pageState("Test");
+    const beforeRoots = [...pageByName("Test")!.roots];
+    const nodeReceipts = Object.fromEntries(
+      Object.entries(doc.byId).map(([id, node]) => [id, JSON.parse(JSON.stringify(node))]),
+    );
+    selectRange(selected[0].id, selected[2].id);
+    await moveSelectionItems(direction);
+
+    const expectedRoots = direction === -1
+      ? [...selected.map((block) => block.id), displacedBefore.id, ...padding.map((block) => block.id)]
+      : [displacedBefore.id, padding[0].id, ...selected.map((block) => block.id), ...padding.slice(1).map((block) => block.id)];
+    expect(beforeRoots).toEqual([displacedBefore.id, ...selected.map((block) => block.id), ...padding.map((block) => block.id)]);
+    expect(pageByName("Test")!.roots).toEqual(expectedRoots);
+    for (const [id, receipt] of Object.entries(nodeReceipts)) {
+      expect(doc.byId[id]).toEqual(receipt);
+    }
+
+    const after = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(before);
+    redo();
+    expect(pageState("Test")).toEqual(after);
+  });
+
+  it("starts fresh units after idle/max boundaries, selection endpoints, other edits, and reload", async () => {
+    const { after } = loadMovableSelection(2);
+
+    await moveSelectionItems(1);
+    const afterFirst = pageState("Test");
+    await vi.advanceTimersByTimeAsync(400); // closes the burst's independent idle timer
+    await moveSelectionItems(1);
+    const afterIdleSeparated = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(afterFirst);
+    redo();
+    expect(pageState("Test")).toEqual(afterIdleSeparated);
+
+    // A raw edit closes the burst without merging that edit into either move.
+    setRaw(after[0].id, "changed between move gestures");
+    const afterRaw = pageState("Test");
+    await moveSelectionItems(1);
+    const afterRawThenMove = pageState("Test");
+    undo();
+    expect(pageState("Test")).toEqual(afterRaw);
+    undo();
+    expect(doc.byId[after[0].id].raw).toBe("after-0");
+    expect(pageState("Test")).toEqual(afterIdleSeparated);
+    redo();
+    redo();
+    expect(pageState("Test")).toEqual(afterRawThenMove);
+
+    // A structural command has the same generic reset point as raw editing.
+    setBlockProperty(after[1].id, "burst-boundary", "yes");
+    const afterStructural = pageState("Test");
+    await moveSelectionItems(-1);
+    undo();
+    expect(pageState("Test")).toEqual(afterStructural);
+
+    // The endpoint change only removes a descendant of an already-selected
+    // parent in the normalized root set. It must still end the gesture.
+    resetStore();
+    const child = blk("child");
+    const parent = blk("parent", [child]);
+    const tail = blk("tail");
+    load([blk("lead"), parent, tail]);
+    const parentBefore = pageState("Test");
+    selectBlock(parent.id);
+    extendSelectionTo(child.id);
+    await moveSelectionItems(1);
+    const parentAfterFirst = pageState("Test");
+    selectBlock(parent.id); // topSelected remains [parent], focus changed child → parent
+    await moveSelectionItems(-1);
+    undo();
+    expect(pageState("Test")).toEqual(parentAfterFirst);
+    undo();
+    expect(pageState("Test")).toEqual(parentBefore);
+
+    // A replacement of the loaded page instance ends the old burst too.
+    resetStore();
+    const { selected: reloadedSelected } = loadMovableSelection(2);
+    await moveSelectionItems(1);
+    const reloaded = pageToDto("Test")!;
+    await reloadPage({
+      ...reloaded,
+      rev: "replacement",
+      blocks: reloaded.blocks.map((block, index) => index === 0 ? { ...block, raw: "reloaded" } : block),
+    });
+    const afterReload = pageState("Test");
+    selectRange(reloadedSelected[0].id, reloadedSelected.at(-1)!.id);
+    await moveSelectionItems(1);
+    undo();
+    expect(pageState("Test")).toEqual(afterReload);
+  });
+
+  it("splits a continuous burst at the three-second maximum", async () => {
+    loadMovableSelection(1);
+    const beforeFinalNudge = await (async () => {
+      for (let i = 0; i < 30; i++) {
+        await moveSelectionItems(1);
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      return pageState("Test");
+    })();
+    await moveSelectionItems(1); // exactly 3,000ms from the first nudge → fresh unit
+    const afterFinalNudge = pageState("Test");
+
+    undo();
+    expect(pageState("Test")).toEqual(beforeFinalNudge);
+    redo();
+    expect(pageState("Test")).toEqual(afterFinalNudge);
+  });
+
+  it("keeps normal maximum-delay persistence and the final idle save during a long burst", async () => {
+    loadMovableSelection(1);
+    for (let i = 0; i < 30; i++) {
+      await moveSelectionItems(1);
+      await vi.advanceTimersByTimeAsync(100);
+    }
+
+    // The first dirty window reaches its existing three-second deadline while
+    // keys continue, and its request is the complete state at that boundary.
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expectSavedPageEqualsCurrent(0, "Test");
+
+    for (let i = 0; i < 5; i++) {
+      await moveSelectionItems(1);
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    const finalPage = pageToDto("Test");
+
+    // Later marks are still delivered to persistence, yielding one final idle
+    // save rather than suppressing the dirty generation. That tail request must
+    // be the complete final page, not the three-second checkpoint DTO.
+    await vi.advanceTimersByTimeAsync(299);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(saveSpy.mock.calls[1][0]).toEqual(finalPage);
+  });
+
+  it("separates in-page, cross-day, and changed-page-scope moves with exact Undo/Redo", async () => {
+    const today = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null, blocks: [blk("a"), blk("b"), blk("c")] };
+    const older = { name: "Older", kind: "journal" as const, title: "Older", pre_block: null, blocks: [blk("old-1"), blk("old-2")] };
+    await loadFeed([today, older]);
+    const state = () => ({ today: pageState("Today"), older: pageState("Older") });
+    const before = state();
+    selectBlock(today.blocks[1].id);
+    await moveSelectionItems(1); // b → after c, an in-page burst
+    const afterInPage = state();
+    await moveSelectionItems(1); // c/b boundary → cross-page route
+    const afterCross = state();
+    expect(doc.byId[today.blocks[1].id].page).toBe("Older");
+    expect(pageByName("Today")!.roots).toEqual([today.blocks[0].id, today.blocks[2].id]);
+    expect(pageByName("Older")!.roots).toEqual([today.blocks[1].id, older.blocks[0].id, older.blocks[1].id]);
+
+    // The selected root id is unchanged, but its complete page-instance scope
+    // changed from Today to Older. Its next in-page nudge is a third undo unit.
+    await vi.advanceTimersByTimeAsync(100);
+    await moveSelectionItems(1);
+    const afterChangedScope = state();
+    expect(pageByName("Older")!.roots).toEqual([older.blocks[0].id, today.blocks[1].id, older.blocks[1].id]);
+
+    undo();
+    expect(state()).toEqual(afterCross);
+    undo();
+    expect(state()).toEqual(afterInPage);
+    undo();
+    expect(state()).toEqual(before);
+    redo();
+    expect(state()).toEqual(afterInPage);
+    redo();
+    expect(state()).toEqual(afterCross);
+    redo();
+    expect(state()).toEqual(afterChangedScope);
+  });
+});
+
 // Characterization tests for the debounced persistence engine (markDirty →
 // scheduleSave/doSave/flushPage/flushAll/forceSave + the dirty/baseRev/
 // deletedPages/conflict guards). These pin the save behaviour so the R2

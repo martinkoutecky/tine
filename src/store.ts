@@ -88,7 +88,7 @@ import {
 } from "./persistence";
 // The debounced persistence engine lives in persistence.ts; re-exported here so
 // the rest of the app keeps importing the save API from the store.
-type StoreMutationObservation = { kind: "publication" | "dirty"; page?: string };
+type StoreMutationObservation = { kind: "publication" | "dirty" | "undo-snapshot"; page?: string };
 let storeMutationObserverForTest: ((observation: StoreMutationObservation) => void) | null = null;
 
 /** Test-only observation seam for proving work shape at the actual store and
@@ -1657,6 +1657,107 @@ let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
 let undoSuppressionDepth = 0;
 
+/**
+ * Repeated selection moves have a deliberately narrower coalescing rule than
+ * ordinary structural commands. Every key repeat still changes the live Solid
+ * document immediately; this ledger only lets the repeats share their first
+ * page-scoped undo snapshot.
+ */
+interface MoveSelectionBurst {
+  /** Ordered top-level selection roots. A set is insufficient: order is state. */
+  roots: string[];
+  /** Sorted exact page-instance scope captured by the first nudge. */
+  pages: Array<{ name: string; instance: number }>;
+  /** Prevents reuse across Undo/Redo/history replacement. */
+  historyEpoch: number;
+  startedAt: number;
+  lastCommandAt: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
+
+let moveSelectionBurst: MoveSelectionBurst | null = null;
+let historyEpoch = 0;
+const MOVE_SELECTION_BURST_IDLE_MS = 400;
+const MOVE_SELECTION_BURST_MAX_MS = 3_000;
+
+function endMoveSelectionBurst(): void {
+  const idleTimer = moveSelectionBurst?.idleTimer;
+  if (idleTimer !== null && idleTimer !== undefined) clearTimeout(idleTimer);
+  moveSelectionBurst = null;
+}
+
+function advanceHistoryEpoch(): void {
+  historyEpoch++;
+}
+
+function armMoveSelectionBurstIdleTimer(burst: MoveSelectionBurst): void {
+  if (burst.idleTimer !== null) clearTimeout(burst.idleTimer);
+  burst.idleTimer = setTimeout(() => {
+    // A later repeat arms a different timer; an obsolete timer must not close it.
+    if (moveSelectionBurst !== burst) return;
+    if (Date.now() - burst.lastCommandAt >= MOVE_SELECTION_BURST_IDLE_MS) endMoveSelectionBurst();
+  }, MOVE_SELECTION_BURST_IDLE_MS);
+}
+
+function currentMoveSelectionScope(ids: readonly string[]): Array<{ name: string; instance: number }> | null {
+  const names = [...new Set(ids.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])].sort();
+  const pages: Array<{ name: string; instance: number }> = [];
+  for (const name of names) {
+    const instance = pageInstanceGeneration(name);
+    if (instance === null) return null;
+    pages.push({ name, instance });
+  }
+  return pages;
+}
+
+function sameMoveSelectionScope(
+  left: readonly { name: string; instance: number }[],
+  right: readonly { name: string; instance: number }[],
+): boolean {
+  return left.length === right.length
+    && left.every((page, index) => page.name === right[index]?.name && page.instance === right[index]?.instance);
+}
+
+/**
+ * Start a fresh selection-move undo gesture, or reuse its first snapshot for a
+ * matching short repeat. Up and Down deliberately share this command family:
+ * reversing direction is still one continuous selection-move gesture.
+ */
+function beginOrContinueMoveSelectionUndo(ids: readonly string[]): string[] | null {
+  const pages = currentMoveSelectionScope(ids);
+  if (!pages?.length) return null;
+  const now = Date.now();
+  const current = moveSelectionBurst;
+  const matching = current
+    && current.historyEpoch === historyEpoch
+    && current.roots.length === ids.length
+    && current.roots.every((id, index) => id === ids[index])
+    && sameMoveSelectionScope(current.pages, pages)
+    && now - current.lastCommandAt < MOVE_SELECTION_BURST_IDLE_MS
+    && now - current.startedAt < MOVE_SELECTION_BURST_MAX_MS;
+  if (matching) {
+    current.lastCommandAt = now;
+    armMoveSelectionBurstIdleTimer(current);
+    return pages.map((page) => page.name);
+  }
+
+  endMoveSelectionBurst();
+  // This one call opts out of the generic undo reset below. It is the only
+  // structural command allowed to retain a previous snapshot.
+  pushUndo("move-sel", pages.map((page) => page.name), undefined, { keepMoveSelectionBurst: true });
+  const burst: MoveSelectionBurst = {
+    roots: [...ids],
+    pages,
+    historyEpoch,
+    startedAt: now,
+    lastCommandAt: now,
+    idleTimer: null,
+  };
+  moveSelectionBurst = burst;
+  armMoveSelectionBurstIdleTimer(burst);
+  return pages.map((page) => page.name);
+}
+
 // Session-scoped and global by default, matching OG's transient app-state flag
 // at `src/main/frontend/state.cljs:304-306` (OG commit 6e7afa8eb).
 let pageOnlyHistoryMode = false;
@@ -1711,6 +1812,8 @@ function captureHistoryContext(): HistoryContext {
 /** Discard all undo/redo history. Called on graph switch/reset so old-graph
  *  snapshots can't be replayed into a different graph. */
 export function clearUndoHistory() {
+  endMoveSelectionBurst();
+  advanceHistoryEpoch();
   undoStack.length = 0;
   redoStack = [];
   lastUndoTag = null;
@@ -1803,6 +1906,12 @@ function popHistoryEntry(stack: UndoEntry[]): UndoEntry | undefined {
  *  cost an unrelated co-snapshotted page its undo step, which is the safe tradeoff
  *  (lose an undo vs. clobber a file). */
 export function invalidateUndoForPage(name: string) {
+  // A page-instance replacement is a history boundary for the whole working
+  // set, not only for bursts whose snapshot named that page. An unrelated
+  // sidebar/watcher reload still changes the history episode; allowing an
+  // active move gesture to span it can reuse a pre-reload snapshot afterwards.
+  endMoveSelectionBurst();
+  advanceHistoryEpoch();
   for (let i = undoStack.length - 1; i >= 0; i--) {
     if (entryTouchesPage(undoStack[i], name)) undoStack.splice(i, 1);
   }
@@ -1826,6 +1935,11 @@ function clonePages(src: FeedPage[]): FeedPage[] {
   return src.map((p) => ({ ...p, roots: p.roots.slice() }));
 }
 function snapEntry(affected?: string[] | null, preservedIds?: readonly string[]): SnapEntry {
+  // Vite replaces MODE at build time, so this diagnostic is dead-code-eliminated
+  // from production snapshots rather than adding an observer check to undo.
+  if (import.meta.env.MODE === "test") {
+    storeMutationObserverForTest?.({ kind: "undo-snapshot" });
+  }
   const context = captureHistoryContext();
   // null/omitted → snapshot the whole working set (safe fallback). Otherwise just
   // the named pages: their FeedPage objects + every node living on them.
@@ -1867,8 +1981,15 @@ function snapEntry(affected?: string[] | null, preservedIds?: readonly string[])
  *  but O(loaded pages)). The affected set MUST include every page whose nodes the
  *  op changes, including a cross-page move's source AND destination, or undo
  *  would miss a page. `tag` resets the typing-coalesce marker. */
-function pushUndo(tag: string, affected?: string[], preservedIds?: readonly string[]) {
+function pushUndo(
+  tag: string,
+  affected?: string[],
+  preservedIds?: readonly string[],
+  opts: { keepMoveSelectionBurst?: boolean } = {},
+) {
   if (undoSuppressionDepth > 0) return;
+  if (!opts.keepMoveSelectionBurst) endMoveSelectionBurst();
+  advanceHistoryEpoch();
   undoStack.push(snapEntry(affected, preservedIds));
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
@@ -1879,6 +2000,8 @@ function pushUndo(tag: string, affected?: string[], preservedIds?: readonly stri
  *  burst in one block coalesces to a single entry holding the pre-burst text. */
 function pushRawUndo(id: string, prevRaw: string) {
   if (undoSuppressionDepth > 0) return;
+  endMoveSelectionBurst();
+  advanceHistoryEpoch();
   const tag = `type:${id}`;
   if (tag === lastUndoTag) return; // mid-burst: keep the first (pre-burst) raw
   const node = doc.byId[id];
@@ -2008,6 +2131,8 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
 }
 
 export function undo() {
+  endMoveSelectionBurst();
+  advanceHistoryEpoch();
   const entry = popHistoryEntry(undoStack);
   if (!entry) return;
   if (!entryIsReplayable(entry)) return discardStaleHistory(entry);
@@ -2019,6 +2144,8 @@ export function undo() {
 }
 
 export function redo() {
+  endMoveSelectionBurst();
+  advanceHistoryEpoch();
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
   if (!entryIsReplayable(entry)) return discardStaleHistory(entry);
@@ -3877,6 +4004,18 @@ export function ensureEmptyBlock(pageName: string, opts: { afterProperties?: boo
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
 
+/** Selection endpoints are part of the move gesture identity even when their
+ * normalized `topSelected()` roots happen to stay the same (for example moving
+ * focus from a selected child back to its selected parent). */
+function setSelectionAnchor(next: string | null): void {
+  if (selAnchor() !== next) endMoveSelectionBurst();
+  setSelAnchor(next);
+}
+function setSelectionFocus(next: string | null): void {
+  if (selFocus() !== next) endMoveSelectionBurst();
+  setSelFocus(next);
+}
+
 /** True when `ancestor` is a strict ancestor of `id` in the block tree. */
 function isAncestorId(ancestor: string, id: string): boolean {
   let p = doc.byId[id]?.parent ?? null;
@@ -3940,12 +4079,12 @@ export function selectBlock(id: string, scope: OutlineScope | null = null) {
   notifyOutlineSelectionStarted(id);
   activeSelectionScope = scope;
   selectAllHead = null;
-  setSelAnchor(id);
-  setSelFocus(id);
+  setSelectionAnchor(id);
+  setSelectionFocus(id);
 }
 export function clearSelection() {
-  setSelAnchor(null);
-  setSelFocus(null);
+  setSelectionAnchor(null);
+  setSelectionFocus(null);
   activeSelectionScope = null;
   selectAllHead = null;
 }
@@ -3955,11 +4094,11 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
   notifyOutlineSelectionStarted(id);
   if (selAnchor() === null) {
     activeSelectionScope = scope;
-    setSelAnchor(id);
+    setSelectionAnchor(id);
   }
   if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(id)) return;
   selectAllHead = null;
-  setSelFocus(id);
+  setSelectionFocus(id);
 }
 export function hasSelection(): boolean {
   return selAnchor() !== null;
@@ -3973,8 +4112,8 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   if (ni < 0 || ni >= order.length) return;
   const next = order[ni];
   selectAllHead = null;
-  setSelFocus(next);
-  if (!extend) setSelAnchor(next);
+  setSelectionFocus(next);
+  if (!extend) setSelectionAnchor(next);
   scrollBlockRowIntoView(next);
 }
 
@@ -3986,7 +4125,7 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
   const order = selectionOrder(id);
   const idx = order.indexOf(id);
   if (idx < 0) return;
-  setSelFocus(order[subtreeEndIndex(order, idx)]);
+  setSelectionFocus(order[subtreeEndIndex(order, idx)]);
   selectAllHead = id;
 }
 
@@ -4016,14 +4155,14 @@ export function expandBlockSelection() {
       head = parent;
       idx = order.indexOf(head);
     } else {
-      setSelAnchor(order[0]);
-      setSelFocus(order[order.length - 1]);
+      setSelectionAnchor(order[0]);
+      setSelectionFocus(order[order.length - 1]);
       selectAllHead = null;
       return;
     }
   }
-  setSelAnchor(head);
-  setSelFocus(order[subtreeEndIndex(order, idx)]);
+  setSelectionAnchor(head);
+  setSelectionFocus(order[subtreeEndIndex(order, idx)]);
   selectAllHead = head;
 }
 /** Cycle every non-empty block in the active selection as one document
@@ -4562,8 +4701,8 @@ export async function moveSelectionItems(dir: 1 | -1) {
     // a 15-block nudge became 15 full clones, the visible jank. Going down, move
     // the bottom-most first so they don't collide; up, the top.
     const ordered = dir === 1 ? [...ids].reverse() : ids;
-    const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
-    pushUndo("move-sel", pages); // scope the undo to the touched pages, not the whole set
+    const pages = beginOrContinueMoveSelectionUndo(ids);
+    if (!pages) return;
     setDoc(
       produce((s) => {
         for (const id of ordered) {
@@ -4586,6 +4725,9 @@ export async function moveSelectionItems(dir: 1 | -1) {
   }
   // Boundary: cross the whole group into the adjacent day (only if every
   // selected block is a root block on the same feed day).
+  // This route awaits source durability and has its own cross-page snapshot;
+  // never let it borrow an in-page burst's inverse across that await.
+  endMoveSelectionBurst();
   const page = doc.byId[ids[0]]?.page;
   if (!page) return;
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
