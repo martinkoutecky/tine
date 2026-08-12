@@ -3,6 +3,8 @@ import {
   blockPageReadOnly,
   blockProperty,
   blockWritable,
+  applyPageMutationPlan,
+  createPageMutationPlan,
   doc,
   formatForBlock,
   formatForPage,
@@ -12,8 +14,8 @@ import {
   readPageProperty,
   setBlockProperty,
   setPageProperty,
-  setRaw,
   withUndoUnit,
+  type PageMutationAuthority,
 } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
@@ -165,6 +167,7 @@ export function SheetTable(props: {
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [renamingField, setRenamingField] = createSignal<{ field: FieldId; value: string } | null>(null);
+  const [fieldRenamePending, setFieldRenamePending] = createSignal(false);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
@@ -176,6 +179,7 @@ export function SheetTable(props: {
   let cancelFieldHeaderDrag: (() => void) | undefined;
   let cancelColumnResize: (() => void) | undefined;
   let suppressFieldHeaderClick = false;
+  let mounted = true;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
@@ -723,6 +727,7 @@ export function SheetTable(props: {
     window.addEventListener("pointercancel", onCancel);
   };
   onCleanup(() => {
+    mounted = false;
     cancelFieldHeaderDrag?.();
     cancelColumnResize?.();
   });
@@ -749,6 +754,7 @@ export function SheetTable(props: {
     setRenamingField({ field, value: field.slice("prop:".length) });
   };
   const commitFieldRename = (field: FieldId, value: string): boolean => {
+    if (fieldRenamePending()) return false;
     const owner = doc.byId[props.ownerId];
     const home = schemaHome();
     if (!owner || home?.kind !== "block") return false;
@@ -785,14 +791,41 @@ export function SheetTable(props: {
       pushToast(result.error, "error");
       return false;
     }
-    const plan = result.plan;
-    withUndoUnit("sheet:rename-field", [plan.page], () => {
-      setRaw(plan.ownerId, plan.ownerRaw, { timetracking: false });
-      for (const row of plan.rows) setRaw(row.id, row.raw, { timetracking: false });
+    const renamePlan = result.plan;
+    const authority: PageMutationAuthority<true> = {
+      token: {
+        ownerId: props.ownerId,
+        surfaceId,
+        oldField: renamePlan.oldField,
+        newField: renamePlan.newField,
+        input: value,
+      },
+      isCurrent: () => {
+        const current = renamingField();
+        return mounted
+          && current?.field === field
+          && current.value === value;
+      },
+    };
+    const mutationPlan = createPageMutationPlan(renamePlan.page, "sheet:rename-field", (draft) => {
+      if (!draft.setRaw(renamePlan.ownerId, renamePlan.ownerRaw)) return null;
+      for (const row of renamePlan.rows) if (!draft.setRaw(row.id, row.raw)) return null;
+      return true;
+    }, authority);
+    if (!mutationPlan) return false;
+    const dispatch = applyPageMutationPlan(mutationPlan, () => {
+      setExtraFields((current) => current.filter(
+        (candidate) => candidate !== renamePlan.oldField && candidate !== renamePlan.newField,
+      ));
+      setRenamingField(null);
     });
-    setExtraFields((current) => current.filter((candidate) => candidate !== plan.oldField && candidate !== plan.newField));
-    setRenamingField(null);
-    return true;
+    if (dispatch.kind === "pending") {
+      setFieldRenamePending(true);
+      void dispatch.settled.finally(() => {
+        if (mounted) setFieldRenamePending(false);
+      });
+    }
+    return dispatch.kind !== "refused";
   };
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
@@ -1092,6 +1125,7 @@ export function SheetTable(props: {
                 <input
                   class="sheet-prop-input sheet-header-rename-input"
                   autofocus
+                  disabled={fieldRenamePending()}
                   value={renamingField()?.value ?? ""}
                   aria-label={`Rename ${fieldLabel(field)} field`}
                   onClick={(e) => e.stopPropagation()}
