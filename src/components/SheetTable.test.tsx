@@ -1701,6 +1701,52 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("query-backed cell menu preserves generic Delete row semantics", () => {
+    const queryRaw = "{{query (todo TODO)}}\ntine.view:: table";
+    const rowRaw = "TODO Query row\nowner:: Martin";
+    setDoc({
+      byId: {
+        q: node("q", queryRaw, null),
+        r1: node("r1", rowRaw, null),
+      },
+      pages: [page(["q", "r1"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const groups: RefGroup[] = [{
+      page: "Sheet",
+      kind: "page",
+      blocks: [{
+        id: "r1",
+        raw: rowRaw,
+        collapsed: false,
+        children: [],
+        marker: "TODO",
+        properties: [["owner", "Martin"]],
+      }],
+    }];
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetTable ownerId="q" rowSource="query" groups={groups} />
+        <ContextMenu />
+      </>
+    ));
+
+    const field = root.querySelector(".sheet-field-cell") as HTMLElement;
+    contextMenu(field);
+    clickMenuItem("Delete row");
+
+    expect(doc.byId.r1).toBeUndefined();
+    expect(doc.byId.q.raw).toBe(queryRaw);
+    expect(doc.pages[0].roots).toEqual(["q"]);
+
+    undo();
+    expect(doc.byId.r1.raw).toBe(rowRaw);
+    expect(doc.byId.q.raw).toBe(queryRaw);
+    expect(doc.pages[0].roots).toEqual(["q", "r1"]);
+    dispose();
+  });
+
   it("cell menu 'Delete column' removes the positional column in a grid", () => {
     setDoc({
       byId: {

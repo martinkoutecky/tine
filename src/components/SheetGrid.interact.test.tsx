@@ -12,10 +12,12 @@ import {
   blockIsGridView,
   hasSelection,
   isSelected,
+  pageToDto,
   resetStore,
   selectBlock,
   setDoc,
   undo,
+  __setStoreMutationObserverForTest,
   type FeedPage,
   type Node as StoreNode,
 } from "../store";
@@ -30,6 +32,9 @@ import {
   rowSeamSel,
   setCellSel,
 } from "../sheet/selection";
+import { managedStorageRuntime } from "../managedStorageRuntime";
+import { mockBackend } from "../mock";
+import { __setBackendForTest } from "../backend";
 
 beforeAll(async () => {
   await initParser();
@@ -47,6 +52,9 @@ afterEach(() => {
   restoreClipboard?.();
   restoreClipboard = null;
   resetCellSelectionForTests();
+  __setBackendForTest(null);
+  __setStoreMutationObserverForTest(null);
+  managedStorageRuntime.bind(1, { binding_generation: 1, authority: "direct" });
   setFocusedPaneId("main");
   resetStore();
   document.body.innerHTML = "";
@@ -158,6 +166,42 @@ function setup(): { root: HTMLDivElement; dispose: () => void } {
 
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function click(target: EventTarget): MouseEvent {
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function delayedManagedPreflight(binding = 51) {
+  managedStorageRuntime.bind(binding, {
+    binding_generation: binding,
+    authority: "managed_writable",
+    application_save_page_blocks: 511,
+    application_page_request_text_bytes: 1024 * 1024,
+    application_page_max_depth: 128,
+  });
+  const base = mockBackend();
+  let calls = 0;
+  let resolve!: (value: Awaited<ReturnType<typeof base.preflightManagedPageMutation>>) => void;
+  __setBackendForTest({
+    ...base,
+    preflightManagedPageMutation: () => {
+      calls++;
+      return new Promise((accept) => { resolve = accept; });
+    },
+  });
+  return {
+    calls: () => calls,
+    accept: () => resolve({
+      status: "accepted",
+      binding_generation: binding,
+      page_name: "Sheet",
+      page_path: "",
+      base_revision: null,
+    }),
+  };
 }
 
 function cell(root: HTMLElement, row: number, col: number): HTMLElement {
@@ -493,6 +537,102 @@ describe("SheetGrid interaction", () => {
 
     dispose();
   });
+
+  it("managed empty-grid click waits for one preflight, then grows and selects its synthetic target", async () => {
+    loadEmptyGridDoc();
+    const preflight = delayedManagedPreflight();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    const placeholder = root.querySelector(".sheet-grid-placeholder") as HTMLElement;
+    const surfaceId = placeholder.closest<HTMLElement>(".sheet-grid")!.dataset.sheetSurfaceId;
+    const event = click(placeholder);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(preflight.calls()).toBe(1);
+    expect(doc.byId.grid.children).toEqual([]);
+    expect(cellSel()).toBeNull();
+    expect(observations).toEqual([]);
+
+    preflight.accept();
+    await tick();
+
+    const rowId = doc.byId.grid.children[0];
+    const cellId = doc.byId[rowId].children[0];
+    expect(preflight.calls()).toBe(1);
+    expect(observations.filter((kind) => kind === "undo-snapshot")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "dirty")).toHaveLength(1);
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(cellSel()?.surfaceId).toBe(surfaceId);
+    expect(editingId()).toBe(cellId);
+    dispose();
+  });
+
+  it.each([
+    ["column", ".sheet-grid-add-col", 0, 2],
+    ["row", ".sheet-grid-add-row", 2, 0],
+  ])("managed Add %s edge click applies once and selects the inserted cell", async (_label, selector, row, col) => {
+    const { root, dispose } = setup();
+    const preflight = delayedManagedPreflight();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    const grid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement;
+    pointerEnter(grid);
+    if (_label === "column") {
+      setCellSel({ gridId: "grid", surfaceId: grid.dataset.sheetSurfaceId, row: 1, col: 1 });
+    }
+    const event = click(grid.querySelector(selector)!);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(preflight.calls()).toBe(1);
+    expect(doc.byId.grid.children).toEqual(["r1", "r2"]);
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    expect(observations).toEqual([]);
+
+    preflight.accept();
+    await tick();
+
+    const rowId = doc.byId.grid.children[row];
+    const cellId = doc.byId[rowId].children[col];
+    expect(preflight.calls()).toBe(1);
+    expect(observations.filter((kind) => kind === "undo-snapshot")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "dirty")).toHaveLength(1);
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row, col });
+    expect(cellSel()?.surfaceId).toBe(grid.dataset.sheetSurfaceId);
+    expect(editingId()).toBe(cellId);
+    dispose();
+  });
+
+  it.each(["selection-change", "surface-unmount"])(
+    "managed Add row %s before preflight settles leaves the grid unchanged",
+    async (stale) => {
+      const { root, dispose } = setup();
+      const before = pageToDto("Sheet");
+      const preflight = delayedManagedPreflight();
+      const observations: string[] = [];
+      __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+      const grid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement;
+      pointerEnter(grid);
+      const event = click(grid.querySelector(":scope > .sheet-grid-add-row")!);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(preflight.calls()).toBe(1);
+      if (stale === "selection-change") {
+        setCellSel({ gridId: "grid", surfaceId: grid.dataset.sheetSurfaceId, row: 0, col: 0 });
+      } else {
+        dispose();
+      }
+      preflight.accept();
+      await tick();
+
+      expect(pageToDto("Sheet")).toEqual(before);
+      expect(observations).toEqual([]);
+      expect(editingId()).toBeNull();
+      if (stale === "selection-change") dispose();
+    },
+  );
 
   it("top-level grid edge buttons grow columns and rows", async () => {
     const { root, dispose } = setup();
@@ -987,6 +1127,40 @@ describe("SheetGrid interaction", () => {
     expect(editingId()).toBe(child);
     expect(activeEditor(root).value).toBe("");
 
+    dispose();
+  });
+
+  it("direct grid Delete row uses one managed plan from the actual cell menu", async () => {
+    loadSheetDoc();
+    const before = pageToDto("Sheet");
+    const preflight = delayedManagedPreflight();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="grid" />
+        <ContextMenu />
+      </>
+    ));
+
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 15, clientY: 20 });
+    cell(root, 0, 0).dispatchEvent(event);
+    clickMenuItem("Delete row");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(preflight.calls()).toBe(1);
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(observations).toEqual([]);
+
+    preflight.accept();
+    await tick();
+
+    expect(preflight.calls()).toBe(1);
+    expect(doc.byId.r1).toBeUndefined();
+    expect(doc.byId.grid.children).toEqual(["r2"]);
+    expect(observations.filter((kind) => kind === "undo-snapshot")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+    expect(observations.filter((kind) => kind === "dirty")).toHaveLength(1);
     dispose();
   });
 

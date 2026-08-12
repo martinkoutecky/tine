@@ -222,29 +222,37 @@ function sheetSelectionSnapshot(selection: SheetSel): string {
   });
 }
 
-function sameSheetSelection(left: SheetSel | null, right: SheetSel): boolean {
-  return !!left && sheetSelectionSnapshot(left) === sheetSelectionSnapshot(right);
+function sameSheetSelection(left: SheetSel | null, right: SheetSel | null): boolean {
+  if (!left || !right) return left === right;
+  return sheetSelectionSnapshot(left) === sheetSelectionSnapshot(right);
 }
 
-/** Capture the exact selection and mounted surface instance that owns one
- * pending Sheet command. A later selection publication or adapter unmount/remount
- * invalidates the token even when the coordinates happen to look identical. */
-export function captureSheetMutationAuthority<T>(selection: SheetSel): PageMutationAuthority<T> {
+/** Capture the mounted surface targeted by one Sheet command separately from
+ * the live selection that owns its pending UI continuation. Synthetic edge
+ * seams are operation targets, not selections; an empty grid therefore records
+ * an explicit absent selection. A later selection publication or adapter
+ * unmount/remount invalidates the token even when coordinates look identical. */
+export function captureSheetMutationAuthority<T>(
+  target: SheetSel,
+  selection: SheetSel | null = target,
+): PageMutationAuthority<T> {
   const generation = sheetSelectionGeneration;
-  const snapshot = normalizeSel(selection);
-  const key = instanceKey(snapshot.gridId, snapshot.surfaceId);
-  const mounted = adapters.get(key) ?? (snapshot.surfaceId === undefined ? adapters.get(instanceKey(snapshot.gridId)) : undefined);
+  const targetSnapshot = normalizeSel(target);
+  const selectionSnapshot = selection ? normalizeSel(selection) : null;
+  const key = instanceKey(targetSnapshot.gridId, targetSnapshot.surfaceId);
+  const mounted = adapters.get(key)
+    ?? (targetSnapshot.surfaceId === undefined ? adapters.get(instanceKey(targetSnapshot.gridId)) : undefined);
   return Object.freeze({
     token: Object.freeze({
       selection_generation: generation,
-      selection_snapshot: sheetSelectionSnapshot(snapshot),
-      grid_id: snapshot.gridId,
-      surface_id: snapshot.surfaceId ?? "",
+      selection_snapshot: selectionSnapshot ? sheetSelectionSnapshot(selectionSnapshot) : null,
+      grid_id: targetSnapshot.gridId,
+      surface_id: targetSnapshot.surfaceId ?? "",
       mounted_surface_token: mounted?.token ?? null,
     }),
     isCurrent: () =>
       sheetSelectionGeneration === generation
-      && sameSheetSelection(activeCellSel(), snapshot)
+      && sameSheetSelection(activeCellSel(), selectionSnapshot)
       && (!mounted || adapters.get(key) === mounted),
   });
 }
@@ -941,9 +949,6 @@ function seamInsertTarget(
   const page = pageForGrid(sel.gridId);
   if (!page) return null;
   const active = activeCellSel();
-  const authorityOwner = active?.gridId === sel.gridId && active.surfaceId === sel.surfaceId
-    ? active
-    : sel;
   const point = insertSheetSeam(
     sel.gridId,
     sel.kind === "row-seam" ? "row" : "col",
@@ -955,7 +960,7 @@ function seamInsertTarget(
       row: applied.row,
       col: applied.col,
     } as CellSel, sel.surfaceId)),
-    captureSheetMutationAuthority(authorityOwner),
+    captureSheetMutationAuthority(sel, active),
   );
   return point ? withCellMeta({ kind: "cell", gridId: sel.gridId, ...point } as CellSel, sel.surfaceId) : null;
 }

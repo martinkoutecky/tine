@@ -30,6 +30,7 @@ import {
   ensureBlockId,
   persistentBlockRef,
   blockSubtreeMarkdown,
+  blockIsGridView,
   deleteBlock,
   setBlockProperty,
   toggleBlockProperty,
@@ -437,12 +438,24 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
   const canDeleteColumn = () =>
     props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
   const deleteRow = () => {
-    const { rowId, gridId } = props.remove ?? {};
+    const { rowId, gridId, surfaceId } = props.remove ?? {};
     const row = gridId && rowId ? doc.byId[gridId]?.children.indexOf(rowId) ?? -1 : -1;
     const active = cellSel();
-    if (gridId && row >= 0 && active && active.gridId === gridId) {
-      deleteSheetRow(gridId, row, props.close, captureSheetMutationAuthority(active));
+    const directGridRow = !!gridId
+      && !!rowId
+      && row >= 0
+      && doc.byId[rowId]?.parent === gridId
+      && blockIsGridView(gridId);
+    if (directGridRow) {
+      if (active && active.gridId === gridId && active.surfaceId === surfaceId) {
+        deleteSheetRow(gridId, row, props.close, captureSheetMutationAuthority(active));
+      } else {
+        props.close();
+      }
+      return;
     }
+    if (rowId && doc.byId[rowId]) deleteBlock(rowId);
+    props.close();
   };
   const deleteColumnHere = () => {
     const { gridId, col } = props.remove ?? {};
