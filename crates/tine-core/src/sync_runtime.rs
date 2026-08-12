@@ -2111,6 +2111,11 @@ pub enum SyncEditorLoadOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SyncEditorSaveOutcome {
+    /// Internal no-write preparation result. Only the application-page
+    /// preflight actor request can produce it; ordinary editor saves never do.
+    Prepared {
+        affected_page_ids: Vec<String>,
+    },
     Durable {
         batch_id: String,
         page: SyncEditablePageDto,
@@ -2436,6 +2441,9 @@ pub enum SyncApplicationPageConflict {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SyncApplicationPageSaveOutcome {
+    /// Internal bridge between shared preparation and the no-write preflight
+    /// result. Ordinary saves never return this variant.
+    Prepared,
     Saved {
         batch_id: String,
         page: PageDto,
@@ -2451,6 +2459,17 @@ pub enum SyncApplicationPageSaveOutcome {
     Deferred {
         state: SyncEditorDeferred,
     },
+}
+
+/// Result of preparing one complete application-page save without crossing the
+/// authoring boundary.  `Accepted` is deliberately not a durable receipt: the
+/// ordinary save must prepare and validate the request again.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SyncApplicationPagePreflightOutcome {
+    Accepted,
+    Conflict { reason: SyncApplicationPageConflict },
+    Deferred { state: SyncEditorDeferred },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3795,6 +3814,18 @@ impl SyncRuntimeHandle {
     ) -> Result<SyncApplicationPageSaveOutcome, SyncApplicationPageRequestError> {
         validate_application_save_request(&request)?;
         self.application_request(|reply| ActorRequest::SaveApplicationPage { request, reply })
+    }
+
+    /// Build and validate the exact application/editor semantic transaction,
+    /// then discard it before any journal, projection, database or receipt
+    /// authoring.  This is intentionally actor-serialized but never settles
+    /// pending work; callers receive `Deferred` instead.
+    pub fn preflight_application_page(
+        &self,
+        request: SyncApplicationPageSaveRequest,
+    ) -> Result<SyncApplicationPagePreflightOutcome, SyncApplicationPageRequestError> {
+        validate_application_save_request(&request)?;
+        self.application_request(|reply| ActorRequest::PreflightApplicationPage { request, reply })
     }
 
     /// Perform one page-identity mutation through the same actor and semantic
@@ -6893,6 +6924,12 @@ enum ActorRequest {
         reply:
             mpsc::Sender<Result<SyncApplicationPageSaveOutcome, SyncApplicationPageRequestError>>,
     },
+    PreflightApplicationPage {
+        request: SyncApplicationPageSaveRequest,
+        reply: mpsc::Sender<
+            Result<SyncApplicationPagePreflightOutcome, SyncApplicationPageRequestError>,
+        >,
+    },
     MutateApplicationGraph {
         request: SyncApplicationGraphMutationRequest,
         reply: mpsc::Sender<Result<SyncApplicationUnitOutcome, SyncApplicationPageRequestError>>,
@@ -7122,6 +7159,11 @@ fn run_actor_loop(
                     timings.response_target_exact_dto_reparses =
                         crate::model::exact_page_dto_parse_attempts();
                 });
+                let _ = reply.send(result);
+                false
+            }
+            ActorRequest::PreflightApplicationPage { request, reply } => {
+                let result = actor.preflight_application_page(request);
                 let _ = reply.send(result);
                 false
             }
@@ -13105,6 +13147,35 @@ impl RuntimeActor {
         &mut self,
         request: SyncApplicationPageSaveRequest,
     ) -> Result<SyncApplicationPageSaveOutcome, SyncApplicationPageRequestError> {
+        self.prepare_or_save_application_page(request, false)
+    }
+
+    fn preflight_application_page(
+        &mut self,
+        request: SyncApplicationPageSaveRequest,
+    ) -> Result<SyncApplicationPagePreflightOutcome, SyncApplicationPageRequestError> {
+        match self.prepare_or_save_application_page(request, true)? {
+            SyncApplicationPageSaveOutcome::Prepared => {
+                Ok(SyncApplicationPagePreflightOutcome::Accepted)
+            }
+            SyncApplicationPageSaveOutcome::Conflict { reason } => {
+                Ok(SyncApplicationPagePreflightOutcome::Conflict { reason })
+            }
+            SyncApplicationPageSaveOutcome::Deferred { state } => {
+                Ok(SyncApplicationPagePreflightOutcome::Deferred { state })
+            }
+            SyncApplicationPageSaveOutcome::Saved { .. }
+            | SyncApplicationPageSaveOutcome::Unchanged { .. } => {
+                Err(SyncApplicationPageRequestError::ActorRefused)
+            }
+        }
+    }
+
+    fn prepare_or_save_application_page(
+        &mut self,
+        request: SyncApplicationPageSaveRequest,
+        preflight: bool,
+    ) -> Result<SyncApplicationPageSaveOutcome, SyncApplicationPageRequestError> {
         #[cfg(test)]
         {
             reset_application_save_stage_timings();
@@ -13114,7 +13185,11 @@ impl RuntimeActor {
         }
         #[cfg(test)]
         let prepare_started = Instant::now();
-        let readiness = self.prepare_editor_turn();
+        let readiness = if preflight {
+            self.read_only_editor_turn_readiness()
+        } else {
+            self.prepare_editor_turn()
+        };
         #[cfg(test)]
         note_application_save_stage(|timings| {
             timings.application_prepare_turn = prepare_started.elapsed();
@@ -13266,7 +13341,11 @@ impl RuntimeActor {
         #[cfg(test)]
         let editor_started = Instant::now();
         let editor_outcome = self
-            .save_editor_page_with_existing_application(editor_request, prepared_existing)
+            .prepare_or_save_editor_page_with_existing_application(
+                editor_request,
+                prepared_existing,
+                preflight,
+            )
             .map_err(map_editor_application_error)?;
         #[cfg(test)]
         note_application_save_stage(|timings| {
@@ -13275,6 +13354,7 @@ impl RuntimeActor {
         #[cfg(test)]
         let outcome_started = Instant::now();
         let outcome = match editor_outcome {
+            SyncEditorSaveOutcome::Prepared { .. } => Ok(SyncApplicationPageSaveOutcome::Prepared),
             SyncEditorSaveOutcome::Durable { batch_id, page, .. } => {
                 let accepted = match self.prepared_application_reply.take() {
                     Some((prepared_batch, accepted)) if prepared_batch == batch_id => accepted,
@@ -13967,6 +14047,9 @@ impl RuntimeActor {
             page: merged,
         });
         match outcome {
+            Ok(SyncApplicationPageSaveOutcome::Prepared) => {
+                Err(SyncApplicationPageRequestError::ActorRefused)
+            }
             Ok(SyncApplicationPageSaveOutcome::Saved { .. })
             | Ok(SyncApplicationPageSaveOutcome::Unchanged { .. }) => {
                 Ok(SyncApplicationUnitOutcome::Applied)
@@ -14100,6 +14183,9 @@ impl RuntimeActor {
             },
             page,
         })? {
+            SyncApplicationPageSaveOutcome::Prepared => Err(
+                SyncApplicationPageRequestError::ActorRefusedAt("pdf_hls_page_commit"),
+            ),
             SyncApplicationPageSaveOutcome::Saved { .. }
             | SyncApplicationPageSaveOutcome::Unchanged { .. } => {
                 Ok(SyncApplicationPdfOpenOutcome::Ready { state })
@@ -14237,6 +14323,9 @@ impl RuntimeActor {
         };
         let outcome = self.save_application_page(SyncApplicationPageSaveRequest { target, page });
         match outcome {
+            Ok(SyncApplicationPageSaveOutcome::Prepared) => {
+                Err(SyncApplicationPageRequestError::ActorRefused)
+            }
             Ok(SyncApplicationPageSaveOutcome::Saved { .. })
             | Ok(SyncApplicationPageSaveOutcome::Unchanged { .. }) => {
                 self.graph
@@ -14333,6 +14422,9 @@ impl RuntimeActor {
                 },
                 page: planned.page,
             })? {
+                SyncApplicationPageSaveOutcome::Prepared => {
+                    return Err(SyncApplicationPageRequestError::ActorRefused)
+                }
                 SyncApplicationPageSaveOutcome::Saved { .. }
                 | SyncApplicationPageSaveOutcome::Unchanged { .. } => {
                     created_pages.push(planned.name)
@@ -14544,14 +14636,31 @@ impl RuntimeActor {
     fn save_editor_page_with_existing_application(
         &mut self,
         request: SyncEditorSaveRequest,
+        prepared_existing: Option<ApplicationCurrentPage>,
+    ) -> Result<SyncEditorSaveOutcome, SyncEditorRequestError> {
+        self.prepare_or_save_editor_page_with_existing_application(
+            request,
+            prepared_existing,
+            false,
+        )
+    }
+
+    fn prepare_or_save_editor_page_with_existing_application(
+        &mut self,
+        request: SyncEditorSaveRequest,
         mut prepared_existing: Option<ApplicationCurrentPage>,
+        preflight: bool,
     ) -> Result<SyncEditorSaveOutcome, SyncEditorRequestError> {
         self.prepared_application_reply = None;
         #[cfg(test)]
         reset_prepared_editor_projection_instrumentation();
         #[cfg(test)]
         let prepare_started = Instant::now();
-        let readiness = self.prepare_editor_turn();
+        let readiness = if preflight {
+            self.read_only_editor_turn_readiness()
+        } else {
+            self.prepare_editor_turn()
+        };
         #[cfg(test)]
         note_application_save_stage(|timings| {
             timings.editor_prepare_turn = prepare_started.elapsed();
@@ -15067,6 +15176,9 @@ impl RuntimeActor {
             timings.editor_request_remainder = checked_editor_request_remainder(timings);
         });
 
+        if preflight {
+            return Ok(SyncEditorSaveOutcome::Prepared { affected_page_ids });
+        }
         let Some(transaction) = transaction else {
             let current = match existing_application {
                 Some(current) => current.editor,
@@ -15086,6 +15198,57 @@ impl RuntimeActor {
         };
         self.execute_editor_transaction(transaction, page_id, affected_page_ids, trusted_target)
             .map_err(|error| editor_refusal_at(error, "committing the semantic page transaction"))
+    }
+
+    /// Inspect whether an editor turn may begin without advancing, settling or
+    /// draining any retained actor work. Preflight must be observational: the
+    /// ordinary save path remains the sole owner of those transitions.
+    fn read_only_editor_turn_readiness(&self) -> EditorTurnReadiness {
+        if self.terminal.is_some() {
+            let (batch_id, phase) = self
+                .local_mutation
+                .as_ref()
+                .map(pending_local_identity)
+                .unwrap_or((None, SyncLocalMutationPhase::Bindings));
+            return EditorTurnReadiness::Deferred(SyncEditorDeferred::Revoked {
+                batch_id: batch_id.map(|id| id.to_string()),
+                phase,
+            });
+        }
+        if self.managed_local.as_ref().is_some_and(|managed| {
+            managed.journal.protocol() == ManagedLocalJournalProtocol::LegacyV1
+        }) {
+            return EditorTurnReadiness::Deferred(SyncEditorDeferred::BlockedRecovery {
+                batch_id: None,
+                phase: SyncLocalMutationPhase::ProjectionDrain,
+                retained_publication: true,
+            });
+        }
+        if self
+            .managed_local
+            .as_ref()
+            .is_some_and(|managed| managed.pending_commit.is_some())
+        {
+            return EditorTurnReadiness::Deferred(SyncEditorDeferred::BlockedRecovery {
+                batch_id: self
+                    .managed_local_pending_commit_batch_id()
+                    .map(|id| id.to_string()),
+                phase: SyncLocalMutationPhase::ProjectionDrain,
+                retained_publication: true,
+            });
+        }
+        if let Some(local) = self.local_mutation.as_ref() {
+            let (batch_id, phase) = pending_local_identity(local);
+            return EditorTurnReadiness::Deferred(SyncEditorDeferred::BlockedRecovery {
+                batch_id: batch_id.map(|id| id.to_string()),
+                phase,
+                retained_publication: true,
+            });
+        }
+        if self.last_watcher.pending {
+            return EditorTurnReadiness::Deferred(SyncEditorDeferred::RetryableExternalWork);
+        }
+        EditorTurnReadiness::Ready
     }
 
     fn prepare_editor_turn(&mut self) -> EditorTurnReadiness {
@@ -29154,6 +29317,95 @@ mod tests {
         assert_eq!(expected_org.1, cold_org.1);
         assert!(matches!(
             reopened.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn application_page_preflight_prepares_exact_511_without_writes_then_real_save_prepares_once() {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-application-page-preflight-511");
+        let request = fixture.request();
+        let handle = active_handle(SyncRuntimeHandle::open(request.clone()));
+        drive_initial_feed(&handle);
+        let path = "content/nested pages/Preflight 511.md";
+        admit_external_page(&handle, &fixture, path, b"- existing\n");
+        let (mut page, revision) = load_application_exact(&handle, path);
+        for index in 1..MAX_SYNC_EDITOR_BLOCKS {
+            page.blocks.push(BlockDto {
+                id: format!("preflight-temporary-{index}"),
+                raw: format!("candidate {index}"),
+                ..BlockDto::default()
+            });
+        }
+        assert_eq!(flatten_application_blocks(&page.blocks).len(), 511);
+        let exact = SyncApplicationPageSaveRequest {
+            target: SyncApplicationPageSaveTarget::Existing {
+                path: path.into(),
+                revision: revision.clone(),
+            },
+            page: page.clone(),
+        };
+        let files_before = snapshot_graph_files(fixture.graph_root());
+        let status_before = handle.status().unwrap();
+        let frames_before = managed_local_journal_frames(&request).len();
+        assert!(matches!(
+            handle.preflight_application_page(exact.clone()).unwrap(),
+            SyncApplicationPagePreflightOutcome::Accepted
+        ));
+        let preflight_work = handle
+            .managed_application_save_instrumentation()
+            .expect("preflight exposes exact preparation instrumentation")
+            .application_stages;
+        assert_eq!(preflight_work.editor_block_id_resolution_passes, 1);
+        assert_eq!(preflight_work.transaction_inner_validations, 1);
+        assert_eq!(preflight_work.transaction_outer_validations, 1);
+        let status_after_preflight = handle.status().unwrap();
+        assert_eq!(snapshot_graph_files(fixture.graph_root()), files_before);
+        assert_eq!(managed_local_journal_frames(&request).len(), frames_before);
+        assert_eq!(
+            status_after_preflight.managed_local_next_sequence,
+            status_before.managed_local_next_sequence
+        );
+        assert_eq!(
+            status_after_preflight.managed_local_pending,
+            status_before.managed_local_pending
+        );
+
+        let mut overflow = page.clone();
+        overflow.blocks.push(BlockDto {
+            id: "preflight-temporary-overflow".into(),
+            raw: "overflow".into(),
+            ..BlockDto::default()
+        });
+        assert!(handle
+            .preflight_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: path.into(),
+                    revision: revision.clone(),
+                },
+                page: overflow,
+            })
+            .is_err());
+        assert_eq!(snapshot_graph_files(fixture.graph_root()), files_before);
+        assert_eq!(managed_local_journal_frames(&request).len(), frames_before);
+
+        assert!(matches!(
+            handle.save_application_page(exact).unwrap(),
+            SyncApplicationPageSaveOutcome::Saved { .. }
+        ));
+        let save_work = handle
+            .managed_application_save_instrumentation()
+            .expect("ordinary save exposes exact preparation instrumentation")
+            .application_stages;
+        assert_eq!(save_work.editor_block_id_resolution_passes, 1);
+        assert_eq!(save_work.transaction_inner_validations, 1);
+        assert_eq!(save_work.transaction_outer_validations, 1);
+        assert_eq!(
+            managed_local_journal_frames(&request).len(),
+            frames_before + 1
+        );
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
             SyncShutdownOutcome::Safe(_)
         ));
     }

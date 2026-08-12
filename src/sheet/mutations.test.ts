@@ -10,6 +10,8 @@ import {
   resetStore,
   setDoc,
   undo,
+  redo,
+  __setStoreMutationObserverForTest,
 } from "../store";
 import type { BlockDto, PageDto } from "../types";
 import {
@@ -22,6 +24,7 @@ import {
   fillSheetSelection,
   insertColumn,
   insertRow,
+  insertSheetSeam,
   materializeCell,
   moveSheetSelection,
   pasteTextIntoSheetSelection,
@@ -34,8 +37,12 @@ import {
 import { parseDelimitedText } from "./tsv";
 import { setToasts, toasts } from "../ui";
 import { observeMatrixDimensions } from "./matrix";
+import { managedStorageRuntime } from "../managedStorageRuntime";
+import { mockBackend } from "../mock";
+import { __setBackendForTest } from "../backend";
 
 let counter = 0;
+let bindingCounter = 1_000;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
   return { id: `m${counter++}`, raw, collapsed: false, children };
 }
@@ -107,10 +114,94 @@ beforeAll(() => initParser());
 beforeEach(() => {
   counter = 0;
   resetStore();
+  managedStorageRuntime.bind(++bindingCounter, {
+    binding_generation: bindingCounter,
+    authority: "direct",
+  });
   setToasts([]);
+  __setStoreMutationObserverForTest(null);
+  __setBackendForTest(null);
 });
 
 describe("sheet structural mutations", () => {
+  it("publishes one undo snapshot, one store update, and one dirty mark for axis, sparse rectangle, and seam-growth representatives", () => {
+    const gridId = loadGrid();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+
+    insertColumn(gridId, 1);
+    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
+
+    observations.length = 0;
+    pasteTextIntoSheetSelection({ kind: "cell", gridId, row: 1, col: 3 }, "X\tY\nZ\tW");
+    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
+
+    observations.length = 0;
+    insertSheetSeam(gridId, "row", doc.byId[gridId].children.length, 4);
+    expect(observations).toEqual(["undo-snapshot", "publication", "dirty"]);
+  });
+
+  it("undo and redo of one planned Sheet command each publish the page once", () => {
+    const gridId = loadGrid();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    insertColumn(gridId, 1);
+
+    observations.length = 0;
+    undo();
+    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+
+    observations.length = 0;
+    redo();
+    expect(observations.filter((kind) => kind === "publication")).toHaveLength(1);
+  });
+
+  it("managed rejection, staleness and per-page single-flight leave the page and observers unchanged", async () => {
+    const gridId = loadGrid();
+    const before = pageToDto("Sheet");
+    managedStorageRuntime.bind(51, {
+      binding_generation: 51,
+      authority: "managed_writable",
+      application_save_page_blocks: 511,
+      application_page_request_text_bytes: 1024 * 1024,
+      application_page_max_depth: 128,
+    });
+    const base = mockBackend();
+    let resolvePreflight!: (value: Awaited<ReturnType<typeof base.preflightManagedPageMutation>>) => void;
+    const delayed = new Promise<Awaited<ReturnType<typeof base.preflightManagedPageMutation>>>((resolve) => {
+      resolvePreflight = resolve;
+    });
+    let calls = 0;
+    __setBackendForTest({
+      ...base,
+      preflightManagedPageMutation: async () => {
+        calls++;
+        return delayed;
+      },
+    });
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+
+    insertColumn(gridId, 1);
+    insertColumn(gridId, 1);
+    expect(calls).toBe(1);
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(observations).toEqual([]);
+    expect(toasts().at(-1)?.message).toContain("still checking");
+
+    managedStorageRuntime.bind(52, { binding_generation: 52, authority: "managed_unavailable" });
+    resolvePreflight({
+      status: "accepted",
+      binding_generation: 51,
+      page_name: "Sheet",
+      page_path: "",
+      base_revision: null,
+    });
+    await delayed;
+    await Promise.resolve();
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(observations).toEqual([]);
+  });
   it("inserts an empty row and one undo fully reverts it", () => {
     const gridId = loadGrid();
     const inserted = insertRow(gridId, 1);

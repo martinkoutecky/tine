@@ -271,6 +271,19 @@ export type ApplicationPageAdmission =
     }
   | { binding_generation: number; authority: "managed_unavailable" };
 
+/** Opaque one-shot acknowledgement that exact managed save preparation
+ * completed without authoring. It is useful only to the immutable frontend
+ * plan that requested it; the real save revalidates everything. */
+export type ManagedPageMutationPreflightResult =
+  | {
+      status: "accepted";
+      binding_generation: number;
+      page_name: string;
+      page_path: string;
+      base_revision: string | null;
+    }
+  | { status: "refused" | "deferred" };
+
 export type SparseV2Status = SparseV2Availability & {
   runtime: SparseV2RuntimeStatus | null;
   can_activate: boolean;

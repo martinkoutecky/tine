@@ -897,6 +897,19 @@ export function mockBackend(): Backend {
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean, _conflictEpoch?: number | null): Promise<SavePageResult> {
       return { revision: "mock-rev" }; // no-op in mock; managed-compatible (no activation)
     },
+    async preflightManagedPageMutation(page, baseRevision, bindingGeneration) {
+      if (sparseV2.application_page_admission.authority !== "managed_writable"
+          || sparseV2.binding_generation !== bindingGeneration) {
+        return { status: "refused" as const };
+      }
+      return {
+        status: "accepted" as const,
+        binding_generation: bindingGeneration,
+        page_name: page.name,
+        page_path: page.path ?? "",
+        base_revision: baseRevision,
+      };
+    },
     async sparseV2Status() {
       return sparseV2;
     },

@@ -85,6 +85,7 @@ import {
   isTombstonedFile,
   tombstoneCovers,
   graphBinding,
+  saveBaselineFor,
   forgetSaveState,
   resetSaveState,
   isSaving,
@@ -1115,6 +1116,12 @@ function evictIfNeeded() {
  *  cancels pending saves and clears dirty flags so nothing from the old graph
  *  can be written after a switch. */
 export function resetStore() {
+  // Pure node tests historically exercise the synchronous Direct store without
+  // opening a graph. Seed that authority once; managed-boundary tests explicitly
+  // rebind to the authority they exercise after reset.
+  if (import.meta.env.MODE === "test" && managedStorageRuntime.snapshot().bindingGeneration === null) {
+    managedStorageRuntime.bind(1, { binding_generation: 1, authority: "direct" });
+  }
   // Every identity belongs to the graph being left. The core drops its own
   // registry with the Graph, so clearing locally is sufficient and avoids a
   // storm of per-page retirements against a graph that is going away.
@@ -1397,15 +1404,24 @@ export async function restoreTodayJournalInFeed(): Promise<boolean> {
   return true;
 }
 
-function toDto(id: string): BlockDto {
-  const n = doc.byId[id];
+function toDtoFrom(nodes: Readonly<Record<string, Node>>, id: string): BlockDto {
+  const n = nodes[id];
   // Trim a block's trailing space only here, at the disk-write boundary — OG
   // keeps the space while you edit and trims on save. (The live editor buffer
   // keeps it so backspacing to a trailing space doesn't eat the space out from
   // under the caret.) `trimBlockTrailingSpace` is idempotent and only touches
   // whitespace at the very end of the block, so a block with nothing to trim
   // serializes byte-identically — no churn, no property reordering.
-  return { id: n.id, raw: trimBlockTrailingSpace(n.raw), collapsed: n.collapsed, children: n.children.map(toDto) };
+  return {
+    id: n.id,
+    raw: trimBlockTrailingSpace(n.raw),
+    collapsed: n.collapsed,
+    children: n.children.map((child) => toDtoFrom(nodes, child)),
+  };
+}
+
+function toDto(id: string): BlockDto {
+  return toDtoFrom(doc.byId, id);
 }
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
@@ -1421,19 +1437,24 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
   );
 }
 
-export function pageToDto(pageName: string): PageDto | null {
-  const p = doc.pages.find((x) => x.name === pageName);
+function projectPageDto(
+  p: FeedPage | undefined,
+  nodes: Readonly<Record<string, Node>>,
+  reportInvalidHeader: boolean,
+): PageDto | null {
   if (!p) return null;
   let rootIds = p.roots;
   let preBlock = p.preBlock;
-  const first = doc.byId[rootIds[0]];
+  const first = nodes[rootIds[0]];
   if (first?.originatedFromPageHeader) {
     // Enter temporarily leaves one or more trailing newlines in the live
     // page-header editor. Tolerate only that authoring artifact at the disk
     // firewall; keep the strict shared display predicate and live raw intact.
     const canonicalRaw = first.raw.replace(/\n+$/, "");
     if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-      pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+      if (reportInvalidHeader) {
+        pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+      }
       return null;
     }
     // Exact raw is authoritative here: ordinary toDto trimming must never eat a
@@ -1454,7 +1475,7 @@ export function pageToDto(pageName: string): PageDto | null {
     preBlock = first.raw.replace(/\n+$/, "");
     rootIds = rootIds.slice(1);
   }
-  let blocks = rootIds.map(toDto);
+  let blocks = rootIds.map((id) => toDtoFrom(nodes, id));
   // Don't persist a lone placeholder block. A page that exists only for its
   // properties is loaded with one empty editable bullet (toLoadable); saving it
   // — e.g. after a page-property edit — must NOT write that bullet back as a
@@ -1482,6 +1503,311 @@ export function pageToDto(pageName: string): PageDto | null {
     guide: p.guide,
     read_only: p.readOnly,
   };
+}
+
+export function pageToDto(pageName: string): PageDto | null {
+  return projectPageDto(doc.pages.find((x) => x.name === pageName), doc.byId, true);
+}
+
+// ---------------------------------------------------------------------------
+// Detached one-page mutation plans
+// ---------------------------------------------------------------------------
+
+export type PageMutationEffect =
+  | { kind: "create"; id: string; parent: string; at: number; raw: string }
+  | { kind: "delete"; id: string }
+  | { kind: "raw"; id: string; raw: string }
+  | { kind: "property"; id: string; key: string; value: string | null }
+  | { kind: "order"; parent: string; children: readonly string[] };
+
+export interface PageMutationDraft {
+  readonly page: FeedPage;
+  readonly effects: readonly PageMutationEffect[];
+  node(id: string): Node | undefined;
+  createChild(parentId: string, at: number, raw?: string): string | null;
+  insertOutlineChildren(parentId: string, outlines: readonly OutlineNode[]): string | null;
+  deleteSubtree(id: string): boolean;
+  setRaw(id: string, raw: string): boolean;
+  setProperty(id: string, key: string, value: string | null): boolean;
+  replaceChildren(parentId: string, children: readonly string[]): boolean;
+}
+
+const pageMutationPlanSeal = Symbol("page-mutation-plan");
+
+export interface PageMutationPlan<T> {
+  readonly [pageMutationPlanSeal]: true;
+  readonly pageName: string;
+  readonly tag: string;
+  readonly value: T;
+  readonly candidate: PageDto;
+  readonly effects: readonly PageMutationEffect[];
+}
+
+interface InternalPageMutationPlan<T> extends PageMutationPlan<T> {
+  graphRoot: string;
+  graphEpoch: number;
+  graphBinding: number;
+  pageGeneration: number;
+  editGeneration: number;
+  editorTransactionGeneration: number;
+  saveBaseline: string | null;
+  bindingGeneration: number;
+  authority: "direct" | "managed_writable" | "managed_unavailable" | "missing";
+  captured: Record<string, Node>;
+  draftPage: FeedPage;
+  draftNodes: Record<string, Node>;
+}
+
+export type PageMutationDispatch<T> =
+  | { kind: "applied"; value: T }
+  | { kind: "pending"; value: T; settled: Promise<boolean> }
+  | { kind: "refused"; claimed: boolean };
+
+const pendingPageMutations = new Map<string, object>();
+const startedPageMutationPlans = new WeakSet<object>();
+const appliedPageMutationPlans = new WeakSet<object>();
+
+function clonePageTree(page: FeedPage): Record<string, Node> | null {
+  const nodes: Record<string, Node> = {};
+  const visit = (id: string): boolean => {
+    if (nodes[id]) return true;
+    const current = doc.byId[id];
+    if (!current || current.page !== page.name) return false;
+    nodes[id] = cloneNode(unwrap(current));
+    return current.children.every(visit);
+  };
+  return page.roots.every(visit) ? nodes : null;
+}
+
+/** Build a pure detached draft. The callback sees only the captured page tree;
+ * it cannot publish, dirty, save, select, or enter an editor. */
+export function createPageMutationPlan<T>(
+  pageName: string,
+  tag: string,
+  build: (draft: PageMutationDraft) => T | null,
+): PageMutationPlan<T> | null {
+  const livePage = pageByName(pageName);
+  if (!livePage || !pageWritable(pageName) || graphTransitioning()) return null;
+  const generation = pageInstanceGeneration(pageName);
+  if (generation === null) return null;
+  const draftPage = clonePages([unwrap(livePage)])[0];
+  const draftNodes = clonePageTree(livePage);
+  if (!draftNodes) return null;
+  const captured: Record<string, Node> = {};
+  for (const [id, node] of Object.entries(draftNodes)) captured[id] = cloneNode(node);
+  const effects: PageMutationEffect[] = [];
+
+  const remove = (id: string): boolean => {
+    const node = draftNodes[id];
+    if (!node) return false;
+    const siblings = node.parent === null
+      ? draftPage.roots
+      : draftNodes[node.parent]?.children;
+    if (!siblings) return false;
+    const at = siblings.indexOf(id);
+    if (at < 0) return false;
+    siblings.splice(at, 1);
+    const descend = (childId: string) => {
+      const child = draftNodes[childId];
+      if (!child) return;
+      for (const grandchild of [...child.children]) descend(grandchild);
+      delete draftNodes[childId];
+    };
+    descend(id);
+    effects.push({ kind: "delete", id });
+    return true;
+  };
+
+  const draft: PageMutationDraft = {
+    page: draftPage,
+    get effects() { return effects; },
+    node: (id) => draftNodes[id],
+    createChild(parentId, at, raw = "") {
+      const parent = draftNodes[parentId];
+      if (!parent || at < 0 || at > parent.children.length) return null;
+      const id = freshId();
+      draftNodes[id] = {
+        id,
+        raw,
+        collapsed: false,
+        parent: parentId,
+        page: pageName,
+        children: [],
+      };
+      parent.children.splice(at, 0, id);
+      effects.push({ kind: "create", id, parent: parentId, at, raw });
+      return id;
+    },
+    insertOutlineChildren(parentId, outlines) {
+      const parent = draftNodes[parentId];
+      if (!parent || !outlines.length) return null;
+      const format = draftPage.format;
+      let last: string | null = null;
+      const create = (outline: OutlineNode, parent: string): string => {
+        const id = freshId();
+        const raw = rawWithInheritedOrderListType(outline.raw, format, parentId);
+        draftNodes[id] = { id, raw, collapsed: false, parent, page: pageName, children: [] };
+        const children = outline.children.map((child) => create(child, id));
+        draftNodes[id].children = children;
+        effects.push({ kind: "create", id, parent, at: draftNodes[parent]?.children.length ?? 0, raw });
+        return id;
+      };
+      const created = outlines.map((outline) => create(outline, parentId));
+      parent.children.push(...created);
+      last = created[created.length - 1] ?? null;
+      return last;
+    },
+    deleteSubtree: remove,
+    setRaw(id, raw) {
+      const node = draftNodes[id];
+      if (!node) return false;
+      node.raw = raw;
+      effects.push({ kind: "raw", id, raw });
+      return true;
+    },
+    setProperty(id, key, value) {
+      const node = draftNodes[id];
+      if (!node) return false;
+      node.raw = draftPage.format === "org"
+        ? orgRawWithProperty(node.raw, key, value)
+        : markdownRawWithProperty(node.raw, key, value);
+      effects.push({ kind: "property", id, key, value });
+      return true;
+    },
+    replaceChildren(parentId, children) {
+      const parent = draftNodes[parentId];
+      if (!parent || children.some((id) => !draftNodes[id] || draftNodes[id].page !== pageName)) return false;
+      parent.children = [...children];
+      for (const id of children) draftNodes[id].parent = parentId;
+      effects.push({ kind: "order", parent: parentId, children: [...children] });
+      return true;
+    },
+  };
+
+  const value = build(draft);
+  if (value === null) return null;
+  const candidate = projectPageDto(draftPage, draftNodes, false);
+  if (!candidate) return null;
+  const admission = managedStorageRuntime.snapshot().applicationPageAdmission;
+  const plan: InternalPageMutationPlan<T> = {
+    [pageMutationPlanSeal]: true,
+    pageName,
+    tag,
+    value,
+    candidate,
+    effects: Object.freeze(effects.map((effect) => Object.freeze(effect))),
+    graphRoot: graphMeta()?.root ?? "",
+    graphEpoch: graphEpoch(),
+    graphBinding: graphBinding(),
+    pageGeneration: generation,
+    editGeneration: editGeneration(pageName),
+    editorTransactionGeneration: editorTransactionGeneration(pageName),
+    saveBaseline: saveBaselineFor(pageName),
+    bindingGeneration: admission?.binding_generation ?? -1,
+    authority: admission?.authority ?? "missing",
+    captured,
+    draftPage,
+    draftNodes,
+  };
+  return Object.freeze(plan);
+}
+
+function pageMutationPlanCurrent(plan: InternalPageMutationPlan<unknown>): boolean {
+  const admission = managedStorageRuntime.snapshot().applicationPageAdmission;
+  if (
+    graphTransitioning()
+    || (graphMeta()?.root ?? "") !== plan.graphRoot
+    || graphEpoch() !== plan.graphEpoch
+    || graphBinding() !== plan.graphBinding
+    || pageInstanceGeneration(plan.pageName) !== plan.pageGeneration
+    || editGeneration(plan.pageName) !== plan.editGeneration
+    || editorTransactionGeneration(plan.pageName) !== plan.editorTransactionGeneration
+    || saveBaselineFor(plan.pageName) !== plan.saveBaseline
+    || admission?.binding_generation !== plan.bindingGeneration
+    || admission?.authority !== plan.authority
+  ) return false;
+  for (const [id, expected] of Object.entries(plan.captured)) {
+    const current = doc.byId[id];
+    if (!current
+      || current.page !== expected.page
+      || current.parent !== expected.parent
+      || current.raw !== expected.raw
+      || current.collapsed !== expected.collapsed
+      || current.children.length !== expected.children.length
+      || current.children.some((child, index) => child !== expected.children[index])) return false;
+  }
+  return true;
+}
+
+function applyPageMutationPlanNow<T>(plan: InternalPageMutationPlan<T>): boolean {
+  if (appliedPageMutationPlans.has(plan) || !pageMutationPlanCurrent(plan)) return false;
+  const projected = projectPageDto(plan.draftPage, plan.draftNodes, false);
+  if (!projected || JSON.stringify(projected) !== JSON.stringify(plan.candidate)) return false;
+  const pageIndex = doc.pages.findIndex((page) => page.name === plan.pageName);
+  if (pageIndex < 0) return false;
+  pushUndo(plan.tag, [plan.pageName]);
+  setDoc(produce((state) => {
+    purgePageNodes(state, plan.pageName);
+    for (const [id, node] of Object.entries(plan.draftNodes)) state.byId[id] = cloneNode(node);
+    state.pages[pageIndex] = clonePages([plan.draftPage])[0];
+  }));
+  appliedPageMutationPlans.add(plan);
+  markDirty(plan.pageName);
+  return true;
+}
+
+const managedPageMutationBusyToast = "This Sheet is still checking its previous change. Nothing was changed.";
+const managedPageMutationRefusedToast = "Tine-managed storage could not accept this Sheet change. Nothing was changed.";
+
+/** Apply Direct plans synchronously. Managed plans claim one per-page slot,
+ * await exact native preparation, recheck every captured authority and relation,
+ * then publish once. */
+export function applyPageMutationPlan<T>(
+  publicPlan: PageMutationPlan<T>,
+  afterApply?: (value: T) => void,
+): PageMutationDispatch<T> {
+  const plan = publicPlan as InternalPageMutationPlan<T>;
+  if (!plan[pageMutationPlanSeal] || startedPageMutationPlans.has(plan)) {
+    return { kind: "refused", claimed: plan.authority !== "direct" };
+  }
+  startedPageMutationPlans.add(plan);
+  if (plan.authority === "direct") {
+    if (!applyPageMutationPlanNow(plan)) return { kind: "refused", claimed: false };
+    afterApply?.(plan.value);
+    return { kind: "applied", value: plan.value };
+  }
+  if (plan.authority !== "managed_writable") {
+    pushToast(managedPageMutationRefusedToast, "error");
+    return { kind: "refused", claimed: true };
+  }
+  if (pendingPageMutations.has(plan.pageName)) {
+    pushToast(managedPageMutationBusyToast, "error");
+    return { kind: "refused", claimed: true };
+  }
+  pendingPageMutations.set(plan.pageName, plan);
+  const settled = backend()
+    .preflightManagedPageMutation(plan.candidate, plan.saveBaseline, plan.bindingGeneration)
+    .then((acceptance) => {
+      const accepted = acceptance.status === "accepted"
+        && acceptance.binding_generation === plan.bindingGeneration
+        && acceptance.page_name === plan.candidate.name
+        && acceptance.page_path === plan.candidate.path
+        && acceptance.base_revision === plan.saveBaseline;
+      if (!accepted || !applyPageMutationPlanNow(plan)) {
+        pushToast(managedPageMutationRefusedToast, "error");
+        return false;
+      }
+      afterApply?.(plan.value);
+      return true;
+    })
+    .catch(() => {
+      pushToast(managedPageMutationRefusedToast, "error");
+      return false;
+    })
+    .finally(() => {
+      if (pendingPageMutations.get(plan.pageName) === plan) pendingPageMutations.delete(plan.pageName);
+    });
+  return { kind: "pending", value: plan.value, settled };
 }
 
 // ---------------------------------------------------------------------------

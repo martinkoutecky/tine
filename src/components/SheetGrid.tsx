@@ -497,8 +497,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const growAndEdit = (edge: "row" | "col") => {
     if (readOnly()) return;
-    const target = growSheetEdge(props.id, edge, surfaceId);
-    if (target) startCellEditing(target);
+    growSheetEdge(props.id, edge, surfaceId, (target) => startCellEditing(target));
   };
 
   const activateEmptyGrid = (e: MouseEvent | KeyboardEvent) => {

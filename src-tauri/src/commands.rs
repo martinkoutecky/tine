@@ -420,6 +420,9 @@ fn sparse_save_request(
 
 fn map_sparse_page_save(outcome: SyncApplicationPageSaveOutcome) -> Result<String, String> {
     match outcome {
+        SyncApplicationPageSaveOutcome::Prepared => {
+            Err("managed preflight result escaped the preflight command".into())
+        }
         SyncApplicationPageSaveOutcome::Saved { revision, .. }
         | SyncApplicationPageSaveOutcome::Unchanged { revision, .. } => Ok(revision),
         // This bounded family tells the frontend to retain the draft, observe
@@ -449,6 +452,67 @@ where
     let request = sparse_save_request(page, base_rev, force, managed_conflict_observation)?;
     let outcome = save(request).map_err(|error| error.to_string())?;
     map_sparse_page_save(outcome)
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum ManagedPageMutationPreflightResult {
+    Accepted {
+        binding_generation: u64,
+        page_name: String,
+        page_path: String,
+        base_revision: Option<String>,
+    },
+    Refused,
+    Deferred,
+}
+
+/// Prepare the exact managed application-page transaction and discard it. This
+/// command never falls back to Direct Files and never settles actor work.
+#[tauri::command]
+pub(crate) async fn preflight_managed_page_mutation(
+    page: PageDto,
+    base_revision: Option<String>,
+    binding_generation: u64,
+    state: GraphContext<'_>,
+) -> Result<ManagedPageMutationPreflightResult, String> {
+    let (app, label, owned_binding) = owned_graph_context(state)?;
+    if owned_binding != binding_generation {
+        return Ok(ManagedPageMutationPreflightResult::Refused);
+    }
+    let page_name = page.name.clone();
+    let page_path = page.path.clone();
+    let echoed_base = base_revision.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        let Some(handle) = sparse_application_handle(&slot)? else {
+            return Ok(ManagedPageMutationPreflightResult::Refused);
+        };
+        let request = match sparse_save_request(page, base_revision, false, None) {
+            Ok(request) => request,
+            Err(_) => return Ok(ManagedPageMutationPreflightResult::Refused),
+        };
+        match handle.preflight_application_page(request) {
+            Ok(tine_core::sync_runtime::SyncApplicationPagePreflightOutcome::Accepted) => {
+                Ok(ManagedPageMutationPreflightResult::Accepted {
+                    binding_generation,
+                    page_name,
+                    page_path,
+                    base_revision: echoed_base,
+                })
+            }
+            Ok(tine_core::sync_runtime::SyncApplicationPagePreflightOutcome::Deferred {
+                ..
+            }) => Ok(ManagedPageMutationPreflightResult::Deferred),
+            Ok(tine_core::sync_runtime::SyncApplicationPagePreflightOutcome::Conflict {
+                ..
+            })
+            | Err(_) => Ok(ManagedPageMutationPreflightResult::Refused),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Keep the user-facing save error bounded, while allowing an opt-in local

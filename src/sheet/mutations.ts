@@ -3,15 +3,16 @@ import {
   blockPageReadOnly,
   blockProperty,
   blockSubtreeMarkdown,
-  deleteBlock,
   doc,
   formatForBlock,
   insertEmptyChildBlock,
-  insertOutlineChildren,
   replaceChildOrders,
   setRaw,
   pageByName,
   setBlockProperty,
+  createPageMutationPlan,
+  applyPageMutationPlan,
+  type PageMutationDraft,
   undo,
   withUndoUnit,
 } from "../store";
@@ -133,17 +134,6 @@ function cellText(blockId: string | null): string {
 /** Replace a cell's visible text while KEEPING its hidden built-in properties
  *  (id::/collapsed::) and sheet config props: clearing or overwriting a cell must never orphan a
  *  ((ref)) pointing at it (review finding). Fence-aware via splitProps. */
-function writeCellVisible(id: string, visible: string): void {
-  const fmt = formatForBlock(id);
-  const hidden = splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden, fmt).hidden;
-  setRaw(id, hidden ? joinProps(visible, hidden, fmt) : visible, { timetracking: false });
-}
-
-function rawWithoutId(id: string): string {
-  const raw = doc.byId[id]?.raw ?? "";
-  return splitProps(raw, (key) => key.toLowerCase() === "id", formatForBlock(id)).visible;
-}
-
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -154,38 +144,89 @@ function tableToHtml(rows: readonly (readonly string[])[]): string {
     .join("")}</tbody></table>`;
 }
 
-function ensureGridRows(gridId: string, lastRow: number): boolean {
-  let rows = gridRows(gridId);
-  if (!rows || lastRow < 0) return false;
-  while (rows.length <= lastRow) {
-    if (!insertRow(gridId, rows.length)) return false;
-    rows = gridRows(gridId);
-    if (!rows) return false;
-  }
-  return true;
-}
-
-function ensureRectCells(gridId: string, rect: SheetRect): boolean {
-  for (let row = rect.top; row <= rect.bottom; row++) {
-    for (let col = rect.left; col <= rect.right; col++) {
-      if (!materializeCell(gridId, row, col)) return false;
-    }
-  }
-  return true;
-}
-
 function sheetBounds(gridId: string): { rows: number; cols: number } {
   const rows = gridRows(gridId) ?? [];
   return { rows: rows.length, cols: colCount(rows) };
 }
 
-function withSheetUndo<T>(gridId: string, tag: string, fn: () => T): T | null {
-  // Defense in depth for every coordinate-based compound mutation. Non-grid
-  // sheet surfaces must mutate through their adapter's row-id/field semantics.
+function plannedSheetMutation<T>(
+  gridId: string,
+  tag: string,
+  build: (draft: PageMutationDraft) => T | null,
+  afterApply?: (value: T) => void,
+): T | null {
   if (!gridRows(gridId)) return null;
   const page = gridPage(gridId);
   if (!page) return null;
-  return withUndoUnit(tag, [page], fn);
+  const plan = createPageMutationPlan(page, tag, build);
+  if (!plan) return null;
+  applyPageMutationPlan(plan, afterApply);
+  return plan.value;
+}
+
+function draftRows(draft: PageMutationDraft, gridId: string): string[] | null {
+  return draft.node(gridId)?.children ?? null;
+}
+
+function draftColCount(draft: PageMutationDraft, gridId: string): number {
+  const rows = draftRows(draft, gridId) ?? [];
+  let cols = rows.length ? 1 : 0;
+  for (const rowId of rows) cols = Math.max(cols, draft.node(rowId)?.children.length ?? 0);
+  return cols;
+}
+
+function draftCellId(draft: PageMutationDraft, gridId: string, row: number, col: number): string | null {
+  const rowId = draftRows(draft, gridId)?.[row];
+  return rowId ? (draft.node(rowId)?.children[col] ?? null) : null;
+}
+
+function draftWriteVisible(draft: PageMutationDraft, id: string, visible: string): boolean {
+  const node = draft.node(id);
+  if (!node) return false;
+  const hidden = splitProps(node.raw, isSheetCellHidden, draft.page.format).hidden;
+  return draft.setRaw(id, hidden ? joinProps(visible, hidden, draft.page.format) : visible);
+}
+
+function draftRawWithoutId(draft: PageMutationDraft, id: string): string {
+  return splitProps(
+    draft.node(id)?.raw ?? "",
+    (key) => key.toLowerCase() === "id",
+    draft.page.format,
+  ).visible;
+}
+
+function draftMaterializeCell(
+  draft: PageMutationDraft,
+  gridId: string,
+  row: number,
+  col: number,
+): string | null {
+  const rowId = draftRows(draft, gridId)?.[row];
+  if (!rowId || col < 0) return null;
+  const existing = draft.node(rowId)?.children[col];
+  if (existing) return existing;
+  let made: string | null = null;
+  while ((draft.node(rowId)?.children.length ?? 0) <= col) {
+    made = draft.createChild(rowId, draft.node(rowId)?.children.length ?? 0);
+    if (!made) return null;
+  }
+  return draft.node(rowId)?.children[col] ?? made;
+}
+
+function draftEnsureRows(draft: PageMutationDraft, gridId: string, lastRow: number): boolean {
+  const rows = draftRows(draft, gridId);
+  if (!rows || lastRow < 0) return false;
+  while (rows.length <= lastRow) if (!draft.createChild(gridId, rows.length)) return false;
+  return true;
+}
+
+function draftEnsureRect(draft: PageMutationDraft, gridId: string, rect: SheetRect): boolean {
+  for (let row = rect.top; row <= rect.bottom; row++) {
+    for (let col = rect.left; col <= rect.right; col++) {
+      if (!draftMaterializeCell(draft, gridId, row, col)) return false;
+    }
+  }
+  return true;
 }
 
 function colWidths(gridId: string): ReadonlyMap<number, number> {
@@ -256,110 +297,178 @@ function shiftedAggregates(
   return out;
 }
 
-export function insertRow(gridId: string, at: number): string | null {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page || at < 0 || at > rows.length) return null;
-  const result = withUndoUnit("sheet:insert-row", [page], () => insertEmptyChildBlock(gridId, at));
-  if (result) invalidateMatrixDimensions(gridId);
+export function insertRow(gridId: string, at: number, afterApply?: (id: string) => void): string | null {
+  const result = plannedSheetMutation(gridId, "sheet:insert-row", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows || at < 0 || at > rows.length) return null;
+    return draft.createChild(gridId, at);
+  }, (id) => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.(id);
+  });
   return result;
 }
 
-export function deleteRow(gridId: string, row: number): void {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page || row < 0 || row >= rows.length) return;
-  withUndoUnit("sheet:delete-row", [page], () => deleteBlock(rows[row]));
-  invalidateMatrixDimensions(gridId);
+export function deleteRow(gridId: string, row: number, afterApply?: () => void): void {
+  plannedSheetMutation(gridId, "sheet:delete-row", (draft) => {
+    const id = draftRows(draft, gridId)?.[row];
+    return id && draft.deleteSubtree(id) ? true : null;
+  }, () => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.();
+  });
 }
 
-export function insertColumn(gridId: string, at: number): void {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page) return;
-  const cols = colCount(rows);
-  if (at < 0 || at > cols) return;
-  withUndoUnit("sheet:insert-column", [page], () => {
+export function insertColumn(gridId: string, at: number, afterApply?: () => void): void {
+  plannedSheetMutation(gridId, "sheet:insert-column", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows || at < 0 || at > draftColCount(draft, gridId)) return null;
     for (const rowId of rows) {
-      const row = doc.byId[rowId];
-      if (row && row.children.length >= at) insertEmptyChildBlock(rowId, at);
+      const row = draft.node(rowId);
+      if (row && row.children.length >= at && !draft.createChild(rowId, at)) return null;
     }
-    writeColWidths(gridId, shiftedForInsert(colWidths(gridId), at));
-    writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForInsert(m, at)));
+    const config = sheetConfigFromRaw(draft.node(gridId)?.raw ?? "", draft.page.format);
+    const widths = serializeColWidths(shiftedForInsert(config.colWidths, at));
+    const aggregates = serializeColAggregates(
+      shiftedAggregates(config.colAggregates, (m) => shiftedForInsert(m, at)),
+    );
+    if (!draft.setProperty(gridId, "tine.col-widths", widths || null)) return null;
+    if (!draft.setProperty(gridId, "tine.col-aggregates", aggregates || null)) return null;
+    return true;
+  }, () => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.();
   });
-  invalidateMatrixDimensions(gridId);
 }
 
-export function deleteColumn(gridId: string, col: number): void {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page) return;
-  const cols = colCount(rows);
-  if (col < 0 || col >= cols) return;
-  withUndoUnit("sheet:delete-column", [page], () => {
+export function deleteColumn(gridId: string, col: number, afterApply?: () => void): void {
+  plannedSheetMutation(gridId, "sheet:delete-column", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows || col < 0 || col >= draftColCount(draft, gridId)) return null;
     for (const rowId of rows) {
-      const cellId = doc.byId[rowId]?.children[col];
-      if (cellId) deleteBlock(cellId);
+      const cellId = draft.node(rowId)?.children[col];
+      if (cellId && !draft.deleteSubtree(cellId)) return null;
     }
-    writeColWidths(gridId, shiftedForDelete(colWidths(gridId), col));
-    writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, col)));
+    const config = sheetConfigFromRaw(draft.node(gridId)?.raw ?? "", draft.page.format);
+    const widths = serializeColWidths(shiftedForDelete(config.colWidths, col));
+    const aggregates = serializeColAggregates(
+      shiftedAggregates(config.colAggregates, (m) => shiftedForDelete(m, col)),
+    );
+    if (!draft.setProperty(gridId, "tine.col-widths", widths || null)) return null;
+    if (!draft.setProperty(gridId, "tine.col-aggregates", aggregates || null)) return null;
+    return true;
+  }, () => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.();
   });
-  invalidateMatrixDimensions(gridId);
 }
 
-export function deleteRows(gridId: string, top: number, bottom: number): void {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page) return;
-  const lo = Math.max(0, Math.min(top, bottom));
-  const hi = Math.min(rows.length - 1, Math.max(top, bottom));
-  if (lo > hi) return;
-  // Delete high-to-low so the captured row-id snapshot stays valid, all under
-  // one undo unit.
-  withUndoUnit("sheet:delete-rows", [page], () => {
-    for (let r = hi; r >= lo; r--) if (rows[r]) deleteBlock(rows[r]);
+export function deleteRows(gridId: string, top: number, bottom: number, afterApply?: () => void): void {
+  plannedSheetMutation(gridId, "sheet:delete-rows", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows) return null;
+    const lo = Math.max(0, Math.min(top, bottom));
+    const hi = Math.min(rows.length - 1, Math.max(top, bottom));
+    if (lo > hi) return null;
+    const selected = rows.slice(lo, hi + 1);
+    for (let index = selected.length - 1; index >= 0; index--) {
+      if (!draft.deleteSubtree(selected[index])) return null;
+    }
+    return true;
+  }, () => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.();
   });
-  invalidateMatrixDimensions(gridId);
 }
 
-export function deleteColumns(gridId: string, left: number, right: number): void {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page) return;
-  const cols = colCount(rows);
-  const lo = Math.max(0, Math.min(left, right));
-  const hi = Math.min(cols - 1, Math.max(left, right));
-  if (lo > hi) return;
-  withUndoUnit("sheet:delete-columns", [page], () => {
+export function deleteColumns(gridId: string, left: number, right: number, afterApply?: () => void): void {
+  plannedSheetMutation(gridId, "sheet:delete-columns", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows) return null;
+    const cols = draftColCount(draft, gridId);
+    const lo = Math.max(0, Math.min(left, right));
+    const hi = Math.min(cols - 1, Math.max(left, right));
+    if (lo > hi) return null;
+    let widths = new Map(sheetConfigFromRaw(draft.node(gridId)?.raw ?? "", draft.page.format).colWidths);
+    let aggregates = new Map(sheetConfigFromRaw(draft.node(gridId)?.raw ?? "", draft.page.format).colAggregates);
     for (let c = hi; c >= lo; c--) {
       for (const rowId of rows) {
-        const cellId = doc.byId[rowId]?.children[c];
-        if (cellId) deleteBlock(cellId);
+        const cellId = draft.node(rowId)?.children[c];
+        if (cellId && !draft.deleteSubtree(cellId)) return null;
       }
-      writeColWidths(gridId, shiftedForDelete(colWidths(gridId), c));
-      writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, c)));
+      widths = shiftedForDelete(widths, c);
+      aggregates = shiftedAggregates(aggregates, (m) => shiftedForDelete(m, c));
     }
+    if (!draft.setProperty(gridId, "tine.col-widths", serializeColWidths(widths) || null)) return null;
+    if (!draft.setProperty(gridId, "tine.col-aggregates", serializeColAggregates(aggregates) || null)) return null;
+    return true;
+  }, () => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.();
   });
-  invalidateMatrixDimensions(gridId);
 }
 
-export function materializeCell(gridId: string, row: number, col: number): string | null {
-  const rows = gridRows(gridId);
-  const page = gridPage(gridId);
-  if (!rows || !page || row < 0 || row >= rows.length || col < 0) return null;
-  const rowId = rows[row];
-  const existing = doc.byId[rowId]?.children[col];
-  if (existing) return existing;
-  const result = withUndoUnit("sheet:materialize-cell", [page], () => {
-    let made: string | null = null;
-    while ((doc.byId[rowId]?.children.length ?? 0) <= col) {
-      made = insertEmptyChildBlock(rowId, doc.byId[rowId]?.children.length ?? 0);
-      if (!made) return null;
+export function materializeCell(
+  gridId: string,
+  row: number,
+  col: number,
+  afterApply?: (cellId: string) => void,
+): string | null {
+  const existing = cellIdAt(gridId, row, col);
+  if (existing) {
+    afterApply?.(existing);
+    return existing;
+  }
+  return plannedSheetMutation(gridId, "sheet:materialize-cell", (draft) =>
+    draftMaterializeCell(draft, gridId, row, col), (cellId) => {
+      invalidateMatrixDimensions(gridId);
+      afterApply?.(cellId);
+    });
+}
+
+/** Atomic seam insertion plus the cell required for its post-commit edit
+ * target. This avoids the old row/column publication followed by a second
+ * materialization publication. */
+export function insertSheetSeam(
+  gridId: string,
+  kind: "row" | "col",
+  at: number,
+  anchor: number,
+  afterApply?: (target: SheetPoint) => void,
+): SheetPoint | null {
+  return plannedSheetMutation(gridId, "sheet:seam-insert", (draft) => {
+    const rows = draftRows(draft, gridId);
+    if (!rows) return null;
+    if (kind === "row") {
+      if (at < 0 || at > rows.length || !draft.createChild(gridId, at)) return null;
+      const col = Math.max(0, anchor);
+      if (!draftMaterializeCell(draft, gridId, at, col)) return null;
+      return { row: at, col };
     }
-    return doc.byId[rowId]?.children[col] ?? made;
+    const cols = draftColCount(draft, gridId);
+    if (at < 0 || at > cols) return null;
+    for (const rowId of rows) {
+      const row = draft.node(rowId);
+      if (row && row.children.length >= at && !draft.createChild(rowId, at)) return null;
+    }
+    const config = sheetConfigFromRaw(draft.node(gridId)?.raw ?? "", draft.page.format);
+    if (!draft.setProperty(
+      gridId,
+      "tine.col-widths",
+      serializeColWidths(shiftedForInsert(config.colWidths, at)) || null,
+    )) return null;
+    if (!draft.setProperty(
+      gridId,
+      "tine.col-aggregates",
+      serializeColAggregates(shiftedAggregates(config.colAggregates, (m) => shiftedForInsert(m, at))) || null,
+    )) return null;
+    const row = Math.max(0, anchor);
+    if (!draftMaterializeCell(draft, gridId, row, at)) return null;
+    return { row, col: at };
+  }, (target) => {
+    invalidateMatrixDimensions(gridId);
+    afterApply?.(target);
   });
-  if (result) invalidateMatrixDimensions(gridId);
-  return result;
 }
 
 export function setColumnWidth(gridId: string, col: number, px: number | null): void {
@@ -432,22 +541,23 @@ export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
   return copyRich(text, html);
 }
 
-export function clearSheetSelection(sel: SheetMutationSelection): boolean {
+export function clearSheetSelection(sel: SheetMutationSelection, afterApply?: () => void): boolean {
   const rect = rectForSheetSelection(sel);
-  return withSheetUndo(sel.gridId, "sheet:clear", () => {
+  const result = plannedSheetMutation(sel.gridId, "sheet:clear", (draft) => {
     for (let row = rect.top; row <= rect.bottom; row++) {
       for (let col = rect.left; col <= rect.right; col++) {
-        const id = cellIdAt(sel.gridId, row, col);
-        if (id) writeCellVisible(id, "");
+        const id = draftCellId(draft, sel.gridId, row, col);
+        if (id && !draftWriteVisible(draft, id, "")) return null;
       }
     }
     return true;
-  }) ?? false;
+  }, () => afterApply?.());
+  return result ?? false;
 }
 
-export function cutSheetSelection(sel: SheetMutationSelection): void {
+export function cutSheetSelection(sel: SheetMutationSelection, afterApply?: () => void): void {
   void copySheetSelection(sel);
-  clearSheetSelection(sel);
+  clearSheetSelection(sel, afterApply);
 }
 
 function compactGridConfigSplit(
@@ -488,21 +598,25 @@ export function appendSheetCellChild(cellId: string): string | null {
   });
 }
 
-export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "right"): boolean {
+export function fillSheetSelection(
+  sel: SheetMutationSelection,
+  dir: "down" | "right",
+  afterApply?: () => void,
+): boolean {
   const rect = rectForSheetSelection(sel);
   if (dir === "down" && rect.top === rect.bottom) return true;
   if (dir === "right" && rect.left === rect.right) return true;
-  return withSheetUndo(sel.gridId, `sheet:fill-${dir}`, () => {
+  const result = plannedSheetMutation(sel.gridId, `sheet:fill-${dir}`, (draft) => {
     if (dir === "down") {
       const sources: string[] = [];
       for (let col = rect.left; col <= rect.right; col++) {
-        const id = cellIdAt(sel.gridId, rect.top, col);
-        sources.push(id ? rawWithoutId(id) : "");
+        const id = draftCellId(draft, sel.gridId, rect.top, col);
+        sources.push(id ? draftRawWithoutId(draft, id) : "");
       }
       for (let row = rect.top + 1; row <= rect.bottom; row++) {
         for (let col = rect.left; col <= rect.right; col++) {
-          const target = materializeCell(sel.gridId, row, col);
-          if (target) writeCellVisible(target, sources[col - rect.left]);
+          const target = draftMaterializeCell(draft, sel.gridId, row, col);
+          if (!target || !draftWriteVisible(draft, target, sources[col - rect.left])) return null;
         }
       }
       return true;
@@ -510,22 +624,28 @@ export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "r
 
     const sources: string[] = [];
     for (let row = rect.top; row <= rect.bottom; row++) {
-      const id = cellIdAt(sel.gridId, row, rect.left);
-      sources.push(id ? rawWithoutId(id) : "");
+      const id = draftCellId(draft, sel.gridId, row, rect.left);
+      sources.push(id ? draftRawWithoutId(draft, id) : "");
     }
     for (let row = rect.top; row <= rect.bottom; row++) {
       for (let col = rect.left + 1; col <= rect.right; col++) {
-        const target = materializeCell(sel.gridId, row, col);
+        const target = draftMaterializeCell(draft, sel.gridId, row, col);
         // writeCellVisible (not bare setRaw) so the target's own hidden id:: survives
         // and no ((ref)) pointing at it is orphaned — same as the fill-down branch.
-        if (target) writeCellVisible(target, sources[row - rect.top]);
+        if (!target || !draftWriteVisible(draft, target, sources[row - rect.top])) return null;
       }
     }
     return true;
-  }) ?? false;
+  }, () => afterApply?.());
+  return result ?? false;
 }
 
-function moveWholeRows(gridId: string, rect: SheetRect, dir: "up" | "down"): SheetRect | null {
+function moveWholeRows(
+  gridId: string,
+  rect: SheetRect,
+  dir: "up" | "down",
+  afterApply?: (rect: SheetRect) => void,
+): SheetRect | null {
   const rows = gridRows(gridId);
   if (!rows) return null;
   if (dir === "up" && rect.top <= 0) return null;
@@ -535,8 +655,10 @@ function moveWholeRows(gridId: string, rect: SheetRect, dir: "up" | "down"): She
   const moving = next.splice(rect.top, count);
   const at = dir === "up" ? rect.top - 1 : rect.top + 1;
   next.splice(at, 0, ...moving);
-  const ok = withSheetUndo(gridId, "sheet:move-rows", () => replaceChildOrders({ [gridId]: next })) ?? false;
-  return ok ? offsetRect(rect, dir) : null;
+  const moved = offsetRect(rect, dir);
+  const result = plannedSheetMutation(gridId, "sheet:move-rows", (draft) =>
+    draft.replaceChildren(gridId, next) ? moved : null, afterApply);
+  return result;
 }
 
 function rotateRowSegment(children: string[], start: number, end: number, dir: "left" | "right"): void {
@@ -551,7 +673,12 @@ function rotateRowSegment(children: string[], start: number, end: number, dir: "
   children[start] = last;
 }
 
-function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirection): SheetRect | null {
+function moveRectContent(
+  gridId: string,
+  rect: SheetRect,
+  dir: SheetMoveDirection,
+  afterApply?: (rect: SheetRect) => void,
+): SheetRect | null {
   const bounds = sheetBounds(gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return null;
   if (dir === "up" && rect.top <= 0) return null;
@@ -565,27 +692,27 @@ function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirectio
   else if (dir === "left") materialize.left--;
   else materialize.right++;
 
-  const ok = withSheetUndo(gridId, "sheet:move-range", () => {
-    if (!ensureRectCells(gridId, materialize)) return false;
+  const moved = offsetRect(rect, dir);
+  return plannedSheetMutation(gridId, "sheet:move-range", (draft) => {
+    if (!draftEnsureRect(draft, gridId, materialize)) return null;
 
     if (dir === "left" || dir === "right") {
-      const nextByParent: Record<string, string[]> = {};
       for (let row = materialize.top; row <= materialize.bottom; row++) {
-        const rowId = doc.byId[gridId]?.children[row];
-        if (!rowId) return false;
-        const next = [...doc.byId[rowId].children];
+        const rowId = draftRows(draft, gridId)?.[row];
+        if (!rowId) return null;
+        const next = [...(draft.node(rowId)?.children ?? [])];
         rotateRowSegment(next, materialize.left, materialize.right, dir);
-        nextByParent[rowId] = next;
+        if (!draft.replaceChildren(rowId, next)) return null;
       }
-      return replaceChildOrders(nextByParent);
+      return moved;
     }
 
     const nextByParent: Record<string, string[]> = {};
-    const rowIds = doc.byId[gridId]?.children ?? [];
+    const rowIds = draftRows(draft, gridId) ?? [];
     for (let row = materialize.top; row <= materialize.bottom; row++) {
       const rowId = rowIds[row];
-      if (!rowId) return false;
-      nextByParent[rowId] = [...doc.byId[rowId].children];
+      if (!rowId) return null;
+      nextByParent[rowId] = [...(draft.node(rowId)?.children ?? [])];
     }
     for (let col = materialize.left; col <= materialize.right; col++) {
       if (dir === "up") {
@@ -602,13 +729,18 @@ function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirectio
         nextByParent[rowIds[materialize.top]][col] = last;
       }
     }
-    return replaceChildOrders(nextByParent);
-  }) ?? false;
-
-  return ok ? offsetRect(rect, dir) : null;
+    for (const [parent, children] of Object.entries(nextByParent)) {
+      if (!draft.replaceChildren(parent, children)) return null;
+    }
+    return moved;
+  }, afterApply);
 }
 
-export function moveSheetSelection(sel: SheetMutationSelection, dir: SheetMoveDirection): SheetMutationSelection | null {
+export function moveSheetSelection(
+  sel: SheetMutationSelection,
+  dir: SheetMoveDirection,
+  afterApply?: (selection: SheetMutationSelection) => void,
+): SheetMutationSelection | null {
   const rect = rectForSheetSelection(sel);
   const bounds = sheetBounds(sel.gridId);
   if (sel.kind === "cell") {
@@ -616,8 +748,9 @@ export function moveSheetSelection(sel: SheetMutationSelection, dir: SheetMoveDi
     const target = offsetPoint({ row: sel.row, col: sel.col }, dir);
     if (target.row < 0 || target.col < 0 || target.row >= bounds.rows || target.col >= bounds.cols) return null;
     if ((dir === "left" || dir === "right") && !cellIdAt(sel.gridId, target.row, target.col)) return null;
-    const moved = moveRectContent(sel.gridId, rect, dir);
-    return moved ? { kind: "cell", gridId: sel.gridId, row: target.row, col: target.col } : null;
+    const next = { kind: "cell", gridId: sel.gridId, row: target.row, col: target.col } as const;
+    const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next));
+    return moved ? next : null;
   }
 
   if (
@@ -625,26 +758,26 @@ export function moveSheetSelection(sel: SheetMutationSelection, dir: SheetMoveDi
     rect.left === 0 &&
     rect.right === Math.max(0, bounds.cols - 1)
   ) {
-    const movedRows = moveWholeRows(sel.gridId, rect, dir);
-    if (!movedRows) return null;
     const delta = dir === "up" ? -1 : 1;
-    return {
+    const next: SheetMutationSelection = {
       kind: "range",
       gridId: sel.gridId,
       anchor: { row: sel.anchor.row + delta, col: sel.anchor.col },
       focus: { row: sel.focus.row + delta, col: sel.focus.col },
     };
+    const movedRows = moveWholeRows(sel.gridId, rect, dir, () => afterApply?.(next));
+    return movedRows ? next : null;
   }
 
-  const moved = moveRectContent(sel.gridId, rect, dir);
-  if (!moved) return null;
   const delta = offsetPoint({ row: 0, col: 0 }, dir);
-  return {
+  const next: SheetMutationSelection = {
     kind: "range",
     gridId: sel.gridId,
     anchor: { row: sel.anchor.row + delta.row, col: sel.anchor.col + delta.col },
     focus: { row: sel.focus.row + delta.row, col: sel.focus.col + delta.col },
   };
+  const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next));
+  return moved ? next : null;
 }
 
 function looksIndentedOutline(text: string): boolean {
@@ -672,8 +805,10 @@ export function structuralSheetPasteNode(text: string): OutlineNode | null {
   return { raw: "tine.view:: grid", children: rows };
 }
 
-function cellHasVisibleTextOrChildren(id: string): boolean {
-  return cellText(id).trim() !== "" || (doc.byId[id]?.children.length ?? 0) > 0;
+function draftCellHasVisibleTextOrChildren(draft: PageMutationDraft, id: string): boolean {
+  const node = draft.node(id);
+  const text = visibleBody(node?.raw ?? "").join(" ").replace(/[\t\r\n]+/g, " ");
+  return text.trim() !== "" || (node?.children.length ?? 0) > 0;
 }
 
 function pushPasteOverwriteToast(): void {
@@ -682,7 +817,8 @@ function pushPasteOverwriteToast(): void {
 
 export function splatStructuralSheetSelection(
   sel: SheetMutationSelection,
-  text: string
+  text: string,
+  afterApply?: (selection: SheetMutationSelection) => void,
 ): SheetMutationSelection | null | undefined {
   if (!lastSheetCopy || lastSheetCopy.fingerprint !== text) return undefined;
   const rows = parseOutline(lastSheetCopy.outlineMd);
@@ -693,85 +829,95 @@ export function splatStructuralSheetSelection(
   const anchor = { row: rect.top, col: rect.left };
   const height = rows.length;
   const width = Math.max(...rows.map((row) => row.children.length));
-  const result =
-    withSheetUndo(sel.gridId, "sheet:paste-splat", () => {
-      if (!ensureGridRows(sel.gridId, anchor.row + height - 1)) return false;
-      let overwroteNonEmpty = false;
-      for (let r = 0; r < height; r++) {
-        const row = rows[r];
-        for (let c = 0; c < row.children.length; c++) {
-          const srcCell = row.children[c];
-          const target = materializeCell(sel.gridId, anchor.row + r, anchor.col + c);
-          if (!target) return false;
-          if (cellHasVisibleTextOrChildren(target)) overwroteNonEmpty = true;
-          const existingChildren = [...(doc.byId[target]?.children ?? [])];
-          for (const child of existingChildren) deleteBlock(child);
-          writeCellVisible(target, srcCell.raw);
-          if (srcCell.children.length && !insertOutlineChildren(target, srcCell.children)) return false;
-        }
-      }
-      return { overwroteNonEmpty };
-    }) ?? false;
-  if (!result) return null;
-  if (result.overwroteNonEmpty) pushPasteOverwriteToast();
-  return {
+  const selection: SheetMutationSelection = {
     kind: "range",
     gridId: sel.gridId,
     anchor,
     focus: { row: anchor.row + height - 1, col: anchor.col + width - 1 },
   };
+  const result = plannedSheetMutation(sel.gridId, "sheet:paste-splat", (draft) => {
+      if (!draftEnsureRows(draft, sel.gridId, anchor.row + height - 1)) return null;
+      let overwroteNonEmpty = false;
+      for (let r = 0; r < height; r++) {
+        const row = rows[r];
+        for (let c = 0; c < row.children.length; c++) {
+          const srcCell = row.children[c];
+          const target = draftMaterializeCell(draft, sel.gridId, anchor.row + r, anchor.col + c);
+          if (!target) return null;
+          if (draftCellHasVisibleTextOrChildren(draft, target)) overwroteNonEmpty = true;
+          const existingChildren = [...(draft.node(target)?.children ?? [])];
+          for (const child of existingChildren) if (!draft.deleteSubtree(child)) return null;
+          if (!draftWriteVisible(draft, target, srcCell.raw)) return null;
+          if (srcCell.children.length && !draft.insertOutlineChildren(target, srcCell.children)) return null;
+        }
+      }
+      return { overwroteNonEmpty };
+    }, (applied) => {
+      if (applied.overwroteNonEmpty) pushPasteOverwriteToast();
+      afterApply?.(selection);
+    });
+  if (!result) return null;
+  return selection;
 }
 
-export function pasteTextIntoSheetSelection(sel: SheetMutationSelection, text: string): SheetMutationSelection | null {
+export function pasteTextIntoSheetSelection(
+  sel: SheetMutationSelection,
+  text: string,
+  afterApply?: (selection: SheetMutationSelection) => void,
+): SheetMutationSelection | null {
   const rect = rectForSheetSelection(sel);
   const anchor = { row: rect.top, col: rect.left };
   if (looksLikeDelimitedText(text)) {
     const matrix = parseDelimitedText(text);
     if (!matrix.length) return sel;
-    const result = withSheetUndo(sel.gridId, "sheet:paste-matrix", () => {
-      if (!ensureGridRows(sel.gridId, anchor.row + matrix.length - 1)) return false;
+    const height = matrix.length;
+    const width = Math.max(1, ...matrix.map((row) => row.length));
+    const selection: SheetMutationSelection = height === 1 && width === 1
+      ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col }
+      : {
+          kind: "range",
+          gridId: sel.gridId,
+          anchor,
+          focus: { row: anchor.row + height - 1, col: anchor.col + width - 1 },
+        };
+    const result = plannedSheetMutation(sel.gridId, "sheet:paste-matrix", (draft) => {
+      if (!draftEnsureRows(draft, sel.gridId, anchor.row + matrix.length - 1)) return null;
       let overwroteNonEmpty = false;
       for (let r = 0; r < matrix.length; r++) {
         const row = matrix[r];
         for (let c = 0; c < row.length; c++) {
-          const existing = cellIdAt(sel.gridId, anchor.row + r, anchor.col + c);
-          if (existing && cellHasVisibleTextOrChildren(existing)) overwroteNonEmpty = true;
-          const id = materializeCell(sel.gridId, anchor.row + r, anchor.col + c);
-          if (!id) return false;
-          writeCellVisible(id, row[c]);
+          const existing = draftCellId(draft, sel.gridId, anchor.row + r, anchor.col + c);
+          if (existing && draftCellHasVisibleTextOrChildren(draft, existing)) overwroteNonEmpty = true;
+          const id = draftMaterializeCell(draft, sel.gridId, anchor.row + r, anchor.col + c);
+          if (!id || !draftWriteVisible(draft, id, row[c])) return null;
         }
       }
       return { overwroteNonEmpty };
-    }) ?? false;
+    }, (applied) => {
+      if (applied.overwroteNonEmpty) pushPasteOverwriteToast();
+      afterApply?.(selection);
+    });
     if (!result) return null;
-    if (result.overwroteNonEmpty) pushPasteOverwriteToast();
-    const height = matrix.length;
-    const width = Math.max(1, ...matrix.map((row) => row.length));
-    if (height === 1 && width === 1) return { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col };
-    return {
-      kind: "range",
-      gridId: sel.gridId,
-      anchor,
-      focus: { row: anchor.row + height - 1, col: anchor.col + width - 1 },
-    };
+    return selection;
   }
 
   if (looksIndentedOutline(text)) {
     const nodes = parseOutline(text);
     if (!nodes.length) return sel;
-    const ok = withSheetUndo(sel.gridId, "sheet:paste-outline", () => {
-      const id = materializeCell(sel.gridId, anchor.row, anchor.col);
-      if (!id) return false;
-      return !!insertOutlineChildren(id, nodes);
-    }) ?? false;
-    return ok ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col } : null;
+    const selection: SheetMutationSelection = { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col };
+    const ok = plannedSheetMutation(sel.gridId, "sheet:paste-outline", (draft) => {
+      const id = draftMaterializeCell(draft, sel.gridId, anchor.row, anchor.col);
+      return id && draft.insertOutlineChildren(id, nodes) ? true : null;
+    }, () => afterApply?.(selection));
+    return ok ? selection : null;
   }
 
-  const ok = withSheetUndo(sel.gridId, "sheet:paste-text", () => {
-    const id = materializeCell(sel.gridId, anchor.row, anchor.col);
-    if (!id) return false;
-    writeCellVisible(id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
-    return true;
-  }) ?? false;
-  return ok ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col } : null;
+  const selection: SheetMutationSelection = { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col };
+  const ok = plannedSheetMutation(sel.gridId, "sheet:paste-text", (draft) => {
+    const id = draftMaterializeCell(draft, sel.gridId, anchor.row, anchor.col);
+    return id && draftWriteVisible(draft, id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))
+      ? true
+      : null;
+  }, () => afterApply?.(selection));
+  return ok ? selection : null;
 }
