@@ -1591,7 +1591,11 @@ function FieldCell(props: {
     e.preventDefault();
     e.stopPropagation();
     select();
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id, { rowId: props.row.id });
+    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id, {
+      rowId: props.row.id,
+      gridId: props.ownerId,
+      surfaceId: props.surfaceId,
+    });
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!editable()) return;
@@ -1599,7 +1603,11 @@ function FieldCell(props: {
     e.stopPropagation();
     select();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id, { rowId: props.row.id });
+    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id, {
+      rowId: props.row.id,
+      gridId: props.ownerId,
+      surfaceId: props.surfaceId,
+    });
   };
 
   return (

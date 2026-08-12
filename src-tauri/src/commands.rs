@@ -5,9 +5,9 @@ use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
     capture_quick_switch_slot, owned_graph_context, refresh_graph, slot_for_bound_window,
     slot_for_context, with_config_graph, with_filesystem_graph, with_trash_graph, AppState,
-    GraphContext,
+    ApplicationPageAdmissionAuthority, GraphContext,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{Emitter, Manager, State, WebviewWindow};
@@ -454,7 +454,7 @@ where
     map_sparse_page_save(outcome)
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum ManagedPageMutationPreflightResult {
     Accepted {
@@ -465,6 +465,18 @@ pub(crate) enum ManagedPageMutationPreflightResult {
     },
     Refused,
     Deferred,
+}
+
+fn managed_preflight_binding_admitted(
+    owned_binding: u64,
+    requested_binding: u64,
+    authority: &ApplicationPageAdmissionAuthority,
+) -> bool {
+    owned_binding == requested_binding
+        && matches!(
+            authority,
+            ApplicationPageAdmissionAuthority::ManagedWritable { .. }
+        )
 }
 
 /// Prepare the exact managed application-page transaction and discard it. This
@@ -486,6 +498,13 @@ pub(crate) async fn preflight_managed_page_mutation(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        if !managed_preflight_binding_admitted(
+            slot.binding_generation,
+            binding_generation,
+            &slot.application_page_admission().authority,
+        ) {
+            return Ok(ManagedPageMutationPreflightResult::Refused);
+        }
         let Some(handle) = sparse_application_handle(&slot)? else {
             return Ok(ManagedPageMutationPreflightResult::Refused);
         };
@@ -513,6 +532,53 @@ pub(crate) async fn preflight_managed_page_mutation(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod managed_page_mutation_preflight_tests {
+    use super::{managed_preflight_binding_admitted, ManagedPageMutationPreflightResult};
+    use crate::state::ApplicationPageAdmissionAuthority;
+
+    #[test]
+    fn binding_and_authority_gate_refuses_mismatch_direct_and_unavailable() {
+        let writable = ApplicationPageAdmissionAuthority::ManagedWritable {
+            application_save_page_blocks: 511,
+            application_page_request_text_bytes: 1024 * 1024,
+            application_page_max_depth: 128,
+        };
+        assert!(managed_preflight_binding_admitted(7, 7, &writable));
+        assert!(!managed_preflight_binding_admitted(7, 8, &writable));
+        assert!(!managed_preflight_binding_admitted(
+            7,
+            7,
+            &ApplicationPageAdmissionAuthority::Direct
+        ));
+        assert!(!managed_preflight_binding_admitted(
+            7,
+            7,
+            &ApplicationPageAdmissionAuthority::ManagedUnavailable
+        ));
+    }
+
+    #[test]
+    fn every_preflight_result_round_trips_exact_json() {
+        for result in [
+            ManagedPageMutationPreflightResult::Accepted {
+                binding_generation: 7,
+                page_name: "Dense".into(),
+                page_path: "pages/Dense.md".into(),
+                base_revision: Some("base".into()),
+            },
+            ManagedPageMutationPreflightResult::Refused,
+            ManagedPageMutationPreflightResult::Deferred,
+        ] {
+            let json = serde_json::to_string(&result).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ManagedPageMutationPreflightResult>(&json).unwrap(),
+                result
+            );
+        }
+    }
 }
 
 /// Keep the user-facing save error bounded, while allowing an opt-in local

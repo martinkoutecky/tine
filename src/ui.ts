@@ -1428,7 +1428,7 @@ export async function pruneSidebarBlocks(): Promise<void> {
  *  row block to drop (works for grid + table, sort-safe). `gridId`/`col` enable a
  *  positional column delete (grid only; tables remove columns via "Remove from
  *  schema" on the header instead). */
-export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number };
+export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number; surfaceId?: string };
 
 export type CtxTarget =
   | { kind: "block"; blockId: string }

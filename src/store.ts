@@ -107,6 +107,11 @@ export function __setStoreMutationObserverForTest(
   storeMutationObserverForTest = observer;
 }
 
+export function __setPageMutationEffectFailureForTest(enabled: boolean): void {
+  if (import.meta.env.MODE !== "test") return;
+  pageMutationEffectFailureForTest = enabled;
+}
+
 /** Production keeps the exact persistence function identity and call path. Vitest
  * selects the observing façade once at module initialization, never per edit. */
 export const markDirty: typeof markDirtyInner = import.meta.env.MODE === "test"
@@ -1514,16 +1519,24 @@ export function pageToDto(pageName: string): PageDto | null {
 // ---------------------------------------------------------------------------
 
 export type PageMutationEffect =
-  | { kind: "create"; id: string; parent: string; at: number; raw: string }
+  | { kind: "create"; node: Readonly<Omit<Node, "children">> & { readonly children: readonly string[] }; parent: string; at: number }
   | { kind: "delete"; id: string }
   | { kind: "raw"; id: string; raw: string }
-  | { kind: "property"; id: string; key: string; value: string | null }
+  | { kind: "property"; id: string; key: string; value: string | null; raw: string }
+  | { kind: "parent"; id: string; parent: string }
   | { kind: "order"; parent: string; children: readonly string[] };
 
+export type PageMutationDraftNode = Readonly<Omit<Node, "children">> & {
+  readonly children: readonly string[];
+};
+
+export type PageMutationDraftPage = Readonly<Omit<FeedPage, "roots">> & {
+  readonly roots: readonly string[];
+};
+
 export interface PageMutationDraft {
-  readonly page: FeedPage;
-  readonly effects: readonly PageMutationEffect[];
-  node(id: string): Node | undefined;
+  readonly page: PageMutationDraftPage;
+  node(id: string): PageMutationDraftNode | undefined;
   createChild(parentId: string, at: number, raw?: string): string | null;
   insertOutlineChildren(parentId: string, outlines: readonly OutlineNode[]): string | null;
   deleteSubtree(id: string): boolean;
@@ -1543,6 +1556,15 @@ export interface PageMutationPlan<T> {
   readonly effects: readonly PageMutationEffect[];
 }
 
+/** Optional UI ownership attached to a plan. The token itself is immutable and
+ * `isCurrent` must cover the exact selection and mounted Sheet surface that
+ * issued the command. Store code checks it before native admission, before
+ * publication, and once more before post-commit UI effects. */
+export interface PageMutationAuthority<T> {
+  readonly token: Readonly<Record<string, unknown>>;
+  isCurrent(value: T): boolean;
+}
+
 interface InternalPageMutationPlan<T> extends PageMutationPlan<T> {
   graphRoot: string;
   graphEpoch: number;
@@ -1553,9 +1575,10 @@ interface InternalPageMutationPlan<T> extends PageMutationPlan<T> {
   saveBaseline: string | null;
   bindingGeneration: number;
   authority: "direct" | "managed_writable" | "managed_unavailable" | "missing";
-  captured: Record<string, Node>;
-  draftPage: FeedPage;
-  draftNodes: Record<string, Node>;
+  pendingKey: string;
+  captured: Readonly<Record<string, PageMutationDraftNode>>;
+  capturedPage: PageMutationDraftPage;
+  uiAuthority?: PageMutationAuthority<T>;
 }
 
 export type PageMutationDispatch<T> =
@@ -1566,6 +1589,27 @@ export type PageMutationDispatch<T> =
 const pendingPageMutations = new Map<string, object>();
 const startedPageMutationPlans = new WeakSet<object>();
 const appliedPageMutationPlans = new WeakSet<object>();
+let pageMutationEffectFailureForTest = false;
+
+function immutableClone<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => immutableClone(item))) as T;
+  }
+  const clone: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    clone[key] = immutableClone(nested);
+  }
+  return Object.freeze(clone) as T;
+}
+
+function immutableNode(node: Node): PageMutationDraftNode {
+  return immutableClone(cloneNode(node)) as PageMutationDraftNode;
+}
+
+function immutablePage(page: FeedPage): PageMutationDraftPage {
+  return immutableClone(clonePages([page])[0]) as PageMutationDraftPage;
+}
 
 function clonePageTree(page: FeedPage): Record<string, Node> | null {
   const nodes: Record<string, Node> = {};
@@ -1585,6 +1629,7 @@ export function createPageMutationPlan<T>(
   pageName: string,
   tag: string,
   build: (draft: PageMutationDraft) => T | null,
+  uiAuthority?: PageMutationAuthority<T>,
 ): PageMutationPlan<T> | null {
   const livePage = pageByName(pageName);
   if (!livePage || !pageWritable(pageName) || graphTransitioning()) return null;
@@ -1593,9 +1638,10 @@ export function createPageMutationPlan<T>(
   const draftPage = clonePages([unwrap(livePage)])[0];
   const draftNodes = clonePageTree(livePage);
   if (!draftNodes) return null;
-  const captured: Record<string, Node> = {};
-  for (const [id, node] of Object.entries(draftNodes)) captured[id] = cloneNode(node);
+  const capturedMutable: Record<string, Node> = {};
+  for (const [id, node] of Object.entries(draftNodes)) capturedMutable[id] = cloneNode(node);
   const effects: PageMutationEffect[] = [];
+  let active = true;
 
   const remove = (id: string): boolean => {
     const node = draftNodes[id];
@@ -1619,14 +1665,14 @@ export function createPageMutationPlan<T>(
   };
 
   const draft: PageMutationDraft = {
-    page: draftPage,
-    get effects() { return effects; },
-    node: (id) => draftNodes[id],
+    page: immutablePage(draftPage),
+    node: (id) => active && draftNodes[id] ? immutableNode(draftNodes[id]) : undefined,
     createChild(parentId, at, raw = "") {
+      if (!active) return null;
       const parent = draftNodes[parentId];
       if (!parent || at < 0 || at > parent.children.length) return null;
       const id = freshId();
-      draftNodes[id] = {
+      const node: Node = {
         id,
         raw,
         collapsed: false,
@@ -1634,11 +1680,13 @@ export function createPageMutationPlan<T>(
         page: pageName,
         children: [],
       };
+      draftNodes[id] = node;
       parent.children.splice(at, 0, id);
-      effects.push({ kind: "create", id, parent: parentId, at, raw });
+      effects.push({ kind: "create", node: immutableNode(node), parent: parentId, at });
       return id;
     },
     insertOutlineChildren(parentId, outlines) {
+      if (!active) return null;
       const parent = draftNodes[parentId];
       if (!parent || !outlines.length) return null;
       const format = draftPage.format;
@@ -1647,18 +1695,22 @@ export function createPageMutationPlan<T>(
         const id = freshId();
         const raw = rawWithInheritedOrderListType(outline.raw, format, parentId);
         draftNodes[id] = { id, raw, collapsed: false, parent, page: pageName, children: [] };
+        const at = draftNodes[parent]?.children.length ?? 0;
+        draftNodes[parent]?.children.push(id);
+        effects.push({ kind: "create", node: immutableNode(draftNodes[id]), parent, at });
         const children = outline.children.map((child) => create(child, id));
         draftNodes[id].children = children;
-        effects.push({ kind: "create", id, parent, at: draftNodes[parent]?.children.length ?? 0, raw });
         return id;
       };
       const created = outlines.map((outline) => create(outline, parentId));
-      parent.children.push(...created);
       last = created[created.length - 1] ?? null;
       return last;
     },
-    deleteSubtree: remove,
+    deleteSubtree(id) {
+      return active && remove(id);
+    },
     setRaw(id, raw) {
+      if (!active) return false;
       const node = draftNodes[id];
       if (!node) return false;
       node.raw = raw;
@@ -1666,53 +1718,195 @@ export function createPageMutationPlan<T>(
       return true;
     },
     setProperty(id, key, value) {
+      if (!active) return false;
       const node = draftNodes[id];
       if (!node) return false;
       node.raw = draftPage.format === "org"
         ? orgRawWithProperty(node.raw, key, value)
         : markdownRawWithProperty(node.raw, key, value);
-      effects.push({ kind: "property", id, key, value });
+      effects.push({ kind: "property", id, key, value, raw: node.raw });
       return true;
     },
     replaceChildren(parentId, children) {
+      if (!active) return false;
       const parent = draftNodes[parentId];
       if (!parent || children.some((id) => !draftNodes[id] || draftNodes[id].page !== pageName)) return false;
       parent.children = [...children];
-      for (const id of children) draftNodes[id].parent = parentId;
+      for (const id of children) {
+        if (draftNodes[id].parent !== parentId) {
+          draftNodes[id].parent = parentId;
+          effects.push({ kind: "parent", id, parent: parentId });
+        }
+      }
       effects.push({ kind: "order", parent: parentId, children: [...children] });
       return true;
     },
   };
 
-  const value = build(draft);
-  if (value === null) return null;
-  const candidate = projectPageDto(draftPage, draftNodes, false);
+  let builtValue: T | null;
+  try {
+    builtValue = build(draft);
+  } finally {
+    active = false;
+  }
+  if (builtValue === null) return null;
+  const frozenEffects = immutableClone(effects) as readonly PageMutationEffect[];
+  const capturedPage = immutablePage(draftPage);
+  const captured = immutableClone(Object.fromEntries(
+    Object.entries(capturedMutable).map(([id, node]) => [id, immutableNode(node)]),
+  )) as Readonly<Record<string, PageMutationDraftNode>>;
+  const replay = replayPageMutationEffects(capturedPage, captured, frozenEffects);
+  if (!replay) return null;
+  const candidate = projectPageDto(replay.page, replay.nodes, false);
   if (!candidate) return null;
+  const value = immutableClone(builtValue);
   const admission = managedStorageRuntime.snapshot().applicationPageAdmission;
+  const graphRoot = graphMeta()?.root ?? "";
+  const epoch = graphEpoch();
+  const binding = graphBinding();
   const plan: InternalPageMutationPlan<T> = {
     [pageMutationPlanSeal]: true,
     pageName,
     tag,
     value,
-    candidate,
-    effects: Object.freeze(effects.map((effect) => Object.freeze(effect))),
-    graphRoot: graphMeta()?.root ?? "",
-    graphEpoch: graphEpoch(),
-    graphBinding: graphBinding(),
+    candidate: immutableClone(candidate),
+    effects: frozenEffects,
+    graphRoot,
+    graphEpoch: epoch,
+    graphBinding: binding,
     pageGeneration: generation,
     editGeneration: editGeneration(pageName),
     editorTransactionGeneration: editorTransactionGeneration(pageName),
     saveBaseline: saveBaselineFor(pageName),
     bindingGeneration: admission?.binding_generation ?? -1,
     authority: admission?.authority ?? "missing",
+    pendingKey: `${graphRoot}\0${epoch}\0${binding}\0${generation}\0${pageName}`,
     captured,
-    draftPage,
-    draftNodes,
+    capturedPage,
+    uiAuthority: uiAuthority
+      ? Object.freeze({ token: immutableClone(uiAuthority.token), isCurrent: uiAuthority.isCurrent })
+      : undefined,
   };
   return Object.freeze(plan);
 }
 
-function pageMutationPlanCurrent(plan: InternalPageMutationPlan<unknown>): boolean {
+interface ReplayedPageMutation {
+  page: FeedPage;
+  nodes: Record<string, Node>;
+}
+
+function mutablePage(page: PageMutationDraftPage | FeedPage): FeedPage {
+  return clonePages([page as FeedPage])[0];
+}
+
+function mutableNodes(nodes: Readonly<Record<string, PageMutationDraftNode>>): Record<string, Node> {
+  return Object.fromEntries(Object.entries(nodes).map(([id, node]) => [id, cloneNode(node as Node)]));
+}
+
+function applyEffectsToMutablePage(
+  page: FeedPage,
+  nodes: Record<string, Node>,
+  effects: readonly PageMutationEffect[],
+): boolean {
+  if (pageMutationEffectFailureForTest) return false;
+  for (const effect of effects) {
+    if (effect.kind === "create") {
+      const parent = nodes[effect.parent];
+      if (nodes[effect.node.id] || !parent || effect.at < 0 || effect.at > parent.children.length) return false;
+      const node = cloneNode(effect.node as Node);
+      if (node.page !== page.name || node.parent !== effect.parent || node.children.length) return false;
+      nodes[node.id] = node;
+      parent.children.splice(effect.at, 0, node.id);
+      continue;
+    }
+    if (effect.kind === "delete") {
+      const node = nodes[effect.id];
+      if (!node) return false;
+      const siblings = node.parent === null ? page.roots : nodes[node.parent]?.children;
+      if (!siblings) return false;
+      const at = siblings.indexOf(effect.id);
+      if (at < 0) return false;
+      siblings.splice(at, 1);
+      const remove = (id: string): boolean => {
+        const current = nodes[id];
+        if (!current) return false;
+        for (const child of [...current.children]) if (!remove(child)) return false;
+        delete nodes[id];
+        return true;
+      };
+      if (!remove(effect.id)) return false;
+      continue;
+    }
+    if (effect.kind === "raw") {
+      const node = nodes[effect.id];
+      if (!node) return false;
+      node.raw = effect.raw;
+      continue;
+    }
+    if (effect.kind === "property") {
+      const node = nodes[effect.id];
+      if (!node) return false;
+      const raw = page.format === "org"
+        ? orgRawWithProperty(node.raw, effect.key, effect.value)
+        : markdownRawWithProperty(node.raw, effect.key, effect.value);
+      if (raw !== effect.raw) return false;
+      node.raw = raw;
+      continue;
+    }
+    if (effect.kind === "parent") {
+      const node = nodes[effect.id];
+      if (!node || !nodes[effect.parent]) return false;
+      node.parent = effect.parent;
+      continue;
+    }
+    const parent = nodes[effect.parent];
+    if (!parent || new Set(effect.children).size !== effect.children.length) return false;
+    if (effect.children.some((id) => !nodes[id] || nodes[id].page !== page.name)) return false;
+    parent.children = [...effect.children];
+  }
+
+  const seen = new Set<string>();
+  const visit = (id: string, parent: string | null): boolean => {
+    const node = nodes[id];
+    if (!node || seen.has(id) || node.page !== page.name || node.parent !== parent) return false;
+    seen.add(id);
+    return node.children.every((child) => visit(child, id));
+  };
+  if (new Set(page.roots).size !== page.roots.length || !page.roots.every((id) => visit(id, null))) return false;
+  return Object.values(nodes).every((node) => node.page !== page.name || seen.has(node.id));
+}
+
+function replayPageMutationEffects(
+  page: PageMutationDraftPage,
+  captured: Readonly<Record<string, PageMutationDraftNode>>,
+  effects: readonly PageMutationEffect[],
+): ReplayedPageMutation | null {
+  const replay = { page: mutablePage(page), nodes: mutableNodes(captured) };
+  return applyEffectsToMutablePage(replay.page, replay.nodes, effects) ? replay : null;
+}
+
+function replayMatchesCandidate(plan: InternalPageMutationPlan<unknown>): boolean {
+  const replay = replayPageMutationEffects(plan.capturedPage, plan.captured, plan.effects);
+  const projected = replay && projectPageDto(replay.page, replay.nodes, false);
+  return !!projected && JSON.stringify(projected) === JSON.stringify(plan.candidate);
+}
+
+/** Test-only proof that the finalized authority is a deeply immutable replay
+ * program. Returns false in production builds. */
+export function __pageMutationPlanDeeplyFrozenForTest(plan: PageMutationPlan<unknown>): boolean {
+  if (import.meta.env.MODE !== "test") return false;
+  const check = (value: unknown): boolean => {
+    if (value === null || typeof value !== "object") return true;
+    if (!Object.isFrozen(value)) return false;
+    return Object.values(value).every(check);
+  };
+  return check(plan.effects) && check(plan.candidate) && check(plan.value);
+}
+
+function pageMutationPlanCurrent(
+  plan: InternalPageMutationPlan<unknown>,
+  checkUiAuthority = true,
+): boolean {
   const admission = managedStorageRuntime.snapshot().applicationPageAdmission;
   if (
     graphTransitioning()
@@ -1726,6 +1920,11 @@ function pageMutationPlanCurrent(plan: InternalPageMutationPlan<unknown>): boole
     || admission?.binding_generation !== plan.bindingGeneration
     || admission?.authority !== plan.authority
   ) return false;
+  const page = pageByName(plan.pageName);
+  if (!page || JSON.stringify(mutablePage(page)) !== JSON.stringify(mutablePage(plan.capturedPage))) return false;
+  const liveIds = Object.values(doc.byId).filter((node) => node.page === plan.pageName).map((node) => node.id).sort();
+  const capturedIds = Object.keys(plan.captured).sort();
+  if (liveIds.length !== capturedIds.length || liveIds.some((id, index) => id !== capturedIds[index])) return false;
   for (const [id, expected] of Object.entries(plan.captured)) {
     const current = doc.byId[id];
     if (!current
@@ -1736,20 +1935,32 @@ function pageMutationPlanCurrent(plan: InternalPageMutationPlan<unknown>): boole
       || current.children.length !== expected.children.length
       || current.children.some((child, index) => child !== expected.children[index])) return false;
   }
-  return true;
+  return !checkUiAuthority || !plan.uiAuthority || plan.uiAuthority.isCurrent(plan.value);
 }
 
-function applyPageMutationPlanNow<T>(plan: InternalPageMutationPlan<T>): boolean {
-  if (appliedPageMutationPlans.has(plan) || !pageMutationPlanCurrent(plan)) return false;
-  const projected = projectPageDto(plan.draftPage, plan.draftNodes, false);
-  if (!projected || JSON.stringify(projected) !== JSON.stringify(plan.candidate)) return false;
+function applyPageMutationPlanNow<T>(
+  plan: InternalPageMutationPlan<T>,
+  checkUiAuthority: boolean,
+): boolean {
+  if (appliedPageMutationPlans.has(plan)
+    || !pageMutationPlanCurrent(plan, checkUiAuthority)
+    || !replayMatchesCandidate(plan)) return false;
   const pageIndex = doc.pages.findIndex((page) => page.name === plan.pageName);
   if (pageIndex < 0) return false;
+  const livePage = mutablePage(doc.pages[pageIndex]);
+  const liveNodes = Object.fromEntries(
+    Object.values(doc.byId)
+      .filter((node) => node.page === plan.pageName)
+      .map((node) => [node.id, cloneNode(unwrap(node))]),
+  );
+  if (!applyEffectsToMutablePage(livePage, liveNodes, plan.effects)) return false;
+  const projected = projectPageDto(livePage, liveNodes, false);
+  if (!projected || JSON.stringify(projected) !== JSON.stringify(plan.candidate)) return false;
   pushUndo(plan.tag, [plan.pageName]);
   setDoc(produce((state) => {
-    purgePageNodes(state, plan.pageName);
-    for (const [id, node] of Object.entries(plan.draftNodes)) state.byId[id] = cloneNode(node);
-    state.pages[pageIndex] = clonePages([plan.draftPage])[0];
+    if (!applyEffectsToMutablePage(state.pages[pageIndex], state.byId, plan.effects)) {
+      throw new Error("validated page-mutation effects failed during atomic replay");
+    }
   }));
   appliedPageMutationPlans.add(plan);
   markDirty(plan.pageName);
@@ -1772,7 +1983,7 @@ export function applyPageMutationPlan<T>(
   }
   startedPageMutationPlans.add(plan);
   if (plan.authority === "direct") {
-    if (!applyPageMutationPlanNow(plan)) return { kind: "refused", claimed: false };
+    if (!applyPageMutationPlanNow(plan, false)) return { kind: "refused", claimed: false };
     afterApply?.(plan.value);
     return { kind: "applied", value: plan.value };
   }
@@ -1780,11 +1991,14 @@ export function applyPageMutationPlan<T>(
     pushToast(managedPageMutationRefusedToast, "error");
     return { kind: "refused", claimed: true };
   }
-  if (pendingPageMutations.has(plan.pageName)) {
+  if (!pageMutationPlanCurrent(plan) || !replayMatchesCandidate(plan)) {
+    return { kind: "refused", claimed: true };
+  }
+  if (pendingPageMutations.has(plan.pendingKey)) {
     pushToast(managedPageMutationBusyToast, "error");
     return { kind: "refused", claimed: true };
   }
-  pendingPageMutations.set(plan.pageName, plan);
+  pendingPageMutations.set(plan.pendingKey, plan);
   const settled = backend()
     .preflightManagedPageMutation(plan.candidate, plan.saveBaseline, plan.bindingGeneration)
     .then((acceptance) => {
@@ -1793,11 +2007,11 @@ export function applyPageMutationPlan<T>(
         && acceptance.page_name === plan.candidate.name
         && acceptance.page_path === plan.candidate.path
         && acceptance.base_revision === plan.saveBaseline;
-      if (!accepted || !applyPageMutationPlanNow(plan)) {
+      if (!accepted || !applyPageMutationPlanNow(plan, true)) {
         pushToast(managedPageMutationRefusedToast, "error");
         return false;
       }
-      afterApply?.(plan.value);
+      if (!plan.uiAuthority || plan.uiAuthority.isCurrent(plan.value)) afterApply?.(plan.value);
       return true;
     })
     .catch(() => {
@@ -1805,7 +2019,7 @@ export function applyPageMutationPlan<T>(
       return false;
     })
     .finally(() => {
-      if (pendingPageMutations.get(plan.pageName) === plan) pendingPageMutations.delete(plan.pageName);
+      if (pendingPageMutations.get(plan.pendingKey) === plan) pendingPageMutations.delete(plan.pendingKey);
     });
   return { kind: "pending", value: plan.value, settled };
 }

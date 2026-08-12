@@ -752,6 +752,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     rowId: doc.byId[props.gridId]?.children[props.cell.row],
     gridId: props.gridId,
     col: props.cell.col,
+    surfaceId: props.surfaceId,
   });
   const openCellMenu = (e: MouseEvent) => {
     const blockId = props.cell.blockId;

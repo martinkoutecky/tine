@@ -51,8 +51,16 @@ import {
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
-import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
-import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel } from "../sheet/selection";
+import { appendSheetCellChild, deleteColumn, deleteRow as deleteSheetRow, setBoardGroupBy } from "../sheet/mutations";
+import {
+  captureSheetMutationAuthority,
+  cellBlockId,
+  cellForBlockId,
+  cellOwner,
+  cellSel,
+  focusCell,
+  setCellSel,
+} from "../sheet/selection";
 import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
 import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
@@ -429,14 +437,19 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
   const canDeleteColumn = () =>
     props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
   const deleteRow = () => {
-    const rowId = props.remove?.rowId;
-    if (rowId && doc.byId[rowId]) deleteBlock(rowId);
-    props.close();
+    const { rowId, gridId } = props.remove ?? {};
+    const row = gridId && rowId ? doc.byId[gridId]?.children.indexOf(rowId) ?? -1 : -1;
+    const active = cellSel();
+    if (gridId && row >= 0 && active && active.gridId === gridId) {
+      deleteSheetRow(gridId, row, props.close, captureSheetMutationAuthority(active));
+    }
   };
   const deleteColumnHere = () => {
     const { gridId, col } = props.remove ?? {};
-    if (gridId != null && col != null) deleteColumn(gridId, col);
-    props.close();
+    const active = cellSel();
+    if (gridId != null && col != null && active && active.gridId === gridId) {
+      deleteColumn(gridId, col, props.close, captureSheetMutationAuthority(active));
+    }
   };
   const addChild = () => {
     const active = cellSel();

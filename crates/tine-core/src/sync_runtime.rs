@@ -29371,6 +29371,23 @@ mod tests {
             status_before.managed_local_pending
         );
 
+        handle
+            .observe_watcher(vec![SyncWatcherObservation::RescanRequired])
+            .unwrap();
+        let watcher_before = handle.status().unwrap();
+        let watcher_files = snapshot_graph_files(fixture.graph_root());
+        let watcher_frames = managed_local_journal_frames(&request);
+        assert!(matches!(
+            handle.preflight_application_page(exact.clone()),
+            Ok(SyncApplicationPagePreflightOutcome::Deferred { .. })
+        ));
+        assert_eq!(handle.status().unwrap(), watcher_before);
+        assert_eq!(snapshot_graph_files(fixture.graph_root()), watcher_files);
+        assert_eq!(managed_local_journal_frames(&request), watcher_frames);
+        while handle.status().unwrap().watcher.pending {
+            handle.tick().unwrap();
+        }
+
         let mut overflow = page.clone();
         overflow.blocks.push(BlockDto {
             id: "preflight-temporary-overflow".into(),
@@ -29404,6 +29421,114 @@ mod tests {
             managed_local_journal_frames(&request).len(),
             frames_before + 1
         );
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+    }
+
+    #[test]
+    fn application_page_preflight_rejects_depth_utf8_text_and_local_transaction_limits_without_writes(
+    ) {
+        let fixture = RuntimeHostFixture::safe("sync-runtime-application-page-preflight-limits");
+        let request = fixture.request();
+        let handle = active_handle(SyncRuntimeHandle::open(request.clone()));
+        drive_initial_feed(&handle);
+        let before_files = snapshot_graph_files(fixture.graph_root());
+        let before_status = handle.status().unwrap();
+        let before_frames = managed_local_journal_frames(&request);
+
+        let assert_unchanged = || {
+            assert_eq!(snapshot_graph_files(fixture.graph_root()), before_files);
+            assert_eq!(handle.status().unwrap(), before_status);
+            assert_eq!(managed_local_journal_frames(&request), before_frames);
+        };
+        let new_target = |name: &str| SyncApplicationPageSaveTarget::New {
+            name: name.into(),
+            page_kind: SyncPageKind::Page,
+        };
+
+        let mut nested = BlockDto {
+            id: "depth-128".into(),
+            raw: "bottom".into(),
+            ..BlockDto::default()
+        };
+        for depth in (0..MAX_SYNC_EDITOR_DEPTH).rev() {
+            nested = BlockDto {
+                id: format!("depth-{depth}"),
+                raw: String::new(),
+                children: vec![nested],
+                ..BlockDto::default()
+            };
+        }
+        assert!(matches!(
+            handle.preflight_application_page(SyncApplicationPageSaveRequest {
+                target: new_target("Preflight Depth 129"),
+                page: new_application_page(
+                    "Preflight Depth 129",
+                    SyncPageKind::Page,
+                    None,
+                    vec![nested],
+                ),
+            }),
+            Err(SyncApplicationPageRequestError::RequestTooLarge(size))
+                if size.depth == MAX_SYNC_EDITOR_DEPTH + 1
+        ));
+        assert_unchanged();
+
+        let utf8 = "é".repeat(MAX_SYNC_EDITOR_REQUEST_BYTES / 2 + 1);
+        assert!(utf8.chars().count() < MAX_SYNC_EDITOR_REQUEST_BYTES);
+        assert!(utf8.len() > MAX_SYNC_EDITOR_REQUEST_BYTES);
+        assert!(matches!(
+            handle.preflight_application_page(SyncApplicationPageSaveRequest {
+                target: new_target("Preflight UTF8 Bytes"),
+                page: new_application_page(
+                    "Preflight UTF8 Bytes",
+                    SyncPageKind::Page,
+                    None,
+                    vec![BlockDto {
+                        id: "utf8".into(),
+                        raw: utf8,
+                        ..BlockDto::default()
+                    }],
+                ),
+            }),
+            Err(SyncApplicationPageRequestError::RequestTooLarge(size))
+                if size.text_bytes > MAX_SYNC_EDITOR_REQUEST_BYTES
+        ));
+        assert_unchanged();
+
+        let path = "content/nested pages/Preflight Local Rows.md";
+        let source = (0..MAX_SYNC_EDITOR_BLOCKS)
+            .map(|index| format!("- source {index}\n"))
+            .collect::<String>();
+        admit_external_page(&handle, &fixture, path, source.as_bytes());
+        let (mut replacement, revision) = load_application_exact(&handle, path);
+        for (index, block) in replacement.blocks.iter_mut().enumerate() {
+            block.id = format!("replacement-{index}");
+            block.raw = format!("replacement {index}");
+        }
+        replacement.name = "Preflight Local Rows Renamed".into();
+        replacement.title.clone_from(&replacement.name);
+        replacement.pre_block = Some("local row overflow preamble".into());
+        let local_before_files = snapshot_graph_files(fixture.graph_root());
+        let local_before_status = handle.status().unwrap();
+        let local_before_frames = managed_local_journal_frames(&request);
+        assert!(handle
+            .preflight_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: path.into(),
+                    revision,
+                },
+                page: replacement,
+            })
+            .is_err());
+        assert_eq!(
+            snapshot_graph_files(fixture.graph_root()),
+            local_before_files
+        );
+        assert_eq!(handle.status().unwrap(), local_before_status);
+        assert_eq!(managed_local_journal_frames(&request), local_before_frames);
         assert!(matches!(
             handle.clean_shutdown().unwrap(),
             SyncShutdownOutcome::Safe(_)

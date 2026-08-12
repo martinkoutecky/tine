@@ -11,6 +11,12 @@ import {
   setDoc,
   undo,
   redo,
+  createPageMutationPlan,
+  applyPageMutationPlan,
+  bumpEditGeneration,
+  takeEditorLease,
+  __pageMutationPlanDeeplyFrozenForTest,
+  __setPageMutationEffectFailureForTest,
   __setStoreMutationObserverForTest,
 } from "../store";
 import type { BlockDto, PageDto } from "../types";
@@ -36,10 +42,12 @@ import {
 } from "./mutations";
 import { parseDelimitedText } from "./tsv";
 import { setToasts, toasts } from "../ui";
+import { bumpGraphEpoch, graphMeta, setGraphMeta } from "../ui";
 import { observeMatrixDimensions } from "./matrix";
 import { managedStorageRuntime } from "../managedStorageRuntime";
 import { mockBackend } from "../mock";
 import { __setBackendForTest } from "../backend";
+import { setBaseRev } from "../persistence";
 
 let counter = 0;
 let bindingCounter = 1_000;
@@ -121,9 +129,216 @@ beforeEach(() => {
   setToasts([]);
   __setStoreMutationObserverForTest(null);
   __setBackendForTest(null);
+  __setPageMutationEffectFailureForTest(false);
 });
 
 describe("sheet structural mutations", () => {
+  function bindManaged(binding = 51) {
+    managedStorageRuntime.bind(binding, {
+      binding_generation: binding,
+      authority: "managed_writable",
+      application_save_page_blocks: 511,
+      application_page_request_text_bytes: 1024 * 1024,
+      application_page_max_depth: 128,
+    });
+  }
+
+  function delayedPreflight() {
+    const base = mockBackend();
+    const pending: Array<(value: Awaited<ReturnType<typeof base.preflightManagedPageMutation>>) => void> = [];
+    __setBackendForTest({
+      ...base,
+      preflightManagedPageMutation: () => new Promise((resolve) => pending.push(resolve)),
+    });
+    return pending;
+  }
+
+  function acceptance(binding = 51) {
+    return {
+      status: "accepted" as const,
+      binding_generation: binding,
+      page_name: "Sheet",
+      page_path: "",
+      base_revision: null,
+    };
+  }
+
+  async function settle() {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  const managedRouteRepresentatives: Array<[
+    string,
+    (gridId: string, afterApply: () => void) => void | Promise<void>,
+  ]> = [
+    ["axis", (gridId, done) => insertColumn(gridId, 1, done)],
+    ["clear", (gridId, done) => { clearSheetSelection({ kind: "cell", gridId, row: 0, col: 0 }, done); }],
+    ["fill", (gridId, done) => {
+      fillSheetSelection(
+        { kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } },
+        "down",
+        done,
+      );
+    }],
+    ["matrix paste", (gridId, done) => {
+      pasteTextIntoSheetSelection({ kind: "cell", gridId, row: 1, col: 1 }, "X\tY", () => done());
+    }],
+    ["structural splat", async (gridId, done) => {
+      const source = { kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } } as const;
+      const text = sheetSelectionText(source).text;
+      await copySheetSelection(source);
+      splatStructuralSheetSelection({ kind: "cell", gridId, row: 1, col: 0 }, text, () => done());
+    }],
+    ["move", (gridId, done) => {
+      moveSheetSelection({ kind: "cell", gridId, row: 0, col: 0 }, "down", () => done());
+    }],
+    ["cut", (gridId, done) => {
+      cutSheetSelection({ kind: "cell", gridId, row: 0, col: 0 }, done);
+    }],
+    ["seam growth", (gridId, done) => {
+      insertSheetSeam(gridId, "row", doc.byId[gridId].children.length, 1, () => done());
+    }],
+  ];
+
+  it.each(managedRouteRepresentatives)(
+    "managed acceptance applies the %s representative once after exact preflight",
+    async (_name, invoke) => {
+      const gridId = loadGrid();
+      const before = pageToDto("Sheet");
+      bindManaged();
+      let calls = 0;
+      const base = mockBackend();
+      __setBackendForTest({
+        ...base,
+        preflightManagedPageMutation: async (page, baseRevision, bindingGeneration) => {
+          calls++;
+          return {
+            status: "accepted",
+            binding_generation: bindingGeneration,
+            page_name: page.name,
+            page_path: page.path ?? "",
+            base_revision: baseRevision,
+          };
+        },
+      });
+      const afterApply = vi.fn();
+      await invoke(gridId, afterApply);
+      await settle();
+      expect(calls).toBe(1);
+      expect(afterApply).toHaveBeenCalledTimes(1);
+      expect(pageToDto("Sheet")).not.toEqual(before);
+    },
+  );
+
+  it.each(managedRouteRepresentatives)(
+    "managed refusal leaves the %s representative completely unpublished",
+    async (_name, invoke) => {
+      const gridId = loadGrid();
+      const before = pageToDto("Sheet");
+      bindManaged();
+      const base = mockBackend();
+      __setBackendForTest({
+        ...base,
+        preflightManagedPageMutation: async () => ({ status: "refused" }),
+      });
+      const afterApply = vi.fn();
+      await invoke(gridId, afterApply);
+      await settle();
+      expect(pageToDto("Sheet")).toEqual(before);
+      expect(afterApply).not.toHaveBeenCalled();
+    },
+  );
+
+  it("finalizes a deeply immutable effect authority and revokes retained builder references", () => {
+    const gridId = loadGrid();
+    let retained: Parameters<Parameters<typeof createPageMutationPlan>[2]>[0] | null = null;
+    const plan = createPageMutationPlan("Sheet", "sheet:tamper-proof", (draft) => {
+      retained = draft;
+      return draft.createChild(gridId, 1);
+    });
+    expect(plan).not.toBeNull();
+    expect(__pageMutationPlanDeeplyFrozenForTest(plan!)).toBe(true);
+    expect(retained!.node(gridId)).toBeUndefined();
+    expect(retained!.createChild(gridId, 0)).toBeNull();
+    expect(() => ((plan!.candidate.blocks[0] as { raw: string }).raw = "tampered")).toThrow();
+    expect(applyPageMutationPlan(plan!).kind).toBe("applied");
+  });
+
+  it("helper replay failure refuses before undo, publication, or dirty work", () => {
+    const gridId = loadGrid();
+    const before = pageToDto("Sheet");
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    __setPageMutationEffectFailureForTest(true);
+    insertColumn(gridId, 1);
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(observations).toEqual([]);
+  });
+
+  it.each([
+    ["graph epoch", () => bumpGraphEpoch()],
+    ["graph root", () => setGraphMeta({ ...(graphMeta() ?? {} as never), root: "/changed" })],
+    ["edit generation", () => bumpEditGeneration("Sheet")],
+    ["editor transaction", () => { takeEditorLease("Sheet"); }],
+    ["save baseline", () => setBaseRev("Sheet", "advanced")],
+    ["binding", () => managedStorageRuntime.bind(52, { binding_generation: 52, authority: "managed_unavailable" })],
+  ])("managed delayed %s change stales before publication", async (_name, stale) => {
+    const gridId = loadGrid();
+    const before = pageToDto("Sheet");
+    bindManaged();
+    const pending = delayedPreflight();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    insertColumn(gridId, 1);
+    stale();
+    pending[0](acceptance());
+    await settle();
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(observations).toEqual([]);
+  });
+
+  it("managed delayed referenced relation change preserves that newer edit and suppresses the plan", async () => {
+    const gridId = loadGrid();
+    bindManaged();
+    const pending = delayedPreflight();
+    const observations: string[] = [];
+    __setStoreMutationObserverForTest((event) => observations.push(event.kind));
+    insertColumn(gridId, 1);
+    observations.length = 0;
+    setDoc("byId", "m1", "raw", "changed under plan");
+    observations.length = 0;
+    pending[0](acceptance());
+    await settle();
+    expect(doc.byId.m1.raw).toBe("changed under plan");
+    expect(observations).toEqual([]);
+  });
+
+  it("successor graph uses a distinct single-flight key and reordered old acceptance cannot publish", async () => {
+    const firstGrid = loadGrid();
+    bindManaged();
+    const pending = delayedPreflight();
+    insertColumn(firstGrid, 1);
+
+    resetStore();
+    managedStorageRuntime.bind(51, {
+      binding_generation: 51,
+      authority: "managed_writable",
+      application_save_page_blocks: 511,
+      application_page_request_text_bytes: 1024 * 1024,
+      application_page_max_depth: 128,
+    });
+    const secondGrid = loadGrid();
+    insertColumn(secondGrid, 1);
+    expect(pending).toHaveLength(2);
+    pending[1](acceptance());
+    await settle();
+    const successor = pageToDto("Sheet");
+    pending[0](acceptance());
+    await settle();
+    expect(pageToDto("Sheet")).toEqual(successor);
+  });
+
   it("publishes one undo snapshot, one store update, and one dirty mark for axis, sparse rectangle, and seam-growth representatives", () => {
     const gridId = loadGrid();
     const observations: string[] = [];

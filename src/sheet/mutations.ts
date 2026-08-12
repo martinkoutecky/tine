@@ -13,6 +13,7 @@ import {
   createPageMutationPlan,
   applyPageMutationPlan,
   type PageMutationDraft,
+  type PageMutationAuthority,
   undo,
   withUndoUnit,
 } from "../store";
@@ -154,17 +155,33 @@ function plannedSheetMutation<T>(
   tag: string,
   build: (draft: PageMutationDraft) => T | null,
   afterApply?: (value: T) => void,
+  authority?: PageMutationAuthority<T>,
 ): T | null {
   if (!gridRows(gridId)) return null;
   const page = gridPage(gridId);
   if (!page) return null;
-  const plan = createPageMutationPlan(page, tag, build);
+  const plan = createPageMutationPlan(page, tag, build, authority);
   if (!plan) return null;
   applyPageMutationPlan(plan, afterApply);
   return plan.value;
 }
 
-function draftRows(draft: PageMutationDraft, gridId: string): string[] | null {
+function plannedSheetOwnerMutation<T>(
+  ownerId: string,
+  tag: string,
+  build: (draft: PageMutationDraft) => T | null,
+  afterApply?: (value: T) => void,
+  authority?: PageMutationAuthority<T>,
+): T | null {
+  const page = gridPage(ownerId);
+  if (!page || !doc.byId[ownerId]) return null;
+  const plan = createPageMutationPlan(page, tag, build, authority);
+  if (!plan) return null;
+  applyPageMutationPlan(plan, afterApply);
+  return plan.value;
+}
+
+function draftRows(draft: PageMutationDraft, gridId: string): readonly string[] | null {
   return draft.node(gridId)?.children ?? null;
 }
 
@@ -214,9 +231,11 @@ function draftMaterializeCell(
 }
 
 function draftEnsureRows(draft: PageMutationDraft, gridId: string, lastRow: number): boolean {
-  const rows = draftRows(draft, gridId);
-  if (!rows || lastRow < 0) return false;
-  while (rows.length <= lastRow) if (!draft.createChild(gridId, rows.length)) return false;
+  if (!draftRows(draft, gridId) || lastRow < 0) return false;
+  while ((draftRows(draft, gridId)?.length ?? 0) <= lastRow) {
+    const at = draftRows(draft, gridId)?.length ?? -1;
+    if (at < 0 || !draft.createChild(gridId, at)) return false;
+  }
   return true;
 }
 
@@ -297,7 +316,12 @@ function shiftedAggregates(
   return out;
 }
 
-export function insertRow(gridId: string, at: number, afterApply?: (id: string) => void): string | null {
+export function insertRow(
+  gridId: string,
+  at: number,
+  afterApply?: (id: string) => void,
+  authority?: PageMutationAuthority<string>,
+): string | null {
   const result = plannedSheetMutation(gridId, "sheet:insert-row", (draft) => {
     const rows = draftRows(draft, gridId);
     if (!rows || at < 0 || at > rows.length) return null;
@@ -305,21 +329,31 @@ export function insertRow(gridId: string, at: number, afterApply?: (id: string) 
   }, (id) => {
     invalidateMatrixDimensions(gridId);
     afterApply?.(id);
-  });
+  }, authority);
   return result;
 }
 
-export function deleteRow(gridId: string, row: number, afterApply?: () => void): void {
-  plannedSheetMutation(gridId, "sheet:delete-row", (draft) => {
-    const id = draftRows(draft, gridId)?.[row];
+export function deleteRow(
+  gridId: string,
+  row: number,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
+  plannedSheetOwnerMutation(gridId, "sheet:delete-row", (draft) => {
+    const id = draft.node(gridId)?.children[row];
     return id && draft.deleteSubtree(id) ? true : null;
   }, () => {
     invalidateMatrixDimensions(gridId);
     afterApply?.();
-  });
+  }, authority);
 }
 
-export function insertColumn(gridId: string, at: number, afterApply?: () => void): void {
+export function insertColumn(
+  gridId: string,
+  at: number,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
   plannedSheetMutation(gridId, "sheet:insert-column", (draft) => {
     const rows = draftRows(draft, gridId);
     if (!rows || at < 0 || at > draftColCount(draft, gridId)) return null;
@@ -338,10 +372,15 @@ export function insertColumn(gridId: string, at: number, afterApply?: () => void
   }, () => {
     invalidateMatrixDimensions(gridId);
     afterApply?.();
-  });
+  }, authority);
 }
 
-export function deleteColumn(gridId: string, col: number, afterApply?: () => void): void {
+export function deleteColumn(
+  gridId: string,
+  col: number,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
   plannedSheetMutation(gridId, "sheet:delete-column", (draft) => {
     const rows = draftRows(draft, gridId);
     if (!rows || col < 0 || col >= draftColCount(draft, gridId)) return null;
@@ -360,10 +399,16 @@ export function deleteColumn(gridId: string, col: number, afterApply?: () => voi
   }, () => {
     invalidateMatrixDimensions(gridId);
     afterApply?.();
-  });
+  }, authority);
 }
 
-export function deleteRows(gridId: string, top: number, bottom: number, afterApply?: () => void): void {
+export function deleteRows(
+  gridId: string,
+  top: number,
+  bottom: number,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
   plannedSheetMutation(gridId, "sheet:delete-rows", (draft) => {
     const rows = draftRows(draft, gridId);
     if (!rows) return null;
@@ -378,10 +423,16 @@ export function deleteRows(gridId: string, top: number, bottom: number, afterApp
   }, () => {
     invalidateMatrixDimensions(gridId);
     afterApply?.();
-  });
+  }, authority);
 }
 
-export function deleteColumns(gridId: string, left: number, right: number, afterApply?: () => void): void {
+export function deleteColumns(
+  gridId: string,
+  left: number,
+  right: number,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
   plannedSheetMutation(gridId, "sheet:delete-columns", (draft) => {
     const rows = draftRows(draft, gridId);
     if (!rows) return null;
@@ -405,7 +456,7 @@ export function deleteColumns(gridId: string, left: number, right: number, after
   }, () => {
     invalidateMatrixDimensions(gridId);
     afterApply?.();
-  });
+  }, authority);
 }
 
 export function materializeCell(
@@ -413,6 +464,7 @@ export function materializeCell(
   row: number,
   col: number,
   afterApply?: (cellId: string) => void,
+  authority?: PageMutationAuthority<string>,
 ): string | null {
   const existing = cellIdAt(gridId, row, col);
   if (existing) {
@@ -423,7 +475,7 @@ export function materializeCell(
     draftMaterializeCell(draft, gridId, row, col), (cellId) => {
       invalidateMatrixDimensions(gridId);
       afterApply?.(cellId);
-    });
+    }, authority);
 }
 
 /** Atomic seam insertion plus the cell required for its post-commit edit
@@ -435,6 +487,7 @@ export function insertSheetSeam(
   at: number,
   anchor: number,
   afterApply?: (target: SheetPoint) => void,
+  authority?: PageMutationAuthority<SheetPoint>,
 ): SheetPoint | null {
   return plannedSheetMutation(gridId, "sheet:seam-insert", (draft) => {
     const rows = draftRows(draft, gridId);
@@ -468,7 +521,7 @@ export function insertSheetSeam(
   }, (target) => {
     invalidateMatrixDimensions(gridId);
     afterApply?.(target);
-  });
+  }, authority);
 }
 
 export function setColumnWidth(gridId: string, col: number, px: number | null): void {
@@ -541,7 +594,11 @@ export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
   return copyRich(text, html);
 }
 
-export function clearSheetSelection(sel: SheetMutationSelection, afterApply?: () => void): boolean {
+export function clearSheetSelection(
+  sel: SheetMutationSelection,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): boolean {
   const rect = rectForSheetSelection(sel);
   const result = plannedSheetMutation(sel.gridId, "sheet:clear", (draft) => {
     for (let row = rect.top; row <= rect.bottom; row++) {
@@ -551,13 +608,17 @@ export function clearSheetSelection(sel: SheetMutationSelection, afterApply?: ()
       }
     }
     return true;
-  }, () => afterApply?.());
+  }, () => afterApply?.(), authority);
   return result ?? false;
 }
 
-export function cutSheetSelection(sel: SheetMutationSelection, afterApply?: () => void): void {
+export function cutSheetSelection(
+  sel: SheetMutationSelection,
+  afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
+): void {
   void copySheetSelection(sel);
-  clearSheetSelection(sel, afterApply);
+  clearSheetSelection(sel, afterApply, authority);
 }
 
 function compactGridConfigSplit(
@@ -602,6 +663,7 @@ export function fillSheetSelection(
   sel: SheetMutationSelection,
   dir: "down" | "right",
   afterApply?: () => void,
+  authority?: PageMutationAuthority<true>,
 ): boolean {
   const rect = rectForSheetSelection(sel);
   if (dir === "down" && rect.top === rect.bottom) return true;
@@ -636,7 +698,7 @@ export function fillSheetSelection(
       }
     }
     return true;
-  }, () => afterApply?.());
+  }, () => afterApply?.(), authority);
   return result ?? false;
 }
 
@@ -645,6 +707,7 @@ function moveWholeRows(
   rect: SheetRect,
   dir: "up" | "down",
   afterApply?: (rect: SheetRect) => void,
+  authority?: PageMutationAuthority<SheetRect>,
 ): SheetRect | null {
   const rows = gridRows(gridId);
   if (!rows) return null;
@@ -657,7 +720,7 @@ function moveWholeRows(
   next.splice(at, 0, ...moving);
   const moved = offsetRect(rect, dir);
   const result = plannedSheetMutation(gridId, "sheet:move-rows", (draft) =>
-    draft.replaceChildren(gridId, next) ? moved : null, afterApply);
+    draft.replaceChildren(gridId, next) ? moved : null, afterApply, authority);
   return result;
 }
 
@@ -678,6 +741,7 @@ function moveRectContent(
   rect: SheetRect,
   dir: SheetMoveDirection,
   afterApply?: (rect: SheetRect) => void,
+  authority?: PageMutationAuthority<SheetRect>,
 ): SheetRect | null {
   const bounds = sheetBounds(gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return null;
@@ -733,13 +797,14 @@ function moveRectContent(
       if (!draft.replaceChildren(parent, children)) return null;
     }
     return moved;
-  }, afterApply);
+  }, afterApply, authority);
 }
 
 export function moveSheetSelection(
   sel: SheetMutationSelection,
   dir: SheetMoveDirection,
   afterApply?: (selection: SheetMutationSelection) => void,
+  authority?: PageMutationAuthority<SheetMutationSelection>,
 ): SheetMutationSelection | null {
   const rect = rectForSheetSelection(sel);
   const bounds = sheetBounds(sel.gridId);
@@ -749,7 +814,7 @@ export function moveSheetSelection(
     if (target.row < 0 || target.col < 0 || target.row >= bounds.rows || target.col >= bounds.cols) return null;
     if ((dir === "left" || dir === "right") && !cellIdAt(sel.gridId, target.row, target.col)) return null;
     const next = { kind: "cell", gridId: sel.gridId, row: target.row, col: target.col } as const;
-    const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next));
+    const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next), authority as PageMutationAuthority<SheetRect> | undefined);
     return moved ? next : null;
   }
 
@@ -765,7 +830,7 @@ export function moveSheetSelection(
       anchor: { row: sel.anchor.row + delta, col: sel.anchor.col },
       focus: { row: sel.focus.row + delta, col: sel.focus.col },
     };
-    const movedRows = moveWholeRows(sel.gridId, rect, dir, () => afterApply?.(next));
+    const movedRows = moveWholeRows(sel.gridId, rect, dir, () => afterApply?.(next), authority as PageMutationAuthority<SheetRect> | undefined);
     return movedRows ? next : null;
   }
 
@@ -776,7 +841,7 @@ export function moveSheetSelection(
     anchor: { row: sel.anchor.row + delta.row, col: sel.anchor.col + delta.col },
     focus: { row: sel.focus.row + delta.row, col: sel.focus.col + delta.col },
   };
-  const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next));
+  const moved = moveRectContent(sel.gridId, rect, dir, () => afterApply?.(next), authority as PageMutationAuthority<SheetRect> | undefined);
   return moved ? next : null;
 }
 
@@ -819,6 +884,7 @@ export function splatStructuralSheetSelection(
   sel: SheetMutationSelection,
   text: string,
   afterApply?: (selection: SheetMutationSelection) => void,
+  authority?: PageMutationAuthority<{ overwroteNonEmpty: boolean }>,
 ): SheetMutationSelection | null | undefined {
   if (!lastSheetCopy || lastSheetCopy.fingerprint !== text) return undefined;
   const rows = parseOutline(lastSheetCopy.outlineMd);
@@ -855,7 +921,7 @@ export function splatStructuralSheetSelection(
     }, (applied) => {
       if (applied.overwroteNonEmpty) pushPasteOverwriteToast();
       afterApply?.(selection);
-    });
+    }, authority);
   if (!result) return null;
   return selection;
 }
@@ -864,6 +930,7 @@ export function pasteTextIntoSheetSelection(
   sel: SheetMutationSelection,
   text: string,
   afterApply?: (selection: SheetMutationSelection) => void,
+  authority?: PageMutationAuthority<{ overwroteNonEmpty: boolean } | true>,
 ): SheetMutationSelection | null {
   const rect = rectForSheetSelection(sel);
   const anchor = { row: rect.top, col: rect.left };
@@ -896,7 +963,7 @@ export function pasteTextIntoSheetSelection(
     }, (applied) => {
       if (applied.overwroteNonEmpty) pushPasteOverwriteToast();
       afterApply?.(selection);
-    });
+    }, authority as PageMutationAuthority<{ overwroteNonEmpty: boolean }> | undefined);
     if (!result) return null;
     return selection;
   }
@@ -908,7 +975,7 @@ export function pasteTextIntoSheetSelection(
     const ok = plannedSheetMutation(sel.gridId, "sheet:paste-outline", (draft) => {
       const id = draftMaterializeCell(draft, sel.gridId, anchor.row, anchor.col);
       return id && draft.insertOutlineChildren(id, nodes) ? true : null;
-    }, () => afterApply?.(selection));
+    }, () => afterApply?.(selection), authority as PageMutationAuthority<true> | undefined);
     return ok ? selection : null;
   }
 
@@ -918,6 +985,6 @@ export function pasteTextIntoSheetSelection(
     return id && draftWriteVisible(draft, id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))
       ? true
       : null;
-  }, () => afterApply?.(selection));
+  }, () => afterApply?.(selection), authority as PageMutationAuthority<true> | undefined);
   return ok ? selection : null;
 }
