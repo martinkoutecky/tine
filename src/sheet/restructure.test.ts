@@ -1,4 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { __setBackendForTest } from "../backend";
+import { managedStorageRuntime } from "../managedStorageRuntime";
+import { mockBackend } from "../mock";
 import { initParser } from "../render/parse";
 import { doc, pageToDto, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { flatten, hierarchify } from "./restructure";
@@ -7,7 +10,42 @@ beforeAll(() => initParser());
 
 beforeEach(() => {
   resetStore();
+  managedStorageRuntime.bind(1, { binding_generation: 1, authority: "direct" });
+  __setBackendForTest(null);
 });
+
+function bindManaged(preflight: "accepted" | "refused") {
+  managedStorageRuntime.bind(51, {
+    binding_generation: 51,
+    authority: "managed_writable",
+    application_save_page_blocks: 511,
+    application_page_request_text_bytes: 1024 * 1024,
+    application_page_max_depth: 128,
+  });
+  const base = mockBackend();
+  let calls = 0;
+  __setBackendForTest({
+    ...base,
+    preflightManagedPageMutation: async (candidate, baseRevision, bindingGeneration) => {
+      calls++;
+      return preflight === "accepted"
+        ? {
+            status: "accepted",
+            binding_generation: bindingGeneration,
+            page_name: candidate.name,
+            page_path: candidate.path ?? "",
+            base_revision: baseRevision,
+          }
+        : { status: "refused" };
+    },
+  });
+  return () => calls;
+}
+
+async function settleManagedPlan() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 function page(roots: string[]): FeedPage {
   return {
@@ -97,6 +135,34 @@ describe("sheet restructure", () => {
     expect(flatten("table")).toBe(false);
     expect(hierarchify("missing", "state")).toBe(false);
 
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("routes managed hierarchify and flatten through one atomic preflight each", async () => {
+    loadTable();
+    const before = pageToDto("Sheet");
+    const calls = bindManaged("accepted");
+
+    expect(hierarchify("table", "state")).toBe(true);
+    expect(pageToDto("Sheet")).toEqual(before);
+    await settleManagedPlan();
+    expect(doc.byId.table.children).toHaveLength(2);
+
+    expect(flatten("table")).toBe(true);
+    await settleManagedPlan();
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(calls()).toBe(2);
+  });
+
+  it("leaves restructure entirely unpublished when managed preflight refuses", async () => {
+    loadTable();
+    const before = pageToDto("Sheet");
+    const calls = bindManaged("refused");
+
+    expect(hierarchify("table", "priority")).toBe(true);
+    await settleManagedPlan();
+
+    expect(calls()).toBe(1);
     expect(pageToDto("Sheet")).toEqual(before);
   });
 });

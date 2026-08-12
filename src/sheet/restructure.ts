@@ -1,16 +1,21 @@
 import {
-  deleteBlock,
+  applyPageMutationPlan,
+  createPageMutationPlan,
   doc,
   formatForBlock,
-  insertEmptyChildBlock,
-  replaceChildOrders,
-  setRaw,
-  withUndoUnit,
   blockPageReadOnly,
+  type PageMutationDraft,
 } from "../store";
 import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
-import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeField, type FieldId } from "./fields";
+import {
+  fieldIdsForBlocks,
+  groupKeyForBlock,
+  isFieldId,
+  readField,
+  writeGroupingFieldToDraft,
+  type FieldId,
+} from "./fields";
 import { sheetConfigFromRaw } from "./config";
 
 const NONE_LABEL = "(none)";
@@ -102,6 +107,16 @@ function inferFlattenField(parentId: string, groups: readonly FlattenGroup[], ch
   return null;
 }
 
+function runRestructurePlan(
+  page: string,
+  tag: string,
+  build: (draft: PageMutationDraft) => boolean | null,
+): boolean {
+  const plan = createPageMutationPlan(page, tag, build);
+  if (!plan) return false;
+  return applyPageMutationPlan(plan).kind !== "refused";
+}
+
 export function canFlatten(parentId: string): boolean {
   return (doc.byId[parentId]?.children ?? []).some((id) => (doc.byId[id]?.children.length ?? 0) > 0);
 }
@@ -126,19 +141,15 @@ export function hierarchify(parentId: string, field: FieldId): boolean {
   }
   if (!buckets.length) return false;
 
-  return withUndoUnit("sheet:hierarchify", [parent.page], () => {
+  return runRestructurePlan(parent.page, "sheet:hierarchify", (draft) => {
     const groupIds: string[] = [];
-    const nextOrders: Record<string, readonly string[]> = {};
     for (const bucket of buckets) {
-      const groupId = insertEmptyChildBlock(parentId, doc.byId[parentId]?.children.length ?? 0);
-      if (!groupId) throw new Error("failed to create group block");
-      setRaw(groupId, bucket.label, { timetracking: false });
+      const groupId = draft.createChild(parentId, draft.node(parentId)?.children.length ?? -1, bucket.label);
+      if (!groupId) return null;
       groupIds.push(groupId);
-      nextOrders[groupId] = bucket.rows;
+      if (!draft.replaceChildren(groupId, bucket.rows)) return null;
     }
-    nextOrders[parentId] = groupIds;
-    if (!replaceChildOrders(nextOrders)) throw new Error("failed to reparent grouped rows");
-    return true;
+    return draft.replaceChildren(parentId, groupIds) ? true : null;
   });
 }
 
@@ -164,21 +175,28 @@ export function flatten(parentId: string): boolean {
   }
   if (!groups.length) return false;
 
-  return withUndoUnit("sheet:flatten", [parent.page], () => {
-    const field = inferFlattenField(parentId, groups, childless);
-    if (field) {
-      for (const group of groups) {
+  const field = inferFlattenField(parentId, groups, childless);
+  const missingValues = field
+    ? groups.flatMap((group) => {
         const value = parseLabel(field, group.label);
-        if (value == null) continue;
-        for (const row of group.rows) {
-          if (!readField(row, field)) writeField(row, field, value);
-        }
+        if (value == null) return [];
+        return group.rows.filter((row) => !readField(row, field)).map((row) => [row, value] as const);
+      })
+    : [];
+
+  return runRestructurePlan(parent.page, "sheet:flatten", (draft) => {
+    if (field) {
+      for (const [row, value] of missingValues) {
+        if (!writeGroupingFieldToDraft(draft, row, field, value)) return null;
       }
     }
-    const orders: Record<string, readonly string[]> = { [parentId]: nextParentOrder };
-    for (const group of groups) orders[group.id] = [];
-    if (!replaceChildOrders(orders)) throw new Error("failed to flatten rows");
-    for (const group of groups) deleteBlock(group.id);
-    return true;
+    // Empty each group while it is still attached, then delete the now-empty
+    // group. This keeps every effect independently replayable; moved rows are
+    // finally reparented and ordered by the parent replacement below.
+    for (const group of groups) {
+      if (!draft.replaceChildren(group.id, [])) return null;
+      if (!draft.deleteSubtree(group.id)) return null;
+    }
+    return draft.replaceChildren(parentId, nextParentOrder) ? true : null;
   });
 }

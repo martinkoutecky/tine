@@ -1,4 +1,13 @@
-import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit } from "../store";
+import {
+  doc,
+  formatForBlock,
+  setRaw,
+  setBlockProperty,
+  setSchedule,
+  blockPageReadOnly,
+  withUndoUnit,
+  type PageMutationDraft,
+} from "../store";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
@@ -389,4 +398,28 @@ function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {
   const prefix = head ? `${head} ` : "";
   lines[0] = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;
   return lines.join("\n");
+}
+
+/** Pure/detached counterpart used when a structural Sheet command is being
+ * assembled as one atomic page-mutation plan. Restructure only writes fields
+ * that are currently absent, so marker insertion has no clock transition to
+ * preserve. */
+export function writeGroupingFieldToDraft(
+  draft: PageMutationDraft,
+  id: string,
+  field: "state" | "priority" | `prop:${string}`,
+  value: string,
+): boolean {
+  const node = draft.node(id);
+  if (!node) return false;
+  const trimmed = value.trim();
+  if (field === "state") {
+    const target = MARKERS.includes(trimmed as (typeof MARKERS)[number]) ? trimmed : null;
+    return target !== null && draft.setRaw(id, setMarker(node.raw, target));
+  }
+  if (field === "priority") {
+    const target = trimmed === "A" || trimmed === "B" || trimmed === "C" ? trimmed : null;
+    return target !== null && draft.setRaw(id, setPriorityRaw(node.raw, target));
+  }
+  return draft.setProperty(id, field.slice(5), trimmed || null);
 }

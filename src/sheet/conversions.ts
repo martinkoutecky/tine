@@ -5,17 +5,15 @@ import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
 import {
+  applyPageMutationPlan,
   blockIsGridView,
   blockPageReadOnly,
-  deleteBlock,
+  createPageMutationPlan,
   doc,
   formatForBlock,
-  insertEmptyChildBlock,
   insertOutlineAfter,
-  replaceChildOrders,
-  setBlockProperty,
-  setRaw,
   withUndoUnit,
+  type PageMutationDraft,
 } from "../store";
 import { pushToast } from "../ui";
 import { sheetConfigFromRaw } from "./config";
@@ -80,22 +78,22 @@ export function convertPipeTableToGrid(id: string): boolean {
   const rows = table.header ? [table.header, ...table.rows] : table.rows;
   const hasHeader = table.header !== null;
   const page = node.page;
-  return withUndoUnit("sheet:pipe-table-to-grid", [page], () => {
-    const raw = doc.byId[id]?.raw ?? "";
-    setRaw(id, rawWithoutTable(raw, table), { timetracking: false });
-    setBlockProperty(id, "tine.view", "grid");
-    setBlockProperty(id, "tine.header", hasHeader ? "true" : null);
+  const raw = node.raw;
+  const plan = createPageMutationPlan(page, "sheet:pipe-table-to-grid", (draft) => {
+    if (!draft.setRaw(id, rawWithoutTable(raw, table))) return null;
+    if (!draft.setProperty(id, "tine.view", "grid")) return null;
+    if (!draft.setProperty(id, "tine.header", hasHeader ? "true" : null)) return null;
     for (const row of rows) {
-      const rowId = insertEmptyChildBlock(id, doc.byId[id]?.children.length ?? 0);
-      if (!rowId) throw new Error("failed to create grid row");
+      const rowId = draft.createChild(id, draft.node(id)?.children.length ?? -1);
+      if (!rowId) return null;
       for (const cell of row) {
-        const cellId = insertEmptyChildBlock(rowId, doc.byId[rowId]?.children.length ?? 0);
-        if (!cellId) throw new Error("failed to create grid cell");
-        setRaw(cellId, cellRaw(raw, cell), { timetracking: false });
+        const cellId = draft.createChild(rowId, draft.node(rowId)?.children.length ?? -1, cellRaw(raw, cell));
+        if (!cellId) return null;
       }
     }
     return true;
   });
+  return !!plan && applyPageMutationPlan(plan).kind !== "refused";
 }
 
 export function escapedPipeCellsRoundTrip(): boolean {
@@ -149,13 +147,8 @@ const TINE_SHEET_PROPS = ["tine.view", "tine.header", "tine.col-widths", "tine.c
 
 /** Drop the sheet config properties, keeping every other line of the host
  *  verbatim (a rebuild-from-facets approach would silently lose body lines). */
-function stripTineSheetProps(id: string): void {
-  for (const key of TINE_SHEET_PROPS) setBlockProperty(id, key, null);
-}
-
-function appendTableToHead(id: string, table: string): void {
-  const head = trimTrailingBlankLines(doc.byId[id]?.raw ?? "");
-  setRaw(id, head ? `${head}\n${table}` : table, { timetracking: false });
+function stripTineSheetProps(draft: PageMutationDraft, id: string): boolean {
+  return TINE_SHEET_PROPS.every((key) => draft.setProperty(id, key, null));
 }
 
 interface GridTableData {
@@ -237,13 +230,14 @@ export function convertGridToPipeTable(id: string): boolean {
     return false;
   }
 
-  return withUndoUnit("sheet:grid-to-pipe-table", [page], () => {
-    stripTineSheetProps(id);
-    appendTableToHead(id, table);
-    if (!replaceChildOrders({ [id]: [] })) throw new Error("failed to detach grid rows");
-    for (const rowId of rows) deleteBlock(rowId);
+  const plan = createPageMutationPlan(page, "sheet:grid-to-pipe-table", (draft) => {
+    if (!stripTineSheetProps(draft, id)) return null;
+    const head = trimTrailingBlankLines(draft.node(id)?.raw ?? "");
+    if (!draft.setRaw(id, head ? `${head}\n${table}` : table)) return null;
+    for (const rowId of rows) if (!draft.deleteSubtree(rowId)) return null;
     return true;
   });
+  return !!plan && applyPageMutationPlan(plan).kind !== "refused";
 }
 
 export function delimitedCellCount(matrix: readonly (readonly string[])[]): number {

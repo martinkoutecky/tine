@@ -1,4 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { __setBackendForTest } from "../backend";
+import { managedStorageRuntime } from "../managedStorageRuntime";
+import { mockBackend } from "../mock";
 import { initParser } from "../render/parse";
 import { inlineText, parseBody } from "../render/facets";
 import { pageToDto, resetStore, setDoc, undo, doc, type FeedPage, type Node as StoreNode } from "../store";
@@ -16,8 +19,43 @@ beforeAll(() => initParser());
 
 beforeEach(() => {
   resetStore();
+  managedStorageRuntime.bind(1, { binding_generation: 1, authority: "direct" });
+  __setBackendForTest(null);
   setToasts([]);
 });
+
+function bindManaged(preflight: "accepted" | "refused") {
+  managedStorageRuntime.bind(52, {
+    binding_generation: 52,
+    authority: "managed_writable",
+    application_save_page_blocks: 511,
+    application_page_request_text_bytes: 1024 * 1024,
+    application_page_max_depth: 128,
+  });
+  const base = mockBackend();
+  let calls = 0;
+  __setBackendForTest({
+    ...base,
+    preflightManagedPageMutation: async (candidate, baseRevision, bindingGeneration) => {
+      calls++;
+      return preflight === "accepted"
+        ? {
+            status: "accepted",
+            binding_generation: bindingGeneration,
+            page_name: candidate.name,
+            page_path: candidate.path ?? "",
+            base_revision: baseRevision,
+          }
+        : { status: "refused" };
+    },
+  });
+  return () => calls;
+}
+
+async function settleManagedPlan() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 function page(roots: string[]): FeedPage {
   return {
@@ -278,6 +316,34 @@ describe("sheet pipe-table/grid conversions", () => {
     expect(rawMatrix(inserted!)).toEqual([["Name", "Role"], ["Ada", "[[Math]]"]]);
 
     undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("routes both managed conversion directions through one atomic preflight", async () => {
+    const raw = "Title\n| A | B |\n| --- | --- |\n| C | D |";
+    load({ b: node("b", raw, null) }, ["b"]);
+    const calls = bindManaged("accepted");
+
+    expect(convertPipeTableToGrid("b")).toBe(true);
+    expect(doc.byId.b.raw).toBe(raw);
+    await settleManagedPlan();
+    expect(rawMatrix("b")).toEqual([["A", "B"], ["C", "D"]]);
+
+    expect(convertGridToPipeTable("b")).toBe(true);
+    await settleManagedPlan();
+    expect(doc.byId.b.raw).toBe(raw);
+    expect(calls()).toBe(2);
+  });
+
+  it("leaves conversion entirely unpublished when managed preflight refuses", async () => {
+    grid("Title\ntine.view:: grid", [["A", "B"]]);
+    const before = pageToDto("Sheet");
+    const calls = bindManaged("refused");
+
+    expect(convertGridToPipeTable("grid")).toBe(true);
+    await settleManagedPlan();
+
+    expect(calls()).toBe(1);
     expect(pageToDto("Sheet")).toEqual(before);
   });
 });
