@@ -273,12 +273,13 @@ receipt recovery rules apply.
 The sibling `local-activation-v1.reservation` is also pre-enrollment,
 reconstructible resume evidence rather than authority. On Android it is
 published and reopened through ordinary absolute app-private file operations:
-create-new temporary file, file sync, atomic rename, and exact-byte reread. A
-permission/unsupported/invalid-operation response from the containing
-directory sync does not refuse activation, because a crash may discard the
-whole unpromoted subtree and rebuild it from the unchanged Markdown/Org graph.
-The file write, rename, reread, canonical JSON, and binding comparison remain
-strict.
+create-new final file, file sync, and exact-byte reread. A
+permission/unsupported/invalid-operation response from file or directory sync
+does not refuse activation, because a crash may discard the whole unpromoted
+subtree and rebuild it from the unchanged Markdown/Org graph. An interrupted
+partial final file is not authority and is replaced on retry; a different valid
+reservation is never overwritten. Ordinary create, write, read, canonical JSON,
+collision, and binding failures remain strict.
 
 The initial `ShadowImport` enrollment is likewise still pre-promotion. Its
 authority claim, immutable first record, and head are each written to a synced

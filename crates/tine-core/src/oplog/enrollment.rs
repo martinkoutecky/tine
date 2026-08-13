@@ -456,14 +456,20 @@ fn open_local_activation_reservation(
             }
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                return Err(EnrollmentError::Io(format!(
+                    "inspect pre-enrollment reservation: {error}"
+                )))
+            }
         };
         if metadata.len() > MAX_LOCAL_ACTIVATION_RESERVATION_BYTES as u64 {
             return Err(EnrollmentError::LocalActivationReservationTooLarge(
                 usize::try_from(metadata.len()).unwrap_or(usize::MAX),
             ));
         }
-        fs::read(&path)?
+        fs::read(&path).map_err(|error| {
+            EnrollmentError::Io(format!("read pre-enrollment reservation: {error}"))
+        })?
     };
     #[cfg(not(target_os = "android"))]
     let bytes = {
@@ -511,78 +517,110 @@ fn open_local_activation_reservation(
 #[cfg(any(test, target_os = "android"))]
 fn publish_android_reconstructible_reservation(root: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let target = root.join(LOCAL_ACTIVATION_RESERVATION_FILE);
-    match fs::symlink_metadata(&target) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            return Err(std::io::Error::new(
-                ErrorKind::InvalidData,
-                "local activation reservation target is not a regular file",
-            ));
-        }
-        Ok(_) => {
-            return if fs::read(&target)? == bytes {
-                Ok(())
-            } else {
-                Err(std::io::Error::new(
-                    ErrorKind::AlreadyExists,
-                    "local activation reservation already contains different bytes",
-                ))
-            };
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-
-    let temporary = root.join(format!(
-        ".{LOCAL_ACTIVATION_RESERVATION_FILE}.{}.tmp",
-        Uuid::new_v4().simple()
-    ));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        crate::filesystem_durability::sync_reconstructible_file(&file).map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("sync pre-enrollment reservation temporary file: {error}"),
-            )
-        })?;
-        drop(file);
-        fs::rename(&temporary, &target).map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("publish pre-enrollment reservation: {error}"),
-            )
-        })?;
-        // A vendor filesystem may permit every exact file operation above but
-        // reject directory fsync. Before enrollment/promotion, a crash may
-        // discard this complete private subtree and rebuild it from Markdown.
-        accept_android_reconstructible_directory_sync(
-            File::open(root).and_then(|directory| directory.sync_all()),
+    publish_android_reconstructible_reservation_direct(&target, bytes)?;
+    // The reservation is explicitly pre-authority and reconstructible. Do not
+    // require Android to support rename or directory fsync merely to remember
+    // how to resume an import; the exact final bytes above are sufficient, and
+    // a crash may discard/rebuild the whole unpromoted subtree from Markdown.
+    accept_android_reconstructible_directory_sync(
+        File::open(root).and_then(|directory| directory.sync_all()),
+    )
+    .map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("sync pre-enrollment reservation directory: {error}"),
         )
-        .map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("sync pre-enrollment reservation directory: {error}"),
-            )
-        })?;
-        if fs::read(&target).map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("reread pre-enrollment reservation: {error}"),
-            )
-        })? != bytes
-        {
-            return Err(std::io::Error::new(
-                ErrorKind::InvalidData,
-                "published local activation reservation differs from source bytes",
-            ));
+    })
+}
+
+#[cfg(any(test, target_os = "android"))]
+fn publish_android_reconstructible_reservation_direct(
+    target: &Path,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let mut target_file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(target).map_err(|inspect_error| {
+                std::io::Error::new(
+                    inspect_error.kind(),
+                    format!("inspect direct pre-enrollment reservation target: {inspect_error}"),
+                )
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidData,
+                    "direct pre-enrollment reservation target is not a regular file",
+                ));
+            }
+            let found = fs::read(target).map_err(|read_error| {
+                std::io::Error::new(
+                    read_error.kind(),
+                    format!("read raced pre-enrollment reservation target: {read_error}"),
+                )
+            })?;
+            if found == bytes {
+                return Ok(());
+            }
+            if android_reservation_bytes_are_canonical(&found) {
+                return Err(std::io::Error::new(
+                    ErrorKind::AlreadyExists,
+                    "pre-enrollment reservation target contains different bytes",
+                ));
+            }
+            fs::remove_file(target).map_err(|remove_error| {
+                std::io::Error::new(
+                    remove_error.kind(),
+                    format!("remove incomplete direct pre-enrollment reservation: {remove_error}"),
+                )
+            })?;
+            return publish_android_reconstructible_reservation_direct(target, bytes);
         }
-        Ok(())
-    })();
-    let _ = fs::remove_file(&temporary);
-    result
+        Err(error) => {
+            return Err(std::io::Error::new(
+                error.kind(),
+                format!("create direct pre-enrollment reservation target: {error}"),
+            ))
+        }
+    };
+    target_file.write_all(bytes).map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("write direct pre-enrollment reservation target: {error}"),
+        )
+    })?;
+    crate::filesystem_durability::sync_reconstructible_file(&target_file).map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("sync direct pre-enrollment reservation target: {error}"),
+        )
+    })?;
+    drop(target_file);
+    let found = fs::read(target).map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("reread direct pre-enrollment reservation target: {error}"),
+        )
+    })?;
+    if found != bytes {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "direct pre-enrollment reservation differs from source bytes",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(test, target_os = "android"))]
+fn android_reservation_bytes_are_canonical(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<LocalActivationReservationV1>(bytes)
+        .ok()
+        .and_then(|record| serde_json::to_vec(&record).ok())
+        .is_some_and(|canonical| canonical == bytes)
 }
 
 #[cfg(any(test, target_os = "android"))]
@@ -8190,9 +8228,33 @@ mod tests {
         );
 
         publish_android_reconstructible_reservation(&root.path, expected).unwrap();
-        let collision =
-            publish_android_reconstructible_reservation(&root.path, b"different").unwrap_err();
-        assert_eq!(collision.kind(), ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn android_reconstructible_activation_reservation_names_the_failed_operation() {
+        let root = TestRoot::new("android-reconstructible-reservation-diagnostic");
+        let absent = root.path.join("absent-parent");
+        let error = publish_android_reconstructible_reservation(&absent, b"record").unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+        assert!(
+            error
+                .to_string()
+                .contains("direct pre-enrollment reservation target"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn android_reconstructible_activation_reservation_direct_fallback_is_exact() {
+        let root = TestRoot::new("android-reconstructible-reservation-direct");
+        let target = root.path.join(LOCAL_ACTIVATION_RESERVATION_FILE);
+        let expected = br#"{"schema_version":1,"binding":"direct"}"#;
+        publish_android_reconstructible_reservation_direct(&target, expected).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), expected);
+
+        fs::write(&target, b"{incomplete").unwrap();
+        publish_android_reconstructible_reservation_direct(&target, expected).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), expected);
     }
 
     #[test]

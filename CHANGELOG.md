@@ -19,12 +19,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   ordinary I/O error and every later authoritative enrollment transition
   remains strict.
 
+- Android pre-enrollment reservation failures now name the exact file
+  operation. Tine now publishes this still-reconstructible record with an exact
+  create-new/write/reread path and no longer requires rename support; it never
+  overwrites a different valid reservation.
+
 - Android managed-storage activation no longer asks the generic
   hard-link/capability publisher to persist its reconstructible pre-enrollment
   reservation. Physical devices that permit normal app-private file writes but
-  reject that stronger primitive now use a synced temporary file, atomic
-  rename, and exact reread; only the pre-promotion directory-sync capability
-  refusal is tolerated.
+  reject that stronger primitive now use a create-new final file and exact
+  reread. An interrupted partial record is replaced on retry, while a different
+  valid reservation is never overwritten; only pre-promotion sync capability
+  refusals are tolerated.
 
 - Android managed-storage activation can recover even when an older failed
   setup left an inaccessible projection-receipt diagnostic tree. Each
