@@ -8061,6 +8061,7 @@ fn ensure_directory_for_lifecycle(
     name: &str,
     lifecycle: ObjectStoreLifecycle,
 ) -> Result<(), StoreError> {
+    let _ = lifecycle;
     #[cfg(target_os = "android")]
     if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
         let component = Path::new(name);
@@ -8649,6 +8650,7 @@ fn open_directory_for_lifecycle(
     path: &str,
     lifecycle: ObjectStoreLifecycle,
 ) -> Result<Dir, StoreError> {
+    let _ = lifecycle;
     #[cfg(target_os = "android")]
     if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
         let component = Path::new(path);
@@ -8695,6 +8697,7 @@ fn sync_directory_for_lifecycle(
     dir: &Dir,
     lifecycle: ObjectStoreLifecycle,
 ) -> Result<(), StoreError> {
+    let _ = lifecycle;
     #[cfg(target_os = "android")]
     if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
         return crate::filesystem_durability::sync_reconstructible_directory(dir)
