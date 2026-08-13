@@ -186,6 +186,18 @@ pub struct PhysicalMaterializationChange {
     pub reference_catalog: Option<PhysicalReferenceCatalogChange>,
 }
 
+/// One regime-neutral update to the disposable graph projection.
+///
+/// This contains only parser-derived graph facts. Direct Files may apply it
+/// from an observed file change; managed storage applies the same rows only
+/// after its own accepted-frontier checks. No oplog sequence, authority stamp,
+/// or sync state crosses this boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalGraphProjectionChange {
+    pub replacements: Vec<PhysicalPage>,
+    pub deletions: Vec<[u8; 16]>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyChangeInstrumentation {
     pub cleanup_page_attempts: usize,
@@ -835,8 +847,23 @@ pub fn initialize_schema(
 ) -> Result<(), MaterializationError> {
     connection.execute_batch(&format!(
         "{MATERIALIZATION_STAMP_DDL};
-         {MATERIALIZATION_BATCHES_DDL};
-         {REFERENCE_SOURCE_COVERAGE_DDL};
+         {MATERIALIZATION_BATCHES_DDL};"
+    ))?;
+    initialize_graph_projection_schema(connection)?;
+    connection.execute(
+        "INSERT INTO materialization_stamp (
+             singleton, acceptance_sequence, frontier_root_digest
+         ) VALUES (1, 0, ?1)",
+        params![empty_frontier_digest.as_bytes().as_slice()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn initialize_graph_projection_schema(
+    connection: &Connection,
+) -> Result<(), MaterializationError> {
+    connection.execute_batch(&format!(
+        "{REFERENCE_SOURCE_COVERAGE_DDL};
          {REFERENCE_POSTINGS_DDL};
          {REFERENCE_NAME_BINDINGS_DDL};
          {REFERENCE_UUID_BINDINGS_DDL};
@@ -876,17 +903,48 @@ pub fn initialize_schema(
          {TASKS_DEADLINE_INDEX_DDL};
          {TASKS_PAGE_INDEX_DDL};"
     ))?;
-    connection.execute(
-        "INSERT INTO materialization_stamp (
-             singleton, acceptance_sequence, frontier_root_digest
-         ) VALUES (1, 0, ?1)",
-        params![empty_frontier_digest.as_bytes().as_slice()],
-    )?;
     Ok(())
 }
 
 pub fn validate_schema(connection: &Connection) -> Result<(), MaterializationError> {
-    for (table, expected) in MATERIALIZATION_TABLE_COLUMNS {
+    validate_graph_projection_schema(connection)?;
+    validate_schema_columns(connection, &MATERIALIZATION_TABLE_COLUMNS[..2])?;
+    for (object_type, name, expected) in &MATERIALIZATION_SCHEMA_OBJECTS[..2] {
+        validate_schema_sql(connection, object_type, name, expected)?;
+    }
+    let stamp_rows: i64 =
+        connection.query_row("SELECT COUNT(*) FROM materialization_stamp", [], |row| {
+            row.get(0)
+        })?;
+    if stamp_rows != 1 {
+        return Err(MaterializationError::Corrupt(
+            "materialization stamp cardinality is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_graph_projection_schema(
+    connection: &Connection,
+) -> Result<(), MaterializationError> {
+    validate_schema_columns(connection, &MATERIALIZATION_TABLE_COLUMNS[2..])?;
+    for (object_type, name, expected) in &MATERIALIZATION_SCHEMA_OBJECTS[2..] {
+        validate_schema_sql(connection, object_type, name, expected)?;
+    }
+    validate_schema_sql(
+        connection,
+        "index",
+        "tasks_deadline_idx",
+        TASKS_DEADLINE_INDEX_DDL,
+    )?;
+    Ok(())
+}
+
+fn validate_schema_columns(
+    connection: &Connection,
+    tables: &[(&str, &[&str])],
+) -> Result<(), MaterializationError> {
+    for &(table, expected) in tables {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
         let columns: Vec<String> = statement
             .query_map([], |row| row.get(1))?
@@ -896,24 +954,6 @@ pub fn validate_schema(connection: &Connection) -> Result<(), MaterializationErr
                 "{table} columns {columns:?} != {expected:?}"
             )));
         }
-    }
-    for (object_type, name, expected) in MATERIALIZATION_SCHEMA_OBJECTS {
-        validate_schema_sql(connection, object_type, name, expected)?;
-    }
-    validate_schema_sql(
-        connection,
-        "index",
-        "tasks_deadline_idx",
-        TASKS_DEADLINE_INDEX_DDL,
-    )?;
-    let stamp_rows: i64 =
-        connection.query_row("SELECT COUNT(*) FROM materialization_stamp", [], |row| {
-            row.get(0)
-        })?;
-    if stamp_rows != 1 {
-        return Err(MaterializationError::Corrupt(
-            "materialization stamp cardinality is invalid".into(),
-        ));
     }
     Ok(())
 }
@@ -1875,32 +1915,8 @@ fn apply_change_inner(
         ));
     }
     validate_preserved_page_metadata(transaction, change)?;
-    // A block can move between two replacement pages. Keep its inbound refs
-    // through every cleanup pass, then remove every old owner before inserting
-    // any new owner so page-ID sort order cannot collide on the block primary key.
-    let retained_blocks = change
-        .replacements
-        .iter()
-        .flat_map(|page| page.blocks.iter().map(|block| block.block_id))
-        .collect::<BTreeSet<_>>();
-    let mut instrumentation = ApplyChangeInstrumentation::default();
-    for page_id in &change.deletions {
-        let cleanup = delete_page(transaction, *page_id, true, &retained_blocks)?;
-        instrumentation.cleanup_page_attempts += 1;
-        instrumentation.cleanup_existing_pages += cleanup.existing_pages;
-        instrumentation.cleanup_owned_rows += cleanup.owned_rows;
-        instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
-    }
-    for page in &change.replacements {
-        let cleanup = delete_page(transaction, page.page_id, false, &retained_blocks)?;
-        instrumentation.cleanup_page_attempts += 1;
-        instrumentation.cleanup_existing_pages += cleanup.existing_pages;
-        instrumentation.cleanup_owned_rows += cleanup.owned_rows;
-        instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
-    }
-    for page in &change.replacements {
-        insert_page(transaction, page)?;
-    }
+    let mut instrumentation =
+        apply_graph_projection_rows(transaction, &change.replacements, &change.deletions)?;
     let reference_values = change
         .reference_catalog
         .as_ref()
@@ -2005,6 +2021,39 @@ fn apply_change_inner(
     Ok(instrumentation)
 }
 
+pub(crate) fn apply_graph_projection_rows(
+    transaction: &Connection,
+    replacements: &[PhysicalPage],
+    deletions: &[[u8; 16]],
+) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+    // A block can move between two replacement pages. Keep its inbound refs
+    // through every cleanup pass, then remove every old owner before inserting
+    // any new owner so page-ID sort order cannot collide on the block primary key.
+    let retained_blocks = replacements
+        .iter()
+        .flat_map(|page| page.blocks.iter().map(|block| block.block_id))
+        .collect::<BTreeSet<_>>();
+    let mut instrumentation = ApplyChangeInstrumentation::default();
+    for page_id in deletions {
+        let cleanup = delete_page(transaction, *page_id, true, &retained_blocks)?;
+        instrumentation.cleanup_page_attempts += 1;
+        instrumentation.cleanup_existing_pages += cleanup.existing_pages;
+        instrumentation.cleanup_owned_rows += cleanup.owned_rows;
+        instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
+    }
+    for page in replacements {
+        let cleanup = delete_page(transaction, page.page_id, false, &retained_blocks)?;
+        instrumentation.cleanup_page_attempts += 1;
+        instrumentation.cleanup_existing_pages += cleanup.existing_pages;
+        instrumentation.cleanup_owned_rows += cleanup.owned_rows;
+        instrumentation.cleanup_fts_rowids += cleanup.fts_rowids;
+    }
+    for page in replacements {
+        insert_page(transaction, page)?;
+    }
+    Ok(instrumentation)
+}
+
 fn validate_preserved_page_metadata(
     transaction: &Connection,
     change: &PhysicalMaterializationChange,
@@ -2059,6 +2108,25 @@ pub fn reset(
     transaction: &Transaction<'_>,
     empty_frontier_digest: ContentDigest,
 ) -> Result<(), MaterializationError> {
+    reset_graph_projection_rows(transaction)?;
+    transaction.execute("DELETE FROM materialization_batches", [])?;
+    transaction.execute(
+        "UPDATE materialization_stamp
+         SET acceptance_sequence = 0,
+             frontier_root_digest = ?1,
+             catalog_root = NULL,
+             catalog_root_digest = NULL,
+             coverage_digest = NULL,
+             extractor_dependency_stamp_digest = NULL
+         WHERE singleton = 1",
+        params![empty_frontier_digest.as_bytes().as_slice()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn reset_graph_projection_rows(
+    transaction: &Connection,
+) -> Result<(), MaterializationError> {
     transaction.execute_batch(
         "DELETE FROM search_fts;
          DELETE FROM search_fts_owners;
@@ -2073,19 +2141,7 @@ pub fn reset(
          DELETE FROM reference_postings;
          DELETE FROM reference_source_coverage;
          DELETE FROM blocks;
-         DELETE FROM pages;
-         DELETE FROM materialization_batches;",
-    )?;
-    transaction.execute(
-        "UPDATE materialization_stamp
-         SET acceptance_sequence = 0,
-             frontier_root_digest = ?1,
-             catalog_root = NULL,
-             catalog_root_digest = NULL,
-             coverage_digest = NULL,
-             extractor_dependency_stamp_digest = NULL
-         WHERE singleton = 1",
-        params![empty_frontier_digest.as_bytes().as_slice()],
+         DELETE FROM pages;",
     )?;
     Ok(())
 }
@@ -2823,9 +2879,14 @@ fn checked_query_text(value: &str) -> Result<(), MaterializationError> {
     Ok(())
 }
 
-/// A bounded, read-only view at the exact accepted frontier captured on open.
-pub struct SqliteMaterializedRead<'a> {
+/// A bounded, read-only view of regime-neutral graph facts.
+pub struct SqliteGraphProjectionRead<'a> {
     connection: &'a Connection,
+}
+
+/// A graph-projection read bound to one exact managed accepted frontier.
+pub struct SqliteMaterializedRead<'a> {
+    graph: SqliteGraphProjectionRead<'a>,
     acceptance_sequence: u64,
 }
 
@@ -2862,7 +2923,7 @@ impl<'a> SqliteMaterializedRead<'a> {
     ) -> Result<Self, MaterializationError> {
         ensure_stamp(connection, acceptance_sequence, frontier_digest)?;
         Ok(Self {
-            connection,
+            graph: SqliteGraphProjectionRead::new(connection),
             acceptance_sequence,
         })
     }
@@ -2883,6 +2944,20 @@ impl<'a> SqliteMaterializedRead<'a> {
 
     pub const fn acceptance_sequence(&self) -> u64 {
         self.acceptance_sequence
+    }
+}
+
+impl<'a> std::ops::Deref for SqliteMaterializedRead<'a> {
+    type Target = SqliteGraphProjectionRead<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.graph
+    }
+}
+
+impl<'a> SqliteGraphProjectionRead<'a> {
+    pub(crate) const fn new(connection: &'a Connection) -> Self {
+        Self { connection }
     }
 
     pub fn page(&self, page_id: [u8; 16]) -> Result<Option<PhysicalPageRow>, MaterializationError> {

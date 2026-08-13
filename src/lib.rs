@@ -33,6 +33,7 @@ mod scratch;
 mod sqlite_database;
 mod sqlite_fileset;
 mod sqlite_frontier;
+mod sqlite_graph_projection;
 mod sqlite_materialization;
 
 /// Curated physical SQLite API for the disposable projection.
@@ -56,20 +57,22 @@ pub mod sqlite {
         PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,
         PreflightDisposition, StoredBatch, StoredFrontier,
     };
+    pub use crate::sqlite_graph_projection::PhysicalGraphProjectionDatabase;
     pub use crate::sqlite_materialization::{
         ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
         PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockPropertyCandidateRow,
         PhysicalBlockReferenceCountRow, PhysicalBlockReferrerCandidateRow, PhysicalBlockRow,
-        PhysicalBlockStructureRow, PhysicalEntityId, PhysicalMaterializationChange,
-        PhysicalNavigationAliasRow, PhysicalNavigationPageRow, PhysicalNavigationReferenceNameRow,
-        PhysicalPage, PhysicalPageInventoryRow, PhysicalPageReferrerCandidateRow, PhysicalPageRow,
-        PhysicalPlainTextCandidatePageRow, PhysicalProperty, PhysicalPropertyFacetRow,
-        PhysicalPropertyRow, PhysicalReference, PhysicalReferenceCatalogChange,
-        PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalReferrerRow, PhysicalSearchHit,
-        PhysicalSourceCoverage, PhysicalTagRow, PhysicalTask, PhysicalTaskCandidateBlockRow,
-        PhysicalTaskCandidatePageRow, PhysicalTaskRow, PhysicalTerminalCatalogStamp,
-        PhysicalTerminalConstructionBatch, PhysicalTerminalMaterializationChunk,
-        SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
+        PhysicalBlockStructureRow, PhysicalEntityId, PhysicalGraphProjectionChange,
+        PhysicalMaterializationChange, PhysicalNavigationAliasRow, PhysicalNavigationPageRow,
+        PhysicalNavigationReferenceNameRow, PhysicalPage, PhysicalPageInventoryRow,
+        PhysicalPageReferrerCandidateRow, PhysicalPageRow, PhysicalPlainTextCandidatePageRow,
+        PhysicalProperty, PhysicalPropertyFacetRow, PhysicalPropertyRow, PhysicalReference,
+        PhysicalReferenceCatalogChange, PhysicalReferencePosting, PhysicalReferenceTarget,
+        PhysicalReferrerRow, PhysicalSearchHit, PhysicalSourceCoverage, PhysicalTagRow,
+        PhysicalTask, PhysicalTaskCandidateBlockRow, PhysicalTaskCandidatePageRow, PhysicalTaskRow,
+        PhysicalTerminalCatalogStamp, PhysicalTerminalConstructionBatch,
+        PhysicalTerminalMaterializationChunk, SqliteGraphProjectionRead, SqliteMaterializedRead,
+        MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
         MAX_MATERIALIZATION_READ_BYTES,
     };
 

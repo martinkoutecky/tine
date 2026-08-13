@@ -7,10 +7,13 @@ is `src-tauri -> tine-core -> tine-storage`: core supplies policy, authority,
 validation, and domain meaning, while this crate supplies storage operations.
 It has no dependency on `tine-core`, `lsdoc`, Tauri, or UI crates.
 
-SQLite is a disposable local projection. The oplog/archive is authoritative,
-so recovery can rebuild SQLite rather than treating it as a source of truth.
-Consumers use the curated `tine_storage::sqlite` facade; it exposes typed
-physical operations without raw connections or DDL construction details.
+SQLite is a disposable local projection. In managed storage the oplog/archive
+is authoritative; in Direct Files the Markdown/Org tree is authoritative. Both
+can feed the same regime-neutral graph-fact tables through
+`PhysicalGraphProjectionDatabase`, while managed storage layers its accepted
+frontier stamps beside those tables. Consumers use the curated
+`tine_storage::sqlite` facade; it exposes typed physical operations without raw
+connections or DDL construction details.
 
 ## Persistent-format identity
 
@@ -44,7 +47,7 @@ Package-local test ownership is intentionally divided as follows:
 - SQLite transaction and schema invariants: `sqlite_frontier::tests` and
   `sqlite_materialization::tests`.
 - SQLite facade, connection ownership, and test-support-gate invariants:
-  `sqlite_database::tests`.
+  `sqlite_database::tests` and `sqlite_graph_projection::tests`.
 
 ## Public API surface
 

@@ -7,6 +7,23 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13
+
+### Added
+
+- A regime-neutral disposable SQLite graph projection with one typed page
+  replace/delete transaction and the existing bounded page, block, task,
+  property, reference, and search reads. Direct Files and managed storage can
+  now feed the same physical graph-fact tables without exposing an oplog
+  frontier or raw SQLite connection to Direct Files.
+
+### Changed
+
+- Managed materialization delegates its graph-row work to the same extracted
+  projection engine while retaining accepted-frontier stamps and reference
+  authentication in its managed-only adapter. The on-disk managed format is
+  unchanged.
+
 ## [0.3.1] - 2026-08-13
 
 ### Fixed
@@ -68,7 +85,8 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.1.1...v0.2.0

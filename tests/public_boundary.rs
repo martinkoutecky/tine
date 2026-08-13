@@ -17,7 +17,8 @@
 use serde::{Deserialize, Serialize};
 use tine_storage::formats::{self, FormatKind, FormatValue};
 use tine_storage::sqlite::{
-    MaterializationError, PhysicalBlockStructureRow, PhysicalTaskCandidateBlockRow,
+    MaterializationError, PhysicalBlockStructureRow, PhysicalGraphProjectionChange,
+    PhysicalGraphProjectionDatabase, PhysicalTaskCandidateBlockRow, SqliteGraphProjectionRead,
     SqliteMaterializedRead,
 };
 use tine_storage::{
@@ -81,6 +82,33 @@ fn sparse_task_candidate_reads_are_publicly_typed() {
     }
 
     let _compile_use: for<'a> fn(&SqliteMaterializedRead<'a>) = compile_use;
+}
+
+#[test]
+fn standalone_graph_projection_is_usable_without_managed_storage_types() {
+    fn compile_read(read: &SqliteGraphProjectionRead<'_>) {
+        let _: Result<Vec<PhysicalTaskCandidateBlockRow>, MaterializationError> =
+            read.task_candidate_blocks_after("TODO", None, 64);
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "tine-storage-public-graph-projection-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+    database.initialize_schema().unwrap();
+    database.validate_schema().unwrap();
+    database
+        .apply(&PhysicalGraphProjectionChange {
+            replacements: Vec::new(),
+            deletions: Vec::new(),
+        })
+        .unwrap();
+    compile_read(&database.read());
+    drop(database);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
 }
 
 /// The whole point of `formats`: a release or pin receipt is *generated* from
