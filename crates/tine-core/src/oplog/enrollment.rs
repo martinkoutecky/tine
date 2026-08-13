@@ -3012,8 +3012,13 @@ impl EnrollmentWriter {
             lifecycle,
             &self.reader.authority.material,
         )?;
-        let snapshot =
-            persist_record_and_head(&self.reader.directories, &self.lease, &record, cut)?;
+        let snapshot = persist_record_and_head(
+            &self.reader.directories,
+            &self.lease,
+            &record,
+            cut,
+            EnrollmentDirectoryDurability::Required,
+        )?;
         self.reader.current = snapshot;
         Ok(&self.reader.current)
     }
@@ -5784,10 +5789,18 @@ fn persist_record_and_head(
     lease: &EnrollmentLease,
     record: &EnrollmentRecordV1,
     cut: CommitCut,
+    directory_durability: EnrollmentDirectoryDurability,
 ) -> Result<EnrollmentSnapshot, EnrollmentError> {
     let bytes = canonical_record_bytes(record)?;
     let digest = ContentDigest::from_bytes(Sha256::digest(&bytes).into());
-    publish_record(&directories.records, lease, digest, &bytes, cut)?;
+    publish_record(
+        &directories.records,
+        lease,
+        digest,
+        &bytes,
+        cut,
+        directory_durability,
+    )?;
 
     let temp_name = format!("{HEAD_TEMP_PREFIX}{}", Uuid::new_v4());
     lease.validate_current()?;
@@ -5813,8 +5826,7 @@ fn persist_record_and_head(
         .rename(&temp_name, &directories.enrollment, HEAD_FILE)?;
     inject_crash_cut(cut, CommitCut::AfterHeadReplace, "after_head_replace")?;
     lease.validate_current()?;
-    sync_dir_required(&directories.enrollment)
-        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    sync_enrollment_directory(&directories.enrollment, directory_durability)?;
     inject_crash_cut(
         cut,
         CommitCut::AfterEnrollmentDirectorySync,
@@ -6334,10 +6346,18 @@ fn publish_record(
     digest: ContentDigest,
     bytes: &[u8],
     cut: CommitCut,
+    directory_durability: EnrollmentDirectoryDurability,
 ) -> Result<(), EnrollmentError> {
     let target = format!("{digest}{RECORD_SUFFIX}");
     let temp_name = format!("{RECORD_TEMP_PREFIX}{digest}");
-    recover_record_publication_temp(records, lease, &temp_name, &target, bytes)?;
+    recover_record_publication_temp(
+        records,
+        lease,
+        &temp_name,
+        &target,
+        bytes,
+        directory_durability,
+    )?;
     lease.validate_current()?;
     let mut temp = create_new_regular(records, &temp_name)?;
     validate_authoritative_file(&temp, "enrollment record temporary file")?;
@@ -6387,7 +6407,7 @@ fn publish_record(
     }
     inject_crash_cut(cut, CommitCut::AfterRecordInsert, "after_record_insert")?;
     lease.validate_current()?;
-    sync_dir_required(records).map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    sync_enrollment_directory(records, directory_durability)?;
     inject_crash_cut(
         cut,
         CommitCut::AfterRecordsDirectorySync,
@@ -6401,6 +6421,7 @@ fn recover_record_publication_temp(
     temp_name: &str,
     target: &str,
     expected_bytes: &[u8],
+    directory_durability: EnrollmentDirectoryDurability,
 ) -> Result<(), EnrollmentError> {
     let target_state = match records.symlink_metadata(target) {
         Ok(metadata) if cap_metadata_is_authoritative_file(&metadata) => {
@@ -6459,7 +6480,7 @@ fn recover_record_publication_temp(
     }
     lease.validate_current()?;
     records.remove_file(temp_name)?;
-    sync_dir_required(records).map_err(|error| EnrollmentError::Durability(error.to_string()))
+    sync_enrollment_directory(records, directory_durability)
 }
 
 fn resume_or_persist_initial_record(
@@ -6579,12 +6600,16 @@ fn resume_or_persist_initial_record(
         directories.enrollment.remove_file(&name)?;
     }
     if had_record_temps {
-        sync_dir_required(&directories.records)
-            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+        sync_enrollment_directory(
+            &directories.records,
+            EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+        )?;
     }
     if had_head_temps {
-        sync_dir_required(&directories.enrollment)
-            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+        sync_enrollment_directory(
+            &directories.enrollment,
+            EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+        )?;
     }
 
     if head.is_some() {
@@ -6603,7 +6628,38 @@ fn resume_or_persist_initial_record(
             record: found,
         });
     }
-    persist_record_and_head(directories, lease, record, cut)
+    persist_record_and_head(
+        directories,
+        lease,
+        record,
+        cut,
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum EnrollmentDirectoryDurability {
+    /// A committed enrollment transition is authority and must satisfy the
+    /// platform's ordinary directory-durability contract.
+    Required,
+    /// The initial ShadowImport enrollment precedes promotion. If Android
+    /// cannot fsync a directory after exact file synchronization, a crash may
+    /// discard this private state and rebuild it from unchanged Markdown.
+    ReconstructibleBootstrap,
+}
+
+fn sync_enrollment_directory(
+    directory: &Dir,
+    durability: EnrollmentDirectoryDurability,
+) -> Result<(), EnrollmentError> {
+    match durability {
+        EnrollmentDirectoryDurability::Required => sync_dir_required(directory)
+            .map_err(|error| EnrollmentError::Durability(error.to_string())),
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap => {
+            crate::filesystem_durability::sync_reconstructible_directory(directory)
+                .map_err(|error| EnrollmentError::Durability(error.to_string()))
+        }
+    }
 }
 
 /// A current binary never mints a legacy checkpoint, but it must be able to
@@ -6945,8 +7001,10 @@ fn provision_or_resume_enrollment_authority(
     if let Some(temp_name) = recover_authority_temps(directories, lease, binding, shadow, None)? {
         lease.validate_current()?;
         rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
-        sync_dir_required(&directories.enrollment)
-            .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+        sync_enrollment_directory(
+            &directories.enrollment,
+            EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+        )?;
         return open_enrollment_authority(directories, binding, lease.resource_id);
     }
 
@@ -6967,8 +7025,10 @@ fn provision_or_resume_enrollment_authority(
     temp.sync_all()?;
     lease.validate_current()?;
     rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
-    sync_dir_required(&directories.enrollment)
-        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    sync_enrollment_directory(
+        &directories.enrollment,
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+    )?;
     open_enrollment_authority(directories, binding, lease.resource_id)
 }
 
@@ -7091,8 +7151,10 @@ fn recover_installed_authority_temp(
     }
 
     directories.enrollment.remove_file(&temp_name)?;
-    sync_dir_required(&directories.enrollment)
-        .map_err(|error| EnrollmentError::Durability(error.to_string()))
+    sync_enrollment_directory(
+        &directories.enrollment,
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+    )
 }
 
 const fn authority_publication_uses_link_unlink() -> bool {

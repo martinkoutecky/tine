@@ -267,6 +267,17 @@ whole unpromoted subtree and rebuild it from the unchanged Markdown/Org graph.
 The file write, rename, reread, canonical JSON, and binding comparison remain
 strict.
 
+The initial `ShadowImport` enrollment is likewise still pre-promotion. Its
+authority claim, immutable first record, and head are each written to a synced
+regular file and reopened through the existing canonical-byte, binding, lease,
+and digest checks. If Android then refuses only the containing-directory fsync,
+activation may continue: after a crash this unpromoted private state is either
+resumed exactly or discarded and reconstructed from the unchanged Markdown/Org
+graph. Every later enrollment transition, including `VerifiedLocal`, promotion,
+and shared state, keeps the required directory-durability barrier. Ordinary file
+I/O, locking, decoding, collision, and identity failures remain fatal in both
+states.
+
 The graph-local shared-provider tree is transport rather than local authority.
 Tine still creates and opens it no-follow, requires ordinary directories and
 regular files, flushes published file contents, and validates bounded bytes and

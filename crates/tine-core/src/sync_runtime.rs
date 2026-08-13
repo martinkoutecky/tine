@@ -4901,16 +4901,17 @@ fn activate_non_active_local(
                     source_inventory_digest,
                 ),
             )
-            .map_err(display)?,
+            .map_err(|error| format!("publish pre-enrollment reservation: {error}"))?,
         )
     } else {
         None
     };
     activation_cut("before_archive_creation")?;
 
-    prepare_object_store_parent_nofollow(&request.archive_root).map_err(display)?;
+    prepare_object_store_parent_nofollow(&request.archive_root)
+        .map_err(|error| format!("prepare private archive root: {error}"))?;
     let archive = ObjectStore::open(&request.archive_root, request.identities.workspace_id)
-        .map_err(display)?;
+        .map_err(|error| format!("open private bootstrap archive: {error}"))?;
     let binding = match existing_binding {
         Some(binding) => {
             archive
@@ -4954,7 +4955,7 @@ fn activate_non_active_local(
         preparation_id,
         source_inventory_digest,
     )
-    .map_err(display)?;
+    .map_err(|error| format!("create reconstructible initial enrollment: {error}"))?;
     activation_cut("after_shadow_import")?;
 
     let authoring_store =
