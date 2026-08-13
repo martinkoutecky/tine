@@ -240,7 +240,10 @@ Receipt files follow the same rule: ordinary app-private open, then retained
 handle type, length, and bounded-byte validation. This applies to the receipt
 root as well: Android does not have to accept creation relative to a Linux
 capability-style parent handle when its ordinary app-private file API is
-available. Honest concurrent Tine writers remain excluded by the runtime lease;
+available. Nor does Android have to permit canonical traversal through
+system-owned ancestors such as `/data/user/0`: the platform-selected exact
+app-private path is checked directly and retained as a directory handle. Honest
+concurrent Tine writers remain excluded by the runtime lease;
 a hostile process inside the same application sandbox is outside this threat
 model.
 

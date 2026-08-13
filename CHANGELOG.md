@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   private storage access but reject those Linux-oriented preflights with
   `Permission denied (os error 13)`.
 
+- Android managed-storage receipt setup no longer canonicalizes system-owned
+  ancestors of Tine's app-private data directory. Physical-device SELinux may
+  forbid traversing those ancestors while still permitting exact access to
+  Tine's own directory; setup now validates and retains that exact directory
+  handle instead.
+
 - **Android managed-storage setup no longer requires hostile-replacement directory primitives inside Tine's private receipt store.** The app-private, single-writer tree is created and opened through Android's ordinary verified file API, including its root, while shared or externally writable namespaces retain strict no-follow capability opens. If an older or interrupted candidate left a receipt tree before managed authority was promoted, retry preserves one diagnostic copy and rebuilds that disposable state from the still-authoritative Markdown graph. A setup failure also keeps its exact inner operation when storage rediscovery runs, so a device-specific error can no longer be replaced by a generic retry message.
 
 - **Enabling experimental managed storage no longer requires Android app-private storage to support Linux hostile-path or filesystem-wide primitives.** Tine uses ordinary app-private opens and validates the resulting file and directory handles, while permission or capability refusals from filesystem-wide flushes fall back to flushing each exact bootstrap tree. The same audit removed mandatory directory-fsync assumptions from graph-local shared-provider setup and publication while preserving file flushes, type and size checks, and strict durability for private authority. Ordinary graph and app-private access is sufficient; stronger platform-specific operations can no longer turn it into a misleading `Permission denied` setup failure.

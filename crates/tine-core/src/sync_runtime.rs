@@ -40939,6 +40939,24 @@ mod tests {
                 "Android receipt bootstrap must not re-enter {forbidden}"
             );
         }
+
+        for function in ["fn open_existing_for_endpoint(", "fn open_with_binding("] {
+            let start = source.find(function).expect("receipt root open function");
+            let android_start = source[start..]
+                .find("#[cfg(target_os = \"android\")]")
+                .map(|offset| start + offset)
+                .expect("Android receipt root branch");
+            let non_android_start = source[android_start..]
+                .find("#[cfg(not(target_os = \"android\"))]")
+                .map(|offset| android_start + offset)
+                .expect("non-Android receipt root branch");
+            let android_branch = &source[android_start..non_android_start];
+            assert!(android_branch.contains("parent.join(name)"));
+            assert!(
+                !android_branch.contains("canonicalize("),
+                "Android app-private receipt opening must not require traversal of system-owned ancestors"
+            );
+        }
     }
 
     #[test]

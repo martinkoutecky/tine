@@ -1100,13 +1100,26 @@ impl ProjectionReceiptStore {
         let parent = root.parent().ok_or_else(|| {
             ProjectionStoreError::UnsafeEntry("store root has no existing parent".into())
         })?;
-        let canonical_parent = std::fs::canonicalize(parent)?;
         #[cfg(target_os = "android")]
-        let capability = open_android_private_directory(&canonical_parent.join(name))?;
+        let (root_path, capability) = {
+            // Android already gives Tine an app-private root. Canonicalizing
+            // its ancestors asks SELinux to traverse system-owned components
+            // such as /data/user/0, which physical devices may refuse even
+            // though opening Tine's exact private directory is permitted.
+            // Keep the honest-local boundary at the exact path and retained
+            // directory handle instead of requiring that unrelated traversal.
+            let root_path = parent.join(name);
+            let capability = open_android_private_directory(&root_path)?;
+            (root_path, capability)
+        };
         #[cfg(not(target_os = "android"))]
-        let capability = {
+        let (root_path, capability) = {
+            let canonical_parent = std::fs::canonicalize(parent)?;
             let parent_capability = Dir::open_ambient_dir(&canonical_parent, ambient_authority())?;
-            open_dir_nofollow(&parent_capability, name)?
+            (
+                canonical_parent.join(name),
+                open_dir_nofollow(&parent_capability, name)?,
+            )
         };
         let store_id = canonical_receipt_store_id(&capability)?;
         if store_id != expected_store_id {
@@ -1122,7 +1135,7 @@ impl ProjectionReceiptStore {
             ));
         }
         Ok(Self {
-            root_path: canonical_parent.join(name),
+            root_path,
             store_id,
             workspace_id,
             endpoint: Some(endpoint),
@@ -1151,22 +1164,31 @@ impl ProjectionReceiptStore {
         let parent = root.parent().ok_or_else(|| {
             ProjectionStoreError::UnsafeEntry("store root has no existing parent".into())
         })?;
-        let canonical_parent = std::fs::canonicalize(parent)
-            .map_err(ProjectionStoreError::from)
-            .map_err(|error| error.at("canonicalize private receipt parent"))?;
         #[cfg(target_os = "android")]
-        let capability = create_android_private_directory(&canonical_parent.join(name))
-            .map_err(|error| error.at("create Android private receipt root"))?;
+        let (root_path, capability) = {
+            // See open_existing_for_endpoint: exact access to this app-private
+            // path is the useful permission boundary on Android. Requiring a
+            // canonical ancestor walk is both unnecessary and rejected by
+            // some physical-device SELinux policies.
+            let root_path = parent.join(name);
+            let capability = create_android_private_directory(&root_path)
+                .map_err(|error| error.at("create Android private receipt root"))?;
+            (root_path, capability)
+        };
         #[cfg(not(target_os = "android"))]
-        let capability = {
+        let (root_path, capability) = {
+            let canonical_parent = std::fs::canonicalize(parent)
+                .map_err(ProjectionStoreError::from)
+                .map_err(|error| error.at("canonicalize private receipt parent"))?;
             let parent_capability = Dir::open_ambient_dir(&canonical_parent, ambient_authority())
                 .map_err(ProjectionStoreError::from)
                 .map_err(|error| error.at("open private receipt parent"))?;
             ensure_directory_nofollow(&parent_capability, name)
                 .map_err(|error| error.at("create private receipt root"))?;
-            open_dir_nofollow(&parent_capability, name)
+            let capability = open_dir_nofollow(&parent_capability, name)
                 .map_err(ProjectionStoreError::from)
-                .map_err(|error| error.at("open private receipt root"))?
+                .map_err(|error| error.at("open private receipt root"))?;
+            (canonical_parent.join(name), capability)
         };
         let store_id = canonical_receipt_store_id(&capability)
             .map_err(|error| error.at("identify private receipt root"))?;
@@ -1174,7 +1196,7 @@ impl ProjectionReceiptStore {
             .map_err(|error| error.at("initialize private receipt store"))?;
 
         Ok(Self {
-            root_path: canonical_parent.join(name),
+            root_path,
             store_id,
             workspace_id,
             endpoint,
