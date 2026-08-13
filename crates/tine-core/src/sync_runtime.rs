@@ -47938,8 +47938,8 @@ mod tests {
         assert_eq!(large_receipt.source_files, small_receipt.source_files + 4);
         assert!(large_receipt.source_bytes > small_receipt.source_bytes);
         assert!(large_receipt.blocks > small_receipt.blocks);
-        assert_eq!(small_receipt.phase_ms.len(), 9);
-        assert_eq!(large_receipt.phase_ms.len(), 9);
+        assert_eq!(small_receipt.phase_ms.len(), 12);
+        assert_eq!(large_receipt.phase_ms.len(), 12);
         for receipt in [&small_receipt, &large_receipt] {
             assert_eq!(
                 receipt.full_digest_scans,
