@@ -718,6 +718,41 @@ pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
     Some((key.to_string(), value))
 }
 
+/// Original-case page names carried by OG-compatible `tags::`, `alias::`, or
+/// `aliases::` properties. Quoted whole values are ordinary text rather than a
+/// reference list; list items may be bare, `#tag`, or `[[page]]` spellings.
+pub(crate) fn property_reference_page_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let Some((key, value)) = parse_property_line(line) else {
+            continue;
+        };
+        if !(key.eq_ignore_ascii_case("tags")
+            || key.eq_ignore_ascii_case("alias")
+            || key.eq_ignore_ascii_case("aliases"))
+        {
+            continue;
+        }
+        let quoted = value.trim();
+        if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
+            continue;
+        }
+        for value in value.split([',', '，']) {
+            let value = value.trim();
+            let value = value.strip_prefix('#').unwrap_or(value).trim();
+            let value = value
+                .strip_prefix("[[")
+                .and_then(|inner| inner.strip_suffix("]]"))
+                .unwrap_or(value)
+                .trim();
+            if !value.is_empty() {
+                names.push(value.to_string());
+            }
+        }
+    }
+    names
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PromotedHeadingLayout {
     /// The first parser-owned block is an unbulleted ATX heading, but its next

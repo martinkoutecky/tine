@@ -1,0 +1,43 @@
+tine-storage certification receipt
+ref=v0.6.0
+commit=bf585c57066cb3fc26ffef66375310c8f8f20fe8
+package_version=0.6.0
+run=https://github.com/martinkoutecky/tine-storage/actions/runs/31743495381
+rustc=rustc 1.96.0 (ac68faa20 2026-05-25)
+cargo=cargo 1.96.0 (30a34c682 2026-05-25)
+cargo_lock_sha256=2e05df23870a0415434458a83da617708b0f4aad45a9acbbfc802ffcd0a6f5f7
+public_api_sha256=5a1ca78f518040c911b20d99ed25c0c05dd5e7dd9ee81ccae6b72742e9a27229
+required_jobs=linux-complete,windows-complete,android-compile,api-semver
+format_manifest_begin
+OPLOG_PROTOCOL_VERSION	identity	oplog manifest/object protocol	2
+OBJECT_ENVELOPE_SCHEMA_VERSION	identity	durable object envelope	2
+MANIFEST_ENCODING_VERSION	identity	durable batch manifest	4
+LOCAL_JOURNAL_FRAME_SCHEMA_VERSION	identity	local journal frame	1
+LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION	identity	local journal v2 segment and frontier	2
+LOCAL_JOURNAL_SEGMENT_V2_MAGIC	identity	local journal v2 segment header	TINEJNL2
+LOCAL_JOURNAL_FRONTIER_V2_MAGIC	identity	local journal v2 frontier	TINEFRT2
+SCRATCH_SCHEMA_VERSION	identity	engine scratch run	13
+SCRATCH_PAGE_SCHEMA_VERSION	identity	engine scratch page	1
+SQLITE_APPLICATION_ID	identity	SQLite projection header	1414090309
+SQLITE_SCHEMA_VERSION	identity	SQLite projection schema	16
+LOCAL_JOURNAL_SEGMENT_HEADER_BYTES	layout	local journal v2 segment header	136
+LOCAL_JOURNAL_FRONTIER_BYTES	layout	local journal v2 frontier	240
+LOCAL_JOURNAL_FRONTIER_SUFFIX	layout	local journal v2 frontier	.frontier-v2
+SCRATCH_DIR	layout	engine scratch directory	engine-scratch-v2
+SCRATCH_MARKER_FILE	layout	engine scratch directory	marker
+SCRATCH_LEASE_FILE	layout	engine scratch directory	lease
+SCRATCH_PAGES_FILE	layout	engine scratch directory	pages.index
+SCRATCH_BLOBS_FILE	layout	engine scratch directory	blobs.data
+SCRATCH_LSM_LEVELS	layout	engine scratch LSM	32
+MAX_MANIFEST_BYTES	writer-bound	durable batch manifest	1048576
+MAX_OBJECT_BYTES	writer-bound	durable object envelope	268435456
+MAX_LOCAL_JOURNAL_FRAME_BYTES	writer-bound	local journal frame	67108864
+MAX_LOCAL_JOURNAL_FRAME_HEADER_BYTES	writer-bound	local journal frame header	4096
+MAX_LOCAL_JOURNAL_SEGMENT_BYTES	writer-bound	local journal segment	4294967296
+MAX_SCRATCH_PAGE_BYTES	writer-bound	engine scratch page	268435456
+MAX_SCRATCH_BLOB_BYTES	writer-bound	engine scratch blob	268435456
+MAX_SQLITE_CHECKPOINT_BYTES	checkpoint-geometry	SQLite checkpoint fingerprint	65536
+SQLITE_CHECKPOINT_EDGE_BYTES	checkpoint-geometry	SQLite checkpoint fingerprint	65536
+SQLITE_CHECKPOINT_INTERIOR_RANGE_BYTES	checkpoint-geometry	SQLite checkpoint fingerprint	16384
+SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES	checkpoint-geometry	SQLite checkpoint fingerprint	1048576
+format_manifest_end

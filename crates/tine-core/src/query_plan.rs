@@ -1541,7 +1541,16 @@ fn execute_blocks(
     if branch.limit == 0 {
         return Some((Vec::new(), false));
     }
-    graph.with_pages(|pages| {
+    let candidate_pages = match &branch.predicate {
+        QueryExpr::Text(TextPredicate {
+            field: TextField::VisibleContent,
+            mode: TextMatchMode::Fuzzy,
+            value,
+            ..
+        }) => graph.direct_projection_fuzzy_candidate_pages(value),
+        _ => None,
+    };
+    let execute = |pages: &[(PageEntry, std::sync::Arc<crate::doc::Document>)]| {
         let mut heap = BinaryHeap::new();
         let mut has_more = false;
         let mut index = 0usize;
@@ -1640,7 +1649,11 @@ fn execute_blocks(
                 .collect(),
             has_more,
         ))
-    })
+    };
+    match candidate_pages.as_deref() {
+        Some(pages) => execute(pages),
+        None => graph.with_pages(execute),
+    }
 }
 
 #[derive(Debug)]

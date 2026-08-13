@@ -1789,6 +1789,7 @@ pub(crate) enum SimpleQueryCandidatePlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SparseTaskQueryEligibility {
     pub(crate) markers: Vec<String>,
+    pub(crate) uses_recency: bool,
 }
 
 /// The existing simple parser intentionally accepts a recoverable prefix for
@@ -2060,8 +2061,11 @@ pub(crate) fn sparse_task_query_eligibility(query_src: &str) -> Option<SparseTas
     if markers.is_empty() || !markers.is_subset(&planned_markers) {
         return None;
     }
+    let mut opts = QueryOpts::default();
+    pred.collect_opts(&mut opts);
     Some(SparseTaskQueryEligibility {
         markers: markers.into_iter().collect(),
+        uses_recency: matches!(&opts.sort, Some((field, _)) if is_recency_field(field)),
     })
 }
 
@@ -2281,6 +2285,19 @@ pub(crate) enum ApplicationSparseQueryError {
     DuplicateIdentity,
 }
 
+/// One exact parser-owned block selected by a disposable physical index.
+///
+/// Direct Files uses this view to avoid reparsing SQL candidates: SQLite only
+/// chooses structural coordinates, while the current `Arc<Document>` supplies
+/// the same memoized `DocBlock` used by the established whole-page evaluator.
+pub(crate) struct ParserSparseQueryCandidate<'a> {
+    pub(crate) block: &'a DocBlock,
+    pub(crate) identity: &'a str,
+    pub(crate) page: &'a ApplicationSparseQueryPage,
+    pub(crate) parent_identity: Option<&'a str>,
+    pub(crate) dfs_order: &'a [String],
+}
+
 fn application_sparse_query_doc_block(candidate: &ApplicationSparseQueryCandidate) -> DocBlock {
     DocBlock {
         raw: candidate.raw.clone(),
@@ -2304,6 +2321,30 @@ pub(crate) fn run_application_sparse_task_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> Result<BoundedGroups, ApplicationSparseQueryError> {
+    let blocks = candidates
+        .iter()
+        .map(application_sparse_query_doc_block)
+        .collect::<Vec<_>>();
+    let views = candidates
+        .iter()
+        .zip(&blocks)
+        .map(|(candidate, block)| ParserSparseQueryCandidate {
+            block,
+            identity: &candidate.identity,
+            page: &candidate.page,
+            parent_identity: candidate.parent_identity.as_deref(),
+            dfs_order: &candidate.dfs_order,
+        })
+        .collect::<Vec<_>>();
+    run_parser_sparse_task_query_bounded(&views, query_src, max_rows, max_bytes)
+}
+
+pub(crate) fn run_parser_sparse_task_query_bounded(
+    candidates: &[ParserSparseQueryCandidate<'_>],
+    query_src: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> Result<BoundedGroups, ApplicationSparseQueryError> {
     if sparse_task_query_eligibility(query_src).is_none() {
         return Err(ApplicationSparseQueryError::Ineligible);
     }
@@ -2313,27 +2354,25 @@ pub(crate) fn run_application_sparse_task_query_bounded(
     pred.collect_opts(&mut opts);
 
     let mut ordered = candidates.iter().collect::<Vec<_>>();
-    ordered.sort_by(|left, right| left.dfs_order.cmp(&right.dfs_order));
+    ordered.sort_by(|left, right| left.dfs_order.cmp(right.dfs_order));
 
     let mut identities = HashSet::with_capacity(ordered.len());
     for candidate in &ordered {
         if candidate.identity.is_empty() {
             return Err(ApplicationSparseQueryError::MissingIdentity);
         }
-        if !identities.insert(candidate.identity.as_str()) {
+        if !identities.insert(candidate.identity) {
             return Err(ApplicationSparseQueryError::DuplicateIdentity);
         }
     }
 
     struct EvaluatedCandidate<'a> {
-        candidate: &'a ApplicationSparseQueryCandidate,
-        block: DocBlock,
+        candidate: &'a ParserSparseQueryCandidate<'a>,
         matched: bool,
     }
 
     let mut evaluated = Vec::with_capacity(ordered.len());
     for candidate in ordered {
-        let block = application_sparse_query_doc_block(candidate);
         let empty_props = Vec::new();
         let empty_tags = Vec::new();
         let ctx = EvalCtx {
@@ -2345,17 +2384,13 @@ pub(crate) fn run_application_sparse_task_query_bounded(
             page_props: &empty_props,
             page_tags: &empty_tags,
         };
-        let matched = pred.eval_with_path_refs(&block, &PathRefCounts::new(), &ctx);
-        evaluated.push(EvaluatedCandidate {
-            candidate,
-            block,
-            matched,
-        });
+        let matched = pred.eval_with_path_refs(candidate.block, &PathRefCounts::new(), &ctx);
+        evaluated.push(EvaluatedCandidate { candidate, matched });
     }
     let matched_ids = evaluated
         .iter()
         .filter(|candidate| candidate.matched)
-        .map(|candidate| candidate.candidate.identity.as_str())
+        .map(|candidate| candidate.candidate.identity)
         .collect::<HashSet<_>>();
 
     struct SparseGroup {
@@ -2375,7 +2410,6 @@ pub(crate) fn run_application_sparse_task_query_bounded(
             || candidate
                 .candidate
                 .parent_identity
-                .as_deref()
                 .is_some_and(|parent| matched_ids.contains(parent))
         {
             continue;
@@ -2389,7 +2423,7 @@ pub(crate) fn run_application_sparse_task_query_bounded(
         }
         if !budget.admit_estimated(
             &candidate.candidate.page.name,
-            shallow_dto_estimated_bytes(&candidate.block, &[]),
+            shallow_dto_estimated_bytes(candidate.candidate.block, &[]),
         ) {
             continue;
         }
@@ -2410,7 +2444,9 @@ pub(crate) fn run_application_sparse_task_query_bounded(
                 index
             }
         };
-        groups[index].blocks.push(result_dto(&candidate.block));
+        groups[index]
+            .blocks
+            .push(result_dto(candidate.candidate.block));
     }
 
     let mut recency_by_page = HashMap::new();

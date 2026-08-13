@@ -76,7 +76,7 @@ from the immutable archive.
 | `reconciliation/{scan.sqlite,scan.sqlite-wal,scan.sqlite-shm,scan.sqlite-journal}` | reconciliation | reconciliation scheduler | SQLite baseline v3 | disposable |
 | `reconciliation/<workspace>/<endpoint>/scan.sqlite.forensic-<uuid>/{database,wal,shm,journal,EVIDENCE_COMPLETE,REBUILD_COMPLETE}` | reconciliation recovery | cache-corruption diagnostics and crash-resumable rebuild | exact former baseline file set plus completion markers | diagnostic; never authority; created only when the disposable baseline fails semantic validation |
 | `.tine-runtime/sqlite-workspaces/sqlite-applier.lock` | SQLite applier | SQLite applier | empty OS-lock file | disposable process coordination |
-| `projection/materialization.sqlite{,-wal,-shm}` | SQLite applier | managed queries/navigation | `tine-storage` SQLite schema 15 | disposable; mismatch causes one rebuild |
+| `projection/materialization.sqlite{,-wal,-shm}` | SQLite applier | managed queries/navigation | `tine-storage` SQLite schema 16 | disposable; mismatch causes one rebuild |
 | runtime scratch (`tine-storage::formats::SCRATCH_DIR` and its marker/lease/pages/blobs) | hot engine/import | hot engine/rebuild | scratch schema 13, page schema 1 | disposable; one run only |
 | `managed-local-journal-v1/` | actor fast durability lane | drain/recovery | journal frames/segments | durable until incorporated into oplog, then reclaimable |
 | `local-authorship-v1/` | actor publication | provider repair/recovery | receipt v1 | retained until corresponding publication is proven |
@@ -89,6 +89,52 @@ Temporary prefixes (`.tmp-`, `.head-tmp-`, `.record-tmp-`,
 `.authority-tmp-`) and `.staging` files have no authority until their named
 atomic publication completes. Unknown canonical-looking files are errors;
 recognized provider temporary files mean “delivery may still be settling.”
+
+### 1.3 Direct Files disposable graph projection
+
+Direct Files stores one app-private
+`direct-files-projections/<canonical-graph-path-digest>.sqlite` database outside
+the graph. It contains only the same parser-derived physical page, block, task,
+property, tag, and search facts accepted by managed storage's disposable
+projection; it contains no binding, oplog frontier, sync role, or authority
+stamp. Markdown/Org remains the sole Direct Files authority.
+
+The existing parsed `PageEntry + Arc<Document>` cache feeds one background
+SQLite owner. The database retains each page's exact caller-owned content
+revision as disposable adapter metadata. A full warm-cache installation
+compares those revisions and lowers only changed or missing pages; a clean
+reopen lowers none. One-page cache upserts and deletes enqueue coalesced page
+deltas. The editor, watcher, and save paths never wait for SQL. Indexed reads
+are admitted only when the worker has published the exact current parser-cache
+generation. One app-private sidecar lease permits only one graph instance to
+publish into a projection database at a time; a concurrent window or process
+that cannot acquire it stays on the parser evaluator. This prevents an older
+instance from replacing facts behind another instance's locally-ready
+generation watermark. A missing, stale, corrupt, incompatible, leased, or
+unwritable database
+therefore uses the established parser evaluator and cannot block graph open,
+save, or external file observation.
+
+The switched read families are the conservative task-query subset already
+accepted by `sparse_task_query_eligibility` (task markers plus priority,
+scheduled/deadline and presentation directives), literal fuzzy-search candidate
+selection (including the `((` picker), and the original-case referenced-page
+inventory used by autocomplete and navigation. Once current, these families
+enumerate SQLite task candidates and re-evaluate every returned raw block
+through the existing parser query evaluator, or obtain a generation-bound
+candidate/name set before applying the existing parser-owned matching and
+presentation semantics. They no longer use manual whole-graph candidate scans
+or a second in-memory referenced-name semantic cache as their ordinary route.
+The bounded generation-keyed
+memo of already-shaped frontend result DTOs remains Tine-native: SQLite cannot
+own parser AST semantics or presentation reuse, and dropping that memo would
+turn reactive re-renders into repeated SQL plus parser evaluation. If SQLite is
+unavailable, the same parser evaluator remains the correctness fallback; it is
+not a second candidate index. Referenced-name fallback walks only the already-
+parsed page cache and deliberately retains no separate semantic memo. All other
+query, reference, navigation, and search families retain their existing
+implementation until an equivalent generation-bound differential packet
+replaces and deletes each old route.
 
 ## 2. Enrollment and synchronization state machine
 
@@ -180,7 +226,9 @@ fallback.
    not import the `simulator` compatibility module.
 8. Direct Files remains isolated: no passive `.tine-sync` discovery, managed
    recovery, oplog write, or managed cache work occurs without the validated
-   private binding or an explicit activation/join command.
+   private binding or an explicit activation/join command. Its separate
+   app-private graph-fact projection contains no managed state and grants no
+   authority.
 
 ### 3.1 Refusal scenarios
 

@@ -3025,7 +3025,7 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
 
 #[cfg(unix)]
 #[test]
-fn checked_graph_open_rejects_a_managed_sync_symlink() {
+fn checked_direct_graph_open_ignores_the_separate_managed_sync_namespace() {
     use std::os::unix::fs::symlink;
 
     let root = std::env::temp_dir().join(format!("tine-sync-link-{}", uuid::Uuid::new_v4()));
@@ -3036,7 +3036,11 @@ fn checked_graph_open_rejects_a_managed_sync_symlink() {
     std::fs::create_dir_all(&outside).unwrap();
     symlink(&outside, root.join(".tine-sync")).unwrap();
 
-    assert!(Graph::open_checked(&root).is_err());
+    // Direct Files neither trusts nor owns `.tine-sync`; managed activation and
+    // join validate it at their explicit boundary. A stale/broken managed
+    // namespace must therefore not make an otherwise healthy Direct graph
+    // unavailable.
+    assert!(Graph::open_checked(&root).is_ok());
 
     std::fs::remove_dir_all(&root).ok();
     std::fs::remove_dir_all(&outside).ok();

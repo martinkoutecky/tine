@@ -6,6 +6,7 @@ use crate::state::{
     canonical_graph_root, poke_watcher, slot_for_window, AppState, ApplicationPageAdmission,
     GraphSlot,
 };
+use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -550,6 +551,24 @@ fn publish_direct_files_slot(
     Ok((slot, warm_generation))
 }
 
+fn direct_files_projection_path(app: &tauri::AppHandle, root: &Path) -> Result<PathBuf, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("app data directory is unavailable: {error}"))?;
+    let mut digest = Sha256::new();
+    digest.update(b"tine-direct-projection-path-v1\0");
+    digest.update(root.to_string_lossy().as_bytes());
+    let key = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(app_data
+        .join("direct-files-projections")
+        .join(format!("{key}.sqlite")))
+}
+
 pub(crate) fn open_and_publish_direct_files(
     app: &tauri::AppHandle,
     window_label: &str,
@@ -569,6 +588,18 @@ pub(crate) fn open_and_publish_direct_files(
         graph
             .migrate_journal_filenames_checked()
             .map_err(|error| format!("journal filename migration failed: {error}"))?;
+    }
+    match direct_files_projection_path(app, &root_key) {
+        Ok(path) => {
+            if let Err(error) = graph.attach_direct_projection(path) {
+                crate::debug::diag(format!(
+                    "Direct Files SQLite projection unavailable; parser fallback remains active: {error}"
+                ));
+            }
+        }
+        Err(error) => crate::debug::diag(format!(
+            "Direct Files SQLite projection path unavailable; parser fallback remains active: {error}"
+        )),
     }
     let (slot, warm_generation) = publish_direct_files_slot(state, window_label, graph, root_key)?;
     if !launch_backup_done {

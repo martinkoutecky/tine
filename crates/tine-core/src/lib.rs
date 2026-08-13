@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod date;
+mod direct_projection;
 pub mod doc;
 pub mod edn;
 pub mod fast_commit;
