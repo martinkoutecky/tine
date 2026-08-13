@@ -7,6 +7,14 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+### Added
+
+- Regime-neutral graph-projection changes can transactionally replace the raw
+  page-reference spellings owned by each replaced page. Direct Files can now
+  populate the same disposable `reference_postings` facts and bounded
+  navigation-name read used by managed storage, without a second application
+  cache or a whole-graph referenced-name scan.
+
 ## [0.5.0] - 2026-08-13
 
 ### Added

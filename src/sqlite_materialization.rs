@@ -196,6 +196,12 @@ pub struct PhysicalMaterializationChange {
 pub struct PhysicalGraphProjectionChange {
     pub replacements: Vec<PhysicalPage>,
     pub deletions: Vec<[u8; 16]>,
+    /// Parser-derived reference spellings owned by replacement pages.
+    ///
+    /// Managed storage may obtain the same rows from its authenticated catalog;
+    /// Direct Files obtains them directly from the parser snapshot. They are
+    /// disposable graph facts in both regimes, never write authority.
+    pub reference_postings: Vec<PhysicalReferencePosting>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2052,6 +2058,36 @@ pub(crate) fn apply_graph_projection_rows(
         insert_page(transaction, page)?;
     }
     Ok(instrumentation)
+}
+
+pub(crate) fn replace_graph_projection_reference_postings(
+    transaction: &Connection,
+    change: &PhysicalGraphProjectionChange,
+) -> Result<(), MaterializationError> {
+    let replacement_ids = change
+        .replacements
+        .iter()
+        .map(|page| page.page_id)
+        .collect::<BTreeSet<_>>();
+    if change
+        .reference_postings
+        .iter()
+        .any(|posting| !replacement_ids.contains(&posting.source_page_id))
+    {
+        return Err(MaterializationError::InvalidInput(
+            "graph-projection reference postings must belong to replacement pages".into(),
+        ));
+    }
+    for page_id in replacement_ids.iter().chain(change.deletions.iter()) {
+        transaction.execute(
+            "DELETE FROM reference_postings WHERE source_page_id = ?1",
+            params![page_id.as_slice()],
+        )?;
+    }
+    for posting in &change.reference_postings {
+        insert_reference_posting(transaction, posting)?;
+    }
+    Ok(())
 }
 
 fn validate_preserved_page_metadata(

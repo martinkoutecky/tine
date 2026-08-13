@@ -102,6 +102,7 @@ fn standalone_graph_projection_is_usable_without_managed_storage_types() {
         .apply(&PhysicalGraphProjectionChange {
             replacements: Vec::new(),
             deletions: Vec::new(),
+            reference_postings: Vec::new(),
         })
         .unwrap();
     compile_read(&database.read());

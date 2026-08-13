@@ -123,6 +123,7 @@ impl PhysicalGraphProjectionDatabase {
             &change.replacements,
             &change.deletions,
         )?;
+        sqlite_materialization::replace_graph_projection_reference_postings(&transaction, change)?;
         for page in &change.replacements {
             transaction.execute(
                 "DELETE FROM direct_source_revisions WHERE page_id = ?1",
@@ -167,6 +168,7 @@ impl PhysicalGraphProjectionDatabase {
             &change.replacements,
             &change.deletions,
         )?;
+        sqlite_materialization::replace_graph_projection_reference_postings(&transaction, change)?;
         for page_id in &change.deletions {
             transaction.execute(
                 "DELETE FROM direct_source_revisions WHERE page_id = ?1",
@@ -275,7 +277,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use crate::sqlite_materialization::{
-        PhysicalBlock, PhysicalMaterializationChange, PhysicalPage, PhysicalTask,
+        PhysicalBlock, PhysicalEntityId, PhysicalMaterializationChange, PhysicalPage,
+        PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalTask,
     };
     use crate::ContentDigest;
 
@@ -347,6 +350,7 @@ mod tests {
             .apply(&PhysicalGraphProjectionChange {
                 replacements: vec![page(1, "TODO", "Needle first")],
                 deletions: Vec::new(),
+                reference_postings: Vec::new(),
             })
             .unwrap();
         assert_eq!(database.read().tasks(Some("TODO"), 10).unwrap().len(), 1);
@@ -356,6 +360,7 @@ mod tests {
             .apply(&PhysicalGraphProjectionChange {
                 replacements: vec![page(1, "DONE", "Needle changed")],
                 deletions: Vec::new(),
+                reference_postings: Vec::new(),
             })
             .unwrap();
         assert!(database.read().tasks(Some("TODO"), 10).unwrap().is_empty());
@@ -365,10 +370,108 @@ mod tests {
             .apply(&PhysicalGraphProjectionChange {
                 replacements: Vec::new(),
                 deletions: vec![[1; 16]],
+                reference_postings: Vec::new(),
             })
             .unwrap();
         assert!(database.read().tasks(None, 10).unwrap().is_empty());
         assert!(database.read().search("needle", 10).unwrap().is_empty());
+        database.quick_check().unwrap();
+        drop(database);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn standalone_projection_replaces_reference_names_in_the_page_transaction() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-storage-graph-reference-projection-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        database.initialize_schema().unwrap();
+
+        let posting = |raw_name: &str, normalized_name: &str| PhysicalReferencePosting {
+            source_page_id: [1; 16],
+            source_entity: PhysicalEntityId::Page([1; 16]),
+            source_locator: b"preamble".to_vec(),
+            ordinal: 0,
+            kind: 0,
+            target: PhysicalReferenceTarget::PageName {
+                raw_name: raw_name.into(),
+                normalized_name: normalized_name.into(),
+                resolved_page_id: None,
+            },
+        };
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: vec![page(1, "TODO", "[[First Target]]")],
+                deletions: Vec::new(),
+                reference_postings: vec![posting("First Target", "first target")],
+            })
+            .unwrap();
+        assert_eq!(
+            database
+                .read()
+                .navigation_reference_names_after(None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.raw_name)
+                .collect::<Vec<_>>(),
+            vec!["First Target"]
+        );
+
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: vec![page(1, "TODO", "[[Second Target]]")],
+                deletions: Vec::new(),
+                reference_postings: vec![posting("Second Target", "second target")],
+            })
+            .unwrap();
+        assert_eq!(
+            database
+                .read()
+                .navigation_reference_names_after(None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.raw_name)
+                .collect::<Vec<_>>(),
+            vec!["Second Target"]
+        );
+
+        let mut orphan = posting("Orphan", "orphan");
+        orphan.source_page_id = [2; 16];
+        assert!(matches!(
+            database.apply(&PhysicalGraphProjectionChange {
+                replacements: vec![page(1, "TODO", "unchanged")],
+                deletions: Vec::new(),
+                reference_postings: vec![orphan],
+            }),
+            Err(MaterializationError::InvalidInput(_))
+        ));
+        assert_eq!(
+            database
+                .read()
+                .navigation_reference_names_after(None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.raw_name)
+                .collect::<Vec<_>>(),
+            vec!["Second Target"]
+        );
+
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: Vec::new(),
+                deletions: vec![[1; 16]],
+                reference_postings: Vec::new(),
+            })
+            .unwrap();
+        assert!(database
+            .read()
+            .navigation_reference_names_after(None, 10)
+            .unwrap()
+            .is_empty());
         database.quick_check().unwrap();
         drop(database);
         for suffix in ["", "-wal", "-shm"] {
@@ -399,6 +502,7 @@ mod tests {
                 &PhysicalGraphProjectionChange {
                     replacements: vec![page(1, "TODO", "first"), page(2, "DONE", "second")],
                     deletions: Vec::new(),
+                    reference_postings: Vec::new(),
                 },
                 &initial_revisions,
             )
@@ -433,6 +537,7 @@ mod tests {
                 &PhysicalGraphProjectionChange {
                     replacements: vec![page(1, "DONE", "first changed"), page(3, "TODO", "third")],
                     deletions: vec![[2; 16]],
+                    reference_postings: Vec::new(),
                 },
                 &changed,
             )
@@ -465,6 +570,7 @@ mod tests {
                 &PhysicalGraphProjectionChange {
                     replacements: vec![page(1, "TODO", "first")],
                     deletions: Vec::new(),
+                    reference_postings: Vec::new(),
                 },
                 std::slice::from_ref(&revision),
             )
@@ -473,6 +579,7 @@ mod tests {
             .apply(&PhysicalGraphProjectionChange {
                 replacements: vec![page(1, "DONE", "untracked replacement")],
                 deletions: Vec::new(),
+                reference_postings: Vec::new(),
             })
             .unwrap();
         assert_eq!(
@@ -504,6 +611,7 @@ mod tests {
             .apply(&PhysicalGraphProjectionChange {
                 replacements: vec![source.clone()],
                 deletions: Vec::new(),
+                reference_postings: Vec::new(),
             })
             .unwrap();
 
