@@ -7,6 +7,16 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
+### Added
+
+- Disposable SQLite projections can return bounded task-candidate structural
+  locators without copying block content or public UUIDs. Applications that
+  already retain the exact parser document can recover and identity-check the
+  corresponding parser block while managed storage keeps the existing full-row
+  physical API.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

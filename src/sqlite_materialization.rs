@@ -2665,6 +2665,25 @@ pub struct PhysicalTaskCandidateBlockRow {
     pub page_text_kind: i64,
 }
 
+/// Structural coordinates for a task candidate whose parser-owned document is
+/// already resident in the application.
+///
+/// Unlike [`PhysicalTaskCandidateBlockRow`], this deliberately does not copy
+/// raw content or a public UUID across SQLite. Direct Files uses the page path
+/// and full structural order to recover the exact current `DocBlock`; managed
+/// storage, which has no parser cache at this boundary, keeps using the fuller
+/// row above.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalTaskCandidateLocatorRow {
+    pub block_id: [u8; 16],
+    pub page_id: [u8; 16],
+    pub parent: Option<[u8; 16]>,
+    pub order: String,
+    pub page_name: String,
+    pub page_path: String,
+    pub page_text_kind: i64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalPropertyRow {
     pub owner: PhysicalEntityId,
@@ -2826,6 +2845,19 @@ fn task_candidate_block_row_output_bytes(
     )
 }
 
+fn task_candidate_locator_row_output_bytes(
+    row: &PhysicalTaskCandidateLocatorRow,
+) -> Result<usize, MaterializationError> {
+    checked_output_bytes(
+        64,
+        [
+            Some(row.order.as_str()),
+            Some(row.page_name.as_str()),
+            Some(row.page_path.as_str()),
+        ],
+    )
+}
+
 fn referrer_row_output_bytes(_: &PhysicalReferrerRow) -> Result<usize, MaterializationError> {
     checked_output_bytes(64, [])
 }
@@ -2907,6 +2939,27 @@ const TASK_CANDIDATE_BLOCKS_SQL: &str =
 const TASK_CANDIDATE_BLOCKS_AFTER_SQL: &str =
     "SELECT t.block_id, t.page_id, b.parent_block_id, b.order_key,
             b.content, b.logseq_uuid, p.name, p.path, p.text_kind
+     FROM tasks AS t
+     JOIN blocks AS b
+       ON b.block_id = t.block_id AND b.page_id = t.page_id
+     JOIN pages AS p ON p.page_id = t.page_id
+     WHERE t.marker = ?1
+       AND (t.page_id, t.block_id) > (?2, ?3)
+     ORDER BY t.page_id, t.block_id LIMIT ?4";
+
+const TASK_CANDIDATE_LOCATORS_SQL: &str =
+    "SELECT t.block_id, t.page_id, b.parent_block_id, b.order_key,
+            p.name, p.path, p.text_kind
+     FROM tasks AS t
+     JOIN blocks AS b
+       ON b.block_id = t.block_id AND b.page_id = t.page_id
+     JOIN pages AS p ON p.page_id = t.page_id
+     WHERE t.marker = ?1
+     ORDER BY t.page_id, t.block_id LIMIT ?2";
+
+const TASK_CANDIDATE_LOCATORS_AFTER_SQL: &str =
+    "SELECT t.block_id, t.page_id, b.parent_block_id, b.order_key,
+            p.name, p.path, p.text_kind
      FROM tasks AS t
      JOIN blocks AS b
        ON b.block_id = t.block_id AND b.page_id = t.page_id
@@ -4137,6 +4190,62 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         )
     }
 
+    /// Structural task candidates for a caller that already owns the exact
+    /// parser document at this projection generation.
+    ///
+    /// The cursor and marker rules match [`Self::task_candidate_blocks_after`],
+    /// but the row omits raw content and external UUID transport. The caller
+    /// must locate and identity-check the parser block before exposing a result;
+    /// this physical API does not make a semantic claim by itself.
+    pub fn task_candidate_locators_after(
+        &self,
+        marker: &str,
+        after: Option<([u8; 16], [u8; 16])>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalTaskCandidateLocatorRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(marker)?;
+        if marker.trim().is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "task marker must be non-empty".into(),
+            ));
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                TASK_CANDIDATE_LOCATORS_SQL,
+                vec![marker.to_owned().into(), limit.into()],
+            ),
+            Some((page_id, block_id)) => (
+                TASK_CANDIDATE_LOCATORS_AFTER_SQL,
+                vec![
+                    marker.to_owned().into(),
+                    page_id.to_vec().into(),
+                    block_id.to_vec().into(),
+                    limit.into(),
+                ],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let block_id: Vec<u8> = row.get(0)?;
+            let page_id: Vec<u8> = row.get(1)?;
+            let parent: Option<Vec<u8>> = row.get(2)?;
+            Ok(PhysicalTaskCandidateLocatorRow {
+                block_id: decode_id_sql(&block_id)?,
+                page_id: decode_id_sql(&page_id)?,
+                parent: parent.as_deref().map(decode_id_sql).transpose()?,
+                order: row.get(3)?,
+                page_name: row.get(4)?,
+                page_path: row.get(5)?,
+                page_text_kind: row.get(6)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            task_candidate_locator_row_output_bytes,
+        )
+    }
+
     pub fn search(
         &self,
         query: &str,
@@ -5017,6 +5126,27 @@ mod tests {
         assert_eq!(all[2].page_path, "journals/second.org");
         assert_eq!(all[2].page_text_kind, 1);
 
+        let locators = read
+            .task_candidate_locators_after("TODO", None, 10)
+            .unwrap();
+        assert_eq!(
+            locators
+                .iter()
+                .map(|row| (row.page_id, row.block_id))
+                .collect::<Vec<_>>(),
+            all.iter()
+                .map(|row| (row.page_id, row.block_id))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(locators[1].parent, Some(parent_block_id));
+        assert_eq!(locators[1].order, "child");
+        assert_eq!(locators[1].page_name, "First");
+        assert_eq!(locators[1].page_path, "pages/first.md");
+        assert_eq!(locators[1].page_text_kind, 0);
+        assert_eq!(locators[2].page_name, "Second");
+        assert_eq!(locators[2].page_path, "journals/second.org");
+        assert_eq!(locators[2].page_text_kind, 1);
+
         let mut paged = Vec::new();
         let mut after = None;
         loop {
@@ -5026,8 +5156,24 @@ mod tests {
             paged.extend(rows);
         }
         assert_eq!(paged, all);
+
+        let mut paged_locators = Vec::new();
+        let mut after = None;
+        loop {
+            let rows = read
+                .task_candidate_locators_after("TODO", after, 1)
+                .unwrap();
+            let Some(last) = rows.last() else { break };
+            after = Some((last.page_id, last.block_id));
+            paged_locators.extend(rows);
+        }
+        assert_eq!(paged_locators, locators);
         assert!(read
             .task_candidate_blocks_after("todo", None, 10)
+            .unwrap()
+            .is_empty());
+        assert!(read
+            .task_candidate_locators_after("todo", None, 10)
             .unwrap()
             .is_empty());
     }
