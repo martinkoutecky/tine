@@ -1,6 +1,8 @@
 #[cfg(windows)]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
 use cap_std::fs::{Dir, OpenOptions};
+#[cfg(any(target_os = "android", all(test, unix)))]
+use std::collections::HashSet;
 #[cfg(unix)]
 use std::ffi::CString;
 use std::fmt;
@@ -1317,6 +1319,14 @@ pub struct ExactImmutablePublicationBatch {
     archive: Dir,
     publications: usize,
     existing_publications: usize,
+    #[cfg(any(target_os = "android", all(test, unix)))]
+    exact_publications: Vec<ExactBatchPublication>,
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+struct ExactBatchPublication {
+    dir: Dir,
+    filename: String,
 }
 
 /// Non-forgeable evidence that an exact immutable publication batch finished.
@@ -1332,6 +1342,8 @@ impl ExactImmutablePublicationBatch {
             archive: archive.try_clone()?,
             publications: 0,
             existing_publications: 0,
+            #[cfg(any(target_os = "android", all(test, unix)))]
+            exact_publications: Vec::new(),
         })
     }
 
@@ -1343,6 +1355,11 @@ impl ExactImmutablePublicationBatch {
         bytes: &[u8],
     ) -> Result<(), FilesystemError> {
         let existing = stage_immutable_unflushed(dir, filename, bytes)?;
+        #[cfg(any(target_os = "android", all(test, unix)))]
+        self.exact_publications.push(ExactBatchPublication {
+            dir: dir.try_clone()?,
+            filename: filename.to_owned(),
+        });
         self.publications = self.publications.saturating_add(1);
         self.existing_publications = self
             .existing_publications
@@ -1363,6 +1380,9 @@ impl ExactImmutablePublicationBatch {
     }
 
     pub fn finish(self) -> Result<CompletedExactImmutablePublicationBatch, FilesystemError> {
+        #[cfg(any(target_os = "android", all(test, unix)))]
+        flush_exact_batch(&self.archive, &self.exact_publications)?;
+        #[cfg(not(any(target_os = "android", all(test, unix))))]
         flush_exact_batch(&self.archive)?;
         #[cfg(test)]
         note_batch_durability_barrier();
@@ -1481,7 +1501,7 @@ fn rename_noreplace(_dir: &Dir, _from: &str, _to: &str) -> io::Result<()> {
     ))
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(target_os = "linux", not(test)))]
 fn flush_exact_batch(archive: &Dir) -> Result<(), FilesystemError> {
     // cap-std may retain an O_PATH descriptor. Derive a real descriptor only
     // through that retained archive capability before issuing the one barrier.
@@ -1503,6 +1523,105 @@ fn flush_exact_batch(archive: &Dir) -> Result<(), FilesystemError> {
     } else {
         Err(io::Error::last_os_error().into())
     }
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+fn flush_exact_batch(
+    archive: &Dir,
+    exact_publications: &[ExactBatchPublication],
+) -> Result<(), FilesystemError> {
+    let result = flush_filesystem(archive);
+    finish_android_exact_batch_flush(exact_publications, result)
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+fn flush_filesystem(archive: &Dir) -> io::Result<()> {
+    // cap-std may retain an O_PATH descriptor. Derive a real descriptor only
+    // through that retained archive capability before issuing the one barrier.
+    let fd = unsafe {
+        libc::openat(
+            archive.as_fd().as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned one newly owned directory descriptor.
+    let archive = unsafe { fs::File::from_raw_fd(fd) };
+    let result = unsafe { libc::syncfs(archive.as_raw_fd()) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+const fn android_durability_capability_refusal(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::PermissionDenied | ErrorKind::Unsupported | ErrorKind::InvalidInput
+    )
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+fn finish_android_exact_batch_flush(
+    exact_publications: &[ExactBatchPublication],
+    result: io::Result<()>,
+) -> Result<(), FilesystemError> {
+    match result {
+        Ok(()) => return Ok(()),
+        Err(error) if android_durability_capability_refusal(error.kind()) => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    // Some Android kernels deny filesystem-wide synchronization even for an
+    // app-private archive. Synchronize every exact immutable file retained by
+    // this batch, then request directory-entry durability. A directory fsync
+    // capability refusal is the one platform limitation we cannot strengthen;
+    // all ordinary file and I/O failures remain fatal.
+    let mut synchronized_directories = HashSet::new();
+    for publication in exact_publications {
+        open_file_nofollow(&publication.dir, &publication.filename)?.sync_all()?;
+        let directory_identity = directory_identity(&publication.dir)?;
+        if !synchronized_directories.insert(directory_identity) {
+            continue;
+        }
+        match sync_dir_required(&publication.dir) {
+            Ok(()) => {}
+            Err(error) if android_durability_capability_refusal(error.kind()) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+fn directory_identity(dir: &Dir) -> io::Result<(libc::dev_t, libc::ino_t)> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `stat` is valid writable storage and the retained directory
+    // capability's descriptor remains live for the duration of the call.
+    if unsafe { libc::fstat(dir.as_fd().as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful fstat initialized every field.
+    let stat = unsafe { stat.assume_init() };
+    Ok((stat.st_dev, stat.st_ino))
+}
+
+#[cfg(all(test, unix))]
+fn simulate_android_exact_batch_finish(
+    batch: ExactImmutablePublicationBatch,
+    filesystem_result: io::Result<()>,
+) -> Result<CompletedExactImmutablePublicationBatch, FilesystemError> {
+    finish_android_exact_batch_flush(&batch.exact_publications, filesystem_result)?;
+    Ok(CompletedExactImmutablePublicationBatch {
+        _private: (),
+        publications: batch.publications,
+        existing_publications: batch.existing_publications,
+    })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -1602,6 +1721,50 @@ mod tests {
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         assert_persisted_entries(&fixture, &[("entry", b"exact bytes")]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn android_permission_refusal_flushes_every_exact_batch_file() {
+        let fixture = TestDirectory::new("android-exact-batch-fallback");
+        let entries: &[(&str, &[u8])] = &[
+            ("first", b"first exact bytes"),
+            ("second", b"second exact bytes"),
+        ];
+        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        for (filename, bytes) in entries {
+            batch.publish(&fixture.dir, filename, bytes).unwrap();
+        }
+
+        let completed = simulate_android_exact_batch_finish(
+            batch,
+            Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                "simulated Android syncfs refusal",
+            )),
+        )
+        .unwrap();
+
+        assert_eq!(completed.publication_count(), entries.len());
+        assert_persisted_entries(&fixture, entries);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn android_exact_batch_fallback_keeps_real_io_errors_fatal() {
+        let fixture = TestDirectory::new("android-exact-batch-real-error");
+        let mut batch = ExactImmutablePublicationBatch::new(&fixture.dir).unwrap();
+        batch
+            .publish(&fixture.dir, "entry", b"exact bytes")
+            .unwrap();
+
+        assert!(matches!(
+            simulate_android_exact_batch_finish(
+                batch,
+                Err(io::Error::new(ErrorKind::WriteZero, "real I/O failure")),
+            ),
+            Err(FilesystemError::Io(error)) if error.kind() == ErrorKind::WriteZero
+        ));
     }
 
     fn staged_bytes(
