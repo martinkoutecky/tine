@@ -492,6 +492,10 @@ pub const SEARCH_FTS_DDL: &str = "CREATE VIRTUAL TABLE search_fts USING fts5(
     normalized_text,
     tokenize = 'unicode61 remove_diacritics 0'
 )";
+pub const SEARCH_SUBSTRING_FTS_DDL: &str = "CREATE VIRTUAL TABLE search_substring_fts USING fts5(
+    normalized_text,
+    tokenize = 'trigram'
+)";
 pub const SEARCH_FTS_OWNERS_DDL: &str = "CREATE TABLE search_fts_owners (
     rowid INTEGER PRIMARY KEY,
     entity_type INTEGER NOT NULL CHECK (entity_type IN (0, 1)),
@@ -716,7 +720,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 40] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 41] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -757,6 +761,7 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 40] = [
     ("table", "tasks", TASKS_DDL),
     ("table", "search_fts_owners", SEARCH_FTS_OWNERS_DDL),
     ("table", "search_fts", SEARCH_FTS_DDL),
+    ("table", "search_substring_fts", SEARCH_SUBSTRING_FTS_DDL),
     ("index", "pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("index", "pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("index", "pages_path_idx", PAGES_PATH_INDEX_DDL),
@@ -883,6 +888,7 @@ pub(crate) fn initialize_graph_projection_schema(
          {TASKS_DDL};
          {SEARCH_FTS_OWNERS_DDL};
          {SEARCH_FTS_DDL};
+         {SEARCH_SUBSTRING_FTS_DDL};
          {PAGES_NAME_INDEX_DDL};
          {PAGES_NAME_KEY_INDEX_DDL};
          {PAGES_PATH_INDEX_DDL};
@@ -974,12 +980,13 @@ fn validate_schema_columns(
 /// consumed one row at a time.
 fn digested_materialization_tables() -> impl Iterator<Item = (&'static str, &'static [&'static str])>
 {
-    MATERIALIZATION_TABLE_COLUMNS
-        .into_iter()
-        .chain(std::iter::once((
+    MATERIALIZATION_TABLE_COLUMNS.into_iter().chain([
+        (
             "search_fts",
             &["entity_type", "entity_id", "page_id", "text"] as &[&str],
-        )))
+        ),
+        ("search_substring_fts", &["normalized_text"] as &[&str]),
+    ])
 }
 
 fn update_table_rows(
@@ -1157,13 +1164,13 @@ fn update_sqlite_value(
 #[cfg(test)]
 fn row_digest_legacy(connection: &Connection) -> Result<ContentDigest, MaterializationError> {
     let mut bytes = b"tine/sqlite-materialization/rows/v2\0".to_vec();
-    for (table, columns) in MATERIALIZATION_TABLE_COLUMNS
-        .into_iter()
-        .chain(std::iter::once((
+    for (table, columns) in MATERIALIZATION_TABLE_COLUMNS.into_iter().chain([
+        (
             "search_fts",
             &["entity_type", "entity_id", "page_id", "text"] as &[&str],
-        )))
-    {
+        ),
+        ("search_substring_fts", &["normalized_text"] as &[&str]),
+    ]) {
         encode_len(&mut bytes, table.len());
         bytes.extend_from_slice(table.as_bytes());
         encode_len(&mut bytes, columns.len());
@@ -1325,6 +1332,10 @@ pub fn finalize_fresh_bootstrap(
         })?;
     let fts_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM search_fts", [], |row| row.get(0))?;
+    let substring_fts_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM search_substring_fts", [], |row| {
+            row.get(0)
+        })?;
     let mismatches: i64 = connection.query_row(
         "SELECT COUNT(*)
          FROM search_fts_owners AS owner
@@ -1339,6 +1350,19 @@ pub fn finalize_fresh_bootstrap(
     if owner_count != fts_count || mismatches != 0 {
         return Err(MaterializationError::Corrupt(
             "FTS rows differ from their authoritative owner mapping".into(),
+        ));
+    }
+    let substring_mismatches: i64 = connection.query_row(
+        "SELECT COUNT(*)
+         FROM search_fts_owners AS owner
+         LEFT JOIN search_substring_fts AS substring ON substring.rowid = owner.rowid
+         WHERE substring.rowid IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    if owner_count != substring_fts_count || substring_mismatches != 0 {
+        return Err(MaterializationError::Corrupt(
+            "substring FTS rows differ from their authoritative owner mapping".into(),
         ));
     }
     Ok(())
@@ -1382,7 +1406,7 @@ pub struct PhysicalTerminalCatalogStamp {
     pub source_count: u64,
 }
 
-const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 15] = [
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 16] = [
     "pages",
     "blocks",
     "refs",
@@ -1391,6 +1415,7 @@ const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 15] = [
     "tasks",
     "search_fts_owners",
     "search_fts",
+    "search_substring_fts",
     "reference_source_coverage",
     "reference_postings",
     "reference_alias_declarations",
@@ -2164,7 +2189,8 @@ pub(crate) fn reset_graph_projection_rows(
     transaction: &Connection,
 ) -> Result<(), MaterializationError> {
     transaction.execute_batch(
-        "DELETE FROM search_fts;
+        "DELETE FROM search_substring_fts;
+         DELETE FROM search_fts;
          DELETE FROM search_fts_owners;
          DELETE FROM tasks;
          DELETE FROM tags;
@@ -2228,6 +2254,10 @@ fn delete_page(
     };
     instrumentation.fts_rowids = fts_rowids.len();
     for rowid in fts_rowids {
+        transaction.execute(
+            "DELETE FROM search_substring_fts WHERE rowid = ?1",
+            params![rowid],
+        )?;
         transaction.execute("DELETE FROM search_fts WHERE rowid = ?1", params![rowid])?;
     }
     instrumentation.owned_rows = instrumentation
@@ -2466,6 +2496,11 @@ fn insert_fts(
             text,
             normalized_text,
         ],
+    )?;
+    execute_cached(
+        transaction,
+        "INSERT INTO search_substring_fts (rowid, normalized_text) VALUES (?1, ?2)",
+        params![rowid, normalized_text],
     )?;
     Ok(())
 }
@@ -3840,6 +3875,72 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         )
     }
 
+    /// Page-level candidates for exact normalized literal-substring matching.
+    ///
+    /// Three-or-more-character needles use SQLite's trigram index. Shorter
+    /// needles deliberately return the bounded page inventory because an exact
+    /// trigram index cannot represent them; the application parser remains the
+    /// final semantic matcher in both cases.
+    pub fn literal_substring_candidate_pages_after(
+        &self,
+        normalized_needle: &str,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPlainTextCandidatePageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(normalized_needle)?;
+        if normalized_needle.is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "normalized literal needle must be non-empty".into(),
+            ));
+        }
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) =
+            if normalized_needle.chars().count() < 3 {
+                match after {
+                    None => (
+                        "SELECT page_id FROM pages ORDER BY page_id LIMIT ?1",
+                        vec![limit.into()],
+                    ),
+                    Some(page_id) => (
+                        "SELECT page_id FROM pages WHERE page_id > ?1
+                         ORDER BY page_id LIMIT ?2",
+                        vec![page_id.to_vec().into(), limit.into()],
+                    ),
+                }
+            } else {
+                let phrase = format!("\"{}\"", normalized_needle.replace('"', "\"\""));
+                match after {
+                    None => (
+                        "SELECT DISTINCT owner.page_id
+                         FROM search_substring_fts AS substring
+                         JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                         WHERE search_substring_fts MATCH ?1
+                         ORDER BY owner.page_id LIMIT ?2",
+                        vec![phrase.into(), limit.into()],
+                    ),
+                    Some(page_id) => (
+                        "SELECT DISTINCT owner.page_id
+                         FROM search_substring_fts AS substring
+                         JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                         WHERE search_substring_fts MATCH ?1 AND owner.page_id > ?2
+                         ORDER BY owner.page_id LIMIT ?3",
+                        vec![phrase.into(), page_id.to_vec().into(), limit.into()],
+                    ),
+                }
+            };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalPlainTextCandidatePageRow {
+                page_id: decode_id_sql(&page_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(16),
+        )
+    }
+
     /// Stable block owners for one canonical property key. Rows are candidates:
     /// callers retain semantic ownership of property parsing and subtree shape.
     pub fn block_property_candidates_after(
@@ -4971,6 +5072,27 @@ mod tests {
                 .unwrap(),
             vec![PhysicalPlainTextCandidatePageRow {
                 page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.literal_substring_candidate_pages_after("afé f", None, 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.literal_substring_candidate_pages_after("oo-b", None, 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.literal_substring_candidate_pages_after("ca", Some(first_page), 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: second_page,
             }]
         );
         assert_eq!(

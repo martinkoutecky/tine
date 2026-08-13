@@ -14,6 +14,16 @@ independently in `src/formats.rs` and summarized in
   populate the same disposable `reference_postings` facts and bounded
   navigation-name read used by managed storage, without a second application
   cache or a whole-graph referenced-name scan.
+- Disposable projections now maintain a SQLite trigram index and expose
+  bounded page candidates for exact normalized literal-substring matching,
+  including matches in the middle of tokens. One- and two-character needles
+  use the bounded page inventory; the application parser remains the final
+  semantic matcher for every query.
+
+### Changed
+
+- The disposable SQLite projection schema is now 16. Older projections rebuild
+  from authoritative graph/history input rather than being reinterpreted.
 
 ## [0.5.0] - 2026-08-13
 

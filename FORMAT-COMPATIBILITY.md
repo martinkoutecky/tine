@@ -10,7 +10,7 @@ is a review aid, not a second source of truth.
 | Oplog manifest/object protocol | protocol 2; object envelope 2; manifest encoding 4 | Existing versions must remain readable or receive an explicit migration before a writer changes these values. |
 | Local journal | frame schema 1; segment/frontier protocol 2; `TINEJNL2`/`TINEFRT2`; 136-byte header; 240-byte `.frontier-v2` | V1 inspection remains non-mutating. V2 recovery accepts only the exact selected header and frontier and treats bytes beyond a valid old frontier as uncommitted suffix. |
 | Engine scratch | run schema 13; page schema 1; 32 LSM levels; `engine-scratch-v2` layout | Scratch is reconstructible, but an interrupted run must either resume safely or be rejected and rebuilt. |
-| SQLite projection | application ID `0x54494e45`; schema 15 | SQLite is disposable. A mismatch must rebuild from authoritative history, never reinterpret rows under a new schema. |
+| SQLite projection | application ID `0x54494e45`; schema 16 | SQLite is disposable. A mismatch must rebuild from authoritative history, never reinterpret rows under a new schema. |
 | Checkpoint fingerprints | 64 KiB edges; 16 KiB interior ranges; 1 MiB interior sampling interval | Stored and freshly computed fingerprints are comparable only with identical geometry. |
 
 Writer bounds are also part of compatibility because lowering them may strand

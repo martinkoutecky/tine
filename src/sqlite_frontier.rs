@@ -18,7 +18,7 @@ use crate::sqlite_materialization::{
 use crate::ContentDigest;
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 15;
+pub const SQLITE_SCHEMA_VERSION: u32 = 16;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
 
 pub const META_DDL: &str = "CREATE TABLE meta (
@@ -109,7 +109,7 @@ pub const BATCH_ID_INDEX_DDL: &str =
 pub const ACCEPTANCE_SEQUENCE_INDEX_DDL: &str = "CREATE UNIQUE INDEX \
     applied_batches_acceptance_sequence_uq ON applied_batches(acceptance_sequence)";
 
-const EXPECTED_TABLES: [&str; 27] = [
+const EXPECTED_TABLES: [&str; 33] = [
     "accepted_batch_nodes",
     "applied_batches",
     "blocks",
@@ -135,6 +135,12 @@ const EXPECTED_TABLES: [&str; 27] = [
     "search_fts_docsize",
     "search_fts_idx",
     "search_fts_owners",
+    "search_substring_fts",
+    "search_substring_fts_config",
+    "search_substring_fts_content",
+    "search_substring_fts_data",
+    "search_substring_fts_docsize",
+    "search_substring_fts_idx",
     "tags",
     "tasks",
 ];
