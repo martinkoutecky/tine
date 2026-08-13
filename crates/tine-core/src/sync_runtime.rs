@@ -5157,7 +5157,7 @@ fn open_reconstructible_activation_receipts(
                 // copy, then prove that ordinary creation can start cleanly.
                 archive_pre_promotion_receipts(&request.receipt_root).map_err(|error| {
                     format!(
-                        "create private projection receipts: {first_error}; archive reconstructible pre-promotion receipt state: {error}"
+                        "archive reconstructible pre-promotion receipt state failed: {error}; initial receipt setup failure: {first_error}"
                     )
                 })?;
                 return ProjectionReceiptStore::open_for_endpoint(
@@ -5167,7 +5167,7 @@ fn open_reconstructible_activation_receipts(
                 )
                 .map_err(|retry_error| {
                     format!(
-                        "create private projection receipts: {first_error}; clean Android receipt rebuild also failed: {retry_error}"
+                        "clean Android receipt rebuild failed: {retry_error}; initial receipt setup failure: {first_error}"
                     )
                 });
             }
@@ -5197,17 +5197,16 @@ fn archive_pre_promotion_receipts(receipt_root: &Path) -> Result<(), String> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "private receipt root has no UTF-8 filename".to_owned())?;
-    let archived = receipt_root.with_file_name(format!("{name}.pre-promotion-failed"));
-    match fs::remove_dir_all(&archived) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "remove prior diagnostic {}: {error}",
-                archived.display()
-            ));
-        }
-    }
+    // Never traverse or remove a prior failed tree here. The whole reason for
+    // taking this path is that an older Android build may have created a
+    // receipt tree whose descendants this app can no longer open. Reusing one
+    // fixed diagnostic name made that inaccessible residue a permanent gate:
+    // every retry failed while deleting the *previous* diagnostic before the
+    // current reconstructible tree could be moved aside and rebuilt.
+    let archived = receipt_root.with_file_name(format!(
+        "{name}.pre-promotion-failed.{}",
+        Uuid::new_v4().simple()
+    ));
     fs::rename(receipt_root, &archived).map_err(|error| {
         format!(
             "move {} to {}: {error}",
@@ -24969,7 +24968,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_promotion_receipt_retry_preserves_one_diagnostic_tree() {
+    fn pre_promotion_receipt_retry_never_traverses_an_older_diagnostic_tree() {
         let root = std::env::temp_dir().join(format!(
             "tine-pre-promotion-receipts-{}",
             uuid::Uuid::new_v4()
@@ -24977,12 +24976,35 @@ mod tests {
         let receipts = root.join("receipts");
         fs::create_dir_all(&receipts).unwrap();
         fs::write(receipts.join("interrupted.tmp"), b"partial receipt bytes").unwrap();
+        // A fixed-name recovery implementation would try remove_dir_all here
+        // and fail before moving the current tree. A physical Android device
+        // produces the same shape when the prior diagnostic exists but cannot
+        // be traversed by this app version.
+        fs::write(
+            root.join("receipts.pre-promotion-failed"),
+            b"opaque older diagnostic",
+        )
+        .unwrap();
 
         archive_pre_promotion_receipts(&receipts).unwrap();
 
         assert!(!receipts.exists());
         assert_eq!(
-            fs::read(root.join("receipts.pre-promotion-failed/interrupted.tmp")).unwrap(),
+            fs::read(root.join("receipts.pre-promotion-failed")).unwrap(),
+            b"opaque older diagnostic"
+        );
+        let archived = fs::read_dir(&root)
+            .unwrap()
+            .map(Result::unwrap)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("receipts.pre-promotion-failed."))
+            })
+            .expect("current receipt tree must receive a fresh diagnostic name");
+        assert_eq!(
+            fs::read(archived.join("interrupted.tmp")).unwrap(),
             b"partial receipt bytes"
         );
         fs::remove_dir_all(root).unwrap();
@@ -24992,7 +25014,7 @@ mod tests {
     fn storage_contract_limits_receipt_rebuild_to_pre_enrollment_android_state() {
         let contract = include_str!("../../../docs/storage-sync-contract.md");
         assert!(contract.contains("Before an enrollment binding exists"));
-        assert!(contract.contains("receipts.pre-promotion-failed"));
+        assert!(contract.contains("receipts.pre-promotion-failed.<unique-id>"));
         assert!(contract.contains("Once enrollment has promoted"));
     }
 

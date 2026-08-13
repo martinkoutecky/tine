@@ -249,9 +249,11 @@ model.
 
 Before an enrollment binding exists, projection receipts are reconstructible
 bootstrap state rather than authority. If Android cannot reopen a receipt tree
-left by an interrupted or older activation, retry retains one sibling
-`receipts.pre-promotion-failed` diagnostic tree and initializes a clean receipt
-store from the unchanged Markdown/Org source. Once enrollment has promoted the
+left by an interrupted or older activation, retry renames it to a fresh sibling
+`receipts.pre-promotion-failed.<unique-id>` diagnostic tree and initializes a
+clean receipt store from the unchanged Markdown/Org source. It never traverses
+or deletes an older diagnostic tree: that residue may be the very tree whose
+Android access semantics caused the retry. Once enrollment has promoted the
 receipt-store identity, this recovery is forbidden: normal exact identity and
 receipt recovery rules apply.
 

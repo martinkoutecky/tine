@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android managed-storage activation can recover even when an older failed
+  setup left an inaccessible projection-receipt diagnostic tree. Each
+  pre-enrollment retry now moves the current reconstructible receipts to a
+  fresh diagnostic name without traversing or deleting prior residue, then
+  rebuilds from the unchanged Markdown/Org graph.
+
 - Android managed-storage activation now uses the ordinary app-private
   `mkdirat`/`openat`/`renameat` boundary throughout reconstructible projection
   receipt initialization, rather than re-entering capability preflights after
