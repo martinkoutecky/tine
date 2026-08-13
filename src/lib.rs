@@ -57,7 +57,10 @@ pub mod sqlite {
         PhysicalApplyRequest, PhysicalClaim, PhysicalFrontierDocument, PhysicalFrontierRoot,
         PreflightDisposition, StoredBatch, StoredFrontier,
     };
-    pub use crate::sqlite_graph_projection::PhysicalGraphProjectionDatabase;
+    pub use crate::sqlite_graph_projection::{
+        PhysicalGraphProjectionDatabase, PhysicalGraphProjectionSourceDelta,
+        PhysicalGraphProjectionSourceRevision,
+    };
     pub use crate::sqlite_materialization::{
         ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
         PhysicalAuthenticatedReference, PhysicalBlock, PhysicalBlockPropertyCandidateRow,

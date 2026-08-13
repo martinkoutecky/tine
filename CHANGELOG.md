@@ -16,6 +16,11 @@ independently in `src/formats.rs` and summarized in
   already retain the exact parser document can recover and identity-check the
   corresponding parser block while managed storage keeps the existing full-row
   physical API.
+- Standalone disposable projections can transactionally retain each page's
+  caller-owned source revision and report only changed, missing, or deleted
+  pages on reopen. Direct Files can therefore reuse exact SQLite facts after a
+  clean restart and lower only externally changed parser documents; these
+  revisions are adapter metadata and do not alter managed-storage formats.
 
 ## [0.4.0] - 2026-08-13
 
@@ -95,7 +100,8 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.2.0...v0.3.0

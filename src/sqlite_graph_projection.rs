@@ -5,6 +5,7 @@
 //! A Direct Files watcher/parser and a managed accepted-event adapter can feed
 //! the same page replacement/delete transaction.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,6 +17,26 @@ use crate::sqlite_materialization::{
 };
 
 const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
+const SOURCE_REVISION_MAX_BYTES: usize = 4096;
+const SOURCE_REVISIONS_DDL: &str = "CREATE TABLE direct_source_revisions (
+    page_id BLOB PRIMARY KEY CHECK (length(page_id) = 16),
+    revision TEXT NOT NULL CHECK (length(CAST(revision AS BLOB)) BETWEEN 1 AND 4096),
+    FOREIGN KEY (page_id) REFERENCES pages(page_id) ON DELETE CASCADE
+) STRICT";
+
+/// Exact application-authority revision for one disposable projection page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalGraphProjectionSourceRevision {
+    pub page_id: [u8; 16],
+    pub revision: String,
+}
+
+/// Page IDs whose physical facts differ from an application's current source.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PhysicalGraphProjectionSourceDelta {
+    pub replacements: Vec<[u8; 16]>,
+    pub deletions: Vec<[u8; 16]>,
+}
 
 /// Connection-owning standalone graph-fact projection.
 ///
@@ -56,11 +77,26 @@ impl PhysicalGraphProjectionDatabase {
     }
 
     pub fn initialize_schema(&self) -> Result<(), MaterializationError> {
-        sqlite_materialization::initialize_graph_projection_schema(&self.connection)
+        sqlite_materialization::initialize_graph_projection_schema(&self.connection)?;
+        self.connection
+            .execute_batch(&format!("{SOURCE_REVISIONS_DDL};"))?;
+        Ok(())
     }
 
     pub fn validate_schema(&self) -> Result<(), MaterializationError> {
-        sqlite_materialization::validate_graph_projection_schema(&self.connection)
+        sqlite_materialization::validate_graph_projection_schema(&self.connection)?;
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(direct_source_revisions)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if columns != ["page_id", "revision"] {
+            return Err(MaterializationError::Schema(format!(
+                "direct_source_revisions columns {columns:?} != [page_id, revision]"
+            )));
+        }
+        Ok(())
     }
 
     pub fn quick_check(&self) -> Result<(), MaterializationError> {
@@ -87,8 +123,107 @@ impl PhysicalGraphProjectionDatabase {
             &change.replacements,
             &change.deletions,
         )?;
+        for page in &change.replacements {
+            transaction.execute(
+                "DELETE FROM direct_source_revisions WHERE page_id = ?1",
+                rusqlite::params![page.page_id.as_slice()],
+            )?;
+        }
+        for page_id in &change.deletions {
+            transaction.execute(
+                "DELETE FROM direct_source_revisions WHERE page_id = ?1",
+                rusqlite::params![page_id.as_slice()],
+            )?;
+        }
         transaction.commit()?;
         Ok(instrumentation)
+    }
+
+    /// Apply physical page facts and publish the exact caller-owned source
+    /// revisions in the same SQLite transaction.
+    pub fn apply_with_source_revisions(
+        &mut self,
+        change: &PhysicalGraphProjectionChange,
+        revisions: &[PhysicalGraphProjectionSourceRevision],
+    ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+        let replacement_ids = change
+            .replacements
+            .iter()
+            .map(|page| page.page_id)
+            .collect::<BTreeSet<_>>();
+        let revision_ids = validated_source_revisions(revisions)?
+            .into_keys()
+            .collect::<BTreeSet<_>>();
+        if replacement_ids != revision_ids {
+            return Err(MaterializationError::InvalidInput(
+                "source revisions must exactly cover replacement pages".into(),
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let instrumentation = sqlite_materialization::apply_graph_projection_rows(
+            &transaction,
+            &change.replacements,
+            &change.deletions,
+        )?;
+        for page_id in &change.deletions {
+            transaction.execute(
+                "DELETE FROM direct_source_revisions WHERE page_id = ?1",
+                rusqlite::params![page_id.as_slice()],
+            )?;
+        }
+        for revision in revisions {
+            transaction.execute(
+                "INSERT INTO direct_source_revisions (page_id, revision)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(page_id) DO UPDATE SET revision = excluded.revision",
+                rusqlite::params![revision.page_id.as_slice(), &revision.revision],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(instrumentation)
+    }
+
+    /// Compare caller authority revisions to the persisted disposable facts.
+    /// Missing metadata is stale, never authoritative.
+    pub fn source_delta(
+        &self,
+        current: &[PhysicalGraphProjectionSourceRevision],
+    ) -> Result<PhysicalGraphProjectionSourceDelta, MaterializationError> {
+        let current = validated_source_revisions(current)?;
+        let mut existing = BTreeMap::<[u8; 16], Option<String>>::new();
+        let mut statement = self.connection.prepare(
+            "SELECT p.page_id, s.revision
+             FROM pages AS p
+             LEFT JOIN direct_source_revisions AS s ON s.page_id = p.page_id
+             ORDER BY p.page_id",
+        )?;
+        for row in statement.query_map([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<String>>(1)?))
+        })? {
+            let (page_id, revision) = row?;
+            let page_id: [u8; 16] = page_id.try_into().map_err(|_| {
+                MaterializationError::Corrupt("stored page ID is not 16 bytes".into())
+            })?;
+            existing.insert(page_id, revision);
+        }
+        let replacements = current
+            .iter()
+            .filter_map(|(page_id, revision)| {
+                (existing.get(page_id).and_then(Option::as_ref) != Some(revision))
+                    .then_some(*page_id)
+            })
+            .collect();
+        let deletions = existing
+            .keys()
+            .filter(|page_id| !current.contains_key(*page_id))
+            .copied()
+            .collect();
+        Ok(PhysicalGraphProjectionSourceDelta {
+            replacements,
+            deletions,
+        })
     }
 
     pub fn reset(&mut self) -> Result<(), MaterializationError> {
@@ -96,6 +231,7 @@ impl PhysicalGraphProjectionDatabase {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         sqlite_materialization::reset_graph_projection_rows(&transaction)?;
+        transaction.execute("DELETE FROM direct_source_revisions", [])?;
         transaction.commit()?;
         Ok(())
     }
@@ -109,6 +245,28 @@ impl PhysicalGraphProjectionDatabase {
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
         Ok(())
     }
+}
+
+fn validated_source_revisions(
+    revisions: &[PhysicalGraphProjectionSourceRevision],
+) -> Result<BTreeMap<[u8; 16], String>, MaterializationError> {
+    let mut validated = BTreeMap::new();
+    for revision in revisions {
+        if revision.revision.is_empty() || revision.revision.len() > SOURCE_REVISION_MAX_BYTES {
+            return Err(MaterializationError::InvalidInput(
+                "source revision must contain 1..=4096 bytes".into(),
+            ));
+        }
+        if validated
+            .insert(revision.page_id, revision.revision.clone())
+            .is_some()
+        {
+            return Err(MaterializationError::InvalidInput(
+                "source revisions contain a duplicate page ID".into(),
+            ));
+        }
+    }
+    Ok(validated)
 }
 
 #[cfg(test)]
@@ -212,6 +370,120 @@ mod tests {
         assert!(database.read().tasks(None, 10).unwrap().is_empty());
         assert!(database.read().search("needle", 10).unwrap().is_empty());
         database.quick_check().unwrap();
+        drop(database);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn standalone_source_revisions_reuse_exact_pages_and_localize_changes() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-storage-source-revisions-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        database.initialize_schema().unwrap();
+        let initial_revisions = vec![
+            PhysicalGraphProjectionSourceRevision {
+                page_id: [1; 16],
+                revision: "rev-1".into(),
+            },
+            PhysicalGraphProjectionSourceRevision {
+                page_id: [2; 16],
+                revision: "rev-2".into(),
+            },
+        ];
+        database
+            .apply_with_source_revisions(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "TODO", "first"), page(2, "DONE", "second")],
+                    deletions: Vec::new(),
+                },
+                &initial_revisions,
+            )
+            .unwrap();
+        assert_eq!(
+            database.source_delta(&initial_revisions).unwrap(),
+            PhysicalGraphProjectionSourceDelta::default()
+        );
+
+        drop(database);
+        let mut reopened = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        reopened.validate_schema().unwrap();
+        let changed = vec![
+            PhysicalGraphProjectionSourceRevision {
+                page_id: [1; 16],
+                revision: "rev-1-new".into(),
+            },
+            PhysicalGraphProjectionSourceRevision {
+                page_id: [3; 16],
+                revision: "rev-3".into(),
+            },
+        ];
+        assert_eq!(
+            reopened.source_delta(&changed).unwrap(),
+            PhysicalGraphProjectionSourceDelta {
+                replacements: vec![[1; 16], [3; 16]],
+                deletions: vec![[2; 16]],
+            }
+        );
+        reopened
+            .apply_with_source_revisions(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "DONE", "first changed"), page(3, "TODO", "third")],
+                    deletions: vec![[2; 16]],
+                },
+                &changed,
+            )
+            .unwrap();
+        assert_eq!(
+            reopened.source_delta(&changed).unwrap(),
+            PhysicalGraphProjectionSourceDelta::default()
+        );
+        reopened.quick_check().unwrap();
+        drop(reopened);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn ordinary_apply_invalidates_source_reuse_for_replaced_pages() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-storage-source-invalidation-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        database.initialize_schema().unwrap();
+        let revision = PhysicalGraphProjectionSourceRevision {
+            page_id: [1; 16],
+            revision: "exact-source".into(),
+        };
+        database
+            .apply_with_source_revisions(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "TODO", "first")],
+                    deletions: Vec::new(),
+                },
+                std::slice::from_ref(&revision),
+            )
+            .unwrap();
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: vec![page(1, "DONE", "untracked replacement")],
+                deletions: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(
+            database
+                .source_delta(std::slice::from_ref(&revision))
+                .unwrap(),
+            PhysicalGraphProjectionSourceDelta {
+                replacements: vec![[1; 16]],
+                deletions: Vec::new(),
+            }
+        );
         drop(database);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
