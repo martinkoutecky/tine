@@ -202,6 +202,13 @@ pub struct PhysicalGraphProjectionChange {
     /// Direct Files obtains them directly from the parser snapshot. They are
     /// disposable graph facts in both regimes, never write authority.
     pub reference_postings: Vec<PhysicalReferencePosting>,
+    /// Parser-derived page aliases owned by replacement pages.
+    ///
+    /// Like reference postings, aliases are disposable graph facts. Keeping
+    /// their replacement in the same page transaction prevents a Direct Files
+    /// projection from retaining an alias after the page which declared it was
+    /// changed or deleted.
+    pub aliases: Vec<PhysicalAliasDeclaration>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2085,7 +2092,7 @@ pub(crate) fn apply_graph_projection_rows(
     Ok(instrumentation)
 }
 
-pub(crate) fn replace_graph_projection_reference_postings(
+pub(crate) fn replace_graph_projection_reference_facts(
     transaction: &Connection,
     change: &PhysicalGraphProjectionChange,
 ) -> Result<(), MaterializationError> {
@@ -2103,14 +2110,30 @@ pub(crate) fn replace_graph_projection_reference_postings(
             "graph-projection reference postings must belong to replacement pages".into(),
         ));
     }
+    if change
+        .aliases
+        .iter()
+        .any(|alias| !replacement_ids.contains(&alias.source_page_id))
+    {
+        return Err(MaterializationError::InvalidInput(
+            "graph-projection aliases must belong to replacement pages".into(),
+        ));
+    }
     for page_id in replacement_ids.iter().chain(change.deletions.iter()) {
         transaction.execute(
             "DELETE FROM reference_postings WHERE source_page_id = ?1",
             params![page_id.as_slice()],
         )?;
+        transaction.execute(
+            "DELETE FROM reference_alias_declarations WHERE source_page_id = ?1",
+            params![page_id.as_slice()],
+        )?;
     }
     for posting in &change.reference_postings {
         insert_reference_posting(transaction, posting)?;
+    }
+    for alias in &change.aliases {
+        insert_alias_declaration(transaction, alias)?;
     }
     Ok(())
 }

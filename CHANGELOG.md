@@ -7,6 +7,13 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+### Added
+
+- Regime-neutral graph-projection changes can transactionally replace the
+  parser-derived aliases owned by each replaced page. Replacement, deletion,
+  and reopen now leave no stale alias declarations in the disposable SQLite
+  projection.
+
 ## [0.6.0] - 2026-08-13
 
 ### Added
