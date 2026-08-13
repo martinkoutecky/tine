@@ -445,7 +445,11 @@ export interface StartupProgressEvent {
 }
 
 export type SparseV2ActivationPhase =
+  | "private_setup"
   | "source_capture"
+  | "pre_enrollment_reservation"
+  | "archive_setup"
+  | "initial_enrollment"
   | "bootstrap_import_preparation"
   | "immutable_publication_install"
   | "backup_proof"

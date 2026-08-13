@@ -1422,6 +1422,7 @@ pub enum SyncLocalActivationPhase {
     PrivateSetup,
     SourceCapture,
     PreEnrollmentReservation,
+    ArchiveSetup,
     InitialEnrollment,
     BootstrapImportPreparation,
     ImmutablePublicationInstall,
@@ -1564,6 +1565,7 @@ impl SyncLocalActivationPhase {
             Self::PrivateSetup => "private activation setup",
             Self::SourceCapture => "source capture",
             Self::PreEnrollmentReservation => "pre-enrollment reservation",
+            Self::ArchiveSetup => "private archive setup",
             Self::InitialEnrollment => "initial enrollment",
             Self::BootstrapImportPreparation => "bootstrap import preparation",
             Self::ImmutablePublicationInstall => "immutable publication/install",
@@ -4915,6 +4917,9 @@ fn activate_non_active_local(
     };
     activation_cut("before_archive_creation")?;
 
+    progress(SyncLocalActivationProgress::Phase {
+        phase: SyncLocalActivationPhase::ArchiveSetup,
+    });
     prepare_object_store_parent_nofollow(&request.archive_root)
         .map_err(|error| format!("prepare private archive root: {error}"))?;
     let archive = ObjectStore::open(&request.archive_root, request.identities.workspace_id)
@@ -5302,7 +5307,15 @@ fn activation_failure_after(
 ) -> SyncLocalActivationResult {
     let reservation = match inspect_local_activation_reservation_at(&request.enrollment_root) {
         Ok(reservation) => reservation,
-        Err(error) => return activation_enrollment_failure(fallback_stage, error),
+        Err(error) => {
+            return activation_retryable(
+                fallback_stage,
+                retain_activation_failure_detail(
+                    detail,
+                    format!("post-failure reservation inspection: {error}"),
+                ),
+            )
+        }
     };
     let matching_reservation = reservation.as_ref().is_some_and(|reservation| {
         reservation.identity() == &local_activation_identity(request, graph_resource_id)
@@ -47729,6 +47742,7 @@ mod tests {
             SyncLocalActivationPhase::PrivateSetup,
             SyncLocalActivationPhase::SourceCapture,
             SyncLocalActivationPhase::PreEnrollmentReservation,
+            SyncLocalActivationPhase::ArchiveSetup,
             SyncLocalActivationPhase::InitialEnrollment,
             SyncLocalActivationPhase::BootstrapImportPreparation,
             SyncLocalActivationPhase::ImmutablePublicationInstall,
@@ -47815,6 +47829,7 @@ mod tests {
                 SyncLocalActivationPhase::PrivateSetup,
                 SyncLocalActivationPhase::SourceCapture,
                 SyncLocalActivationPhase::PreEnrollmentReservation,
+                SyncLocalActivationPhase::ArchiveSetup,
                 SyncLocalActivationPhase::InitialEnrollment,
                 SyncLocalActivationPhase::BootstrapImportPreparation,
                 SyncLocalActivationPhase::ImmutablePublicationInstall,

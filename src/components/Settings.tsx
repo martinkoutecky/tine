@@ -2168,7 +2168,11 @@ function ManagedSyncPanel(props: { forceOpen: boolean }): JSX.Element {
       return "Prepared graph operation history…";
     }
     return {
+      private_setup: "Preparing private storage…",
       source_capture: "Capturing source files…",
+      pre_enrollment_reservation: "Preparing resumable setup…",
+      archive_setup: "Preparing private history storage…",
+      initial_enrollment: "Preparing local enrollment…",
       bootstrap_import_preparation: "Preparing graph operation history…",
       immutable_publication_install: "Installing prepared history…",
       backup_proof: "Verifying the safety backup…",
