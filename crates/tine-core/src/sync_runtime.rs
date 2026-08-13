@@ -101,7 +101,7 @@ use crate::oplog::local_journal_drain::{
 use crate::oplog::migration_backup::MigrationBackupInstrumentation;
 use crate::oplog::migration_backup::{verify_migration_source_backup, MigrationBackupRoot};
 use crate::oplog::object_store::{
-    ensure_directory_nofollow, open_dir_nofollow, prepare_object_store_parent_nofollow,
+    ensure_directory_nofollow, open_dir_nofollow, prepare_reconstructible_object_store_parent,
     ObjectStore, ObjectStoreManifestCursor,
 };
 #[cfg(test)]
@@ -4920,10 +4920,13 @@ fn activate_non_active_local(
     progress(SyncLocalActivationProgress::Phase {
         phase: SyncLocalActivationPhase::ArchiveSetup,
     });
-    prepare_object_store_parent_nofollow(&request.archive_root)
+    prepare_reconstructible_object_store_parent(&request.archive_root)
         .map_err(|error| format!("prepare private archive root: {error}"))?;
-    let archive = ObjectStore::open(&request.archive_root, request.identities.workspace_id)
-        .map_err(|error| format!("open private bootstrap archive: {error}"))?;
+    let archive = ObjectStore::open_reconstructible_activation(
+        &request.archive_root,
+        request.identities.workspace_id,
+    )
+    .map_err(|error| format!("open reconstructible private bootstrap archive: {error}"))?;
     let binding = match existing_binding {
         Some(binding) => {
             archive
@@ -4974,7 +4977,10 @@ fn activate_non_active_local(
     activation_cut("after_shadow_import")?;
 
     let authoring_store =
-        ObjectStore::open(&request.archive_root, binding.workspace_id()).map_err(display)?;
+        ObjectStore::open_reconstructible_activation(&request.archive_root, binding.workspace_id())
+            .map_err(|error| {
+                format!("reopen reconstructible archive for bootstrap authoring: {error}")
+            })?;
     let authoring_capability = authoring_store
         .bootstrap_authoring_capability()
         .map_err(display)?;
@@ -5005,14 +5011,18 @@ fn activate_non_active_local(
     });
     let verified = publish_install_verify_inactive_bootstrap(
         &prepared,
-        ObjectStore::open(&request.archive_root, binding.workspace_id()).map_err(display)?,
+        ObjectStore::open_reconstructible_activation(&request.archive_root, binding.workspace_id())
+            .map_err(|error| format!("reopen reconstructible archive for installation: {error}"))?,
         storage_binding,
     )
     .map_err(display)?;
     let accepted_authority = retain_inactive_bootstrap_accepted_authority(
         &prepared,
         &verified,
-        ObjectStore::open(&request.archive_root, binding.workspace_id()).map_err(display)?,
+        ObjectStore::open_reconstructible_activation(&request.archive_root, binding.workspace_id())
+            .map_err(|error| {
+                format!("reopen reconstructible archive for accepted bootstrap: {error}")
+            })?,
     )
     .map_err(display)?;
 
@@ -41003,6 +41013,30 @@ mod tests {
                 "Android app-private receipt opening must not require traversal of system-owned ancestors"
             );
         }
+    }
+
+    #[test]
+    fn inactive_activation_uses_only_the_reconstructible_archive_boundary() {
+        let source = include_str!("sync_runtime.rs");
+        let start = source
+            .find("fn activate_non_active_local(")
+            .expect("inactive activation function");
+        let end = source[start..]
+            .find("fn open_reconstructible_activation_receipts(")
+            .map(|offset| start + offset)
+            .expect("end of inactive activation function");
+        let activation = &source[start..end];
+        assert!(
+            activation
+                .matches("ObjectStore::open_reconstructible_activation(")
+                .count()
+                >= 4,
+            "every archive reopen before VerifiedLocal must retain the reconstructible lifecycle"
+        );
+        assert!(
+            !activation.contains("ObjectStore::open("),
+            "inactive activation must not silently re-enter the authority-strength archive constructor"
+        );
     }
 
     #[test]

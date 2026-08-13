@@ -315,6 +315,19 @@ pub struct ObjectStore {
     workspace_id: WorkspaceId,
     capability: Dir,
     counters: Arc<StoreCounters>,
+    lifecycle: ObjectStoreLifecycle,
+}
+
+/// Filesystem strength required by the caller that opened this archive.
+///
+/// An inactive import can be discarded and rebuilt from the unchanged graph;
+/// an enrolled/promoted archive is recovery authority. Keeping that distinction
+/// on the retained store prevents Android compatibility from depending on a
+/// process-global helper policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObjectStoreLifecycle {
+    Authority,
+    ReconstructibleActivation,
 }
 
 /// One-shot enrolled-engine open token. Existing controls are exact retained
@@ -1964,6 +1977,29 @@ impl ObjectStore {
     /// Open or create a store at an explicit root and retain the opened
     /// directory capability for all later operations.
     pub fn open(root: &Path, workspace_id: WorkspaceId) -> Result<Self, StoreError> {
+        Self::open_with_lifecycle(root, workspace_id, ObjectStoreLifecycle::Authority)
+    }
+
+    /// Open the private archive while Markdown/Org is still the sole
+    /// authority. On Android this uses ordinary app-private directory handles
+    /// and accepts only unavailable durability capabilities; every content,
+    /// type, collision, and ordinary I/O failure remains fatal.
+    pub(crate) fn open_reconstructible_activation(
+        root: &Path,
+        workspace_id: WorkspaceId,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_lifecycle(
+            root,
+            workspace_id,
+            ObjectStoreLifecycle::ReconstructibleActivation,
+        )
+    }
+
+    fn open_with_lifecycle(
+        root: &Path,
+        workspace_id: WorkspaceId,
+        lifecycle: ObjectStoreLifecycle,
+    ) -> Result<Self, StoreError> {
         let name = root
             .file_name()
             .ok_or_else(|| StoreError::UnsafeEntry("store root has no final component".into()))?;
@@ -1991,19 +2027,20 @@ impl ObjectStore {
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 parent_capability.create_dir(relative)?;
-                sync_dir_required(&parent_capability)?;
+                sync_directory_for_lifecycle(&parent_capability, lifecycle)?;
             }
             Err(error) => return Err(error.into()),
         }
 
-        let capability = open_dir_nofollow(&parent_capability, name)?;
-        ensure_directory(&capability, OBJECTS_DIR)?;
-        ensure_directory(&capability, BATCHES_DIR)?;
+        let capability = open_directory_for_lifecycle(&parent_capability, name, lifecycle)?;
+        ensure_directory_for_lifecycle(&capability, OBJECTS_DIR, lifecycle)?;
+        ensure_directory_for_lifecycle(&capability, BATCHES_DIR, lifecycle)?;
         let store = Self {
             root_path: canonical_parent.join(name),
             workspace_id,
             capability,
             counters: Arc::new(StoreCounters::default()),
+            lifecycle,
         };
         store.validate_namespace()?;
         Ok(store)
@@ -2045,6 +2082,7 @@ impl ObjectStore {
             workspace_id: self.workspace_id,
             capability: self.capability.try_clone()?,
             counters: Arc::clone(&self.counters),
+            lifecycle: self.lifecycle,
         })
     }
 
@@ -2881,11 +2919,12 @@ impl ObjectStore {
             Ok(work) => work,
             Err(error) => return Err((self, error)),
         };
-        let history_parent_created = match history.bind_absent_parent(&self.capability) {
-            Ok(created) => created,
-            Err(error) => return Err((self, error)),
-        };
-        if let Err(error) = work.bind_absent_parent(&self.capability) {
+        let history_parent_created =
+            match history.bind_absent_parent(&self.capability, self.lifecycle) {
+                Ok(created) => created,
+                Err(error) => return Err((self, error)),
+            };
+        if let Err(error) = work.bind_absent_parent(&self.capability, self.lifecycle) {
             if history_parent_created {
                 history.release_empty_parent(&self.capability);
             }
@@ -2910,7 +2949,7 @@ impl ObjectStore {
             Ok(history) => history,
             Err(error) => return Err((self, error)),
         };
-        if let Err(error) = history.bind_absent_parent(&self.capability) {
+        if let Err(error) = history.bind_absent_parent(&self.capability, self.lifecycle) {
             return Err((self, error));
         }
         Ok(HistoryOnlyOpen {
@@ -2959,7 +2998,7 @@ impl ObjectStore {
                 binding.receipt_store_id,
                 control,
                 self.capability.try_clone()?,
-                open_engine_history_transition_lock(&self.capability)?,
+                open_engine_history_transition_lock(&self.capability, self.lifecycle)?,
                 Arc::clone(&self.counters),
             )
             .map(SealedControl::Existing),
@@ -3012,13 +3051,13 @@ impl ObjectStore {
     ) -> Result<DurableEngineHistoryStore, StoreError> {
         self.preflight_engine_history(binding)?;
         let endpoint = binding.endpoint;
-        ensure_directory_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, ENGINE_HISTORY_DIR, self.lifecycle)?;
         let histories = open_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?;
         let endpoint_name = endpoint.endpoint_id.to_string();
-        ensure_directory_nofollow(&histories, &endpoint_name)?;
+        ensure_directory_for_lifecycle(&histories, &endpoint_name, self.lifecycle)?;
         let control = open_dir_nofollow(&histories, &endpoint_name)?;
         for name in [ENGINE_HISTORY_NODES_DIR, ENGINE_HISTORY_ROOTS_DIR] {
-            ensure_directory_nofollow(&control, name)?;
+            ensure_directory_for_lifecycle(&control, name, self.lifecycle)?;
         }
         DurableEngineHistoryStore::new(
             self.workspace_id,
@@ -3027,13 +3066,17 @@ impl ObjectStore {
             binding.receipt_store_id,
             control.try_clone()?,
             self.capability.try_clone()?,
-            open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
+            open_directory_for_lifecycle(&control, ENGINE_HISTORY_ROOTS_DIR, self.lifecycle)?,
             EngineHistoryStore {
-                capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
+                capability: open_directory_for_lifecycle(
+                    &control,
+                    ENGINE_HISTORY_NODES_DIR,
+                    self.lifecycle,
+                )?,
                 counters: Arc::clone(&self.counters),
                 storage_fault: AtomicBool::new(false),
             },
-            open_engine_history_transition_lock(&self.capability)?,
+            open_engine_history_transition_lock(&self.capability, self.lifecycle)?,
         )
     }
 
@@ -3042,11 +3085,11 @@ impl ObjectStore {
         absence: AbsentControlName,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<DurableEngineHistoryStore, StoreError> {
-        let control = absence.claim(&self.capability)?;
+        let control = absence.claim(&self.capability, self.lifecycle)?;
         for name in [ENGINE_HISTORY_NODES_DIR, ENGINE_HISTORY_ROOTS_DIR] {
             control.create_dir(name)?;
         }
-        sync_dir_required(&control)?;
+        sync_directory_for_lifecycle(&control, self.lifecycle)?;
         DurableEngineHistoryStore::new(
             self.workspace_id,
             binding.endpoint.endpoint_id,
@@ -3054,22 +3097,26 @@ impl ObjectStore {
             binding.receipt_store_id,
             control.try_clone()?,
             self.capability.try_clone()?,
-            open_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?,
+            open_directory_for_lifecycle(&control, ENGINE_HISTORY_ROOTS_DIR, self.lifecycle)?,
             EngineHistoryStore {
-                capability: open_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?,
+                capability: open_directory_for_lifecycle(
+                    &control,
+                    ENGINE_HISTORY_NODES_DIR,
+                    self.lifecycle,
+                )?,
                 counters: Arc::clone(&self.counters),
                 storage_fault: AtomicBool::new(false),
             },
-            open_engine_history_transition_lock(&self.capability)?,
+            open_engine_history_transition_lock(&self.capability, self.lifecycle)?,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn start_engine_history(&self) -> Result<EngineHistoryStore, StoreError> {
-        ensure_directory(&self.capability, ENGINE_HISTORY_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, ENGINE_HISTORY_DIR, self.lifecycle)?;
         let histories = self.open_namespace(ENGINE_HISTORY_DIR)?;
         let run = format!("run-{}", Uuid::new_v4());
-        ensure_directory(&histories, &run)?;
+        ensure_directory_for_lifecycle(&histories, &run, self.lifecycle)?;
         Ok(EngineHistoryStore {
             capability: open_dir_nofollow(&histories, &run)?,
             counters: Arc::clone(&self.counters),
@@ -3079,10 +3126,10 @@ impl ObjectStore {
 
     #[cfg(test)]
     pub(crate) fn start_block_claim_index(&self) -> Result<BlockClaimIndexStore, StoreError> {
-        ensure_directory(&self.capability, BLOCK_CLAIM_INDEX_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, BLOCK_CLAIM_INDEX_DIR, self.lifecycle)?;
         let indexes = self.open_namespace(BLOCK_CLAIM_INDEX_DIR)?;
         let run = format!("run-{}", Uuid::new_v4());
-        ensure_directory(&indexes, &run)?;
+        ensure_directory_for_lifecycle(&indexes, &run, self.lifecycle)?;
         let run = open_dir_nofollow(&indexes, &run)?;
         let mut options = OpenOptions::new();
         options.read(true).write(true).create_new(true);
@@ -3151,6 +3198,49 @@ impl ObjectStore {
         instance_id: Uuid,
     ) -> Result<super::CanonicalArchiveResourceId, StoreError> {
         let claim = super::CanonicalArchiveResourceId::claim_bytes(instance_id)?;
+        #[cfg(target_os = "android")]
+        if self.lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
+            match read_optional_regular(
+                &self.capability,
+                ARCHIVE_INSTANCE_CLAIM_FILE,
+                claim.len() as u64,
+                Some(claim.len() as u64),
+            )? {
+                Some(existing) if existing == claim => {}
+                Some(_) => {
+                    return Err(StoreError::ImmutableCollision(
+                        "local activation archive claim",
+                    ))
+                }
+                None => {
+                    let mut options = OpenOptions::new();
+                    options.write(true).create_new(true);
+                    let mut file = self
+                        .capability
+                        .open_with(ARCHIVE_INSTANCE_CLAIM_FILE, &options)?
+                        .into_std();
+                    file.write_all(&claim)?;
+                    crate::filesystem_durability::sync_reconstructible_file(&file)?;
+                    drop(file);
+                    let stored = read_required_regular(
+                        &self.capability,
+                        ARCHIVE_INSTANCE_CLAIM_FILE,
+                        claim.len() as u64,
+                        Some(claim.len() as u64),
+                    )?;
+                    if stored != claim {
+                        return Err(StoreError::ImmutableCollision(
+                            "local activation archive claim",
+                        ));
+                    }
+                }
+            }
+            return super::CanonicalArchiveResourceId::open_exact_claim_in_retained_directory(
+                &self.capability,
+                &claim,
+            )
+            .map_err(StoreError::from);
+        }
         publish_immutable_exact(
             &self.capability,
             ARCHIVE_INSTANCE_CLAIM_FILE,
@@ -3287,7 +3377,7 @@ impl ObjectStore {
     pub(crate) fn open_logseq_claim_index(
         &self,
     ) -> Result<super::uuid_claim_index::LogseqClaimIndexStore, StoreError> {
-        ensure_directory_nofollow(&self.capability, LOGSEQ_CLAIM_INDEX_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, LOGSEQ_CLAIM_INDEX_DIR, self.lifecycle)?;
         Ok(super::uuid_claim_index::LogseqClaimIndexStore::new(
             open_dir_nofollow(&self.capability, LOGSEQ_CLAIM_INDEX_DIR)?,
         ))
@@ -3296,7 +3386,7 @@ impl ObjectStore {
     pub(crate) fn open_portable_path_index(
         &self,
     ) -> Result<super::portable_path_index::PortablePathIndexStore, StoreError> {
-        ensure_directory_nofollow(&self.capability, PORTABLE_PATH_INDEX_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, PORTABLE_PATH_INDEX_DIR, self.lifecycle)?;
         Ok(super::portable_path_index::PortablePathIndexStore::new(
             super::content_patricia::PatriciaIndexStore::new(open_dir_nofollow(
                 &self.capability,
@@ -3308,7 +3398,11 @@ impl ObjectStore {
     pub(crate) fn open_page_name_ownership_index(
         &self,
     ) -> Result<super::page_name_index::PageNameOwnershipStore, StoreError> {
-        ensure_directory_nofollow(&self.capability, PAGE_NAME_OWNERSHIP_INDEX_DIR)?;
+        ensure_directory_for_lifecycle(
+            &self.capability,
+            PAGE_NAME_OWNERSHIP_INDEX_DIR,
+            self.lifecycle,
+        )?;
         let index = open_dir_nofollow(&self.capability, PAGE_NAME_OWNERSHIP_INDEX_DIR)?;
         super::page_name_index::PageNameOwnershipStore::open(index)
     }
@@ -3316,10 +3410,10 @@ impl ObjectStore {
     pub(crate) fn open_reference_catalog(
         &self,
     ) -> Result<super::reference_catalog::ReferenceCatalogStore, StoreError> {
-        ensure_directory_nofollow(&self.capability, REFERENCE_CATALOG_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, REFERENCE_CATALOG_DIR, self.lifecycle)?;
         let catalog = open_dir_nofollow(&self.capability, REFERENCE_CATALOG_DIR)?;
         for name in ["nodes", "postings"] {
-            ensure_directory_nofollow(&catalog, name)?;
+            ensure_directory_for_lifecycle(&catalog, name, self.lifecycle)?;
         }
         Ok(super::reference_catalog::ReferenceCatalogStore::new(
             open_dir_nofollow(&catalog, "nodes")?,
@@ -3357,13 +3451,13 @@ impl ObjectStore {
     ) -> Result<super::ProjectionWorkIndex, StoreError> {
         self.preflight_projection_work_index(binding)?;
         let endpoint = binding.endpoint;
-        ensure_directory_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
+        ensure_directory_for_lifecycle(&self.capability, PROJECTION_WORK_DIR, self.lifecycle)?;
         let root = open_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)?;
         let endpoint_name = endpoint.endpoint_id.to_string();
-        ensure_directory_nofollow(&root, &endpoint_name)?;
+        ensure_directory_for_lifecycle(&root, &endpoint_name, self.lifecycle)?;
         let endpoint_dir = open_dir_nofollow(&root, &endpoint_name)?;
         for name in ["nodes", "roots", "prepared"] {
-            ensure_directory_nofollow(&endpoint_dir, name)?;
+            ensure_directory_for_lifecycle(&endpoint_dir, name, self.lifecycle)?;
         }
         super::ProjectionWorkIndex::new(
             self.workspace_id,
@@ -3383,11 +3477,11 @@ impl ObjectStore {
         absence: AbsentControlName,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<super::ProjectionWorkIndex, StoreError> {
-        let endpoint_dir = absence.claim(&self.capability)?;
+        let endpoint_dir = absence.claim(&self.capability, self.lifecycle)?;
         for name in ["nodes", "roots", "prepared"] {
             endpoint_dir.create_dir(name)?;
         }
-        sync_dir_required(&endpoint_dir)?;
+        sync_directory_for_lifecycle(&endpoint_dir, self.lifecycle)?;
         super::ProjectionWorkIndex::new(
             self.workspace_id,
             binding.endpoint.endpoint_id,
@@ -3865,17 +3959,17 @@ impl ObjectStore {
                 "{name} is not a real no-follow directory"
             )));
         }
-        open_dir_nofollow(&self.capability, name)
+        open_directory_for_lifecycle(&self.capability, name, self.lifecycle)
     }
 
     fn bootstrap_namespace(&self, name: &'static str, create: bool) -> Result<Dir, StoreError> {
         if create {
-            ensure_directory_nofollow(&self.capability, BOOTSTRAP_DIR)?;
+            ensure_directory_for_lifecycle(&self.capability, BOOTSTRAP_DIR, self.lifecycle)?;
         }
         let bootstrap = open_existing_dir_nofollow(&self.capability, BOOTSTRAP_DIR)?
             .ok_or(StoreError::MissingBootstrapArtifact("bootstrap namespace"))?;
         if create {
-            ensure_directory_nofollow(&bootstrap, name)?;
+            ensure_directory_for_lifecycle(&bootstrap, name, self.lifecycle)?;
         }
         open_existing_dir_nofollow(&bootstrap, name)?
             .ok_or(StoreError::MissingBootstrapArtifact(name))
@@ -3897,7 +3991,7 @@ impl ObjectStore {
         let directory = self.bootstrap_namespace(namespace, create)?;
         let root_name = hex_bytes(root);
         if create {
-            ensure_directory_nofollow(&directory, &root_name)?;
+            ensure_directory_for_lifecycle(&directory, &root_name, self.lifecycle)?;
         }
         open_existing_dir_nofollow(&directory, &root_name)?
             .ok_or(StoreError::MissingBootstrapArtifact(namespace))
@@ -4608,7 +4702,11 @@ impl HistoryOnlyOpen {
 }
 
 impl<T> SealedControl<T> {
-    fn bind_absent_parent(&mut self, store_root: &Dir) -> Result<bool, StoreError> {
+    fn bind_absent_parent(
+        &mut self,
+        store_root: &Dir,
+        lifecycle: ObjectStoreLifecycle,
+    ) -> Result<bool, StoreError> {
         let Self::Absent(absence) = self else {
             return Ok(false);
         };
@@ -4627,8 +4725,9 @@ impl<T> SealedControl<T> {
                     error.into()
                 }
             })?;
-        sync_dir_required(store_root)?;
-        let namespace = open_dir_nofollow(store_root, absence.namespace_name)?;
+        sync_directory_for_lifecycle(store_root, lifecycle)?;
+        let namespace =
+            open_directory_for_lifecycle(store_root, absence.namespace_name, lifecycle)?;
         absence.namespace_identity = Some(control_directory_identity(&namespace)?);
         absence.namespace = Some(namespace);
         Ok(true)
@@ -4704,7 +4803,7 @@ impl AbsentControlName {
         }
     }
 
-    fn claim(self, store_root: &Dir) -> Result<Dir, StoreError> {
+    fn claim(self, store_root: &Dir, lifecycle: ObjectStoreLifecycle) -> Result<Dir, StoreError> {
         self.validate_still_absent(store_root)?;
         let namespace = match self.namespace {
             Some(namespace) => namespace,
@@ -4721,8 +4820,8 @@ impl AbsentControlName {
                             error.into()
                         }
                     })?;
-                sync_dir_required(store_root)?;
-                open_dir_nofollow(store_root, self.namespace_name)?
+                sync_directory_for_lifecycle(store_root, lifecycle)?;
+                open_directory_for_lifecycle(store_root, self.namespace_name, lifecycle)?
             }
         };
         namespace.create_dir(&self.endpoint_name).map_err(|error| {
@@ -4735,8 +4834,8 @@ impl AbsentControlName {
                 error.into()
             }
         })?;
-        sync_dir_required(&namespace)?;
-        open_dir_nofollow(&namespace, &self.endpoint_name)
+        sync_directory_for_lifecycle(&namespace, lifecycle)?;
+        open_directory_for_lifecycle(&namespace, &self.endpoint_name, lifecycle)
     }
 }
 
@@ -7954,8 +8053,16 @@ pub(crate) fn control_directory_identity(
 }
 
 pub(crate) fn ensure_directory_nofollow(root: &Dir, name: &str) -> Result<(), StoreError> {
+    tine_storage::ensure_directory_nofollow(root, name).map_err(filesystem_error_without_collision)
+}
+
+fn ensure_directory_for_lifecycle(
+    root: &Dir,
+    name: &str,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<(), StoreError> {
     #[cfg(target_os = "android")]
-    {
+    if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
         let component = Path::new(name);
         if !matches!(component.components().next(), Some(Component::Normal(_)))
             || component.components().count() != 1
@@ -7994,14 +8101,24 @@ pub(crate) fn ensure_directory_nofollow(root: &Dir, name: &str) -> Result<(), St
         return Ok(());
     }
 
-    #[cfg(not(target_os = "android"))]
-    tine_storage::ensure_directory_nofollow(root, name).map_err(filesystem_error_without_collision)
+    ensure_directory_nofollow(root, name)
 }
 
 /// Create only the immediate parent of an explicitly bound object-store root.
 /// The grandparent must already exist; the final parent component is opened
 /// no-follow and its creation is durability-synced before store construction.
 pub(crate) fn prepare_object_store_parent_nofollow(root: &Path) -> Result<(), StoreError> {
+    prepare_object_store_parent(root, ObjectStoreLifecycle::Authority)
+}
+
+pub(crate) fn prepare_reconstructible_object_store_parent(root: &Path) -> Result<(), StoreError> {
+    prepare_object_store_parent(root, ObjectStoreLifecycle::ReconstructibleActivation)
+}
+
+fn prepare_object_store_parent(
+    root: &Path,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<(), StoreError> {
     let parent = root
         .parent()
         .ok_or_else(|| StoreError::UnsafeEntry("store root has no parent".into()))?;
@@ -8019,11 +8136,7 @@ pub(crate) fn prepare_object_store_parent_nofollow(root: &Path) -> Result<(), St
         .ok_or_else(|| StoreError::UnsafeEntry("store parent has no grandparent".into()))?;
     let canonical_grandparent = fs::canonicalize(grandparent)?;
     let grandparent = Dir::open_ambient_dir(&canonical_grandparent, ambient_authority())?;
-    ensure_directory_nofollow(&grandparent, name)
-}
-
-fn ensure_directory(root: &Dir, name: &str) -> Result<(), StoreError> {
-    ensure_directory_nofollow(root, name)
+    ensure_directory_for_lifecycle(&grandparent, name, lifecycle)
 }
 
 impl BootstrapPublicationBatch<'_> {
@@ -8401,20 +8514,24 @@ impl Drop for AdvisoryTransitionGuard<'_> {
 }
 
 #[cfg(unix)]
-fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreError> {
+fn open_engine_history_transition_lock(
+    root: &Dir,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<fs::File, StoreError> {
     let name = CString::new(ENGINE_HISTORY_TRANSITION_LOCK_FILE).map_err(|_| {
         std::io::Error::new(ErrorKind::InvalidInput, "invalid transition lock name")
     })?;
     // SAFETY: the name is live and relative to the retained workspace
     // capability. O_NOFOLLOW rejects a final-component symlink atomically.
-    let fd = unsafe {
-        libc::openat(
-            root.as_fd().as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            0o600,
-        )
+    #[cfg(target_os = "android")]
+    let flags = if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
+        libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC
+    } else {
+        libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW
     };
+    #[cfg(not(target_os = "android"))]
+    let flags = libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    let fd = unsafe { libc::openat(root.as_fd().as_raw_fd(), name.as_ptr(), flags, 0o600) };
     if fd < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
@@ -8425,13 +8542,25 @@ fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreErro
             "engine history transition lock is not a regular no-follow file".into(),
         ));
     }
-    file.sync_all()?;
-    sync_dir_required(root)?;
+    match file.sync_all() {
+        Ok(()) => {}
+        #[cfg(target_os = "android")]
+        Err(error)
+            if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation
+                && crate::filesystem_durability::android_durability_capability_refusal(
+                    error.kind(),
+                ) => {}
+        Err(error) => return Err(error.into()),
+    }
+    sync_directory_for_lifecycle(root, lifecycle)?;
     Ok(file)
 }
 
 #[cfg(windows)]
-fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreError> {
+fn open_engine_history_transition_lock(
+    root: &Dir,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<fs::File, StoreError> {
     let mut options = OpenOptions::new();
     options
         .read(true)
@@ -8452,12 +8581,15 @@ fn open_engine_history_transition_lock(root: &Dir) -> Result<fs::File, StoreErro
         ));
     }
     file.sync_all()?;
-    sync_dir_required(root)?;
+    sync_directory_for_lifecycle(root, lifecycle)?;
     Ok(file)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn open_engine_history_transition_lock(_root: &Dir) -> Result<fs::File, StoreError> {
+fn open_engine_history_transition_lock(
+    _root: &Dir,
+    _lifecycle: ObjectStoreLifecycle,
+) -> Result<fs::File, StoreError> {
     Err(std::io::Error::new(
         ErrorKind::Unsupported,
         "workspace advisory transition locks are unsupported on this target",
@@ -8472,6 +8604,103 @@ pub(crate) fn open_file_nofollow(dir: &Dir, path: &str) -> std::io::Result<fs::F
 pub(crate) fn open_dir_nofollow(dir: &Dir, path: &str) -> Result<Dir, StoreError> {
     tine_storage::open_dir_nofollow(dir, path).map_err(filesystem_error_without_collision)
     // SAFETY: `openat` returned a newly owned directory descriptor.
+}
+
+#[cfg(target_os = "android")]
+fn open_android_private_archive_directory(dir: &Dir, path: &str) -> Result<Dir, StoreError> {
+    let component = Path::new(path);
+    if !matches!(component.components().next(), Some(Component::Normal(_)))
+        || component.components().count() != 1
+    {
+        return Err(StoreError::UnsafeEntry(format!(
+            "private archive directory name is not one normal component: {path}"
+        )));
+    }
+    let metadata = dir.symlink_metadata(component)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StoreError::UnsafeEntry(format!(
+            "private archive entry is not a real directory: {path}"
+        )));
+    }
+    let name = CString::new(path)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid archive directory"))?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_fd().as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY,
+        )
+    };
+    if fd < 0 {
+        return Err(StoreError::Io(std::io::Error::last_os_error()));
+    }
+    // SAFETY: openat returned one newly owned descriptor.
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    if !file.metadata()?.is_dir() {
+        return Err(StoreError::UnsafeEntry(
+            "private archive handle is not a directory".into(),
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
+
+fn open_directory_for_lifecycle(
+    dir: &Dir,
+    path: &str,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<Dir, StoreError> {
+    #[cfg(target_os = "android")]
+    if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
+        let component = Path::new(path);
+        if !matches!(component.components().next(), Some(Component::Normal(_)))
+            || component.components().count() != 1
+        {
+            return Err(StoreError::UnsafeEntry(format!(
+                "activation archive directory name is not one normal component: {path}"
+            )));
+        }
+        let name = CString::new(path).map_err(|_| {
+            std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "invalid activation archive directory",
+            )
+        })?;
+        // This is Android app-private, single-writer, pre-promotion state. An
+        // ordinary directory open is the platform contract; the returned
+        // handle is still checked before it is retained.
+        let fd = unsafe {
+            libc::openat(
+                dir.as_fd().as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY,
+            )
+        };
+        if fd < 0 {
+            return Err(StoreError::Io(std::io::Error::last_os_error()));
+        }
+        // SAFETY: openat returned one newly owned descriptor.
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        if !file.metadata()?.is_dir() {
+            return Err(StoreError::UnsafeEntry(
+                "activation archive handle is not a directory".into(),
+            ));
+        }
+        return Ok(Dir::from_std_file(file));
+    }
+
+    open_dir_nofollow(dir, path)
+}
+
+fn sync_directory_for_lifecycle(
+    dir: &Dir,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<(), StoreError> {
+    #[cfg(target_os = "android")]
+    if lifecycle == ObjectStoreLifecycle::ReconstructibleActivation {
+        return crate::filesystem_durability::sync_reconstructible_directory(dir)
+            .map_err(StoreError::Io);
+    }
+    sync_dir_required(dir)
 }
 
 pub(crate) fn read_optional_regular(

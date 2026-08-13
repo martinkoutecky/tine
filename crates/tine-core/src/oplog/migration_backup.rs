@@ -6,6 +6,8 @@
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
+#[cfg(target_os = "android")]
+use std::io::ErrorKind;
 use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
@@ -751,7 +753,7 @@ pub(crate) fn verify_migration_source_backup(
         )?;
         sync_directory(&paths.stage)?;
         inject_crash_cut(MigrationBackupCrashCut::AfterStagingSync)?;
-        move_file_noreplace(&paths.stage, &paths.final_directory).map_err(|_| {
+        move_reconstructible_noreplace(&paths.stage, &paths.final_directory).map_err(|_| {
             MigrationBackupError::CorruptOrConflicting(
                 "final backup destination appeared or staged rename failed",
             )
@@ -2201,7 +2203,7 @@ fn publish_small_file_atomic(
     })?;
     let description = output.finish()?;
     sync_file_and_parent(&stage)?;
-    move_file_noreplace(&stage, &final_path)
+    move_reconstructible_noreplace(&stage, &final_path)
         .map_err(|_| MigrationBackupError::CorruptOrConflicting(conflict))?;
     sync_directory(directory)?;
     Ok(description)
@@ -2312,7 +2314,8 @@ fn traverse_tree_bounded(
             counts.bytes = checked_add(counts.bytes, metadata.len(), "tree bytes")?;
             enforce_limit("tree bytes", counts.bytes, summary.total_bytes)?;
             if sync {
-                open_regular_for_sync(&path)?.sync_all()?;
+                let file = open_regular_for_sync(&path)?;
+                crate::filesystem_durability::sync_reconstructible_file(&file)?;
             }
         } else {
             return Err(MigrationBackupError::CorruptOrConflicting(
@@ -2552,7 +2555,7 @@ fn require_supported_exact_filesystem() -> io::Result<()> {
 }
 
 fn configure_file_nofollow(options: &mut OpenOptions) {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
@@ -2560,7 +2563,7 @@ fn configure_file_nofollow(options: &mut OpenOptions) {
     {
         options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(any(target_os = "android", not(any(unix, windows))))]
     let _ = options;
 }
 
@@ -2611,16 +2614,31 @@ fn open_regular_for_sync(path: &Path) -> io::Result<File> {
 
 fn open_directory_nofollow_ambient(path: &Path) -> Result<Dir, MigrationBackupError> {
     require_supported_exact_filesystem()?;
-    let name = path.file_name().and_then(|name| name.to_str()).ok_or(
-        MigrationBackupError::InvalidRoot("directory path has no UTF-8 leaf"),
-    )?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let parent = Dir::open_ambient_dir(parent, ambient_authority())?;
-    open_dir_nofollow(&parent, name)
-        .map_err(|error| MigrationBackupError::Io(io::Error::other(error.to_string())))
+    #[cfg(target_os = "android")]
+    {
+        require_real_directory(path, "migration backup path is not a real directory")?;
+        let file = File::open(path)?;
+        if !file.metadata()?.is_dir() {
+            return Err(MigrationBackupError::CorruptOrConflicting(
+                "opened migration backup handle is not a directory",
+            ));
+        }
+        return Ok(Dir::from_std_file(file));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let name = path.file_name().and_then(|name| name.to_str()).ok_or(
+            MigrationBackupError::InvalidRoot("directory path has no UTF-8 leaf"),
+        )?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let parent = Dir::open_ambient_dir(parent, ambient_authority())?;
+        open_dir_nofollow(&parent, name)
+            .map_err(|error| MigrationBackupError::Io(io::Error::other(error.to_string())))
+    }
 }
 
 fn require_real_directory(path: &Path, detail: &'static str) -> Result<(), MigrationBackupError> {
@@ -2668,11 +2686,40 @@ fn path_exists(path: &Path) -> Result<bool, MigrationBackupError> {
 }
 
 fn sync_file_and_parent(path: &Path) -> Result<(), MigrationBackupError> {
-    open_regular_for_sync(path)?.sync_all()?;
+    let file = open_regular_for_sync(path)?;
+    crate::filesystem_durability::sync_reconstructible_file(&file)?;
     sync_directory(
         path.parent()
             .ok_or(MigrationBackupError::InvalidRoot("file has no parent"))?,
     )
+}
+
+fn move_reconstructible_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    match move_file_noreplace(src, dest) {
+        Ok(()) => Ok(()),
+        #[cfg(target_os = "android")]
+        Err(error)
+            if crate::filesystem_durability::android_durability_capability_refusal(
+                error.kind(),
+            ) =>
+        {
+            // This tree is app-private, single-writer, and still disposable.
+            // Preserve the semantic no-clobber check, then use Android's
+            // ordinary rename when renameat2 is not exposed by the filesystem.
+            match fs::symlink_metadata(dest) {
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        ErrorKind::AlreadyExists,
+                        "reconstructible backup destination already exists",
+                    ))
+                }
+                Err(missing) if missing.kind() == ErrorKind::NotFound => {}
+                Err(other) => return Err(other),
+            }
+            fs::rename(src, dest)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn sync_directory(path: &Path) -> Result<(), MigrationBackupError> {

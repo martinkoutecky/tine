@@ -623,9 +623,25 @@ fn create_new_archive_claim(_directory: &cap_std::fs::Dir) -> std::io::Result<Fi
     ))
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn open_archive_claim(directory: &cap_std::fs::Dir) -> std::io::Result<File> {
     openat_archive_claim(directory, libc::O_RDONLY, 0)
+}
+
+#[cfg(target_os = "android")]
+fn open_archive_claim(directory: &cap_std::fs::Dir) -> std::io::Result<File> {
+    // The archive is app-private, single-writer Tine state. Physical Android
+    // filesystems can reject O_NOFOLLOW on an otherwise ordinary readable
+    // file, so validate the entry before and the retained handle after an
+    // ordinary open instead of requiring that Linux flag as an admission rule.
+    let metadata = directory.symlink_metadata(ARCHIVE_INSTANCE_CLAIM_FILE)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "archive instance claim is not a regular file",
+        ));
+    }
+    Ok(directory.open(ARCHIVE_INSTANCE_CLAIM_FILE)?.into_std())
 }
 
 #[cfg(windows)]
@@ -677,7 +693,7 @@ fn validate_archive_claim_handle(file: &File) -> std::io::Result<()> {
             "opened archive claim is not a regular file",
         ));
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
     if metadata.nlink() != 1 {
         return Err(std::io::Error::new(
             ErrorKind::InvalidData,

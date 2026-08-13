@@ -56,6 +56,11 @@ const fn android_filesystem_sync_may_fallback(kind: io::ErrorKind) -> bool {
     )
 }
 
+#[cfg(target_os = "android")]
+pub(crate) const fn android_durability_capability_refusal(kind: io::ErrorKind) -> bool {
+    android_filesystem_sync_may_fallback(kind)
+}
+
 #[cfg(any(test, target_os = "android"))]
 fn finish_android_private_tree_sync(path: &Path, result: io::Result<()>) -> io::Result<()> {
     match result {
