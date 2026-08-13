@@ -7,6 +7,8 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-13
+
 ### Added
 
 - Regime-neutral graph-projection changes can transactionally replace the raw
@@ -19,6 +21,9 @@ independently in `src/formats.rs` and summarized in
   including matches in the middle of tokens. One- and two-character needles
   use the bounded page inventory; the application parser remains the final
   semantic matcher for every query.
+- Disposable projections expose bounded page candidates for Unicode-normalized
+  ordered-subsequence fuzzy matching. This is a candidate superset: the
+  application parser remains the final owner of fuzzy semantics and ordering.
 
 ### Changed
 
@@ -124,7 +129,8 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.3.0...v0.3.1
