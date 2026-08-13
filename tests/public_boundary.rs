@@ -163,6 +163,12 @@ fn format_constants_are_reachable_through_formats() {
     assert_eq!(formats::LOCAL_JOURNAL_SEGMENT_PROTOCOL_VERSION, 2);
     assert_eq!(formats::LOCAL_JOURNAL_SEGMENT_HEADER_BYTES, 136);
     assert_eq!(formats::LOCAL_JOURNAL_FRONTIER_BYTES, 240);
+    assert_eq!(formats::SHARED_FRONTIER_HEADS_DIR, "frontier-heads-v1");
+    assert_eq!(
+        formats::LOCAL_ACTIVATION_RESERVATION_FILE,
+        "local-activation-v1.reservation"
+    );
+    assert_eq!(formats::RECONCILIATION_DATABASE_WAL_FILE, "scan.sqlite-wal");
 }
 
 #[test]

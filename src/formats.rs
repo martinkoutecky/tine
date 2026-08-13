@@ -50,6 +50,55 @@ pub use crate::scratch::{SCRATCH_PAGE_SCHEMA_VERSION, SCRATCH_SCHEMA_VERSION};
 pub use crate::sqlite_frontier::{SQLITE_APPLICATION_ID, SQLITE_SCHEMA_VERSION};
 
 // --- on-disk layout: names and shape -----------------------------------------
+pub use crate::managed_layout::{
+    ARCHIVE_BATCHES_DIR, ARCHIVE_BOOTSTRAP_DIR, ARCHIVE_INSTANCE_CLAIM_FILE, ARCHIVE_OBJECTS_DIR,
+    BLOCK_CLAIM_INDEX_DIR, BLOCK_CLAIM_INDEX_FILE, BOOTSTRAP_AGGREGATES_DIR, BOOTSTRAP_COMMITS_DIR,
+    BOOTSTRAP_EVIDENCE_DIR, BOOTSTRAP_OBJECTS_DIR, BOOTSTRAP_PARTS_DIR, BOOTSTRAP_PART_PACKS_DIR,
+    BOOTSTRAP_PART_SPANS_DIR, BOOTSTRAP_SOURCE_BLOB_DIR, BOOTSTRAP_SOURCE_CAPTURE_CHUNKS_DIR,
+    BOOTSTRAP_SOURCE_CAPTURE_DIR, BOOTSTRAP_SOURCE_CAPTURE_MANIFEST_FILE,
+    BOOTSTRAP_SOURCE_CHUNKS_DIR, BOOTSTRAP_SOURCE_CHUNKS_FILE, BOOTSTRAP_SOURCE_ENTRIES_FILE,
+    BOOTSTRAP_SOURCE_INVENTORY_DIR, BOOTSTRAP_SOURCE_INVENTORY_FILE,
+    BOOTSTRAP_STREAM_AGGREGATE_FILE, BOOTSTRAP_STREAM_BLOB_PAGES_DIR,
+    BOOTSTRAP_STREAM_BOUNDARY_SPOOL_FILE, BOOTSTRAP_STREAM_COMMIT_FILE, BOOTSTRAP_STREAM_DIR,
+    BOOTSTRAP_STREAM_INVENTORY_PAGES_DIR, BOOTSTRAP_STREAM_OPERATION_SPOOL_FILE,
+    BOOTSTRAP_STREAM_PARTS_DIR, BOOTSTRAP_STREAM_PART_EVIDENCE_FILE,
+    BOOTSTRAP_STREAM_PART_MANIFEST_FILE, BOOTSTRAP_STREAM_PART_OBJECTS_FILE,
+    BOOTSTRAP_STREAM_PART_SPANS_FILE, BOOTSTRAP_STREAM_SEAL_FILE, COMMIT_MARKER_FILE,
+    COMMIT_MARKER_STAGE_FILE, ENGINE_HISTORY_CLAIM_FILE, ENGINE_HISTORY_DIR,
+    ENGINE_HISTORY_HEAD_FILE, ENGINE_HISTORY_NODES_DIR, ENGINE_HISTORY_ROOTS_DIR,
+    ENGINE_HISTORY_ROOT_SUFFIX, ENGINE_HISTORY_TRANSITION_LOCK_FILE, ENROLLMENT_AUTHORITY_FILE,
+    ENROLLMENT_AUTHORITY_TEMP_PREFIX, ENROLLMENT_DIR, ENROLLMENT_HEAD_FILE,
+    ENROLLMENT_HEAD_TEMP_PREFIX, ENROLLMENT_LEASE_FILE, ENROLLMENT_LOCAL_DIR,
+    ENROLLMENT_RECORDS_DIR, ENROLLMENT_RECORD_SUFFIX, ENROLLMENT_RECORD_TEMP_PREFIX,
+    ENROLLMENT_STORAGE_DIR, ENROLLMENT_VERSION_DIR, INTENT_NAMESPACE_AUTHORITY_SUFFIX,
+    INTENT_NAMESPACE_RESERVATION_SUFFIX, LINEAGE_CLAIM_FILE, LOCAL_ACTIVATION_RESERVATION_FILE,
+    LOCAL_AUTHORSHIP_RECEIPT_DIR, LOGSEQ_CLAIM_INDEX_DIR, MANAGED_LOCAL_JOURNAL_DIR, MANIFEST_FILE,
+    MIGRATION_BACKUP_ROOT_DIR, MIGRATION_PAYLOAD_DIR, MUTATION_AUTHORITY_LEASE_SUFFIX,
+    MUTATION_AUTHORITY_SUFFIX, PAGE_NAME_EXACT_BLOB_SUFFIX, PAGE_NAME_EXACT_NAMES_DIR,
+    PAGE_NAME_NODES_DIR, PAGE_NAME_OWNERSHIP_INDEX_DIR, PAGE_NAME_STORE_CLAIM_FILE,
+    PORTABLE_PATH_INDEX_DIR, PRIVATE_BINDING_DIR, PRIVATE_BINDING_FILE, PRIVATE_RECOVERY_DIR,
+    PROJECTION_ATTEMPTS_DIR, PROJECTION_BASES_DIR, PROJECTION_CLEANUP_ROUND_0_DIR,
+    PROJECTION_CLEANUP_ROUND_1_DIR, PROJECTION_CLEANUP_ROUND_STATE_FILE,
+    PROJECTION_COMPLETIONS_DIR, PROJECTION_FORENSICS_DIR, PROJECTION_INTENTS_DIR,
+    PROJECTION_PENDING_CLEANUP_AUTHORITY_FILE, PROJECTION_PENDING_CLEANUP_DIR,
+    PROJECTION_PENDING_CLEANUP_SUFFIX, PROJECTION_STORE_CLAIM_FILE, PROJECTION_STORE_INIT_FILE,
+    PROJECTION_WORK_CLAIM_FILE, PROJECTION_WORK_DIR, PROJECTION_WORK_HEAD_FILE,
+    PROJECTION_WORK_NODE_SUFFIX, PROJECTION_WORK_PREPARED_SUFFIX, PROJECTION_WORK_ROOT_SUFFIX,
+    PROMOTED_RUNTIME_STATE_FILE, PROOF_FILE, PROOF_STAGE_FILE, PROVIDER_DEVICE_AUTHORITY_FILE,
+    PROVIDER_INBOX_DIR, PROVIDER_OUTBOX_DIR, PROVIDER_PENDING_PUBLICATION_DIR,
+    RECONCILIATION_DATABASE_FILE, RECONCILIATION_DATABASE_JOURNAL_FILE,
+    RECONCILIATION_DATABASE_SHM_FILE, RECONCILIATION_DATABASE_WAL_FILE, RECONCILIATION_DIR,
+    RECONCILIATION_FORENSIC_DATABASE_FILE, RECONCILIATION_FORENSIC_EVIDENCE_COMPLETE,
+    RECONCILIATION_FORENSIC_JOURNAL_FILE, RECONCILIATION_FORENSIC_PREFIX,
+    RECONCILIATION_FORENSIC_REBUILD_COMPLETE, RECONCILIATION_FORENSIC_SHM_FILE,
+    RECONCILIATION_FORENSIC_WAL_FILE, REFERENCE_CATALOG_DIR, RESTORE_PROOF_FILE,
+    RESTORE_PROOF_STAGE_FILE, RESUME_POINT_DIR, RESUME_POINT_SUFFIX, RESUME_POINT_TEMP_PREFIX,
+    SHADOW_ROOT_DIR, SHARED_ENROLLMENT_DESCRIPTOR_PATH, SHARED_ENROLLMENT_DIR,
+    SHARED_FRONTIER_HEADS_DIR, SHARED_MANIFESTS_DIR, SHARED_MANIFEST_RECOVERY_BLOBS_DIR,
+    SHARED_MANIFEST_RECOVERY_LINKS_DIR, SHARED_OBJECTS_DIR, SHARED_PUBLICATION_INTENTS_DIR,
+    SHARED_REMOVED_DIR, SHARED_RENAME_EVIDENCE_DIR, SHARED_TEMP_DIR, SQLITE_APPLIER_LOCK_FILE,
+    SQLITE_RUNTIME_DIR, SQLITE_WORKSPACES_DIR,
+};
 pub use crate::scratch::{
     SCRATCH_BLOBS_FILE, SCRATCH_DIR, SCRATCH_LEASE_FILE, SCRATCH_LSM_LEVELS, SCRATCH_MARKER_FILE,
     SCRATCH_PAGES_FILE,
@@ -259,6 +308,825 @@ pub const FORMAT_MANIFEST: &[FormatConstant] = &[
         "engine scratch LSM",
         FormatKind::Layout,
         SCRATCH_LSM_LEVELS as u64,
+    ),
+    // Managed-storage path grammar. These rows are an ownership/certification
+    // migration only: every value is frozen to the preceding Tine-owned
+    // sync_layout vocabulary.
+    name_of(
+        "SHARED_ENROLLMENT_DESCRIPTOR_PATH",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_ENROLLMENT_DESCRIPTOR_PATH,
+    ),
+    name_of(
+        "SHARED_FRONTIER_HEADS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_FRONTIER_HEADS_DIR,
+    ),
+    name_of(
+        "SHARED_PUBLICATION_INTENTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_PUBLICATION_INTENTS_DIR,
+    ),
+    name_of(
+        "SHARED_MANIFEST_RECOVERY_LINKS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_MANIFEST_RECOVERY_LINKS_DIR,
+    ),
+    name_of(
+        "SHARED_MANIFEST_RECOVERY_BLOBS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_MANIFEST_RECOVERY_BLOBS_DIR,
+    ),
+    name_of(
+        "SHARED_OBJECTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_OBJECTS_DIR,
+    ),
+    name_of(
+        "SHARED_MANIFESTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_MANIFESTS_DIR,
+    ),
+    name_of(
+        "SHARED_ENROLLMENT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_ENROLLMENT_DIR,
+    ),
+    name_of(
+        "SHARED_TEMP_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_TEMP_DIR,
+    ),
+    name_of(
+        "SHARED_REMOVED_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_REMOVED_DIR,
+    ),
+    name_of(
+        "SHARED_RENAME_EVIDENCE_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHARED_RENAME_EVIDENCE_DIR,
+    ),
+    name_of(
+        "PROVIDER_PENDING_PUBLICATION_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROVIDER_PENDING_PUBLICATION_DIR,
+    ),
+    name_of(
+        "PROVIDER_INBOX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROVIDER_INBOX_DIR,
+    ),
+    name_of(
+        "PROVIDER_OUTBOX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROVIDER_OUTBOX_DIR,
+    ),
+    name_of(
+        "PRIVATE_BINDING_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PRIVATE_BINDING_DIR,
+    ),
+    name_of(
+        "PRIVATE_BINDING_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PRIVATE_BINDING_FILE,
+    ),
+    name_of(
+        "PRIVATE_RECOVERY_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PRIVATE_RECOVERY_DIR,
+    ),
+    name_of(
+        "ARCHIVE_OBJECTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ARCHIVE_OBJECTS_DIR,
+    ),
+    name_of(
+        "ARCHIVE_BATCHES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ARCHIVE_BATCHES_DIR,
+    ),
+    name_of(
+        "ARCHIVE_BOOTSTRAP_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ARCHIVE_BOOTSTRAP_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_INVENTORY_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_INVENTORY_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_BLOB_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_BLOB_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_CHUNKS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_CHUNKS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_PARTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_PARTS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_PART_SPANS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_PART_SPANS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_PART_PACKS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_PART_PACKS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_OBJECTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_OBJECTS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_EVIDENCE_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_EVIDENCE_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_AGGREGATES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_AGGREGATES_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_COMMITS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_COMMITS_DIR,
+    ),
+    name_of(
+        "LINEAGE_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        LINEAGE_CLAIM_FILE,
+    ),
+    name_of(
+        "ENGINE_HISTORY_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_DIR,
+    ),
+    name_of(
+        "ENGINE_HISTORY_NODES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_NODES_DIR,
+    ),
+    name_of(
+        "ENGINE_HISTORY_ROOTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_ROOTS_DIR,
+    ),
+    name_of(
+        "ENGINE_HISTORY_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_CLAIM_FILE,
+    ),
+    name_of(
+        "ENGINE_HISTORY_HEAD_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_HEAD_FILE,
+    ),
+    name_of(
+        "ENGINE_HISTORY_TRANSITION_LOCK_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_TRANSITION_LOCK_FILE,
+    ),
+    name_of(
+        "ENGINE_HISTORY_ROOT_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENGINE_HISTORY_ROOT_SUFFIX,
+    ),
+    name_of(
+        "PROMOTED_RUNTIME_STATE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROMOTED_RUNTIME_STATE_FILE,
+    ),
+    name_of(
+        "BLOCK_CLAIM_INDEX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BLOCK_CLAIM_INDEX_DIR,
+    ),
+    name_of(
+        "BLOCK_CLAIM_INDEX_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BLOCK_CLAIM_INDEX_FILE,
+    ),
+    name_of(
+        "LOGSEQ_CLAIM_INDEX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        LOGSEQ_CLAIM_INDEX_DIR,
+    ),
+    name_of(
+        "PORTABLE_PATH_INDEX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PORTABLE_PATH_INDEX_DIR,
+    ),
+    name_of(
+        "PAGE_NAME_OWNERSHIP_INDEX_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PAGE_NAME_OWNERSHIP_INDEX_DIR,
+    ),
+    name_of(
+        "REFERENCE_CATALOG_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        REFERENCE_CATALOG_DIR,
+    ),
+    name_of(
+        "PROJECTION_WORK_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_DIR,
+    ),
+    name_of(
+        "ARCHIVE_INSTANCE_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ARCHIVE_INSTANCE_CLAIM_FILE,
+    ),
+    name_of(
+        "PROJECTION_STORE_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_STORE_CLAIM_FILE,
+    ),
+    name_of(
+        "PROJECTION_STORE_INIT_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_STORE_INIT_FILE,
+    ),
+    name_of(
+        "PROJECTION_BASES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_BASES_DIR,
+    ),
+    name_of(
+        "PROJECTION_INTENTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_INTENTS_DIR,
+    ),
+    name_of(
+        "PROJECTION_COMPLETIONS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_COMPLETIONS_DIR,
+    ),
+    name_of(
+        "PROJECTION_ATTEMPTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_ATTEMPTS_DIR,
+    ),
+    name_of(
+        "PROJECTION_FORENSICS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_FORENSICS_DIR,
+    ),
+    name_of(
+        "PROJECTION_PENDING_CLEANUP_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_PENDING_CLEANUP_SUFFIX,
+    ),
+    name_of(
+        "PROJECTION_PENDING_CLEANUP_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_PENDING_CLEANUP_DIR,
+    ),
+    name_of(
+        "PROJECTION_PENDING_CLEANUP_AUTHORITY_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_PENDING_CLEANUP_AUTHORITY_FILE,
+    ),
+    name_of(
+        "PROJECTION_CLEANUP_ROUND_STATE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_CLEANUP_ROUND_STATE_FILE,
+    ),
+    name_of(
+        "PROJECTION_CLEANUP_ROUND_0_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_CLEANUP_ROUND_0_DIR,
+    ),
+    name_of(
+        "PROJECTION_CLEANUP_ROUND_1_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_CLEANUP_ROUND_1_DIR,
+    ),
+    name_of(
+        "INTENT_NAMESPACE_RESERVATION_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        INTENT_NAMESPACE_RESERVATION_SUFFIX,
+    ),
+    name_of(
+        "INTENT_NAMESPACE_AUTHORITY_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        INTENT_NAMESPACE_AUTHORITY_SUFFIX,
+    ),
+    name_of(
+        "MUTATION_AUTHORITY_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        MUTATION_AUTHORITY_SUFFIX,
+    ),
+    name_of(
+        "MUTATION_AUTHORITY_LEASE_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        MUTATION_AUTHORITY_LEASE_SUFFIX,
+    ),
+    name_of(
+        "PROJECTION_WORK_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_CLAIM_FILE,
+    ),
+    name_of(
+        "PROJECTION_WORK_HEAD_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_HEAD_FILE,
+    ),
+    name_of(
+        "PROJECTION_WORK_PREPARED_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_PREPARED_SUFFIX,
+    ),
+    name_of(
+        "PROJECTION_WORK_NODE_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_NODE_SUFFIX,
+    ),
+    name_of(
+        "PROJECTION_WORK_ROOT_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROJECTION_WORK_ROOT_SUFFIX,
+    ),
+    name_of(
+        "RESUME_POINT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        RESUME_POINT_DIR,
+    ),
+    name_of(
+        "RESUME_POINT_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        RESUME_POINT_SUFFIX,
+    ),
+    name_of(
+        "RECONCILIATION_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_DIR,
+    ),
+    name_of(
+        "RECONCILIATION_DATABASE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_DATABASE_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_DATABASE_WAL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_DATABASE_WAL_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_DATABASE_SHM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_DATABASE_SHM_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_DATABASE_JOURNAL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_DATABASE_JOURNAL_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_PREFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_PREFIX,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_DATABASE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_DATABASE_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_WAL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_WAL_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_SHM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_SHM_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_JOURNAL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_JOURNAL_FILE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_EVIDENCE_COMPLETE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_EVIDENCE_COMPLETE,
+    ),
+    name_of(
+        "RECONCILIATION_FORENSIC_REBUILD_COMPLETE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RECONCILIATION_FORENSIC_REBUILD_COMPLETE,
+    ),
+    name_of(
+        "SQLITE_RUNTIME_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SQLITE_RUNTIME_DIR,
+    ),
+    name_of(
+        "SQLITE_WORKSPACES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SQLITE_WORKSPACES_DIR,
+    ),
+    name_of(
+        "SQLITE_APPLIER_LOCK_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        SQLITE_APPLIER_LOCK_FILE,
+    ),
+    name_of(
+        "MANAGED_LOCAL_JOURNAL_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        MANAGED_LOCAL_JOURNAL_DIR,
+    ),
+    name_of(
+        "LOCAL_AUTHORSHIP_RECEIPT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        LOCAL_AUTHORSHIP_RECEIPT_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_STORAGE_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_STORAGE_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_VERSION_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_VERSION_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_LOCAL_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_LOCAL_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_RECORDS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_RECORDS_DIR,
+    ),
+    name_of(
+        "ENROLLMENT_LEASE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_LEASE_FILE,
+    ),
+    name_of(
+        "ENROLLMENT_AUTHORITY_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_AUTHORITY_FILE,
+    ),
+    name_of(
+        "ENROLLMENT_HEAD_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_HEAD_FILE,
+    ),
+    name_of(
+        "ENROLLMENT_RECORD_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_RECORD_SUFFIX,
+    ),
+    name_of(
+        "ENROLLMENT_HEAD_TEMP_PREFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_HEAD_TEMP_PREFIX,
+    ),
+    name_of(
+        "ENROLLMENT_RECORD_TEMP_PREFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_RECORD_TEMP_PREFIX,
+    ),
+    name_of(
+        "ENROLLMENT_AUTHORITY_TEMP_PREFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        ENROLLMENT_AUTHORITY_TEMP_PREFIX,
+    ),
+    name_of(
+        "LOCAL_ACTIVATION_RESERVATION_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        LOCAL_ACTIVATION_RESERVATION_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_SEAL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_SEAL_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_AGGREGATE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_AGGREGATE_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_COMMIT_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_COMMIT_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_INVENTORY_PAGES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_INVENTORY_PAGES_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_BLOB_PAGES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_BLOB_PAGES_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_PARTS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_PARTS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_PART_MANIFEST_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_PART_MANIFEST_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_PART_EVIDENCE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_PART_EVIDENCE_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_PART_SPANS_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_PART_SPANS_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_PART_OBJECTS_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_PART_OBJECTS_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_OPERATION_SPOOL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_OPERATION_SPOOL_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_STREAM_BOUNDARY_SPOOL_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_STREAM_BOUNDARY_SPOOL_FILE,
+    ),
+    name_of(
+        "SHADOW_ROOT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        SHADOW_ROOT_DIR,
+    ),
+    name_of(
+        "MIGRATION_BACKUP_ROOT_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        MIGRATION_BACKUP_ROOT_DIR,
+    ),
+    name_of(
+        "MIGRATION_PAYLOAD_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        MIGRATION_PAYLOAD_DIR,
+    ),
+    name_of(
+        "MANIFEST_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        MANIFEST_FILE,
+    ),
+    name_of(
+        "PROOF_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROOF_FILE,
+    ),
+    name_of(
+        "PROOF_STAGE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROOF_STAGE_FILE,
+    ),
+    name_of(
+        "RESTORE_PROOF_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RESTORE_PROOF_FILE,
+    ),
+    name_of(
+        "RESTORE_PROOF_STAGE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        RESTORE_PROOF_STAGE_FILE,
+    ),
+    name_of(
+        "COMMIT_MARKER_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        COMMIT_MARKER_FILE,
+    ),
+    name_of(
+        "COMMIT_MARKER_STAGE_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        COMMIT_MARKER_STAGE_FILE,
+    ),
+    name_of(
+        "PAGE_NAME_EXACT_BLOB_SUFFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        PAGE_NAME_EXACT_BLOB_SUFFIX,
+    ),
+    name_of(
+        "PAGE_NAME_STORE_CLAIM_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PAGE_NAME_STORE_CLAIM_FILE,
+    ),
+    name_of(
+        "PAGE_NAME_NODES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PAGE_NAME_NODES_DIR,
+    ),
+    name_of(
+        "PAGE_NAME_EXACT_NAMES_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        PAGE_NAME_EXACT_NAMES_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_CAPTURE_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_CAPTURE_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_CAPTURE_CHUNKS_DIR",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_CAPTURE_CHUNKS_DIR,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_CAPTURE_MANIFEST_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_CAPTURE_MANIFEST_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_INVENTORY_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_INVENTORY_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_ENTRIES_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_ENTRIES_FILE,
+    ),
+    name_of(
+        "BOOTSTRAP_SOURCE_CHUNKS_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        BOOTSTRAP_SOURCE_CHUNKS_FILE,
+    ),
+    name_of(
+        "RESUME_POINT_TEMP_PREFIX",
+        "managed storage layout",
+        FormatKind::Layout,
+        RESUME_POINT_TEMP_PREFIX,
+    ),
+    name_of(
+        "PROVIDER_DEVICE_AUTHORITY_FILE",
+        "managed storage layout",
+        FormatKind::Layout,
+        PROVIDER_DEVICE_AUTHORITY_FILE,
     ),
     // writer bounds
     num(
@@ -495,18 +1363,51 @@ mod tests {
                 FormatValue::Number(SQLITE_CHECKPOINT_INTERIOR_SAMPLE_BYTES as u64),
             ),
         ];
+        let base = FORMAT_MANIFEST
+            .iter()
+            .filter(|row| row.artifact != "managed storage layout")
+            .collect::<Vec<_>>();
         assert_eq!(
-            FORMAT_MANIFEST.len(),
+            base.len(),
             expected.len(),
-            "a persistent-format constant was added or removed without updating both the manifest and this test"
+            "the base persistent-format manifest changed without updating this test"
         );
-        for (row, (name, value)) in FORMAT_MANIFEST.iter().zip(expected) {
+        for (row, (name, value)) in base.into_iter().zip(expected) {
             assert_eq!(&row.name, name, "manifest order changed");
             assert_eq!(
                 &row.value, value,
                 "manifest row for {name} does not quote the live constant"
             );
         }
+    }
+
+    #[test]
+    fn managed_layout_matches_the_frozen_pre_migration_vocabulary() {
+        const FROZEN: &str = include_str!("../tests/fixtures/managed-layout-v1.txt");
+        let expected = FROZEN
+            .lines()
+            .map(|line| {
+                line.split_once('=')
+                    .expect("every frozen managed-layout row has name=value")
+            })
+            .collect::<Vec<_>>();
+        let actual = FORMAT_MANIFEST
+            .iter()
+            .filter(|row| row.artifact == "managed storage layout")
+            .map(|row| {
+                let FormatValue::Name(value) = row.value else {
+                    panic!("managed-layout value {} is not a name", row.name);
+                };
+                (row.name, value)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected, "managed-storage path vocabulary drifted");
+        assert_eq!(
+            FORMAT_MANIFEST.len(),
+            31 + expected.len(),
+            "a format row was added outside the pinned base or managed-layout inventories",
+        );
     }
 
     #[test]

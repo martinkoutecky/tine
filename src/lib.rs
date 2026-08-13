@@ -28,6 +28,7 @@ mod filesystem;
 pub mod formats;
 mod local_journal;
 mod local_journal_v2;
+mod managed_layout;
 mod packed_patricia;
 mod scratch;
 mod sqlite_database;
