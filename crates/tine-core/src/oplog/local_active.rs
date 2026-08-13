@@ -2038,7 +2038,7 @@ fn open_retained_history_control(
     archive: &ObjectStore,
     state: &PromotedRuntimeStateV1,
 ) -> Result<(ObjectStore, super::object_store::DurableEngineHistoryStore), RuntimePromotionError> {
-    let store = archive.duplicate_retained_capability()?;
+    let store = archive.duplicate_retained_authority_capability()?;
     let open = store
         .seal_history_only(promoted_storage_binding(state))
         .map_err(|(_store, error)| error)?;
@@ -5932,7 +5932,7 @@ impl InactiveBootstrapRuntimeSession {
         authority: &InactiveBootstrapAcceptedAuthority,
         terminal: Option<TerminalBootstrapConstructionMaterial>,
     ) -> Result<Self, ProjectionError> {
-        let archive = ObjectStore::open(archive_root, workspace)?;
+        let archive = ObjectStore::open_reconstructible_activation(archive_root, workspace)?;
         let lease = WorkspaceRuntimeLease::acquire(&archive, workspace)?;
         Self::reopen_under_with_terminal_material(
             lease,

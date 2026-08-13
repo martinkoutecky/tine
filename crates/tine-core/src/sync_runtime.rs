@@ -41037,6 +41037,14 @@ mod tests {
             !activation.contains("ObjectStore::open("),
             "inactive activation must not silently re-enter the authority-strength archive constructor"
         );
+
+        let local_active = include_str!("oplog/local_active.rs");
+        let inactive_open = local_active
+            .find("impl InactiveBootstrapRuntimeSession {")
+            .expect("inactive runtime session implementation");
+        let inactive_session = &local_active[inactive_open..];
+        assert!(inactive_session.contains("ObjectStore::open_reconstructible_activation("));
+        assert!(local_active.contains("duplicate_retained_authority_capability()"));
     }
 
     #[test]

@@ -2086,6 +2086,19 @@ impl ObjectStore {
         })
     }
 
+    /// Rebind the exact same retained archive directory to authority-strength
+    /// filesystem rules after VerifiedLocal has been committed. This changes
+    /// policy, never pathname or physical resource identity.
+    pub(crate) fn duplicate_retained_authority_capability(&self) -> Result<Self, StoreError> {
+        Ok(Self {
+            root_path: self.root_path.clone(),
+            workspace_id: self.workspace_id,
+            capability: self.capability.try_clone()?,
+            counters: Arc::clone(&self.counters),
+            lifecycle: ObjectStoreLifecycle::Authority,
+        })
+    }
+
     /// Prove this store's retained capability and its enrolled archive pathname
     /// still name one and the same physical directory.
     ///
