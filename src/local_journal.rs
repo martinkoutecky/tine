@@ -516,23 +516,40 @@ impl<K: LocalJournalPayloadKind> LocalJournalSegment<K> {
         if !lock_exclusive_nonblocking(&file)? {
             return Err(LocalJournalError::SegmentAlreadyOpen(name.to_owned()));
         }
-        if !file.metadata()?.is_file() {
-            return Err(LocalJournalError::UnsafeSegmentName(name.to_owned()));
-        }
-        let mut stats = LocalJournalStats::default();
-        if created {
-            sync_dir_required(dir)?;
-            stats.directory_durability_syncs += 1;
-        }
-        let scan = scan_segment::<K>(&file, device_id, base_sequence)?;
-        if scan.discarded_tail_bytes > 0 {
-            file.set_len(scan.committed_bytes)?;
-            file.sync_data()?;
-            stats.data_durability_syncs += 1;
-            stats.recovery_truncations += 1;
-        }
+        let setup = (|| {
+            if !file.metadata()?.is_file() {
+                return Err(LocalJournalError::UnsafeSegmentName(name.to_owned()));
+            }
+            let mut stats = LocalJournalStats::default();
+            if created {
+                sync_dir_required(dir)?;
+                stats.directory_durability_syncs += 1;
+            }
+            let scan = scan_segment::<K>(&file, device_id, base_sequence)?;
+            if scan.discarded_tail_bytes > 0 {
+                file.set_len(scan.committed_bytes)?;
+                file.sync_data()?;
+                stats.data_durability_syncs += 1;
+                stats.recovery_truncations += 1;
+            }
+            Ok((scan, stats))
+        })();
+        let (scan, stats) = match setup {
+            Ok(setup) => setup,
+            Err(error) => {
+                // Do not rely on close-time lock release after a refused scan.
+                // Callers may immediately retry the same retained evidence;
+                // the refusal must not manufacture SegmentAlreadyOpen on the
+                // next attempt in this process.
+                unlock(&file);
+                return Err(error);
+            }
+        };
         let mut file = file;
-        file.seek(SeekFrom::Start(scan.committed_bytes))?;
+        if let Err(error) = file.seek(SeekFrom::Start(scan.committed_bytes)) {
+            unlock(&file);
+            return Err(error.into());
+        }
         let segment = Self {
             file,
             name: name.to_owned(),

@@ -22,6 +22,12 @@ independently in `src/formats.rs` and summarized in
   clean restart and lower only externally changed parser documents; these
   revisions are adapter metadata and do not alter managed-storage formats.
 
+### Fixed
+
+- A refused legacy-journal recovery scan now explicitly releases its retained
+  writer lock before returning, so an immediate retry reports the original
+  corruption instead of an intermittent false “already open” refusal.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added
