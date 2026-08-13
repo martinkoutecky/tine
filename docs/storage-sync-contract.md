@@ -257,12 +257,23 @@ Android access semantics caused the retry. Once enrollment has promoted the
 receipt-store identity, this recovery is forbidden: normal exact identity and
 receipt recovery rules apply.
 
+The sibling `local-activation-v1.reservation` is also pre-enrollment,
+reconstructible resume evidence rather than authority. On Android it is
+published and reopened through ordinary absolute app-private file operations:
+create-new temporary file, file sync, atomic rename, and exact-byte reread. A
+permission/unsupported/invalid-operation response from the containing
+directory sync does not refuse activation, because a crash may discard the
+whole unpromoted subtree and rebuild it from the unchanged Markdown/Org graph.
+The file write, rename, reread, canonical JSON, and binding comparison remain
+strict.
+
 The graph-local shared-provider tree is transport rather than local authority.
 Tine still creates and opens it no-follow, requires ordinary directories and
 regular files, flushes published file contents, and validates bounded bytes and
 digests. On Android, inability to fsync a shared-storage directory is treated
 as a platform durability limit rather than a durable refusal. App-private
-enrollment, archive, journal, and SQLite directory barriers remain required.
+post-promotion enrollment, archive, journal, and SQLite directory barriers
+remain required.
 
 Current disposable schema identities are scratch 13 / scratch page 1 / SQLite
 15. Their authoritative values are `tine_storage::formats::{SCRATCH_SCHEMA_VERSION,

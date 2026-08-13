@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android managed-storage activation no longer asks the generic
+  hard-link/capability publisher to persist its reconstructible pre-enrollment
+  reservation. Physical devices that permit normal app-private file writes but
+  reject that stronger primitive now use a synced temporary file, atomic
+  rename, and exact reread; only the pre-promotion directory-sync capability
+  refusal is tolerated.
+
 - Android managed-storage activation can recover even when an older failed
   setup left an inaccessible projection-receipt diagnostic tree. Each
   pre-enrollment retry now moves the current reconstructible receipts to a

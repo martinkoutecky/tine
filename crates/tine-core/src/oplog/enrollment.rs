@@ -419,14 +419,20 @@ pub(crate) fn begin_or_resume_local_activation_reservation(
             bytes.len(),
         ));
     }
-    let directory = Dir::open_ambient_dir(root.path(), ambient_authority())?;
-    publish_immutable_exact(
-        &directory,
-        LOCAL_ACTIVATION_RESERVATION_FILE,
-        &bytes,
-        "local activation reservation",
-    )
-    .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    #[cfg(target_os = "android")]
+    publish_android_reconstructible_reservation(root.path(), &bytes)
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    #[cfg(not(target_os = "android"))]
+    {
+        let directory = Dir::open_ambient_dir(root.path(), ambient_authority())?;
+        publish_immutable_exact(
+            &directory,
+            LOCAL_ACTIVATION_RESERVATION_FILE,
+            &bytes,
+            "local activation reservation",
+        )
+        .map_err(|error| EnrollmentError::Durability(error.to_string()))?;
+    }
     let published = open_local_activation_reservation(root)?.ok_or_else(|| {
         EnrollmentError::Io("published local activation reservation is absent".into())
     })?;
@@ -439,24 +445,48 @@ pub(crate) fn begin_or_resume_local_activation_reservation(
 fn open_local_activation_reservation(
     root: &EnrollmentApplicationRoot,
 ) -> Result<Option<LocalActivationReservation>, EnrollmentError> {
-    let directory = Dir::open_ambient_dir(root.path(), ambient_authority())?;
-    match directory.symlink_metadata(LOCAL_ACTIVATION_RESERVATION_FILE) {
-        Ok(metadata) if !cap_metadata_is_authoritative_file(&metadata) => {
-            return Err(EnrollmentError::UnsafeNamespace(
-                "local activation reservation is not a regular no-follow file".into(),
+    #[cfg(target_os = "android")]
+    let bytes = {
+        let path = root.path().join(LOCAL_ACTIVATION_RESERVATION_FILE);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(EnrollmentError::UnsafeNamespace(
+                    "local activation reservation is not a regular file".into(),
+                ));
+            }
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.len() > MAX_LOCAL_ACTIVATION_RESERVATION_BYTES as u64 {
+            return Err(EnrollmentError::LocalActivationReservationTooLarge(
+                usize::try_from(metadata.len()).unwrap_or(usize::MAX),
             ));
         }
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    }
-    let (bytes, _) = read_bounded_authoritative_file(
-        &directory,
-        LOCAL_ACTIVATION_RESERVATION_FILE,
-        MAX_LOCAL_ACTIVATION_RESERVATION_BYTES,
-        "local activation reservation",
-        true,
-    )?;
+        fs::read(&path)?
+    };
+    #[cfg(not(target_os = "android"))]
+    let bytes = {
+        let directory = Dir::open_ambient_dir(root.path(), ambient_authority())?;
+        match directory.symlink_metadata(LOCAL_ACTIVATION_RESERVATION_FILE) {
+            Ok(metadata) if !cap_metadata_is_authoritative_file(&metadata) => {
+                return Err(EnrollmentError::UnsafeNamespace(
+                    "local activation reservation is not a regular no-follow file".into(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
+        let (bytes, _) = read_bounded_authoritative_file(
+            &directory,
+            LOCAL_ACTIVATION_RESERVATION_FILE,
+            MAX_LOCAL_ACTIVATION_RESERVATION_BYTES,
+            "local activation reservation",
+            true,
+        )?;
+        bytes
+    };
     let record: LocalActivationReservationV1 = serde_json::from_slice(&bytes)
         .map_err(|error| EnrollmentError::Decode(error.to_string()))?;
     if record.schema_version != LOCAL_ACTIVATION_RESERVATION_SCHEMA_VERSION {
@@ -470,6 +500,85 @@ fn open_local_activation_reservation(
         return Err(EnrollmentError::NonCanonicalLocalActivationReservation);
     }
     Ok(Some(LocalActivationReservation { record }))
+}
+
+/// Publish the pre-enrollment reservation through ordinary Android app-private
+/// file operations. This record is reconstructible from the unchanged graph
+/// and exists only to resume an interrupted pre-promotion import; requiring the
+/// generic hard-link/capability publisher or a successful directory fsync made
+/// an honest physical Android device refuse before any managed authority
+/// existed.
+#[cfg(any(test, target_os = "android"))]
+fn publish_android_reconstructible_reservation(root: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let target = root.join(LOCAL_ACTIVATION_RESERVATION_FILE);
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "local activation reservation target is not a regular file",
+            ));
+        }
+        Ok(_) => {
+            return if fs::read(&target)? == bytes {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    ErrorKind::AlreadyExists,
+                    "local activation reservation already contains different bytes",
+                ))
+            };
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let temporary = root.join(format!(
+        ".{LOCAL_ACTIVATION_RESERVATION_FILE}.{}.tmp",
+        Uuid::new_v4().simple()
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, &target)?;
+        // A vendor filesystem may permit every exact file operation above but
+        // reject directory fsync. Before enrollment/promotion, a crash may
+        // discard this complete private subtree and rebuild it from Markdown.
+        accept_android_reconstructible_directory_sync(
+            File::open(root).and_then(|directory| directory.sync_all()),
+        )?;
+        if fs::read(&target)? != bytes {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "published local activation reservation differs from source bytes",
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_file(&temporary);
+    result
+}
+
+#[cfg(any(test, target_os = "android"))]
+fn accept_android_reconstructible_directory_sync(
+    result: std::io::Result<()>,
+) -> std::io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::PermissionDenied | ErrorKind::Unsupported | ErrorKind::InvalidInput
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -7901,6 +8010,39 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn android_reconstructible_activation_reservation_is_exact_and_idempotent() {
+        let root = TestRoot::new("android-reconstructible-reservation");
+        let expected = br#"{"schema_version":1,"binding":"test"}"#;
+        publish_android_reconstructible_reservation(&root.path, expected).unwrap();
+        assert_eq!(
+            fs::read(root.path.join(LOCAL_ACTIVATION_RESERVATION_FILE)).unwrap(),
+            expected
+        );
+
+        publish_android_reconstructible_reservation(&root.path, expected).unwrap();
+        let collision =
+            publish_android_reconstructible_reservation(&root.path, b"different").unwrap_err();
+        assert_eq!(collision.kind(), ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn android_reconstructible_directory_sync_accepts_only_capability_refusals() {
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Unsupported,
+            ErrorKind::InvalidInput,
+        ] {
+            accept_android_reconstructible_directory_sync(Err(std::io::Error::from(kind))).unwrap();
+        }
+
+        let real_io_failure = accept_android_reconstructible_directory_sync(Err(
+            std::io::Error::from(ErrorKind::Other),
+        ))
+        .unwrap_err();
+        assert_eq!(real_io_failure.kind(), ErrorKind::Other);
     }
 
     fn digest(byte: u8) -> ContentDigest {
