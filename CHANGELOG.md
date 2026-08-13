@@ -10,12 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Android managed-storage activation now treats the initial `ShadowImport`
-  enrollment as reconstructible until promotion. Its authority, first record,
-  and head still use synced files, atomic publication, exact rereads, and all
-  binding/lease/digest checks, but a physical device that rejects only the
-  containing-directory fsync no longer fails after source capture. Every later
-  authoritative enrollment transition remains strictly durable.
+- Android managed-storage activation now treats the pre-enrollment reservation
+  and initial `ShadowImport` enrollment as reconstructible until promotion.
+  Their authority, first record, and head still use atomic publication, exact
+  rereads, and all binding/lease/digest checks, but a physical device that
+  rejects an app-private file or directory sync capability—or Linux's
+  no-replace rename primitive—no longer fails after source capture. Every
+  ordinary I/O error and every later authoritative enrollment transition
+  remains strict.
 
 - Android managed-storage activation no longer asks the generic
   hard-link/capability publisher to persist its reconstructible pre-enrollment

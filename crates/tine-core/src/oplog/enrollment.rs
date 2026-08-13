@@ -542,16 +542,38 @@ fn publish_android_reconstructible_reservation(root: &Path, bytes: &[u8]) -> std
             .create_new(true)
             .open(&temporary)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
+        crate::filesystem_durability::sync_reconstructible_file(&file).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("sync pre-enrollment reservation temporary file: {error}"),
+            )
+        })?;
         drop(file);
-        fs::rename(&temporary, &target)?;
+        fs::rename(&temporary, &target).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("publish pre-enrollment reservation: {error}"),
+            )
+        })?;
         // A vendor filesystem may permit every exact file operation above but
         // reject directory fsync. Before enrollment/promotion, a crash may
         // discard this complete private subtree and rebuild it from Markdown.
         accept_android_reconstructible_directory_sync(
             File::open(root).and_then(|directory| directory.sync_all()),
-        )?;
-        if fs::read(&target)? != bytes {
+        )
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("sync pre-enrollment reservation directory: {error}"),
+            )
+        })?;
+        if fs::read(&target).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("reread pre-enrollment reservation: {error}"),
+            )
+        })? != bytes
+        {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
                 "published local activation reservation differs from source bytes",
@@ -5815,7 +5837,11 @@ fn persist_record_and_head(
     temp.write_all(format!("{digest}\n").as_bytes())?;
     inject_crash_cut(cut, CommitCut::AfterHeadWrite, "after_head_write")?;
     lease.validate_current()?;
-    temp.sync_all()?;
+    sync_enrollment_file(
+        &temp,
+        directory_durability,
+        "sync enrollment head temporary file",
+    )?;
     inject_crash_cut(cut, CommitCut::AfterHeadFileSync, "after_head_file_sync")?;
 
     lease.validate_current()?;
@@ -6370,7 +6396,11 @@ fn publish_record(
     temp.write_all(bytes)?;
     inject_crash_cut(cut, CommitCut::AfterRecordWrite, "after_record_write")?;
     lease.validate_current()?;
-    temp.sync_all()?;
+    sync_enrollment_file(
+        &temp,
+        directory_durability,
+        "sync enrollment record temporary file",
+    )?;
     inject_crash_cut(
         cut,
         CommitCut::AfterRecordFileSync,
@@ -6392,7 +6422,7 @@ fn publish_record(
     match if inserted_at_test_link_seam {
         Ok(())
     } else {
-        rename_noreplace(records, &temp_name, &target)
+        rename_enrollment_noreplace(records, &temp_name, &target, directory_durability)
     } {
         Ok(()) => {}
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
@@ -6646,6 +6676,20 @@ enum EnrollmentDirectoryDurability {
     /// cannot fsync a directory after exact file synchronization, a crash may
     /// discard this private state and rebuild it from unchanged Markdown.
     ReconstructibleBootstrap,
+}
+
+fn sync_enrollment_file(
+    file: &File,
+    durability: EnrollmentDirectoryDurability,
+    operation: &'static str,
+) -> Result<(), EnrollmentError> {
+    let result = match durability {
+        EnrollmentDirectoryDurability::Required => file.sync_all(),
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap => {
+            crate::filesystem_durability::sync_reconstructible_file(file)
+        }
+    };
+    result.map_err(|error| EnrollmentError::Durability(format!("{operation}: {error}")))
 }
 
 fn sync_enrollment_directory(
@@ -7000,7 +7044,12 @@ fn provision_or_resume_enrollment_authority(
 
     if let Some(temp_name) = recover_authority_temps(directories, lease, binding, shadow, None)? {
         lease.validate_current()?;
-        rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
+        rename_enrollment_noreplace(
+            &directories.enrollment,
+            &temp_name,
+            AUTHORITY_FILE,
+            EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+        )?;
         sync_enrollment_directory(
             &directories.enrollment,
             EnrollmentDirectoryDurability::ReconstructibleBootstrap,
@@ -7022,9 +7071,18 @@ fn provision_or_resume_enrollment_authority(
     let mut temp = create_new_regular(&directories.enrollment, &temp_name)?;
     validate_authoritative_file(&temp, "enrollment authority temporary file")?;
     temp.write_all(&bytes)?;
-    temp.sync_all()?;
+    sync_enrollment_file(
+        &temp,
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+        "sync initial enrollment authority temporary file",
+    )?;
     lease.validate_current()?;
-    rename_noreplace(&directories.enrollment, &temp_name, AUTHORITY_FILE)?;
+    rename_enrollment_noreplace(
+        &directories.enrollment,
+        &temp_name,
+        AUTHORITY_FILE,
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap,
+    )?;
     sync_enrollment_directory(
         &directories.enrollment,
         EnrollmentDirectoryDurability::ReconstructibleBootstrap,
@@ -7733,6 +7791,53 @@ fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+fn rename_enrollment_noreplace(
+    directory: &Dir,
+    from: &str,
+    to: &str,
+    durability: EnrollmentDirectoryDurability,
+) -> std::io::Result<()> {
+    match durability {
+        EnrollmentDirectoryDurability::Required => rename_noreplace(directory, from, to),
+        EnrollmentDirectoryDurability::ReconstructibleBootstrap => {
+            rename_reconstructible_enrollment_noreplace(directory, from, to)
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn rename_reconstructible_enrollment_noreplace(
+    directory: &Dir,
+    from: &str,
+    to: &str,
+) -> std::io::Result<()> {
+    match directory.symlink_metadata(to) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                ErrorKind::AlreadyExists,
+                "reconstructible enrollment target already exists",
+            ))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    // Both writers must hold the same private enrollment lease. Under the
+    // non-adversarial local trust boundary there is therefore no honest writer
+    // that can create `to` between the check and this ordinary Android rename.
+    // This avoids making pre-promotion activation depend on renameat2 support;
+    // exact bytes are reread before the enrollment can advance.
+    directory.rename(from, directory, to)
+}
+
+#[cfg(not(target_os = "android"))]
+fn rename_reconstructible_enrollment_noreplace(
+    directory: &Dir,
+    from: &str,
+    to: &str,
+) -> std::io::Result<()> {
+    rename_noreplace(directory, from, to)
 }
 
 #[cfg(target_os = "macos")]

@@ -7,6 +7,7 @@
 //! private tree instead of refusing managed-storage activation.
 
 use std::fs;
+use std::fs::File;
 #[cfg(any(test, not(target_os = "linux")))]
 use std::fs::OpenOptions;
 use std::io;
@@ -101,6 +102,16 @@ pub(crate) fn sync_reconstructible_directory(directory: &Dir) -> io::Result<()> 
     finish_android_reconstructible_directory_sync(tine_storage::sync_dir_required(directory))
 }
 
+/// Synchronize one file in a pre-promotion tree which can be recreated from
+/// unchanged Markdown. Some Android storage stacks permit the complete
+/// create/write/read sequence but refuse `fsync` with a capability-style
+/// error. A returned success in that case does not promote the file to
+/// authority: callers must still reread exact bytes, and an interrupted
+/// activation discards/rebuilds the enclosing tree.
+pub(crate) fn sync_reconstructible_file(file: &File) -> io::Result<()> {
+    finish_android_reconstructible_file_sync(file.sync_all())
+}
+
 #[cfg(target_os = "android")]
 fn finish_android_reconstructible_directory_sync(result: io::Result<()>) -> io::Result<()> {
     match result {
@@ -110,6 +121,20 @@ fn finish_android_reconstructible_directory_sync(result: io::Result<()>) -> io::
     }
 }
 
+#[cfg(target_os = "android")]
+fn finish_android_reconstructible_file_sync(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if android_filesystem_sync_may_fallback(error.kind()) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn finish_android_reconstructible_file_sync(result: io::Result<()>) -> io::Result<()> {
+    result
+}
+
 #[cfg(not(target_os = "android"))]
 fn finish_android_reconstructible_directory_sync(result: io::Result<()>) -> io::Result<()> {
     result
@@ -117,6 +142,15 @@ fn finish_android_reconstructible_directory_sync(result: io::Result<()>) -> io::
 
 #[cfg(test)]
 fn simulate_android_reconstructible_directory_sync(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if android_filesystem_sync_may_fallback(error.kind()) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+fn simulate_android_reconstructible_file_sync(result: io::Result<()>) -> io::Result<()> {
     match result {
         Ok(()) => Ok(()),
         Err(error) if android_filesystem_sync_may_fallback(error.kind()) => Ok(()),
@@ -181,6 +215,32 @@ mod tests {
             b"durable private state"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn android_reconstructible_file_accepts_only_capability_refusals() {
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::Unsupported,
+            io::ErrorKind::InvalidInput,
+        ] {
+            simulate_android_reconstructible_file_sync(Err(io::Error::new(kind, "injected")))
+                .unwrap();
+        }
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::Interrupted,
+            io::ErrorKind::InvalidData,
+            io::ErrorKind::WriteZero,
+            io::ErrorKind::Other,
+        ] {
+            assert_eq!(
+                simulate_android_reconstructible_file_sync(Err(io::Error::new(kind, "injected")))
+                    .unwrap_err()
+                    .kind(),
+                kind
+            );
+        }
     }
 
     #[test]

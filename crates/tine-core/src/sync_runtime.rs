@@ -1421,6 +1421,8 @@ pub fn inspect_shared_enrollment_for_cold_discovery(
 pub enum SyncLocalActivationPhase {
     PrivateSetup,
     SourceCapture,
+    PreEnrollmentReservation,
+    InitialEnrollment,
     BootstrapImportPreparation,
     ImmutablePublicationInstall,
     BackupProof,
@@ -1561,6 +1563,8 @@ impl SyncLocalActivationPhase {
         match self {
             Self::PrivateSetup => "private activation setup",
             Self::SourceCapture => "source capture",
+            Self::PreEnrollmentReservation => "pre-enrollment reservation",
+            Self::InitialEnrollment => "initial enrollment",
             Self::BootstrapImportPreparation => "bootstrap import preparation",
             Self::ImmutablePublicationInstall => "immutable publication/install",
             Self::BackupProof => "backup proof",
@@ -4890,6 +4894,9 @@ fn activate_non_active_local(
         ContentDigest::from_bytes(*capture.inventory_description().sha256());
     let graph_resource_id = graph.canonical_resource_id().map_err(display)?;
     let graph_text_scope_binding = graph.graph_text_scope_binding().map_err(display)?;
+    progress(SyncLocalActivationProgress::Phase {
+        phase: SyncLocalActivationPhase::PreEnrollmentReservation,
+    });
     let reservation = if existing_binding.is_none() {
         Some(
             begin_or_resume_local_activation_reservation(
@@ -4948,6 +4955,9 @@ fn activate_non_active_local(
     drop(archive);
     activation_cut("after_archive_claim_before_enrollment_head")?;
 
+    progress(SyncLocalActivationProgress::Phase {
+        phase: SyncLocalActivationPhase::InitialEnrollment,
+    });
     let preparation_id = PreparationId::from_uuid(request.identities.preparation_id);
     begin_or_resume_shadow_import(
         &enrollment,
@@ -47718,6 +47728,8 @@ mod tests {
         let expected = [
             SyncLocalActivationPhase::PrivateSetup,
             SyncLocalActivationPhase::SourceCapture,
+            SyncLocalActivationPhase::PreEnrollmentReservation,
+            SyncLocalActivationPhase::InitialEnrollment,
             SyncLocalActivationPhase::BootstrapImportPreparation,
             SyncLocalActivationPhase::ImmutablePublicationInstall,
             SyncLocalActivationPhase::BackupProof,
@@ -47802,6 +47814,8 @@ mod tests {
             vec![
                 SyncLocalActivationPhase::PrivateSetup,
                 SyncLocalActivationPhase::SourceCapture,
+                SyncLocalActivationPhase::PreEnrollmentReservation,
+                SyncLocalActivationPhase::InitialEnrollment,
                 SyncLocalActivationPhase::BootstrapImportPreparation,
                 SyncLocalActivationPhase::ImmutablePublicationInstall,
                 SyncLocalActivationPhase::BackupProof,

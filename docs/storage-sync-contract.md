@@ -224,6 +224,19 @@ regular file and directory in that exact app-private tree. Other I/O failures
 still abort activation, and the graph projection remains untouched until the
 private state has been sealed.
 
+The pre-enrollment reservation and the first `ShadowImport` enrollment are
+also reconstructible bootstrap state. On Android, Tine attempts each ordinary
+file and directory synchronization, but a permission, unsupported, or
+invalid-operation response from that synchronization primitive does not turn
+the disposable pre-promotion tree into a durable refusal. Exact file bytes are
+reread, bindings and digests are checked, and honest concurrent writers remain
+serialized by the private lease; a crash may discard the incomplete tree and
+rebuild it from unchanged Markdown/Org. Initial immutable names use ordinary
+lease-serialized Android rename when `renameat2(RENAME_NOREPLACE)` is not an
+available app-private primitive. Every non-capability I/O error still aborts,
+and every enrollment transition after bootstrap promotion retains mandatory
+file and directory durability.
+
 Android app-private projection receipts retain create-new temporary-file
 writes, exact-byte collision checks, file-content synchronization, and atomic
 rename publication. Directory creation and immutable publication stay on
