@@ -2969,7 +2969,11 @@ impl ObjectStore {
         self.preflight_engine_history(binding)?;
         #[cfg(test)]
         sealed_history_after_preflight_hook();
-        let Some(histories) = open_existing_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?
+        let Some(histories) = open_existing_directory_for_lifecycle(
+            &self.capability,
+            ENGINE_HISTORY_DIR,
+            self.lifecycle,
+        )?
         else {
             return Ok(SealedControl::Absent(AbsentControlName {
                 namespace_name: ENGINE_HISTORY_DIR,
@@ -2979,7 +2983,9 @@ impl ObjectStore {
             }));
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
-        let Some(control) = open_existing_dir_nofollow(&histories, &endpoint_name)? else {
+        let Some(control) =
+            open_existing_directory_for_lifecycle(&histories, &endpoint_name, self.lifecycle)?
+        else {
             return Ok(SealedControl::Absent(AbsentControlName {
                 namespace_name: ENGINE_HISTORY_DIR,
                 namespace_identity: Some(control_directory_identity(&histories)?),
@@ -3010,7 +3016,12 @@ impl ObjectStore {
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<SealedControl<super::ProjectionWorkIndex>, StoreError> {
-        let Some(root) = open_existing_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)? else {
+        let Some(root) = open_existing_directory_for_lifecycle(
+            &self.capability,
+            PROJECTION_WORK_DIR,
+            self.lifecycle,
+        )?
+        else {
             return Ok(SealedControl::Absent(AbsentControlName {
                 namespace_name: PROJECTION_WORK_DIR,
                 namespace: None,
@@ -3019,7 +3030,9 @@ impl ObjectStore {
             }));
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
-        let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
+        let Some(control) =
+            open_existing_directory_for_lifecycle(&root, &endpoint_name, self.lifecycle)?
+        else {
             return Ok(SealedControl::Absent(AbsentControlName {
                 namespace_name: PROJECTION_WORK_DIR,
                 namespace_identity: Some(control_directory_identity(&root)?),
@@ -3499,12 +3512,18 @@ impl ObjectStore {
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<(), StoreError> {
-        let Some(histories) = open_existing_dir_nofollow(&self.capability, ENGINE_HISTORY_DIR)?
+        let Some(histories) = open_existing_directory_for_lifecycle(
+            &self.capability,
+            ENGINE_HISTORY_DIR,
+            self.lifecycle,
+        )?
         else {
             return Ok(());
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
-        let Some(control) = open_existing_dir_nofollow(&histories, &endpoint_name)? else {
+        let Some(control) =
+            open_existing_directory_for_lifecycle(&histories, &endpoint_name, self.lifecycle)?
+        else {
             return Ok(());
         };
         let head = read_optional_regular(&control, ENGINE_HISTORY_HEAD_FILE, 64, None)?;
@@ -3519,10 +3538,18 @@ impl ObjectStore {
                     binding.endpoint.graph_resource_id,
                     binding.receipt_store_id,
                 )?;
-                let _nodes = open_existing_dir_nofollow(&control, ENGINE_HISTORY_NODES_DIR)?
-                    .ok_or(StoreError::MalformedHistoryIndex)?;
-                let roots = open_existing_dir_nofollow(&control, ENGINE_HISTORY_ROOTS_DIR)?
-                    .ok_or(StoreError::MalformedHistoryIndex)?;
+                let _nodes = open_existing_directory_for_lifecycle(
+                    &control,
+                    ENGINE_HISTORY_NODES_DIR,
+                    self.lifecycle,
+                )?
+                .ok_or(StoreError::MalformedHistoryIndex)?;
+                let roots = open_existing_directory_for_lifecycle(
+                    &control,
+                    ENGINE_HISTORY_ROOTS_DIR,
+                    self.lifecycle,
+                )?
+                .ok_or(StoreError::MalformedHistoryIndex)?;
                 let text =
                     std::str::from_utf8(&head).map_err(|_| StoreError::MalformedHistoryIndex)?;
                 let digest = parse_digest(text)
@@ -3565,11 +3592,18 @@ impl ObjectStore {
         &self,
         binding: super::hot_engine::ProjectionStorageBinding,
     ) -> Result<(), StoreError> {
-        let Some(root) = open_existing_dir_nofollow(&self.capability, PROJECTION_WORK_DIR)? else {
+        let Some(root) = open_existing_directory_for_lifecycle(
+            &self.capability,
+            PROJECTION_WORK_DIR,
+            self.lifecycle,
+        )?
+        else {
             return Ok(());
         };
         let endpoint_name = binding.endpoint.endpoint_id.to_string();
-        let Some(control) = open_existing_dir_nofollow(&root, &endpoint_name)? else {
+        let Some(control) =
+            open_existing_directory_for_lifecycle(&root, &endpoint_name, self.lifecycle)?
+        else {
             return Ok(());
         };
         let head = read_optional_regular(&control, "projection-work.head", 64, None)?;
@@ -3966,20 +4000,23 @@ impl ObjectStore {
         if create {
             ensure_directory_for_lifecycle(&self.capability, BOOTSTRAP_DIR, self.lifecycle)?;
         }
-        let bootstrap = open_existing_dir_nofollow(&self.capability, BOOTSTRAP_DIR)?
-            .ok_or(StoreError::MissingBootstrapArtifact("bootstrap namespace"))?;
+        let bootstrap =
+            open_existing_directory_for_lifecycle(&self.capability, BOOTSTRAP_DIR, self.lifecycle)?
+                .ok_or(StoreError::MissingBootstrapArtifact("bootstrap namespace"))?;
         if create {
             ensure_directory_for_lifecycle(&bootstrap, name, self.lifecycle)?;
         }
-        open_existing_dir_nofollow(&bootstrap, name)?
+        open_existing_directory_for_lifecycle(&bootstrap, name, self.lifecycle)?
             .ok_or(StoreError::MissingBootstrapArtifact(name))
     }
 
     fn bootstrap_optional_namespace(&self, name: &str) -> Result<Option<Dir>, StoreError> {
-        let Some(bootstrap) = open_existing_dir_nofollow(&self.capability, BOOTSTRAP_DIR)? else {
+        let Some(bootstrap) =
+            open_existing_directory_for_lifecycle(&self.capability, BOOTSTRAP_DIR, self.lifecycle)?
+        else {
             return Ok(None);
         };
-        open_existing_dir_nofollow(&bootstrap, name)
+        open_existing_directory_for_lifecycle(&bootstrap, name, self.lifecycle)
     }
 
     fn bootstrap_index_root_dir(
@@ -3993,7 +4030,7 @@ impl ObjectStore {
         if create {
             ensure_directory_for_lifecycle(&directory, &root_name, self.lifecycle)?;
         }
-        open_existing_dir_nofollow(&directory, &root_name)?
+        open_existing_directory_for_lifecycle(&directory, &root_name, self.lifecycle)?
             .ok_or(StoreError::MissingBootstrapArtifact(namespace))
     }
 
@@ -8691,6 +8728,24 @@ fn open_directory_for_lifecycle(
     }
 
     open_dir_nofollow(dir, path)
+}
+
+fn open_existing_directory_for_lifecycle(
+    dir: &Dir,
+    path: &str,
+    lifecycle: ObjectStoreLifecycle,
+) -> Result<Option<Dir>, StoreError> {
+    let metadata = match dir.symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StoreError::UnsafeEntry(format!(
+            "private archive entry is not a real directory: {path}"
+        )));
+    }
+    open_directory_for_lifecycle(dir, path, lifecycle).map(Some)
 }
 
 fn sync_directory_for_lifecycle(
