@@ -2698,6 +2698,12 @@ pub struct PhysicalPlainTextCandidatePageRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalFuzzyCandidatePageRow {
+    pub page_id: [u8; 16],
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalBlockPropertyCandidateRow {
     pub page_id: [u8; 16],
     pub block_id: [u8; 16],
@@ -3949,7 +3955,7 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         normalized_needle: &str,
         after: Option<[u8; 16]>,
         limit: usize,
-    ) -> Result<Vec<PhysicalPlainTextCandidatePageRow>, MaterializationError> {
+    ) -> Result<Vec<PhysicalFuzzyCandidatePageRow>, MaterializationError> {
         let limit = checked_limit(limit)?;
         checked_query_text(normalized_needle)?;
         if normalized_needle.is_empty() {
@@ -3969,17 +3975,19 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         checked_query_text(&pattern)?;
         let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
             None => (
-                "SELECT DISTINCT owner.page_id
+                "SELECT DISTINCT owner.page_id, pages.path
                  FROM search_substring_fts AS substring
                  JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                 JOIN pages ON pages.page_id = owner.page_id
                  WHERE substring.normalized_text LIKE ?1 ESCAPE '\\'
                  ORDER BY owner.page_id LIMIT ?2",
                 vec![pattern.into(), limit.into()],
             ),
             Some(page_id) => (
-                "SELECT DISTINCT owner.page_id
+                "SELECT DISTINCT owner.page_id, pages.path
                  FROM search_substring_fts AS substring
                  JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                 JOIN pages ON pages.page_id = owner.page_id
                  WHERE substring.normalized_text LIKE ?1 ESCAPE '\\'
                    AND owner.page_id > ?2
                  ORDER BY owner.page_id LIMIT ?3",
@@ -3989,13 +3997,14 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
             let page_id: Vec<u8> = row.get(0)?;
-            Ok(PhysicalPlainTextCandidatePageRow {
+            Ok(PhysicalFuzzyCandidatePageRow {
                 page_id: decode_id_sql(&page_id)?,
+                path: row.get(1)?,
             })
         })?;
         collect_read_rows(
             rows.map(|row| row.map_err(MaterializationError::from)),
-            |_| Ok(16),
+            |row| checked_output_bytes(16, [Some(row.path.as_str())]),
         )
     }
 
@@ -5149,14 +5158,15 @@ mod tests {
         assert_eq!(
             read.fuzzy_subsequence_candidate_pages_after("cfb", None, 10)
                 .unwrap(),
-            vec![PhysicalPlainTextCandidatePageRow {
+            vec![PhysicalFuzzyCandidatePageRow {
                 page_id: first_page,
+                path: first.path.clone(),
             }]
         );
         assert_eq!(
             read.fuzzy_subsequence_candidate_pages_after("c%", None, 10)
                 .unwrap(),
-            Vec::<PhysicalPlainTextCandidatePageRow>::new()
+            Vec::<PhysicalFuzzyCandidatePageRow>::new()
         );
         assert_eq!(
             read.literal_substring_candidate_pages_after("ca", Some(first_page), 10)
