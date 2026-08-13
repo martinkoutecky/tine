@@ -73,6 +73,10 @@ class ManagedStorageSmokeTest {
     // the sole authority and retry must rebuild disposable private state.
     File(privateRoot, "receipts").mkdirs()
     File(privateRoot, "receipts/interrupted.tmp").writeText("partial\n")
+    // An older candidate used one fixed diagnostic name. Keep opaque residue
+    // there so the runtime proves it does not traverse or delete that prior
+    // failure before rebuilding the current receipt tree.
+    File(privateRoot, "receipts.pre-promotion-failed").writeText("opaque prior diagnostic\n")
 
     System.loadLibrary("tine_lib")
     try {
@@ -86,9 +90,13 @@ class ManagedStorageSmokeTest {
         File(graphRoot, "pages/Resume.md").readText(),
       )
       assertEquals(
-        "partial\n",
-        File(privateRoot, "receipts.pre-promotion-failed/interrupted.tmp").readText(),
+        "opaque prior diagnostic\n",
+        File(privateRoot, "receipts.pre-promotion-failed").readText(),
       )
+      val archived = privateRoot.listFiles()
+        ?.singleOrNull { it.name.startsWith("receipts.pre-promotion-failed.") }
+        ?: error("current receipt tree did not receive one fresh diagnostic name")
+      assertEquals("partial\n", File(archived, "interrupted.tmp").readText())
     } finally {
       graphRoot.deleteRecursively()
       privateRoot.deleteRecursively()
