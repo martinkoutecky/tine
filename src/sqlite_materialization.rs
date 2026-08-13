@@ -3941,6 +3941,64 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         )
     }
 
+    /// Page-level candidates for the legacy ordered-subsequence matcher.
+    /// Stored text is already application-normalized, so SQLite only selects
+    /// pages; the parser-owned matcher still ranks blocks and produces evidence.
+    pub fn fuzzy_subsequence_candidate_pages_after(
+        &self,
+        normalized_needle: &str,
+        after: Option<[u8; 16]>,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPlainTextCandidatePageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        checked_query_text(normalized_needle)?;
+        if normalized_needle.is_empty() {
+            return Err(MaterializationError::InvalidQuery(
+                "normalized fuzzy needle must be non-empty".into(),
+            ));
+        }
+        let mut pattern = String::with_capacity(normalized_needle.len().saturating_mul(2) + 1);
+        pattern.push('%');
+        for character in normalized_needle.chars() {
+            if matches!(character, '%' | '_' | '\\') {
+                pattern.push('\\');
+            }
+            pattern.push(character);
+            pattern.push('%');
+        }
+        checked_query_text(&pattern)?;
+        let (sql, args): (&str, Vec<rusqlite::types::Value>) = match after {
+            None => (
+                "SELECT DISTINCT owner.page_id
+                 FROM search_substring_fts AS substring
+                 JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                 WHERE substring.normalized_text LIKE ?1 ESCAPE '\\'
+                 ORDER BY owner.page_id LIMIT ?2",
+                vec![pattern.into(), limit.into()],
+            ),
+            Some(page_id) => (
+                "SELECT DISTINCT owner.page_id
+                 FROM search_substring_fts AS substring
+                 JOIN search_fts_owners AS owner ON owner.rowid = substring.rowid
+                 WHERE substring.normalized_text LIKE ?1 ESCAPE '\\'
+                   AND owner.page_id > ?2
+                 ORDER BY owner.page_id LIMIT ?3",
+                vec![pattern.into(), page_id.to_vec().into(), limit.into()],
+            ),
+        };
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+            let page_id: Vec<u8> = row.get(0)?;
+            Ok(PhysicalPlainTextCandidatePageRow {
+                page_id: decode_id_sql(&page_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(16),
+        )
+    }
+
     /// Stable block owners for one canonical property key. Rows are candidates:
     /// callers retain semantic ownership of property parsing and subtree shape.
     pub fn block_property_candidates_after(
@@ -5087,6 +5145,18 @@ mod tests {
             vec![PhysicalPlainTextCandidatePageRow {
                 page_id: first_page,
             }]
+        );
+        assert_eq!(
+            read.fuzzy_subsequence_candidate_pages_after("cfb", None, 10)
+                .unwrap(),
+            vec![PhysicalPlainTextCandidatePageRow {
+                page_id: first_page,
+            }]
+        );
+        assert_eq!(
+            read.fuzzy_subsequence_candidate_pages_after("c%", None, 10)
+                .unwrap(),
+            Vec::<PhysicalPlainTextCandidatePageRow>::new()
         );
         assert_eq!(
             read.literal_substring_candidate_pages_after("ca", Some(first_page), 10)
