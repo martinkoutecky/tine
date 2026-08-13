@@ -170,6 +170,21 @@ mod tests {
         database.initialize_schema().unwrap();
         database.validate_schema().unwrap();
 
+        let managed_tables: i64 = database
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name IN ('materialization_stamp', 'materialization_batches')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            managed_tables, 0,
+            "the standalone graph projection must not grow managed-frontier tables"
+        );
+
         database
             .apply(&PhysicalGraphProjectionChange {
                 replacements: vec![page(1, "TODO", "Needle first")],
