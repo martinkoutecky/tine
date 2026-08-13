@@ -7,12 +7,6 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
-### Added
-
-- The complete managed-storage path vocabulary is now exported through the
-  certified format manifest and pinned to the exact pre-migration Tine values.
-  This changes ownership and reviewability only; no persisted path changes.
-
 ## [0.6.1] - 2026-08-13
 
 ### Added
@@ -21,6 +15,9 @@ independently in `src/formats.rs` and summarized in
   parser-derived aliases owned by each replaced page. Replacement, deletion,
   and reopen now leave no stale alias declarations in the disposable SQLite
   projection.
+- The complete managed-storage path vocabulary is now exported through the
+  certified format manifest and pinned to the exact pre-migration Tine values.
+  This changes ownership and reviewability only; no persisted path changes.
 
 ## [0.6.0] - 2026-08-13
 
