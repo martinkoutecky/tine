@@ -17,7 +17,7 @@ use crate::sqlite_materialization::{
 use crate::ContentDigest;
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 19;
+pub const SQLITE_SCHEMA_VERSION: u32 = 20;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
 
 pub const META_DDL: &str = "CREATE TABLE meta (
@@ -108,7 +108,7 @@ pub const BATCH_ID_INDEX_DDL: &str =
 pub const ACCEPTANCE_SEQUENCE_INDEX_DDL: &str = "CREATE UNIQUE INDEX \
     applied_batches_acceptance_sequence_uq ON applied_batches(acceptance_sequence)";
 
-const EXPECTED_TABLES: [&str; 32] = [
+const EXPECTED_TABLES: [&str; 35] = [
     "accepted_batch_nodes",
     "applied_batches",
     "block_home_claims",
@@ -116,11 +116,14 @@ const EXPECTED_TABLES: [&str; 32] = [
     "causal_clock_nodes",
     "frontier",
     "frontier_documents",
+    "logseq_uuid_introductions",
     "materialization_batches",
     "materialization_stamp",
     "meta",
+    "page_name_identity_records",
     "page_portable_path_claims",
     "pages",
+    "portable_path_identity_records",
     "properties",
     "reference_alias_bindings",
     "reference_alias_declarations",
@@ -2772,6 +2775,9 @@ mod tests {
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
             block_home_claims: Vec::new(),
+            page_name_identity_records: Vec::new(),
+            portable_path_identity_records: Vec::new(),
+            logseq_uuid_introductions: Vec::new(),
         }
     }
 

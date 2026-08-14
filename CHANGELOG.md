@@ -11,7 +11,7 @@ independently in `src/formats.rs` and summarized in
 
 ### Changed
 
-- SQLite schema 19 preserves every block that claims the same external Logseq
+- SQLite schema 20 preserves every block that claims the same external Logseq
   UUID and exposes those claimants through one bounded, canonical multi-row
   read. Ambiguous source graphs are now application-visible input rather than
   a projection-construction failure or an arbitrary physical owner.
@@ -20,6 +20,12 @@ independently in `src/formats.rs` and summarized in
   dot. Deleting a live block no longer erases the evidence needed to classify
   sequential versus concurrent identity reuse; all candidates are exposed
   through a bounded canonical read.
+- The disposable projection now also retains application-owned causal
+  page-name and portable-path ownership records behind bounded SQLite point
+  reads, plus append-only external-UUID introductions with baseline or
+  accepted-batch provenance. These tables are the physical replacement for
+  Tine's custom Patricia identity indexes; storage does not interpret their
+  domain semantics.
 - The former singular `block_by_logseq_uuid` API is replaced by
   `blocks_by_logseq_uuid(logseq_uuid, limit)`. Callers must classify ambiguity
   explicitly.

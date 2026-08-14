@@ -176,6 +176,35 @@ pub struct PhysicalBlockHomeClaim {
     pub causal_counter: Option<u64>,
 }
 
+/// One application-owned causal identity record addressed by a normalized
+/// page-name or portable-path digest.
+///
+/// Storage deliberately treats the record as opaque bytes: tine-core owns the
+/// conflict semantics and encoding, while SQLite supplies the bounded point
+/// lookup and atomic replacement that previously required a custom Patricia
+/// tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalIdentityRecord {
+    pub key_digest: ContentDigest,
+    pub record: Vec<u8>,
+}
+
+/// One accepted introduction of an external Logseq UUID claim.
+///
+/// Introductions are append-only even after a live block changes or is
+/// deleted. `None` provenance identifies an identity already present in the
+/// immutable activation baseline; accepted operations carry their batch and
+/// causal dot.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PhysicalLogseqUuidIntroduction {
+    pub logseq_uuid: [u8; 16],
+    pub block_id: [u8; 16],
+    pub home_document_id: [u8; 16],
+    pub batch_id: Option<[u8; 16]>,
+    pub causal_peer_id: Option<[u8; 16]>,
+    pub causal_counter: Option<u64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalMaterializationChange {
     pub batch_id: [u8; 16],
@@ -195,6 +224,16 @@ pub struct PhysicalMaterializationChange {
     /// Newly accepted block-home claims. Exact duplicates are invalid input;
     /// distinct homes for one block ID are preserved as ambiguity.
     pub block_home_claims: Vec<PhysicalBlockHomeClaim>,
+    /// Complete post-transition ownership records for the affected normalized
+    /// page-name keys. These are causal-history projections, not current-page
+    /// aliases or navigation facts.
+    pub page_name_identity_records: Vec<PhysicalIdentityRecord>,
+    /// Complete post-transition ownership records for the affected portable
+    /// path keys.
+    pub portable_path_identity_records: Vec<PhysicalIdentityRecord>,
+    /// Newly accepted external-UUID introductions. These remain after current
+    /// graph rows cease to expose the UUID.
+    pub logseq_uuid_introductions: Vec<PhysicalLogseqUuidIntroduction>,
 }
 
 /// One regime-neutral update to the disposable graph projection.
@@ -367,6 +406,37 @@ pub const BLOCK_HOME_CLAIMS_DDL: &str = "CREATE TABLE block_home_claims (
     ),
     PRIMARY KEY (block_id, claim_kind, claim_key, home_document_id)
 ) WITHOUT ROWID, STRICT";
+pub const PAGE_NAME_IDENTITY_RECORDS_DDL: &str = "CREATE TABLE page_name_identity_records (
+    key_digest BLOB PRIMARY KEY CHECK (length(key_digest) = 32),
+    record BLOB NOT NULL CHECK (length(record) BETWEEN 1 AND 4194304)
+) WITHOUT ROWID, STRICT";
+pub const PORTABLE_PATH_IDENTITY_RECORDS_DDL: &str = "CREATE TABLE portable_path_identity_records (
+    key_digest BLOB PRIMARY KEY CHECK (length(key_digest) = 32),
+    record BLOB NOT NULL CHECK (length(record) BETWEEN 1 AND 4194304)
+) WITHOUT ROWID, STRICT";
+pub const LOGSEQ_UUID_INTRODUCTIONS_DDL: &str = "CREATE TABLE logseq_uuid_introductions (
+    logseq_uuid BLOB NOT NULL CHECK (length(logseq_uuid) = 16),
+    block_id BLOB NOT NULL CHECK (length(block_id) = 16),
+    home_document_id BLOB NOT NULL CHECK (length(home_document_id) = 16),
+    claim_kind INTEGER NOT NULL CHECK (claim_kind IN (0, 1)),
+    claim_key BLOB NOT NULL CHECK (length(claim_key) = 16),
+    batch_id BLOB CHECK (batch_id IS NULL OR length(batch_id) = 16),
+    causal_peer_id BLOB CHECK (
+        causal_peer_id IS NULL OR length(causal_peer_id) = 16
+    ),
+    causal_counter INTEGER CHECK (causal_counter IS NULL OR causal_counter > 0),
+    CHECK (
+        (claim_kind = 0 AND claim_key = zeroblob(16) AND batch_id IS NULL
+            AND causal_peer_id IS NULL AND causal_counter IS NULL)
+        OR
+        (claim_kind = 1 AND batch_id IS NOT NULL AND claim_key = batch_id
+            AND ((causal_peer_id IS NULL AND causal_counter IS NULL)
+                OR (causal_peer_id IS NOT NULL AND causal_counter IS NOT NULL)))
+    ),
+    PRIMARY KEY (
+        logseq_uuid, claim_kind, claim_key, block_id, home_document_id
+    )
+) WITHOUT ROWID, STRICT";
 // Retained temporarily for active v2 reads/writes. The authenticated catalog
 // migration-cleanup slice removes this legacy target-ID representation only
 // after every call site has moved to the v10 raw-evidence tables below.
@@ -531,7 +601,7 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 22] = [
     ("tasks_page_idx", TASKS_PAGE_INDEX_DDL),
 ];
 
-const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
+const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 17] = [
     (
         "materialization_stamp",
         &["singleton", "acceptance_sequence", "frontier_root_digest"],
@@ -618,6 +688,21 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
             "causal_counter",
         ],
     ),
+    ("page_name_identity_records", &["key_digest", "record"]),
+    ("portable_path_identity_records", &["key_digest", "record"]),
+    (
+        "logseq_uuid_introductions",
+        &[
+            "logseq_uuid",
+            "block_id",
+            "home_document_id",
+            "claim_kind",
+            "claim_key",
+            "batch_id",
+            "causal_peer_id",
+            "causal_counter",
+        ],
+    ),
     (
         "refs",
         &[
@@ -663,7 +748,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 37] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 40] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -689,6 +774,21 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 37] = [
     ),
     ("table", "blocks", BLOCKS_DDL),
     ("table", "block_home_claims", BLOCK_HOME_CLAIMS_DDL),
+    (
+        "table",
+        "page_name_identity_records",
+        PAGE_NAME_IDENTITY_RECORDS_DDL,
+    ),
+    (
+        "table",
+        "portable_path_identity_records",
+        PORTABLE_PATH_IDENTITY_RECORDS_DDL,
+    ),
+    (
+        "table",
+        "logseq_uuid_introductions",
+        LOGSEQ_UUID_INTRODUCTIONS_DDL,
+    ),
     ("table", "refs", REFERENCES_DDL),
     ("table", "properties", PROPERTIES_DDL),
     ("table", "tags", TAGS_DDL),
@@ -800,6 +900,9 @@ pub(crate) fn initialize_graph_projection_schema(
          {PAGE_PORTABLE_PATH_CLAIMS_DDL};
          {BLOCKS_DDL};
          {BLOCK_HOME_CLAIMS_DDL};
+         {PAGE_NAME_IDENTITY_RECORDS_DDL};
+         {PORTABLE_PATH_IDENTITY_RECORDS_DDL};
+         {LOGSEQ_UUID_INTRODUCTIONS_DDL};
          {REFERENCES_DDL};
          {PROPERTIES_DDL};
          {TAGS_DDL};
@@ -1273,6 +1376,9 @@ pub struct PhysicalTerminalMaterializationChunk {
     pub postings: Vec<PhysicalReferencePosting>,
     pub aliases: Vec<PhysicalAliasDeclaration>,
     pub block_home_claims: Vec<PhysicalBlockHomeClaim>,
+    pub page_name_identity_records: Vec<PhysicalIdentityRecord>,
+    pub portable_path_identity_records: Vec<PhysicalIdentityRecord>,
+    pub logseq_uuid_introductions: Vec<PhysicalLogseqUuidIntroduction>,
 }
 
 /// Construction provenance for one accepted sequence of a terminal build.
@@ -1298,11 +1404,14 @@ pub struct PhysicalTerminalProjectionStamp {
     pub frontier_root_digest: ContentDigest,
 }
 
-const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 15] = [
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 18] = [
     "pages",
     "page_portable_path_claims",
     "blocks",
     "block_home_claims",
+    "page_name_identity_records",
+    "portable_path_identity_records",
+    "logseq_uuid_introductions",
     "refs",
     "properties",
     "tags",
@@ -1366,6 +1475,17 @@ pub(crate) fn seed_terminal_chunk_in_open_candidate(
         insert_alias_declaration(transaction, alias)?;
     }
     insert_block_home_claims(transaction, &chunk.block_home_claims)?;
+    replace_identity_records(
+        transaction,
+        "page_name_identity_records",
+        &chunk.page_name_identity_records,
+    )?;
+    replace_identity_records(
+        transaction,
+        "portable_path_identity_records",
+        &chunk.portable_path_identity_records,
+    )?;
+    insert_logseq_uuid_introductions(transaction, &chunk.logseq_uuid_introductions)?;
     Ok(())
 }
 
@@ -1584,6 +1704,17 @@ fn apply_change_inner(
         )?;
     }
     insert_block_home_claims(transaction, &change.block_home_claims)?;
+    replace_identity_records(
+        transaction,
+        "page_name_identity_records",
+        &change.page_name_identity_records,
+    )?;
+    replace_identity_records(
+        transaction,
+        "portable_path_identity_records",
+        &change.portable_path_identity_records,
+    )?;
+    insert_logseq_uuid_introductions(transaction, &change.logseq_uuid_introductions)?;
     let sequence = i64::try_from(sequence)
         .map_err(|_| MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into()))?;
     transaction.execute(
@@ -1654,6 +1785,107 @@ fn insert_block_home_claims(
                 claim_key.as_slice(),
                 batch_id,
                 claim.causal_peer_id.map(|id| id.to_vec()),
+                causal_counter,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn replace_identity_records(
+    transaction: &Connection,
+    table: &'static str,
+    records: &[PhysicalIdentityRecord],
+) -> Result<(), MaterializationError> {
+    let sql = match table {
+        "page_name_identity_records" => {
+            "INSERT INTO page_name_identity_records (key_digest, record)
+             VALUES (?1, ?2)
+             ON CONFLICT(key_digest) DO UPDATE SET record = excluded.record"
+        }
+        "portable_path_identity_records" => {
+            "INSERT INTO portable_path_identity_records (key_digest, record)
+             VALUES (?1, ?2)
+             ON CONFLICT(key_digest) DO UPDATE SET record = excluded.record"
+        }
+        _ => {
+            return Err(MaterializationError::InvalidInput(
+                "unknown causal identity record table".into(),
+            ));
+        }
+    };
+    let mut unique = BTreeSet::new();
+    for record in records {
+        if record.record.is_empty() || record.record.len() > MAX_MATERIALIZATION_FIELD_BYTES {
+            return Err(resource_limit(
+                "causal identity record bytes",
+                record.record.len(),
+                MAX_MATERIALIZATION_FIELD_BYTES,
+            ));
+        }
+        if !unique.insert(record.key_digest) {
+            return Err(MaterializationError::InvalidInput(
+                "causal identity records contain a duplicate key".into(),
+            ));
+        }
+        execute_cached(
+            transaction,
+            sql,
+            params![record.key_digest.as_bytes().as_slice(), &record.record],
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_logseq_uuid_introductions(
+    transaction: &Connection,
+    introductions: &[PhysicalLogseqUuidIntroduction],
+) -> Result<(), MaterializationError> {
+    let mut unique = BTreeSet::new();
+    for introduction in introductions {
+        if !unique.insert(*introduction) {
+            return Err(MaterializationError::InvalidInput(
+                "Logseq UUID introductions contain an exact duplicate".into(),
+            ));
+        }
+    }
+    for introduction in unique {
+        let (claim_kind, claim_key, batch_id) = match introduction.batch_id {
+            None => (0_i64, [0_u8; 16], None),
+            Some(batch_id) => (1_i64, batch_id, Some(batch_id.to_vec())),
+        };
+        let causal_counter = introduction
+            .causal_counter
+            .map(|counter| {
+                i64::try_from(counter).map_err(|_| {
+                    MaterializationError::InvalidInput(
+                        "Logseq UUID introduction causal counter exceeds SQLite".into(),
+                    )
+                })
+            })
+            .transpose()?;
+        if (introduction.batch_id.is_none()
+            && (introduction.causal_peer_id.is_some() || introduction.causal_counter.is_some()))
+            || introduction.causal_peer_id.is_some() != introduction.causal_counter.is_some()
+        {
+            return Err(MaterializationError::InvalidInput(
+                "Logseq UUID introduction provenance is incomplete".into(),
+            ));
+        }
+        execute_cached(
+            transaction,
+            "INSERT OR IGNORE INTO logseq_uuid_introductions (
+                 logseq_uuid, block_id, home_document_id, claim_kind, claim_key,
+                 batch_id, causal_peer_id, causal_counter
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                introduction.logseq_uuid.as_slice(),
+                introduction.block_id.as_slice(),
+                introduction.home_document_id.as_slice(),
+                claim_kind,
+                claim_key.as_slice(),
+                batch_id,
+                introduction.causal_peer_id.map(|id| id.to_vec()),
                 causal_counter,
             ],
         )?;
@@ -1917,6 +2149,9 @@ pub(crate) fn reset_graph_projection_rows(
          DELETE FROM tags;
          DELETE FROM properties;
          DELETE FROM refs;
+         DELETE FROM logseq_uuid_introductions;
+         DELETE FROM portable_path_identity_records;
+         DELETE FROM page_name_identity_records;
          DELETE FROM block_home_claims;
          DELETE FROM reference_alias_bindings;
          DELETE FROM reference_alias_declarations;
@@ -2377,6 +2612,24 @@ pub struct PhysicalBlockRow {
 /// One candidate home retained for a block identity across accepted history.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysicalBlockHomeClaimRow {
+    pub block_id: [u8; 16],
+    pub home_document_id: [u8; 16],
+    pub batch_id: Option<[u8; 16]>,
+    pub causal_peer_id: Option<[u8; 16]>,
+    pub causal_counter: Option<u64>,
+}
+
+/// One bounded opaque causal-identity record returned by its digest key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalIdentityRecordRow {
+    pub key_digest: ContentDigest,
+    pub record: Vec<u8>,
+}
+
+/// One accepted-history external UUID introduction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalLogseqUuidIntroductionRow {
+    pub logseq_uuid: [u8; 16],
     pub block_id: [u8; 16],
     pub home_document_id: [u8; 16],
     pub batch_id: Option<[u8; 16]>,
@@ -2946,6 +3199,119 @@ impl<'a> SqliteGraphProjectionRead<'a> {
             rows.map(|row| row.map_err(MaterializationError::from)),
             |_| Ok(72),
         )
+    }
+
+    /// Return the complete causal ownership record for one normalized page
+    /// name. The record encoding remains application-owned.
+    pub fn page_name_identity_record(
+        &self,
+        key_digest: ContentDigest,
+    ) -> Result<Option<PhysicalIdentityRecordRow>, MaterializationError> {
+        self.identity_record("page_name_identity_records", key_digest)
+    }
+
+    /// Return the complete causal ownership record for one portable path.
+    pub fn portable_path_identity_record(
+        &self,
+        key_digest: ContentDigest,
+    ) -> Result<Option<PhysicalIdentityRecordRow>, MaterializationError> {
+        self.identity_record("portable_path_identity_records", key_digest)
+    }
+
+    fn identity_record(
+        &self,
+        table: &'static str,
+        key_digest: ContentDigest,
+    ) -> Result<Option<PhysicalIdentityRecordRow>, MaterializationError> {
+        let sql = match table {
+            "page_name_identity_records" => {
+                "SELECT key_digest, record FROM page_name_identity_records
+                 WHERE key_digest = ?1"
+            }
+            "portable_path_identity_records" => {
+                "SELECT key_digest, record FROM portable_path_identity_records
+                 WHERE key_digest = ?1"
+            }
+            _ => {
+                return Err(MaterializationError::InvalidInput(
+                    "unknown causal identity record table".into(),
+                ));
+            }
+        };
+        let row: Option<(Vec<u8>, Vec<u8>)> = self
+            .connection
+            .query_row(sql, params![key_digest.as_bytes().as_slice()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?;
+        row.map(|(stored_key, record)| {
+            if record.is_empty() || record.len() > MAX_MATERIALIZATION_FIELD_BYTES {
+                return Err(MaterializationError::Corrupt(
+                    "causal identity record has an invalid byte length".into(),
+                ));
+            }
+            let stored_key = decode_digest(stored_key)?;
+            if stored_key != key_digest {
+                return Err(MaterializationError::Corrupt(
+                    "causal identity record key does not match its lookup".into(),
+                ));
+            }
+            let mut budget = MaterializationReadBudget::default();
+            budget.add(record.len().saturating_add(32))?;
+            Ok(PhysicalIdentityRecordRow {
+                key_digest: stored_key,
+                record,
+            })
+        })
+        .transpose()
+    }
+
+    /// Return bounded accepted-history introductions for one external UUID.
+    /// Multiple rows are preserved for application-level ambiguity handling.
+    pub fn logseq_uuid_introductions(
+        &self,
+        logseq_uuid: [u8; 16],
+        limit: usize,
+    ) -> Result<Vec<PhysicalLogseqUuidIntroductionRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT logseq_uuid, block_id, home_document_id, batch_id,
+                    causal_peer_id, causal_counter
+             FROM logseq_uuid_introductions
+             WHERE logseq_uuid = ?1
+             ORDER BY claim_kind, claim_key, block_id, home_document_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![logseq_uuid.as_slice(), limit], |row| {
+            let stored_uuid: Vec<u8> = row.get(0)?;
+            let block_id: Vec<u8> = row.get(1)?;
+            let home_document_id: Vec<u8> = row.get(2)?;
+            let batch_id: Option<Vec<u8>> = row.get(3)?;
+            let causal_peer_id: Option<Vec<u8>> = row.get(4)?;
+            let causal_counter: Option<i64> = row.get(5)?;
+            Ok(PhysicalLogseqUuidIntroductionRow {
+                logseq_uuid: decode_id_sql(&stored_uuid)?,
+                block_id: decode_id_sql(&block_id)?,
+                home_document_id: decode_id_sql(&home_document_id)?,
+                batch_id: batch_id.as_deref().map(decode_id_sql).transpose()?,
+                causal_peer_id: causal_peer_id.as_deref().map(decode_id_sql).transpose()?,
+                causal_counter: causal_counter
+                    .map(|counter| u64::try_from(counter).map_err(sql_decode_error))
+                    .transpose()?,
+            })
+        })?;
+        let result = collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(88),
+        )?;
+        if result
+            .iter()
+            .any(|introduction| introduction.logseq_uuid != logseq_uuid)
+        {
+            return Err(MaterializationError::Corrupt(
+                "Logseq UUID introduction key does not match its lookup".into(),
+            ));
+        }
+        Ok(result)
     }
 
     /// Read only the structural fields needed to walk one block's ancestors.
@@ -4664,6 +5030,9 @@ mod tests {
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
             block_home_claims: Vec::new(),
+            page_name_identity_records: Vec::new(),
+            portable_path_identity_records: Vec::new(),
+            logseq_uuid_introductions: Vec::new(),
         }
     }
 
@@ -5698,6 +6067,171 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+        transaction.commit().unwrap();
+        validate_schema(&connection).unwrap();
+    }
+
+    #[test]
+    fn causal_identity_records_and_uuid_introductions_survive_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-causal-identity-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let name_key = digest(b"normalized page name");
+        let path_key = digest(b"portable path");
+        let logseq_uuid = id(0xcafe);
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            initialize_schema(&connection, digest(b"empty")).unwrap();
+            let mut first = change(0x201, vec![page(1, "first")], Vec::new());
+            first.page_name_identity_records = vec![PhysicalIdentityRecord {
+                key_digest: name_key,
+                record: b"name-v1".to_vec(),
+            }];
+            first.portable_path_identity_records = vec![PhysicalIdentityRecord {
+                key_digest: path_key,
+                record: b"path-v1".to_vec(),
+            }];
+            first.logseq_uuid_introductions = vec![PhysicalLogseqUuidIntroduction {
+                logseq_uuid,
+                block_id: id(0x301),
+                home_document_id: id(0x401),
+                batch_id: Some(id(0x201)),
+                causal_peer_id: Some(id(0x501)),
+                causal_counter: Some(7),
+            }];
+            apply_and_commit(&mut connection, &first, 1, digest(b"frontier-1"));
+
+            let mut second = change(0x202, Vec::new(), vec![id(1)]);
+            second.page_name_identity_records = vec![PhysicalIdentityRecord {
+                key_digest: name_key,
+                record: b"name-v2".to_vec(),
+            }];
+            second.portable_path_identity_records = vec![PhysicalIdentityRecord {
+                key_digest: path_key,
+                record: b"path-v2".to_vec(),
+            }];
+            second.logseq_uuid_introductions = vec![PhysicalLogseqUuidIntroduction {
+                logseq_uuid,
+                block_id: id(0x302),
+                home_document_id: id(0x402),
+                batch_id: Some(id(0x202)),
+                causal_peer_id: Some(id(0x502)),
+                causal_counter: Some(9),
+            }];
+            apply_and_commit(&mut connection, &second, 2, digest(b"frontier-2"));
+        }
+        {
+            let connection = Connection::open(&path).unwrap();
+            validate_schema(&connection).unwrap();
+            let read = SqliteMaterializedRead::new(&connection, 2, digest(b"frontier-2")).unwrap();
+            assert_eq!(
+                read.page_name_identity_record(name_key).unwrap(),
+                Some(PhysicalIdentityRecordRow {
+                    key_digest: name_key,
+                    record: b"name-v2".to_vec(),
+                })
+            );
+            assert_eq!(
+                read.portable_path_identity_record(path_key).unwrap(),
+                Some(PhysicalIdentityRecordRow {
+                    key_digest: path_key,
+                    record: b"path-v2".to_vec(),
+                })
+            );
+            assert_eq!(
+                read.logseq_uuid_introductions(logseq_uuid, 2).unwrap(),
+                vec![
+                    PhysicalLogseqUuidIntroductionRow {
+                        logseq_uuid,
+                        block_id: id(0x301),
+                        home_document_id: id(0x401),
+                        batch_id: Some(id(0x201)),
+                        causal_peer_id: Some(id(0x501)),
+                        causal_counter: Some(7),
+                    },
+                    PhysicalLogseqUuidIntroductionRow {
+                        logseq_uuid,
+                        block_id: id(0x302),
+                        home_document_id: id(0x402),
+                        batch_id: Some(id(0x202)),
+                        causal_peer_id: Some(id(0x502)),
+                        causal_counter: Some(9),
+                    },
+                ]
+            );
+            assert!(matches!(
+                read.logseq_uuid_introductions(logseq_uuid, 0),
+                Err(MaterializationError::InvalidQuery(_))
+            ));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn terminal_construction_seeds_baseline_identity_history() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let transaction = connection.transaction().unwrap();
+        begin_terminal_construction_in_open_candidate(&transaction).unwrap();
+        let name_key = digest(b"baseline name");
+        let path_key = digest(b"baseline path");
+        let logseq_uuid = id(0xdada);
+        seed_terminal_chunk_in_open_candidate(
+            &transaction,
+            &PhysicalTerminalMaterializationChunk {
+                page_name_identity_records: vec![PhysicalIdentityRecord {
+                    key_digest: name_key,
+                    record: b"baseline-name".to_vec(),
+                }],
+                portable_path_identity_records: vec![PhysicalIdentityRecord {
+                    key_digest: path_key,
+                    record: b"baseline-path".to_vec(),
+                }],
+                logseq_uuid_introductions: vec![PhysicalLogseqUuidIntroduction {
+                    logseq_uuid,
+                    block_id: id(0xdb01),
+                    home_document_id: id(0xdb02),
+                    batch_id: None,
+                    causal_peer_id: None,
+                    causal_counter: None,
+                }],
+                ..PhysicalTerminalMaterializationChunk::default()
+            },
+        )
+        .unwrap();
+        finish_terminal_graph_projection_in_open_candidate(
+            &transaction,
+            &[],
+            empty_terminal_stamp(),
+        )
+        .unwrap();
+        let read = SqliteGraphProjectionRead::new(&transaction);
+        assert_eq!(
+            read.page_name_identity_record(name_key)
+                .unwrap()
+                .unwrap()
+                .record,
+            b"baseline-name"
+        );
+        assert_eq!(
+            read.portable_path_identity_record(path_key)
+                .unwrap()
+                .unwrap()
+                .record,
+            b"baseline-path"
+        );
+        assert_eq!(
+            read.logseq_uuid_introductions(logseq_uuid, 2).unwrap(),
+            vec![PhysicalLogseqUuidIntroductionRow {
+                logseq_uuid,
+                block_id: id(0xdb01),
+                home_document_id: id(0xdb02),
+                batch_id: None,
+                causal_peer_id: None,
+                causal_counter: None,
+            }]
         );
         transaction.commit().unwrap();
         validate_schema(&connection).unwrap();
