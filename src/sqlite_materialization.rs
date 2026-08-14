@@ -5142,7 +5142,11 @@ mod tests {
     fn terminal_construction_defers_and_transactionally_restores_secondary_indexes() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_schema(&connection, digest(b"empty")).unwrap();
-        assert_eq!(terminal_deferred_index_count(&connection), 25);
+        let deferred_index_count = TERMINAL_DEFERRED_INDEXES.len() as i64;
+        assert_eq!(
+            terminal_deferred_index_count(&connection),
+            deferred_index_count
+        );
 
         {
             let transaction = connection.transaction().unwrap();
@@ -5150,7 +5154,10 @@ mod tests {
             assert_eq!(terminal_deferred_index_count(&transaction), 0);
             transaction.rollback().unwrap();
         }
-        assert_eq!(terminal_deferred_index_count(&connection), 25);
+        assert_eq!(
+            terminal_deferred_index_count(&connection),
+            deferred_index_count
+        );
         validate_schema(&connection).unwrap();
 
         {
@@ -5162,7 +5169,10 @@ mod tests {
                 &empty_terminal_stamp(),
             )
             .unwrap();
-            assert_eq!(terminal_deferred_index_count(&transaction), 25);
+            assert_eq!(
+                terminal_deferred_index_count(&transaction),
+                deferred_index_count
+            );
             validate_schema(&transaction).unwrap();
             transaction.commit().unwrap();
         }
