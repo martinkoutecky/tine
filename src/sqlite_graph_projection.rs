@@ -995,6 +995,7 @@ mod tests {
                 derived_reference_postings: vec![posting],
                 derived_aliases: vec![alias],
                 portable_path_claims: vec![path_claim],
+                block_home_claims: Vec::new(),
             },
             1,
             ContentDigest::of(b"input"),

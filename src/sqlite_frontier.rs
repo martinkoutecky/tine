@@ -108,9 +108,10 @@ pub const BATCH_ID_INDEX_DDL: &str =
 pub const ACCEPTANCE_SEQUENCE_INDEX_DDL: &str = "CREATE UNIQUE INDEX \
     applied_batches_acceptance_sequence_uq ON applied_batches(acceptance_sequence)";
 
-const EXPECTED_TABLES: [&str; 31] = [
+const EXPECTED_TABLES: [&str; 32] = [
     "accepted_batch_nodes",
     "applied_batches",
+    "block_home_claims",
     "blocks",
     "causal_clock_nodes",
     "frontier",
@@ -2770,6 +2771,7 @@ mod tests {
             derived_reference_postings: Vec::new(),
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
+            block_home_claims: Vec::new(),
         }
     }
 

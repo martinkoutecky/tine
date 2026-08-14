@@ -158,6 +158,17 @@ pub struct PhysicalPagePortablePathClaim {
     pub portable_path_key: ContentDigest,
 }
 
+/// One accepted claim that a stable block identity belongs to a CRDT document.
+///
+/// These rows are a disposable projection of accepted history. They are
+/// append-only within one materialization because deleting a live block does
+/// not make its identity safe to reuse under another document.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PhysicalBlockHomeClaim {
+    pub block_id: [u8; 16],
+    pub home_document_id: [u8; 16],
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalMaterializationChange {
     pub batch_id: [u8; 16],
@@ -174,6 +185,9 @@ pub struct PhysicalMaterializationChange {
     /// An empty vector preserves the legacy transition while clients migrate;
     /// a non-empty vector must cover every replacement exactly once.
     pub portable_path_claims: Vec<PhysicalPagePortablePathClaim>,
+    /// Newly accepted block-home claims. Exact duplicates are invalid input;
+    /// distinct homes for one block ID are preserved as ambiguity.
+    pub block_home_claims: Vec<PhysicalBlockHomeClaim>,
 }
 
 /// One regime-neutral update to the disposable graph projection.
@@ -326,6 +340,11 @@ pub const BLOCKS_DDL: &str = "CREATE TABLE blocks (
         OR (logseq_uuid IS NOT NULL AND logseq_identity_origin IS NOT NULL)
     )
 ) STRICT";
+pub const BLOCK_HOME_CLAIMS_DDL: &str = "CREATE TABLE block_home_claims (
+    block_id BLOB NOT NULL CHECK (length(block_id) = 16),
+    home_document_id BLOB NOT NULL CHECK (length(home_document_id) = 16),
+    PRIMARY KEY (block_id, home_document_id)
+) WITHOUT ROWID, STRICT";
 // Retained temporarily for active v2 reads/writes. The authenticated catalog
 // migration-cleanup slice removes this legacy target-ID representation only
 // after every call site has moved to the v10 raw-evidence tables below.
@@ -490,7 +509,7 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 22] = [
     ("tasks_page_idx", TASKS_PAGE_INDEX_DDL),
 ];
 
-const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 13] = [
+const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
     (
         "materialization_stamp",
         &["singleton", "acceptance_sequence", "frontier_root_digest"],
@@ -565,6 +584,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 13] = [
             "logseq_identity_origin",
         ],
     ),
+    ("block_home_claims", &["block_id", "home_document_id"]),
     (
         "refs",
         &[
@@ -610,7 +630,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 13] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 36] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 37] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -635,6 +655,7 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 36] = [
         PAGE_PORTABLE_PATH_CLAIMS_DDL,
     ),
     ("table", "blocks", BLOCKS_DDL),
+    ("table", "block_home_claims", BLOCK_HOME_CLAIMS_DDL),
     ("table", "refs", REFERENCES_DDL),
     ("table", "properties", PROPERTIES_DDL),
     ("table", "tags", TAGS_DDL),
@@ -745,6 +766,7 @@ pub(crate) fn initialize_graph_projection_schema(
          {PAGES_DDL};
          {PAGE_PORTABLE_PATH_CLAIMS_DDL};
          {BLOCKS_DDL};
+         {BLOCK_HOME_CLAIMS_DDL};
          {REFERENCES_DDL};
          {PROPERTIES_DDL};
          {TAGS_DDL};
@@ -1217,6 +1239,7 @@ pub struct PhysicalTerminalMaterializationChunk {
     pub pages: Vec<PhysicalPage>,
     pub postings: Vec<PhysicalReferencePosting>,
     pub aliases: Vec<PhysicalAliasDeclaration>,
+    pub block_home_claims: Vec<PhysicalBlockHomeClaim>,
 }
 
 /// Construction provenance for one accepted sequence of a terminal build.
@@ -1242,10 +1265,11 @@ pub struct PhysicalTerminalProjectionStamp {
     pub frontier_root_digest: ContentDigest,
 }
 
-const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 14] = [
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 15] = [
     "pages",
     "page_portable_path_claims",
     "blocks",
+    "block_home_claims",
     "refs",
     "properties",
     "tags",
@@ -1308,6 +1332,7 @@ pub(crate) fn seed_terminal_chunk_in_open_candidate(
     for alias in &chunk.aliases {
         insert_alias_declaration(transaction, alias)?;
     }
+    insert_block_home_claims(transaction, &chunk.block_home_claims)?;
     Ok(())
 }
 
@@ -1525,6 +1550,7 @@ fn apply_change_inner(
             &change.portable_path_claims,
         )?;
     }
+    insert_block_home_claims(transaction, &change.block_home_claims)?;
     let sequence = i64::try_from(sequence)
         .map_err(|_| MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into()))?;
     transaction.execute(
@@ -1545,6 +1571,29 @@ fn apply_change_inner(
         params![sequence, post_frontier_digest.as_bytes().as_slice()],
     )?;
     Ok(instrumentation)
+}
+
+fn insert_block_home_claims(
+    transaction: &Connection,
+    claims: &[PhysicalBlockHomeClaim],
+) -> Result<(), MaterializationError> {
+    let mut unique = BTreeSet::new();
+    for claim in claims {
+        if !unique.insert(*claim) {
+            return Err(MaterializationError::InvalidInput(
+                "block-home claims contain an exact duplicate".into(),
+            ));
+        }
+    }
+    for claim in unique {
+        execute_cached(
+            transaction,
+            "INSERT OR IGNORE INTO block_home_claims (block_id, home_document_id)
+             VALUES (?1, ?2)",
+            params![claim.block_id.as_slice(), claim.home_document_id.as_slice()],
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn apply_graph_projection_rows(
@@ -1803,6 +1852,7 @@ pub(crate) fn reset_graph_projection_rows(
          DELETE FROM tags;
          DELETE FROM properties;
          DELETE FROM refs;
+         DELETE FROM block_home_claims;
          DELETE FROM reference_alias_bindings;
          DELETE FROM reference_alias_declarations;
          DELETE FROM reference_postings;
@@ -2257,6 +2307,13 @@ pub struct PhysicalBlockRow {
     pub collapsed: bool,
     pub logseq_uuid: Option<[u8; 16]>,
     pub logseq_identity_origin: Option<i64>,
+}
+
+/// One candidate home retained for a block identity across accepted history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalBlockHomeClaimRow {
+    pub block_id: [u8; 16],
+    pub home_document_id: [u8; 16],
 }
 
 /// The structural fields required for a bounded block ancestor walk.
@@ -2782,6 +2839,36 @@ impl<'a> SqliteGraphProjectionRead<'a> {
             budget.add(block_row_output_bytes(row)?)?;
         }
         Ok(block)
+    }
+
+    /// Return bounded accepted-history homes for one block identity.
+    ///
+    /// Rows remain after the live block is deleted. Multiple rows therefore
+    /// represent semantic ambiguity for the caller; storage never chooses one.
+    pub fn block_home_claims(
+        &self,
+        block_id: [u8; 16],
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockHomeClaimRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT block_id, home_document_id
+             FROM block_home_claims
+             WHERE block_id = ?1
+             ORDER BY home_document_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![block_id.as_slice(), limit], |row| {
+            let block_id: Vec<u8> = row.get(0)?;
+            let home_document_id: Vec<u8> = row.get(1)?;
+            Ok(PhysicalBlockHomeClaimRow {
+                block_id: decode_id_sql(&block_id)?,
+                home_document_id: decode_id_sql(&home_document_id)?,
+            })
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            |_| Ok(32),
+        )
     }
 
     /// Read only the structural fields needed to walk one block's ancestors.
@@ -4499,6 +4586,7 @@ mod tests {
             derived_reference_postings: Vec::new(),
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
+            block_home_claims: Vec::new(),
         }
     }
 
@@ -5416,6 +5504,108 @@ mod tests {
             read.blocks_by_logseq_uuid(claimed, 0),
             Err(MaterializationError::InvalidQuery(_))
         ));
+    }
+
+    #[test]
+    fn block_home_claims_are_ambiguous_append_only_and_survive_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-block-home-claims-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let block_id = id(0x5151);
+        let first_home = id(0x6161);
+        let second_home = id(0x7171);
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            initialize_schema(&connection, digest(b"empty")).unwrap();
+            let mut first = change(0x100, vec![page(1, "first")], Vec::new());
+            first.block_home_claims = vec![PhysicalBlockHomeClaim {
+                block_id,
+                home_document_id: first_home,
+            }];
+            apply_and_commit(&mut connection, &first, 1, digest(b"frontier-1"));
+
+            let mut second = change(0x101, Vec::new(), vec![id(1)]);
+            second.block_home_claims = vec![PhysicalBlockHomeClaim {
+                block_id,
+                home_document_id: second_home,
+            }];
+            apply_and_commit(&mut connection, &second, 2, digest(b"frontier-2"));
+            assert!(
+                SqliteMaterializedRead::new(&connection, 2, digest(b"frontier-2"))
+                    .unwrap()
+                    .block(block_id)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        {
+            let connection = Connection::open(&path).unwrap();
+            validate_schema(&connection).unwrap();
+            let claims = SqliteMaterializedRead::new(&connection, 2, digest(b"frontier-2"))
+                .unwrap()
+                .block_home_claims(block_id, 2)
+                .unwrap();
+            assert_eq!(
+                claims,
+                vec![
+                    PhysicalBlockHomeClaimRow {
+                        block_id,
+                        home_document_id: first_home,
+                    },
+                    PhysicalBlockHomeClaimRow {
+                        block_id,
+                        home_document_id: second_home,
+                    },
+                ]
+            );
+            assert!(matches!(
+                SqliteGraphProjectionRead::new(&connection).block_home_claims(block_id, 0),
+                Err(MaterializationError::InvalidQuery(_))
+            ));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn terminal_construction_seeds_block_home_claims() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let transaction = connection.transaction().unwrap();
+        begin_terminal_construction_in_open_candidate(&transaction).unwrap();
+        let block_id = id(0x8181);
+        seed_terminal_chunk_in_open_candidate(
+            &transaction,
+            &PhysicalTerminalMaterializationChunk {
+                block_home_claims: vec![
+                    PhysicalBlockHomeClaim {
+                        block_id,
+                        home_document_id: id(0x9191),
+                    },
+                    PhysicalBlockHomeClaim {
+                        block_id,
+                        home_document_id: id(0xa1a1),
+                    },
+                ],
+                ..PhysicalTerminalMaterializationChunk::default()
+            },
+        )
+        .unwrap();
+        finish_terminal_graph_projection_in_open_candidate(
+            &transaction,
+            &[],
+            empty_terminal_stamp(),
+        )
+        .unwrap();
+        assert_eq!(
+            SqliteGraphProjectionRead::new(&transaction)
+                .block_home_claims(block_id, 2)
+                .unwrap()
+                .len(),
+            2
+        );
+        transaction.commit().unwrap();
+        validate_schema(&connection).unwrap();
     }
 
     #[test]
