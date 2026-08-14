@@ -15,6 +15,10 @@ use crate::sqlite_materialization::{
     self, ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
     PhysicalGraphProjectionChange, PhysicalPagePortablePathClaim, SqliteGraphProjectionRead,
 };
+#[cfg(test)]
+use crate::sqlite_materialization::{
+    PhysicalEntityId, PhysicalReferencePosting, PhysicalReferenceTarget,
+};
 
 const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
 const SOURCE_REVISION_MAX_BYTES: usize = 4096;
@@ -885,15 +889,47 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let source = page(7, "TODO", "Shared projection needle");
+        let posting = PhysicalReferencePosting {
+            source_page_id: [7; 16],
+            source_entity: PhysicalEntityId::Page([7; 16]),
+            source_locator: b"preamble".to_vec(),
+            ordinal: 0,
+            kind: 0,
+            target: PhysicalReferenceTarget::PageName {
+                raw_name: "Shared Target".into(),
+                normalized_name: "shared target".into(),
+                resolved_page_id: None,
+            },
+        };
+        let alias = PhysicalAliasDeclaration {
+            source_page_id: [7; 16],
+            source_entity: PhysicalEntityId::Page([7; 16]),
+            source_locator: b"page-alias".to_vec(),
+            ordinal: 0,
+            raw_alias: "Shared Alias".into(),
+            normalized_alias: "shared alias".into(),
+        };
+        let path_claim = PhysicalPagePortablePathClaim {
+            page_id: [7; 16],
+            portable_path_key: ContentDigest::of(b"shared portable path"),
+        };
 
         let mut standalone = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
         standalone.initialize_schema().unwrap();
         standalone
-            .apply(&PhysicalGraphProjectionChange {
-                replacements: vec![source.clone()],
-                deletions: Vec::new(),
-                reference_postings: Vec::new(),
-            })
+            .apply_with_source_revisions_aliases_and_portable_paths(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![source.clone()],
+                    deletions: Vec::new(),
+                    reference_postings: vec![posting.clone()],
+                },
+                &[PhysicalGraphProjectionSourceRevision {
+                    page_id: [7; 16],
+                    revision: "shared-source".into(),
+                }],
+                std::slice::from_ref(&alias),
+                std::slice::from_ref(&path_claim),
+            )
             .unwrap();
 
         let managed = Connection::open_in_memory().unwrap();
@@ -908,6 +944,9 @@ mod tests {
                 replacements: vec![source],
                 deletions: Vec::new(),
                 pages_with_live_metadata_delta: BTreeSet::from([[7; 16]]),
+                derived_reference_postings: vec![posting],
+                derived_aliases: vec![alias],
+                portable_path_claims: vec![path_claim],
                 reference_catalog: None,
             },
             1,
@@ -932,6 +971,25 @@ mod tests {
             standalone.read().pages(None, 10).unwrap(),
             managed_read.pages(None, 10).unwrap()
         );
+        let derived_counts = |connection: &Connection| {
+            [
+                "reference_postings",
+                "reference_alias_declarations",
+                "page_portable_path_claims",
+            ]
+            .map(|table| {
+                connection
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap()
+            })
+        };
+        assert_eq!(
+            derived_counts(&standalone.connection),
+            derived_counts(&managed)
+        );
+        assert_eq!(derived_counts(&managed), [1, 1, 1]);
 
         drop(standalone);
         for suffix in ["", "-wal", "-shm"] {

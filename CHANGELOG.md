@@ -7,6 +7,15 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-08-14
+
+### Added
+
+- Managed materialization changes can now publish parser-derived reference
+  postings, aliases, and portable-path claims directly in the accepted-frontier
+  transaction. These are disposable current-state facts and no longer require
+  clients to manufacture a second authenticated reference-catalog authority.
+
 ## [0.6.4] - 2026-08-14
 
 ### Added

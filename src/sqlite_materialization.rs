@@ -195,6 +195,16 @@ pub struct PhysicalMaterializationChange {
     pub replacements: Vec<PhysicalPage>,
     pub deletions: Vec<[u8; 16]>,
     pub pages_with_live_metadata_delta: BTreeSet<[u8; 16]>,
+    /// Parser-derived reference spellings for replacement pages. These are
+    /// disposable current-state facts stamped by the accepted frontier, not a
+    /// second authenticated catalog authority.
+    pub derived_reference_postings: Vec<PhysicalReferencePosting>,
+    /// Parser-derived aliases owned by replacement pages.
+    pub derived_aliases: Vec<PhysicalAliasDeclaration>,
+    /// Complete caller-derived portable-path claims for replacement pages.
+    /// An empty vector preserves the legacy transition while clients migrate;
+    /// a non-empty vector must cover every replacement exactly once.
+    pub portable_path_claims: Vec<PhysicalPagePortablePathClaim>,
     pub reference_catalog: Option<PhysicalReferenceCatalogChange>,
 }
 
@@ -2074,6 +2084,19 @@ fn apply_change_inner(
     validate_preserved_page_metadata(transaction, change)?;
     let mut instrumentation =
         apply_graph_projection_rows(transaction, &change.replacements, &change.deletions)?;
+    let derived = PhysicalGraphProjectionChange {
+        replacements: change.replacements.clone(),
+        deletions: change.deletions.clone(),
+        reference_postings: change.derived_reference_postings.clone(),
+    };
+    replace_graph_projection_reference_facts(transaction, &derived, &change.derived_aliases)?;
+    if !change.portable_path_claims.is_empty() {
+        replace_graph_projection_portable_path_claims(
+            transaction,
+            &change.replacements,
+            &change.portable_path_claims,
+        )?;
+    }
     let reference_values = change
         .reference_catalog
         .as_ref()
@@ -5076,6 +5099,9 @@ mod tests {
             pages_with_live_metadata_delta: replacements.iter().map(|page| page.page_id).collect(),
             replacements,
             deletions,
+            derived_reference_postings: Vec::new(),
+            derived_aliases: Vec::new(),
+            portable_path_claims: Vec::new(),
             reference_catalog: None,
         }
     }

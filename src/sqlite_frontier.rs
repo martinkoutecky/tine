@@ -2808,6 +2808,9 @@ mod tests {
             }],
             deletions: Vec::new(),
             pages_with_live_metadata_delta: BTreeSet::from([page_id]),
+            derived_reference_postings: Vec::new(),
+            derived_aliases: Vec::new(),
+            portable_path_claims: Vec::new(),
             reference_catalog: None,
         }
     }
