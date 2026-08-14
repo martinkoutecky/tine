@@ -77,8 +77,9 @@ pub mod sqlite {
         PhysicalTask, PhysicalTaskCandidateBlockRow, PhysicalTaskCandidateLocatorRow,
         PhysicalTaskCandidatePageRow, PhysicalTaskRow, PhysicalTerminalCatalogStamp,
         PhysicalTerminalConstructionBatch, PhysicalTerminalMaterializationChunk,
-        SqliteGraphProjectionRead, SqliteMaterializedRead, MAX_MATERIALIZATION_QUERY_BYTES,
-        MAX_MATERIALIZATION_QUERY_ROWS, MAX_MATERIALIZATION_READ_BYTES,
+        PhysicalTerminalProjectionStamp, SqliteGraphProjectionRead, SqliteMaterializedRead,
+        MAX_MATERIALIZATION_QUERY_BYTES, MAX_MATERIALIZATION_QUERY_ROWS,
+        MAX_MATERIALIZATION_READ_BYTES,
     };
 
     #[cfg(feature = "test-support")]
