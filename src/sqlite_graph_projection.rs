@@ -15,11 +15,6 @@ use crate::sqlite_materialization::{
     self, ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
     PhysicalGraphProjectionChange, PhysicalPagePortablePathClaim, SqliteGraphProjectionRead,
 };
-#[cfg(test)]
-use crate::sqlite_materialization::{
-    PhysicalEntityId, PhysicalReferencePosting, PhysicalReferenceTarget,
-};
-
 const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
 const SOURCE_REVISION_MAX_BYTES: usize = 4096;
 const SOURCE_REVISIONS_DDL: &str = "CREATE TABLE direct_source_revisions (
@@ -947,12 +942,10 @@ mod tests {
                 derived_reference_postings: vec![posting],
                 derived_aliases: vec![alias],
                 portable_path_claims: vec![path_claim],
-                reference_catalog: None,
             },
             1,
             ContentDigest::of(b"input"),
             frontier,
-            None,
         )
         .unwrap();
         transaction.commit().unwrap();

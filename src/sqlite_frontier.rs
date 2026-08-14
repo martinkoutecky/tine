@@ -12,13 +12,12 @@ use std::fmt;
 use rusqlite::{params, Connection, OptionalExtension as _, Transaction, TransactionBehavior};
 
 use crate::sqlite_materialization::{
-    self, ApplyChangeInstrumentation, MaterializationError, PhysicalAuthenticatedReference,
-    PhysicalMaterializationChange,
+    self, ApplyChangeInstrumentation, MaterializationError, PhysicalMaterializationChange,
 };
 use crate::ContentDigest;
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 17;
+pub const SQLITE_SCHEMA_VERSION: u32 = 18;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
 
 pub const META_DDL: &str = "CREATE TABLE meta (
@@ -109,7 +108,7 @@ pub const BATCH_ID_INDEX_DDL: &str =
 pub const ACCEPTANCE_SEQUENCE_INDEX_DDL: &str = "CREATE UNIQUE INDEX \
     applied_batches_acceptance_sequence_uq ON applied_batches(acceptance_sequence)";
 
-const EXPECTED_TABLES: [&str; 34] = [
+const EXPECTED_TABLES: [&str; 31] = [
     "accepted_batch_nodes",
     "applied_batches",
     "blocks",
@@ -124,10 +123,7 @@ const EXPECTED_TABLES: [&str; 34] = [
     "properties",
     "reference_alias_bindings",
     "reference_alias_declarations",
-    "reference_name_bindings",
     "reference_postings",
-    "reference_source_coverage",
-    "reference_uuid_bindings",
     "refs",
     "search_fts",
     "search_fts_config",
@@ -145,7 +141,7 @@ const EXPECTED_TABLES: [&str; 34] = [
     "tags",
     "tasks",
 ];
-const EXPECTED_INDEXES: [&str; 29] = [
+const EXPECTED_INDEXES: [&str; 24] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
     "blocks_logseq_uuid_idx",
@@ -159,14 +155,9 @@ const EXPECTED_INDEXES: [&str; 29] = [
     "properties_page_idx",
     "reference_alias_bindings_normalized_alias_idx",
     "reference_alias_declarations_source_idx",
-    "reference_name_bindings_raw_name_idx",
-    "reference_name_bindings_resolved_page_idx",
     "reference_postings_normalized_name_idx",
     "reference_postings_raw_uuid_idx",
     "reference_postings_source_idx",
-    "reference_source_coverage_source_idx",
-    "reference_uuid_bindings_raw_uuid_idx",
-    "reference_uuid_bindings_resolved_block_idx",
     "references_source_idx",
     "references_target_idx",
     "search_fts_owners_page_idx",
@@ -314,8 +305,6 @@ pub struct PhysicalApplyRequest {
     pub batch: PhysicalAcceptedBatch,
     pub materialization: Option<PhysicalMaterializationChange>,
     pub materialization_input_digest: Option<ContentDigest>,
-    pub authenticated_reference: Option<PhysicalAuthenticatedReference>,
-    pub prior_reference_coverage_count: Option<u64>,
     pub fault: ApplyFault,
 }
 
@@ -2357,10 +2346,7 @@ pub fn apply_terminal_prefix_candidate(
     current_root: &PhysicalFrontierRoot,
     request: &PhysicalApplyRequest,
 ) -> Result<ApplyResult, FrontierError> {
-    if request.materialization.is_some()
-        || request.materialization_input_digest.is_some()
-        || request.authenticated_reference.is_some()
-    {
+    if request.materialization.is_some() || request.materialization_input_digest.is_some() {
         return Err(FrontierError::InvalidInput(
             "terminal prefix candidate accepts history without materialization".into(),
         ));
@@ -2586,47 +2572,21 @@ fn apply_in_open_transaction(
         request.materialization.as_ref(),
         request.materialization_input_digest,
     ) {
-        materialization_stats = match (&transaction, request.prior_reference_coverage_count) {
-            (OpenApplyTransaction::Ordinary(transaction), Some(prior_count)) => {
-                sqlite_materialization::apply_change_fresh_bootstrap(
-                    transaction,
-                    change,
-                    batch.acceptance_sequence,
-                    input_digest,
-                    batch.post_frontier_root.digest(),
-                    request.authenticated_reference.as_ref(),
-                    prior_count,
-                )?
-            }
-            (OpenApplyTransaction::Ordinary(transaction), None) => {
-                sqlite_materialization::apply_change(
-                    transaction,
-                    change,
-                    batch.acceptance_sequence,
-                    input_digest,
-                    batch.post_frontier_root.digest(),
-                    request.authenticated_reference.as_ref(),
-                )?
-            }
-            (OpenApplyTransaction::Candidate(transaction), Some(prior_count)) => {
-                sqlite_materialization::apply_change_fresh_bootstrap_in_open_candidate(
-                    transaction,
-                    change,
-                    batch.acceptance_sequence,
-                    input_digest,
-                    batch.post_frontier_root.digest(),
-                    request.authenticated_reference.as_ref(),
-                    prior_count,
-                )?
-            }
-            (OpenApplyTransaction::Candidate(transaction), None) => {
+        materialization_stats = match &transaction {
+            OpenApplyTransaction::Ordinary(transaction) => sqlite_materialization::apply_change(
+                transaction,
+                change,
+                batch.acceptance_sequence,
+                input_digest,
+                batch.post_frontier_root.digest(),
+            )?,
+            OpenApplyTransaction::Candidate(transaction) => {
                 sqlite_materialization::apply_change_in_open_candidate(
                     transaction,
                     change,
                     batch.acceptance_sequence,
                     input_digest,
                     batch.post_frontier_root.digest(),
-                    request.authenticated_reference.as_ref(),
                 )?
             }
         };
@@ -2657,8 +2617,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     use crate::sqlite::{
-        PhysicalEntityId, PhysicalReferenceCatalogChange, PhysicalReferencePosting,
-        PhysicalReferenceTarget, PhysicalSourceCoverage, PhysicalSqliteDatabase,
+        PhysicalEntityId, PhysicalReferencePosting, PhysicalReferenceTarget, PhysicalSqliteDatabase,
     };
 
     use super::*;
@@ -2811,7 +2770,6 @@ mod tests {
             derived_reference_postings: Vec::new(),
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
-            reference_catalog: None,
         }
     }
 
@@ -2870,8 +2828,6 @@ mod tests {
                 batch,
                 materialization,
                 materialization_input_digest,
-                authenticated_reference: None,
-                prior_reference_coverage_count: None,
                 fault: ApplyFault::None,
             },
             batch_entries,
@@ -2895,73 +2851,33 @@ mod tests {
         (database, physical, empty)
     }
 
-    fn catalog_root(sources: &[[u8; 16]]) -> Vec<u8> {
-        let mut bytes = b"synthetic fresh bootstrap catalog\0".to_vec();
-        for source in sources {
-            bytes.extend_from_slice(source);
-        }
-        bytes
-    }
-
     fn reference_target_name(source_page_id: [u8; 16]) -> String {
         format!("bootstrap-target-{}", u128::from_be_bytes(source_page_id))
     }
 
-    fn configure_fresh_bootstrap_reference(
-        request: &mut PhysicalApplyRequest,
-        prior_sources: &[[u8; 16]],
-    ) -> [u8; 16] {
+    fn configure_fresh_bootstrap_reference(request: &mut PhysicalApplyRequest) -> [u8; 16] {
         let source_page_id = request.batch.batch_id;
-        let mut post_sources = prior_sources.to_vec();
-        post_sources.push(source_page_id);
-        let prior_catalog_root = catalog_root(prior_sources);
-        let post_catalog_root = catalog_root(&post_sources);
-        let extractor_dependency_stamp_digest = ContentDigest::of(b"bootstrap extractor");
-        let source_digest = ContentDigest::of(&source_page_id);
         let target_name = reference_target_name(source_page_id);
-        request.materialization.as_mut().unwrap().reference_catalog =
-            Some(PhysicalReferenceCatalogChange {
-                prior_catalog_root: prior_catalog_root.clone(),
-                prior_catalog_root_digest: ContentDigest::of(&prior_catalog_root),
-                prior_source_count: prior_sources.len() as u64,
-                post_catalog_root: post_catalog_root.clone(),
-                post_catalog_root_digest: ContentDigest::of(&post_catalog_root),
-                post_source_count: post_sources.len() as u64,
-                coverage_digest: ContentDigest::of(&post_catalog_root),
-                extractor_dependency_stamp_digest,
-                postings: vec![PhysicalReferencePosting {
-                    source_page_id,
-                    source_entity: PhysicalEntityId::Page(source_page_id),
-                    source_locator: vec![request.batch.acceptance_sequence as u8],
-                    ordinal: 0,
-                    kind: 0,
-                    target: PhysicalReferenceTarget::PageName {
-                        raw_name: target_name.clone(),
-                        normalized_name: target_name,
-                        resolved_page_id: None,
-                    },
-                }],
-                aliases: Vec::new(),
-                coverage: vec![PhysicalSourceCoverage {
-                    source_page_id,
-                    source_digest,
-                    extractor_dependency_stamp_digest,
-                }],
-                removed_sources: Vec::new(),
-                canonical_bytes: post_catalog_root,
-            });
-        request.authenticated_reference = Some(PhysicalAuthenticatedReference {
-            event_binding_digest: request.batch.event_binding_digest,
-            prior_frontier_root_digest: request.batch.prior_frontier_root.digest(),
-            post_frontier_root_digest: request.batch.post_frontier_root.digest(),
-        });
-        request.prior_reference_coverage_count = Some(prior_sources.len() as u64);
+        request
+            .materialization
+            .as_mut()
+            .unwrap()
+            .derived_reference_postings = vec![PhysicalReferencePosting {
+            source_page_id,
+            source_entity: PhysicalEntityId::Page(source_page_id),
+            source_locator: vec![request.batch.acceptance_sequence as u8],
+            ordinal: 0,
+            kind: 0,
+            target: PhysicalReferenceTarget::PageName {
+                raw_name: target_name.clone(),
+                normalized_name: target_name,
+                resolved_page_id: None,
+            },
+        }];
         source_page_id
     }
 
     struct FreshBootstrapScenario {
-        first_apply: ApplyResult,
-        second_apply: ApplyResult,
         first_batch_id: [u8; 16],
         second_batch_id: [u8; 16],
         first_source_page_id: [u8; 16],
@@ -2987,9 +2903,9 @@ mod tests {
             canonical_bytes: b"fresh-bootstrap-document".to_vec(),
         };
         let (mut first, first_entries) = request(empty, 1, None, vec![document.clone()], &[], true);
-        let first_source_page_id = configure_fresh_bootstrap_reference(&mut first, &[]);
+        let first_source_page_id = configure_fresh_bootstrap_reference(&mut first);
         let first_batch_id = first.batch.batch_id;
-        let first_apply = if candidate {
+        if candidate {
             physical.apply_candidate(empty, &first)
         } else {
             physical.apply(empty, &first)
@@ -3005,10 +2921,9 @@ mod tests {
             &first_entries,
             true,
         );
-        let second_source_page_id =
-            configure_fresh_bootstrap_reference(&mut second, &[first_source_page_id]);
+        let second_source_page_id = configure_fresh_bootstrap_reference(&mut second);
         let second_batch_id = second.batch.batch_id;
-        let second_apply = if candidate {
+        if candidate {
             physical.apply_candidate(&first_root, &second)
         } else {
             physical.apply(&first_root, &second)
@@ -3016,8 +2931,6 @@ mod tests {
         .unwrap();
 
         FreshBootstrapScenario {
-            first_apply,
-            second_apply,
             first_batch_id,
             second_batch_id,
             first_source_page_id,
@@ -3185,53 +3098,9 @@ mod tests {
     }
 
     #[test]
-    fn fresh_bootstrap_inductively_covers_authenticated_reference_catalog_transitions() {
+    fn fresh_bootstrap_materializes_parser_derived_references() {
         let (_database, mut physical, empty) = initialized_facade();
         let scenario = apply_two_part_fresh_bootstrap(&mut physical, &empty);
-
-        assert_eq!(
-            scenario
-                .first_apply
-                .materialization
-                .reference_coverage_count,
-            Some(1)
-        );
-        assert_eq!(
-            scenario
-                .second_apply
-                .materialization
-                .reference_coverage_count,
-            Some(2)
-        );
-        assert_eq!(
-            scenario
-                .first_apply
-                .materialization
-                .reference_coverage_inductive_checks,
-            1
-        );
-        assert_eq!(
-            scenario
-                .second_apply
-                .materialization
-                .reference_coverage_inductive_checks,
-            1
-        );
-        assert_eq!(
-            scenario
-                .first_apply
-                .materialization
-                .reference_coverage_full_scans,
-            0
-        );
-        assert_eq!(
-            scenario
-                .second_apply
-                .materialization
-                .reference_coverage_full_scans,
-            0
-        );
-        assert_eq!(physical.reference_source_coverage_count().unwrap(), 2);
         assert_eq!(
             physical
                 .reference_page_candidates_for_name(
@@ -3351,7 +3220,7 @@ mod tests {
         };
         let (mut first, first_entries) =
             request(&empty, 1, None, vec![document.clone()], &[], true);
-        let first_source = configure_fresh_bootstrap_reference(&mut first, &[]);
+        configure_fresh_bootstrap_reference(&mut first);
         candidate.apply_candidate(&empty, &first).unwrap();
         let first_root = first.batch.post_frontier_root.clone();
 
@@ -3363,7 +3232,7 @@ mod tests {
             &first_entries,
             true,
         );
-        configure_fresh_bootstrap_reference(&mut second, &[first_source]);
+        configure_fresh_bootstrap_reference(&mut second);
         second.fault = ApplyFault::ReturnAfterMaterialization;
         assert_eq!(
             candidate.apply_candidate(&first_root, &second),
@@ -3377,7 +3246,6 @@ mod tests {
             empty.canonical_bytes
         );
         assert!(reopened.load_all_batches().unwrap().is_empty());
-        assert_eq!(reopened.reference_source_coverage_count().unwrap(), 0);
         assert!(reopened.stored_semantic_effects().unwrap().is_empty());
     }
 
@@ -3397,20 +3265,14 @@ mod tests {
             &scenario.batch_entries,
             true,
         );
-        let staged_source_page_id = configure_fresh_bootstrap_reference(
-            &mut staged,
-            &[
-                scenario.first_source_page_id,
-                scenario.second_source_page_id,
-            ],
-        );
+        let staged_source_page_id = configure_fresh_bootstrap_reference(&mut staged);
         staged.fault = ApplyFault::ReturnAfterMaterialization;
         assert_eq!(
             physical.apply(&scenario.final_root, &staged),
             Err(FrontierError::InjectedFailure)
         );
 
-        physical.finalize_fresh_bootstrap(2, 2).unwrap();
+        physical.finalize_fresh_bootstrap().unwrap();
         assert_eq!(
             physical.read_frontier().unwrap(),
             StoredFrontier {
@@ -3432,7 +3294,6 @@ mod tests {
             .load_batch(staged.batch.batch_id)
             .unwrap()
             .is_none());
-        assert_eq!(physical.reference_source_coverage_count().unwrap(), 2);
         assert!(physical
             .reference_page_candidates_for_name(&reference_target_name(staged_source_page_id), 2)
             .unwrap()
@@ -3462,11 +3323,10 @@ mod tests {
     fn finalized_fresh_bootstrap_reopens_through_public_storage_facade() {
         let (database, mut physical, empty) = initialized_facade();
         let scenario = apply_two_part_fresh_bootstrap(&mut physical, &empty);
-        physical.finalize_fresh_bootstrap(2, 2).unwrap();
+        physical.finalize_fresh_bootstrap().unwrap();
 
         let expected_frontier = physical.read_frontier().unwrap();
         let expected_batches = physical.load_all_batches().unwrap();
-        let expected_coverage_count = physical.reference_source_coverage_count().unwrap();
         let expected_first_candidates = physical
             .reference_page_candidates_for_name(
                 &reference_target_name(scenario.first_source_page_id),
@@ -3494,10 +3354,6 @@ mod tests {
         reopened.validate_schema_and_claim(claim()).unwrap();
         assert_eq!(reopened.read_frontier().unwrap(), expected_frontier);
         assert_eq!(reopened.load_all_batches().unwrap(), expected_batches);
-        assert_eq!(
-            reopened.reference_source_coverage_count().unwrap(),
-            expected_coverage_count
-        );
         assert_eq!(
             reopened
                 .reference_page_candidates_for_name(

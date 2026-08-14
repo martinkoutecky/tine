@@ -19,24 +19,11 @@ use crate::sqlite_frontier::{
 };
 use crate::sqlite_materialization::{self, SqliteMaterializedRead};
 #[cfg(any(test, feature = "test-support"))]
-use crate::sqlite_materialization::{
-    ApplyChangeInstrumentation, PhysicalAuthenticatedReference, PhysicalMaterializationChange,
-};
+use crate::sqlite_materialization::{ApplyChangeInstrumentation, PhysicalMaterializationChange};
 use crate::ContentDigest;
 
 /// Prepared-statement cache size for the writable connection.
 const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
-
-/// Physical fields from the reference-catalog materialization stamp.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PhysicalReferenceCatalogStamp {
-    pub acceptance_sequence: i64,
-    pub frontier_root_digest: Vec<u8>,
-    pub catalog_root: Option<Vec<u8>>,
-    pub catalog_root_digest: Option<Vec<u8>>,
-    pub coverage_digest: Option<Vec<u8>>,
-    pub extractor_dependency_stamp_digest: Option<Vec<u8>>,
-}
 
 /// Storage-owned live SQLite database.
 ///
@@ -344,22 +331,6 @@ impl PhysicalSqliteDatabase {
             .map_err(Into::into)
     }
 
-    /// Close the terminal seed with its accepted-prefix construction provenance
-    /// and the one authenticated catalog stamp.
-    pub fn finish_terminal_bootstrap_construction(
-        &mut self,
-        provenance: &[sqlite_materialization::PhysicalTerminalConstructionBatch],
-        stamp: &sqlite_materialization::PhysicalTerminalCatalogStamp,
-    ) -> Result<u64, FrontierError> {
-        self.require_candidate_build()?;
-        sqlite_materialization::finish_terminal_construction_in_open_candidate(
-            &self.connection,
-            provenance,
-            stamp,
-        )
-        .map_err(Into::into)
-    }
-
     /// Close a terminal seed as ordinary frontier-stamped disposable graph
     /// projection state, without a second reference-catalog authority.
     pub fn finish_terminal_graph_projection_construction(
@@ -398,17 +369,8 @@ impl PhysicalSqliteDatabase {
             .map_err(Into::into)
     }
 
-    pub fn finalize_fresh_bootstrap(
-        &self,
-        expected_catalog_source_count: u64,
-        inductive_coverage_count: u64,
-    ) -> Result<(), FrontierError> {
-        sqlite_materialization::finalize_fresh_bootstrap(
-            &self.connection,
-            expected_catalog_source_count,
-            inductive_coverage_count,
-        )
-        .map_err(Into::into)
+    pub fn finalize_fresh_bootstrap(&self) -> Result<(), FrontierError> {
+        sqlite_materialization::finalize_fresh_bootstrap(&self.connection).map_err(Into::into)
     }
 
     pub fn materialized_row_digest(&self) -> Result<ContentDigest, FrontierError> {
@@ -430,38 +392,6 @@ impl PhysicalSqliteDatabase {
         frontier_digest: ContentDigest,
     ) -> Result<SqliteMaterializedRead<'_>, FrontierError> {
         SqliteMaterializedRead::new(&self.connection, acceptance_sequence, frontier_digest)
-            .map_err(Into::into)
-    }
-
-    pub fn reference_catalog_stamp(&self) -> Result<PhysicalReferenceCatalogStamp, FrontierError> {
-        self.connection
-            .query_row(
-                "SELECT acceptance_sequence, frontier_root_digest, catalog_root,
-                        catalog_root_digest, coverage_digest,
-                        extractor_dependency_stamp_digest
-                 FROM materialization_stamp WHERE singleton = 1",
-                [],
-                |row| {
-                    Ok(PhysicalReferenceCatalogStamp {
-                        acceptance_sequence: row.get(0)?,
-                        frontier_root_digest: row.get(1)?,
-                        catalog_root: row.get(2)?,
-                        catalog_root_digest: row.get(3)?,
-                        coverage_digest: row.get(4)?,
-                        extractor_dependency_stamp_digest: row.get(5)?,
-                    })
-                },
-            )
-            .map_err(Into::into)
-    }
-
-    pub fn reference_source_coverage_count(&self) -> Result<i64, FrontierError> {
-        self.connection
-            .query_row(
-                "SELECT COUNT(*) FROM reference_source_coverage",
-                [],
-                |row| row.get(0),
-            )
             .map_err(Into::into)
     }
 
@@ -557,7 +487,6 @@ impl PhysicalSqliteDatabase {
         sequence: u64,
         input_digest: ContentDigest,
         post_frontier_digest: ContentDigest,
-        authenticated_reference: Option<&PhysicalAuthenticatedReference>,
     ) -> Result<ApplyChangeInstrumentation, FrontierError> {
         let transaction = self
             .connection
@@ -568,7 +497,6 @@ impl PhysicalSqliteDatabase {
             sequence,
             input_digest,
             post_frontier_digest,
-            authenticated_reference,
         )?;
         transaction.commit()?;
         Ok(instrumentation)
@@ -677,7 +605,6 @@ mod tests {
         assert!(database.load_all_batches().unwrap().is_empty());
         assert!(database.stored_semantic_effects().unwrap().is_empty());
         assert_eq!(database.diagnostic_row_counts().unwrap(), (0, 0));
-        assert_eq!(database.reference_source_coverage_count().unwrap(), 0);
         assert!(database
             .reference_page_candidates_for_name("absent", 2)
             .unwrap()

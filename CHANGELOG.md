@@ -7,6 +7,22 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-14
+
+### Changed
+
+- SQLite schema 18 makes reference postings and aliases ordinary
+  parser-derived projection facts. The disposable database now has one
+  frontier stamp and one regime-neutral apply path instead of retaining an
+  unused second reference-catalog authority.
+
+### Removed
+
+- Removed the authenticated reference-catalog change, stamp, coverage, and
+  terminal-catalog APIs, together with their three authority tables and five
+  indexes. Direct Files and managed storage now feed the same physical
+  reference projection surface.
+
 ## [0.6.5] - 2026-08-14
 
 ### Added

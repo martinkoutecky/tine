@@ -3,7 +3,7 @@
 //! This module owns disposable SQL shape and bounded physical reads. Inputs are
 //! lowered and semantically validated by tine-core before they cross this boundary.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use rusqlite::{
@@ -158,37 +158,6 @@ pub struct PhysicalPagePortablePathClaim {
     pub portable_path_key: ContentDigest,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PhysicalSourceCoverage {
-    pub source_page_id: [u8; 16],
-    pub source_digest: ContentDigest,
-    pub extractor_dependency_stamp_digest: ContentDigest,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PhysicalReferenceCatalogChange {
-    pub prior_catalog_root: Vec<u8>,
-    pub prior_catalog_root_digest: ContentDigest,
-    pub prior_source_count: u64,
-    pub post_catalog_root: Vec<u8>,
-    pub post_catalog_root_digest: ContentDigest,
-    pub post_source_count: u64,
-    pub coverage_digest: ContentDigest,
-    pub extractor_dependency_stamp_digest: ContentDigest,
-    pub postings: Vec<PhysicalReferencePosting>,
-    pub aliases: Vec<PhysicalAliasDeclaration>,
-    pub coverage: Vec<PhysicalSourceCoverage>,
-    pub removed_sources: Vec<[u8; 16]>,
-    pub canonical_bytes: Vec<u8>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PhysicalAuthenticatedReference {
-    pub event_binding_digest: ContentDigest,
-    pub prior_frontier_root_digest: ContentDigest,
-    pub post_frontier_root_digest: ContentDigest,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalMaterializationChange {
     pub batch_id: [u8; 16],
@@ -205,7 +174,6 @@ pub struct PhysicalMaterializationChange {
     /// An empty vector preserves the legacy transition while clients migrate;
     /// a non-empty vector must cover every replacement exactly once.
     pub portable_path_claims: Vec<PhysicalPagePortablePathClaim>,
-    pub reference_catalog: Option<PhysicalReferenceCatalogChange>,
 }
 
 /// One regime-neutral update to the disposable graph projection.
@@ -220,9 +188,8 @@ pub struct PhysicalGraphProjectionChange {
     pub deletions: Vec<[u8; 16]>,
     /// Parser-derived reference spellings owned by replacement pages.
     ///
-    /// Managed storage may obtain the same rows from its authenticated catalog;
-    /// Direct Files obtains them directly from the parser snapshot. They are
-    /// disposable graph facts in both regimes, never write authority.
+    /// Both storage regimes obtain these rows directly from the parser
+    /// snapshot. They are disposable graph facts, never write authority.
     pub reference_postings: Vec<PhysicalReferencePosting>,
 }
 
@@ -232,109 +199,17 @@ pub struct ApplyChangeInstrumentation {
     pub cleanup_existing_pages: usize,
     pub cleanup_owned_rows: usize,
     pub cleanup_fts_rowids: usize,
-    pub reference_coverage_count: Option<u64>,
-    pub reference_coverage_inductive_checks: usize,
-    pub reference_coverage_full_scans: usize,
-}
-
-/// How one apply establishes the post-apply `reference_source_coverage` row
-/// count it checks against the authenticated catalog's post source count.
-///
-/// `FullScan` reads the whole table and is therefore proportional to the graph,
-/// not to the change. `FreshInductive` instead starts from a count the caller
-/// already proved at the immediately preceding accepted sequence, checks it
-/// against the same authenticated catalog's *prior* source count, and moves it
-/// by the rows this apply actually replaced and inserted. Both end at the same
-/// equality check, so a caller that has no proved prior count -- a fresh open,
-/// a rebuild, a gap in the accepted chain -- selects the scan and loses nothing.
-#[derive(Clone, Copy)]
-enum CoverageValidation {
-    FullScan,
-    FreshInductive { prior_count: u64 },
 }
 
 pub const MATERIALIZATION_STAMP_DDL: &str = "CREATE TABLE materialization_stamp (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     acceptance_sequence INTEGER NOT NULL CHECK (acceptance_sequence >= 0),
-    frontier_root_digest BLOB NOT NULL CHECK (length(frontier_root_digest) = 32),
-    catalog_root BLOB CHECK (
-        catalog_root IS NULL OR length(catalog_root) BETWEEN 1 AND 4096
-    ),
-    catalog_root_digest BLOB CHECK (
-        catalog_root_digest IS NULL OR length(catalog_root_digest) = 32
-    ),
-    coverage_digest BLOB CHECK (
-        coverage_digest IS NULL OR length(coverage_digest) = 32
-    ),
-    extractor_dependency_stamp_digest BLOB CHECK (
-        extractor_dependency_stamp_digest IS NULL
-        OR length(extractor_dependency_stamp_digest) = 32
-    ),
-    CHECK (
-        (catalog_root IS NULL AND catalog_root_digest IS NULL
-         AND coverage_digest IS NULL AND extractor_dependency_stamp_digest IS NULL)
-        OR
-        (catalog_root IS NOT NULL AND catalog_root_digest IS NOT NULL
-         AND coverage_digest IS NOT NULL AND extractor_dependency_stamp_digest IS NOT NULL)
-    )
+    frontier_root_digest BLOB NOT NULL CHECK (length(frontier_root_digest) = 32)
 ) WITHOUT ROWID, STRICT";
 pub const MATERIALIZATION_BATCHES_DDL: &str = "CREATE TABLE materialization_batches (
     acceptance_sequence INTEGER PRIMARY KEY CHECK (acceptance_sequence > 0),
     batch_id BLOB NOT NULL UNIQUE CHECK (length(batch_id) = 16),
-    input_digest BLOB NOT NULL CHECK (length(input_digest) = 32),
-    event_binding_digest BLOB CHECK (
-        event_binding_digest IS NULL OR length(event_binding_digest) = 32
-    ),
-    prior_frontier_root_digest BLOB CHECK (
-        prior_frontier_root_digest IS NULL OR length(prior_frontier_root_digest) = 32
-    ),
-    post_frontier_root_digest BLOB CHECK (
-        post_frontier_root_digest IS NULL OR length(post_frontier_root_digest) = 32
-    ),
-    prior_catalog_root BLOB CHECK (
-        prior_catalog_root IS NULL OR length(prior_catalog_root) BETWEEN 1 AND 4096
-    ),
-    prior_catalog_root_digest BLOB CHECK (
-        prior_catalog_root_digest IS NULL OR length(prior_catalog_root_digest) = 32
-    ),
-    post_catalog_root BLOB CHECK (
-        post_catalog_root IS NULL OR length(post_catalog_root) BETWEEN 1 AND 4096
-    ),
-    post_catalog_root_digest BLOB CHECK (
-        post_catalog_root_digest IS NULL OR length(post_catalog_root_digest) = 32
-    ),
-    catalog_change BLOB CHECK (
-        catalog_change IS NULL OR length(catalog_change) BETWEEN 1 AND 67108864
-    ),
-    catalog_change_digest BLOB CHECK (
-        catalog_change_digest IS NULL OR length(catalog_change_digest) = 32
-    ),
-    canonical_input_digest BLOB CHECK (
-        canonical_input_digest IS NULL OR length(canonical_input_digest) = 32
-    ),
-    CHECK (
-        (event_binding_digest IS NULL AND prior_frontier_root_digest IS NULL
-         AND post_frontier_root_digest IS NULL AND prior_catalog_root IS NULL
-         AND prior_catalog_root_digest IS NULL AND post_catalog_root IS NULL
-         AND post_catalog_root_digest IS NULL AND catalog_change IS NULL
-         AND catalog_change_digest IS NULL AND canonical_input_digest IS NULL)
-        OR
-        (event_binding_digest IS NOT NULL AND prior_frontier_root_digest IS NOT NULL
-         AND post_frontier_root_digest IS NOT NULL AND prior_catalog_root IS NOT NULL
-         AND prior_catalog_root_digest IS NOT NULL AND post_catalog_root IS NOT NULL
-         AND post_catalog_root_digest IS NOT NULL AND catalog_change IS NOT NULL
-         AND catalog_change_digest IS NOT NULL AND canonical_input_digest IS NOT NULL)
-    )
-) WITHOUT ROWID, STRICT";
-// Generic page materialization leaves this authority group NULL.  The packet-3
-// adapter fills it atomically only from an accepted catalog transition; it
-// must never synthesize zero or sentinel authority.
-pub const REFERENCE_SOURCE_COVERAGE_DDL: &str = "CREATE TABLE reference_source_coverage (
-    source_page_id BLOB PRIMARY KEY CHECK (length(source_page_id) = 16),
-    source_digest BLOB NOT NULL CHECK (length(source_digest) = 32),
-    extractor_dependency_stamp_digest BLOB NOT NULL CHECK (
-        length(extractor_dependency_stamp_digest) = 32
-    )
+    input_digest BLOB NOT NULL CHECK (length(input_digest) = 32)
 ) WITHOUT ROWID, STRICT";
 pub const REFERENCE_POSTINGS_DDL: &str = "CREATE TABLE reference_postings (
     source_page_id BLOB NOT NULL CHECK (length(source_page_id) = 16),
@@ -374,25 +249,6 @@ pub const REFERENCE_POSTINGS_DDL: &str = "CREATE TABLE reference_postings (
     PRIMARY KEY (
         source_page_id, source_entity_type, source_entity_id, source_locator, ordinal
     )
-) WITHOUT ROWID, STRICT";
-pub const REFERENCE_NAME_BINDINGS_DDL: &str = "CREATE TABLE reference_name_bindings (
-    raw_name TEXT NOT NULL CHECK (length(CAST(raw_name AS BLOB)) BETWEEN 1 AND 4194304),
-    normalized_name TEXT NOT NULL CHECK (
-        length(CAST(normalized_name AS BLOB)) BETWEEN 1 AND 4194304
-    ),
-    candidate_ordinal INTEGER NOT NULL CHECK (candidate_ordinal >= 0),
-    resolved_page_id BLOB CHECK (
-        resolved_page_id IS NULL OR length(resolved_page_id) = 16
-    ),
-    PRIMARY KEY (raw_name, candidate_ordinal)
-) WITHOUT ROWID, STRICT";
-pub const REFERENCE_UUID_BINDINGS_DDL: &str = "CREATE TABLE reference_uuid_bindings (
-    raw_uuid_claim BLOB NOT NULL CHECK (length(raw_uuid_claim) = 16),
-    candidate_ordinal INTEGER NOT NULL CHECK (candidate_ordinal >= 0),
-    resolved_block_id BLOB CHECK (
-        resolved_block_id IS NULL OR length(resolved_block_id) = 16
-    ),
-    PRIMARY KEY (raw_uuid_claim, candidate_ordinal)
 ) WITHOUT ROWID, STRICT";
 pub const REFERENCE_ALIAS_DECLARATIONS_DDL: &str = "CREATE TABLE reference_alias_declarations (
     source_page_id BLOB NOT NULL CHECK (length(source_page_id) = 16),
@@ -550,8 +406,6 @@ pub const REFERENCES_TARGET_INDEX_DDL: &str = "CREATE INDEX references_target_id
     ON refs(target_type, target_id, source_page_id, source_type, source_id)";
 pub const REFERENCES_SOURCE_INDEX_DDL: &str = "CREATE INDEX references_source_idx
     ON refs(source_page_id, source_type, source_id)";
-pub const REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL: &str =
-    "CREATE INDEX reference_source_coverage_source_idx ON reference_source_coverage(source_page_id)";
 pub const REFERENCE_POSTINGS_SOURCE_INDEX_DDL: &str = "CREATE INDEX reference_postings_source_idx
     ON reference_postings(source_page_id, source_entity_type, source_entity_id, ordinal)";
 pub const REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL: &str =
@@ -561,18 +415,6 @@ pub const REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL: &str =
 pub const REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL: &str = "CREATE INDEX reference_postings_raw_uuid_idx
     ON reference_postings(raw_uuid_claim, source_page_id, source_entity_type, source_entity_id, ordinal)
     WHERE target_type = 1";
-pub const REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL: &str =
-    "CREATE INDEX reference_name_bindings_raw_name_idx
-    ON reference_name_bindings(raw_name, candidate_ordinal)";
-pub const REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL: &str =
-    "CREATE INDEX reference_name_bindings_resolved_page_idx
-    ON reference_name_bindings(resolved_page_id, raw_name, candidate_ordinal)";
-pub const REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL: &str =
-    "CREATE INDEX reference_uuid_bindings_raw_uuid_idx
-    ON reference_uuid_bindings(raw_uuid_claim, candidate_ordinal)";
-pub const REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL: &str =
-    "CREATE INDEX reference_uuid_bindings_resolved_block_idx
-    ON reference_uuid_bindings(resolved_block_id, raw_uuid_claim, candidate_ordinal)";
 pub const REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL: &str =
     "CREATE INDEX reference_alias_declarations_source_idx
     ON reference_alias_declarations(source_page_id, source_entity_type, source_entity_id, ordinal)";
@@ -599,7 +441,7 @@ pub const TASKS_PAGE_INDEX_DDL: &str = "CREATE INDEX tasks_page_idx ON tasks(pag
 // indexes and both FTS virtual tables remain live throughout construction.
 // This list must reproduce the exact normal schema before the terminal stamp
 // can advance.
-const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 27] = [
+const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 22] = [
     ("pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("pages_path_idx", PAGES_PATH_INDEX_DDL),
@@ -620,10 +462,6 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 27] = [
     ("references_target_idx", REFERENCES_TARGET_INDEX_DDL),
     ("references_source_idx", REFERENCES_SOURCE_INDEX_DDL),
     (
-        "reference_source_coverage_source_idx",
-        REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL,
-    ),
-    (
         "reference_postings_source_idx",
         REFERENCE_POSTINGS_SOURCE_INDEX_DDL,
     ),
@@ -634,22 +472,6 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 27] = [
     (
         "reference_postings_raw_uuid_idx",
         REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL,
-    ),
-    (
-        "reference_name_bindings_raw_name_idx",
-        REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL,
-    ),
-    (
-        "reference_name_bindings_resolved_page_idx",
-        REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL,
-    ),
-    (
-        "reference_uuid_bindings_raw_uuid_idx",
-        REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL,
-    ),
-    (
-        "reference_uuid_bindings_resolved_block_idx",
-        REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL,
     ),
     (
         "reference_alias_declarations_source_idx",
@@ -668,44 +490,14 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 27] = [
     ("tasks_page_idx", TASKS_PAGE_INDEX_DDL),
 ];
 
-const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 16] = [
+const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 13] = [
     (
         "materialization_stamp",
-        &[
-            "singleton",
-            "acceptance_sequence",
-            "frontier_root_digest",
-            "catalog_root",
-            "catalog_root_digest",
-            "coverage_digest",
-            "extractor_dependency_stamp_digest",
-        ],
+        &["singleton", "acceptance_sequence", "frontier_root_digest"],
     ),
     (
         "materialization_batches",
-        &[
-            "acceptance_sequence",
-            "batch_id",
-            "input_digest",
-            "event_binding_digest",
-            "prior_frontier_root_digest",
-            "post_frontier_root_digest",
-            "prior_catalog_root",
-            "prior_catalog_root_digest",
-            "post_catalog_root",
-            "post_catalog_root_digest",
-            "catalog_change",
-            "catalog_change_digest",
-            "canonical_input_digest",
-        ],
-    ),
-    (
-        "reference_source_coverage",
-        &[
-            "source_page_id",
-            "source_digest",
-            "extractor_dependency_stamp_digest",
-        ],
+        &["acceptance_sequence", "batch_id", "input_digest"],
     ),
     (
         "reference_postings",
@@ -723,19 +515,6 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 16] = [
             "resolved_page_id",
             "resolved_block_id",
         ],
-    ),
-    (
-        "reference_name_bindings",
-        &[
-            "raw_name",
-            "normalized_name",
-            "candidate_ordinal",
-            "resolved_page_id",
-        ],
-    ),
-    (
-        "reference_uuid_bindings",
-        &["raw_uuid_claim", "candidate_ordinal", "resolved_block_id"],
     ),
     (
         "reference_alias_declarations",
@@ -831,29 +610,14 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 16] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 44] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 36] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
         "materialization_batches",
         MATERIALIZATION_BATCHES_DDL,
     ),
-    (
-        "table",
-        "reference_source_coverage",
-        REFERENCE_SOURCE_COVERAGE_DDL,
-    ),
     ("table", "reference_postings", REFERENCE_POSTINGS_DDL),
-    (
-        "table",
-        "reference_name_bindings",
-        REFERENCE_NAME_BINDINGS_DDL,
-    ),
-    (
-        "table",
-        "reference_uuid_bindings",
-        REFERENCE_UUID_BINDINGS_DDL,
-    ),
     (
         "table",
         "reference_alias_declarations",
@@ -918,11 +682,6 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 44] = [
     ),
     (
         "index",
-        "reference_source_coverage_source_idx",
-        REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL,
-    ),
-    (
-        "index",
         "reference_postings_source_idx",
         REFERENCE_POSTINGS_SOURCE_INDEX_DDL,
     ),
@@ -935,26 +694,6 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 44] = [
         "index",
         "reference_postings_raw_uuid_idx",
         REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL,
-    ),
-    (
-        "index",
-        "reference_name_bindings_raw_name_idx",
-        REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL,
-    ),
-    (
-        "index",
-        "reference_name_bindings_resolved_page_idx",
-        REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL,
-    ),
-    (
-        "index",
-        "reference_uuid_bindings_raw_uuid_idx",
-        REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL,
-    ),
-    (
-        "index",
-        "reference_uuid_bindings_resolved_block_idx",
-        REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL,
     ),
     (
         "index",
@@ -1000,10 +739,7 @@ pub(crate) fn initialize_graph_projection_schema(
     connection: &Connection,
 ) -> Result<(), MaterializationError> {
     connection.execute_batch(&format!(
-        "{REFERENCE_SOURCE_COVERAGE_DDL};
-         {REFERENCE_POSTINGS_DDL};
-         {REFERENCE_NAME_BINDINGS_DDL};
-         {REFERENCE_UUID_BINDINGS_DDL};
+        "{REFERENCE_POSTINGS_DDL};
          {REFERENCE_ALIAS_DECLARATIONS_DDL};
          {REFERENCE_ALIAS_BINDINGS_DDL};
          {PAGES_DDL};
@@ -1026,14 +762,9 @@ pub(crate) fn initialize_graph_projection_schema(
          {SEARCH_FTS_OWNERS_PAGE_INDEX_DDL};
          {REFERENCES_TARGET_INDEX_DDL};
          {REFERENCES_SOURCE_INDEX_DDL};
-         {REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL};
          {REFERENCE_POSTINGS_SOURCE_INDEX_DDL};
          {REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL};
          {REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL};
-         {REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL};
-         {REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL};
-         {REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL};
-         {REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL};
          {REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL};
          {REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL};
          {PROPERTIES_LOOKUP_INDEX_DDL};
@@ -1431,30 +1162,9 @@ pub fn recorded_digest(
     bytes.map(decode_digest).transpose()
 }
 
-/// One full disposable-candidate proof after all inductive per-part updates
-/// and before publication. Ordinary incremental application continues to use
-/// the per-transaction full coverage check.
-pub fn finalize_fresh_bootstrap(
-    connection: &Connection,
-    expected_catalog_source_count: u64,
-    inductive_coverage_count: u64,
-) -> Result<(), MaterializationError> {
-    let coverage_count: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM reference_source_coverage",
-        [],
-        |row| row.get(0),
-    )?;
-    let coverage_count = u64::try_from(coverage_count).map_err(|_| {
-        MaterializationError::Corrupt("reference source coverage count is negative".into())
-    })?;
-    if coverage_count != inductive_coverage_count || coverage_count != expected_catalog_source_count
-    {
-        return Err(MaterializationError::Incomplete(format!(
-            "final SQLite reference source coverage {coverage_count} differs from inductive count {inductive_coverage_count} or authenticated catalog count {}",
-            expected_catalog_source_count,
-        )));
-    }
-
+/// Prove that a fully built disposable candidate's FTS ownership is exact
+/// before publication.
+pub fn finalize_fresh_bootstrap(connection: &Connection) -> Result<(), MaterializationError> {
     let owner_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM search_fts_owners", [], |row| {
             row.get(0)
@@ -1505,7 +1215,6 @@ pub fn finalize_fresh_bootstrap(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PhysicalTerminalMaterializationChunk {
     pub pages: Vec<PhysicalPage>,
-    pub coverage: Vec<PhysicalSourceCoverage>,
     pub postings: Vec<PhysicalReferencePosting>,
     pub aliases: Vec<PhysicalAliasDeclaration>,
 }
@@ -1522,19 +1231,6 @@ pub struct PhysicalTerminalConstructionBatch {
     pub input_digest: ContentDigest,
 }
 
-/// The single authenticated catalog stamp a terminal build publishes after its
-/// complete terminal rows.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PhysicalTerminalCatalogStamp {
-    pub acceptance_sequence: u64,
-    pub frontier_root_digest: ContentDigest,
-    pub catalog_root: Vec<u8>,
-    pub catalog_root_digest: ContentDigest,
-    pub coverage_digest: ContentDigest,
-    pub extractor_dependency_stamp_digest: ContentDigest,
-    pub source_count: u64,
-}
-
 /// Frontier binding for a terminal disposable graph projection.
 ///
 /// Unlike the legacy catalog stamp, this carries no derived reference root.
@@ -1546,7 +1242,7 @@ pub struct PhysicalTerminalProjectionStamp {
     pub frontier_root_digest: ContentDigest,
 }
 
-const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 17] = [
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 14] = [
     "pages",
     "page_portable_path_claims",
     "blocks",
@@ -1557,12 +1253,9 @@ const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 17] = [
     "search_fts_owners",
     "search_fts",
     "search_substring_fts",
-    "reference_source_coverage",
     "reference_postings",
     "reference_alias_declarations",
     "reference_alias_bindings",
-    "reference_name_bindings",
-    "reference_uuid_bindings",
     "materialization_batches",
 ];
 
@@ -1609,22 +1302,6 @@ pub(crate) fn seed_terminal_chunk_in_open_candidate(
     for page in &chunk.pages {
         insert_page(transaction, page)?;
     }
-    for facet in &chunk.coverage {
-        execute_cached(
-            transaction,
-            "INSERT INTO reference_source_coverage (
-                 source_page_id, source_digest, extractor_dependency_stamp_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                facet.source_page_id.as_slice(),
-                facet.source_digest.as_bytes().as_slice(),
-                facet
-                    .extractor_dependency_stamp_digest
-                    .as_bytes()
-                    .as_slice(),
-            ],
-        )?;
-    }
     for posting in &chunk.postings {
         insert_reference_posting(transaction, posting)?;
     }
@@ -1632,89 +1309,6 @@ pub(crate) fn seed_terminal_chunk_in_open_candidate(
         insert_alias_declaration(transaction, alias)?;
     }
     Ok(())
-}
-
-/// Close one terminal build: derive the alias bindings from the complete
-/// declarations, write the accepted-prefix construction provenance, and publish
-/// the one authenticated catalog stamp.
-pub(crate) fn finish_terminal_construction_in_open_candidate(
-    transaction: &Connection,
-    provenance: &[PhysicalTerminalConstructionBatch],
-    stamp: &PhysicalTerminalCatalogStamp,
-) -> Result<u64, MaterializationError> {
-    require_open_candidate(transaction)?;
-    transaction.execute(
-        "INSERT INTO reference_alias_bindings (
-             normalized_alias, candidate_ordinal, resolved_page_id
-         )
-         SELECT normalized_alias, candidate_ordinal, source_page_id
-         FROM (
-             SELECT normalized_alias, source_page_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY normalized_alias ORDER BY source_page_id
-                    ) - 1 AS candidate_ordinal
-             FROM (
-                 SELECT DISTINCT normalized_alias, source_page_id
-                 FROM reference_alias_declarations
-             )
-         )",
-        [],
-    )?;
-    for batch in provenance {
-        transaction.execute(
-            "INSERT INTO materialization_batches (
-                 acceptance_sequence, batch_id, input_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                i64::try_from(batch.acceptance_sequence).map_err(|_| {
-                    MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
-                })?,
-                batch.batch_id.as_slice(),
-                batch.input_digest.as_bytes().as_slice(),
-            ],
-        )?;
-    }
-    let coverage_count: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM reference_source_coverage",
-        [],
-        |row| row.get(0),
-    )?;
-    let coverage_count = u64::try_from(coverage_count).map_err(|_| {
-        MaterializationError::Corrupt("reference source coverage count is negative".into())
-    })?;
-    if coverage_count != stamp.source_count {
-        return Err(MaterializationError::Incomplete(format!(
-            "terminal SQLite reference source coverage {coverage_count} differs from authenticated catalog source count {}",
-            stamp.source_count,
-        )));
-    }
-    for (_, ddl) in TERMINAL_DEFERRED_INDEXES {
-        transaction.execute(ddl, [])?;
-    }
-    transaction.execute(
-        "UPDATE materialization_stamp
-         SET acceptance_sequence = ?1,
-             frontier_root_digest = ?2,
-             catalog_root = ?3,
-             catalog_root_digest = ?4,
-             coverage_digest = ?5,
-             extractor_dependency_stamp_digest = ?6
-         WHERE singleton = 1",
-        params![
-            i64::try_from(stamp.acceptance_sequence).map_err(|_| {
-                MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
-            })?,
-            stamp.frontier_root_digest.as_bytes().as_slice(),
-            &stamp.catalog_root,
-            stamp.catalog_root_digest.as_bytes().as_slice(),
-            stamp.coverage_digest.as_bytes().as_slice(),
-            stamp
-                .extractor_dependency_stamp_digest
-                .as_bytes()
-                .as_slice(),
-        ],
-    )?;
-    Ok(coverage_count)
 }
 
 /// Close a terminal build whose reference rows are ordinary parser-derived
@@ -1756,27 +1350,13 @@ pub(crate) fn finish_terminal_graph_projection_in_open_candidate(
             ],
         )?;
     }
-    let coverage_count: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM reference_source_coverage",
-        [],
-        |row| row.get(0),
-    )?;
-    if coverage_count != 0 {
-        return Err(MaterializationError::Contradiction(
-            "frontier-stamped terminal projection contains legacy reference coverage".into(),
-        ));
-    }
     for (_, ddl) in TERMINAL_DEFERRED_INDEXES {
         transaction.execute(ddl, [])?;
     }
     transaction.execute(
         "UPDATE materialization_stamp
          SET acceptance_sequence = ?1,
-             frontier_root_digest = ?2,
-             catalog_root = NULL,
-             catalog_root_digest = NULL,
-             coverage_digest = NULL,
-             extractor_dependency_stamp_digest = NULL
+             frontier_root_digest = ?2
          WHERE singleton = 1",
         params![
             i64::try_from(stamp.acceptance_sequence).map_err(|_| {
@@ -1885,183 +1465,12 @@ fn require_open_candidate(transaction: &Connection) -> Result<(), Materializatio
     Ok(())
 }
 
-fn apply_reference_catalog_change(
-    transaction: &Connection,
-    input: &PhysicalReferenceCatalogChange,
-    coverage_validation: CoverageValidation,
-) -> Result<(Vec<u8>, ContentDigest, ContentDigest, ContentDigest, u64), MaterializationError> {
-    let post_root_bytes = input.post_catalog_root.clone();
-    let post_root_digest = input.post_catalog_root_digest;
-    let extractor_stamp_digest = input.extractor_dependency_stamp_digest;
-    let coverage_digest = input.coverage_digest;
-    let sources = input
-        .coverage
-        .iter()
-        .map(|facet| facet.source_page_id)
-        .chain(input.removed_sources.iter().copied())
-        .collect::<BTreeSet<_>>();
-    let mut altered_aliases = BTreeSet::new();
-    let mut prior_alias_candidates = BTreeMap::<String, BTreeSet<[u8; 16]>>::new();
-    let mut replaced_coverage_rows = 0_u64;
-    for page_id in &sources {
-        let existed: i64 = transaction.query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM reference_source_coverage WHERE source_page_id = ?1
-             )",
-            params![page_id.as_slice()],
-            |row| row.get(0),
-        )?;
-        replaced_coverage_rows = replaced_coverage_rows.saturating_add(u64::from(existed != 0));
-        let mut statement = transaction.prepare(
-            "SELECT normalized_alias FROM reference_alias_declarations
-             WHERE source_page_id = ?1",
-        )?;
-        let aliases = statement
-            .query_map(params![page_id.as_slice()], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        altered_aliases.extend(aliases);
-    }
-    altered_aliases.extend(
-        input
-            .aliases
-            .iter()
-            .map(|alias| alias.normalized_alias.clone()),
-    );
-    for alias in &altered_aliases {
-        let mut statement = transaction.prepare(
-            "SELECT DISTINCT resolved_page_id FROM reference_alias_bindings
-             WHERE normalized_alias = ?1 AND resolved_page_id IS NOT NULL",
-        )?;
-        let candidates = statement
-            .query_map(params![alias], |row| row.get::<_, Vec<u8>>(0))?
-            .map(|row| {
-                row.map_err(MaterializationError::from)
-                    .and_then(|bytes| decode_id(&bytes))
-            })
-            .collect::<Result<BTreeSet<_>, _>>()?;
-        prior_alias_candidates.insert(alias.clone(), candidates);
-    }
-
-    for page_id in &sources {
-        let id = page_id;
-        transaction.execute(
-            "DELETE FROM reference_postings WHERE source_page_id = ?1",
-            params![id.as_slice()],
-        )?;
-        transaction.execute(
-            "DELETE FROM reference_alias_declarations WHERE source_page_id = ?1",
-            params![id.as_slice()],
-        )?;
-        transaction.execute(
-            "DELETE FROM reference_source_coverage WHERE source_page_id = ?1",
-            params![id.as_slice()],
-        )?;
-    }
-    for facet in &input.coverage {
-        execute_cached(
-            transaction,
-            "INSERT INTO reference_source_coverage (
-                 source_page_id, source_digest, extractor_dependency_stamp_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                facet.source_page_id.as_slice(),
-                facet.source_digest.as_bytes().as_slice(),
-                facet
-                    .extractor_dependency_stamp_digest
-                    .as_bytes()
-                    .as_slice(),
-            ],
-        )?;
-    }
-    for posting in &input.postings {
-        insert_reference_posting(transaction, posting)?;
-    }
-    for alias in &input.aliases {
-        insert_alias_declaration(transaction, alias)?;
-    }
-    for alias in altered_aliases {
-        let mut candidates = prior_alias_candidates.remove(&alias).unwrap_or_default();
-        candidates.retain(|page_id| !sources.contains(page_id));
-        candidates.extend(
-            input
-                .aliases
-                .iter()
-                .filter(|declaration| declaration.normalized_alias == alias)
-                .map(|declaration| declaration.source_page_id),
-        );
-        transaction.execute(
-            "DELETE FROM reference_alias_bindings WHERE normalized_alias = ?1",
-            params![&alias],
-        )?;
-        for (ordinal, page_id) in candidates.into_iter().enumerate() {
-            transaction.execute(
-                "INSERT INTO reference_alias_bindings (
-                     normalized_alias, candidate_ordinal, resolved_page_id
-                 ) VALUES (?1, ?2, ?3)",
-                params![
-                    &alias,
-                    i64::try_from(ordinal).map_err(|_| {
-                        MaterializationError::InvalidInput(
-                            "reference alias candidate ordinal overflowed".into(),
-                        )
-                    })?,
-                    page_id.as_slice(),
-                ],
-            )?;
-        }
-    }
-    let coverage_count = match coverage_validation {
-        CoverageValidation::FullScan => {
-            let count: i64 = transaction.query_row(
-                "SELECT COUNT(*) FROM reference_source_coverage",
-                [],
-                |row| row.get(0),
-            )?;
-            u64::try_from(count).map_err(|_| {
-                MaterializationError::Corrupt("reference source coverage count is negative".into())
-            })?
-        }
-        CoverageValidation::FreshInductive { prior_count } => {
-            if prior_count != input.prior_source_count {
-                return Err(MaterializationError::Incomplete(format!(
-                    "inductive SQLite reference source coverage {prior_count} does not match authenticated prior catalog source count {}",
-                    input.prior_source_count,
-                )));
-            }
-            prior_count
-                .checked_sub(replaced_coverage_rows)
-                .and_then(|count| count.checked_add(input.coverage.len() as u64))
-                .ok_or_else(|| {
-                    MaterializationError::Corrupt(
-                        "inductive reference source coverage count overflowed".into(),
-                    )
-                })?
-        }
-    };
-    if coverage_count != input.post_source_count {
-        return Err(MaterializationError::Incomplete(
-            format!(
-                "SQLite reference source coverage {coverage_count} does not match authenticated catalog source count {}",
-                input.post_source_count,
-            ),
-        ));
-    }
-    Ok((
-        post_root_bytes,
-        post_root_digest,
-        coverage_digest,
-        extractor_stamp_digest,
-        coverage_count,
-    ))
-}
-
 pub fn apply_change(
     transaction: &Transaction<'_>,
     change: &PhysicalMaterializationChange,
     sequence: u64,
     input_digest: ContentDigest,
     post_frontier_digest: ContentDigest,
-    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
 ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
     apply_change_inner(
         transaction,
@@ -2069,30 +1478,6 @@ pub fn apply_change(
         sequence,
         input_digest,
         post_frontier_digest,
-        authenticated_reference,
-        CoverageValidation::FullScan,
-    )
-}
-
-pub fn apply_change_fresh_bootstrap(
-    transaction: &Transaction<'_>,
-    change: &PhysicalMaterializationChange,
-    sequence: u64,
-    input_digest: ContentDigest,
-    post_frontier_digest: ContentDigest,
-    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
-    prior_reference_coverage_count: u64,
-) -> Result<ApplyChangeInstrumentation, MaterializationError> {
-    apply_change_inner(
-        transaction,
-        change,
-        sequence,
-        input_digest,
-        post_frontier_digest,
-        authenticated_reference,
-        CoverageValidation::FreshInductive {
-            prior_count: prior_reference_coverage_count,
-        },
     )
 }
 
@@ -2102,7 +1487,6 @@ pub(crate) fn apply_change_in_open_candidate(
     sequence: u64,
     input_digest: ContentDigest,
     post_frontier_digest: ContentDigest,
-    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
 ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
     if transaction.is_autocommit() {
         return Err(MaterializationError::InvalidInput(
@@ -2115,56 +1499,18 @@ pub(crate) fn apply_change_in_open_candidate(
         sequence,
         input_digest,
         post_frontier_digest,
-        authenticated_reference,
-        CoverageValidation::FullScan,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_change_fresh_bootstrap_in_open_candidate(
-    transaction: &Connection,
-    change: &PhysicalMaterializationChange,
-    sequence: u64,
-    input_digest: ContentDigest,
-    post_frontier_digest: ContentDigest,
-    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
-    prior_reference_coverage_count: u64,
-) -> Result<ApplyChangeInstrumentation, MaterializationError> {
-    if transaction.is_autocommit() {
-        return Err(MaterializationError::InvalidInput(
-            "candidate materialization requires an active transaction".into(),
-        ));
-    }
-    apply_change_inner(
-        transaction,
-        change,
-        sequence,
-        input_digest,
-        post_frontier_digest,
-        authenticated_reference,
-        CoverageValidation::FreshInductive {
-            prior_count: prior_reference_coverage_count,
-        },
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 fn apply_change_inner(
     transaction: &Connection,
     change: &PhysicalMaterializationChange,
     sequence: u64,
     input_digest: ContentDigest,
     post_frontier_digest: ContentDigest,
-    authenticated_reference: Option<&PhysicalAuthenticatedReference>,
-    coverage_validation: CoverageValidation,
 ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
-    if change.reference_catalog.is_some() && authenticated_reference.is_none() {
-        return Err(MaterializationError::Incomplete(
-            "authenticated reference materialization requires accepted event evidence".into(),
-        ));
-    }
     validate_preserved_page_metadata(transaction, change)?;
-    let mut instrumentation =
+    let instrumentation =
         apply_graph_projection_rows(transaction, &change.replacements, &change.deletions)?;
     let derived = PhysicalGraphProjectionChange {
         replacements: change.replacements.clone(),
@@ -2179,107 +1525,25 @@ fn apply_change_inner(
             &change.portable_path_claims,
         )?;
     }
-    let reference_values = change
-        .reference_catalog
-        .as_ref()
-        .map(|input| apply_reference_catalog_change(transaction, input, coverage_validation))
-        .transpose()?;
     let sequence = i64::try_from(sequence)
         .map_err(|_| MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into()))?;
-    if let Some((
-        catalog_root,
-        catalog_root_digest,
-        coverage_digest,
-        extractor_stamp_digest,
-        coverage_count,
-    )) = reference_values
-    {
-        instrumentation.reference_coverage_count = Some(coverage_count);
-        match coverage_validation {
-            CoverageValidation::FullScan => instrumentation.reference_coverage_full_scans = 1,
-            CoverageValidation::FreshInductive { .. } => {
-                instrumentation.reference_coverage_inductive_checks = 1;
-            }
-        }
-        let authenticated = authenticated_reference
-            .expect("reference values require authenticated transition evidence");
-        let reference_catalog = change.reference_catalog.as_ref().expect("present");
-        let catalog_change = reference_catalog.canonical_bytes.clone();
-        let catalog_change_digest = ContentDigest::of(&catalog_change);
-        transaction.execute(
-            "INSERT INTO materialization_batches (
-                 acceptance_sequence, batch_id, input_digest, event_binding_digest,
-                 prior_frontier_root_digest, post_frontier_root_digest,
-                 prior_catalog_root, prior_catalog_root_digest,
-                 post_catalog_root, post_catalog_root_digest,
-                 catalog_change, catalog_change_digest, canonical_input_digest
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                sequence,
-                change.batch_id.as_slice(),
-                input_digest.as_bytes().as_slice(),
-                authenticated.event_binding_digest.as_bytes().as_slice(),
-                authenticated
-                    .prior_frontier_root_digest
-                    .as_bytes()
-                    .as_slice(),
-                authenticated
-                    .post_frontier_root_digest
-                    .as_bytes()
-                    .as_slice(),
-                &reference_catalog.prior_catalog_root,
-                reference_catalog
-                    .prior_catalog_root_digest
-                    .as_bytes()
-                    .as_slice(),
-                catalog_root,
-                catalog_root_digest.as_bytes().as_slice(),
-                catalog_change,
-                catalog_change_digest.as_bytes().as_slice(),
-                input_digest.as_bytes().as_slice(),
-            ],
-        )?;
-        transaction.execute(
-            "UPDATE materialization_stamp
-             SET acceptance_sequence = ?1,
-                 frontier_root_digest = ?2,
-                 catalog_root = ?3,
-                 catalog_root_digest = ?4,
-                 coverage_digest = ?5,
-                 extractor_dependency_stamp_digest = ?6
-             WHERE singleton = 1",
-            params![
-                sequence,
-                post_frontier_digest.as_bytes().as_slice(),
-                catalog_root,
-                catalog_root_digest.as_bytes().as_slice(),
-                coverage_digest.as_bytes().as_slice(),
-                extractor_stamp_digest.as_bytes().as_slice(),
-            ],
-        )?;
-    } else {
-        transaction.execute(
-            "INSERT INTO materialization_batches (
-                 acceptance_sequence, batch_id, input_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                sequence,
-                change.batch_id.as_slice(),
-                input_digest.as_bytes().as_slice(),
-            ],
-        )?;
-        transaction.execute(
-            "UPDATE materialization_stamp
-             SET acceptance_sequence = ?1,
-                 frontier_root_digest = ?2,
-                 catalog_root = NULL,
-                 catalog_root_digest = NULL,
-                 coverage_digest = NULL,
-                 extractor_dependency_stamp_digest = NULL
-             WHERE singleton = 1",
-            params![sequence, post_frontier_digest.as_bytes().as_slice()],
-        )?;
-    }
+    transaction.execute(
+        "INSERT INTO materialization_batches (
+             acceptance_sequence, batch_id, input_digest
+         ) VALUES (?1, ?2, ?3)",
+        params![
+            sequence,
+            change.batch_id.as_slice(),
+            input_digest.as_bytes().as_slice(),
+        ],
+    )?;
+    transaction.execute(
+        "UPDATE materialization_stamp
+         SET acceptance_sequence = ?1,
+             frontier_root_digest = ?2
+         WHERE singleton = 1",
+        params![sequence, post_frontier_digest.as_bytes().as_slice()],
+    )?;
     Ok(instrumentation)
 }
 
@@ -2511,6 +1775,7 @@ fn validate_preserved_page_metadata(
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn reset(
     transaction: &Transaction<'_>,
     empty_frontier_digest: ContentDigest,
@@ -2520,11 +1785,7 @@ pub fn reset(
     transaction.execute(
         "UPDATE materialization_stamp
          SET acceptance_sequence = 0,
-             frontier_root_digest = ?1,
-             catalog_root = NULL,
-             catalog_root_digest = NULL,
-             coverage_digest = NULL,
-             extractor_dependency_stamp_digest = NULL
+             frontier_root_digest = ?1
          WHERE singleton = 1",
         params![empty_frontier_digest.as_bytes().as_slice()],
     )?;
@@ -2544,10 +1805,7 @@ pub(crate) fn reset_graph_projection_rows(
          DELETE FROM refs;
          DELETE FROM reference_alias_bindings;
          DELETE FROM reference_alias_declarations;
-         DELETE FROM reference_uuid_bindings;
-         DELETE FROM reference_name_bindings;
          DELETE FROM reference_postings;
-         DELETE FROM reference_source_coverage;
          DELETE FROM blocks;
          DELETE FROM page_portable_path_claims;
          DELETE FROM pages;",
@@ -5242,7 +4500,6 @@ mod tests {
             derived_reference_postings: Vec::new(),
             derived_aliases: Vec::new(),
             portable_path_claims: Vec::new(),
-            reference_catalog: None,
         }
     }
 
@@ -5259,7 +4516,6 @@ mod tests {
             sequence,
             digest(format!("input-{sequence}").as_bytes()),
             frontier,
-            None,
         )
         .unwrap();
         transaction.commit().unwrap();
@@ -5292,15 +4548,10 @@ mod tests {
             .unwrap()
     }
 
-    fn empty_terminal_stamp() -> PhysicalTerminalCatalogStamp {
-        PhysicalTerminalCatalogStamp {
+    fn empty_terminal_stamp() -> PhysicalTerminalProjectionStamp {
+        PhysicalTerminalProjectionStamp {
             acceptance_sequence: 1,
             frontier_root_digest: digest(b"terminal-frontier"),
-            catalog_root: b"terminal-catalog".to_vec(),
-            catalog_root_digest: digest(b"terminal-catalog"),
-            coverage_digest: digest(b"terminal-coverage"),
-            extractor_dependency_stamp_digest: digest(b"terminal-extractor"),
-            source_count: 0,
         }
     }
 
@@ -5329,10 +4580,10 @@ mod tests {
         {
             let transaction = connection.transaction().unwrap();
             begin_terminal_construction_in_open_candidate(&transaction).unwrap();
-            finish_terminal_construction_in_open_candidate(
+            finish_terminal_graph_projection_in_open_candidate(
                 &transaction,
                 &[],
-                &empty_terminal_stamp(),
+                empty_terminal_stamp(),
             )
             .unwrap();
             assert_eq!(
@@ -5377,10 +4628,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert!(finish_terminal_construction_in_open_candidate(
+        assert!(finish_terminal_graph_projection_in_open_candidate(
             &transaction,
             &[],
-            &empty_terminal_stamp(),
+            empty_terminal_stamp(),
         )
         .is_err());
         transaction.rollback().unwrap();
@@ -5437,18 +4688,6 @@ mod tests {
 
         connection
             .execute(
-                "INSERT INTO reference_source_coverage (
-                     source_page_id, source_digest, extractor_dependency_stamp_digest
-                 ) VALUES (?1, ?2, ?3)",
-                params![
-                    first.page_id.as_slice(),
-                    digest(b"source").as_bytes().as_slice(),
-                    digest(b"extractor").as_bytes().as_slice(),
-                ],
-            )
-            .unwrap();
-        connection
-            .execute(
                 "INSERT INTO reference_postings (
                      source_page_id, source_entity_type, source_entity_id, source_locator,
                      ordinal, reference_kind, target_type, raw_name, normalized_name,
@@ -5461,26 +4700,6 @@ mod tests {
                     "alias \u{00e5}",
                     second.page_id.as_slice(),
                 ],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO reference_name_bindings (
-                     raw_name, normalized_name, candidate_ordinal, resolved_page_id
-                 ) VALUES (?1, ?2, 0, ?3)",
-                params![
-                    "Alias \u{00c5}",
-                    "alias \u{00e5}",
-                    second.page_id.as_slice()
-                ],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO reference_uuid_bindings (
-                     raw_uuid_claim, candidate_ordinal, resolved_block_id
-                 ) VALUES (?1, 0, ?2)",
-                params![id(0x444).as_slice(), first.blocks[0].block_id.as_slice()],
             )
             .unwrap();
         connection
@@ -6174,7 +5393,6 @@ mod tests {
             1,
             digest(b"input"),
             digest(b"frontier"),
-            None,
         )
         .is_err());
         transaction.rollback().unwrap();
@@ -6379,7 +5597,6 @@ mod tests {
                 1,
                 digest(b"input"),
                 digest(b"frontier"),
-                None,
             )
             .unwrap();
         }
@@ -6388,86 +5605,6 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn catalog_rows_and_stamp_are_one_physical_transition() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        initialize_schema(&connection, digest(b"empty")).unwrap();
-        let mut page = page(4, "catalog");
-        page.blocks.clear();
-        let page_id = page.page_id;
-        let post_root_digest = digest(b"post-root");
-        let mut physical = change(40, vec![page], Vec::new());
-        physical.reference_catalog = Some(PhysicalReferenceCatalogChange {
-            prior_catalog_root: vec![1],
-            prior_catalog_root_digest: digest(b"prior-root"),
-            prior_source_count: 0,
-            post_catalog_root: vec![2],
-            post_catalog_root_digest: post_root_digest,
-            post_source_count: 1,
-            coverage_digest: digest(b"coverage"),
-            extractor_dependency_stamp_digest: digest(b"extractor"),
-            postings: vec![PhysicalReferencePosting {
-                source_page_id: page_id,
-                source_entity: PhysicalEntityId::Page(page_id),
-                source_locator: vec![1, 2, 3],
-                ordinal: 0,
-                kind: 0,
-                target: PhysicalReferenceTarget::PageName {
-                    raw_name: "Target".into(),
-                    normalized_name: "target".into(),
-                    resolved_page_id: None,
-                },
-            }],
-            aliases: vec![PhysicalAliasDeclaration {
-                source_page_id: page_id,
-                source_entity: PhysicalEntityId::Page(page_id),
-                source_locator: vec![4, 5],
-                ordinal: 0,
-                raw_alias: "Alias".into(),
-                normalized_alias: "alias".into(),
-            }],
-            coverage: vec![PhysicalSourceCoverage {
-                source_page_id: page_id,
-                source_digest: digest(b"source"),
-                extractor_dependency_stamp_digest: digest(b"source-extractor"),
-            }],
-            removed_sources: Vec::new(),
-            canonical_bytes: vec![9, 8, 7],
-        });
-        let authenticated = PhysicalAuthenticatedReference {
-            event_binding_digest: digest(b"event"),
-            prior_frontier_root_digest: digest(b"frontier-0"),
-            post_frontier_root_digest: digest(b"frontier-1"),
-        };
-        let transaction = connection.transaction().unwrap();
-        let stats = apply_change(
-            &transaction,
-            &physical,
-            1,
-            digest(b"input"),
-            digest(b"frontier-1"),
-            Some(&authenticated),
-        )
-        .unwrap();
-        transaction.commit().unwrap();
-        assert_eq!(stats.reference_coverage_count, Some(1));
-        let stamp: (Vec<u8>, Vec<u8>) = connection
-            .query_row(
-                "SELECT catalog_root, catalog_root_digest FROM materialization_stamp",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(stamp.0, vec![2]);
-        assert_eq!(stamp.1.as_slice(), post_root_digest.as_bytes());
-        let postings: i64 = connection
-            .query_row("SELECT COUNT(*) FROM reference_postings", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(postings, 1);
     }
 
     #[test]
