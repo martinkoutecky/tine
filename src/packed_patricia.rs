@@ -102,7 +102,7 @@ const PACK_SIZE_TIER_COUNT: usize = (MAX_PACK_BYTES.ilog2() - MIN_PACK_BYTES.ilo
 #[cfg(test)]
 const AMORTIZED_SELECTED_BYTE_FACTOR: usize = 2 * MAX_PACKS_PER_SIZE_TIER * PACK_SIZE_TIER_COUNT;
 pub(crate) const MAX_CATALOG_PACKS: usize = 256;
-pub(crate) const MAX_CATALOG_PACK_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_CATALOG_PACK_BYTES: usize = 128 * 1024 * 1024;
 pub(crate) const MAX_CATALOG_BYTES: usize =
     CATALOG_HEADER_BYTES + MAX_CATALOG_PACKS * CATALOG_ENTRY_BYTES;
 

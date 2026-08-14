@@ -16,6 +16,10 @@ independently in `src/formats.rs` and summarized in
   reference indices no longer fall back to hundreds of thousands of loose
   per-key immutable files merely because the complete range exceeds one
   bounded construction buffer.
+- Packed Patricia catalogs admit up to 128 MiB of exact immutable pack data.
+  This remains a hard decode and construction bound, while covering the
+  derived reverse-reference index of a representative 130,000-block graph
+  without forcing the otherwise valid tail into loose per-node files.
 
 ## [0.6.1] - 2026-08-13
 

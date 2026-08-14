@@ -234,24 +234,12 @@ pub const MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES: usize = 512 * 1024 * 1024;
 // bytes; 2 KiB per entry leaves more than 8x headroom for B-tree node slack and
 // allocator metadata. The compile-time-sized portion is asserted in tests.
 const CONSTRUCTION_ENTRY_OWNERSHIP_BYTES: usize = 2 * 1024;
-const fn construction_min(left: usize, right: usize) -> usize {
-    if left < right {
-        left
-    } else {
-        right
-    }
-}
-
 /// One sorted bulk range can create at most one leaf and one branch per
-/// record. Bound both owned residency and the exact packed-catalog byte ceiling:
-/// a machine may grant a 512 MiB construction budget while one canonical pack
-/// remains capped at 64 MiB. The additional 128 bytes conservatively covers
-/// each node's pack-index entry and framing beyond its maximum encoded body.
-const CONSTRUCTION_BULK_NODE_PACK_BYTES: usize = CONSTRUCTION_MAX_VALID_NODE_BYTES + 128;
-pub const MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS: usize = construction_min(
-    MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES),
-    MAX_CATALOG_PACK_BYTES / (2 * CONSTRUCTION_BULK_NODE_PACK_BYTES),
-);
+/// record. This conservative capacity keeps the sink inside the construction
+/// residency budget without relying on a fixed graph-size threshold. The pack
+/// writer partitions one accepted range into its own bounded physical packs.
+pub const MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS: usize =
+    MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES);
 // A valid leaf is bounded by the admitted key/value sizes; a branch is smaller.
 // The extra 512 bytes covers postcard tags/lengths, and the factor of two
 // covers Vec growth/allocator rounding while the encoded bytes overlap Node.
@@ -559,10 +547,7 @@ impl PatriciaIndexConstruction {
     }
 
     pub const fn bulk_record_limit(&self) -> usize {
-        construction_min(
-            self.resident_budget_bytes / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES),
-            MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS,
-        )
+        self.resident_budget_bytes / (2 * CONSTRUCTION_ENTRY_OWNERSHIP_BYTES)
     }
 
     pub const fn resident_budget_bytes(&self) -> usize {
@@ -5253,14 +5238,8 @@ mod tests {
             MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
         )
         .unwrap();
-        assert_eq!(
-            enlarged.bulk_record_limit(),
-            MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS,
-            "the format pack ceiling must remain binding even when more construction memory is available"
-        );
         assert!(
-            PatriciaIndexConstruction::default().bulk_record_limit()
-                <= enlarged.bulk_record_limit()
+            enlarged.bulk_record_limit() > PatriciaIndexConstruction::default().bulk_record_limit()
         );
         assert!(PatriciaIndexConstruction::with_resident_budget(
             DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES - 1,
