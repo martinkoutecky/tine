@@ -15,6 +15,15 @@ independently in `src/formats.rs` and summarized in
   genesis archive and its manifest, commit, catalog-update, and segment files.
   This is the physical publication vocabulary for Tine's new activation
   format; authority and semantic validation remain owned by Tine core.
+- The disposable SQLite graph projection now retains caller-derived portable
+  path keys as a bounded, non-unique page-candidate index. Direct Files and
+  managed storage can share path-identity lookup while preserving every
+  case/Unicode-equivalent conflict for application-level diagnosis.
+
+### Changed
+
+- The disposable SQLite projection schema is now 17. Older projections rebuild
+  from authoritative graph/history input rather than being reinterpreted.
 
 ## [0.6.3] - 2026-08-14
 

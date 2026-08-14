@@ -146,6 +146,18 @@ pub struct PhysicalAliasDeclaration {
     pub normalized_alias: String,
 }
 
+/// One parser-owned page's platform-neutral path identity.
+///
+/// The caller owns Unicode normalization and case-folding policy. Storage
+/// retains only the resulting fixed-width key so both Direct Files and managed
+/// storage can use the same bounded candidate lookup without teaching this
+/// physical crate graph-path semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalPagePortablePathClaim {
+    pub page_id: [u8; 16],
+    pub portable_path_key: ContentDigest,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysicalSourceCoverage {
     pub source_page_id: [u8; 16],
@@ -418,6 +430,11 @@ pub const PAGES_DDL: &str = "CREATE TABLE pages (
     preamble TEXT CHECK (preamble IS NULL OR length(CAST(preamble AS BLOB)) <= 16777216),
     searchable_text TEXT NOT NULL CHECK (length(CAST(searchable_text AS BLOB)) <= 4194304)
 ) STRICT";
+pub const PAGE_PORTABLE_PATH_CLAIMS_DDL: &str = "CREATE TABLE page_portable_path_claims (
+    page_id BLOB PRIMARY KEY CHECK (length(page_id) = 16)
+        REFERENCES pages(page_id) ON DELETE CASCADE,
+    portable_path_key BLOB NOT NULL CHECK (length(portable_path_key) = 32)
+) STRICT";
 pub const BLOCKS_DDL: &str = "CREATE TABLE blocks (
     block_id BLOB PRIMARY KEY CHECK (length(block_id) = 16),
     page_id BLOB NOT NULL CHECK (length(page_id) = 16)
@@ -508,6 +525,9 @@ pub const PAGES_NAME_INDEX_DDL: &str = "CREATE INDEX pages_name_idx ON pages(nam
 pub const PAGES_NAME_KEY_INDEX_DDL: &str =
     "CREATE INDEX pages_name_key_idx ON pages(name_key, page_id)";
 pub const PAGES_PATH_INDEX_DDL: &str = "CREATE INDEX pages_path_idx ON pages(path, page_id)";
+pub const PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL: &str =
+    "CREATE INDEX page_portable_path_claims_key_idx
+     ON page_portable_path_claims(portable_path_key, page_id)";
 pub const BLOCKS_PAGE_ORDER_INDEX_DDL: &str =
     "CREATE INDEX blocks_page_order_idx ON blocks(page_id, order_key, block_id)";
 pub const BLOCKS_LOGSEQ_UUID_INDEX_DDL: &str = "CREATE UNIQUE INDEX blocks_logseq_uuid_idx
@@ -567,10 +587,14 @@ pub const TASKS_PAGE_INDEX_DDL: &str = "CREATE INDEX tasks_page_idx ON tasks(pag
 // indexes and both FTS virtual tables remain live throughout construction.
 // This list must reproduce the exact normal schema before the terminal stamp
 // can advance.
-const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 25] = [
+const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 26] = [
     ("pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("pages_path_idx", PAGES_PATH_INDEX_DDL),
+    (
+        "page_portable_path_claims_key_idx",
+        PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL,
+    ),
     ("blocks_page_order_idx", BLOCKS_PAGE_ORDER_INDEX_DDL),
     ("blocks_logseq_uuid_idx", BLOCKS_LOGSEQ_UUID_INDEX_DDL),
     (
@@ -628,7 +652,7 @@ const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 25] = [
     ("tasks_page_idx", TASKS_PAGE_INDEX_DDL),
 ];
 
-const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
+const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 16] = [
     (
         "materialization_stamp",
         &[
@@ -727,6 +751,10 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
         ],
     ),
     (
+        "page_portable_path_claims",
+        &["page_id", "portable_path_key"],
+    ),
+    (
         "blocks",
         &[
             "block_id",
@@ -787,7 +815,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 41] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 43] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -821,6 +849,11 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 41] = [
         REFERENCE_ALIAS_BINDINGS_DDL,
     ),
     ("table", "pages", PAGES_DDL),
+    (
+        "table",
+        "page_portable_path_claims",
+        PAGE_PORTABLE_PATH_CLAIMS_DDL,
+    ),
     ("table", "blocks", BLOCKS_DDL),
     ("table", "refs", REFERENCES_DDL),
     ("table", "properties", PROPERTIES_DDL),
@@ -832,6 +865,11 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 41] = [
     ("index", "pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("index", "pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("index", "pages_path_idx", PAGES_PATH_INDEX_DDL),
+    (
+        "index",
+        "page_portable_path_claims_key_idx",
+        PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL,
+    ),
     (
         "index",
         "blocks_page_order_idx",
@@ -948,6 +986,7 @@ pub(crate) fn initialize_graph_projection_schema(
          {REFERENCE_ALIAS_DECLARATIONS_DDL};
          {REFERENCE_ALIAS_BINDINGS_DDL};
          {PAGES_DDL};
+         {PAGE_PORTABLE_PATH_CLAIMS_DDL};
          {BLOCKS_DDL};
          {REFERENCES_DDL};
          {PROPERTIES_DDL};
@@ -959,6 +998,7 @@ pub(crate) fn initialize_graph_projection_schema(
          {PAGES_NAME_INDEX_DDL};
          {PAGES_NAME_KEY_INDEX_DDL};
          {PAGES_PATH_INDEX_DDL};
+         {PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL};
          {BLOCKS_PAGE_ORDER_INDEX_DDL};
          {BLOCKS_LOGSEQ_UUID_INDEX_DDL};
          {SEARCH_FTS_OWNERS_PAGE_INDEX_DDL};
@@ -1473,8 +1513,9 @@ pub struct PhysicalTerminalCatalogStamp {
     pub source_count: u64,
 }
 
-const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 16] = [
+const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 17] = [
     "pages",
+    "page_portable_path_claims",
     "blocks",
     "refs",
     "properties",
@@ -2204,6 +2245,47 @@ pub(crate) fn replace_graph_projection_reference_facts(
     Ok(())
 }
 
+/// Install the complete portable-path candidate surface for replacement pages.
+///
+/// This is deliberately non-unique: two source files may collide after the
+/// application's platform-neutral normalization. The projection must preserve
+/// both candidates so the semantic owner can diagnose/refuse the conflict.
+pub(crate) fn replace_graph_projection_portable_path_claims(
+    transaction: &Connection,
+    replacements: &[PhysicalPage],
+    claims: &[PhysicalPagePortablePathClaim],
+) -> Result<(), MaterializationError> {
+    let replacement_ids = replacements
+        .iter()
+        .map(|page| page.page_id)
+        .collect::<BTreeSet<_>>();
+    let mut claim_ids = BTreeSet::new();
+    for claim in claims {
+        if !claim_ids.insert(claim.page_id) {
+            return Err(MaterializationError::InvalidInput(
+                "portable-path claims contain a duplicate page ID".into(),
+            ));
+        }
+    }
+    if claim_ids != replacement_ids {
+        return Err(MaterializationError::InvalidInput(
+            "portable-path claims must exactly cover replacement pages".into(),
+        ));
+    }
+    for claim in claims {
+        execute_cached(
+            transaction,
+            "INSERT INTO page_portable_path_claims (page_id, portable_path_key)
+             VALUES (?1, ?2)",
+            params![
+                claim.page_id.as_slice(),
+                claim.portable_path_key.as_bytes().as_slice(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_preserved_page_metadata(
     transaction: &Connection,
     change: &PhysicalMaterializationChange,
@@ -2292,6 +2374,7 @@ pub(crate) fn reset_graph_projection_rows(
          DELETE FROM reference_postings;
          DELETE FROM reference_source_coverage;
          DELETE FROM blocks;
+         DELETE FROM page_portable_path_claims;
          DELETE FROM pages;",
     )?;
     Ok(())
@@ -3383,6 +3466,47 @@ impl<'a> SqliteGraphProjectionRead<'a> {
             path.as_str(),
             limit,
             validate_header,
+        )
+    }
+
+    /// Return bounded candidates whose caller-derived portable path key
+    /// matches exactly. Multiple rows are meaningful: the application must
+    /// classify case/Unicode-equivalent source-path conflicts rather than let
+    /// the physical index choose an owner.
+    pub fn pages_by_portable_path_key(
+        &self,
+        portable_path_key: ContentDigest,
+        limit: usize,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_portable_path_key_with_header_validation(
+            portable_path_key,
+            limit,
+            allow_any_page_header,
+        )
+    }
+
+    pub fn pages_by_portable_path_key_with_header_validation(
+        &self,
+        portable_path_key: ContentDigest,
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT p.page_id, p.home_document_id, p.name, p.name_key, p.path,
+                    p.text_kind, p.preamble, p.searchable_text
+             FROM page_portable_path_claims AS c
+             JOIN pages AS p ON p.page_id = c.page_id
+             WHERE c.portable_path_key = ?1
+             ORDER BY p.page_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![portable_path_key.as_bytes().as_slice(), limit],
+            |row| page_row_with_header_validation(row, &mut validate_header),
+        )?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
+            page_row_output_bytes,
         )
     }
 

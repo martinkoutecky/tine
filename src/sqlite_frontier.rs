@@ -18,7 +18,7 @@ use crate::sqlite_materialization::{
 use crate::ContentDigest;
 
 pub const SQLITE_APPLICATION_ID: u32 = 0x5449_4e45;
-pub const SQLITE_SCHEMA_VERSION: u32 = 16;
+pub const SQLITE_SCHEMA_VERSION: u32 = 17;
 const MAX_AUTHENTICATED_MAP_DEPTH: usize = 256;
 
 pub const META_DDL: &str = "CREATE TABLE meta (
@@ -109,7 +109,7 @@ pub const BATCH_ID_INDEX_DDL: &str =
 pub const ACCEPTANCE_SEQUENCE_INDEX_DDL: &str = "CREATE UNIQUE INDEX \
     applied_batches_acceptance_sequence_uq ON applied_batches(acceptance_sequence)";
 
-const EXPECTED_TABLES: [&str; 33] = [
+const EXPECTED_TABLES: [&str; 34] = [
     "accepted_batch_nodes",
     "applied_batches",
     "blocks",
@@ -119,6 +119,7 @@ const EXPECTED_TABLES: [&str; 33] = [
     "materialization_batches",
     "materialization_stamp",
     "meta",
+    "page_portable_path_claims",
     "pages",
     "properties",
     "reference_alias_bindings",
@@ -144,11 +145,12 @@ const EXPECTED_TABLES: [&str; 33] = [
     "tags",
     "tasks",
 ];
-const EXPECTED_INDEXES: [&str; 27] = [
+const EXPECTED_INDEXES: [&str; 28] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
     "blocks_logseq_uuid_idx",
     "blocks_page_order_idx",
+    "page_portable_path_claims_key_idx",
     "pages_name_idx",
     "pages_name_key_idx",
     "pages_path_idx",
