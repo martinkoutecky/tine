@@ -5253,8 +5253,14 @@ mod tests {
             MAX_PATRICIA_CONSTRUCTION_RESIDENT_BYTES,
         )
         .unwrap();
+        assert_eq!(
+            enlarged.bulk_record_limit(),
+            MAX_PATRICIA_CONSTRUCTION_BULK_RECORDS,
+            "the format pack ceiling must remain binding even when more construction memory is available"
+        );
         assert!(
-            enlarged.bulk_record_limit() > PatriciaIndexConstruction::default().bulk_record_limit()
+            PatriciaIndexConstruction::default().bulk_record_limit()
+                <= enlarged.bulk_record_limit()
         );
         assert!(PatriciaIndexConstruction::with_resident_budget(
             DEFAULT_PATRICIA_CONSTRUCTION_RESIDENT_BYTES - 1,
