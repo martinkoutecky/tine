@@ -293,6 +293,24 @@ impl PhysicalSqliteDatabase {
         )
     }
 
+    /// Install a sequence-zero genesis frontier and its exact document map in
+    /// one unpublished candidate transaction.
+    ///
+    /// Unlike [`Self::seed_terminal_frontier_documents`], this entry point
+    /// advances a freshly initialized database from its empty frontier to a
+    /// caller-authenticated genesis frontier without inventing an accepted
+    /// batch. Domain validation of the canonical frontier bytes remains the
+    /// caller's responsibility; this layer proves the physical frontier is a
+    /// fresh sequence-zero state with no accepted-batch authority.
+    pub fn seed_genesis_frontier(
+        &mut self,
+        genesis_root: &PhysicalFrontierRoot,
+        documents: &[PhysicalFrontierDocument],
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_frontier::seed_genesis_frontier_candidate(&self.connection, genesis_root, documents)
+    }
+
     /// Commit the fully proved candidate once. Under this connection's
     /// `synchronous=FULL` contract, the commit is the candidate apply-path
     /// durability barrier; WAL checkpoint and atomic publication remain later

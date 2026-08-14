@@ -1732,6 +1732,59 @@ pub fn seed_terminal_frontier_documents_candidate(
     Ok(())
 }
 
+/// Install one exact sequence-zero genesis frontier in an otherwise fresh
+/// candidate, then construct its authenticated document map once.
+///
+/// The baseline is not an accepted operation. Requiring an empty physical
+/// history and the canonical empty accepted-batch root prevents this primitive
+/// from being used to rewrite an established frontier while still allowing a
+/// higher layer to introduce a separately authenticated genesis binding.
+pub fn seed_genesis_frontier_candidate(
+    connection: &Connection,
+    genesis_root: &PhysicalFrontierRoot,
+    documents: &[PhysicalFrontierDocument],
+) -> Result<(), FrontierError> {
+    if connection.is_autocommit() {
+        return Err(FrontierError::InvalidInput(
+            "genesis frontier requires an active candidate-build transaction".into(),
+        ));
+    }
+    let stored = read_frontier(connection)?;
+    let stored_documents: i64 =
+        connection.query_row("SELECT COUNT(*) FROM frontier_documents", [], |row| {
+            row.get(0)
+        })?;
+    let stored_batches: i64 =
+        connection.query_row("SELECT COUNT(*) FROM applied_batches", [], |row| row.get(0))?;
+    let accepted_nodes: i64 =
+        connection.query_row("SELECT COUNT(*) FROM accepted_batch_nodes", [], |row| {
+            row.get(0)
+        })?;
+    let empty_map = ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty");
+    if stored.applied_batch_count != 0
+        || stored_documents != 0
+        || stored_batches != 0
+        || accepted_nodes != 0
+        || genesis_root.acceptance_sequence != 0
+        || genesis_root.batch_map_root_key.is_some()
+        || genesis_root.batch_map_root_digest != empty_map
+    {
+        return Err(FrontierError::InvalidInput(
+            "genesis frontier requires a fresh sequence-zero physical history".into(),
+        ));
+    }
+    connection.execute(
+        "UPDATE frontier
+         SET frontier_root = ?1, frontier_root_digest = ?2, applied_batch_count = 0
+         WHERE singleton = 1",
+        params![
+            &genesis_root.canonical_bytes,
+            genesis_root.digest().as_bytes().as_slice(),
+        ],
+    )?;
+    seed_terminal_frontier_documents_candidate(connection, genesis_root, documents)
+}
+
 fn write_clock_node(connection: &Connection, node: &ClockNode) -> Result<MapLink, FrontierError> {
     let value_digest = causal_clock_counter_digest(node.peer, node.counter);
     let digest = authenticated_map_node_digest(
@@ -3215,6 +3268,64 @@ mod tests {
         assert_eq!(
             terminal.semantic_projection_digest().unwrap(),
             ordinary.semantic_projection_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn sequence_zero_genesis_seeds_frontier_without_fabricated_batches() {
+        let documents = [7_u128, 11, 19]
+            .into_iter()
+            .map(|value| PhysicalFrontierDocument {
+                document_id: id(value),
+                canonical_bytes: format!("genesis-document-{value}").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+        let genesis = root(0, &documents, &[]);
+        let (database, mut physical, _empty) = initialized_facade();
+        physical.begin_candidate_build().unwrap();
+        physical.begin_terminal_bootstrap_construction().unwrap();
+        physical
+            .seed_genesis_frontier(&genesis, &documents)
+            .unwrap();
+        physical
+            .finish_terminal_graph_projection_construction(
+                &[],
+                sqlite_materialization::PhysicalTerminalProjectionStamp {
+                    acceptance_sequence: 0,
+                    frontier_root_digest: genesis.digest(),
+                },
+            )
+            .unwrap();
+        physical.finish_candidate_build().unwrap();
+
+        assert_eq!(
+            physical.read_frontier().unwrap(),
+            StoredFrontier {
+                canonical_bytes: genesis.canonical_bytes.clone(),
+                digest: genesis.digest(),
+                applied_batch_count: 0,
+            }
+        );
+        assert_eq!(
+            physical.read_frontier_documents(&genesis).unwrap(),
+            documents
+        );
+        assert!(physical.load_all_batches().unwrap().is_empty());
+        assert_eq!(
+            physical
+                .materialized_read(0, genesis.digest())
+                .unwrap()
+                .acceptance_sequence(),
+            0
+        );
+        drop(physical);
+
+        let reopened = PhysicalSqliteDatabase::open_read_only(&database.path).unwrap();
+        assert_eq!(reopened.read_frontier().unwrap().digest, genesis.digest());
+        assert!(reopened.load_all_batches().unwrap().is_empty());
+        assert_eq!(
+            reopened.read_frontier_documents(&genesis).unwrap(),
+            documents
         );
     }
 
