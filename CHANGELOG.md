@@ -7,7 +7,7 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
-## [0.6.6] - 2026-08-14
+## [0.7.0] - 2026-08-14
 
 ### Changed
 
