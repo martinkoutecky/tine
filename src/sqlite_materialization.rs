@@ -1535,6 +1535,17 @@ pub struct PhysicalTerminalCatalogStamp {
     pub source_count: u64,
 }
 
+/// Frontier binding for a terminal disposable graph projection.
+///
+/// Unlike the legacy catalog stamp, this carries no derived reference root.
+/// The accepted frontier authenticates semantic history; parser-derived
+/// reference/search/query rows are replaceable SQLite state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhysicalTerminalProjectionStamp {
+    pub acceptance_sequence: u64,
+    pub frontier_root_digest: ContentDigest,
+}
+
 const TERMINAL_CONSTRUCTION_EMPTY_TABLES: [&str; 17] = [
     "pages",
     "page_portable_path_claims",
@@ -1704,6 +1715,77 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
         ],
     )?;
     Ok(coverage_count)
+}
+
+/// Close a terminal build whose reference rows are ordinary parser-derived
+/// projection facts rather than an authenticated catalog transition.
+pub(crate) fn finish_terminal_graph_projection_in_open_candidate(
+    transaction: &Connection,
+    provenance: &[PhysicalTerminalConstructionBatch],
+    stamp: PhysicalTerminalProjectionStamp,
+) -> Result<(), MaterializationError> {
+    require_open_candidate(transaction)?;
+    transaction.execute(
+        "INSERT INTO reference_alias_bindings (
+             normalized_alias, candidate_ordinal, resolved_page_id
+         )
+         SELECT normalized_alias, candidate_ordinal, source_page_id
+         FROM (
+             SELECT normalized_alias, source_page_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY normalized_alias ORDER BY source_page_id
+                    ) - 1 AS candidate_ordinal
+             FROM (
+                 SELECT DISTINCT normalized_alias, source_page_id
+                 FROM reference_alias_declarations
+             )
+         )",
+        [],
+    )?;
+    for batch in provenance {
+        transaction.execute(
+            "INSERT INTO materialization_batches (
+                 acceptance_sequence, batch_id, input_digest
+             ) VALUES (?1, ?2, ?3)",
+            params![
+                i64::try_from(batch.acceptance_sequence).map_err(|_| {
+                    MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
+                })?,
+                batch.batch_id.as_slice(),
+                batch.input_digest.as_bytes().as_slice(),
+            ],
+        )?;
+    }
+    let coverage_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM reference_source_coverage",
+        [],
+        |row| row.get(0),
+    )?;
+    if coverage_count != 0 {
+        return Err(MaterializationError::Contradiction(
+            "frontier-stamped terminal projection contains legacy reference coverage".into(),
+        ));
+    }
+    for (_, ddl) in TERMINAL_DEFERRED_INDEXES {
+        transaction.execute(ddl, [])?;
+    }
+    transaction.execute(
+        "UPDATE materialization_stamp
+         SET acceptance_sequence = ?1,
+             frontier_root_digest = ?2,
+             catalog_root = NULL,
+             catalog_root_digest = NULL,
+             coverage_digest = NULL,
+             extractor_dependency_stamp_digest = NULL
+         WHERE singleton = 1",
+        params![
+            i64::try_from(stamp.acceptance_sequence).map_err(|_| {
+                MaterializationError::Corrupt("acceptance sequence exceeds SQLite".into())
+            })?,
+            stamp.frontier_root_digest.as_bytes().as_slice(),
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_reference_posting(

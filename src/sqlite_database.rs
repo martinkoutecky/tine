@@ -360,6 +360,22 @@ impl PhysicalSqliteDatabase {
         .map_err(Into::into)
     }
 
+    /// Close a terminal seed as ordinary frontier-stamped disposable graph
+    /// projection state, without a second reference-catalog authority.
+    pub fn finish_terminal_graph_projection_construction(
+        &mut self,
+        provenance: &[sqlite_materialization::PhysicalTerminalConstructionBatch],
+        stamp: sqlite_materialization::PhysicalTerminalProjectionStamp,
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_materialization::finish_terminal_graph_projection_in_open_candidate(
+            &self.connection,
+            provenance,
+            stamp,
+        )
+        .map_err(Into::into)
+    }
+
     fn require_candidate_build(&self) -> Result<(), FrontierError> {
         if !self.candidate_build_active {
             return Err(FrontierError::InvalidInput(
