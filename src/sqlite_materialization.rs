@@ -167,6 +167,13 @@ pub struct PhysicalPagePortablePathClaim {
 pub struct PhysicalBlockHomeClaim {
     pub block_id: [u8; 16],
     pub home_document_id: [u8; 16],
+    /// `None` identifies a claim inherent in the immutable activation
+    /// baseline. `Some` identifies the accepted batch that introduced it.
+    pub batch_id: Option<[u8; 16]>,
+    /// Causal provenance for an accepted-batch claim. Both fields are present
+    /// or absent together; baseline claims never carry either field.
+    pub causal_peer_id: Option<[u8; 16]>,
+    pub causal_counter: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -343,7 +350,22 @@ pub const BLOCKS_DDL: &str = "CREATE TABLE blocks (
 pub const BLOCK_HOME_CLAIMS_DDL: &str = "CREATE TABLE block_home_claims (
     block_id BLOB NOT NULL CHECK (length(block_id) = 16),
     home_document_id BLOB NOT NULL CHECK (length(home_document_id) = 16),
-    PRIMARY KEY (block_id, home_document_id)
+    claim_kind INTEGER NOT NULL CHECK (claim_kind IN (0, 1)),
+    claim_key BLOB NOT NULL CHECK (length(claim_key) = 16),
+    batch_id BLOB CHECK (batch_id IS NULL OR length(batch_id) = 16),
+    causal_peer_id BLOB CHECK (
+        causal_peer_id IS NULL OR length(causal_peer_id) = 16
+    ),
+    causal_counter INTEGER CHECK (causal_counter IS NULL OR causal_counter > 0),
+    CHECK (
+        (claim_kind = 0 AND claim_key = zeroblob(16) AND batch_id IS NULL
+            AND causal_peer_id IS NULL AND causal_counter IS NULL)
+        OR
+        (claim_kind = 1 AND batch_id IS NOT NULL AND claim_key = batch_id
+            AND ((causal_peer_id IS NULL AND causal_counter IS NULL)
+                OR (causal_peer_id IS NOT NULL AND causal_counter IS NOT NULL)))
+    ),
+    PRIMARY KEY (block_id, claim_kind, claim_key, home_document_id)
 ) WITHOUT ROWID, STRICT";
 // Retained temporarily for active v2 reads/writes. The authenticated catalog
 // migration-cleanup slice removes this legacy target-ID representation only
@@ -584,7 +606,18 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 14] = [
             "logseq_identity_origin",
         ],
     ),
-    ("block_home_claims", &["block_id", "home_document_id"]),
+    (
+        "block_home_claims",
+        &[
+            "block_id",
+            "home_document_id",
+            "claim_kind",
+            "claim_key",
+            "batch_id",
+            "causal_peer_id",
+            "causal_counter",
+        ],
+    ),
     (
         "refs",
         &[
@@ -1586,11 +1619,43 @@ fn insert_block_home_claims(
         }
     }
     for claim in unique {
+        let (claim_kind, claim_key, batch_id) = match claim.batch_id {
+            None => (0_i64, [0_u8; 16], None),
+            Some(batch_id) => (1_i64, batch_id, Some(batch_id.to_vec())),
+        };
+        let causal_counter = claim
+            .causal_counter
+            .map(|counter| {
+                i64::try_from(counter).map_err(|_| {
+                    MaterializationError::InvalidInput(
+                        "block-home claim causal counter exceeds SQLite".into(),
+                    )
+                })
+            })
+            .transpose()?;
+        if (claim.batch_id.is_none()
+            && (claim.causal_peer_id.is_some() || claim.causal_counter.is_some()))
+            || claim.causal_peer_id.is_some() != claim.causal_counter.is_some()
+        {
+            return Err(MaterializationError::InvalidInput(
+                "block-home claim provenance is incomplete".into(),
+            ));
+        }
         execute_cached(
             transaction,
-            "INSERT OR IGNORE INTO block_home_claims (block_id, home_document_id)
-             VALUES (?1, ?2)",
-            params![claim.block_id.as_slice(), claim.home_document_id.as_slice()],
+            "INSERT OR IGNORE INTO block_home_claims (
+                 block_id, home_document_id, claim_kind, claim_key, batch_id,
+                 causal_peer_id, causal_counter
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                claim.block_id.as_slice(),
+                claim.home_document_id.as_slice(),
+                claim_kind,
+                claim_key.as_slice(),
+                batch_id,
+                claim.causal_peer_id.map(|id| id.to_vec()),
+                causal_counter,
+            ],
         )?;
     }
     Ok(())
@@ -2314,6 +2379,9 @@ pub struct PhysicalBlockRow {
 pub struct PhysicalBlockHomeClaimRow {
     pub block_id: [u8; 16],
     pub home_document_id: [u8; 16],
+    pub batch_id: Option<[u8; 16]>,
+    pub causal_peer_id: Option<[u8; 16]>,
+    pub causal_counter: Option<u64>,
 }
 
 /// The structural fields required for a bounded block ancestor walk.
@@ -2852,22 +2920,31 @@ impl<'a> SqliteGraphProjectionRead<'a> {
     ) -> Result<Vec<PhysicalBlockHomeClaimRow>, MaterializationError> {
         let limit = checked_limit(limit)?;
         let mut statement = self.connection.prepare(
-            "SELECT block_id, home_document_id
+            "SELECT block_id, home_document_id, batch_id, causal_peer_id,
+                    causal_counter
              FROM block_home_claims
              WHERE block_id = ?1
-             ORDER BY home_document_id LIMIT ?2",
+             ORDER BY claim_kind, claim_key, home_document_id LIMIT ?2",
         )?;
         let rows = statement.query_map(params![block_id.as_slice(), limit], |row| {
             let block_id: Vec<u8> = row.get(0)?;
             let home_document_id: Vec<u8> = row.get(1)?;
+            let batch_id: Option<Vec<u8>> = row.get(2)?;
+            let causal_peer_id: Option<Vec<u8>> = row.get(3)?;
+            let causal_counter: Option<i64> = row.get(4)?;
             Ok(PhysicalBlockHomeClaimRow {
                 block_id: decode_id_sql(&block_id)?,
                 home_document_id: decode_id_sql(&home_document_id)?,
+                batch_id: batch_id.as_deref().map(decode_id_sql).transpose()?,
+                causal_peer_id: causal_peer_id.as_deref().map(decode_id_sql).transpose()?,
+                causal_counter: causal_counter
+                    .map(|counter| u64::try_from(counter).map_err(sql_decode_error))
+                    .transpose()?,
             })
         })?;
         collect_read_rows(
             rows.map(|row| row.map_err(MaterializationError::from)),
-            |_| Ok(32),
+            |_| Ok(72),
         )
     }
 
@@ -5522,6 +5599,9 @@ mod tests {
             first.block_home_claims = vec![PhysicalBlockHomeClaim {
                 block_id,
                 home_document_id: first_home,
+                batch_id: Some(id(0x100)),
+                causal_peer_id: Some(id(0xb1)),
+                causal_counter: Some(1),
             }];
             apply_and_commit(&mut connection, &first, 1, digest(b"frontier-1"));
 
@@ -5529,6 +5609,9 @@ mod tests {
             second.block_home_claims = vec![PhysicalBlockHomeClaim {
                 block_id,
                 home_document_id: second_home,
+                batch_id: Some(id(0x101)),
+                causal_peer_id: Some(id(0xb2)),
+                causal_counter: Some(1),
             }];
             apply_and_commit(&mut connection, &second, 2, digest(b"frontier-2"));
             assert!(
@@ -5552,10 +5635,16 @@ mod tests {
                     PhysicalBlockHomeClaimRow {
                         block_id,
                         home_document_id: first_home,
+                        batch_id: Some(id(0x100)),
+                        causal_peer_id: Some(id(0xb1)),
+                        causal_counter: Some(1),
                     },
                     PhysicalBlockHomeClaimRow {
                         block_id,
                         home_document_id: second_home,
+                        batch_id: Some(id(0x101)),
+                        causal_peer_id: Some(id(0xb2)),
+                        causal_counter: Some(1),
                     },
                 ]
             );
@@ -5581,10 +5670,16 @@ mod tests {
                     PhysicalBlockHomeClaim {
                         block_id,
                         home_document_id: id(0x9191),
+                        batch_id: None,
+                        causal_peer_id: None,
+                        causal_counter: None,
                     },
                     PhysicalBlockHomeClaim {
                         block_id,
                         home_document_id: id(0xa1a1),
+                        batch_id: None,
+                        causal_peer_id: None,
+                        causal_counter: None,
                     },
                 ],
                 ..PhysicalTerminalMaterializationChunk::default()

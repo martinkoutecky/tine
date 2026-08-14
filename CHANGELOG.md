@@ -16,9 +16,10 @@ independently in `src/formats.rs` and summarized in
   read. Ambiguous source graphs are now application-visible input rather than
   a projection-construction failure or an arbitrary physical owner.
 - The same schema retains append-only block-ID/home-document claims derived
-  from accepted history. Deleting a live block no longer erases the evidence
-  needed to refuse or classify reuse of its identity under another document;
-  duplicate homes are exposed through a bounded canonical read.
+  from accepted history, including their accepted batch and optional causal
+  dot. Deleting a live block no longer erases the evidence needed to classify
+  sequential versus concurrent identity reuse; all candidates are exposed
+  through a bounded canonical read.
 - The former singular `block_by_logseq_uuid` API is replaced by
   `blocks_by_logseq_uuid(logseq_uuid, limit)`. Callers must classify ambiguity
   explicitly.
