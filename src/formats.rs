@@ -1256,7 +1256,7 @@ mod tests {
         assert_eq!(SCRATCH_SCHEMA_VERSION, 13);
         assert_eq!(SCRATCH_PAGE_SCHEMA_VERSION, 1);
         assert_eq!(SQLITE_APPLICATION_ID, 0x5449_4e45);
-        assert_eq!(SQLITE_SCHEMA_VERSION, 18);
+        assert_eq!(SQLITE_SCHEMA_VERSION, 19);
 
         assert_eq!(LOCAL_JOURNAL_SEGMENT_HEADER_BYTES, 136);
         assert_eq!(LOCAL_JOURNAL_FRONTIER_BYTES, 240);

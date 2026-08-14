@@ -7,6 +7,18 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-14
+
+### Changed
+
+- SQLite schema 19 preserves every block that claims the same external Logseq
+  UUID and exposes those claimants through one bounded, canonical multi-row
+  read. Ambiguous source graphs are now application-visible input rather than
+  a projection-construction failure or an arbitrary physical owner.
+- The former singular `block_by_logseq_uuid` API is replaced by
+  `blocks_by_logseq_uuid(logseq_uuid, limit)`. Callers must classify ambiguity
+  explicitly.
+
 ## [0.7.0] - 2026-08-14
 
 ### Changed

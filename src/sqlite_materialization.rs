@@ -398,8 +398,8 @@ pub const PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL: &str =
      ON page_portable_path_claims(portable_path_key, page_id)";
 pub const BLOCKS_PAGE_ORDER_INDEX_DDL: &str =
     "CREATE INDEX blocks_page_order_idx ON blocks(page_id, order_key, block_id)";
-pub const BLOCKS_LOGSEQ_UUID_INDEX_DDL: &str = "CREATE UNIQUE INDEX blocks_logseq_uuid_idx
-    ON blocks(logseq_uuid) WHERE logseq_uuid IS NOT NULL";
+pub const BLOCKS_LOGSEQ_UUID_INDEX_DDL: &str = "CREATE INDEX blocks_logseq_uuid_idx
+    ON blocks(logseq_uuid, block_id) WHERE logseq_uuid IS NOT NULL";
 pub const SEARCH_FTS_OWNERS_PAGE_INDEX_DDL: &str =
     "CREATE INDEX search_fts_owners_page_idx ON search_fts_owners(page_id, rowid)";
 pub const REFERENCES_TARGET_INDEX_DDL: &str = "CREATE INDEX references_target_idx
@@ -2810,31 +2810,30 @@ impl<'a> SqliteGraphProjectionRead<'a> {
         Ok(block)
     }
 
-    /// Point-locate the one accepted block that owns a public Logseq UUID.
-    /// The partial unique index makes ambiguity a construction error rather
-    /// than a read-time choice; semantic callers must still verify the exact
-    /// parser-owned page before exposing the candidate.
-    pub fn block_by_logseq_uuid(
+    /// Return every bounded block candidate that claims one public Logseq UUID.
+    ///
+    /// Duplicate claims are valid physical input. The disposable projection
+    /// must preserve them so the application can diagnose or deterministically
+    /// resolve the semantic ambiguity instead of letting SQLite select an
+    /// arbitrary owner.
+    pub fn blocks_by_logseq_uuid(
         &self,
         logseq_uuid: [u8; 16],
-    ) -> Result<Option<PhysicalBlockRow>, MaterializationError> {
-        let block = self
-            .connection
-            .query_row(
-                "SELECT block_id, page_id, home_document_id, parent_block_id,
-                        order_key, content, searchable_text, heading_level,
-                        collapsed, logseq_uuid, logseq_identity_origin
-                 FROM blocks WHERE logseq_uuid = ?1",
-                params![logseq_uuid.as_slice()],
-                block_row,
-            )
-            .optional()
-            .map_err(MaterializationError::from)?;
-        if let Some(row) = &block {
-            let mut budget = MaterializationReadBudget::default();
-            budget.add(block_row_output_bytes(row)?)?;
-        }
-        Ok(block)
+        limit: usize,
+    ) -> Result<Vec<PhysicalBlockRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT block_id, page_id, home_document_id, parent_block_id,
+                    order_key, content, searchable_text, heading_level,
+                    collapsed, logseq_uuid, logseq_identity_origin
+             FROM blocks WHERE logseq_uuid = ?1
+             ORDER BY block_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![logseq_uuid.as_slice(), limit], block_row)?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from)),
+            block_row_output_bytes,
+        )
     }
 
     pub fn pages_by_name(
@@ -4597,7 +4596,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_index_rebuild_rejects_rows_violating_normal_unique_index() {
+    fn terminal_index_rebuild_preserves_ambiguous_external_uuid_claims() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_schema(&connection, digest(b"empty")).unwrap();
         let transaction = connection.transaction().unwrap();
@@ -4628,13 +4627,23 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert!(finish_terminal_graph_projection_in_open_candidate(
+        finish_terminal_graph_projection_in_open_candidate(
             &transaction,
             &[],
             empty_terminal_stamp(),
         )
-        .is_err());
-        transaction.rollback().unwrap();
+        .unwrap();
+        let claimants = SqliteGraphProjectionRead::new(&transaction)
+            .blocks_by_logseq_uuid(id(30), 2)
+            .unwrap();
+        assert_eq!(
+            claimants
+                .into_iter()
+                .map(|row| row.block_id)
+                .collect::<Vec<_>>(),
+            [id(1), id(2)]
+        );
+        transaction.commit().unwrap();
         validate_schema(&connection).unwrap();
     }
 
@@ -4831,8 +4840,10 @@ mod tests {
             "block content"
         );
         assert_eq!(
-            read.block_by_logseq_uuid(logseq_uuid)
+            read.blocks_by_logseq_uuid(logseq_uuid, 2)
                 .unwrap()
+                .into_iter()
+                .next()
                 .unwrap()
                 .block_id,
             block_id
@@ -5376,7 +5387,7 @@ mod tests {
     }
 
     #[test]
-    fn logseq_uuid_index_rejects_duplicate_owners_atomically() {
+    fn logseq_uuid_index_preserves_duplicate_claimants_canonically() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_schema(&connection, digest(b"empty")).unwrap();
         let claimed = id(0xbeef);
@@ -5386,18 +5397,25 @@ mod tests {
         let mut second = page(102, "second");
         second.blocks[0].logseq_uuid = Some(claimed);
         second.blocks[0].logseq_identity_origin = Some(0);
-        let transaction = connection.transaction().unwrap();
-        assert!(apply_change(
-            &transaction,
+        let first_block = first.blocks[0].block_id;
+        let second_block = second.blocks[0].block_id;
+        apply_and_commit(
+            &mut connection,
             &change(0x1234, vec![first, second], Vec::new()),
             1,
-            digest(b"input"),
             digest(b"frontier"),
-        )
-        .is_err());
-        transaction.rollback().unwrap();
-        let read = SqliteMaterializedRead::new(&connection, 0, digest(b"empty")).unwrap();
-        assert!(read.block_by_logseq_uuid(claimed).unwrap().is_none());
+        );
+        let read = SqliteMaterializedRead::new(&connection, 1, digest(b"frontier")).unwrap();
+        let claimants = read.blocks_by_logseq_uuid(claimed, 2).unwrap();
+        assert_eq!(claimants.len(), 2);
+        assert_eq!(
+            claimants.iter().map(|row| row.block_id).collect::<Vec<_>>(),
+            [first_block, second_block]
+        );
+        assert!(matches!(
+            read.blocks_by_logseq_uuid(claimed, 0),
+            Err(MaterializationError::InvalidQuery(_))
+        ));
     }
 
     #[test]

@@ -701,6 +701,59 @@ mod tests {
     }
 
     #[test]
+    fn external_uuid_claimants_survive_reopen_replace_and_delete_without_an_owner() {
+        let path = std::env::temp_dir().join(format!(
+            "tine-storage-external-uuid-claims-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let claim = [0x5a; 16];
+        let with_claim = |page_id: u8, content: &str| {
+            let mut page = page(page_id, "TODO", content);
+            page.blocks[0].logseq_uuid = Some(claim);
+            page.blocks[0].logseq_identity_origin = Some(0);
+            page
+        };
+        let claimant_ids = |database: &PhysicalGraphProjectionDatabase| {
+            database
+                .read()
+                .blocks_by_logseq_uuid(claim, 3)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.block_id)
+                .collect::<Vec<_>>()
+        };
+
+        let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        database.initialize_schema().unwrap();
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: vec![with_claim(1, "first"), with_claim(2, "second")],
+                deletions: Vec::new(),
+                reference_postings: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(claimant_ids(&database), vec![[101; 16], [102; 16]]);
+        drop(database);
+
+        let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+        database.validate_schema().unwrap();
+        assert_eq!(claimant_ids(&database), vec![[101; 16], [102; 16]]);
+        database
+            .apply(&PhysicalGraphProjectionChange {
+                replacements: vec![page(1, "DONE", "claim removed")],
+                deletions: vec![[2; 16]],
+                reference_postings: Vec::new(),
+            })
+            .unwrap();
+        assert!(claimant_ids(&database).is_empty());
+        database.quick_check().unwrap();
+        drop(database);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn portable_path_candidates_replace_delete_reopen_and_preserve_conflicts() {
         let path = std::env::temp_dir().join(format!(
             "tine-storage-portable-paths-{}.sqlite",
