@@ -1170,7 +1170,7 @@ impl PatriciaIndexStore {
     pub fn construction_insert_many_bulk(
         &self,
         construction: &mut PatriciaIndexConstruction,
-        root: PatriciaIndexRoot,
+        mut root: PatriciaIndexRoot,
         records: &BTreeMap<Vec<u8>, Vec<u8>>,
     ) -> Result<PatriciaIndexRoot, PatriciaError> {
         if records.is_empty() {
@@ -1178,6 +1178,30 @@ impl PatriciaIndexStore {
         }
         for (key, value) in records {
             validate_record(key, value)?;
+        }
+        let record_limit = construction.bulk_record_limit().max(1);
+        if records.len() > record_limit {
+            // A complete sorted range may legitimately exceed one bounded
+            // construction sink (dense reverse-reference indices are the
+            // common case). Falling back to per-key insertion here turns a
+            // handful of packed publications into hundreds of thousands of
+            // loose immutable files, especially costly on Windows. Preserve
+            // canonical Patricia semantics by applying consecutive sorted
+            // ranges to the prior range's root. Each recursive call is within
+            // the same construction residency ceiling and retains the exact
+            // existing per-range capacity fallback.
+            let mut chunk = BTreeMap::new();
+            for (key, value) in records {
+                chunk.insert(key.clone(), value.clone());
+                if chunk.len() == record_limit {
+                    root = self.construction_insert_many_bulk(construction, root, &chunk)?;
+                    chunk.clear();
+                }
+            }
+            if !chunk.is_empty() {
+                root = self.construction_insert_many_bulk(construction, root, &chunk)?;
+            }
+            return Ok(root);
         }
         let minimum_record_refs_bytes = records
             .len()
@@ -5114,6 +5138,36 @@ mod tests {
             reachable_node_bytes(&legacy, [first_root, second_root, legacy_root]),
             "bulk construction must retain the exact legacy node bytes for every checkpoint"
         );
+
+        drop(bulk);
+        drop(legacy);
+        fs::remove_dir_all(bulk_path).unwrap();
+        fs::remove_dir_all(legacy_path).unwrap();
+    }
+
+    #[test]
+    fn construction_bulk_chunks_ranges_larger_than_one_resident_sink() {
+        let (legacy_path, legacy) = store("construction-bulk-chunked-legacy");
+        let (bulk_path, bulk) =
+            store_with_publisher("construction-bulk-chunked", PackedExactPublisher);
+        let mut construction = PatriciaIndexConstruction::default();
+        let record_count = construction.bulk_record_limit() + 1_024;
+        let records = bulk_differential_records(0, record_count, 77_000);
+        let expected = legacy
+            .insert_many(PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+
+        let root = bulk
+            .construction_insert_many_bulk(&mut construction, PatriciaIndexRoot::empty(), &records)
+            .unwrap();
+        assert_eq!(root, expected);
+        construction.set_live_roots([root]);
+        construction.checkpoint([root]);
+        let completed = bulk.finish_construction(&mut construction).unwrap();
+        assert_eq!(completed.stats().capacity_fallbacks, 0);
+        assert_eq!(completed.stats().loose_publication_calls, 0);
+        assert!(completed.stats().pack_publication_calls >= 2);
+        assert_eq!(all_records(&bulk, root), records);
 
         drop(bulk);
         drop(legacy);

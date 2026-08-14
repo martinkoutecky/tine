@@ -7,6 +7,16 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-14
+
+### Fixed
+
+- Private Patricia construction now divides a sorted update range larger than
+  one resident bulk sink into consecutive canonical bulk publications. Dense
+  reference indices no longer fall back to hundreds of thousands of loose
+  per-key immutable files merely because the complete range exceeds one
+  bounded construction buffer.
+
 ## [0.6.1] - 2026-08-13
 
 ### Added
