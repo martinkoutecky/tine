@@ -10,7 +10,12 @@
 //! authorities retain their frozen verifier only for reopening old histories;
 //! current records make a corruption-detection claim, not a secret-holder
 //! security claim. Filesystem and directory-sync guarantees remain
-//! platform/filesystem dependent.
+//! platform/filesystem dependent. Android app-private storage is a trusted
+//! single-application boundary: some physical devices reject Linux no-follow
+//! and renameat2 operations even though ordinary file access succeeds. On that
+//! platform enrollment uses ordinary opens/renames and then validates type,
+//! bounded authenticated bytes, and lifecycle state. It does not pretend those
+//! rejected kernel capabilities are a data-safety boundary.
 //! Windows authoritative handles reject reparse points after open; writable
 //! lease handles additionally deny delete/replacement sharing.
 //!
@@ -6960,6 +6965,11 @@ fn open_component(parent: &Dir, name: &str, create: bool) -> Result<Option<Dir>,
         }
         Err(error) => return Err(error.into()),
     }
+    #[cfg(target_os = "android")]
+    let directory = parent
+        .open_dir(name)
+        .map_err(|error| EnrollmentError::UnsafeNamespace(error.to_string()))?;
+    #[cfg(not(target_os = "android"))]
     let directory = open_dir_nofollow(parent, name)
         .map_err(|error| EnrollmentError::UnsafeNamespace(error.to_string()))?;
     #[cfg(all(unix, not(target_os = "android")))]
@@ -7675,9 +7685,14 @@ fn cap_metadata_is_authoritative_file(metadata: &cap_std::fs::Metadata) -> bool 
     )
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn open_regular_readonly(directory: &Dir, name: &str) -> std::io::Result<File> {
     openat_regular(directory, name, libc::O_RDONLY, 0)
+}
+
+#[cfg(target_os = "android")]
+fn open_regular_readonly(directory: &Dir, name: &str) -> std::io::Result<File> {
+    Ok(directory.open(name)?.into_std())
 }
 
 #[cfg(windows)]
@@ -7692,9 +7707,16 @@ fn open_regular_readonly(_directory: &Dir, _name: &str) -> std::io::Result<File>
     Err(unsupported_filesystem())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn open_regular_readwrite_create(directory: &Dir, name: &str) -> std::io::Result<File> {
     openat_regular(directory, name, libc::O_RDWR | libc::O_CREAT, 0o600)
+}
+
+#[cfg(target_os = "android")]
+fn open_regular_readwrite_create(directory: &Dir, name: &str) -> std::io::Result<File> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    Ok(directory.open_with(name, &options)?.into_std())
 }
 
 #[cfg(windows)]
@@ -7716,9 +7738,16 @@ fn open_regular_readwrite_create(_directory: &Dir, _name: &str) -> std::io::Resu
     Err(unsupported_filesystem())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn open_regular_readwrite_existing(directory: &Dir, name: &str) -> std::io::Result<File> {
     openat_regular(directory, name, libc::O_RDWR, 0)
+}
+
+#[cfg(target_os = "android")]
+fn open_regular_readwrite_existing(directory: &Dir, name: &str) -> std::io::Result<File> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).write(true);
+    Ok(directory.open_with(name, &options)?.into_std())
 }
 
 #[cfg(windows)]
@@ -7739,7 +7768,7 @@ fn open_regular_readwrite_existing(_directory: &Dir, _name: &str) -> std::io::Re
     Err(unsupported_filesystem())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn create_new_regular(directory: &Dir, name: &str) -> std::io::Result<File> {
     openat_regular(
         directory,
@@ -7747,6 +7776,13 @@ fn create_new_regular(directory: &Dir, name: &str) -> std::io::Result<File> {
         libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
         0o600,
     )
+}
+
+#[cfg(target_os = "android")]
+fn create_new_regular(directory: &Dir, name: &str) -> std::io::Result<File> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    Ok(directory.open_with(name, &options)?.into_std())
 }
 
 #[cfg(windows)]
@@ -7805,7 +7841,7 @@ fn unsupported_filesystem() -> std::io::Error {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()> {
     let from = CString::new(from)
         .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid temporary name"))?;
@@ -7831,6 +7867,34 @@ fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()
     }
 }
 
+#[cfg(target_os = "android")]
+fn rename_noreplace(directory: &Dir, from: &str, to: &str) -> std::io::Result<()> {
+    rename_android_enrollment_noreplace(directory, from, to)
+}
+
+#[cfg(target_os = "android")]
+fn rename_android_enrollment_noreplace(
+    directory: &Dir,
+    from: &str,
+    to: &str,
+) -> std::io::Result<()> {
+    match directory.symlink_metadata(to) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                ErrorKind::AlreadyExists,
+                "Android enrollment target already exists",
+            ))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    // Enrollment writers are serialized by Tine and live in app-private
+    // storage. Under the non-hostile local trust model there is no independent
+    // writer racing this check. The installed file is immediately reopened and
+    // its regular-file shape plus authenticated bytes are validated.
+    directory.rename(from, directory, to)
+}
+
 fn rename_enrollment_noreplace(
     directory: &Dir,
     from: &str,
@@ -7851,22 +7915,7 @@ fn rename_reconstructible_enrollment_noreplace(
     from: &str,
     to: &str,
 ) -> std::io::Result<()> {
-    match directory.symlink_metadata(to) {
-        Ok(_) => {
-            return Err(std::io::Error::new(
-                ErrorKind::AlreadyExists,
-                "reconstructible enrollment target already exists",
-            ))
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    // Both writers must hold the same private enrollment lease. Under the
-    // non-adversarial local trust boundary there is therefore no honest writer
-    // that can create `to` between the check and this ordinary Android rename.
-    // This avoids making pre-promotion activation depend on renameat2 support;
-    // exact bytes are reread before the enrollment can advance.
-    directory.rename(from, directory, to)
+    rename_android_enrollment_noreplace(directory, from, to)
 }
 
 #[cfg(not(target_os = "android"))]

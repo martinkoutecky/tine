@@ -16,14 +16,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android's app-private enrollment journal now uses the platform's ordinary
+  file and directory opens and rename while retaining regular-file/type checks,
+  bounded authenticated bytes, leases, and lifecycle validation. Some physical
+  devices reject Linux `O_NOFOLLOW` or `renameat2` capabilities despite allowing
+  the same private files to be created, read, and written; those capability
+  mismatches no longer make initial enrollment fail with `Permission denied`.
+  Externally writable graph and provider namespaces retain their separate
+  defensive rules.
+
 - Android managed-storage activation now treats the pre-enrollment reservation
   and initial `ShadowImport` enrollment as reconstructible until promotion.
   Their authority, first record, and head still use atomic publication, exact
   rereads, and all binding/lease/digest checks, but a physical device that
   rejects an app-private file or directory sync capability—or Linux's
   no-replace rename primitive—no longer fails after source capture. Every
-  ordinary I/O error and every later authoritative enrollment transition
-  remains strict.
+  ordinary I/O error and every later authoritative enrollment transition keeps
+  its exact authenticated state and durability requirements.
 
 - Android pre-enrollment reservation failures now name the exact file
   operation. Tine now publishes this still-reconstructible record with an exact
