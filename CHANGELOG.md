@@ -7,6 +7,17 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-14
+
+### Added
+
+- The certified managed-storage layout now names the content-addressed lazy
+  genesis archive and its manifest, commit, catalog-update, and segment files.
+  This is the physical publication vocabulary for Tine's new activation
+  format; authority and semantic validation remain owned by Tine core.
+
+## [0.6.3] - 2026-08-14
+
 ### Changed
 
 - Fresh terminal bootstrap now builds ordinary SQLite secondary indexes once

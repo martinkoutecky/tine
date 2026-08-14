@@ -12,7 +12,7 @@ is a review aid, not a second source of truth.
 | Engine scratch | run schema 13; page schema 1; 32 LSM levels; `engine-scratch-v2` layout | Scratch is reconstructible, but an interrupted run must either resume safely or be rejected and rebuilt. |
 | SQLite projection | application ID `0x54494e45`; schema 16 | SQLite is disposable. A mismatch must rebuild from authoritative history, never reinterpret rows under a new schema. |
 | Checkpoint fingerprints | 64 KiB edges; 16 KiB interior ranges; 1 MiB interior sampling interval | Stored and freshly computed fingerprints are comparable only with identical geometry. |
-| Managed-storage layout | Shared-provider, archive, projection, reconciliation, enrollment, bootstrap, migration, and source-capture path vocabulary frozen in `managed-layout-v1.txt` | The ownership moved from Tine core into `tine-storage` without changing any path. Future changes must preserve old readers/writers or carry an explicit migration/rebuild rule. |
+| Managed-storage layout | Shared-provider, archive, lazy-genesis, projection, reconciliation, enrollment, bootstrap, migration, and source-capture path vocabulary frozen in `managed-layout-v1.txt` | The lazy-genesis names are additive before 0.7 and old crates simply ignore them. Future changes must preserve old readers/writers or carry an explicit migration/rebuild rule. |
 
 Writer bounds are also part of compatibility because lowering them may strand
 already-written data. The exact released bounds are pinned by
