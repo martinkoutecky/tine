@@ -202,13 +202,6 @@ pub struct PhysicalGraphProjectionChange {
     /// Direct Files obtains them directly from the parser snapshot. They are
     /// disposable graph facts in both regimes, never write authority.
     pub reference_postings: Vec<PhysicalReferencePosting>,
-    /// Parser-derived page aliases owned by replacement pages.
-    ///
-    /// Like reference postings, aliases are disposable graph facts. Keeping
-    /// their replacement in the same page transaction prevents a Direct Files
-    /// projection from retaining an alias after the page which declared it was
-    /// changed or deleted.
-    pub aliases: Vec<PhysicalAliasDeclaration>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2095,6 +2088,7 @@ pub(crate) fn apply_graph_projection_rows(
 pub(crate) fn replace_graph_projection_reference_facts(
     transaction: &Connection,
     change: &PhysicalGraphProjectionChange,
+    aliases: &[PhysicalAliasDeclaration],
 ) -> Result<(), MaterializationError> {
     let replacement_ids = change
         .replacements
@@ -2110,8 +2104,7 @@ pub(crate) fn replace_graph_projection_reference_facts(
             "graph-projection reference postings must belong to replacement pages".into(),
         ));
     }
-    if change
-        .aliases
+    if aliases
         .iter()
         .any(|alias| !replacement_ids.contains(&alias.source_page_id))
     {
@@ -2132,7 +2125,7 @@ pub(crate) fn replace_graph_projection_reference_facts(
     for posting in &change.reference_postings {
         insert_reference_posting(transaction, posting)?;
     }
-    for alias in &change.aliases {
+    for alias in aliases {
         insert_alias_declaration(transaction, alias)?;
     }
     Ok(())

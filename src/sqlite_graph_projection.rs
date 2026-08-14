@@ -12,8 +12,8 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::sqlite_materialization::{
-    self, ApplyChangeInstrumentation, MaterializationError, PhysicalGraphProjectionChange,
-    SqliteGraphProjectionRead,
+    self, ApplyChangeInstrumentation, MaterializationError, PhysicalAliasDeclaration,
+    PhysicalGraphProjectionChange, SqliteGraphProjectionRead,
 };
 
 const PREPARED_STATEMENT_CACHE_STATEMENTS: usize = 64;
@@ -115,6 +115,17 @@ impl PhysicalGraphProjectionDatabase {
         &mut self,
         change: &PhysicalGraphProjectionChange,
     ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+        self.apply_with_aliases(change, &[])
+    }
+
+    /// Apply physical page/reference facts and parser-derived aliases in one
+    /// SQLite transaction. Existing callers that do not project aliases may
+    /// continue to use [`Self::apply`].
+    pub fn apply_with_aliases(
+        &mut self,
+        change: &PhysicalGraphProjectionChange,
+        aliases: &[PhysicalAliasDeclaration],
+    ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -123,7 +134,11 @@ impl PhysicalGraphProjectionDatabase {
             &change.replacements,
             &change.deletions,
         )?;
-        sqlite_materialization::replace_graph_projection_reference_facts(&transaction, change)?;
+        sqlite_materialization::replace_graph_projection_reference_facts(
+            &transaction,
+            change,
+            aliases,
+        )?;
         for page in &change.replacements {
             transaction.execute(
                 "DELETE FROM direct_source_revisions WHERE page_id = ?1",
@@ -147,6 +162,18 @@ impl PhysicalGraphProjectionDatabase {
         change: &PhysicalGraphProjectionChange,
         revisions: &[PhysicalGraphProjectionSourceRevision],
     ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
+        self.apply_with_source_revisions_and_aliases(change, revisions, &[])
+    }
+
+    /// Apply page/reference facts, exact source revisions, and aliases in one
+    /// transaction. This additive API keeps `PhysicalGraphProjectionChange`
+    /// source-compatible with tine-storage 0.6.0.
+    pub fn apply_with_source_revisions_and_aliases(
+        &mut self,
+        change: &PhysicalGraphProjectionChange,
+        revisions: &[PhysicalGraphProjectionSourceRevision],
+        aliases: &[PhysicalAliasDeclaration],
+    ) -> Result<ApplyChangeInstrumentation, MaterializationError> {
         let replacement_ids = change
             .replacements
             .iter()
@@ -168,7 +195,11 @@ impl PhysicalGraphProjectionDatabase {
             &change.replacements,
             &change.deletions,
         )?;
-        sqlite_materialization::replace_graph_projection_reference_facts(&transaction, change)?;
+        sqlite_materialization::replace_graph_projection_reference_facts(
+            &transaction,
+            change,
+            aliases,
+        )?;
         for page_id in &change.deletions {
             transaction.execute(
                 "DELETE FROM direct_source_revisions WHERE page_id = ?1",
@@ -351,7 +382,6 @@ mod tests {
                 replacements: vec![page(1, "TODO", "Needle first")],
                 deletions: Vec::new(),
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert_eq!(database.read().tasks(Some("TODO"), 10).unwrap().len(), 1);
@@ -362,7 +392,6 @@ mod tests {
                 replacements: vec![page(1, "DONE", "Needle changed")],
                 deletions: Vec::new(),
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert!(database.read().tasks(Some("TODO"), 10).unwrap().is_empty());
@@ -373,7 +402,6 @@ mod tests {
                 replacements: Vec::new(),
                 deletions: vec![[1; 16]],
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert!(database.read().tasks(None, 10).unwrap().is_empty());
@@ -411,7 +439,6 @@ mod tests {
                 replacements: vec![page(1, "TODO", "[[First Target]]")],
                 deletions: Vec::new(),
                 reference_postings: vec![posting("First Target", "first target")],
-                aliases: Vec::new(),
             })
             .unwrap();
         assert_eq!(
@@ -430,7 +457,6 @@ mod tests {
                 replacements: vec![page(1, "TODO", "[[Second Target]]")],
                 deletions: Vec::new(),
                 reference_postings: vec![posting("Second Target", "second target")],
-                aliases: Vec::new(),
             })
             .unwrap();
         assert_eq!(
@@ -451,7 +477,6 @@ mod tests {
                 replacements: vec![page(1, "TODO", "unchanged")],
                 deletions: Vec::new(),
                 reference_postings: vec![orphan],
-                aliases: Vec::new(),
             }),
             Err(MaterializationError::InvalidInput(_))
         ));
@@ -471,7 +496,6 @@ mod tests {
                 replacements: Vec::new(),
                 deletions: vec![[1; 16]],
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert!(database
@@ -513,12 +537,14 @@ mod tests {
         let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
         database.initialize_schema().unwrap();
         database
-            .apply(&PhysicalGraphProjectionChange {
-                replacements: vec![page(1, "TODO", "first")],
-                deletions: Vec::new(),
-                reference_postings: Vec::new(),
-                aliases: vec![alias("First Alias", "first alias")],
-            })
+            .apply_with_aliases(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "TODO", "first")],
+                    deletions: Vec::new(),
+                    reference_postings: Vec::new(),
+                },
+                &[alias("First Alias", "first alias")],
+            )
             .unwrap();
         assert_eq!(alias_names(&database), vec!["first alias"]);
         drop(database);
@@ -527,24 +553,28 @@ mod tests {
         database.validate_schema().unwrap();
         assert_eq!(alias_names(&database), vec!["first alias"]);
         database
-            .apply(&PhysicalGraphProjectionChange {
-                replacements: vec![page(1, "TODO", "second")],
-                deletions: Vec::new(),
-                reference_postings: Vec::new(),
-                aliases: vec![alias("Second Alias", "second alias")],
-            })
+            .apply_with_aliases(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "TODO", "second")],
+                    deletions: Vec::new(),
+                    reference_postings: Vec::new(),
+                },
+                &[alias("Second Alias", "second alias")],
+            )
             .unwrap();
         assert_eq!(alias_names(&database), vec!["second alias"]);
 
         let mut orphan = alias("Orphan Alias", "orphan alias");
         orphan.source_page_id = [2; 16];
         assert!(matches!(
-            database.apply(&PhysicalGraphProjectionChange {
-                replacements: vec![page(1, "TODO", "must roll back")],
-                deletions: Vec::new(),
-                reference_postings: Vec::new(),
-                aliases: vec![orphan],
-            }),
+            database.apply_with_aliases(
+                &PhysicalGraphProjectionChange {
+                    replacements: vec![page(1, "TODO", "must roll back")],
+                    deletions: Vec::new(),
+                    reference_postings: Vec::new(),
+                },
+                &[orphan],
+            ),
             Err(MaterializationError::InvalidInput(_))
         ));
         assert_eq!(alias_names(&database), vec!["second alias"]);
@@ -559,7 +589,6 @@ mod tests {
                 replacements: Vec::new(),
                 deletions: vec![[1; 16]],
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert!(alias_names(&database).is_empty());
@@ -600,7 +629,6 @@ mod tests {
                     replacements: vec![page(1, "TODO", "first"), page(2, "DONE", "second")],
                     deletions: Vec::new(),
                     reference_postings: Vec::new(),
-                    aliases: Vec::new(),
                 },
                 &initial_revisions,
             )
@@ -636,7 +664,6 @@ mod tests {
                     replacements: vec![page(1, "DONE", "first changed"), page(3, "TODO", "third")],
                     deletions: vec![[2; 16]],
                     reference_postings: Vec::new(),
-                    aliases: Vec::new(),
                 },
                 &changed,
             )
@@ -670,7 +697,6 @@ mod tests {
                     replacements: vec![page(1, "TODO", "first")],
                     deletions: Vec::new(),
                     reference_postings: Vec::new(),
-                    aliases: Vec::new(),
                 },
                 std::slice::from_ref(&revision),
             )
@@ -680,7 +706,6 @@ mod tests {
                 replacements: vec![page(1, "DONE", "untracked replacement")],
                 deletions: Vec::new(),
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
         assert_eq!(
@@ -713,7 +738,6 @@ mod tests {
                 replacements: vec![source.clone()],
                 deletions: Vec::new(),
                 reference_postings: Vec::new(),
-                aliases: Vec::new(),
             })
             .unwrap();
 
