@@ -561,6 +561,73 @@ pub const TASKS_DEADLINE_INDEX_DDL: &str =
     "CREATE INDEX tasks_deadline_idx ON tasks(deadline, scheduled, page_id, block_id)";
 pub const TASKS_PAGE_INDEX_DDL: &str = "CREATE INDEX tasks_page_idx ON tasks(page_id, block_id)";
 
+// A terminal bootstrap candidate is a brand-new, unpublished database. Its
+// ordinary secondary indexes can be built once after the complete row set is
+// present instead of being maintained for every inserted row. The primary-key
+// indexes and both FTS virtual tables remain live throughout construction.
+// This list must reproduce the exact normal schema before the terminal stamp
+// can advance.
+const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 25] = [
+    ("pages_name_idx", PAGES_NAME_INDEX_DDL),
+    ("pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
+    ("pages_path_idx", PAGES_PATH_INDEX_DDL),
+    ("blocks_page_order_idx", BLOCKS_PAGE_ORDER_INDEX_DDL),
+    ("blocks_logseq_uuid_idx", BLOCKS_LOGSEQ_UUID_INDEX_DDL),
+    (
+        "search_fts_owners_page_idx",
+        SEARCH_FTS_OWNERS_PAGE_INDEX_DDL,
+    ),
+    ("references_target_idx", REFERENCES_TARGET_INDEX_DDL),
+    ("references_source_idx", REFERENCES_SOURCE_INDEX_DDL),
+    (
+        "reference_source_coverage_source_idx",
+        REFERENCE_SOURCE_COVERAGE_SOURCE_INDEX_DDL,
+    ),
+    (
+        "reference_postings_source_idx",
+        REFERENCE_POSTINGS_SOURCE_INDEX_DDL,
+    ),
+    (
+        "reference_postings_normalized_name_idx",
+        REFERENCE_POSTINGS_NORMALIZED_NAME_INDEX_DDL,
+    ),
+    (
+        "reference_postings_raw_uuid_idx",
+        REFERENCE_POSTINGS_RAW_UUID_INDEX_DDL,
+    ),
+    (
+        "reference_name_bindings_raw_name_idx",
+        REFERENCE_NAME_BINDINGS_RAW_NAME_INDEX_DDL,
+    ),
+    (
+        "reference_name_bindings_resolved_page_idx",
+        REFERENCE_NAME_BINDINGS_RESOLVED_PAGE_INDEX_DDL,
+    ),
+    (
+        "reference_uuid_bindings_raw_uuid_idx",
+        REFERENCE_UUID_BINDINGS_RAW_UUID_INDEX_DDL,
+    ),
+    (
+        "reference_uuid_bindings_resolved_block_idx",
+        REFERENCE_UUID_BINDINGS_RESOLVED_BLOCK_INDEX_DDL,
+    ),
+    (
+        "reference_alias_declarations_source_idx",
+        REFERENCE_ALIAS_DECLARATIONS_SOURCE_INDEX_DDL,
+    ),
+    (
+        "reference_alias_bindings_normalized_alias_idx",
+        REFERENCE_ALIAS_BINDINGS_NORMALIZED_ALIAS_INDEX_DDL,
+    ),
+    ("properties_lookup_idx", PROPERTIES_LOOKUP_INDEX_DDL),
+    ("properties_page_idx", PROPERTIES_PAGE_INDEX_DDL),
+    ("tags_lookup_idx", TAGS_LOOKUP_INDEX_DDL),
+    ("tags_page_idx", TAGS_PAGE_INDEX_DDL),
+    ("tasks_marker_idx", TASKS_MARKER_INDEX_DDL),
+    ("tasks_deadline_idx", TASKS_DEADLINE_INDEX_DDL),
+    ("tasks_page_idx", TASKS_PAGE_INDEX_DDL),
+];
+
 const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 15] = [
     (
         "materialization_stamp",
@@ -1453,6 +1520,9 @@ pub(crate) fn begin_terminal_construction_in_open_candidate(
             "terminal construction requires an unstamped candidate".into(),
         ));
     }
+    for (name, _) in TERMINAL_DEFERRED_INDEXES {
+        transaction.execute(&format!("DROP INDEX {name}"), [])?;
+    }
     Ok(())
 }
 
@@ -1543,6 +1613,9 @@ pub(crate) fn finish_terminal_construction_in_open_candidate(
             "terminal SQLite reference source coverage {coverage_count} differs from authenticated catalog source count {}",
             stamp.source_count,
         )));
+    }
+    for (_, ddl) in TERMINAL_DEFERRED_INDEXES {
+        transaction.execute(ddl, [])?;
     }
     transaction.execute(
         "UPDATE materialization_stamp
@@ -4858,6 +4931,110 @@ mod tests {
             row_digest(connection).unwrap(),
             row_digest_legacy(connection).unwrap()
         );
+    }
+
+    fn terminal_deferred_index_count(connection: &Connection) -> i64 {
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'index' AND name IN (
+                     SELECT value FROM json_each(?1)
+                 )",
+                params![serde_json::to_string(
+                    &TERMINAL_DEFERRED_INDEXES
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                )
+                .unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn empty_terminal_stamp() -> PhysicalTerminalCatalogStamp {
+        PhysicalTerminalCatalogStamp {
+            acceptance_sequence: 1,
+            frontier_root_digest: digest(b"terminal-frontier"),
+            catalog_root: b"terminal-catalog".to_vec(),
+            catalog_root_digest: digest(b"terminal-catalog"),
+            coverage_digest: digest(b"terminal-coverage"),
+            extractor_dependency_stamp_digest: digest(b"terminal-extractor"),
+            source_count: 0,
+        }
+    }
+
+    #[test]
+    fn terminal_construction_defers_and_transactionally_restores_secondary_indexes() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        assert_eq!(terminal_deferred_index_count(&connection), 25);
+
+        {
+            let transaction = connection.transaction().unwrap();
+            begin_terminal_construction_in_open_candidate(&transaction).unwrap();
+            assert_eq!(terminal_deferred_index_count(&transaction), 0);
+            transaction.rollback().unwrap();
+        }
+        assert_eq!(terminal_deferred_index_count(&connection), 25);
+        validate_schema(&connection).unwrap();
+
+        {
+            let transaction = connection.transaction().unwrap();
+            begin_terminal_construction_in_open_candidate(&transaction).unwrap();
+            finish_terminal_construction_in_open_candidate(
+                &transaction,
+                &[],
+                &empty_terminal_stamp(),
+            )
+            .unwrap();
+            assert_eq!(terminal_deferred_index_count(&transaction), 25);
+            validate_schema(&transaction).unwrap();
+            transaction.commit().unwrap();
+        }
+        validate_schema(&connection).unwrap();
+    }
+
+    #[test]
+    fn terminal_index_rebuild_rejects_rows_violating_normal_unique_index() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_schema(&connection, digest(b"empty")).unwrap();
+        let transaction = connection.transaction().unwrap();
+        begin_terminal_construction_in_open_candidate(&transaction).unwrap();
+        transaction
+            .execute(
+                "INSERT INTO pages (
+                     page_id, home_document_id, name, name_key, path, text_kind,
+                     preamble, searchable_text
+                 ) VALUES (?1, ?2, 'Page', 'page', 'pages/page.md', 0, NULL, '')",
+                params![id(10).as_slice(), id(20).as_slice()],
+            )
+            .unwrap();
+        for value in [1_u128, 2] {
+            transaction
+                .execute(
+                    "INSERT INTO blocks (
+                         block_id, page_id, home_document_id, parent_block_id,
+                         order_key, content, searchable_text, heading_level,
+                         collapsed, logseq_uuid, logseq_identity_origin
+                     ) VALUES (?1, ?2, ?3, NULL, 'a', '', '', NULL, 0, ?4, 0)",
+                    params![
+                        id(value).as_slice(),
+                        id(10).as_slice(),
+                        id(20).as_slice(),
+                        id(30).as_slice(),
+                    ],
+                )
+                .unwrap();
+        }
+        assert!(finish_terminal_construction_in_open_candidate(
+            &transaction,
+            &[],
+            &empty_terminal_stamp(),
+        )
+        .is_err());
+        transaction.rollback().unwrap();
+        validate_schema(&connection).unwrap();
     }
 
     #[test]

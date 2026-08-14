@@ -7,6 +7,14 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+### Changed
+
+- Fresh terminal bootstrap now builds ordinary SQLite secondary indexes once
+  after inserting the complete row set. The exact normal schema is restored
+  inside the unpublished candidate transaction before its authenticated stamp
+  advances; Direct Files, ordinary managed updates, and reopen behavior are
+  unchanged.
+
 ## [0.6.2] - 2026-08-14
 
 ### Fixed
