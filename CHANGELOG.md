@@ -19,6 +19,9 @@ independently in `src/formats.rs` and summarized in
   path keys as a bounded, non-unique page-candidate index. Direct Files and
   managed storage can share path-identity lookup while preserving every
   case/Unicode-equivalent conflict for application-level diagnosis.
+- Page home-document ownership is now a bounded, non-unique candidate lookup,
+  so duplicate CRDT-home claims remain diagnosable without a handwritten
+  application index.
 
 ### Changed
 

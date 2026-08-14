@@ -726,13 +726,16 @@ mod tests {
                 .map(|row| row.page_id)
                 .collect::<Vec<_>>()
         };
+        let mut second_page = page(2, "DONE", "second");
+        second_page.home_document_id = [1; 16];
+        second_page.blocks[0].home_document_id = [1; 16];
 
         let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
         database.initialize_schema().unwrap();
         database
             .apply_with_source_revisions_aliases_and_portable_paths(
                 &PhysicalGraphProjectionChange {
-                    replacements: vec![page(1, "TODO", "first"), page(2, "DONE", "second")],
+                    replacements: vec![page(1, "TODO", "first"), second_page],
                     deletions: Vec::new(),
                     reference_postings: Vec::new(),
                 },
@@ -742,6 +745,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ids(&database, shared_key), vec![[1; 16], [2; 16]]);
+        assert_eq!(
+            database
+                .read()
+                .pages_by_home_document_id([1; 16], 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.page_id)
+                .collect::<Vec<_>>(),
+            vec![[1; 16], [2; 16]]
+        );
         drop(database);
 
         let mut database = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
@@ -799,6 +812,16 @@ mod tests {
             )
             .unwrap();
         assert!(ids(&database, shared_key).is_empty());
+        assert_eq!(
+            database
+                .read()
+                .pages_by_home_document_id([1; 16], 10)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.page_id)
+                .collect::<Vec<_>>(),
+            vec![[1; 16]]
+        );
         database.quick_check().unwrap();
         drop(database);
 

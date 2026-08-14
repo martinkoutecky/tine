@@ -145,12 +145,13 @@ const EXPECTED_TABLES: [&str; 34] = [
     "tags",
     "tasks",
 ];
-const EXPECTED_INDEXES: [&str; 28] = [
+const EXPECTED_INDEXES: [&str; 29] = [
     "applied_batches_acceptance_sequence_uq",
     "applied_batches_batch_id_uq",
     "blocks_logseq_uuid_idx",
     "blocks_page_order_idx",
     "page_portable_path_claims_key_idx",
+    "pages_home_document_id_idx",
     "pages_name_idx",
     "pages_name_key_idx",
     "pages_path_idx",

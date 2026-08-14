@@ -525,6 +525,8 @@ pub const PAGES_NAME_INDEX_DDL: &str = "CREATE INDEX pages_name_idx ON pages(nam
 pub const PAGES_NAME_KEY_INDEX_DDL: &str =
     "CREATE INDEX pages_name_key_idx ON pages(name_key, page_id)";
 pub const PAGES_PATH_INDEX_DDL: &str = "CREATE INDEX pages_path_idx ON pages(path, page_id)";
+pub const PAGES_HOME_DOCUMENT_ID_INDEX_DDL: &str =
+    "CREATE INDEX pages_home_document_id_idx ON pages(home_document_id, page_id)";
 pub const PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL: &str =
     "CREATE INDEX page_portable_path_claims_key_idx
      ON page_portable_path_claims(portable_path_key, page_id)";
@@ -587,10 +589,14 @@ pub const TASKS_PAGE_INDEX_DDL: &str = "CREATE INDEX tasks_page_idx ON tasks(pag
 // indexes and both FTS virtual tables remain live throughout construction.
 // This list must reproduce the exact normal schema before the terminal stamp
 // can advance.
-const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 26] = [
+const TERMINAL_DEFERRED_INDEXES: [(&str, &str); 27] = [
     ("pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("pages_path_idx", PAGES_PATH_INDEX_DDL),
+    (
+        "pages_home_document_id_idx",
+        PAGES_HOME_DOCUMENT_ID_INDEX_DDL,
+    ),
     (
         "page_portable_path_claims_key_idx",
         PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL,
@@ -815,7 +821,7 @@ const MATERIALIZATION_TABLE_COLUMNS: [(&str, &[&str]); 16] = [
     ),
 ];
 
-const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 43] = [
+const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 44] = [
     ("table", "materialization_stamp", MATERIALIZATION_STAMP_DDL),
     (
         "table",
@@ -865,6 +871,11 @@ const MATERIALIZATION_SCHEMA_OBJECTS: [(&str, &str, &str); 43] = [
     ("index", "pages_name_idx", PAGES_NAME_INDEX_DDL),
     ("index", "pages_name_key_idx", PAGES_NAME_KEY_INDEX_DDL),
     ("index", "pages_path_idx", PAGES_PATH_INDEX_DDL),
+    (
+        "index",
+        "pages_home_document_id_idx",
+        PAGES_HOME_DOCUMENT_ID_INDEX_DDL,
+    ),
     (
         "index",
         "page_portable_path_claims_key_idx",
@@ -998,6 +1009,7 @@ pub(crate) fn initialize_graph_projection_schema(
          {PAGES_NAME_INDEX_DDL};
          {PAGES_NAME_KEY_INDEX_DDL};
          {PAGES_PATH_INDEX_DDL};
+         {PAGES_HOME_DOCUMENT_ID_INDEX_DDL};
          {PAGE_PORTABLE_PATH_CLAIMS_KEY_INDEX_DDL};
          {BLOCKS_PAGE_ORDER_INDEX_DDL};
          {BLOCKS_LOGSEQ_UUID_INDEX_DDL};
@@ -3288,6 +3300,44 @@ impl<'a> SqliteGraphProjectionRead<'a> {
             budget.add(page_row_output_bytes(row)?)?;
         }
         Ok(page)
+    }
+
+    /// Return bounded candidates that claim one CRDT home document. Multiple
+    /// rows are preserved so the semantic owner can diagnose a duplicate-home
+    /// graph instead of the physical layer choosing one page.
+    pub fn pages_by_home_document_id(
+        &self,
+        home_document_id: [u8; 16],
+        limit: usize,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        self.pages_by_home_document_id_with_header_validation(
+            home_document_id,
+            limit,
+            allow_any_page_header,
+        )
+    }
+
+    pub fn pages_by_home_document_id_with_header_validation(
+        &self,
+        home_document_id: [u8; 16],
+        limit: usize,
+        mut validate_header: impl FnMut(&str, i64) -> Result<(), MaterializationError>,
+    ) -> Result<Vec<PhysicalPageRow>, MaterializationError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT page_id, home_document_id, name, name_key, path,
+                    text_kind, preamble, searchable_text
+             FROM pages
+             WHERE home_document_id = ?1
+             ORDER BY page_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![home_document_id.as_slice(), limit], |row| {
+            page_row_with_header_validation(row, &mut validate_header)
+        })?;
+        collect_read_rows(
+            rows.map(|row| row.map_err(MaterializationError::from).and_then(|row| row)),
+            page_row_output_bytes,
+        )
     }
 
     pub fn block(
