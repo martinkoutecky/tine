@@ -16,6 +16,12 @@ independently in `src/formats.rs` and summarized in
   transaction. These are disposable current-state facts and no longer require
   clients to manufacture a second authenticated reference-catalog authority.
 
+### Fixed
+
+- Ordinary parser-derived page replacements now refresh the affected alias
+  candidate bindings in the same transaction as their declarations. Alias
+  navigation no longer waits for a terminal rebuild after an edit.
+
 ## [0.6.4] - 2026-08-14
 
 ### Added

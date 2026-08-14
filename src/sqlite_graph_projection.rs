@@ -975,6 +975,7 @@ mod tests {
             [
                 "reference_postings",
                 "reference_alias_declarations",
+                "reference_alias_bindings",
                 "page_portable_path_claims",
             ]
             .map(|table| {
@@ -989,7 +990,7 @@ mod tests {
             derived_counts(&standalone.connection),
             derived_counts(&managed)
         );
-        assert_eq!(derived_counts(&managed), [1, 1, 1]);
+        assert_eq!(derived_counts(&managed), [1, 1, 1, 1]);
 
         drop(standalone);
         for suffix in ["", "-wal", "-shm"] {

@@ -2343,7 +2343,28 @@ pub(crate) fn replace_graph_projection_reference_facts(
             "graph-projection aliases must belong to replacement pages".into(),
         ));
     }
-    for page_id in replacement_ids.iter().chain(change.deletions.iter()) {
+    let affected_pages = replacement_ids
+        .iter()
+        .chain(change.deletions.iter())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut affected_aliases = aliases
+        .iter()
+        .map(|alias| alias.normalized_alias.clone())
+        .collect::<BTreeSet<_>>();
+    for page_id in &affected_pages {
+        let mut statement = transaction.prepare_cached(
+            "SELECT DISTINCT normalized_alias
+             FROM reference_alias_declarations
+             WHERE source_page_id = ?1",
+        )?;
+        let rows =
+            statement.query_map(params![page_id.as_slice()], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            affected_aliases.insert(row?);
+        }
+    }
+    for page_id in &affected_pages {
         transaction.execute(
             "DELETE FROM reference_postings WHERE source_page_id = ?1",
             params![page_id.as_slice()],
@@ -2358,6 +2379,43 @@ pub(crate) fn replace_graph_projection_reference_facts(
     }
     for alias in aliases {
         insert_alias_declaration(transaction, alias)?;
+    }
+    for alias in affected_aliases {
+        transaction.execute(
+            "DELETE FROM reference_alias_bindings WHERE normalized_alias = ?1",
+            params![&alias],
+        )?;
+        let candidates = {
+            let mut statement = transaction.prepare_cached(
+                "SELECT DISTINCT source_page_id
+                 FROM reference_alias_declarations
+                 WHERE normalized_alias = ?1
+                 ORDER BY source_page_id",
+            )?;
+            let rows = statement.query_map(params![&alias], |row| row.get::<_, Vec<u8>>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (ordinal, page_id) in candidates.into_iter().enumerate() {
+            if page_id.len() != 16 {
+                return Err(MaterializationError::Corrupt(
+                    "reference alias declaration page ID is malformed".into(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO reference_alias_bindings (
+                     normalized_alias, candidate_ordinal, resolved_page_id
+                 ) VALUES (?1, ?2, ?3)",
+                params![
+                    &alias,
+                    i64::try_from(ordinal).map_err(|_| {
+                        MaterializationError::InvalidInput(
+                            "reference alias candidate ordinal overflowed".into(),
+                        )
+                    })?,
+                    page_id,
+                ],
+            )?;
+        }
     }
     Ok(())
 }
