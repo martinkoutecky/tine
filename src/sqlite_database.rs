@@ -311,6 +311,20 @@ impl PhysicalSqliteDatabase {
         sqlite_frontier::seed_genesis_frontier_candidate(&self.connection, genesis_root, documents)
     }
 
+    /// Install a sequence-zero lazy-genesis frontier whose immutable baseline
+    /// documents live outside SQLite.
+    ///
+    /// SQLite retains only later accepted-document overlays, so the physical
+    /// document map is empty even though the logical frontier's document count
+    /// is nonzero.
+    pub fn seed_lazy_genesis_frontier(
+        &mut self,
+        genesis_root: &PhysicalFrontierRoot,
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_frontier::seed_genesis_frontier_candidate(&self.connection, genesis_root, &[])
+    }
+
     /// Commit the fully proved candidate once. Under this connection's
     /// `synchronous=FULL` contract, the commit is the candidate apply-path
     /// durability barrier; WAL checkpoint and atomic publication remain later

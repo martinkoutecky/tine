@@ -1385,14 +1385,10 @@ pub fn frontier_document(
             key,
             digest: root.document_map_root_digest,
         }),
-        None => {
-            if root.document_count != 0 {
-                return Err(FrontierError::Corrupt(
-                    "empty frontier map root is malformed".into(),
-                ));
-            }
-            None
-        }
+        // Lazy genesis authenticates baseline dependencies in the immutable
+        // pack. SQLite contains only the later mutable overlay, so the map may
+        // be empty while the logical document count is nonzero.
+        None => None,
     };
     let mut depth = 0;
     while let Some(link) = current {
@@ -1451,11 +1447,8 @@ pub fn read_frontier_documents(
         }
     }
     documents.sort_unstable_by_key(|document| document.document_id);
-    if documents.len() as u64 != root.document_count {
-        return Err(FrontierError::Corrupt(
-            "authenticated frontier document count is stale".into(),
-        ));
-    }
+    // This is the authenticated SQLite overlay. Its row count equals the
+    // logical total only for a frontier without an external genesis baseline.
     Ok(documents)
 }
 
@@ -1782,6 +1775,16 @@ pub fn seed_genesis_frontier_candidate(
             genesis_root.digest().as_bytes().as_slice(),
         ],
     )?;
+    if genesis_root.document_map_root_key.is_none()
+        && genesis_root.document_map_root_digest == empty_map
+    {
+        if !documents.is_empty() {
+            return Err(FrontierError::InvalidInput(
+                "lazy genesis stores no baseline documents in the SQLite overlay".into(),
+            ));
+        }
+        return Ok(());
+    }
     seed_terminal_frontier_documents_candidate(connection, genesis_root, documents)
 }
 
@@ -2248,8 +2251,7 @@ fn insert_event(
 
 fn validate_root_shape(root: &PhysicalFrontierRoot) -> Result<(), FrontierError> {
     let empty_digest = ContentDigest::of(b"tine/oplog/authenticated-map/v1/empty");
-    if (root.document_count == 0) != root.document_map_root_key.is_none()
-        || (root.document_map_root_key.is_none() && root.document_map_root_digest != empty_digest)
+    if (root.document_map_root_key.is_none() && root.document_map_root_digest != empty_digest)
         || (root.acceptance_sequence == 0) != root.batch_map_root_key.is_none()
         || (root.batch_map_root_key.is_none() && root.batch_map_root_digest != empty_digest)
     {
@@ -2615,8 +2617,9 @@ fn apply_in_open_transaction(
         let (document_key, document_digest) = document_root
             .map(|root| (Some(root.key), root.digest))
             .unwrap_or((None, current_root.document_map_root_digest));
-        if batch.post_frontier_root.document_count
-            != current_root.document_count.saturating_add(new_documents)
+        if batch.post_frontier_root.document_count < current_root.document_count
+            || batch.post_frontier_root.document_count
+                > current_root.document_count.saturating_add(new_documents)
             || batch.post_frontier_root.document_map_root_key != document_key
             || batch.post_frontier_root.document_map_root_digest != document_digest
         {
@@ -3272,21 +3275,15 @@ mod tests {
     }
 
     #[test]
-    fn sequence_zero_genesis_seeds_frontier_without_fabricated_batches() {
-        let documents = [7_u128, 11, 19]
-            .into_iter()
-            .map(|value| PhysicalFrontierDocument {
-                document_id: id(value),
-                canonical_bytes: format!("genesis-document-{value}").into_bytes(),
-            })
-            .collect::<Vec<_>>();
-        let genesis = root(0, &documents, &[]);
+    fn sequence_zero_genesis_seeds_overlay_without_fabricated_batches() {
+        let mut genesis = root(0, &[], &[]);
+        genesis.document_count = 3;
+        genesis.canonical_bytes = b"synthetic lazy genesis with three pack documents".to_vec();
+        genesis.state_digest = ContentDigest::of(b"lazy genesis state");
         let (database, mut physical, _empty) = initialized_facade();
         physical.begin_candidate_build().unwrap();
         physical.begin_terminal_bootstrap_construction().unwrap();
-        physical
-            .seed_genesis_frontier(&genesis, &documents)
-            .unwrap();
+        physical.seed_lazy_genesis_frontier(&genesis).unwrap();
         physical
             .finish_terminal_graph_projection_construction(
                 &[],
@@ -3306,10 +3303,10 @@ mod tests {
                 applied_batch_count: 0,
             }
         );
-        assert_eq!(
-            physical.read_frontier_documents(&genesis).unwrap(),
-            documents
-        );
+        assert!(physical
+            .read_frontier_documents(&genesis)
+            .unwrap()
+            .is_empty());
         assert!(physical.load_all_batches().unwrap().is_empty());
         assert_eq!(
             physical
@@ -3318,14 +3315,39 @@ mod tests {
                 .acceptance_sequence(),
             0
         );
+        let changed_baseline_document = PhysicalFrontierDocument {
+            document_id: id(11),
+            canonical_bytes: b"changed baseline document".to_vec(),
+        };
+        let (mut first, _) = request(
+            &genesis,
+            1,
+            None,
+            vec![changed_baseline_document.clone()],
+            &[],
+            false,
+        );
+        first.batch.post_frontier_root.document_count = 3;
+        physical.apply(&genesis, &first).unwrap();
+        assert_eq!(
+            physical
+                .read_frontier_documents(&first.batch.post_frontier_root)
+                .unwrap(),
+            vec![changed_baseline_document.clone()]
+        );
         drop(physical);
 
         let reopened = PhysicalSqliteDatabase::open_read_only(&database.path).unwrap();
-        assert_eq!(reopened.read_frontier().unwrap().digest, genesis.digest());
-        assert!(reopened.load_all_batches().unwrap().is_empty());
         assert_eq!(
-            reopened.read_frontier_documents(&genesis).unwrap(),
-            documents
+            reopened.read_frontier().unwrap().digest,
+            first.batch.post_frontier_root.digest()
+        );
+        assert_eq!(reopened.load_all_batches().unwrap().len(), 1);
+        assert_eq!(
+            reopened
+                .read_frontier_documents(&first.batch.post_frontier_root)
+                .unwrap(),
+            vec![changed_baseline_document]
         );
     }
 

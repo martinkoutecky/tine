@@ -7,6 +7,16 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-14
+
+### Added
+
+- SQLite frontiers now support an immutable lazy-genesis baseline: baseline
+  dependencies remain in the external pack while SQLite stores only later
+  accepted-document overlays. Sequence-zero installation and the first edit of
+  an existing baseline document therefore require neither copied baseline rows
+  nor a fabricated accepted batch.
+
 ## [0.8.1] - 2026-08-14
 
 ### Added
@@ -249,7 +259,8 @@ independently in `src/formats.rs` and summarized in
 - Generated public-API inventory and a production/test-support boundary gate.
 - Machine-readable persistent-format manifest.
 
-[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine-storage/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/martinkoutecky/tine-storage/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/martinkoutecky/tine-storage/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/martinkoutecky/tine-storage/compare/v0.6.5...v0.7.0
