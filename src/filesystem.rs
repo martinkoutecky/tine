@@ -1063,6 +1063,33 @@ pub fn publish_immutable_exact(
     filename: &str,
     bytes: &[u8],
 ) -> Result<(), FilesystemError> {
+    publish_immutable_exact_impl(dir, filename, bytes, false)
+}
+
+/// Publish exact immutable bytes while the caller holds the sole writer lease
+/// for this private namespace.
+///
+/// On Android, some app-private filesystems permit ordinary atomic renames but
+/// deny the hard-link operation used by the portable no-replace protocol. A
+/// caller that owns the namespace's single-writer lease may therefore fall
+/// back to an ordinary same-directory atomic rename after proving the target
+/// name is absent. Shared/provider namespaces must continue to use
+/// [`publish_immutable_exact`], because another process may legitimately race
+/// their publication.
+pub fn publish_immutable_exact_single_writer(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<(), FilesystemError> {
+    publish_immutable_exact_impl(dir, filename, bytes, true)
+}
+
+fn publish_immutable_exact_impl(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+    allow_android_single_writer_install: bool,
+) -> Result<(), FilesystemError> {
     // Windows clones, retains, and validates the exact directory capability
     // before inserting an immutable target name. Win32 exposes no documented
     // directory-entry flush, so that validated state explicitly records the
@@ -1077,7 +1104,12 @@ pub fn publish_immutable_exact(
         temp.write_all(bytes)?;
         temp.sync_all()?;
         drop(temp);
-        match rename_noreplace(dir, &temp_name, filename) {
+        match install_immutable_name(
+            dir,
+            &temp_name,
+            filename,
+            allow_android_single_writer_install,
+        ) {
             // A post-insertion sync error can leave the correct immutable
             // target present. Retrying verifies bytes and retries the barrier.
             Ok(()) => {
@@ -1104,6 +1136,22 @@ pub fn publish_immutable_exact(
     #[cfg(test)]
     note_exact_durability_barrier();
     Ok(())
+}
+
+fn install_immutable_name(
+    dir: &Dir,
+    from: &str,
+    to: &str,
+    allow_android_single_writer_install: bool,
+) -> io::Result<()> {
+    let result = rename_noreplace(dir, from, to);
+    #[cfg(target_os = "android")]
+    if allow_android_single_writer_install {
+        return finish_android_single_writer_install(dir, from, to, result);
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = allow_android_single_writer_install;
+    result
 }
 
 #[cfg(target_os = "android")]
@@ -1581,10 +1629,13 @@ fn flush_filesystem(archive: &Dir) -> io::Result<()> {
 }
 
 #[cfg(any(target_os = "android", all(test, unix)))]
-const fn android_durability_capability_refusal(kind: ErrorKind) -> bool {
+fn android_durability_capability_refusal(error: &io::Error) -> bool {
     matches!(
-        kind,
+        error.kind(),
         ErrorKind::PermissionDenied | ErrorKind::Unsupported | ErrorKind::InvalidInput
+    ) || matches!(
+        error.raw_os_error(),
+        Some(libc::EACCES) | Some(libc::EPERM) | Some(libc::EINVAL) | Some(libc::EOPNOTSUPP)
     )
 }
 
@@ -1597,7 +1648,7 @@ fn finish_android_immutable_publication_sync(
 ) -> Result<(), FilesystemError> {
     match result {
         Ok(()) => Ok(()),
-        Err(error) if android_durability_capability_refusal(error.kind()) => {
+        Err(error) if android_durability_capability_refusal(&error) => {
             // Android kernels and provider-backed filesystems can allow the
             // exact create, file flush, and no-replace rename while refusing
             // directory fsync. Re-open the published immutable name, prove its
@@ -1613,13 +1664,41 @@ fn finish_android_immutable_publication_sync(
 }
 
 #[cfg(any(target_os = "android", all(test, unix)))]
+fn finish_android_single_writer_install(
+    dir: &Dir,
+    from: &str,
+    to: &str,
+    result: io::Result<()>,
+) -> io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Err(error),
+        Err(error) if android_durability_capability_refusal(&error) => {
+            // This namespace is app-private and the caller holds its sole
+            // writer lease. Android may nevertheless reject hard-link based
+            // no-replace installation. Never overwrite an observed target;
+            // once absence is proved, use the ordinary same-directory atomic
+            // rename that Direct Files and Android's storage stack support.
+            match dir.symlink_metadata(to) {
+                Ok(_) => Err(io::Error::from(ErrorKind::AlreadyExists)),
+                Err(target_error) if target_error.kind() == ErrorKind::NotFound => {
+                    dir.rename(from, dir, to)
+                }
+                Err(target_error) => Err(target_error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
 fn finish_android_exact_batch_flush(
     exact_publications: &[ExactBatchPublication],
     result: io::Result<()>,
 ) -> Result<(), FilesystemError> {
     match result {
         Ok(()) => return Ok(()),
-        Err(error) if android_durability_capability_refusal(error.kind()) => {}
+        Err(error) if android_durability_capability_refusal(&error) => {}
         Err(error) => return Err(error.into()),
     }
 
@@ -1637,7 +1716,7 @@ fn finish_android_exact_batch_flush(
         }
         match sync_dir_required(&publication.dir) {
             Ok(()) => {}
-            Err(error) if android_durability_capability_refusal(error.kind()) => {}
+            Err(error) if android_durability_capability_refusal(&error) => {}
             Err(error) => return Err(error.into()),
         }
     }
@@ -1808,6 +1887,37 @@ mod tests {
             ),
             Err(FilesystemError::Io(error)) if error.kind() == ErrorKind::WriteZero
         ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn android_single_writer_install_falls_back_without_overwriting() {
+        let fixture = TestDirectory::new("android-single-writer-install");
+        fixture.dir.write("temporary", b"exact bytes").unwrap();
+        finish_android_single_writer_install(
+            &fixture.dir,
+            "temporary",
+            "final",
+            Err(io::Error::from(ErrorKind::PermissionDenied)),
+        )
+        .unwrap();
+        assert_eq!(fixture.dir.read("final").unwrap(), b"exact bytes");
+        assert!(fixture.dir.symlink_metadata("temporary").is_err());
+
+        fixture
+            .dir
+            .write("other-temporary", b"replacement")
+            .unwrap();
+        let error = finish_android_single_writer_install(
+            &fixture.dir,
+            "other-temporary",
+            "final",
+            Err(io::Error::from(ErrorKind::PermissionDenied)),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fixture.dir.read("final").unwrap(), b"exact bytes");
+        assert_eq!(fixture.dir.read("other-temporary").unwrap(), b"replacement");
     }
 
     #[test]

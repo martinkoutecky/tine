@@ -7,6 +7,15 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-15
+
+### Fixed
+
+- Android app-private single-writer immutable publication now falls back from
+  a denied hard-link installation to an ordinary same-directory atomic rename
+  after proving the target name is absent. Shared/provider publication retains
+  the strict no-replace protocol.
+
 ## [0.8.4] - 2026-08-15
 
 ### Fixed
