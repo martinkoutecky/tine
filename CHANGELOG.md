@@ -7,6 +7,15 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-15
+
+### Added
+
+- Fresh SQLite rebuilds can now seed the exact sparse terminal overlay of a
+  lazy-genesis frontier. Immutable baseline documents remain outside SQLite,
+  while accepted history and changed-document frontier rows are reconstructed
+  without pretending that the sparse map contains every logical document.
+
 ## [0.8.2] - 2026-08-14
 
 ### Added

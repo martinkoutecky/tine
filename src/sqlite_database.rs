@@ -293,6 +293,22 @@ impl PhysicalSqliteDatabase {
         )
     }
 
+    /// Persist the exact sparse overlay for a terminal lazy-genesis frontier.
+    /// Immutable baseline documents remain outside SQLite, so the physical map
+    /// can contain fewer rows than the frontier's logical document count.
+    pub fn seed_sparse_terminal_frontier_documents(
+        &mut self,
+        expected_root: &PhysicalFrontierRoot,
+        documents: &[PhysicalFrontierDocument],
+    ) -> Result<(), FrontierError> {
+        self.require_candidate_build()?;
+        sqlite_frontier::seed_sparse_terminal_frontier_documents_candidate(
+            &self.connection,
+            expected_root,
+            documents,
+        )
+    }
+
     /// Install a sequence-zero genesis frontier and its exact document map in
     /// one unpublished candidate transaction.
     ///

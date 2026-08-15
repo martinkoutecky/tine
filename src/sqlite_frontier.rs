@@ -1603,6 +1603,41 @@ pub fn seed_terminal_frontier_documents_candidate(
     expected_root: &PhysicalFrontierRoot,
     documents: &[PhysicalFrontierDocument],
 ) -> Result<(), FrontierError> {
+    seed_terminal_frontier_documents_candidate_with_policy(
+        connection,
+        expected_root,
+        documents,
+        false,
+    )
+}
+
+/// Persist the exact sparse terminal overlay of a frontier whose immutable
+/// baseline documents live outside SQLite.
+///
+/// The authenticated map itself must still match exactly; only the equality
+/// between its row count and the logical frontier's total document count is
+/// relaxed. This is the rebuild counterpart of a lazy-genesis frontier, where
+/// `document_count` includes immutable baseline documents while the map stores
+/// only documents changed since that baseline.
+pub fn seed_sparse_terminal_frontier_documents_candidate(
+    connection: &Connection,
+    expected_root: &PhysicalFrontierRoot,
+    documents: &[PhysicalFrontierDocument],
+) -> Result<(), FrontierError> {
+    seed_terminal_frontier_documents_candidate_with_policy(
+        connection,
+        expected_root,
+        documents,
+        true,
+    )
+}
+
+fn seed_terminal_frontier_documents_candidate_with_policy(
+    connection: &Connection,
+    expected_root: &PhysicalFrontierRoot,
+    documents: &[PhysicalFrontierDocument],
+    sparse: bool,
+) -> Result<(), FrontierError> {
     if connection.is_autocommit() {
         return Err(FrontierError::InvalidInput(
             "terminal document frontier requires an active candidate-build transaction".into(),
@@ -1632,7 +1667,10 @@ pub fn seed_terminal_frontier_documents_candidate(
             "terminal frontier documents are not sorted unique".into(),
         ));
     }
-    if expected_root.document_count != documents.len() as u64 {
+    let stored_count = documents.len() as u64;
+    if (!sparse && expected_root.document_count != stored_count)
+        || (sparse && stored_count > expected_root.document_count)
+    {
         return Err(FrontierError::FrontierRegression);
     }
     if documents.is_empty() {
@@ -3328,6 +3366,7 @@ mod tests {
             false,
         );
         first.batch.post_frontier_root.document_count = 3;
+        let terminal_request = first.clone();
         physical.apply(&genesis, &first).unwrap();
         assert_eq!(
             physical
@@ -3346,6 +3385,34 @@ mod tests {
         assert_eq!(
             reopened
                 .read_frontier_documents(&first.batch.post_frontier_root)
+                .unwrap(),
+            vec![changed_baseline_document.clone()]
+        );
+
+        let (_rebuild_path, mut rebuilt, _empty) = initialized_facade();
+        rebuilt.begin_candidate_build().unwrap();
+        rebuilt.seed_lazy_genesis_frontier(&genesis).unwrap();
+        rebuilt
+            .apply_terminal_prefix_candidate(&genesis, &terminal_request)
+            .unwrap();
+        assert_eq!(
+            rebuilt.seed_terminal_frontier_documents(
+                &terminal_request.batch.post_frontier_root,
+                std::slice::from_ref(&changed_baseline_document),
+            ),
+            Err(FrontierError::FrontierRegression),
+            "the dense terminal API must not silently reinterpret a sparse frontier"
+        );
+        rebuilt
+            .seed_sparse_terminal_frontier_documents(
+                &terminal_request.batch.post_frontier_root,
+                std::slice::from_ref(&changed_baseline_document),
+            )
+            .unwrap();
+        rebuilt.finish_candidate_build().unwrap();
+        assert_eq!(
+            rebuilt
+                .read_frontier_documents(&terminal_request.batch.post_frontier_root)
                 .unwrap(),
             vec![changed_baseline_document]
         );
