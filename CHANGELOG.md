@@ -7,6 +7,15 @@ independently in `src/formats.rs` and summarized in
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-15
+
+### Fixed
+
+- Android immutable publications now retain exact byte verification and file
+  synchronization when the platform refuses directory synchronization. Real
+  I/O failures remain fatal, while managed-storage edits no longer enter a
+  retry loop after an otherwise successful no-replace manifest publication.
+
 ## [0.8.3] - 2026-08-15
 
 ### Added

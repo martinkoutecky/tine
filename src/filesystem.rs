@@ -1080,10 +1080,12 @@ pub fn publish_immutable_exact(
         match rename_noreplace(dir, &temp_name, filename) {
             // A post-insertion sync error can leave the correct immutable
             // target present. Retrying verifies bytes and retries the barrier.
-            Ok(()) => publication_sync.sync().map_err(FilesystemError::from),
+            Ok(()) => {
+                finish_immutable_publication_sync(dir, filename, bytes, publication_sync.sync())
+            }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
                 verify_existing(dir, filename, bytes)?;
-                publication_sync.sync().map_err(FilesystemError::from)
+                finish_immutable_publication_sync(dir, filename, bytes, publication_sync.sync())
             }
             Err(error) => Err(error.into()),
         }
@@ -1102,6 +1104,26 @@ pub fn publish_immutable_exact(
     #[cfg(test)]
     note_exact_durability_barrier();
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn finish_immutable_publication_sync(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+    result: io::Result<()>,
+) -> Result<(), FilesystemError> {
+    finish_android_immutable_publication_sync(dir, filename, bytes, result)
+}
+
+#[cfg(not(target_os = "android"))]
+fn finish_immutable_publication_sync(
+    _dir: &Dir,
+    _filename: &str,
+    _bytes: &[u8],
+    result: io::Result<()>,
+) -> Result<(), FilesystemError> {
+    result.map_err(FilesystemError::from)
 }
 
 /// One synced, unpublished exact immutable file.
@@ -1567,6 +1589,30 @@ const fn android_durability_capability_refusal(kind: ErrorKind) -> bool {
 }
 
 #[cfg(any(target_os = "android", all(test, unix)))]
+fn finish_android_immutable_publication_sync(
+    dir: &Dir,
+    filename: &str,
+    bytes: &[u8],
+    result: io::Result<()>,
+) -> Result<(), FilesystemError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if android_durability_capability_refusal(error.kind()) => {
+            // Android kernels and provider-backed filesystems can allow the
+            // exact create, file flush, and no-replace rename while refusing
+            // directory fsync. Re-open the published immutable name, prove its
+            // bytes, and flush the file again. This is the strongest available
+            // crash boundary on that platform; every ordinary I/O error stays
+            // fatal and non-Android targets retain required directory fsync.
+            verify_existing(dir, filename, bytes)?;
+            open_file_nofollow(dir, filename)?.sync_all()?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
 fn finish_android_exact_batch_flush(
     exact_publications: &[ExactBatchPublication],
     result: io::Result<()>,
@@ -1721,6 +1767,47 @@ mod tests {
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
         assert_persisted_entries(&fixture, &[("entry", b"exact bytes")]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn android_exact_publish_accepts_only_directory_sync_capability_refusal() {
+        let fixture = TestDirectory::new("android-exact-publish-fallback");
+        publish_immutable_exact(&fixture.dir, "entry", b"exact bytes").unwrap();
+
+        finish_android_immutable_publication_sync(
+            &fixture.dir,
+            "entry",
+            b"exact bytes",
+            Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                "simulated Android directory fsync refusal",
+            )),
+        )
+        .unwrap();
+        assert_persisted_entries(&fixture, &[("entry", b"exact bytes")]);
+
+        assert!(matches!(
+            finish_android_immutable_publication_sync(
+                &fixture.dir,
+                "entry",
+                b"different bytes",
+                Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "simulated Android directory fsync refusal",
+                )),
+            ),
+            Err(FilesystemError::ByteCollision)
+        ));
+        assert!(matches!(
+            finish_android_immutable_publication_sync(
+                &fixture.dir,
+                "entry",
+                b"exact bytes",
+                Err(io::Error::new(ErrorKind::WriteZero, "real I/O failure")),
+            ),
+            Err(FilesystemError::Io(error)) if error.kind() == ErrorKind::WriteZero
+        ));
     }
 
     #[test]
