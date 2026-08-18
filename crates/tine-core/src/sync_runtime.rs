@@ -19210,7 +19210,20 @@ impl RuntimeActor {
             match outcome {
                 None => return (turn, true),
                 Some(CleanActorMutationOutcome::Durable(batch_id)) => {
-                    self.queue_clean_provider_publication(batch_id);
+                    // This continuation is not this request's work, so it may
+                    // have come from provider ingest or external
+                    // reconciliation. Publishing a batch we RECEIVED back to
+                    // the provider is wrong, so mirror `tick_clean_runtime`
+                    // and leave a notified provider batch to that lane.
+                    let provider_owned = self
+                        .clean
+                        .as_ref()
+                        .expect("clean settlement retains its clean actor")
+                        .provider_change_pending_notification
+                        == Some(batch_id);
+                    if !provider_owned {
+                        self.queue_clean_provider_publication(batch_id);
+                    }
                     return (turn + 1, true);
                 }
                 Some(
