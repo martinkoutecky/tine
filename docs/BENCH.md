@@ -80,6 +80,36 @@ candidate tail, or either median regression budget. Rerunning a red job cannot
 erase the first attempt's evidence; every attempt uploads its complete
 distribution.
 
+### What the vs-immutable comparison can and cannot resolve
+
+Measured 2026-08-18 over the 21 archived A/B attempts from 2026-08-05 onward:
+`bigLoad`'s candidate-vs-`v0.4.7` delta reads **mean 19.6%, sd 6.1 points, range
+4.4%-32.2%**. Commit `1df0fac4` was measured three times and read 21.0%, 26.7%
+and 32.2%. Nearly all of that scatter is *inside* one job — the per-round
+candidate/immutable ratio has a mean within-job sd of 7.4 points (job
+`32102778845` read 3.2%, 35.3% and 25.2% in its three rounds) while the
+between-job sd of the job means is only 3.3 points. The candidate-vs-previous
+axis is far tighter (sd 2.0 points) because both trees are modern builds; a
+same-code A/B on that axis reads 0% +/- 2%.
+
+So the anchor comparison resolves a doubling, not a few points. Three
+consequences, none of which is licence to re-run a red gate:
+
+- A breach within roughly 5 points of the 25% budget is not by itself evidence
+  of a regression. Adjudicate it from **code**: what changed under `src/` since
+  the last green attempt, plus a paired local A/B against that exact tree. A
+  candidate whose frontend inputs are unchanged cannot have regressed, whatever
+  the runner reported.
+- The gate flaps because the true level (~18%) leaves ~6 points of headroom over
+  ~5 points of measurement sd. The observed red rate is 5 of 21 attempts.
+- The two honest cures are more evidence per decision — `reliability.rounds`
+  3 -> 5 predicts sd ~3.6 points, 3 -> 7 predicts ~3.0, with budgets and anchor
+  untouched — and making large-page mount genuinely faster so the level drops
+  away from the budget. Widening `maxVsImmutablePct` or advancing
+  `immutableBaseline.ref` is neither. Replacing the ratio-of-medians with a
+  median of per-round ratios was tried against the same archived jobs and only
+  moves the sd from 5.4 to 4.6; it does not fix the flap.
+
 `scripts/bench-policy.json` is the contract:
 
 - `v0.4.7` is the immutable pre-Sheets/pre-split-view anchor. It does not advance
