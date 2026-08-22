@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>A fast, local, Logseq-compatible outliner.</b><br>
-  Reads and writes the <i>same</i> markdown graph as Logseq — swap between the two on the same files.
+  Reads and writes the <i>same</i> Markdown graph as Logseq — swap between the two on the same files.
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@ Tine is a desktop outliner built to look and feel like [Logseq](https://logseq.c
 much faster. It operates directly on the standard Logseq graph layout —
 `journals/`, `pages/`, `assets/`, and `logseq/config.edn` — so you can point it at the graph you
 already use and keep editing in either app (one at a time). Files are written back in
-Logseq-compatible markdown, so there's **no import/export step and no lock-in**.
+Logseq-compatible Markdown, so there's **no import/export step and no lock-in**.
 
 **Why build it?** Logseq's UI is Electron + DataScript with heavy re-rendering, and it gets
 sluggish on large graphs. Tine is a ground-up rewrite: a small native shell (Tauri/WebKitGTK), a
