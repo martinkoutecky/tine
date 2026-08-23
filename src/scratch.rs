@@ -455,6 +455,64 @@ pub struct ScratchRun<Owner> {
     lifecycle_stats: ScratchRunLifecycleStats,
 }
 
+/// One locked read session over a scratch run's append-only page address space.
+///
+/// An authenticated tree walk discovers each child only after reading its
+/// parent. Keeping the page file borrowed across that adaptive walk avoids a
+/// lock, pending-buffer flush, and end-position refresh for every immutable
+/// node while preserving the exact same per-page digest and binding checks.
+pub struct ScratchPageReader<'a> {
+    file: &'a mut fs::File,
+    operation_counters: &'a ScratchOperationCounters,
+}
+
+impl ScratchPageReader<'_> {
+    pub fn read_page<Tag, Value>(
+        &mut self,
+        page_ref: &ScratchPageRef<Tag>,
+        expected_kind: Tag,
+    ) -> Result<Value, ScratchRunError>
+    where
+        Tag: ScratchPageTag,
+        Value: DeserializeOwned + Serialize,
+    {
+        if page_ref.kind != expected_kind {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        let length =
+            usize::try_from(page_ref.encoded_len).map_err(|_| ScratchRunError::MalformedPage)?;
+        if length == 0 || length > MAX_SCRATCH_PAGE_BYTES {
+            return Err(ScratchRunError::MalformedPage);
+        }
+        let mut bytes = vec![0_u8; length];
+        self.file.seek(SeekFrom::Start(page_ref.offset))?;
+        self.file
+            .read_exact(&mut bytes)
+            .map_err(|_| ScratchRunError::MalformedPage)?;
+        if ContentDigest::of(&bytes) != page_ref.digest {
+            return Err(ScratchRunError::PageDigestMismatch(page_ref.digest));
+        }
+        let envelope: ScratchPageEnvelope<Tag> = decode_page_canonical(&bytes)?;
+        if envelope.schema_version != SCRATCH_PAGE_SCHEMA_VERSION
+            || envelope.kind != expected_kind
+            || envelope.key_min != page_ref.key_min
+            || envelope.key_max != page_ref.key_max
+        {
+            return Err(ScratchRunError::PageBindingMismatch);
+        }
+        self.operation_counters
+            .page_reads
+            .fetch_add(1, Ordering::Relaxed);
+        self.operation_counters
+            .page_bytes_read
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        self.operation_counters
+            .max_page_bytes_read
+            .fetch_max(bytes.len(), Ordering::Relaxed);
+        decode_page_canonical(&envelope.payload)
+    }
+}
+
 /// A bounded userspace append buffer for one run-local scratch address space.
 ///
 /// Scratch references bind byte offsets, lengths, and digests, but the scratch
@@ -801,6 +859,23 @@ where
             .with_file(operation)
     }
 
+    /// Execute an adaptive sequence of authenticated page reads while holding
+    /// the append-only page file once. Each `read_page` performs the same
+    /// canonical decoding, digest verification, binding checks, and accounting
+    /// as [`ScratchRun::read_page`].
+    pub fn with_page_reader<T>(
+        &self,
+        operation: impl FnOnce(&mut ScratchPageReader<'_>) -> Result<T, ScratchRunError>,
+    ) -> Result<T, ScratchRunError> {
+        self.with_pages(|file| {
+            let mut reader = ScratchPageReader {
+                file,
+                operation_counters: &self.operation_counters,
+            };
+            operation(&mut reader)
+        })?
+    }
+
     /// Execute one operation against the locked raw blob-file address space.
     pub fn with_blobs<T>(
         &self,
@@ -976,41 +1051,7 @@ where
         Tag: ScratchPageTag,
         Value: DeserializeOwned + Serialize,
     {
-        if page_ref.kind != expected_kind {
-            return Err(ScratchRunError::PageBindingMismatch);
-        }
-        let length =
-            usize::try_from(page_ref.encoded_len).map_err(|_| ScratchRunError::MalformedPage)?;
-        if length == 0 || length > MAX_SCRATCH_PAGE_BYTES {
-            return Err(ScratchRunError::MalformedPage);
-        }
-        let mut bytes = vec![0_u8; length];
-        self.with_pages(|file| -> Result<_, ScratchRunError> {
-            file.seek(SeekFrom::Start(page_ref.offset))?;
-            file.read_exact(&mut bytes)
-                .map_err(|_| ScratchRunError::MalformedPage)
-        })??;
-        if ContentDigest::of(&bytes) != page_ref.digest {
-            return Err(ScratchRunError::PageDigestMismatch(page_ref.digest));
-        }
-        let envelope: ScratchPageEnvelope<Tag> = decode_page_canonical(&bytes)?;
-        if envelope.schema_version != SCRATCH_PAGE_SCHEMA_VERSION
-            || envelope.kind != expected_kind
-            || envelope.key_min != page_ref.key_min
-            || envelope.key_max != page_ref.key_max
-        {
-            return Err(ScratchRunError::PageBindingMismatch);
-        }
-        self.operation_counters
-            .page_reads
-            .fetch_add(1, Ordering::Relaxed);
-        self.operation_counters
-            .page_bytes_read
-            .fetch_add(bytes.len(), Ordering::Relaxed);
-        self.operation_counters
-            .max_page_bytes_read
-            .fetch_max(bytes.len(), Ordering::Relaxed);
-        decode_page_canonical(&envelope.payload)
+        self.with_page_reader(|reader| reader.read_page(page_ref, expected_kind))
     }
 
     pub fn insert_many<Tag>(
@@ -2267,6 +2308,44 @@ mod tests {
             assert_eq!(reopened.read_blob(&blob).unwrap(), expected.to_be_bytes());
         }
         drop(reopened);
+        drop(archive);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn page_reader_reuses_one_locked_file_without_weakening_page_checks() {
+        let root = scratch_root("page-reader");
+        let archive = archive(&root);
+        let run =
+            ScratchRun::create_retained(&archive, TestOwner(Uuid::from_u128(0xba7c_0002))).unwrap();
+        let first = run
+            .append_page(TestPageKind::Primary, b"a".to_vec(), b"a".to_vec(), &7_u64)
+            .unwrap();
+        let second = run
+            .append_page(TestPageKind::Primary, b"b".to_vec(), b"b".to_vec(), &11_u64)
+            .unwrap();
+
+        let values = run
+            .with_page_reader(|reader| {
+                Ok([
+                    reader.read_page::<_, u64>(&first, TestPageKind::Primary)?,
+                    reader.read_page::<_, u64>(&second, TestPageKind::Primary)?,
+                ])
+            })
+            .unwrap();
+        assert_eq!(values, [7, 11]);
+        assert_eq!(run.operation_stats().page_reads, 2);
+
+        let mut misbound = second.clone();
+        misbound.key_min = b"c".to_vec();
+        assert_eq!(
+            run.with_page_reader(|reader| {
+                reader.read_page::<_, u64>(&misbound, TestPageKind::Primary)
+            }),
+            Err(ScratchRunError::PageBindingMismatch)
+        );
+
+        drop(run);
         drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
