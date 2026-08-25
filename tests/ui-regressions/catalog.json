@@ -4129,7 +4129,7 @@
         "android"
       ],
       "layer": "browser",
-      "status": "reproduced",
+      "status": "covered",
       "coverage": {
         "tests": [
           "src/components/Block.mobileSelectionToolbar.test.tsx",
@@ -4138,7 +4138,7 @@
         "scenario": "mobile-editing.selection-formatting-docks-away-from-native-action-mode",
         "failBefore": "proven"
       },
-      "notes": "GH #375 reports the literal physical-Android boundary: Android's native Cut/Copy/Paste/Select-all ActionMode and Tine's own editor-anchored .sel-toolbar both claim the area immediately above selected text. Fail-before on base b958b391: the mobile render had no dock marker, while production CSS geometry placed Tine's 208x30px toolbar at y=186–216 inside the representative native ActionMode band y=120–260; its overflow opened downward at y=220–250. The existing GH #162 row covers suppression of Tine's desktop context menu on mobile, not this second Tine formatting surface."
+      "notes": "GH #375 reports the literal physical-Android boundary: Android's native Cut/Copy/Paste/Select-all ActionMode and Tine's own editor-anchored .sel-toolbar both claim the area immediately above selected text. Fail-before on base b958b391: the mobile render had no dock marker, while production CSS geometry placed Tine's 208x30px toolbar at y=186–216 inside the representative native ActionMode band y=120–260; its overflow opened downward at y=220–250. Pass-after: only the mobile render carries the dock marker; at a 390x844 viewport the formatting row is fixed within safe horizontal bounds, sits 8px above the measured keyboard-toolbar top, does not intersect the ActionMode band, and its overflow opens upward. Desktop remains editor-anchored, and existing wrap/undo, overflow transient ownership, mobile keyboard placement and hide-gesture tests remain green. The same mobile branch benefits iOS, but the catalog's platform vocabulary currently records Android only. A physical Android ActionMode smoke test remains required because Chromium cannot render OS-native selection chrome. The existing GH #162 row covers suppression of Tine's desktop context menu on mobile, not this second Tine formatting surface."
     },
     {
       "id": "UI-VOICE-RECORDING-BOUNDED-OWNER-001",

@@ -4737,6 +4737,29 @@ textarea {
   background: var(--bg-primary);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
+
+/* GH #375: Android/iOS already own the selection-adjacent region with their
+   native Cut/Copy/Paste ActionMode. Tine's separate formatting actions form a
+   second row immediately above the existing mobile keyboard toolbar instead of
+   competing for that region. MobileKeyboardToolbar publishes the measured lift
+   from the layout viewport, including the visible keyboard and safe-area. */
+.sel-toolbar-mobile {
+  position: fixed;
+  top: auto;
+  bottom: var(--mobile-kb-toolbar-lift, calc(64px + env(safe-area-inset-bottom)));
+  left: max(6px, env(safe-area-inset-left));
+  right: max(6px, env(safe-area-inset-right));
+  z-index: 81;
+  justify-content: center;
+}
+
+/* The dock is already above the keyboard, so its narrow-layout overflow opens
+   farther upward rather than covering the keyboard toolbar below. */
+.sel-toolbar-mobile .sel-toolbar-overflow {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 @container editor (max-width: 260px) {
   .sel-toolbar-secondary {
     display: none;

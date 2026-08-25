@@ -34,6 +34,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Selecting text on Android no longer stacks Tine's formatting controls under
+  the system Cut/Copy/Paste menu.** Tine's Bold, link, code, highlight and other
+  formatting actions now dock above the existing mobile keyboard toolbar, while
+  Android keeps the selection-adjacent region for its native actions and handles.
+  The compact formatting overflow opens upward, away from the keyboard (GH #375).
+
 - **Fitting split panes no longer keep a scrollbar merely for blank editing
   space.** The first GH #369 correction fixed short panes but still made an
   otherwise fitting page scroll whenever it occupied 60–100% of its pane. An
