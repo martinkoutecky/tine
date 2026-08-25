@@ -7,9 +7,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const css = ["theme.css", "app.css"]
   .map((file) => fs.readFileSync(path.join(root, "src/styles", file), "utf8"))
   .join("\n");
-const actions = `
+const actions = (extraClass = "") => `
   <div class="editor-wrap">
-    <div class="sel-toolbar">
+    <div class="sel-toolbar ${extraClass}">
       <button>B</button><button>I</button><button class="sel-action-page-link">[[ ]]</button><button>\`</button>
       <div class="sel-toolbar-secondary"><button>Link</button><button>S</button><button>H</button></div>
       <button class="sel-toolbar-more">…</button>
@@ -19,7 +19,7 @@ const actions = `
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 600, height: 240 } });
-  await page.setContent(`<!doctype html><style>${css}</style><div id="narrow" style="width:220px">${actions}</div><div id="wide" style="width:400px;margin-top:80px">${actions}</div>`);
+  await page.setContent(`<!doctype html><style>${css}</style><div id="narrow" style="width:220px">${actions()}</div><div id="wide" style="width:400px;margin-top:80px">${actions()}</div>`);
   const geometry = await page.evaluate(() => {
     const read = (id) => {
       const host = document.querySelector(`#${id} .editor-wrap`);
@@ -39,7 +39,63 @@ try {
   if (geometry.wide.secondary === "none" || geometry.wide.more !== "none") {
     throw new Error(`wide selection toolbar needlessly hides actions: ${JSON.stringify(geometry)}`);
   }
-  console.log(`PASS: selection toolbar is ${geometry.narrow.toolbarWidth}px narrow and expands at ${geometry.wide.hostWidth}px`);
+  console.log(`PASS: desktop selection toolbar is ${geometry.narrow.toolbarWidth}px narrow and expands at ${geometry.wide.hostWidth}px`);
+
+  // GH #375: Android's native ActionMode occupies the selection-adjacent band.
+  // Tine's own mobile formatting surface must instead form a second dock row
+  // immediately above the existing keyboard toolbar. The custom property is
+  // the real runtime handoff published by MobileKeyboardToolbar.tsx.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setContent(`<!doctype html><style>${css}</style>
+    <div id="mobile" style="--mobile-kb-toolbar-lift: 208px">
+      <div id="native-action-mode-proxy" style="position:fixed;left:20px;right:20px;top:120px;height:140px"></div>
+      <div style="position:absolute;left:18px;right:18px;top:220px">
+        ${actions("sel-toolbar-mobile")}
+      </div>
+      <div class="mobile-keyboard-toolbar" style="top:700px">
+        <div class="mobile-keyboard-toolbar-strip"><button class="mobile-keyboard-toolbar-btn">A</button></div>
+      </div>
+    </div>`);
+  await page.evaluate(() => {
+    const toolbar = document.querySelector(".sel-toolbar-mobile");
+    const overflow = document.createElement("div");
+    overflow.className = "sel-toolbar-overflow";
+    overflow.style.display = "flex";
+    overflow.innerHTML = "<button>More</button>";
+    toolbar.appendChild(overflow);
+  });
+  const mobile = await page.evaluate(() => {
+    const rect = (selector) => {
+      const r = document.querySelector(selector).getBoundingClientRect();
+      return { top: r.top, right: r.right, bottom: r.bottom, left: r.left, width: r.width, height: r.height };
+    };
+    return {
+      formatting: rect(".sel-toolbar-mobile"),
+      overflow: rect(".sel-toolbar-overflow"),
+      keyboard: rect(".mobile-keyboard-toolbar"),
+      nativeProxy: rect("#native-action-mode-proxy"),
+      position: getComputedStyle(document.querySelector(".sel-toolbar-mobile")).position,
+    };
+  });
+  const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  if (mobile.position !== "fixed") {
+    throw new Error(`mobile formatting toolbar remains editor-anchored instead of docked: ${JSON.stringify(mobile)}`);
+  }
+  if (overlaps(mobile.formatting, mobile.nativeProxy)) {
+    throw new Error(`mobile formatting toolbar still occupies native ActionMode's selection band: ${JSON.stringify(mobile)}`);
+  }
+  const gap = mobile.keyboard.top - mobile.formatting.bottom;
+  if (gap < 4 || gap > 12) {
+    throw new Error(`mobile formatting toolbar is not immediately above the keyboard dock (gap ${gap}px): ${JSON.stringify(mobile)}`);
+  }
+  if (mobile.overflow.bottom > mobile.formatting.top + 1) {
+    throw new Error(`mobile formatting overflow opens toward the keyboard instead of upward: ${JSON.stringify(mobile)}`);
+  }
+  if (mobile.formatting.left < 6 || mobile.formatting.right > 384) {
+    throw new Error(`mobile formatting dock escapes phone safe horizontal bounds: ${JSON.stringify(mobile)}`);
+  }
+  await page.screenshot({ path: "/tmp/selection-toolbar-mobile.png" });
+  console.log(`PASS: mobile formatting dock avoids ActionMode and sits ${gap}px above the keyboard toolbar`);
 } finally {
   await browser.close();
 }

@@ -4116,6 +4116,31 @@
       }
     },
     {
+      "id": "UI-MOBILE-SELECTION-TOOLBAR-DOCK-375",
+      "title": "Mobile selected-text formatting docks above the keyboard toolbar without covering Android's native selection actions",
+      "family": "mobile-editing",
+      "sources": {
+        "issues": [
+          375
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
+      "layer": "browser",
+      "status": "reproduced",
+      "coverage": {
+        "tests": [
+          "src/components/Block.mobileSelectionToolbar.test.tsx",
+          "scripts/check-selection-toolbar.mjs"
+        ],
+        "scenario": "mobile-editing.selection-formatting-docks-away-from-native-action-mode",
+        "failBefore": "proven"
+      },
+      "notes": "GH #375 reports the literal physical-Android boundary: Android's native Cut/Copy/Paste/Select-all ActionMode and Tine's own editor-anchored .sel-toolbar both claim the area immediately above selected text. Fail-before on base b958b391: the mobile render had no dock marker, while production CSS geometry placed Tine's 208x30px toolbar at y=186–216 inside the representative native ActionMode band y=120–260; its overflow opened downward at y=220–250. The existing GH #162 row covers suppression of Tine's desktop context menu on mobile, not this second Tine formatting surface."
+    },
+    {
       "id": "UI-VOICE-RECORDING-BOUNDED-OWNER-001",
       "title": "Voice recording is bounded and Android preserves its native cache token through Kotlin, Rust, and the frontend import",
       "family": "media",
