@@ -40,3 +40,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.
 # https://github.com/tauri-apps/tao/pull/1218
 tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }
+
+# AUDIT-ONLY (2026-08-26 cost-model audit): local tine-storage with SQLite
+# statement/commit counters. Never integrate this patch.
+[patch."https://github.com/martinkoutecky/tine-storage"]
+tine-storage = { path = "/aux/koutecky/logseq/ms-audit-data/tine-storage-v089" }

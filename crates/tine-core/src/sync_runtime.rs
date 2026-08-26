@@ -39963,6 +39963,122 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual audit probe (2026-08-26): primitive count tables for the five audited operations"]
+    fn ms_cost_audit_five_operation_probe() {
+        assert!(
+            !cfg!(debug_assertions),
+            "release-only; run cargo test -p tine-core --release --lib ms_cost_audit_five_operation_probe -- --ignored --nocapture"
+        );
+        let source = real_graph_copy_source_from_env("TINE_MS_AUDIT_GRAPH_COPY");
+        let fixture = ActivationFixture::copied_graph("ms-cost-audit", 0xa0f9, &source);
+
+        fn report(label: &str, before: &crate::perf_count::Snapshot) -> crate::perf_count::Snapshot {
+            let now = crate::perf_count::snapshot();
+            eprintln!("{}", now.report_since(before, label));
+            eprint!("{}", tine_storage::audit_counters::drain_attribution());
+            crate::perf_count::snapshot()
+        }
+
+        let pc = crate::perf_count::snapshot();
+        let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+        assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+        let handle = activated.handle.expect("audit probe activates");
+        let pc = report("enable-ms:activate", &pc);
+        drive_initial_feed_with_turn_budget(&handle, 4096);
+        let pc = report("enable-ms:initial-feed", &pc);
+
+        let pages = match handle.application_page_inventory().unwrap() {
+            SyncApplicationPageInventoryOutcome::Loaded { pages } => pages,
+            other => panic!("audit probe inventory did not load: {other:?}"),
+        };
+        let mut journals: Vec<String> = pages
+            .iter()
+            .map(|entry| entry.rel_path.clone())
+            .filter(|path| path.starts_with("journals/"))
+            .collect();
+        journals.sort();
+        let mut day1 = None;
+        let mut day2 = None;
+        for path in &journals {
+            let (page, _) = load_application_exact(&handle, path);
+            if page.blocks.is_empty() {
+                continue;
+            }
+            if day1.is_none() {
+                day1 = Some(path.clone());
+            } else {
+                day2 = Some(path.clone());
+                break;
+            }
+        }
+        let day1 = day1.expect("audit corpus has a nonempty journal day");
+        let day2 = day2.expect("audit corpus has a second nonempty journal day");
+        eprintln!("ms-audit selected day1={day1} day2={day2}");
+        let pc = report("selection(untimed)", &pc);
+
+        // (b) open page — cold-ish, second page, warm repeat.
+        let _ = load_application_exact(&handle, &day1);
+        let pc = report("open-page:day1", &pc);
+        let _ = load_application_exact(&handle, &day2);
+        let pc = report("open-page:day2", &pc);
+        let _ = load_application_exact(&handle, &day1);
+        let mut pc = report("open-page:day1-warm-repeat", &pc);
+
+        // (c) save a single-block edit, three samples, foreground and drain split.
+        for sample in 0..3 {
+            let (page, revision) = load_application_exact(&handle, &day1);
+            let pc_load = report(&format!("save:{sample}:pre-load"), &pc);
+            let _ = save_application_block_text(
+                &handle,
+                page,
+                revision,
+                &format!("ms audit save sample {sample}"),
+            );
+            let pc_save = report(&format!("save:{sample}:foreground"), &pc_load);
+            drain_managed_local(&handle);
+            pc = report(&format!("save:{sample}:deferred-drain"), &pc_save);
+        }
+
+        // (d) move the first block of day1 to day2 (cross-day move), then drain.
+        let (source_page, source_revision) = load_application_exact(&handle, &day1);
+        let (destination_page, destination_revision) = load_application_exact(&handle, &day2);
+        let moved_identity = source_page.blocks[0].id.clone();
+        let pc_move = report("move:pre-load(untimed)", &pc);
+        let outcome = handle
+            .move_application_subtrees(SyncApplicationMoveSubtreesRequest {
+                episode_id: Uuid::new_v4().to_string(),
+                source_path: source_page.path.clone(),
+                source_revision,
+                destination_path: destination_page.path.clone(),
+                destination_revision,
+                roots: vec![SyncApplicationMoveRoot {
+                    identity: moved_identity,
+                    raw_rewrite: None,
+                }],
+                placement: SyncApplicationMovePlacement::Root { position: 0 },
+                admission: application_move_admission(),
+            })
+            .unwrap();
+        assert!(
+            matches!(
+                outcome,
+                SyncApplicationMoveSubtreesOutcome::Committed { .. }
+            ),
+            "audit move did not commit: {outcome:?}"
+        );
+        let pc_moved = report("move:foreground", &pc_move);
+        drain_managed_local(&handle);
+        let pc = report("move:deferred-drain", &pc_moved);
+
+        // (e) clean shutdown.
+        assert!(matches!(
+            handle.clean_shutdown().unwrap(),
+            SyncShutdownOutcome::Safe(_)
+        ));
+        let _ = report("clean-shutdown", &pc);
+    }
+
+    #[test]
     #[ignore = "manual release gate: activation of a real graph copy"]
     fn managed_activation_real_graph_manual_benchmark() {
         assert!(
@@ -40838,6 +40954,7 @@ mod tests {
                     let counters_before = handle
                         .managed_application_save_instrumentation()
                         .expect("benchmark save obtains actor foreground instrumentation");
+                    let __pc_before = crate::perf_count::snapshot();
                     let started = Instant::now();
                     let outcome = handle
                         .save_application_page(SyncApplicationPageSaveRequest {
@@ -40849,6 +40966,16 @@ mod tests {
                         })
                         .expect("ordinary managed application save succeeds");
                     let caller = started.elapsed();
+                    let __pc_after = crate::perf_count::snapshot();
+                    if timed {
+                        eprintln!(
+                            "{}",
+                            __pc_after.report_since(
+                                &__pc_before,
+                                &format!("save pages={total_pages} blocks={target_blocks} edit={edit}")
+                            )
+                        );
+                    }
                     let counters_after = handle
                         .managed_application_save_instrumentation()
                         .expect("benchmark save obtains post-save foreground instrumentation");

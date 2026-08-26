@@ -267,8 +267,11 @@ pub(crate) fn parse_document(
 ) -> Result<ParsedDocument, OutlineAdapterError> {
     #[cfg(test)]
     OUTLINE_PARSE_ATTEMPTS.with(|attempts| attempts.set(attempts.get().saturating_add(1)));
-    let outline = lsdoc::parse_outline(source, format.lsdoc_name())
-        .map_err(|_| OutlineAdapterError::ParserOwnership)?;
+    crate::perf_count::add(crate::perf_count::P::ParseBytes, source.len() as u64);
+    let outline = crate::perf_count::timed(crate::perf_count::P::ParseCall, || {
+        lsdoc::parse_outline(source, format.lsdoc_name())
+    })
+    .map_err(|_| OutlineAdapterError::ParserOwnership)?;
     let lines = physical_lines(source);
     let line_indexes = validate_events(source, format, &outline.headers, &lines)?;
 

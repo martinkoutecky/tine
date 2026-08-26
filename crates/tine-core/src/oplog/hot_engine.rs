@@ -7438,6 +7438,7 @@ pub(crate) fn append_managed_local_record<J: ManagedLocalJournalAppend>(
     segment: &mut J,
     prepared: &PreparedManagedLocalRecord,
 ) -> Result<ManagedLocalAppendProof, ManagedLocalAppendError> {
+    crate::perf_count::inc(crate::perf_count::P::OplogAppend);
     let author_device = prepared
         .record
         .prepared_batch
@@ -14817,6 +14818,7 @@ impl ShardedHotEngine {
         &mut self,
         frame: &LocalJournalFrame<ManagedLocalJournalPayloadKind>,
     ) -> Result<ManagedLocalApplyOutcome, ManagedLocalRecordError> {
+        crate::perf_count::inc(crate::perf_count::P::OplogReplayRecord);
         let record = decode_managed_local_record(frame)?;
         self.apply_managed_local_record(record, frame.payload())
     }
@@ -26276,6 +26278,7 @@ impl ShardedHotEngine {
         &self,
         frontier: &FrontierV2,
     ) -> Result<BTreeMap<DocumentId, LoroDoc>, EngineError> {
+        crate::perf_count::inc(crate::perf_count::P::FrontierReconstruct);
         let direct_heads = declared_batch_heads(frontier);
         let ancestry = self.collect_batch_ancestry(&direct_heads, self.is_blocked())?;
         validate_maximal_document_heads(frontier, &ancestry)?;

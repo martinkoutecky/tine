@@ -20,7 +20,7 @@ use cap_std::fs::Dir;
 pub(crate) fn sync_private_tree(path: &Path) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
-        return sync_filesystem(path);
+        return crate::perf_count::timed(crate::perf_count::P::SyncFs, || sync_filesystem(path));
     }
 
     #[cfg(target_os = "android")]
@@ -170,6 +170,7 @@ fn sync_private_tree_exact(path: &Path) -> io::Result<()> {
 /// directory fsync even after permitting every exact file sync. That platform
 /// limitation must not block activation; ordinary I/O errors remain fatal.
 pub(crate) fn sync_reconstructible_directory(directory: &Dir) -> io::Result<()> {
+    // Counted inside tine_storage::sync_dir_required (filesystem.rs:240).
     finish_android_reconstructible_directory_sync(tine_storage::sync_dir_required(directory))
 }
 

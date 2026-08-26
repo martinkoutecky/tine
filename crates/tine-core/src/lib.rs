@@ -35,6 +35,7 @@ pub mod refs;
 pub mod render;
 pub mod search_query;
 pub mod sync_diff;
+pub mod perf_count;
 pub mod sync_runtime;
 #[cfg(test)]
 mod test_support;

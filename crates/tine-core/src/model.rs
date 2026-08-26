@@ -4537,7 +4537,7 @@ fn projection_post_publish_hook(path: &Path) -> io::Result<()> {
             file.set_len(0)?;
             file.seek(io::SeekFrom::Start(0))?;
             file.write_all(&bytes)?;
-            file.sync_all()?;
+            tine_storage::audit_counters::count_fsync_at("model.rs:4540", || file.sync_all())?;
         }
         Ok(())
     })
@@ -17732,7 +17732,7 @@ impl Graph {
                 "existing projection differs from guarded page serialization",
             ));
         }
-        file.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:17735", || file.sync_all())?;
         sync_reconstructible_projection_chain(&parent.chain)?;
         self.ensure_projection_parent_binding(&parent, &target)?;
         self.ensure_projection_target_shape(&parent, &target)?;
@@ -17951,7 +17951,7 @@ impl Graph {
                                     "projection precondition changed before displacement",
                                 ));
                             }
-                            displaced_file.sync_all()?;
+                            tine_storage::audit_counters::count_fsync_at("model.rs:17954", || displaced_file.sync_all())?;
                             drop(displaced_file);
                             let captured = ProjectionRecoveryEvidence::new_bound(
                                 &target_path.relative_path,
@@ -18372,7 +18372,7 @@ impl Graph {
                     "projection removal precondition changed before displacement",
                 ));
             }
-            displaced_file.sync_all()?;
+            tine_storage::audit_counters::count_fsync_at("model.rs:18375", || displaced_file.sync_all())?;
             drop(displaced_file);
             let captured = ProjectionRecoveryEvidence::new_bound(
                 &target.relative_path,
@@ -18395,7 +18395,7 @@ impl Graph {
                     "projection removal base changed after exact capture",
                 ));
             }
-            live_file.sync_all()?;
+            tine_storage::audit_counters::count_fsync_at("model.rs:18398", || live_file.sync_all())?;
             drop(live_file);
             retire_projection_target(parent.final_dir(), &target.filename, &retired)?;
             retirement_occurred = true;
@@ -19037,7 +19037,7 @@ impl Graph {
                 return Ok(ProjectionRecoveryCleanup::ConflictRetained { relative_path });
             }
         };
-        opened.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:19040", || opened.sync_all())?;
         if !projection_recovery_matches_record(&opened, &bytes, record)? {
             let relative_path = retain_projection_recovery_conflict(
                 &target,
@@ -19402,7 +19402,7 @@ impl Graph {
         let rev = content_rev(text);
         self.note_self_write(&target_path.absolute_path, rev.clone());
         let result = (|| {
-            file.sync_all()?;
+            tine_storage::audit_counters::count_fsync_at("model.rs:19405", || file.sync_all())?;
             sync_reconstructible_projection_chain(&parent.chain)?;
             let hooks = combine_projection_hook_results(
                 projection_post_publish_hook(&target_path.absolute_path),
@@ -21323,7 +21323,7 @@ impl Graph {
                 "committed journal target changed before durability proof",
             ));
         }
-        file.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:21326", || file.sync_all())?;
         journal_projection_after_file_sync_hook()?;
         sync_reconstructible_projection_chain(&target.chain)?;
         let rebound = self.managed_target(write, &plan.path, false)?;
@@ -23170,7 +23170,10 @@ pub(crate) fn pre_block_icon(pre: &str) -> Option<String> {
 /// Stable SHA-256 content digest used as the exact loaded-byte baseline for an
 /// audited existing-file save.
 pub fn content_rev(s: &str) -> String {
-    format!("{:x}", Sha256::digest(s.as_bytes()))
+    crate::perf_count::add(crate::perf_count::P::HashBytes, s.len() as u64);
+    crate::perf_count::timed(crate::perf_count::P::HashCall, || {
+        format!("{:x}", Sha256::digest(s.as_bytes()))
+    })
 }
 
 /// Encode one logical page title as a portable on-disk filename stem.
@@ -23770,7 +23773,9 @@ pub fn dir_fsync_error_is_unsupported(error: &io::Error) -> bool {
 /// propagated, because a caller told the durability succeeded when it did not
 /// will happily report a save as committed.
 fn sync_dir(dir: &Path) -> io::Result<()> {
-    match fs::File::open(dir).and_then(|handle| handle.sync_all()) {
+    match tine_storage::audit_counters::count_dir_fsync_at("model.rs:sync_dir", || {
+        fs::File::open(dir).and_then(|handle| handle.sync_all())
+    }) {
         Ok(()) => Ok(()),
         Err(error) if dir_fsync_is_unsupported(&error) => Ok(()),
         Err(error) => Err(error),
@@ -23833,7 +23838,7 @@ fn atomic_replace_expected_with_hooks(
             .create_new(true)
             .open(&tmp)?;
         file.write_all(next)?;
-        file.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:23841", || file.sync_all())?;
         Ok(())
     })();
     if let Err(error) = staged {
@@ -23996,9 +24001,12 @@ fn atomic_publish(path: &Path, bytes: &[u8], mode: PublishMode) -> io::Result<()
             .write(true)
             .create_new(true)
             .open(&tmp)?;
+        crate::perf_count::inc(crate::perf_count::P::FileWrite);
+        crate::perf_count::add(crate::perf_count::P::FileWriteBytes, bytes.len() as u64);
         f.write_all(bytes)?;
-        f.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:atomic_publish", || f.sync_all())?;
         drop(f);
+        crate::perf_count::inc(crate::perf_count::P::Rename);
         match mode {
             PublishMode::Replace => fs::rename(&tmp, path),
             PublishMode::NoReplace => move_file_noreplace(&tmp, path),
@@ -24394,7 +24402,7 @@ enum StableProjectionQuarantineRetirement {
 }
 
 fn sync_and_reread_retained_projection_file(file: &mut fs::File) -> io::Result<Vec<u8>> {
-    file.sync_all()?;
+    tine_storage::audit_counters::count_fsync_at("model.rs:24405", || file.sync_all())?;
     file.seek(std::io::SeekFrom::Start(0))?;
     let length = file.metadata()?.len();
     if length > MAX_PROJECTION_EVIDENCE_BYTES {
@@ -24514,7 +24522,7 @@ fn sync_open_and_read_projection_regular(dir: &Dir, name: &str) -> io::Result<(f
             "projection evidence exceeds the reload bound",
         ));
     }
-    file.sync_all()
+    tine_storage::audit_counters::count_fsync_at("model.rs:24525", || file.sync_all())
         .map_err(|error| projection_platform_error("fsync of a projection file", name, error))?;
     let capacity = usize::try_from(len).map_err(|_| {
         io::Error::new(
@@ -26393,11 +26401,11 @@ impl BootstrapSourcePassWriters {
     }
 
     fn sync_all(&mut self) -> io::Result<()> {
-        self.inventory.sync_all()?;
-        self.entries.sync_all()?;
-        self.chunks.sync_all()?;
-        self.aliases.sync_all()?;
-        self.portable.sync_all()
+        tine_storage::audit_counters::count_fsync_at("model.rs:26404", || self.inventory.sync_all())?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:26405", || self.entries.sync_all())?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:26406", || self.chunks.sync_all())?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:26407", || self.aliases.sync_all())?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:26408", || self.portable.sync_all())
     }
 }
 
@@ -26673,7 +26681,7 @@ fn collect_bootstrap_source_pass(
         seal_chunks,
     )?;
     note_bootstrap_source_io_stage("sync bootstrap source raw spool writers");
-    writers.sync_all()?;
+    tine_storage::audit_counters::count_fsync_at("model.rs:26684", || writers.sync_all())?;
     // Sorting no longer needs the raw spool writers, so release them at the
     // durable handoff before reopening and removing those files.
     drop(writers);
@@ -27581,7 +27589,7 @@ fn sort_bootstrap_source_spool(
             write_bootstrap_source_frame(&mut file, row)?;
         }
         note_bootstrap_source_io_stage("sync in-memory sorted bootstrap source spool");
-        file.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:27592", || file.sync_all())?;
         instrumentation.spool_bytes = instrumentation
             .spool_bytes
             .checked_add(file.metadata()?.len())
@@ -27596,7 +27604,7 @@ fn sort_bootstrap_source_spool(
             .create_new(true)
             .open(&sorted)?;
         note_bootstrap_source_io_stage("sync empty sorted bootstrap source spool");
-        file.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:27607", || file.sync_all())?;
         return Ok(());
     }
     let mut generation = 0_u64;
@@ -27653,7 +27661,7 @@ fn bootstrap_source_flush_sort_run(
     for row in rows.iter() {
         write_bootstrap_source_frame(&mut file, row)?;
     }
-    file.sync_all()?;
+    tine_storage::audit_counters::count_fsync_at("model.rs:27664", || file.sync_all())?;
     instrumentation.sort_runs = instrumentation
         .sort_runs
         .checked_add(1)
@@ -27718,7 +27726,7 @@ fn merge_bootstrap_source_runs(
                 .sum(),
         );
     }
-    file.sync_all()?;
+    tine_storage::audit_counters::count_fsync_at("model.rs:27729", || file.sync_all())?;
     instrumentation.sort_runs = instrumentation
         .sort_runs
         .checked_add(1)
@@ -30709,7 +30717,7 @@ fn create_projection_staged_recovery(
     let mut options = CapOpenOptions::new();
     options.write(true).create_new(true);
     let mut file = dir.open_with(&name, &options)?;
-    let result = file.write_all(bytes).and_then(|()| file.sync_all());
+    let result = file.write_all(bytes).and_then(|()| tine_storage::audit_counters::count_fsync_at("model.rs:30720", || file.sync_all()));
     drop(file);
     if let Err(error) = result {
         let _ = dir.remove_file(&name);
@@ -30763,7 +30771,7 @@ fn create_projection_staging_file(
         options.write(true).create_new(true);
         match dir.open_with(&name, &options) {
             Ok(mut file) => {
-                let result = file.write_all(bytes).and_then(|()| file.sync_all());
+                let result = file.write_all(bytes).and_then(|()| tine_storage::audit_counters::count_fsync_at("model.rs:30774", || file.sync_all()));
                 drop(file);
                 if let Err(error) = result {
                     let _ = dir.remove_file(&name);
@@ -30859,7 +30867,7 @@ fn validate_projection_recovery_object_exact(
             format!("projection recovery bytes changed after capture: {recovery}"),
         ));
     }
-    recovery_file.sync_all()
+    tine_storage::audit_counters::count_fsync_at("model.rs:30870", || recovery_file.sync_all())
 }
 
 fn preserve_and_restore_projection_recovery(
@@ -32154,7 +32162,7 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
             .create_new(true)
             .open(&tmp)?;
         std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:32165", || output.sync_all())?;
         drop(output);
         fs::rename(&tmp, dst)
     })();
@@ -32187,7 +32195,7 @@ pub fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
             .create_new(true)
             .open(&tmp)?;
         std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:32198", || output.sync_all())?;
         drop(output);
         move_file_noreplace(&tmp, dst)?;
         sync_dir(dir)
@@ -32226,7 +32234,7 @@ pub fn atomic_copy_file_new(input: &mut fs::File, dst: &Path, max_bytes: u64) ->
                 format!("capture exceeds {max_bytes} byte limit"),
             ));
         }
-        output.sync_all()?;
+        tine_storage::audit_counters::count_fsync_at("model.rs:32237", || output.sync_all())?;
         drop(output);
         move_file_noreplace(&tmp, dst)?;
         sync_dir(dir)
@@ -43517,7 +43525,7 @@ mod tests {
         stale_handle.set_len(0).unwrap();
         stale_handle.rewind().unwrap();
         stale_handle.write_all(b"- late after proof\n").unwrap();
-        stale_handle.sync_all().unwrap();
+        tine_storage::audit_counters::count_fsync_at("model.rs:43528", || stale_handle.sync_all()).unwrap();
         let later = graph
             .projection_recovery_evidence("pages/Projection.md")
             .unwrap();
@@ -44912,9 +44920,17 @@ mod tests {
         let builds_before = graph.guarded_graph_text_identity_report().complete_builds;
         direct_save_bench_once(&graph, "- prime");
         let mut warm = Vec::new();
+        let __pc_before = crate::perf_count::snapshot();
+        let _ = tine_storage::audit_counters::drain_attribution();
         for round in 0..rounds {
             warm.push(direct_save_bench_once(&graph, &format!("- warm {round}")));
         }
+        eprintln!(
+            "{}",
+            crate::perf_count::snapshot()
+                .report_since(&__pc_before, &format!("direct-save x{rounds} (divide by rounds)"))
+        );
+        eprint!("{}", tine_storage::audit_counters::drain_attribution());
         describe("warm index", &mut warm, &graph);
 
         let mut cold = Vec::new();
@@ -50768,7 +50784,7 @@ mod tests {
             )
             .unwrap();
         }
-        writers.sync_all().unwrap();
+        tine_storage::audit_counters::count_fsync_at("model.rs:50779", || writers.sync_all()).unwrap();
         sort_bootstrap_source_spool(
             &paths,
             BootstrapSourceSpoolKind::Entries,
