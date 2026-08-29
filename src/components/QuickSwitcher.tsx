@@ -15,7 +15,8 @@ import { persistBlockRefTarget } from "../store";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createLongPress } from "../render/longPress";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { shouldOpenPageContextMenu } from "../contextMenuPolicy";
+import { isAndroidPlatform } from "../nativeChrome";
 
 // One selectable result row.
 type Item =
@@ -506,6 +507,7 @@ export function QuickSwitcher(): JSX.Element {
                         <div
                           ref={rowElement}
                           class="switcher-row"
+                          data-page-context-menu={it.t === "page" ? "" : undefined}
                           classList={{ active: idx() === sel(), "block-result": it.t === "block" }}
                           id={`switcher-option-${idx()}`}
                           role="option"
@@ -546,12 +548,13 @@ export function QuickSwitcher(): JSX.Element {
                               }
                             }
                           }}
-                          onPointerDown={(e) => { if (it.t === "page") longPress.onPointerDown(e); }}
-                          onPointerMove={(e) => { if (it.t === "page") longPress.onPointerMove(e); }}
-                          onPointerUp={(e) => { if (it.t === "page") longPress.onPointerUp(e); }}
-                          onPointerCancel={(e) => { if (it.t === "page") longPress.onPointerCancel(e); }}
+                          onPointerDown={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerDown(e); }}
+                          onPointerMove={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerMove(e); }}
+                          onPointerUp={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerUp(e); }}
+                          onPointerCancel={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerCancel(e); }}
                           onContextMenu={(e) => {
-                            if (it.t !== "page" || !shouldOpenTextContextMenu(e)) return;
+                            if (it.t !== "page" || !shouldOpenPageContextMenu(e.target)) return;
+                            if (isAndroidPlatform) longPress.dispose();
                             e.preventDefault();
                             e.stopPropagation();
                             openPageContextMenu(e.clientX, e.clientY, {

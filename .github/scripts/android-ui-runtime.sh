@@ -114,7 +114,8 @@ overall=0
 for method in \
   responsiveChromeFitsPortraitAndLandscapeAtDefault90And110Percent \
   longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation \
-  initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement; do
+  initialNativeSelectionShowsMobileToolbarForFirstLineCaretSecondLineHold \
+  initialNativeSelectionShowsMobileToolbarForSingleLineHold; do
   if ! run_journey "$method"; then
     overall=1
   fi

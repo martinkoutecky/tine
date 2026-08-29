@@ -5,6 +5,8 @@ import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   /** `elapsedRealtime` of the last notice, or null while none has been shown.
@@ -25,6 +27,20 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // Android WebView 124 on API 35 reports CSS env(safe-area-inset-*) as zero
+    // even in viewport-fit=cover. Apply the actual system-bar/cutout insets to
+    // the Activity content root so the WebView viewport itself starts below the
+    // status bar and ends above navigation. Returning the unconsumed insets is
+    // intentional: descendants still need IME visibility for editor behavior.
+    val content = findViewById<android.view.View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val safe = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+      )
+      view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+      insets
+    }
+    ViewCompat.requestApplyInsets(content)
     // Earliest possible owner: until Tauri is up there is no other callback at
     // all, and the platform default for an unhandled Back is finish(). This
     // registration is NOT sufficient by itself — see takeBackOwnership.

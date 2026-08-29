@@ -4,7 +4,8 @@ import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { shouldOpenPageContextMenu } from "../contextMenuPolicy";
+import { isAndroidPlatform } from "../nativeChrome";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { canonicalFold, matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 import {
@@ -502,6 +503,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     ref={pageButton}
                     type="button"
                     class="reference-page"
+                    data-page-context-menu
                     onMouseDown={internalLinkMouseDown}
                     onClick={(e) => {
                       if (longPress.consumeClick()) {
@@ -514,13 +516,14 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       else if (dest === "background") openPageInNewTab(group().page, group().kind);
                       else openPage(group().page, group().kind);
                     }}
-                    onPointerDown={longPress.onPointerDown}
-                    onPointerMove={longPress.onPointerMove}
-                    onPointerUp={longPress.onPointerUp}
-                    onPointerCancel={longPress.onPointerCancel}
+                    onPointerDown={(e) => { if (!isAndroidPlatform) longPress.onPointerDown(e); }}
+                    onPointerMove={(e) => { if (!isAndroidPlatform) longPress.onPointerMove(e); }}
+                    onPointerUp={(e) => { if (!isAndroidPlatform) longPress.onPointerUp(e); }}
+                    onPointerCancel={(e) => { if (!isAndroidPlatform) longPress.onPointerCancel(e); }}
                     onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onContextMenu={(e) => {
-                      if (!shouldOpenTextContextMenu(e)) return;
+                      if (!shouldOpenPageContextMenu(e.target)) return;
+                      if (isAndroidPlatform) longPress.dispose();
                       e.preventDefault();
                       openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}

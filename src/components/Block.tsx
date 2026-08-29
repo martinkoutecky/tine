@@ -2450,6 +2450,15 @@ export function Editor(props: { id: string }): JSX.Element {
     ref.setSelectionRange(o, o);
   };
   onMount(() => {
+    // Android WebView can establish the initial long-press selection without a
+    // textarea `select` or compatibility `mouseup`; it does emit the document
+    // selectionchange. Observe only while THIS textarea owns focus so repeated
+    // block instances cannot make another surface's stale selection visible.
+    const onSelectionChange = () => {
+      if (document.activeElement === ref) updateSel();
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    onCleanup(() => document.removeEventListener("selectionchange", onSelectionChange));
     const unregisterHistoryTarget = registerHistoryEditorTarget({
       blockId: props.id,
       owner: editingOwner(),

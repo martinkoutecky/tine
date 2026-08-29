@@ -43,6 +43,12 @@ export const isMac: boolean =
 export const isMobilePlatform: boolean =
   typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
 
+/** Android WebView exposes a native contextmenu for a deliberate touch hold.
+ * iOS remains on Tine's pointer-timer fallback, so page-link gesture ownership
+ * must distinguish Android from the broader mobile layout gate. */
+export const isAndroidPlatform: boolean =
+  typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent ?? "");
+
 // Linux/Windows user preference: use the OS-native window frame instead of our
 // custom frameless chrome.
 const startupNativeFrame = typeof globalThis !== "undefined" && globalThis.__TINE_NATIVE_FRAME__ === true;

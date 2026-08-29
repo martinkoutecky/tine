@@ -137,7 +137,9 @@ not a quiet gate expansion during a release.
 - `scope=android-ui-runtime` is the manual API-35 x86_64 Android WebView lane
   for the #205 responsive-chrome, #207 page-reference long-press, and #375
   initial-native-selection journeys. It uses instrumentation-injected
-  MotionEvents and runs each method in a fresh app/WebView lifetime. The
+  MotionEvents and runs each method in a fresh app/WebView lifetime. #375 uses
+  two independently reset methods: a first-line caret followed by a second-line
+  hold in a wrapped editor, and a single-line hold. The
   artifact retains exact app/device/WebView identity, JUnit accounting,
   screenshot, DOM/native JSON receipt, and targeted logcat even when a method
   is red. It asserts semantic fit/menu/selection outcomes rather than fixed

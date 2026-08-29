@@ -82,10 +82,12 @@ class AndroidUiRuntimeTest {
           // than using a test-only component or desktop-width substitute.
           setRootZoom(webView, scale)
           val receipt = measureChrome(webView)
+          val nativeViewport = nativeViewportState(webView)
           receipt.put("journey", "205-responsive-chrome")
           receipt.put("requestedOrientation", orientationName)
           receipt.put("orientation", currentOrientation(scenario))
           receipt.put("requestedRootZoom", scale)
+          receipt.put("nativeViewport", nativeViewport)
           receipts.put(receipt)
 
           val clipped = receipt.optJSONArray("clipped") ?: JSONArray()
@@ -93,6 +95,7 @@ class AndroidUiRuntimeTest {
           val containerWidth = receipt.optDouble("containerWidth", Double.NaN)
           val navigationCount = receipt.optJSONArray("directNavigation")?.length() ?: -1
           val optionalCount = receipt.optJSONArray("directOptional")?.length() ?: -1
+          val sidebarDirect = receipt.optBoolean("directRightSidebar")
           val overflowVisible = receipt.optBoolean("overflowVisible")
           val winControls = receipt.optBoolean("winControls")
           val viewport = receipt.optJSONObject("viewport")
@@ -112,14 +115,19 @@ class AndroidUiRuntimeTest {
           if (winControls) {
             fitFailures += "$orientationName scale=$scale Android unexpectedly rendered desktop window controls"
           }
+          if (nativeViewport.optInt("webViewTop") < nativeViewport.optInt("statusBarTop")) {
+            fitFailures += "$orientationName scale=$scale WebView top ${nativeViewport.optInt("webViewTop")} remained under status inset ${nativeViewport.optInt("statusBarTop")}"
+          }
           if (!containerWidth.isFinite()) {
             fitFailures += "$orientationName scale=$scale did not report a container width"
           } else {
-            val expectOptional = if (containerWidth <= OPTIONAL_ACTION_FLOOR_PX) 0 else 4
+            val expectOptional = if (containerWidth <= OPTIONAL_ACTION_FLOOR_PX) 0 else 3
             val expectNavigation = if (containerWidth <= NAVIGATION_ACTION_FLOOR_PX) 0 else 2
             val expectOverflow = containerWidth <= OPTIONAL_ACTION_FLOOR_PX
-            if (optionalCount != expectOptional || navigationCount != expectNavigation || overflowVisible != expectOverflow) {
-              fitFailures += "$orientationName scale=$scale width=$containerWidth expected optional=$expectOptional navigation=$expectNavigation overflow=$expectOverflow, observed optional=$optionalCount navigation=$navigationCount overflow=$overflowVisible"
+            val expectSidebarDirect = containerWidth > RIGHT_SIDEBAR_FLOOR_PX
+            if (optionalCount != expectOptional || navigationCount != expectNavigation ||
+              sidebarDirect != expectSidebarDirect || overflowVisible != expectOverflow) {
+              fitFailures += "$orientationName scale=$scale width=$containerWidth expected optional=$expectOptional navigation=$expectNavigation sidebar=$expectSidebarDirect overflow=$expectOverflow, observed optional=$optionalCount navigation=$navigationCount sidebar=$sidebarDirect overflow=$overflowVisible"
             }
           }
 
@@ -138,11 +146,9 @@ class AndroidUiRuntimeTest {
             }
             val opened = measureChrome(webView)
             val openedActions = jsonStrings(opened.optJSONArray("visibleOverflowActions"))
-            val expectedActions = if (containerWidth <= NAVIGATION_ACTION_FLOOR_PX) {
-              listOf("calendar", "journals", "theme", "right-sidebar", "back", "forward")
-            } else {
-              listOf("calendar", "journals", "theme", "right-sidebar")
-            }
+            val expectedActions = mutableListOf("calendar", "journals", "theme")
+            if (containerWidth <= RIGHT_SIDEBAR_FLOOR_PX) expectedActions += "right-sidebar"
+            if (containerWidth <= NAVIGATION_ACTION_FLOOR_PX) expectedActions += listOf("back", "forward")
             receipt.put("openedOverflowActions", JSONArray(openedActions))
             if (openedActions != expectedActions) {
               fitFailures += "$orientationName scale=$scale width=$containerWidth expected overflow=$expectedActions observed=$openedActions"
@@ -211,76 +217,96 @@ class AndroidUiRuntimeTest {
   }
 
   @Test
-  fun initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement() {
-    withFreshDemoGraph("initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement") { scenario, webView ->
-      val selections = JSONArray()
+  fun initialNativeSelectionShowsMobileToolbarForFirstLineCaretSecondLineHold() {
+    runInitialNativeSelectionJourney(
+      test = "initialNativeSelectionShowsMobileToolbarForFirstLineCaretSecondLineHold",
+      kind = "first-line-caret-second-line-hold",
+      minimumTextLength = 140,
+      maximumTextLength = Int.MAX_VALUE,
+      requireSingleVisualLine = false,
+    )
+  }
+
+  @Test
+  fun initialNativeSelectionShowsMobileToolbarForSingleLineHold() {
+    runInitialNativeSelectionJourney(
+      test = "initialNativeSelectionShowsMobileToolbarForSingleLineHold",
+      kind = "single-line",
+      minimumTextLength = 1,
+      maximumTextLength = 80,
+      requireSingleVisualLine = true,
+    )
+  }
+
+  private fun runInitialNativeSelectionJourney(
+    test: String,
+    kind: String,
+    minimumTextLength: Int,
+    maximumTextLength: Int,
+    requireSingleVisualLine: Boolean,
+  ) {
+    withFreshDemoGraph(test) { scenario, webView ->
       val failures = mutableListOf<String>()
+      val occurrence = "ui375-${SystemClock.elapsedRealtime()}"
+      val target = awaitContentBlock(
+        webView,
+        minimumTextLength,
+        maximumTextLength,
+        requireSingleVisualLine,
+        occurrence,
+      )
+      val blockId = target.getString("blockId")
+      tapContentEditorEntry(webView, target)
+      val textarea = awaitEditor(webView, blockId, occurrence, !requireSingleVisualLine)
+      if (!requireSingleVisualLine) {
+        // Establish the reporter's literal starting state through touch: the
+        // caret is on visual line one while the keyboard is already open,
+        // then the only long press lands on visual line two.
+        tapAtEditorLine(webView, textarea, 0)
+      }
+      showIme(scenario, webView)
+      val imeBefore = imeVisible(webView)
+      val orientationBefore = currentOrientation(scenario)
+      val before = selectionState(webView, blockId, occurrence)
+      if (requireSingleVisualLine) longPress(webView, textarea) else longPressAtEditorLine(webView, textarea, 1)
+      val completeStateObserved = waitForCondition(SELECTION_TIMEOUT_MS) {
+        val state = selectionState(webView, blockId, occurrence)
+        state.optInt("selectionLength") > 0 && state.optBoolean("toolbarVisible") &&
+          state.optInt("visibleActionCount") == EXPECTED_SELECTION_ACTIONS &&
+          !state.optBoolean("moreVisible") && imeVisible(webView)
+      }
+      val observed = selectionState(webView, blockId, occurrence)
+      observed.put("kind", kind)
+      observed.put("target", target)
+      observed.put("caretProbeVisualLine", if (requireSingleVisualLine) JSONObject.NULL else 0)
+      observed.put("holdProbeVisualLine", if (requireSingleVisualLine) 0 else 1)
+      observed.put("before", before)
+      observed.put("completeStateObservedDuringWait", completeStateObserved)
+      observed.put("imeVisible", imeVisible(webView))
+      observed.put("imeVisibleBeforeLongPress", imeBefore)
+      observed.put("orientationBeforeLongPress", orientationBefore)
+      observed.put("orientation", currentOrientation(scenario))
 
-      // The two probes intentionally use only the initial long-press sequence.
-      // No subsequent move event drags a native selection handle, so a green
-      // receipt proves the initial-selection boundary rather than a workaround.
-      for ((kind, textBounds) in listOf(
-        "first-line-caret-second-line-hold" to (140 to Int.MAX_VALUE),
-        // Probe the scarce wrapped fixture before opening an editor/IME. The
-        // short target is abundant near the same physical scroll position.
-        "single-line" to (1 to 80),
-      )) {
-        val target = awaitContentBlock(webView, textBounds.first, textBounds.second, kind == "single-line")
-        val blockId = target.getString("blockId")
-        tapContentEditorEntry(webView, target)
-        val textarea = awaitEditor(webView, blockId, kind != "single-line")
-        if (kind != "single-line") {
-          // Establish the reporter's literal starting state through touch: the
-          // caret is on visual line one while the keyboard is already open,
-          // then the only long press lands on visual line two.
-          tapAtEditorLine(webView, textarea, 0)
-        }
-        showIme(scenario, webView)
-        val imeBefore = imeVisible(webView)
-        val orientationBefore = currentOrientation(scenario)
-        val before = selectionState(webView, blockId)
-        if (kind == "single-line") longPress(webView, textarea) else longPressAtEditorLine(webView, textarea, 1)
-        val completeStateObserved = waitForCondition(SELECTION_TIMEOUT_MS) {
-          val state = selectionState(webView, blockId)
-          state.optInt("selectionLength") > 0 && state.optBoolean("toolbarVisible") && imeVisible(webView)
-        }
-        val observed = selectionState(webView, blockId)
-        observed.put("kind", kind)
-        observed.put("caretProbeVisualLine", if (kind == "single-line") JSONObject.NULL else 0)
-        observed.put("holdProbeVisualLine", if (kind == "single-line") 0 else 1)
-        observed.put("before", before)
-        observed.put("completeStateObservedDuringWait", completeStateObserved)
-        observed.put("imeVisible", imeVisible(webView))
-        observed.put("imeVisibleBeforeLongPress", imeBefore)
-        observed.put("orientationBeforeLongPress", orientationBefore)
-        observed.put("orientation", currentOrientation(scenario))
-        selections.put(observed)
-
-        if (!completeStateObserved || observed.optInt("selectionLength") <= 0 || !observed.optBoolean("toolbarVisible")) {
-          failures += "$kind selection=${observed.optInt("selectionLength")} toolbarVisible=${observed.optBoolean("toolbarVisible")}"
-        }
-        if (!imeBefore || !observed.optBoolean("imeVisible")) {
-          failures += "$kind IME was dismissed or never visible"
-        }
-        if (!before.optBoolean("activeEditor") || before.optInt("selectionLength") != 0) {
-          failures += "$kind did not begin from the intended active editor with a collapsed caret"
-        }
-        if (orientationBefore != observed.optString("orientation")) {
-          failures += "$kind changed orientation during the initial selection"
-        }
-        if (kind != "single-line" && observed.optInt("editorVisualLines") < 2) {
-          failures += "$kind did not begin on a visually wrapped editor line"
-        }
+      if (!completeStateObserved || observed.optInt("selectionLength") <= 0 || !observed.optBoolean("toolbarVisible")) {
+        failures += "$kind selection=${observed.optInt("selectionLength")} toolbarVisible=${observed.optBoolean("toolbarVisible")}"
+      }
+      if (observed.optInt("visibleActionCount") != EXPECTED_SELECTION_ACTIONS || observed.optBoolean("moreVisible")) {
+        failures += "$kind formatting actions were still collapsed: ${observed.optJSONArray("visibleActionIds")}"
+      }
+      if (!imeBefore || !observed.optBoolean("imeVisible")) failures += "$kind IME was dismissed or never visible"
+      if (!before.optBoolean("activeEditor") || before.optInt("selectionLength") != 0) {
+        failures += "$kind did not begin from the intended active editor with a collapsed caret"
+      }
+      if (orientationBefore != observed.optString("orientation")) failures += "$kind changed orientation during selection"
+      if (!requireSingleVisualLine && observed.optInt("editorVisualLines") < 2) {
+        failures += "$kind did not begin on a visually wrapped editor line"
       }
 
       val receipt = JSONObject()
         .put("journey", "375-initial-native-selection")
-        .put("selections", selections)
+        .put("selection", observed)
         .put("failures", JSONArray(failures))
-      emitReceipt(
-        "initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement",
-        receipt,
-      )
+      emitReceipt(test, receipt)
       assertTrue("initial native selections must retain IME and show Tine's mobile toolbar: $failures", failures.isEmpty())
     }
   }
@@ -377,19 +403,26 @@ class AndroidUiRuntimeTest {
     }
   }
 
-  private fun awaitEditor(webView: WebView, blockId: String, requireMultipleVisualLines: Boolean = false): JSONObject {
+  private fun awaitEditor(
+    webView: WebView,
+    blockId: String,
+    occurrence: String,
+    requireMultipleVisualLines: Boolean = false,
+  ): JSONObject {
     var result: JSONObject? = null
     awaitCondition("real focused block textarea") {
       result = evaluateJsonOrNull(webView, """
         (() => {
-          const row = document.querySelector(`.ls-block[data-block-id=${JSONObject.quote(blockId)}]`);
-          const editor = row?.querySelector('textarea.block-editor');
-          if (!editor) return null;
+          const editor = document.activeElement;
+          if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains('block-editor')) return null;
+          const row = editor.closest('.ls-block');
+          if (row?.dataset.blockId !== ${JSONObject.quote(blockId)} ||
+              row?.dataset.androidUiOccurrence !== ${JSONObject.quote(occurrence)}) return null;
           const rect = editor.getBoundingClientRect();
           const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
           return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
             viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-            lineHeight, blockId: row.dataset.blockId,
+            lineHeight, blockId: row.dataset.blockId, occurrence: row.dataset.androidUiOccurrence,
             active: document.activeElement === editor,
             editorVisualLines: Math.max(1, Math.round(rect.height / lineHeight)) });
         })()
@@ -476,30 +509,53 @@ class AndroidUiRuntimeTest {
     minimumTextLength: Int,
     maximumTextLength: Int,
     requireSingleVisualLine: Boolean,
+    occurrence: String,
   ): JSONObject {
     repeat(MAX_FIXTURE_SCROLLS + 1) { attempt ->
       val result = evaluateJsonOrNull(webView, """
         (() => {
-          const block = [...document.querySelectorAll('.ls-block')]
-            .find((candidate) => {
-              const content = candidate.querySelector(':scope > .block-main > .block-content-wrapper');
-              if (!content) return false;
+          const candidates = [...document.querySelectorAll('.ls-block')];
+          let chosen = null;
+          for (const candidate of candidates) {
+              const content = candidate.querySelector(':scope > .block-main > .block-content-wrapper > .block-content');
+              if (!content) continue;
               const length = content.innerText.trim().length;
               const rect = content.getBoundingClientRect();
               const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20;
               const singleLine = rect.height <= lineHeight * 1.6;
-              return length >= $minimumTextLength && length <= $maximumTextLength &&
-                (${if (requireSingleVisualLine) "singleLine" else "!singleLine"}) &&
-                rect.top > 64 && rect.bottom < window.innerHeight * 0.58;
-            });
-          if (!block) return null;
-          const content = block.querySelector(':scope > .block-main > .block-content-wrapper');
-          const rect = content.getBoundingClientRect();
-          const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20;
+              if (!(length >= $minimumTextLength && length <= $maximumTextLength &&
+                  (${if (requireSingleVisualLine) "singleLine" else "!singleLine"}) &&
+                  rect.top > 64 && rect.bottom < window.innerHeight * 0.58)) continue;
+              const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+              for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                if (!node.textContent?.trim()) continue;
+                const owner = node.parentElement;
+                if (!owner || owner.closest('a,button,input,textarea,select,[contenteditable="true"]')) continue;
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                for (const textRect of Array.from(range.getClientRects())) {
+                  if (textRect.width <= 2 || textRect.height <= 2) continue;
+                  const x = Math.min(textRect.right - 1, textRect.left + Math.min(18, textRect.width / 2));
+                  const y = textRect.top + textRect.height / 2;
+                  const hit = document.elementFromPoint(x, y);
+                  if (hit?.closest('.ls-block') !== candidate || hit.closest('a,button,input,textarea,select,[contenteditable="true"]')) continue;
+                  chosen = { block: candidate, content, rect, lineHeight, length, x, y,
+                    hitTag: hit.tagName, hitClass: String(hit.className || '') };
+                  break;
+                }
+                if (chosen) break;
+              }
+              if (chosen) break;
+          }
+          if (!chosen) return null;
+          const { block, rect, lineHeight, length, x, y, hitTag, hitClass } = chosen;
+          block.dataset.androidUiOccurrence = ${JSONObject.quote(occurrence)};
           if (rect.width <= 0 || rect.height <= 0) return null;
           return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
             viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-            lineHeight, blockId: block.dataset.blockId, textLength: content.innerText.trim().length });
+            lineHeight, blockId: block.dataset.blockId, occurrence: ${JSONObject.quote(occurrence)},
+            duplicateCount: candidates.filter((row) => row.dataset.blockId === block.dataset.blockId).length,
+            textLength: length, entryX: x, entryY: y, hitTag, hitClass });
         })()
       """.trimIndent())
       if (result != null) return result
@@ -536,11 +592,11 @@ class AndroidUiRuntimeTest {
   }
 
   private fun tapContentEditorEntry(webView: WebView, content: JSONObject) {
-    // The rendered text band can contain links and chips at any horizontal
-    // position. The wrapper's trailing padding owns the same production
-    // mousedown-to-edit path without invoking an inline control.
-    val cssX = content.getDouble("left") + content.getDouble("width") - 6.0
-    val cssY = content.getDouble("top") + content.getDouble("lineHeight") * 0.5
+    // The DOM probe retained a text-node Range point and proved elementFromPoint
+    // resolves to this exact non-interactive occurrence. Input remains a real
+    // screen-level MotionEvent; JavaScript only prevents selector guesswork.
+    val cssX = content.getDouble("entryX")
+    val cssY = content.getDouble("entryY")
     tapAt(webView, motionPoint(webView, content, cssX, cssY))
   }
 
@@ -651,6 +707,28 @@ class AndroidUiRuntimeTest {
     }
   }
 
+  private fun nativeViewportState(webView: WebView): JSONObject {
+    val observed = AtomicReference<JSONObject>()
+    val latch = CountDownLatch(1)
+    webView.post {
+      val location = IntArray(2)
+      webView.getLocationOnScreen(location)
+      val rootInsets = webView.rootWindowInsets
+      val status = rootInsets?.getInsets(WindowInsets.Type.statusBars())
+      val navigation = rootInsets?.getInsets(WindowInsets.Type.navigationBars())
+      observed.set(JSONObject()
+        .put("webViewLeft", location[0])
+        .put("webViewTop", location[1])
+        .put("webViewWidth", webView.width)
+        .put("webViewHeight", webView.height)
+        .put("statusBarTop", status?.top ?: 0)
+        .put("navigationBarBottom", navigation?.bottom ?: 0))
+      latch.countDown()
+    }
+    assertTrue("native WebView geometry was unavailable", latch.await(EVALUATE_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+    return checkNotNull(observed.get())
+  }
+
   private fun installLongPressMutationTrace(webView: WebView) {
     val installed = evaluateJson(webView, """
       (() => {
@@ -718,16 +796,19 @@ class AndroidUiRuntimeTest {
     }))()
   """.trimIndent())
 
-  private fun selectionState(webView: WebView, blockId: String): JSONObject = evaluateJson(webView, """
+  private fun selectionState(webView: WebView, blockId: String, occurrence: String): JSONObject = evaluateJson(webView, """
     (() => {
-      const row = document.querySelector(`.ls-block[data-block-id=${JSONObject.quote(blockId)}]`);
-      const editor = row?.querySelector('textarea.block-editor');
+      const editor = document.activeElement instanceof HTMLTextAreaElement &&
+        document.activeElement.classList.contains('block-editor') ? document.activeElement : null;
+      const row = editor?.closest('.ls-block');
+      const ownsOccurrence = row?.dataset.blockId === ${JSONObject.quote(blockId)} &&
+        row?.dataset.androidUiOccurrence === ${JSONObject.quote(occurrence)};
       const toolbar = document.querySelector('[data-mobile-selection-toolbar]');
       const toolbarStyle = toolbar ? getComputedStyle(toolbar) : null;
       const toolbarRect = toolbar?.getBoundingClientRect();
       return JSON.stringify({
-        blockId: row?.dataset.blockId || '',
-        activeEditor: document.activeElement === editor,
+        blockId: row?.dataset.blockId || '', occurrence: row?.dataset.androidUiOccurrence || '',
+        activeEditor: !!editor && ownsOccurrence,
         selectionStart: editor?.selectionStart ?? 0,
         selectionEnd: editor?.selectionEnd ?? 0,
         selectionLength: editor ? Math.max(0, editor.selectionEnd - editor.selectionStart) : 0,
@@ -737,6 +818,17 @@ class AndroidUiRuntimeTest {
         mobileToolbar: !!toolbar,
         toolbarVisible: !!toolbar && toolbarStyle.display !== 'none' && toolbarStyle.visibility !== 'hidden' &&
           toolbarRect.width > 0 && toolbarRect.height > 0,
+        visibleActionIds: toolbar ? [...toolbar.querySelectorAll('[data-selection-action]')].filter((button) => {
+          const style = getComputedStyle(button); const rect = button.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        }).map((button) => button.getAttribute('data-selection-action')) : [],
+        visibleActionCount: toolbar ? [...toolbar.querySelectorAll('[data-selection-action]')].filter((button) => {
+          const style = getComputedStyle(button); const rect = button.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        }).length : 0,
+        moreVisible: (() => { const more = toolbar?.querySelector('.sel-toolbar-more'); if (!more) return false;
+          const style = getComputedStyle(more); const rect = more.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0; })(),
       });
     })()
   """.trimIndent())
@@ -759,6 +851,7 @@ class AndroidUiRuntimeTest {
         .filter((button) => !button.closest('.topbar-overflow-menu') && visible(button));
       const navigation = [...topbar.querySelectorAll('.topbar-navigation-action')].filter(visible);
       const optional = [...topbar.querySelectorAll('.topbar-optional-action')].filter(visible);
+      const sidebar = [...topbar.querySelectorAll('.topbar-sidebar-action')].filter(visible);
       const overflowTrigger = topbar.querySelector('[data-topbar-overflow-trigger]');
       const overflowMenu = topbar.querySelector('.topbar-overflow-menu');
       const clipped = direct
@@ -783,6 +876,7 @@ class AndroidUiRuntimeTest {
         overflowMenuVisible: !!overflowMenu && visible(overflowMenu),
         directNavigation: navigation.map((button) => button.getAttribute('aria-label') || button.title || ''),
         directOptional: optional.map((button) => button.getAttribute('aria-label') || button.title || ''),
+        directRightSidebar: sidebar.length === 1,
         directActions: direct.map((button) => {
           const rect = button.getBoundingClientRect();
           return {
@@ -955,5 +1049,7 @@ class AndroidUiRuntimeTest {
     const val SWIPE_SETTLE_MS = 320L
     const val OPTIONAL_ACTION_FLOOR_PX = 345.0
     const val NAVIGATION_ACTION_FLOOR_PX = 300.0
+    const val RIGHT_SIDEBAR_FLOOR_PX = 250.0
+    const val EXPECTED_SELECTION_ACTIONS = 7
   }
 }

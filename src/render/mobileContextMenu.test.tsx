@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 
 vi.mock("../nativeChrome", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../nativeChrome")>()),
+  isAndroidPlatform: true,
   isMobilePlatform: true,
 }));
 
@@ -30,13 +31,21 @@ function nativeContextMenuRemainsAvailable(element: Element): void {
   expect(bubbled).toBe(1);
 }
 
+function nativeContextMenuIsOwned(element: Element): void {
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  expect(element.dispatchEvent(event)).toBe(false);
+  expect(event.defaultPrevented).toBe(true);
+}
+
 describe("Android text-selection contextmenu policy (GH #162)", () => {
-  it("does not let a nested inline page reference bypass native selection", () => {
+  it("gives an explicit page reference's native hold to its page menu", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const dispose = render(() => <PageRef name="Target page" />, host);
     try {
-      nativeContextMenuRemainsAvailable(host.querySelector(".page-ref")!);
+      const pageRef = host.querySelector(".page-ref")!;
+      expect(pageRef.hasAttribute("data-page-context-menu")).toBe(true);
+      nativeContextMenuIsOwned(pageRef);
     } finally {
       dispose();
     }
@@ -59,4 +68,30 @@ describe("Android text-selection contextmenu policy (GH #162)", () => {
       dispose();
     }
   });
+});
+
+describe("Android page-link hold ownership (GH #207)", () => {
+  it("keeps hover preview desktop-only", async () => {
+    vi.useFakeTimers();
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue({
+      name: "Target page",
+      kind: "page",
+      title: "Target page",
+      pre_block: null,
+      blocks: [{ id: "target", raw: "Preview body", collapsed: false, children: [] }],
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PageRef name="Target page" />, host);
+    try {
+      host.querySelector(".page-ref")!.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getPage).not.toHaveBeenCalled();
+      expect(host.querySelector(".peek-popup")).toBeNull();
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
 });

@@ -10,8 +10,8 @@ const css = ["theme.css", "app.css"]
 const actions = (extraClass = "") => `
   <div class="editor-wrap">
     <div class="sel-toolbar ${extraClass}">
-      <button>B</button><button>I</button><button class="sel-action-page-link">[[ ]]</button><button>\`</button>
-      <div class="sel-toolbar-secondary"><button>Link</button><button>S</button><button>H</button></div>
+      <button data-selection-action="bold">B</button><button data-selection-action="italic">I</button><button class="sel-action-page-link" data-selection-action="page-link">[[ ]]</button><button data-selection-action="code">\`</button>
+      <div class="sel-toolbar-secondary"><button data-selection-action="link">Link</button><button data-selection-action="strike">S</button><button data-selection-action="highlight">H</button></div>
       <button class="sel-toolbar-more">…</button>
     </div>
   </div>`;
@@ -45,11 +45,11 @@ try {
   // Tine's own mobile formatting surface must instead form a second dock row
   // immediately above the existing keyboard toolbar. The custom property is
   // the real runtime handoff published by MobileKeyboardToolbar.tsx.
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 320, height: 844 });
   await page.setContent(`<!doctype html><style>${css}</style>
-    <div id="mobile" style="--mobile-kb-toolbar-lift: 208px">
+    <div id="mobile">
       <div id="native-action-mode-proxy" style="position:fixed;left:20px;right:20px;top:120px;height:140px"></div>
-      <div style="position:absolute;left:18px;right:18px;top:220px">
+      <div style="position:absolute;left:18px;top:220px;width:220px">
         ${actions("sel-toolbar-mobile")}
       </div>
       <div class="mobile-keyboard-toolbar" style="top:700px">
@@ -57,12 +57,8 @@ try {
       </div>
     </div>`);
   await page.evaluate(() => {
-    const toolbar = document.querySelector(".sel-toolbar-mobile");
-    const overflow = document.createElement("div");
-    overflow.className = "sel-toolbar-overflow";
-    overflow.style.display = "flex";
-    overflow.innerHTML = "<button>More</button>";
-    toolbar.appendChild(overflow);
+    const keyboardTop = document.querySelector(".mobile-keyboard-toolbar").getBoundingClientRect().top;
+    document.documentElement.style.setProperty("--mobile-kb-toolbar-lift", `${window.innerHeight - keyboardTop + 8}px`);
   });
   const mobile = await page.evaluate(() => {
     const rect = (selector) => {
@@ -71,10 +67,17 @@ try {
     };
     return {
       formatting: rect(".sel-toolbar-mobile"),
-      overflow: rect(".sel-toolbar-overflow"),
       keyboard: rect(".mobile-keyboard-toolbar"),
       nativeProxy: rect("#native-action-mode-proxy"),
       position: getComputedStyle(document.querySelector(".sel-toolbar-mobile")).position,
+      visibleActions: [...document.querySelectorAll(".sel-toolbar-mobile [data-selection-action]")]
+        .filter((button) => {
+          const style = getComputedStyle(button);
+          const box = button.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0;
+        })
+        .map((button) => button.getAttribute("data-selection-action")),
+      more: getComputedStyle(document.querySelector(".sel-toolbar-mobile > .sel-toolbar-more")).display,
     };
   });
   const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -88,10 +91,11 @@ try {
   if (gap < 4 || gap > 12) {
     throw new Error(`mobile formatting toolbar is not immediately above the keyboard dock (gap ${gap}px): ${JSON.stringify(mobile)}`);
   }
-  if (mobile.overflow.bottom > mobile.formatting.top + 1) {
-    throw new Error(`mobile formatting overflow opens toward the keyboard instead of upward: ${JSON.stringify(mobile)}`);
+  const expectedActions = ["bold", "italic", "page-link", "code", "link", "strike", "highlight"];
+  if (JSON.stringify(mobile.visibleActions) !== JSON.stringify(expectedActions) || mobile.more !== "none") {
+    throw new Error(`mobile formatting actions remain collapsed behind More: ${JSON.stringify(mobile)}`);
   }
-  if (mobile.formatting.left < 6 || mobile.formatting.right > 384) {
+  if (mobile.formatting.left < 6 || mobile.formatting.right > 314) {
     throw new Error(`mobile formatting dock escapes phone safe horizontal bounds: ${JSON.stringify(mobile)}`);
   }
   await page.screenshot({ path: "/tmp/selection-toolbar-mobile.png" });

@@ -24,6 +24,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Android phone controls and text gestures now have one explicit owner.** The
+  right-sidebar button stays directly available until the last-resort phone
+  width tier, the WebView respects native status/navigation insets, holding a
+  page reference opens one Tine Page actions menu without preview or text
+  selection, and an initial editor selection immediately shows all seven Tine
+  formatting actions while retaining the keyboard (GH #205, #207, #375).
+
 - **Android no longer treats a refused directory durability barrier as success
   for promoted managed-storage projection receipts.** Only the receipt store's
   pre-enrollment initialization remains reconstructible; bases, intents,

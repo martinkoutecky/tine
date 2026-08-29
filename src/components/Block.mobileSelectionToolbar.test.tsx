@@ -27,7 +27,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-async function mountSelectedEditor(mobile: boolean) {
+async function mountEditor(mobile: boolean) {
   platform.mobile = mobile;
   const { Block } = await import("./Block");
   const block: BlockDto = {
@@ -43,6 +43,12 @@ async function mountSelectedEditor(mobile: boolean) {
   ));
   const textarea = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
   textarea.focus();
+  return { ...mounted, textarea };
+}
+
+async function mountSelectedEditor(mobile: boolean) {
+  const mounted = await mountEditor(mobile);
+  const { textarea } = mounted;
   textarea.setSelectionRange(6, 14);
   textarea.dispatchEvent(new Event("select", { bubbles: true }));
   await vi.waitFor(() => expect(mounted.root.querySelector(".sel-toolbar")).not.toBeNull());
@@ -50,6 +56,25 @@ async function mountSelectedEditor(mobile: boolean) {
 }
 
 describe("selected-text toolbar platform ownership (GH #375)", () => {
+  it("shows on the initial native selectionchange without waiting for handle movement", async () => {
+    const mounted = await mountEditor(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mounted.textarea.dispatchEvent(new Event("select", { bubbles: true }));
+      expect(mounted.root.querySelector(".sel-toolbar")).toBeNull();
+      // jsdom's setSelectionRange dispatches `select`, which is the event the
+      // old implementation already observed. Android WebView can update these
+      // properties on the initial native hold while emitting only the document
+      // selectionchange; set the observable state without manufacturing select.
+      Object.defineProperty(mounted.textarea, "selectionStart", { configurable: true, value: 6 });
+      Object.defineProperty(mounted.textarea, "selectionEnd", { configurable: true, value: 14 });
+      document.dispatchEvent(new Event("selectionchange"));
+      await vi.waitFor(() => expect(mounted.root.querySelector(".sel-toolbar")).not.toBeNull());
+    } finally {
+      mounted.dispose();
+    }
+  });
+
   it("marks the mobile formatting surface for keyboard-dock positioning", async () => {
     const mounted = await mountSelectedEditor(true);
     try {

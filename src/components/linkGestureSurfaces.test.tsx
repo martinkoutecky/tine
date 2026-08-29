@@ -191,6 +191,7 @@ describe("reference page headers follow the gesture contract (GH #207)", () => {
         expect(el?.textContent).toContain("Backlink Owner");
         return el!;
       });
+      expect(header.hasAttribute("data-page-context-menu")).toBe(true);
       expect(middleDefaultPrevented(header)).toBe(true);
 
       vi.useFakeTimers();

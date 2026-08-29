@@ -32,7 +32,7 @@ import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
-import { isMobilePlatform } from "../nativeChrome";
+import { isAndroidPlatform, isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw, formatForPage, formatForBlock, blockRef } from "../store";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -41,7 +41,7 @@ import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { shouldOpenPageContextMenu, shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { hiccupToHtml } from "./hiccup";
 
 
@@ -329,7 +329,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
-  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
+  const peek = createPeekBridge(() => isMobilePlatform || insidePeek || isGuidePageName(targetName()));
   // Mobile: a deliberate long-press raises the same context menu desktop
   // right-click gives (GH #231). Quick tap, scroll, and text selection behave
   // as before; the recognizer cancels on movement/release/cancel and only
@@ -347,6 +347,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       <a
         ref={anchorEl}
         class={`${props.tag ? "tag" : "page-ref"}${missing() ? " page-ref-missing" : ""}`}
+        data-page-context-menu
         {...(props.spanAttrs ?? {})}
         // Shift+click opens the page in the sidebar (via `open`); the shared
         // guard suppresses native shift-range-selection / middle-click autoscroll
@@ -355,10 +356,10 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onClick={open}
         onMouseEnter={peek.anchorEnter}
         onMouseLeave={peek.anchorLeave}
-        onPointerDown={longPress.onPointerDown}
-        onPointerMove={longPress.onPointerMove}
-        onPointerUp={longPress.onPointerUp}
-        onPointerCancel={longPress.onPointerCancel}
+        onPointerDown={(e) => { if (!isAndroidPlatform) longPress.onPointerDown(e); }}
+        onPointerMove={(e) => { if (!isAndroidPlatform) longPress.onPointerMove(e); }}
+        onPointerUp={(e) => { if (!isAndroidPlatform) longPress.onPointerUp(e); }}
+        onPointerCancel={(e) => { if (!isAndroidPlatform) longPress.onPointerCancel(e); }}
 
         onAuxClick={(e) => {
           // A background tab belongs to the pane that was already active, not
@@ -366,7 +367,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (internalLinkAuxClick(e, () => openPageInNewTab(targetName(), kind()))) e.stopPropagation();
         }}
         onContextMenu={(e) => {
-          if (!shouldOpenTextContextMenu(e)) return;
+          if (!shouldOpenPageContextMenu(e.target)) return;
+          if (isAndroidPlatform) longPress.dispose();
           e.preventDefault();
           e.stopPropagation();
           if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());

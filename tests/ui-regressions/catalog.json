@@ -3567,7 +3567,7 @@
     "all"
    ],
    "layer": "native",
-   "status": "reported",
+   "status": "fixing",
    "coverage": {
     "tests": [
      "src/components/Page.test.tsx"
@@ -8748,7 +8748,7 @@
     "android"
    ],
    "layer": "native",
-   "status": "reported",
+   "status": "fixing",
    "coverage": {
     "tests": [
      "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::responsiveChromeFitsPortraitAndLandscapeAtDefault90And110Percent",
@@ -8757,7 +8757,7 @@
     "scenario": "android-ui-runtime.responsive-chrome-motion-events",
     "failBefore": "proven"
    },
-   "notes": "The focused manual API-35 x86_64 lane resets to the real first-run demo graph, drives the packaged WebView with Android MotionEvents, and records inner/visual viewport, DPR, root zoom, topbar geometry, direct and overflow actions, free width, JUnit accounting, screenshot, DOM/native receipt, and targeted logcat. Hosted run 33251907222 produced six non-vacuous geometry samples with no clipping, but the visible portrait overflow control ignored the native tap at root zoom 1.0, 0.9, and 1.1; landscape fit remained clean. This is a product failure, not evidence for every OEM WebView or display scale."
+   "notes": "The focused manual API-35 x86_64 lane resets to the real first-run demo graph, drives the packaged WebView with Android MotionEvents, and records responsive/native geometry plus durable evidence. The reporter's approximately 360-CSS-pixel phone is a deterministic product failure: the 345px tier hid all four optional actions atomically, then flexible space remained for the requested right-sidebar control; the old screenshot harness encoded that as success. Hosted run 33251907222 also found the edge-to-edge WebView beginning at screen y=0 while CSS safe-area insets were zero, leaving topbar touch centers in the Android status-bar region and all portrait overflow taps ignored. Fixing now gives right-sidebar a higher-priority measured tier, owns system-bar insets at the native content root, and extends the real-tap receipt with native screen/inset geometry. This is not evidence for every OEM WebView or scale."
   },
   {
    "id": "UI-ANDROID-UI-RUNTIME-LONG-PRESS-207",
@@ -8773,16 +8773,19 @@
     "android"
    ],
    "layer": "native",
-   "status": "reproduced",
+   "status": "fixing",
    "coverage": {
     "tests": [
+     "src/render/mobileContextMenu.test.tsx::Android page-link hold ownership (GH #207)",
+     "src/components/linkGestureSurfaces.test.tsx::linked-reference page header suppresses the middle-mousedown default",
+     "src/components/QuickSwitcher.modifiedClicks.test.tsx::opens a page result's context menu on a still touch hold (GH #207)",
      "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation",
      ".github/scripts/android-ui-runtime.sh"
     ],
     "scenario": "android-ui-runtime.page-reference-exclusive-long-press",
     "failBefore": "proven"
    },
-   "notes": "The manual native method installs a DOM mutation trace, sends one Android ACTION_DOWN/long-press/ACTION_UP sequence to a rendered demo-graph page reference, and fails unless exactly one Page actions menu remains while preview count, selection text, and route stay unchanged. Hosted run 33251907222 reached a real demo page reference and retained the full product-failure receipt: zero Page actions menus, one preview, and selected text `Roadmap`, with the route unchanged. The emulator result must not be substituted for the reporter's OEM outcome."
+   "notes": "The manual native method installs a DOM mutation trace, sends one Android ACTION_DOWN/long-press/ACTION_UP sequence to a rendered demo-graph page reference, and fails unless exactly one Page actions menu remains while preview count, selection text, and route stay unchanged. Hosted run 33251907222 reached a real demo page reference and retained the full product-failure receipt: zero Page actions menus, one preview, and selected text `Roadmap`, with the route unchanged. Fixing now makes the mobile link's deliberate hold exclusive by disabling hover preview and native text selection on that link while preserving quick tap, scroll, desktop preview, and non-link/editor text selection. The emulator result must not be substituted for the reporter's OEM outcome."
   },
   {
    "id": "UI-ANDROID-UI-RUNTIME-INITIAL-SELECTION-375",
@@ -8798,16 +8801,19 @@
     "android"
    ],
    "layer": "native",
-   "status": "reported",
+   "status": "fixing",
    "coverage": {
     "tests": [
-     "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement",
+     "src/components/Block.mobileSelectionToolbar.test.tsx::shows on the initial native selectionchange without waiting for handle movement",
+     "scripts/check-selection-toolbar.mjs",
+     "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::initialNativeSelectionShowsMobileToolbarForFirstLineCaretSecondLineHold",
+     "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::initialNativeSelectionShowsMobileToolbarForSingleLineHold",
      ".github/scripts/android-ui-runtime.sh"
     ],
     "scenario": "android-ui-runtime.initial-native-selection-toolbar",
-    "failBefore": "unavailable"
+    "failBefore": "proven"
    },
-   "notes": "The focused method is designed to tap a real demo-graph block, request the Android IME, and probe short and long rendered text with initial native long presses only—no follow-up handle drag, IME dismissal, or orientation change. Hosted API-35 run 33251907222 compiled and executed the harness but timed out before a focused textarea existed, retaining a valid screenshot and structured harness-failure receipt but no journey receipt. #375 therefore remains unproven; this row records an acceptance-lane gap, not product or OEM ActionMode/IME evidence."
+   "notes": "The two separately reset focused methods tap an exact demo-graph occurrence, request the Android IME, and probe a single rendered line plus the reporter's first-line caret/second-line hold sequence with initial native long presses only—no follow-up handle drag, IME dismissal, or orientation change. Hosted run 33251907222 exposed the old harness defect: it retained only the clicked block ID, then queried the first DOM occurrence even though the fixture contains embedded/repeated instances; its padding point was also not proved editable. The rewritten harness stamps the exact occurrence, chooses a text-node Range point with a verified non-interactive hit target, and resolves the editor from document.activeElement. Separate fail-before unit evidence removes the document `selectionchange` listener and reproduces the missing toolbar; pass-after observes the initial native selection through that event, while the phone-width geometry contract requires all seven formatting actions directly visible and More absent. Physical Android proof remains pending."
   },
   {
    "id": "UI-CODEBLOCK-BODY-ONLY-412",

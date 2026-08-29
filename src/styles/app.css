@@ -527,7 +527,8 @@ textarea {
    (or a system-decorated desktop window).  Treat that extra cluster as actual
    occupied space instead of penalizing every phone with the desktop cutoff. */
 @container topbar (max-width: 460px) {
-  .topbar:has(.win-controls) .topbar-optional-action {
+  .topbar:has(.win-controls) .topbar-optional-action,
+  .topbar:has(.win-controls) .topbar-sidebar-action {
     display: none;
   }
   .topbar:has(.win-controls) .topbar-right {
@@ -568,6 +569,12 @@ textarea {
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
   }
+  /* The reporter's 360px Android toolbar has room for this frequent one-tap
+     action after calendar/journals/theme collapse. Keep it direct and remove
+     the duplicate menu row; frameless desktop already collapsed it above. */
+  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
+    display: none;
+  }
 }
 
 /* At this floor the ~76px Back/Forward pair no longer has reliable room beside
@@ -580,6 +587,18 @@ textarea {
   .topbar .topbar-overflow [data-topbar-overflow-action="back"],
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
+    display: block;
+  }
+}
+
+/* Last-resort floor for the fixed clusters themselves. The 280px viewport has
+   a 252px content box and still fits right-sidebar exactly once; only below
+   that measured boundary does it join the overflow menu. */
+@container topbar (max-width: 250px) {
+  .topbar:not(:has(.win-controls)) .topbar-sidebar-action {
+    display: none;
+  }
+  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
     display: block;
   }
 }
@@ -5139,6 +5158,16 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
   .sel-toolbar-overflow {
     display: flex;
   }
+  /* A phone-wide fixed dock is not constrained by the editor's narrow text
+     column. Keep all formatting actions one tap away on mobile; only the
+     desktop editor-anchored toolbar needs this container overflow tier. */
+  .sel-toolbar-mobile .sel-toolbar-secondary {
+    display: flex;
+  }
+  .sel-toolbar-mobile > .sel-toolbar-more,
+  .sel-toolbar-mobile .sel-toolbar-overflow {
+    display: none;
+  }
 }
 .sel-toolbar button {
   width: 26px;
@@ -5466,6 +5495,16 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
      native link callout bubble from stacking on top of it. Text selection is
      unchanged (only the callout is suppressed). */
   -webkit-touch-callout: none;
+}
+
+/* A deliberate hold on an explicit page-navigation affordance belongs to its
+   Page actions menu on touch devices. Keep ordinary block/editor text outside
+   this marker selectable; only the affordance rejects a second native owner. */
+@media (pointer: coarse) {
+  [data-page-context-menu] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 .tag {

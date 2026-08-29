@@ -110,6 +110,7 @@ describe("QuickSwitcher modified clicks (GH #288)", () => {
     openSwitcher();
     await settle();
     const row = rows(root)[0];
+    expect(row.hasAttribute("data-page-context-menu")).toBe(true);
 
     vi.useFakeTimers();
     row.dispatchEvent(new PointerEvent("pointerdown", {

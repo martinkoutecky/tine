@@ -31,3 +31,12 @@ export function shouldOpenTextContextMenu(
   if (event && isLongPressContextMenu(event)) return !editableTarget(target);
   return !mobile && !editableTarget(target);
 }
+
+/** Explicit page-navigation affordances own a mobile hold just like Sidebar
+ * rows do. Ordinary block/editor text still uses shouldOpenTextContextMenu so
+ * Android's native selection remains available away from links. */
+export function shouldOpenPageContextMenu(
+  target: EventTarget | null,
+): boolean {
+  return !editableTarget(target);
+}

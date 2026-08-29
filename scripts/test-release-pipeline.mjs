@@ -69,6 +69,13 @@ const androidUiRuntimeTest = fs.readFileSync(
   ),
   "utf8"
 );
+const androidMainActivity = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    "src-tauri/gen/android/app/src/main/java/page/tine/app/MainActivity.kt"
+  ),
+  "utf8"
+);
 const windowsWebviewDriverInstaller = fs.readFileSync(
   path.join(process.cwd(), "scripts/install-windows-webview2-driver.ps1"),
   "utf8"
@@ -877,7 +884,8 @@ for (const evidence of [
 for (const method of [
   "responsiveChromeFitsPortraitAndLandscapeAtDefault90And110Percent",
   "longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation",
-  "initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement",
+  "initialNativeSelectionShowsMobileToolbarForFirstLineCaretSecondLineHold",
+  "initialNativeSelectionShowsMobileToolbarForSingleLineHold",
 ]) {
   assert.ok(
     androidUiRuntimeScript.includes(method),
@@ -885,6 +893,11 @@ for (const method of [
   );
   assert.ok(androidUiRuntimeTest.includes(`fun ${method}()`), `Android UI instrumentation is missing ${method}`);
 }
+assert.match(
+  androidMainActivity,
+  /setOnApplyWindowInsetsListener[\s\S]*?Type\.systemBars\(\) or WindowInsetsCompat\.Type\.displayCutout\(\)[\s\S]*?view\.setPadding\([\s\S]*?\n\s*insets\n/,
+  "Android content root must own system-bar and cutout insets without consuming IME insets"
+);
 assert.match(
   androidUiRuntimeScript,
   /if ! run_journey "\$method"; then[\s\S]*?overall=1/,

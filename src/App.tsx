@@ -1651,7 +1651,7 @@ export function App(): JSX.Element {
               </Show>
             </button>
             <button
-              class="icon-btn topbar-optional-action"
+              class="icon-btn topbar-sidebar-action"
               classList={{ active: rightSidebarOpen() }}
               title="Toggle right sidebar (t r)"
               onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
