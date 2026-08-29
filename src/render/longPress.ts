@@ -20,6 +20,9 @@ export interface LongPressHandlers {
   onPointerMove(e: PointerEvent): void;
   onPointerUp(e: PointerEvent): void;
   onPointerCancel(e: PointerEvent): void;
+  /** Whether this hold already fired Tine's synthetic contextmenu. Native
+   * Android contextmenu delivery after that point is a duplicate owner. */
+  completedHold(): boolean;
   /** Consume the compatibility click emitted when a completed hold releases. */
   consumeClick(): boolean;
   dispose(): void;
@@ -97,6 +100,9 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
     onPointerCancel(e: PointerEvent) {
       if (firedPointer === e.pointerId) firedPointer = null;
       cancel();
+    },
+    completedHold() {
+      return firedPointer !== null || suppressClick;
     },
     consumeClick() {
       // Some touch WebViews synthesize compatibility mouse events before

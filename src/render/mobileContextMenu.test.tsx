@@ -9,14 +9,18 @@ vi.mock("../nativeChrome", async (importOriginal) => ({
 
 import { backend } from "../backend";
 import { resetStore } from "../store";
+import { closeContextMenu, contextMenu } from "../ui";
 import { AstBody } from "./body";
 import { PageRef } from "./inline";
+import { LONG_PRESS_DELAY } from "./longPress";
 import { initParser } from "./parse";
 
 beforeAll(async () => initParser());
 
 afterEach(() => {
   resetStore();
+  closeContextMenu();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.replaceChildren();
 });
@@ -71,6 +75,29 @@ describe("Android text-selection contextmenu policy (GH #162)", () => {
 });
 
 describe("Android page-link hold ownership (GH #207)", () => {
+  it("uses the still-hold fallback once and ignores a trailing native duplicate", () => {
+    vi.useFakeTimers();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PageRef name="Target page" />, host);
+    try {
+      const ref = host.querySelector(".page-ref")!;
+      ref.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, cancelable: true, pointerType: "touch", isPrimary: true,
+        pointerId: 7, clientX: 12, clientY: 24,
+      }));
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Target page", x: 12, y: 24 });
+
+      ref.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, clientX: 90, clientY: 91,
+      }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Target page", x: 12, y: 24 });
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps hover preview desktop-only", async () => {
     vi.useFakeTimers();
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue({

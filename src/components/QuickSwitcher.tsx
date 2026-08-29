@@ -14,7 +14,7 @@ import { dismissTopTransient, registerTransientLayer } from "../transientLayers"
 import { persistBlockRefTarget } from "../store";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
-import { createLongPress } from "../render/longPress";
+import { createLongPress, isLongPressContextMenu } from "../render/longPress";
 import { shouldOpenPageContextMenu } from "../contextMenuPolicy";
 import { isAndroidPlatform } from "../nativeChrome";
 
@@ -548,13 +548,19 @@ export function QuickSwitcher(): JSX.Element {
                               }
                             }
                           }}
-                          onPointerDown={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerDown(e); }}
-                          onPointerMove={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerMove(e); }}
-                          onPointerUp={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerUp(e); }}
-                          onPointerCancel={(e) => { if (it.t === "page" && !isAndroidPlatform) longPress.onPointerCancel(e); }}
+                          onPointerDown={(e) => { if (it.t === "page") longPress.onPointerDown(e); }}
+                          onPointerMove={(e) => { if (it.t === "page") longPress.onPointerMove(e); }}
+                          onPointerUp={(e) => { if (it.t === "page") longPress.onPointerUp(e); }}
+                          onPointerCancel={(e) => { if (it.t === "page") longPress.onPointerCancel(e); }}
                           onContextMenu={(e) => {
                             if (it.t !== "page" || !shouldOpenPageContextMenu(e.target)) return;
-                            if (isAndroidPlatform) longPress.dispose();
+                            const synthetic = isLongPressContextMenu(e);
+                            if (isAndroidPlatform && !synthetic && longPress.completedHold()) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              return;
+                            }
+                            if (isAndroidPlatform && !synthetic) longPress.dispose();
                             e.preventDefault();
                             e.stopPropagation();
                             openPageContextMenu(e.clientX, e.clientY, {

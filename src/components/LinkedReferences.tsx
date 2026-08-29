@@ -22,7 +22,7 @@ import {
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../lib/referenceGroups";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
-import { createLongPress } from "../render/longPress";
+import { createLongPress, isLongPressContextMenu } from "../render/longPress";
 
 // One identity fold for chips, filters, and group merging (DUP-2/DUP-8): the
 // old private `norm` (trim+toLowerCase) split NFC/NFD and boundary-slash
@@ -516,15 +516,22 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       else if (dest === "background") openPageInNewTab(group().page, group().kind);
                       else openPage(group().page, group().kind);
                     }}
-                    onPointerDown={(e) => { if (!isAndroidPlatform) longPress.onPointerDown(e); }}
-                    onPointerMove={(e) => { if (!isAndroidPlatform) longPress.onPointerMove(e); }}
-                    onPointerUp={(e) => { if (!isAndroidPlatform) longPress.onPointerUp(e); }}
-                    onPointerCancel={(e) => { if (!isAndroidPlatform) longPress.onPointerCancel(e); }}
+                    onPointerDown={longPress.onPointerDown}
+                    onPointerMove={longPress.onPointerMove}
+                    onPointerUp={longPress.onPointerUp}
+                    onPointerCancel={longPress.onPointerCancel}
                     onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onContextMenu={(e) => {
                       if (!shouldOpenPageContextMenu(e.target)) return;
-                      if (isAndroidPlatform) longPress.dispose();
+                      const synthetic = isLongPressContextMenu(e);
+                      if (isAndroidPlatform && !synthetic && longPress.completedHold()) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                      }
+                      if (isAndroidPlatform && !synthetic) longPress.dispose();
                       e.preventDefault();
+                      e.stopPropagation();
                       openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}
                   >

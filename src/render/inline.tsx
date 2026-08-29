@@ -21,7 +21,7 @@ import { pageIcon } from "../pageIconBatch";
 import { pageIsMissing } from "../pageExistsBatch";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
-import { createLongPress } from "./longPress";
+import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
@@ -356,10 +356,10 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onClick={open}
         onMouseEnter={peek.anchorEnter}
         onMouseLeave={peek.anchorLeave}
-        onPointerDown={(e) => { if (!isAndroidPlatform) longPress.onPointerDown(e); }}
-        onPointerMove={(e) => { if (!isAndroidPlatform) longPress.onPointerMove(e); }}
-        onPointerUp={(e) => { if (!isAndroidPlatform) longPress.onPointerUp(e); }}
-        onPointerCancel={(e) => { if (!isAndroidPlatform) longPress.onPointerCancel(e); }}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
 
         onAuxClick={(e) => {
           // A background tab belongs to the pane that was already active, not
@@ -368,7 +368,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         }}
         onContextMenu={(e) => {
           if (!shouldOpenPageContextMenu(e.target)) return;
-          if (isAndroidPlatform) longPress.dispose();
+          const synthetic = isLongPressContextMenu(e);
+          if (isAndroidPlatform && !synthetic && longPress.completedHold()) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          if (isAndroidPlatform && !synthetic) longPress.dispose();
           e.preventDefault();
           e.stopPropagation();
           if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());

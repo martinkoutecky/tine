@@ -223,6 +223,7 @@ class AndroidUiRuntimeTest {
       kind = "first-line-caret-second-line-hold",
       minimumTextLength = 140,
       maximumTextLength = Int.MAX_VALUE,
+      requiredText = "Everything you see here is a real Markdown file",
       requireSingleVisualLine = false,
     )
   }
@@ -234,6 +235,7 @@ class AndroidUiRuntimeTest {
       kind = "single-line",
       minimumTextLength = 1,
       maximumTextLength = 80,
+      requiredText = "This one is already done",
       requireSingleVisualLine = true,
     )
   }
@@ -243,6 +245,7 @@ class AndroidUiRuntimeTest {
     kind: String,
     minimumTextLength: Int,
     maximumTextLength: Int,
+    requiredText: String,
     requireSingleVisualLine: Boolean,
   ) {
     withFreshDemoGraph(test) { scenario, webView ->
@@ -252,6 +255,7 @@ class AndroidUiRuntimeTest {
         webView,
         minimumTextLength,
         maximumTextLength,
+        requiredText,
         requireSingleVisualLine,
         occurrence,
       )
@@ -422,6 +426,7 @@ class AndroidUiRuntimeTest {
           const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
           return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
             viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+            rootZoom: parseFloat(getComputedStyle(document.documentElement).zoom) || 1,
             lineHeight, blockId: row.dataset.blockId, occurrence: row.dataset.androidUiOccurrence,
             active: document.activeElement === editor,
             editorVisualLines: Math.max(1, Math.round(rect.height / lineHeight)) });
@@ -453,7 +458,9 @@ class AndroidUiRuntimeTest {
           const style = getComputedStyle(element);
           if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) return null;
           return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-            viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, dpr: window.devicePixelRatio });
+            viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+            rootZoom: parseFloat(getComputedStyle(document.documentElement).zoom) || 1,
+            dpr: window.devicePixelRatio });
         })()
       """.trimIndent())
       result != null
@@ -478,7 +485,9 @@ class AndroidUiRuntimeTest {
         const style = getComputedStyle(element);
         if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) return null;
         return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-          viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, dpr: window.devicePixelRatio });
+          viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+          rootZoom: parseFloat(getComputedStyle(document.documentElement).zoom) || 1,
+          dpr: window.devicePixelRatio });
       })()
     """.trimIndent()
     return evaluateJsonOrNull(webView, expression)
@@ -498,7 +507,9 @@ class AndroidUiRuntimeTest {
         if (!element) return null;
         const rect = element.getBoundingClientRect();
         return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-          viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, dpr: window.devicePixelRatio });
+          viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+          rootZoom: parseFloat(getComputedStyle(document.documentElement).zoom) || 1,
+          dpr: window.devicePixelRatio });
       })()
     """.trimIndent()
     return evaluateJsonOrNull(webView, expression)
@@ -508,6 +519,7 @@ class AndroidUiRuntimeTest {
     webView: WebView,
     minimumTextLength: Int,
     maximumTextLength: Int,
+    requiredText: String,
     requireSingleVisualLine: Boolean,
     occurrence: String,
   ): JSONObject {
@@ -524,6 +536,7 @@ class AndroidUiRuntimeTest {
               const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20;
               const singleLine = rect.height <= lineHeight * 1.6;
               if (!(length >= $minimumTextLength && length <= $maximumTextLength &&
+                  content.innerText.includes(${JSONObject.quote(requiredText)}) &&
                   (${if (requireSingleVisualLine) "singleLine" else "!singleLine"}) &&
                   rect.top > 64 && rect.bottom < window.innerHeight * 0.58)) continue;
               const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
@@ -553,6 +566,7 @@ class AndroidUiRuntimeTest {
           if (rect.width <= 0 || rect.height <= 0) return null;
           return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
             viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+            rootZoom: parseFloat(getComputedStyle(document.documentElement).zoom) || 1,
             lineHeight, blockId: block.dataset.blockId, occurrence: ${JSONObject.quote(occurrence)},
             duplicateCount: candidates.filter((row) => row.dataset.blockId === block.dataset.blockId).length,
             textLength: length, entryX: x, entryY: y, hitTag, hitClass });
@@ -562,7 +576,8 @@ class AndroidUiRuntimeTest {
       if (attempt < MAX_FIXTURE_SCROLLS) swipeUp(webView)
     }
     throw AssertionError(
-      "timed out waiting for a demo block with $minimumTextLength..$maximumTextLength visible characters " +
+      "timed out waiting for demo text ${JSONObject.quote(requiredText)} with " +
+        "$minimumTextLength..$maximumTextLength visible characters " +
         "after $MAX_FIXTURE_SCROLLS native scroll gestures",
     )
   }
@@ -672,9 +687,13 @@ class AndroidUiRuntimeTest {
   private fun motionPoint(webView: WebView, rect: JSONObject, cssX: Double, cssY: Double): Pair<Float, Float> {
     val viewportWidth = rect.getDouble("viewportWidth")
     val viewportHeight = rect.getDouble("viewportHeight")
-    val x = (cssX * webView.width / viewportWidth)
+    // CSS root zoom changes getBoundingClientRect's coordinate space without
+    // changing window.innerWidth. Convert back to the physical viewport before
+    // injecting; omission previously turned 90% overflow taps into Settings.
+    val rootZoom = rect.optDouble("rootZoom", 1.0)
+    val x = (cssX * rootZoom * webView.width / viewportWidth)
       .coerceIn(1.0, (webView.width - 1).toDouble())
-    val y = (cssY * webView.height / viewportHeight)
+    val y = (cssY * rootZoom * webView.height / viewportHeight)
       .coerceIn(1.0, (webView.height - 1).toDouble())
     return x.toFloat() to y.toFloat()
   }
@@ -687,16 +706,21 @@ class AndroidUiRuntimeTest {
       located.countDown()
     }
     assertTrue("packaged WebView screen location was unavailable", located.await(EVALUATE_TIMEOUT_MS, TimeUnit.MILLISECONDS))
-    val event = MotionEvent.obtain(
-      downTime,
-      SystemClock.uptimeMillis(),
-      action,
-      location[0] + x,
-      location[1] + y,
-      0,
-    ).apply {
-      source = InputDevice.SOURCE_TOUCHSCREEN
+    val pointer = MotionEvent.PointerProperties().apply {
+      id = 0
+      toolType = MotionEvent.TOOL_TYPE_FINGER
     }
+    val coordinates = MotionEvent.PointerCoords().apply {
+      this.x = location[0] + x
+      this.y = location[1] + y
+      pressure = if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) 0f else 1f
+      size = 1f
+    }
+    val event = MotionEvent.obtain(
+      downTime, SystemClock.uptimeMillis(), action, 1,
+      arrayOf(pointer), arrayOf(coordinates), 0, 0, 1f, 1f,
+      0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
+    )
     try {
       assertTrue(
         "Android UiAutomation did not inject the native MotionEvent",

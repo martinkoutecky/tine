@@ -78,7 +78,8 @@ run_journey() {
   # single logcat line). Debug instrumentation permits run-as without exposing
   # any user graph or host filesystem data.
   adb exec-out run-as page.tine.app cat "files/android-ui-runtime/$method.json" > "$receipt_file" || true
-  if ! adb exec-out run-as page.tine.app cat "files/android-ui-runtime/$method.failure.json" > "$failure_file"; then
+  if ! adb exec-out run-as page.tine.app cat "files/android-ui-runtime/$method.failure.json" > "$failure_file" 2>/dev/null ||
+    ! jq -e . "$failure_file" >/dev/null 2>&1; then
     rm -f "$failure_file"
   fi
   grep -F 'TINE_ANDROID_UI_RUNTIME_RECEIPT ' "$runner_log" > "$receipts" || true
