@@ -511,6 +511,27 @@
    ],
    "stability": "stable"
   },
+  "scripts/e2e-pdf-routes.mjs": {
+   "contracts": [
+    {
+     "class": "stateful-ux",
+     "userOutcome": "Opening graph PDFs preserves the source in a structural companion, treats each PDF as an ordinary tab, closes the selected PDF tab, and opens Notes in the adjacent pane.",
+     "blocking": true
+    },
+    {
+     "class": "stateful-ux",
+     "userOutcome": "PDF pane routes and reader position survive relaunch, and a legacy dedicated PDF target migrates without discarding the user's existing pane layout.",
+     "blocking": true
+    }
+   ],
+   "acceptableVariations": [
+    "Pane identifiers, split ratios, tab styling, and reader zoom percentages may vary while the route ownership and restored user state remain intact."
+   ],
+   "nonRequirements": [
+    "Exact PDF pixels, pane dimensions, DOM nesting, drag geometry, or mobile navigation."
+   ],
+   "stability": "stable"
+  },
   "scripts/e2e-pdf-scroll-resources.mjs": {
    "contracts": [
     {
