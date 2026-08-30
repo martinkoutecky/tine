@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createComputed, createRoot } from "solid-js";
 import {
   activatePdfOwnership,
   currentPdfOwnership,
@@ -22,6 +23,19 @@ afterEach(() => {
 });
 
 describe("window-local PDF graph ownership", () => {
+  it("publishes ownership transitions through a reactive accessor", () => {
+    const observed: Array<number | null> = [];
+    createRoot((dispose) => {
+      createComputed(() => observed.push(currentPdfOwnership()?.generation ?? null));
+      const owner = activatePdfOwnership("/graphs/A");
+      expect(isPdfOwnershipCurrent(owner)).toBe(true);
+      retirePdfOwnership();
+      dispose();
+    });
+
+    expect(observed).toEqual([null, 1, null]);
+  });
+
   it("flushes pending state and complete mutations before retiring an owner", async () => {
     const owner = activatePdfOwnership("/graphs/A");
     const mutation = deferred<void>();

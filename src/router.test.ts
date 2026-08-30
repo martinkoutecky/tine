@@ -434,6 +434,24 @@ describe("graph switch tab reset", () => {
   });
 });
 
+describe("pane-local scroll ownership", () => {
+  it("does not borrow a document-wide pane scroller after its own scroller is cleared", () => {
+    const foreignScroller = { scrollTop: 73, isConnected: true } as HTMLElement;
+    vi.stubGlobal("document", { querySelector: vi.fn(() => foreignScroller) });
+    try {
+      const isolated = createPaneRouter("pdf-route-pane");
+      isolated.openPage("Route without a page scroller");
+      isolated.setScrollerElement(null);
+
+      expect(isolated.snapshot().scrolls).toEqual([null]);
+      expect(document.querySelector).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubGlobal("confirm", () => true);
+    }
+  });
+});
+
 describe("reopen closed tab (Ctrl+Shift+T)", () => {
   it("restores the most-recently-closed tab's route and focuses it", async () => {
     openInNewTab({ kind: "page", name: "Gamma", pageKind: "page" }, true);

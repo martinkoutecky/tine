@@ -4,7 +4,7 @@
 // every switcher open, so palette splits and Ctrl+K picks always landed in
 // "main" (Martin's Jul 8 wrong-pane report).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { installPaneTracker, registerPaneFocusSetter } from "./ui";
+import { activePane, installPaneTracker, registerPaneFocusSetter } from "./ui";
 
 describe("pane focus tracker", () => {
   let dispose: (() => void) | null = null;
@@ -16,6 +16,7 @@ describe("pane focus tracker", () => {
     dispose = installPaneTracker();
     document.body.innerHTML = `
       <div data-pane-id="pane-7"><input id="inside" /></div>
+      <div data-pane-id="pdf"><button id="pdf-control">PDF control</button></div>
       <div class="overlay"><input id="outside" /></div>
       <button id="pane-neutral" data-pane-focus-neutral>Go back</button>
     `;
@@ -60,5 +61,21 @@ describe("pane focus tracker", () => {
       button: 1,
     }));
     expect(calls).toEqual([]);
+  });
+
+  it("distinguishes real layout evidence from PDF and satellite focus without changing PDF zoom focus", () => {
+    const evidence: Array<[string, boolean | undefined]> = [];
+    registerPaneFocusSetter((id, rememberLayout) => evidence.push([id, rememberLayout]));
+
+    (document.getElementById("inside") as HTMLInputElement).focus();
+    expect(evidence.at(-1)).toEqual(["pane-7", true]);
+
+    document.getElementById("pdf-control")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(evidence.at(-1)).toEqual(["pdf", false]);
+    expect(activePane()).toBe("pdf");
+
+    document.getElementById("outside")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(evidence.at(-1)).toEqual(["main", false]);
+    expect(activePane()).toBe("notes");
   });
 });

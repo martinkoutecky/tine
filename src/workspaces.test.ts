@@ -4,7 +4,12 @@ import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restore
 import type { PaneSnapshot } from "./router";
 import { buildPersistedSession } from "./session";
 import { applySidebarSession, pdfTarget, rightSidebar, setPdfTarget } from "./ui";
-import { activatePdfOwnership, resetPdfOwnershipForTest, type PdfOwnership } from "./pdfOwnership";
+import {
+  activatePdfOwnership,
+  registerPdfParticipant,
+  resetPdfOwnershipForTest,
+  type PdfOwnership,
+} from "./pdfOwnership";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -56,6 +61,62 @@ afterEach(() => {
 });
 
 describe("named workspace switching", () => {
+  it("drains PDF work before replacing a layout", async () => {
+    const current = buildPersistedSession();
+    const target = { ...current, focusedPaneId: "main" };
+    const events: string[] = [];
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1,
+      activeId: "default",
+      workspaces: [
+        { id: "default", name: "", blob: current },
+        { id: "target", name: "Target", blob: target },
+      ],
+    }));
+    vi.spyOn(backend(), "saveSession").mockImplementation(async () => { events.push("session"); });
+    vi.spyOn(backend(), "saveWorkspaces").mockImplementation(async () => { events.push("registry"); });
+    registerPdfParticipant(pdfOwner, {
+      flush: async () => { events.push("pdf"); return true; },
+      cancel: vi.fn(),
+    });
+
+    await initializeWorkspaces();
+    await switchWorkspace("target");
+
+    expect(events).toEqual(["session", "pdf", "registry"]);
+  });
+
+  it("aborts switch, create, and active deletion before registry or layout mutation when PDF drain fails", async () => {
+    const current = buildPersistedSession();
+    const target = { ...current };
+    const saveRegistry = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveSession").mockResolvedValue();
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1,
+      activeId: "default",
+      workspaces: [
+        { id: "default", name: "", blob: current },
+        { id: "target", name: "Target", blob: target },
+      ],
+    }));
+    await initializeWorkspaces();
+    const beforeRegistry = workspaces();
+    const beforeLayout = layoutRoot();
+    registerPdfParticipant(pdfOwner, {
+      flush: async () => false,
+      cancel: vi.fn(),
+    });
+
+    await expect(switchWorkspace("target")).rejects.toThrow("pending PDF changes");
+    await expect(createWorkspace("Blocked")).rejects.toThrow("pending PDF changes");
+    await expect(deleteWorkspace("default")).rejects.toThrow("pending PDF changes");
+
+    expect(saveRegistry).not.toHaveBeenCalled();
+    expect(activeWorkspaceId()).toBe("default");
+    expect(workspaces()).toEqual(beforeRegistry);
+    expect(layoutRoot()).toEqual(beforeLayout);
+  });
+
   it("keeps independent PDF open/closed identity in each named workspace", async () => {
     setPdfTarget({ filename: "assets/alpha.pdf", label: "Alpha", owner: pdfOwner, page: 8 });
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());

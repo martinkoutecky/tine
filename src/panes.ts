@@ -29,7 +29,7 @@ import {
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import {
-  nearestPane,
+  companionPane,
   nearestPaneInDirection,
   takeBlockSelectionForPaneReturn,
   type PaneDirection,
@@ -85,8 +85,10 @@ function commitLayout(node: LayoutNode) {
 
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
+const [lastFocusedLayoutPaneIdAccessor, writeLastFocusedLayoutPaneId] = createSignal("main");
+export const lastFocusedLayoutPaneId = lastFocusedLayoutPaneIdAccessor;
 
-export function setFocusedPaneId(paneId: string) {
+export function setFocusedPaneId(paneId: string, rememberLayout = true) {
   // Every focus route, including history/session adapters, must reveal the pane
   // it focuses. Keeping this at the state boundary prevents a hidden pane from
   // becoming the logical target while another pane remains maximized.
@@ -96,6 +98,9 @@ export function setFocusedPaneId(paneId: string) {
     setCellSel(null);
   }
   writeFocusedPaneId(paneId);
+  if (rememberLayout && layoutPaneIds().includes(paneId)) {
+    writeLastFocusedLayoutPaneId(paneId);
+  }
 }
 
 const routers = new Map<string, PaneRouter>([["main", mainPaneRouter]]);
@@ -355,9 +360,13 @@ export function closePane(paneId = focusedPaneId()): boolean {
   return true;
 }
 
-export function focusPane(paneId: string) {
-  if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
-  setFocusedPaneId(paneId);
+export function focusPane(paneId: string, rememberLayout = true) {
+  if (!layoutPaneIds().includes(paneId)) return;
+  if (focusedPaneId() === paneId) {
+    if (rememberLayout) writeLastFocusedLayoutPaneId(paneId);
+    return;
+  }
+  setFocusedPaneId(paneId, rememberLayout);
   paneRouter(paneId).activateCurrentRoute();
 }
 
@@ -521,8 +530,7 @@ export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: b
 }
 
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
-  const ids = layoutPaneIds();
-  let target = nearestPane(layoutRoot(), sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
+  let target = companionPane(layoutRoot(), sourcePaneId);
   const created = !target;
   if (!target) target = splitPane(sourcePaneId, "row", { focusNew: false });
   if (!target) return null;

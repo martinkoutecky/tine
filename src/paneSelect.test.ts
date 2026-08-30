@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computePaneGeometry,
+  companionPane,
   nearestPane,
   nearestPaneInDirection,
   readingOrderPanes,
@@ -280,5 +281,65 @@ describe("pane geometry", () => {
     expect(nearestPaneInDirection(root, "a", "right")).toBe("b");
     expect(nearestPaneInDirection(root, "a", "down")).toBe("c");
     expect(nearestPane(root, "a")).toBe("b");
+  });
+});
+
+describe("structural companion panes", () => {
+  const root: LayoutNode = {
+    kind: "split",
+    dir: "col",
+    ratio: 0.1,
+    children: [
+      {
+        kind: "split",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          { kind: "pane", paneId: "source" },
+          { kind: "pane", paneId: "z-structural" },
+        ],
+      },
+      {
+        kind: "split",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          { kind: "pane", paneId: "a-global-tie" },
+          { kind: "pane", paneId: "far" },
+        ],
+      },
+    ],
+  };
+
+  it("stays inside the nearest ancestor's sibling subtree", () => {
+    // The global candidate ties the structural sibling by normalized-center
+    // distance and sorts first by id under the legacy heuristic. "Beside"
+    // nevertheless belongs to the source leaf's immediate sibling subtree.
+    expect(nearestPane(root, "source")).toBe("a-global-tie");
+    expect(companionPane(root, "source")).toBe("z-structural");
+  });
+
+  it("chooses the nearest normalized center in stable layout order", () => {
+    const splitSibling: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.5,
+      children: [
+        { kind: "pane", paneId: "source" },
+        {
+          kind: "split",
+          dir: "col",
+          ratio: 0.5,
+          children: [
+            { kind: "pane", paneId: "first" },
+            { kind: "pane", paneId: "second" },
+          ],
+        },
+      ],
+    };
+
+    expect(companionPane(splitSibling, "source")).toBe("first");
+    expect(companionPane({ kind: "pane", paneId: "source" }, "source")).toBeNull();
+    expect(companionPane(splitSibling, "missing")).toBeNull();
   });
 });

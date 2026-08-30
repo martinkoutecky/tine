@@ -666,8 +666,8 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
-let paneFocusSetter: ((paneId: string) => void) | undefined;
-export function registerPaneFocusSetter(setter: (paneId: string) => void) {
+let paneFocusSetter: ((paneId: string, rememberLayout?: boolean) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string, rememberLayout?: boolean) => void) {
   paneFocusSetter = setter;
 }
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
@@ -687,7 +687,7 @@ export function installPaneTracker(): () => void {
     // main default.
     if (e.type === "focusin" && !container) return;
     const paneId = container?.getAttribute("data-pane-id") ?? "main";
-    paneFocusSetter?.(paneId);
+    paneFocusSetter?.(paneId, !!container && paneId !== "pdf");
     setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
   const pointerdown = (e: Event) => {

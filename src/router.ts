@@ -395,8 +395,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       if (scrollerElement.isConnected) return scrollerElement;
       scrollerElement = null;
     }
-    if (typeof document === "undefined") return null; // no-DOM (unit tests)
-    return document.querySelector(".main-content");
+    return null;
   }
 
   /** Record the current scroll offset against the active tab's current route.

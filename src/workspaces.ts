@@ -8,6 +8,7 @@ import {
   scheduleSessionSave,
   type PersistedSession,
 } from "./session";
+import { drainPdfWork } from "./pdfOwnership";
 
 export interface Workspace {
   id: string;
@@ -114,6 +115,12 @@ function applyWorkspace(workspace: Workspace) {
   scheduleSessionSave();
 }
 
+async function prepareLayoutReplacement(): Promise<void> {
+  if (!(await drainPdfWork())) {
+    throw new Error("Could not save pending PDF changes; the workspace was not changed");
+  }
+}
+
 function workspaceId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
   return uuid ? `workspace-${uuid}` : `workspace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -156,6 +163,7 @@ export function switchWorkspace(targetId: string): Promise<void> {
     const current = registry();
     const target = current.workspaces.find((workspace) => workspace.id === targetId);
     if (!target) throw new Error("Workspace not found");
+    if (targetId !== current.activeId) await prepareLayoutReplacement();
     const next: WorkspaceRegistry = {
       version: 1,
       activeId: targetId,
@@ -177,6 +185,7 @@ export function createWorkspace(name: string): Promise<string> {
   return enqueue(async () => {
     await flushSession();
     const current = registry();
+    await prepareLayoutReplacement();
     const id = workspaceId();
     const fresh: Workspace = { id, name: normalizeName(name), blob: defaultWorkspaceSession() };
     const next: WorkspaceRegistry = {
@@ -219,7 +228,10 @@ export function deleteWorkspace(id: string): Promise<void> {
     const removed = current.workspaces.find((workspace) => workspace.id === id);
     if (!removed) throw new Error("Workspace not found");
     const deletingActive = id === current.activeId;
-    if (deletingActive) await flushSession();
+    if (deletingActive) {
+      await flushSession();
+      await prepareLayoutReplacement();
+    }
     let remaining = current.workspaces.filter((workspace) => workspace.id !== id);
     if (!remaining.length) {
       remaining = [{ id: workspaceId(), name: "", blob: defaultWorkspaceSession() }];

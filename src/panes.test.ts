@@ -9,6 +9,7 @@ import {
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
+  lastFocusedLayoutPaneId,
   maximizedPaneId,
   moveActiveTabInDirection,
   moveActiveTabToPane,
@@ -17,6 +18,7 @@ import {
   visibleLayoutNode,
   paneRouter,
   resetPaneLayoutToSingle,
+  restorePaneLayout,
   setFocusedPaneId,
   setSplitRatio,
   splitLayoutNode,
@@ -683,6 +685,71 @@ describe("openRouteInOtherPane", () => {
     openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main");
 
     expect(paneRouter(other).tabs().length).toBe(before + 1);
+  });
+
+  it("uses the nearest-ancestor sibling rather than a globally-nearest tie", () => {
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "col",
+      ratio: 0.1,
+      children: [
+        {
+          kind: "split", dir: "row", ratio: 0.5,
+          children: [
+            { kind: "pane", paneId: "main" },
+            { kind: "pane", paneId: "z-structural" },
+          ],
+        },
+        {
+          kind: "split", dir: "row", ratio: 0.5,
+          children: [
+            { kind: "pane", paneId: "a-global-tie" },
+            { kind: "pane", paneId: "far" },
+          ],
+        },
+      ],
+    };
+    const snapshots = new Map([
+      ["main", pageSnapshot("Source")],
+      ["z-structural", pageSnapshot("Structural")],
+      ["a-global-tie", pageSnapshot("Global")],
+      ["far", pageSnapshot("Far")],
+    ]);
+    restorePaneLayout(root, snapshots, "main");
+
+    expect(openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main"))
+      .toBe("z-structural");
+  });
+
+  it("does not escape the structural selector for a missing source leaf", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const before = paneRouter("main").snapshot();
+
+    expect(openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "missing"))
+      .toBeNull();
+    expect(layoutPaneIds()).toEqual(["main"]);
+    expect(paneRouter("main").snapshot()).toEqual(before);
+  });
+});
+
+describe("last focused layout pane", () => {
+  it("ignores satellite and legacy PDF focus while retaining current focus behavior", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const other = splitPane("main", "row")!;
+    setFocusedPaneId(other);
+    expect(lastFocusedLayoutPaneId()).toBe(other);
+
+    // The dedicated PDF representation may still publish its pseudo id during
+    // the migration. It must not become a future satellite action's source.
+    setFocusedPaneId("pdf", false);
+    expect(focusedPaneId()).toBe("pdf");
+    expect(lastFocusedLayoutPaneId()).toBe(other);
+
+    // Current outside-pane pointer behavior still retargets current focus to
+    // main, but does not erase the last focus backed by a real pane surface.
+    setFocusedPaneId("main", false);
+    expect(focusedPaneId()).toBe("main");
+    expect(lastFocusedLayoutPaneId()).toBe(other);
   });
 });
 

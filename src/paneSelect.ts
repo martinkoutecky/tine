@@ -324,6 +324,50 @@ export function nearestPane(root: LayoutNode, sourcePaneId: string, exclude = so
   return candidates[0]?.paneId ?? null;
 }
 
+/**
+ * Resolve "beside" structurally: use the sibling subtree at the source leaf's
+ * nearest ancestor split, then choose the leaf whose center is nearest in the
+ * layout's normalized coordinate space. Layout traversal order breaks ties.
+ */
+export function companionPane(root: LayoutNode, sourcePaneId: string): string | null {
+  const locate = (node: LayoutNode): { found: boolean; sibling: LayoutNode | null } => {
+    if (node.kind === "pane") return { found: node.paneId === sourcePaneId, sibling: null };
+    const left = locate(node.children[0]);
+    if (left.found) return { found: true, sibling: left.sibling ?? node.children[1] };
+    const right = locate(node.children[1]);
+    if (right.found) return { found: true, sibling: right.sibling ?? node.children[0] };
+    return { found: false, sibling: null };
+  };
+
+  const located = locate(root);
+  if (!located.found || !located.sibling) return null;
+
+  const siblingIds = new Set<string>();
+  const collect = (node: LayoutNode) => {
+    if (node.kind === "pane") siblingIds.add(node.paneId);
+    else {
+      collect(node.children[0]);
+      collect(node.children[1]);
+    }
+  };
+  collect(located.sibling);
+
+  const geom = computePaneGeometry(root);
+  const source = geom.panes.find((pane) => pane.paneId === sourcePaneId);
+  if (!source) return null;
+  const from = center(source.rect);
+  return geom.panes
+    .map((pane, order) => ({ pane, order }))
+    .filter(({ pane }) => siblingIds.has(pane.paneId))
+    .map(({ pane, order }) => {
+      const candidate = center(pane.rect);
+      const dx = candidate.x - from.x;
+      const dy = candidate.y - from.y;
+      return { paneId: pane.paneId, distance: dx * dx + dy * dy, order };
+    })
+    .sort((a, b) => a.distance - b.distance || a.order - b.order)[0]?.paneId ?? null;
+}
+
 export function nearestPaneInDirection(root: LayoutNode, sourcePaneId: string, dir: PaneDirection): string | null {
   const geom = computePaneGeometry(root);
   const source = geom.panes.find((p) => p.paneId === sourcePaneId);
