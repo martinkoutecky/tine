@@ -3,7 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
-import { closePdf, pushToast, isConflicted, activePane, requestBlockReferences, type PdfTarget } from "../ui";
+import { pushToast, isConflicted, requestBlockReferences, type PdfTarget } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
 import { openPage, openPageAtBlock } from "../router";
 import type { PdfRoute } from "../router";
@@ -1468,7 +1468,7 @@ export function PdfViewer(props: {
     }
     // +/-/0 zoom the PDF only when the PDF pane is focused; otherwise the notes
     // pane owns them for whole-interface zoom (see zoom.ts).
-    if (!(props.focused?.() ?? activePane() === "pdf")) return;
+    if (!(props.focused?.() ?? !!viewerRootEl?.contains(document.activeElement))) return;
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoomBy(1.1);
@@ -2009,8 +2009,7 @@ export function PdfViewer(props: {
       id: surfaceLayerId,
       root: () => viewerRootEl ?? null,
       dismiss: () => {
-        if (props.onClose) props.onClose();
-        else closePdf();
+        props.onClose?.();
         return true;
       },
     });
@@ -2224,7 +2223,7 @@ export function PdfViewer(props: {
             class="icon-btn pdf-close-btn"
             title="Close PDF"
             aria-label="Close PDF"
-            onClick={() => props.onClose ? props.onClose() : closePdf()}
+            onClick={() => props.onClose?.()}
           >
             ✕
           </button>

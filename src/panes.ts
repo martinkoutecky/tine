@@ -605,9 +605,7 @@ export function openPdf(
     return route;
   }
 
-  const companion = nearestPane(layoutRoot(), sourcePaneId)
-    ?? layoutPaneIds().find((paneId) => paneId !== sourcePaneId)
-    ?? null;
+  const companion = companionPane(layoutRoot(), sourcePaneId);
   if (companion) {
     paneRouter(companion).openInNewTab(route, !options.background);
     if (!options.background) focusPane(companion);
@@ -633,6 +631,12 @@ export function openPdfNotes(
   notesPage: string,
   block?: string,
 ): string | null {
+  if (isMobilePlatform) {
+    const router = paneRouter(sourcePaneId);
+    if (block) router.openPageAtBlock(notesPage, "page", block);
+    else router.openPage(notesPage, "page");
+    return sourcePaneId;
+  }
   return openRouteInOtherPane({
     kind: "page",
     name: notesPage,

@@ -12,10 +12,6 @@ export interface PersistedPdfTarget {
   label: string;
 }
 
-export interface GraphSessionUiStateSchema {
-  pdfTarget: PersistedPdfTarget | null;
-}
-
 interface UiStateDecision {
   owner: string;
   lifetime: UiStateLifetime;
@@ -24,20 +20,11 @@ interface UiStateDecision {
 }
 
 /**
- * Compile-time-complete registry for the graph-session UI state migrated to the
- * audited session boundary. Adding a key to GraphSessionUiStateSchema requires
- * an explicit lifetime/reset/persistence decision here.
+ * Route-owned graph-session state is serialized by session.ts's explicit route
+ * serializer. This registry is intentionally empty now that the retired
+ * top-level PDF pane has migrated into ordinary pane routes.
  */
-export const graphSessionUiStateRegistry: {
-  [K in keyof GraphSessionUiStateSchema]: UiStateDecision;
-} = {
-  pdfTarget: {
-    owner: "ui.pdfTarget",
-    lifetime: "graph-session",
-    resetTrigger: "graph switch, workspace switch, or explicit close",
-    persistence: "stable filename and label only",
-  },
-};
+export const graphSessionUiStateRegistry: Record<string, UiStateDecision> = {};
 
 export function parsePersistedPdfTarget(value: unknown): PersistedPdfTarget | null {
   if (!value || typeof value !== "object") return null;

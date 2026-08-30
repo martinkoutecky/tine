@@ -21,10 +21,9 @@ import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
-import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
+import type { PdfOwnership } from "./pdfOwnership";
 import { issue248Collector, issue248Now } from "./issue248Probe";
 import type { ExportNode } from "./editor/exportText";
-import type { PersistedPdfTarget } from "./uiStateRegistry";
 
 const THEME_KEY = "logseq-claude.theme";
 export type ThemePreference = "light" | "dark" | "system";
@@ -663,9 +662,6 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
   }
 }
 
-// --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
-// interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
-export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
 let paneFocusSetter: ((paneId: string, rememberLayout?: boolean) => void) | undefined;
 export function registerPaneFocusSetter(setter: (paneId: string, rememberLayout?: boolean) => void) {
   paneFocusSetter = setter;
@@ -687,8 +683,7 @@ export function installPaneTracker(): () => void {
     // main default.
     if (e.type === "focusin" && !container) return;
     const paneId = container?.getAttribute("data-pane-id") ?? "main";
-    paneFocusSetter?.(paneId, !!container && paneId !== "pdf");
-    setActivePane(paneId === "pdf" ? "pdf" : "notes");
+    paneFocusSetter?.(paneId, !!container);
   };
   const pointerdown = (e: Event) => {
     // Any click exits pane-select (standard modal behavior); without this the
@@ -1067,25 +1062,6 @@ export const [rightSidebarWidth, setRightSidebarWidth] = createSignal(loadRsWidt
 export function persistRightSidebarWidth() {
   try {
     localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
-  } catch {
-    // ignore
-  }
-}
-
-const PDF_W_KEY = "logseq-claude.pdfPaneWidth";
-function loadPdfWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(PDF_W_KEY));
-    if (v >= 320 && v <= 1200) return v;
-  } catch {
-    // ignore
-  }
-  return 560;
-}
-export const [pdfPaneWidth, setPdfPaneWidth] = createSignal(loadPdfWidth());
-export function persistPdfPaneWidth() {
-  try {
-    localStorage.setItem(PDF_W_KEY, String(pdfPaneWidth()));
   } catch {
     // ignore
   }
@@ -2044,62 +2020,4 @@ export interface PdfTarget {
   owner: PdfOwnership;
   page?: number;
   highlightId?: string;
-}
-export const [pdfTarget, setPdfTarget] = createSignal<PdfTarget | null>(null);
-let pendingPdfSessionTarget: PersistedPdfTarget | null = null;
-export function capturePdfSessionTarget(): PersistedPdfTarget | null {
-  const current = pdfTarget();
-  return current ? { filename: current.filename, label: current.label } : null;
-}
-
-/** Apply persisted stable identity under the current graph generation. */
-export function restorePdfSessionTarget(target: PersistedPdfTarget | null): boolean {
-  if (!target) {
-    pendingPdfSessionTarget = null;
-    setPdfTarget(null);
-    return true;
-  }
-  pendingPdfSessionTarget = target;
-  const owner = currentPdfOwnership();
-  if (!owner) {
-    setPdfTarget(null);
-    return false;
-  }
-  pendingPdfSessionTarget = null;
-  setPdfTarget({ ...target, owner });
-  return true;
-}
-
-/** Finish a pre-bind session restore once the graph has minted PDF ownership. */
-export function restorePendingPdfSessionTarget(): boolean {
-  if (!pendingPdfSessionTarget) return true;
-  return restorePdfSessionTarget(pendingPdfSessionTarget);
-}
-
-/** Clear runtime ownership without turning a graph transition into a user close. */
-export function suspendPdfForGraphTransition(): PersistedPdfTarget | null {
-  const stable = capturePdfSessionTarget() ?? pendingPdfSessionTarget;
-  pendingPdfSessionTarget = null;
-  setPdfTarget(null);
-  return stable;
-}
-
-export function openPdf(filename: string, label: string, page?: number, highlightId?: string) {
-  const owner = currentPdfOwnership();
-  if (!owner) return;
-  // Logseq treats re-opening the current PDF resource without a page/highlight
-  // intent as a no-op. Preserve the reader's current location; explicit targets
-  // within the same file still publish a new reactive navigation intent.
-  const current = pdfTarget();
-  if (current?.filename === filename && current.owner.generation === owner.generation &&
-      page == null && highlightId == null) return;
-  pendingPdfSessionTarget = null;
-  setPdfTarget({ filename, label, owner, page, highlightId });
-  scheduleSessionSave();
-}
-export function closePdf() {
-  if (!pdfTarget() && !pendingPdfSessionTarget) return;
-  pendingPdfSessionTarget = null;
-  setPdfTarget(null);
-  scheduleSessionSave();
 }

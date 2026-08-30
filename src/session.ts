@@ -36,7 +36,7 @@ import {
   restorePaneLayout,
   type LayoutNode,
 } from "./panes";
-import { parsePersistedPdfTarget, type GraphSessionUiStateSchema, type PersistedPdfTarget } from "./uiStateRegistry";
+import { parsePersistedPdfTarget, type PersistedPdfTarget } from "./uiStateRegistry";
 
 export type PersistedLayoutNode =
   | {
@@ -50,7 +50,7 @@ export type PersistedLayoutNode =
       paneId: string;
     } & PaneSnapshot);
 
-export interface PersistedSession extends PaneSnapshot, Partial<GraphSessionUiStateSchema> {
+export interface PersistedSession extends PaneSnapshot {
   leftSidebar?: boolean;
   rightSidebar?: boolean;
   rightSidebarItems?: SidebarItem[];
@@ -59,6 +59,8 @@ export interface PersistedSession extends PaneSnapshot, Partial<GraphSessionUiSt
   layout?: PersistedLayoutNode;
   focusedPaneId?: string;
   recentPages?: RecentItem[];
+  /** Legacy dedicated-pane input only. New sessions never write this field. */
+  pdfTarget?: PersistedPdfTarget | null;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;

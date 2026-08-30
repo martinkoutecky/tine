@@ -442,7 +442,6 @@ describe("default journal template graph bind", () => {
 
     expect(events).toEqual([
       `activate-pdf:${META.root}`,
-      "restore-pending-pdf",
       "bump-epoch",
       "save-template",
     ]);
@@ -597,11 +596,10 @@ describe("PDF graph ownership", () => {
     await harness.loadGraphPath(nextMeta.root);
 
     expect(harness.events).toEqual(expect.arrayContaining([
-      "drain-pdf", "retire-pdf", "suspend-pdf", "load-next",
+      "drain-pdf", "retire-pdf", "load-next",
     ]));
     expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("retire-pdf"));
-    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("suspend-pdf"));
-    expect(harness.events.indexOf("suspend-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
+    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
   });
 
@@ -636,22 +634,18 @@ describe("PDF graph ownership", () => {
 
     await harness.loadGraphPath(META.root, { forceRefresh: true });
 
-    expect(harness.events.slice(0, 6)).toEqual([
+    expect(harness.events.slice(0, 5)).toEqual([
       "drain-pdf",
       "retire-pdf",
-      "suspend-pdf",
       "load-refresh",
       `activate-pdf:${META.root}`,
-      "restore-pdf",
+      "bump-epoch",
     ]);
     expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
-    expect(harness.restorePdfSessionTarget).toHaveBeenCalledWith({
-      filename: "assets/paper.pdf",
-      label: "Paper",
-    });
+    expect(harness.restorePdfSessionTarget).not.toHaveBeenCalled();
   });
 
-  it("restores the suspended PDF under fresh old-graph ownership when rebind fails", async () => {
+  it("restores fresh old-graph ownership while route state remains installed when rebind fails", async () => {
     const harness = await loadHarness(null);
     await harness.loadGraphPath(META.root);
     harness.events.length = 0;
@@ -662,14 +656,9 @@ describe("PDF graph ownership", () => {
     expect(harness.events).toEqual([
       "drain-pdf",
       "retire-pdf",
-      "suspend-pdf",
       `activate-pdf:${META.root}`,
-      "restore-pdf",
     ]);
-    expect(harness.restorePdfSessionTarget).toHaveBeenCalledWith({
-      filename: "assets/paper.pdf",
-      label: "Paper",
-    });
+    expect(harness.restorePdfSessionTarget).not.toHaveBeenCalled();
   });
 });
 

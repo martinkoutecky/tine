@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { KeyedPdfViewer } from "./PdfViewer";
 import { activatePdfOwnership, resetPdfOwnershipForTest } from "../pdfOwnership";
@@ -8,7 +9,7 @@ import {
   dismissTopTransient,
   topTransientLayer,
 } from "../transientLayers";
-import { pdfTarget, setPdfTarget } from "../ui";
+import type { PdfTarget } from "../ui";
 
 vi.mock("../nativeChrome", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../nativeChrome")>()),
@@ -87,7 +88,6 @@ describe("mobile PDF pane transient ownership", () => {
 
   afterEach(() => {
     clearTransientLayersForTest();
-    setPdfTarget(null);
     resetPdfOwnershipForTest();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -97,10 +97,10 @@ describe("mobile PDF pane transient ownership", () => {
 
   it("owns Back/Escape while the mobile pane takes over, after its inner Find layer", async () => {
     const owner = activatePdfOwnership("/test/mobile-pdf");
-    setPdfTarget({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [target, setTarget] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={pdfTarget} />, host);
+    const dispose = render(() => <KeyedPdfViewer target={target} onClose={() => setTarget(null)} />, host);
     try {
       await flush();
       expect(topTransientLayer()?.id).toMatch(/^pdf-viewer-.*-surface$/);
@@ -108,7 +108,7 @@ describe("mobile PDF pane transient ownership", () => {
       (host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
       await flush();
       expect(dismissTopTransient("back")).toBe(true);
-      expect(pdfTarget()).not.toBeNull();
+      expect(target()).not.toBeNull();
 
       (host.querySelector('button[title="More settings"]') as HTMLButtonElement).click();
       await flush();
@@ -120,11 +120,11 @@ describe("mobile PDF pane transient ownership", () => {
         "Outline",
       ]);
       expect(dismissTopTransient("back")).toBe(true);
-      expect(pdfTarget()).not.toBeNull();
+      expect(target()).not.toBeNull();
 
       expect(dismissTopTransient("escape")).toBe(true);
       await flush();
-      expect(pdfTarget()).toBeNull();
+      expect(target()).toBeNull();
       expect(topTransientLayer()).toBeUndefined();
     } finally {
       dispose();
@@ -135,10 +135,10 @@ describe("mobile PDF pane transient ownership", () => {
     const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
     vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const owner = activatePdfOwnership("/test/mobile-pdf-selection");
-    setPdfTarget({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [target] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={pdfTarget} />, host);
+    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
     try {
       await flush();
       const page = host.querySelector<HTMLElement>(".pdf-page")!;
@@ -197,10 +197,10 @@ describe("mobile PDF pane transient ownership", () => {
       scale: 1,
     });
     const owner = activatePdfOwnership("/test/mobile-pdf-highlight");
-    setPdfTarget({ filename: "mobile.pdf", label: "Mobile PDF", owner });
+    const [target] = createSignal<PdfTarget | null>({ filename: "mobile.pdf", label: "Mobile PDF", owner });
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <KeyedPdfViewer target={pdfTarget} />, host);
+    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
     try {
       await flush();
       const highlight = host.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`)!;
