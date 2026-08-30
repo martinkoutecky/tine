@@ -1,4 +1,4 @@
-import { Show, Suspense, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
+import { Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, toLoadablePage, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
@@ -56,10 +56,6 @@ import {
   rightSidebarOpen,
   toggleRightSidebar,
   openSwitcher,
-  pdfTarget,
-  pdfPaneWidth,
-  setPdfPaneWidth,
-  persistPdfPaneWidth,
   sidebarWidth,
   setSidebarWidth,
   persistSidebarWidth,
@@ -148,6 +144,7 @@ import {
   layoutHasMultiplePanes,
   layoutRoot,
   paneRouter,
+  openPdfNotes,
   layoutPaneIds,
   setSplitRatio,
   visibleLayoutNode,
@@ -166,6 +163,8 @@ import { freshnessVisible } from "./freshnessBarrier";
 import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { drainPdfWork } from "./pdfOwnership";
+import { currentPdfOwnership } from "./pdfOwnership";
+import { hlsPageName } from "./pdf";
 import { managedStorageRuntime, managedStorageRuntimeErrorMessage } from "./managedStorageRuntime";
 import { createStartupRecoveryController } from "./startupRecovery";
 import { storageTransitionRuntime } from "./storageTransitionRuntime";
@@ -631,6 +630,67 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
   );
 }
 
+function PaneRouteBody(props: {
+  paneId: string;
+  router: PaneRouter;
+  scrollerClass?: string;
+  identifyPane?: boolean;
+}): JSX.Element {
+  const route = () => props.router.route();
+  createEffect(() => {
+    if (route().kind === "pdf" || route().kind === "invalid") {
+      props.router.setScrollerElement(null);
+    }
+  });
+  return (
+    <Switch
+      fallback={
+        <PaneScroller
+          paneId={props.paneId}
+          router={props.router}
+          class={props.scrollerClass}
+          identifyPane={props.identifyPane}
+        >
+          <PaneContent router={props.router} />
+        </PaneScroller>
+      }
+    >
+      <Match when={route().kind === "pdf" ? route() : null} keyed>
+        {(pdfRoute) => (
+          <div
+            class="pdf-pane pdf-route-pane"
+            classList={{ "pdf-pane-mobile": isMobilePlatform }}
+            data-pane-id={props.identifyPane === false ? undefined : props.paneId}
+            data-pdf-view-id={pdfRoute.kind === "pdf" ? pdfRoute.viewId : undefined}
+          >
+            <Suspense fallback={<div class="pdf-loading" />}>
+              <KeyedPdfViewer
+                route={() => pdfRoute as Extract<ReturnType<PaneRouter["route"]>, { kind: "pdf" }>}
+                owner={currentPdfOwnership}
+                focused={() => focusedPaneId() === props.paneId}
+                onClose={() => { void props.router.closePdf(); }}
+                onOpenNotes={(block?: string) => {
+                  const current = props.router.route();
+                  if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
+                }}
+              />
+            </Suspense>
+          </div>
+        )}
+      </Match>
+      <Match when={route().kind === "invalid" ? route() : null} keyed>
+        {(invalidRoute) => (
+          <div class="pane-route-error" role="alert">
+            <h2>{invalidRoute.kind === "invalid" ? invalidRoute.title : "Unavailable tab"}</h2>
+            <p>{invalidRoute.kind === "invalid" ? invalidRoute.message : "This tab could not be restored."}</p>
+            <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+          </div>
+        )}
+      </Match>
+    </Switch>
+  );
+}
+
 /** A page pane's end slack is a property of its natural content geometry, not
  *  of whether a textarea happens to be mounted.  Long pages keep the same
  *  breathing room in read and edit mode; fitting dashboard panes keep none.
@@ -787,9 +847,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
             >
               <PaneTabSplitPreview paneId={props.paneId} />
               <PaneEdgeSegHighlight paneId={props.paneId} />
-              <PaneScroller paneId={props.paneId} router={router}>
-                <PaneContent router={router} />
-              </PaneScroller>
+              <PaneRouteBody paneId={props.paneId} router={router} />
             </div>
           }
         >
@@ -811,9 +869,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
               paneStrip
               focused={focusedPaneId() === props.paneId}
             />
-            <PaneScroller paneId={props.paneId} router={router} class="pane-main-content" identifyPane={false}>
-              <PaneContent router={router} />
-            </PaneScroller>
+            <PaneRouteBody paneId={props.paneId} router={router} scrollerClass="pane-main-content" identifyPane={false} />
           </div>
         </Show>
       </SurfaceContext.Provider>
@@ -1708,38 +1764,6 @@ export function App(): JSX.Element {
           <PaneEdgeHighlights />
           <PaneSelectHint />
           <PaneTree node={visibleLayoutNode()} path={[]} />
-          <Show when={pdfTarget()}>
-        <div
-          class="pdf-pane"
-          classList={{ "pdf-pane-mobile": isMobilePlatform }}
-          data-pane-id="pdf"
-          style={{
-            flex: isMobilePlatform ? "1 1 100%" : `0 0 ${pdfPaneWidth()}px`,
-            width: isMobilePlatform ? "100%" : `${pdfPaneWidth()}px`,
-          }}
-        >
-          <div
-            class="pdf-pane-resizer"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startX = e.clientX;
-              const startW = pdfPaneWidth();
-              const onMove = (ev: MouseEvent) =>
-                setPdfPaneWidth(Math.min(1200, Math.max(320, startW + (startX - ev.clientX))));
-              const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
-                persistPdfPaneWidth();
-              };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
-            }}
-          />
-          <Suspense fallback={<div class="pdf-loading" />}>
-            <KeyedPdfViewer target={pdfTarget} />
-          </Suspense>
-        </div>
-          </Show>
           </DrawerBackground>
           <RightSidebar />
         </div>

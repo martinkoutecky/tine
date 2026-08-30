@@ -103,7 +103,7 @@ describe("mobile PDF pane transient ownership", () => {
     const dispose = render(() => <KeyedPdfViewer target={pdfTarget} />, host);
     try {
       await flush();
-      expect(topTransientLayer()?.id).toBe("pdf-pane");
+      expect(topTransientLayer()?.id).toMatch(/^pdf-viewer-.*-surface$/);
 
       (host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
       await flush();

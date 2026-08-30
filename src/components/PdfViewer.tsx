@@ -6,6 +6,8 @@ import { writeClipboardText } from "../clipboard";
 import { closePdf, pushToast, isConflicted, activePane, requestBlockReferences, type PdfTarget } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
 import { openPage, openPageAtBlock } from "../router";
+import type { PdfRoute } from "../router";
+import { pdfNavigationIntent } from "../pdfNavigation";
 import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
@@ -194,22 +196,48 @@ interface PendingArea {
  * that identity: page/highlight changes within one asset stay reactive, while
  * switching assets still tears down every document-local cache and pdf.js task.
  */
-export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.Element {
+export function KeyedPdfViewer(props: {
+  target?: () => PdfTarget | null;
+  route?: () => PdfRoute;
+  owner?: () => PdfOwnership | null;
+  focused?: () => boolean;
+  onClose?: () => void;
+  onOpenNotes?: (block?: string) => void;
+}): JSX.Element {
+  const resolvedTarget = (): PdfTarget | null => {
+    const legacy = props.target?.();
+    if (legacy) return legacy;
+    const route = props.route?.();
+    const owner = props.owner?.();
+    if (!route || !owner) return null;
+    const intent = pdfNavigationIntent(route.viewId)();
+    return {
+      filename: route.filename,
+      label: route.label,
+      owner,
+      page: intent?.page ?? route.page,
+      ...(intent?.highlightId ? { highlightId: intent.highlightId } : {}),
+    };
+  };
   const resourceKey = () => {
-    const target = props.target();
-    return target ? `${pdfOwnershipKey(target.owner)}:${target.filename}` : null;
+    const target = resolvedTarget();
+    const route = props.route?.();
+    return target ? `${pdfOwnershipKey(target.owner)}:${route?.viewId ?? target.filename}` : null;
   };
   return (
     <Show when={resourceKey()} keyed>
       {(_key) => {
-        const target = props.target()!;
+        const target = resolvedTarget()!;
         return (
           <PdfViewer
             filename={target.filename}
-            label={props.target()?.label ?? target.filename}
+            label={resolvedTarget()?.label ?? target.filename}
             owner={target.owner}
-            page={props.target()?.page}
-            navigation={props.target}
+            page={resolvedTarget()?.page}
+            navigation={resolvedTarget}
+            focused={props.focused}
+            onClose={props.onClose}
+            onOpenNotes={props.onOpenNotes}
           />
         );
       }}
@@ -223,6 +251,9 @@ export function PdfViewer(props: {
   owner: PdfOwnership;
   page?: number;
   navigation?: () => PdfTarget | null;
+  focused?: () => boolean;
+  onClose?: () => void;
+  onOpenNotes?: (block?: string) => void;
 }): JSX.Element {
   const owner = props.owner;
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
@@ -230,6 +261,7 @@ export function PdfViewer(props: {
   const highlightMenuLayerId = `${instanceStem}-highlight-menu`;
   const settingsLayerId = `${instanceStem}-settings`;
   const outlineLayerId = `${instanceStem}-outline`;
+  const surfaceLayerId = `${instanceStem}-surface`;
   let viewerRootEl: HTMLDivElement | undefined;
   let scrollRef!: HTMLDivElement;
   let findTriggerEl: HTMLButtonElement | undefined;
@@ -491,7 +523,8 @@ export function PdfViewer(props: {
     closeHighlightMenu();
     if (!(await ensureExistingHighlightRef(id))) return;
     requestBlockReferences(id);
-    openPageAtBlock(hlsPageName(props.filename), "page", id);
+    if (props.onOpenNotes) props.onOpenNotes(id);
+    else openPageAtBlock(hlsPageName(props.filename), "page", id);
   };
   // Remove a highlight (and its annotation block on the hls page).
   const deleteHighlight = async (id: string) => {
@@ -1435,7 +1468,7 @@ export function PdfViewer(props: {
     }
     // +/-/0 zoom the PDF only when the PDF pane is focused; otherwise the notes
     // pane owns them for whole-interface zoom (see zoom.ts).
-    if (activePane() !== "pdf") return;
+    if (!(props.focused?.() ?? activePane() === "pdf")) return;
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoomBy(1.1);
@@ -1973,10 +2006,11 @@ export function PdfViewer(props: {
   createEffect(() => {
     if (!isMobilePlatform) return;
     const unregister = registerTransientLayer({
-      id: "pdf-pane",
+      id: surfaceLayerId,
       root: () => viewerRootEl ?? null,
       dismiss: () => {
-        closePdf();
+        if (props.onClose) props.onClose();
+        else closePdf();
         return true;
       },
     });
@@ -1986,7 +2020,7 @@ export function PdfViewer(props: {
     if (!findOpen()) return;
     const unregister = registerTransientLayer({
       id: findLayerId,
-      parentId: "pdf-pane",
+      parentId: surfaceLayerId,
       root: () => findRootEl ?? null,
       trigger: () => findTriggerEl ?? null,
       dismiss: () => {
@@ -2000,7 +2034,7 @@ export function PdfViewer(props: {
     if (!settingsOpen()) return;
     const unregister = registerTransientLayer({
       id: settingsLayerId,
-      parentId: "pdf-pane",
+      parentId: surfaceLayerId,
       root: () => settingsRootEl ?? null,
       trigger: () => settingsTriggerEl ?? null,
       dismiss: () => {
@@ -2026,7 +2060,7 @@ export function PdfViewer(props: {
     if (!outlineOpen()) return;
     const unregister = registerTransientLayer({
       id: outlineLayerId,
-      parentId: "pdf-pane",
+      parentId: surfaceLayerId,
       root: () => outlineRootEl ?? null,
       trigger: () => outlineTriggerEl ?? null,
       dismiss: () => {
@@ -2052,7 +2086,7 @@ export function PdfViewer(props: {
     if (!menu()) return;
     const unregister = registerTransientLayer({
       id: highlightMenuLayerId,
-      parentId: "pdf-pane",
+      parentId: surfaceLayerId,
       root: () => highlightMenuRootEl ?? null,
       dismiss: () => {
         closeHighlightMenu();
@@ -2151,7 +2185,7 @@ export function PdfViewer(props: {
           <button
             class="pdf-notes-btn pdf-overflow-action"
             title="Open highlights & notes page"
-            onClick={() => openPage(hlsPageName(props.filename), "page")}
+            onClick={() => props.onOpenNotes ? props.onOpenNotes() : openPage(hlsPageName(props.filename), "page")}
           >
             Notes
           </button>
@@ -2190,7 +2224,7 @@ export function PdfViewer(props: {
             class="icon-btn pdf-close-btn"
             title="Close PDF"
             aria-label="Close PDF"
-            onClick={closePdf}
+            onClick={() => props.onClose ? props.onClose() : closePdf()}
           >
             ✕
           </button>
@@ -2208,7 +2242,7 @@ export function PdfViewer(props: {
             >
               Area highlight
             </button>
-            <button type="button" onClick={() => { openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>Notes</button>
+            <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>Notes</button>
             <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>Outline</button>
           </div>
           <div class="pdf-settings-heading">Theme</div>

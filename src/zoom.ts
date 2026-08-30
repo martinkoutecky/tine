@@ -9,13 +9,11 @@
 // config.edn (that's the graph config shared with OG Logseq over Syncthing).
 //
 // Routing: Ctrl +/-/0 zoom the INTERFACE when the notes pane is focused, and the
-// PDF (its own render scale) when the PDF pane is focused. The split is driven by
-// `activePane` (ui.ts) — this handler bails when the PDF pane is active, and
-// PdfViewer.onKeyZoom bails when it isn't.
+// PDF (its own render scale) when a PDF route is focused.
 import { createSignal } from "solid-js";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "./backend";
-import { activePane } from "./ui";
+import { route } from "./router";
 import { platformKind } from "./platform";
 
 const ZOOM_KEY = "logseq-claude.zoom";
@@ -125,7 +123,7 @@ export function decideWheelZoomGesture(
 export function installInterfaceZoomKeys(): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    if (activePane() === "pdf") return; // PDF pane focused → it zooms the PDF
+    if (route().kind === "pdf") return; // focused PDF route owns its render scale
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoomIn();

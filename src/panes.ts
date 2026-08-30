@@ -620,6 +620,19 @@ export function openPdf(
   return route;
 }
 
+export function openPdfNotes(
+  sourcePaneId: string,
+  notesPage: string,
+  block?: string,
+): string | null {
+  return openRouteInOtherPane({
+    kind: "page",
+    name: notesPage,
+    pageKind: "page",
+    ...(block ? { block } : {}),
+  }, sourcePaneId);
+}
+
 export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {
   setMaximizedPaneId(null);
   setLayoutRoot({ kind: "pane", paneId: "main" });

@@ -27,7 +27,6 @@ import {
   changeShowBrackets,
   pushToast,
   openPdfExport,
-  pdfTarget,
   graphMeta,
   dismissMobileDrawer,
 } from "./ui";
@@ -1075,7 +1074,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
-        if (cmd.id === "go/find-in-page" && pdfTarget()) {
+        if (cmd.id === "go/find-in-page" && route().kind === "pdf") {
           resetSeq();
           return;
         }

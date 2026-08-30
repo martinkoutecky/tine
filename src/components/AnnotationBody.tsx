@@ -1,5 +1,5 @@
 import { type JSX } from "solid-js";
-import { openPdf } from "../ui";
+import { openPdf } from "../panes";
 import { InlineText } from "../render/inline";
 import { formatForPage } from "../store";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";

@@ -22,6 +22,28 @@ afterEach(() => {
 });
 
 describe("PaneTree", () => {
+  it("renders a PDF route as the pane body instead of the page scroller or a dedicated sibling pane", async () => {
+    resetPaneLayoutToSingle({
+      tabs: [{
+        history: [{
+          kind: "pdf", viewId: "pdf-pane-view", filename: "assets/paper.pdf", label: "Paper",
+        }],
+        pos: 0,
+        pinned: false,
+      }],
+      activeIndex: 0,
+    });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PaneTree node={layoutRoot()} path={[]} />, root);
+    await Promise.resolve();
+
+    expect(root.querySelector('[data-pdf-view-id="pdf-pane-view"]')).not.toBeNull();
+    expect(root.querySelector(".main-content")).toBeNull();
+    expect(root.querySelectorAll(".pdf-pane")).toHaveLength(1);
+    dispose();
+  });
+
   it("renders split leaves with independent pane tab bars", () => {
     restorePaneLayout(
       {

@@ -194,7 +194,7 @@ export function tabDropTargetAt(
   if (el.closest(".tab-bar")) return null;
   const pane = el.closest("[data-pane-id]") as HTMLElement | null;
   const paneId = pane?.dataset.paneId;
-  if (!pane || !paneId || paneId === "pdf") return null;
+  if (!pane || !paneId) return null;
   const side = edgeSideAt(x, y, pane.getBoundingClientRect());
   if (side) {
     return isRootEdge(pane, side)

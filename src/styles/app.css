@@ -9476,6 +9476,25 @@ html.row-reorder-dragging * {
   overflow: hidden;
 }
 
+.pdf-route-pane {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  border-left: 0;
+}
+
+.pane-route-error {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
 /* Android/iOS presents a PDF as a deliberate full-width takeover instead of
    shrinking the notes pane beside an over-wide fixed reader. */
 .pdf-pane-mobile {

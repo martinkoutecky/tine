@@ -3,7 +3,7 @@
 
 import { backend } from "./backend";
 import { managedStorageRuntime } from "./managedStorageRuntime";
-import { favorites, setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, restoreLiveSaveConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey, restorePdfSessionTarget, restorePendingPdfSessionTarget, suspendPdfForGraphTransition } from "./ui";
+import { favorites, setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, restoreLiveSaveConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey } from "./ui";
 import { loadFavoritesLayout } from "./favoritesStore";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
@@ -21,7 +21,6 @@ import { endEdit } from "./editorController";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
 import { openConfiguredHomePage } from "./homePage";
 import { safeManagedErrorDetail } from "./managedDiagnostics";
-import type { PersistedPdfTarget } from "./uiStateRegistry";
 import { beginGraphOpenTrace, markGraphOpen } from "./graphOpenTrace";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -150,7 +149,6 @@ export async function loadGraphPath(
   const prev = graphMeta()?.root || persistedGraphPath();
   const switching = !!prev && !!graphPath && prev !== graphPath;
   const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
-  let suspendedPdfTarget: PersistedPdfTarget | null = null;
   if (!(await authorizeGraphAccess(graphPath))) return { kind: "aborted" };
   // This is the last await before the backend graph binding can change.  Flush
   // delayed view state plus complete highlight/area mutations under A; only a
@@ -161,7 +159,6 @@ export async function loadGraphPath(
   }
   if (rebindsPdfOwner) {
     retirePdfOwnership();
-    suspendedPdfTarget = suspendPdfForGraphTransition();
   }
   if (continuation !== graphLoadContinuation) return { kind: "aborted" };
 
@@ -180,7 +177,6 @@ export async function loadGraphPath(
     // closed, so no callback can regain its former authority.
     if (rebindsPdfOwner && prev) {
       activatePdfOwnership(prev);
-      restorePdfSessionTarget(suspendedPdfTarget);
     }
     if (clearedManagedRuntime) void managedStorageRuntime.refresh();
     throw error;
@@ -191,7 +187,6 @@ export async function loadGraphPath(
   if (result.kind === "focused_existing") {
     if (rebindsPdfOwner && prev) {
       activatePdfOwnership(prev);
-      restorePdfSessionTarget(suspendedPdfTarget);
     }
     if (clearedManagedRuntime) void managedStorageRuntime.refresh();
     return { kind: "focused_existing" };
@@ -203,14 +198,6 @@ export async function loadGraphPath(
   }
   if (!hadGraph || rebindsPdfOwner) {
     activatePdfOwnership(meta.root);
-    if (rebindsPdfOwner && !switching) {
-      // Same-root refresh retires the old generation but retains this graph's
-      // stable session identity under the freshly minted owner.
-      restorePdfSessionTarget(suspendedPdfTarget);
-    } else if (!hadGraph) {
-      // A parsed session can arrive before native graph ownership exists.
-      restorePendingPdfSessionTarget();
-    }
   }
   resetStore();
   resetNavigationIndex();
