@@ -27,6 +27,11 @@ export interface PdfDocumentProxyLike {
 
 export interface DirectPdfPageView extends PdfRenderableView {
   div: HTMLDivElement;
+  width: number;
+  height: number;
+  scale: number;
+  canvasPixelLimit?: number;
+  textLayer?: { div?: HTMLDivElement | null } | null;
   setPdfPage(page: PdfPageProxyLike): void;
   update(options: { scale?: number; rotation?: number; drawingDelay?: number }): void;
 }
@@ -51,6 +56,9 @@ export interface PdfPageViewRendererOptions {
   priority?: () => number;
   eventBus?: EventBus;
   createPageView?: DirectPdfPageViewFactory;
+  onPageRendered?: (pageNumber: number, view: DirectPdfPageView) => void;
+  onRenderError?: (pageNumber: number, error: unknown) => void;
+  maxCanvasDimension?: number;
 }
 
 interface PageRecord {
@@ -80,6 +88,10 @@ export function tineScaleToPdfPageViewScale(displayScale: number): number {
   return displayScale / PixelsPerInch.PDF_TO_CSS_UNITS;
 }
 
+export function pdfPageViewScaleToTineScale(pageViewScale: number): number {
+  return pageViewScale * PixelsPerInch.PDF_TO_CSS_UNITS;
+}
+
 /**
  * Owns direct PDFPageView instances for one pane/view. Document/page proxies
  * remain session-owned; this object only resets view resources.
@@ -92,6 +104,11 @@ export class PdfPageViewRenderer {
   private visiblePageNumbers: number[] = [];
   private scrolledDown = true;
   private disposed = false;
+  private readonly renderWaiters = new Map<number, Set<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }>>();
+  private readonly pageRenderedListener: (event: { source?: DirectPdfPageView; error?: unknown }) => void;
 
   constructor(private readonly options: PdfPageViewRendererOptions) {
     this.eventBus = options.eventBus ?? new EventBus();
@@ -100,10 +117,21 @@ export class PdfPageViewRenderer {
       coordinator: options.coordinator,
       priority: options.priority,
       cachedViews: () => this.cachedViews(),
+      onRenderError: (view, error) => this.handleRenderError(view.id, error),
     });
     // This must happen before PDFPageView construction. Otherwise PDF.js marks
     // the page view standalone and bypasses the injected rendering queue.
     this.queue.setViewer(this);
+    this.pageRenderedListener = (event) => {
+      const view = event.source;
+      if (!view || this.pages.get(view.id)?.view !== view) return;
+      if (event.error) {
+        return;
+      }
+      this.resolveRenderWaiters(view.id);
+      this.options.onPageRendered?.(view.id, view);
+    };
+    this.eventBus.on("pagerendered", this.pageRenderedListener);
   }
 
   async mountPage(
@@ -139,6 +167,7 @@ export class PdfPageViewRenderer {
       annotationMode: AnnotationMode.DISABLE,
       maxCanvasPixels: this.options.coordinator.perPagePixelLimit,
     });
+    view.div.classList.add("pdfjs-page-view");
     // A factory is synchronous today, but retain the token check at the last
     // mutation point so a future wrapper cannot attach to a replaced slot.
     if (this.disposed || this.pages.get(pageNumber)?.token !== record.token) {
@@ -147,6 +176,15 @@ export class PdfPageViewRenderer {
       return null;
     }
     view.setPdfPage(page);
+    const maxDimension = this.options.maxCanvasDimension ?? 16_384;
+    const largestSide = Math.max(view.width, view.height);
+    const dimensionLimitedPixels = largestSide > maxDimension
+      ? view.width * view.height * (maxDimension / largestSide) ** 2
+      : this.options.coordinator.perPagePixelLimit;
+    view.canvasPixelLimit = Math.max(
+      1,
+      Math.floor(Math.min(this.options.coordinator.perPagePixelLimit, dimensionLimitedPixels)),
+    );
     record.view = view;
     if (this.visiblePageNumbers.includes(pageNumber)) this.requestVisibleRendering();
     return view;
@@ -178,9 +216,23 @@ export class PdfPageViewRenderer {
 
   setVisiblePages(pageNumbers: Iterable<number>, scrolledDown: boolean): void {
     this.assertActive();
-    this.visiblePageNumbers = [...new Set(pageNumbers)].sort((left, right) => left - right);
+    this.visiblePageNumbers = [...new Set(pageNumbers)];
     this.scrolledDown = scrolledDown;
     this.requestVisibleRendering();
+  }
+
+  renderPage(pageNumber: number, visiblePageNumbers: Iterable<number>): Promise<void> {
+    this.assertActive();
+    const view = this.pages.get(pageNumber)?.view;
+    if (!view) return Promise.reject(new Error(`PDF page ${pageNumber} is not mounted`));
+    if (view.renderingState === 3 && view.canvas) return Promise.resolve();
+    const promise = new Promise<void>((resolve, reject) => {
+      const waiters = this.renderWaiters.get(pageNumber) ?? new Set();
+      waiters.add({ resolve, reject });
+      this.renderWaiters.set(pageNumber, waiters);
+    });
+    this.setVisiblePages(new Set([pageNumber, ...visiblePageNumbers]), this.scrolledDown);
+    return promise;
   }
 
   getPageView(pageNumber: number): DirectPdfPageView | null {
@@ -212,6 +264,8 @@ export class PdfPageViewRenderer {
     this.disposed = true;
     for (const pageNumber of [...this.pages.keys()]) this.unmountPage(pageNumber);
     this.visiblePageNumbers = [];
+    this.eventBus.off("pagerendered", this.pageRenderedListener);
+    for (const pageNumber of this.renderWaiters.keys()) this.resolveRenderWaiters(pageNumber);
     this.queue.dispose();
   }
 
@@ -234,9 +288,10 @@ export class PdfPageViewRenderer {
       return view ? [{ id: pageNumber, view }] : [];
     });
     if (!entries.length) return null;
+    const byPageNumber = [...entries].sort((left, right) => left.id - right.id);
     return {
-      first: entries[0],
-      last: entries.at(-1)!,
+      first: byPageNumber[0],
+      last: byPageNumber.at(-1)!,
       views: entries,
       ids: new Set(entries.map(({ id }) => id)),
     };
@@ -244,5 +299,19 @@ export class PdfPageViewRenderer {
 
   private assertActive(): void {
     if (this.disposed) throw new Error("PDF page renderer has been disposed");
+  }
+
+  private resolveRenderWaiters(pageNumber: number): void {
+    const waiters = this.renderWaiters.get(pageNumber);
+    if (!waiters) return;
+    this.renderWaiters.delete(pageNumber);
+    for (const waiter of waiters) waiter.resolve();
+  }
+
+  private handleRenderError(pageNumber: number, error: unknown): void {
+    const waiters = this.renderWaiters.get(pageNumber);
+    this.renderWaiters.delete(pageNumber);
+    if (waiters) for (const waiter of waiters) waiter.reject(error);
+    this.options.onRenderError?.(pageNumber, error);
   }
 }

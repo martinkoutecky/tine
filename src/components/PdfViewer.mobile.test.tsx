@@ -18,18 +18,15 @@ vi.mock("../nativeChrome", async (importOriginal) => ({
 const getDocumentMock = vi.hoisted(() => vi.fn());
 
 vi.mock("pdfjs-dist", () => ({
+  AnnotationMode: { DISABLE: 0 },
   GlobalWorkerOptions: {},
+  PixelsPerInch: { PDF_TO_CSS_UNITS: 4 / 3 },
   getDocument: getDocumentMock,
-  TextLayer: class {
-    render() {
-      return Promise.resolve();
-    }
-
-    update() {
-      return Promise.resolve();
-    }
-  },
 }));
+
+vi.mock("pdfjs-dist/web/pdf_viewer.mjs", async () =>
+  import("../testPdfPageViewMock")
+);
 
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
   default: "pdf.worker.test.js",

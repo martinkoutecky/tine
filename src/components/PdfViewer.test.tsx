@@ -49,18 +49,15 @@ function KeyedPdfViewer(props: { target: () => any }) {
 }
 
 vi.mock("pdfjs-dist", () => ({
+  AnnotationMode: { DISABLE: 0 },
   GlobalWorkerOptions: {},
+  PixelsPerInch: { PDF_TO_CSS_UNITS: 4 / 3 },
   getDocument: getDocumentMock,
-  TextLayer: class {
-    render() {
-      return Promise.resolve();
-    }
-
-    update() {
-      return Promise.resolve();
-    }
-  },
 }));
+
+vi.mock("pdfjs-dist/web/pdf_viewer.mjs", async () =>
+  import("../testPdfPageViewMock")
+);
 
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
   default: "pdf.worker.test.js",
@@ -1585,7 +1582,7 @@ describe("PdfViewer released-OG themes and outline", () => {
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\][^{]*\{[^}]*filter:[^}]*\bhue-rotate\b/s);
     expect(css).toMatch(/\.pdf-page \{[^}]*background: var\(--pdf-page-bg\);/s);
     expect(css).toContain('.pdf-viewer[data-theme="dark"] {\n  --pdf-container-bg: #202124;');
-    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: invert\(1\);/s);
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page :is\(\.canvasWrapper, \.textLayer\) \{[^}]*filter: invert\(1\);/s);
     expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl \{[^}]*mix-blend-mode: screen/s);
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl-layer \{[^}]*filter:/s);
   });

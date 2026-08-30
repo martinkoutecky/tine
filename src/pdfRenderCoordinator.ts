@@ -15,6 +15,7 @@ export interface PdfRenderableView {
   draw(): Promise<unknown>;
   reset(): void;
   maxCanvasPixels?: number;
+  canvasPixelLimit?: number;
   canvas?: HTMLCanvasElement | null;
 }
 
@@ -40,6 +41,7 @@ export interface TinePdfQueueOptions {
   /** Lower values win. The focused visible pane normally returns zero. */
   priority?: () => number;
   cachedViews?: () => Iterable<PdfRenderableView>;
+  onRenderError?: (view: PdfRenderableView, error: unknown) => void;
 }
 
 interface ActiveRender {
@@ -115,9 +117,16 @@ export class PdfRenderCoordinator {
       return false;
     }
     this.pending.delete(queue);
+    const remaining = this.pixelBudget - this.retainedPixelsExcept(view);
+    if (remaining < Math.min(this.perPagePixelLimit, this.pixelBudget) / 4) {
+      this.evictColdViews(Math.max(0, this.pixelBudget - this.perPagePixelLimit), view);
+    }
     this.active = { queue, view };
     this.touch(view);
-    view.maxCanvasPixels = this.availablePixels(view);
+    view.maxCanvasPixels = Math.min(
+      this.availablePixels(view),
+      view.canvasPixelLimit ?? this.perPagePixelLimit,
+    );
     return true;
   }
 
@@ -137,19 +146,28 @@ export class PdfRenderCoordinator {
   }
 
   enforcePixelBudget(): void {
-    let retained = this.retainedPixels();
-    if (retained <= this.pixelBudget) return;
+    this.evictColdViews(this.pixelBudget);
+  }
+
+  private evictColdViews(targetPixels: number, incoming?: PdfRenderableView): void {
+    let retained = 0;
+    for (const view of this.cachedViews()) {
+      if (view !== incoming) retained += canvasPixels(view);
+    }
+    if (retained <= targetPixels) return;
 
     const candidates = [...this.queues]
       .flatMap((queue) => [...queue.cachedViews()].map((view) => ({ queue, view })))
-      .filter(({ queue, view }) => !queue.isVisible(view.id) && this.active?.view !== view)
+      .filter(({ queue, view }) =>
+        view !== incoming && !queue.isVisible(view.id) && this.active?.view !== view
+      )
       .sort((left, right) =>
         (this.touched.get(left.view) ?? 0) - (this.touched.get(right.view) ?? 0)
         || left.view.id - right.view.id
       );
     const seen = new Set<PdfRenderableView>();
     for (const { view } of candidates) {
-      if (retained <= this.pixelBudget) break;
+      if (retained <= targetPixels) break;
       if (seen.has(view)) continue;
       seen.add(view);
       const pixels = canvasPixels(view);
@@ -162,11 +180,16 @@ export class PdfRenderCoordinator {
   }
 
   private availablePixels(incoming: PdfRenderableView): number {
+    const retained = this.retainedPixelsExcept(incoming);
+    return Math.max(1, Math.min(this.perPagePixelLimit, this.pixelBudget - retained));
+  }
+
+  private retainedPixelsExcept(incoming: PdfRenderableView): number {
     let retained = 0;
     for (const view of this.cachedViews()) {
       if (view !== incoming) retained += canvasPixels(view);
     }
-    return Math.max(1, Math.min(this.perPagePixelLimit, this.pixelBudget - retained));
+    return retained;
   }
 
   private *cachedViews(): Iterable<PdfRenderableView> {
@@ -314,7 +337,8 @@ export class TinePdfRenderingQueue {
       default:
         void view.draw().catch((error: unknown) => {
           if ((error as { name?: string } | undefined)?.name !== "RenderingCancelledException") {
-            console.error("PDF page render failed", error);
+            if (this.options.onRenderError) this.options.onRenderError(view, error);
+            else console.error("PDF page render failed", error);
           }
         }).finally(() => this.options.coordinator.complete(this, view));
         break;

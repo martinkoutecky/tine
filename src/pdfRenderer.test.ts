@@ -3,7 +3,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("pdfjs-dist/web/pdf_viewer.mjs", () => ({
-  EventBus: class EventBus {},
+  EventBus: class EventBus {
+    private listeners = new Map<string, Set<(event: unknown) => void>>();
+    on(name: string, listener: (event: unknown) => void) {
+      const listeners = this.listeners.get(name) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(name, listeners);
+    }
+    off(name: string, listener: (event: unknown) => void) {
+      this.listeners.get(name)?.delete(listener);
+    }
+    dispatch(name: string, event: unknown) {
+      for (const listener of this.listeners.get(name) ?? []) listener(event);
+    }
+  },
   PDFPageView: class PDFPageView {},
 }));
 
@@ -11,6 +24,7 @@ import { PdfRenderCoordinator } from "./pdfRenderCoordinator";
 import {
   PdfPageViewRenderer,
   TINE_PDF_LOADING_OPTIONS,
+  pdfPageViewScaleToTineScale,
   tineScaleToPdfPageViewScale,
   type DirectPdfPageView,
   type DirectPdfPageViewFactory,
@@ -51,9 +65,16 @@ function fakeView(options: DirectPdfPageViewOptions): DirectPdfPageView & {
     id: options.id,
     renderingId: `page${options.id}`,
     renderingState: 0,
+    width: 612 * options.scale,
+    height: 792 * options.scale,
+    scale: options.scale,
     div,
     canvas: null,
-    draw: vi.fn(async function (this: DirectPdfPageView) { this.renderingState = 3; }),
+    draw: vi.fn(async function (this: DirectPdfPageView) {
+      this.renderingState = 3;
+      (options.eventBus as unknown as { dispatch: (name: string, event: unknown) => void })
+        .dispatch("pagerendered", { source: this });
+    }),
     reset: vi.fn(),
     destroy: vi.fn(),
     cleanup: vi.fn(),
@@ -67,6 +88,7 @@ describe("direct PDFPageView renderer adapter", () => {
 
   it("converts Tine display scale to compensate for PDF.js CSS units", () => {
     expect(tineScaleToPdfPageViewScale(2)).toBeCloseTo(1.5);
+    expect(pdfPageViewScaleToTineScale(1.5)).toBeCloseTo(2);
     expect(() => tineScaleToPdfPageViewScale(0)).toThrow(/positive finite/);
   });
 
@@ -149,6 +171,33 @@ describe("direct PDFPageView renderer adapter", () => {
     await mount;
 
     expect(optionsSeen[0].scale).toBeCloseTo(1.5);
+    renderer.dispose();
+  });
+
+  it("derives a per-view pixel ceiling that also bounds an extreme dimension", async () => {
+    const tallPage = fakePage();
+    vi.mocked(tallPage.getViewport).mockReturnValue({
+      width: 100,
+      height: 40_000,
+      rotation: 0,
+      clone: vi.fn(),
+      convertToPdfPoint: vi.fn(),
+    });
+    const renderer = new PdfPageViewRenderer({
+      document: { getPage: vi.fn(async () => tallPage) },
+      coordinator: new PdfRenderCoordinator(50_000_000, 20_000_000),
+      createPageView: (options) => {
+        const view = fakeView(options);
+        view.width = 100;
+        view.height = 40_000;
+        return view;
+      },
+      maxCanvasDimension: 10_000,
+    });
+
+    const view = await renderer.mountPage(1, document.createElement("div"), 1);
+
+    expect(view?.canvasPixelLimit).toBe(250_000);
     renderer.dispose();
   });
 
