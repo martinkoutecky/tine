@@ -2,8 +2,8 @@ icon:: 🗺️
 
 - # Where things are
   - A short map of Tine's main places, so the recipes in this Guide make sense on first read: the page in the middle, the left sidebar, the tab strip, the right sidebar, and Settings and Help. Each place links to the workflow that teaches it — nothing here is a rulebook.
-- ## The middle: one page at a time
-  - The center shows the **page** you're on. Tine opens on the **journal feed** — one continuous, editable list of days — and the **Journals** item in the left sidebar always takes you back to it.
+- ## The middle: one route per pane
+  - Each pane shows the **page or PDF** its active tab points to. Tine opens on the **journal feed** — one continuous, editable list of days — and the **Journals** item in the left sidebar always takes you back to it.
   - Everything you write is a **block** (one bullet). Blocks nest under other blocks to form the outline, and any block can carry a task, a date, a link, or its own id for references from elsewhere.
   - Press **Ctrl+K** at any time to jump to a page by name or to text inside any block.
 - ## The left sidebar: your graph's contents
@@ -12,15 +12,15 @@ icon:: 🗺️
   - Favorites can be arranged without changing what Logseq sees: choose **+ New group**, rename the plain-text label, then drag favorites or groups left/right to lift or nest them to any depth. Deleting a group keeps everything it held one level up. Tine stores that richer arrangement on an ordinary editable page while keeping `config.edn :favorites` as Logseq's flat list; [[Workflows/Find and revisit]] walks the safe path.
   - The **+ New page** button at the bottom opens the same Ctrl+K box; a name that matches nothing becomes a page you can create. Press **t l** to fold the whole sidebar away, and **t l** again to bring it back.
 - ## The tab strip: what's open
-  - Every open page keeps a tab along the top, browser-style: click to switch, **Ctrl+W** to close. Middle-click anything that opens a page — a link, a search result, a bullet's dot — to park it in a background tab without leaving this one. Tabs come back after a restart.
-  - Tabs are a desktop feature — the mobile app hides the strip so one page keeps the screen.
+  - Every open page or PDF keeps a tab along the top, browser-style: click to switch, **Ctrl+W** to close. Middle-click anything that opens a page — a link, a search result, a bullet's dot — to park it in a background tab without leaving this one. PDF links open in a companion pane by default, and their tabs can be dragged between panes like page tabs. Tabs come back after a restart.
+  - Tabs are a desktop feature — the mobile app hides the strip so one page or PDF route keeps the screen, with Back returning through its history.
 - ## The right sidebar: parked context
   - Anything you want **beside** the current page rather than instead of it — another page, or zoomed into one bullet — goes to the right sidebar: **Shift-click** a link or a bullet's dot. Items there are live editors, not previews. Press **t r** to show or hide the whole sidebar.
 - ## Settings and Help
   - The gear at the top right (or press **t s**) opens **Settings**: appearance, editor behavior, graph files and backups, and the remappable shortcut list.
   - The **?** button at the bottom right (or press **Shift+?**) opens Help: this Guide, the shortcut reference, and links out to release notes and bug reports.
 - ## On a phone
-  - Below a 640 px window width, either sidebar opens as an overlay on top of the page instead of shrinking it — tap the shaded outside edge, press Esc, or use Android Back to dismiss. Split panes and the tab strip are desktop-only.
+  - Below a 640 px window width, either sidebar opens as an overlay on top of the current route instead of shrinking it — tap the shaded outside edge, press Esc, or use Android Back to dismiss. Split panes and the tab strip are desktop-only.
   - [[Reference/Platforms and mobile]] separates narrow-window behavior from native-app behavior and maps each platform's shipping surface.
 - ## Where next
   - New here? [[Welcome to Tine]] walks the first hands-on minutes. To put these places to work — parking, pinning, splitting, and saving the layout — continue with [[Workflows/Keep context visible]]; [[Features/Tips & shortcuts]] is the compact shortcut map.

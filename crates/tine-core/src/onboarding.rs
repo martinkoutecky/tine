@@ -1075,6 +1075,10 @@ mod tests {
         assert!(page.markdown.contains("**Notes**"));
         assert!(page.markdown.contains("**Copy ref**"));
         assert!(page.markdown.contains("hls__"));
+        assert!(page.markdown.contains("normal tab in a companion pane"));
+        assert!(page.markdown.contains("drag the PDF tab"));
+        assert!(page.markdown.contains("structural companion pane"));
+        assert!(page.markdown.contains("**Back** returns to the source page"));
         assert!(page.markdown.contains("What you should see"));
         assert!(page.markdown.contains("[[Features/PDF annotation]]"));
 
@@ -1166,6 +1170,8 @@ mod tests {
         assert!(page.markdown.contains("**Shift-click**"));
         assert!(page.markdown.contains("**Ctrl+Shift+T**"));
         assert!(page.markdown.contains("+ New workspace"));
+        assert!(page.markdown.contains("PDF readers use the same tabs and panes"));
+        assert!(page.markdown.contains("**Notes** opens the PDF's notes page"));
         assert!(page.markdown.contains("What you should see"));
         assert!(page.markdown.contains("[[Start/Where things are]]"));
         assert!(page.markdown.contains("[[Features/Tips & shortcuts]]"));
@@ -1266,6 +1272,8 @@ mod tests {
         assert!(page.markdown.contains("Question 2"));
         assert!(page.markdown.contains("640 px"));
         assert!(page.markdown.contains("All files access"));
+        assert!(page.markdown.contains("PDFs use that same one-pane history"));
+        assert!(page.markdown.contains("Hardware Back to return first to the PDF"));
         assert!(page.markdown.contains("experimental 32-bit Windows"));
         assert!(page.markdown.contains("no public iOS app"));
         assert!(page.markdown.contains("[[Workflows/Keep context visible]]"));

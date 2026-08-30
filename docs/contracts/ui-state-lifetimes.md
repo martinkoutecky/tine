@@ -18,25 +18,29 @@ transition from saving state under the wrong graph.
   navigation intents; reminted or cleared at the owning runtime boundary and
   never serialized.
 
-## Registered graph-session fields
+## Route-owned graph-session state
 
-The typed registry in `src/uiStateRegistry.ts` is the code authority for the
-fields migrated to this contract. `GraphSessionUiStateSchema` and
-`graphSessionUiStateRegistry` form a compile-time completeness pair, and
-`PersistedSession` explicitly extends the schema so its migrated fields cannot
-silently drift from that authority. The registry is incremental rather than a
-claim that every legacy session field has already been migrated.
+Pane snapshots and their route histories are the durable authority for visible
+content. `src/session.ts` parses and serializes each route explicitly instead of
+spreading runtime objects into storage. A PDF is therefore an ordinary `pdf`
+route in a tab, not a second top-level pane state:
 
-| Field | Owner | Lifetime | Reset trigger | Persisted representation |
+| State | Owner | Lifetime | Reset trigger | Persisted representation |
 |---|---|---|---|---|
-| `pdfTarget` | `ui.pdfTarget` | `graph-session` | graph switch, workspace switch, or explicit close | stable `filename` and `label` only |
+| PDF tab | pane router and session serializer | `graph-session` | tab close, graph switch, or workspace switch | `kind`, stable `viewId`, `filename`, `label`, optional page and scale |
 
-PDF `owner`, ownership generation, page, highlight intent, viewer/native
-handles, and sidecar view state are `transient-runtime`. On restore, Tine uses
+The former top-level `pdfTarget` is accepted only as legacy input. Desktop
+restore migrates it into a companion pane in the layout tree; mobile restore
+appends it to the active pane history. New sessions never write `pdfTarget` or
+a global PDF-pane width.
+
+PDF graph ownership and its generation, pending page/highlight navigation
+intents, viewer/native handles, render tasks, and sidecar view state are
+`transient-runtime`. They are scoped to the route's `viewId`, reminted or
+cancelled at their owning boundary, and never serialized. On restore, Tine uses
 the stable resource identity and mints ownership from the current graph bind.
-Restoration and transition suspension never schedule a session write. User open
-and explicit close do.
 
-The registry is deliberately incremental. Unmigrated UI signals retain their
-existing tests and storage contracts; adding them here requires an explicit row
+The typed registry in `src/uiStateRegistry.ts` remains the authority for
+standalone graph-session signals. It is intentionally empty now that PDF state
+lives in pane routes. Adding another standalone signal requires an explicit row
 and typed registry decision in the same change.

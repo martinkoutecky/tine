@@ -1,24 +1,24 @@
 icon:: 📖
 
 - # Research a document
-  - The short path: drop a PDF onto a page, read it in Tine's side pane, and highlight as you go. Each highlight becomes an ordinary bullet you can write under, quote anywhere, and follow back to the exact spot — so a paper turns into linked, searchable notes without leaving Tine. The precise highlight and storage rules live in [[Features/PDF annotation]].
+  - The short path: drop a PDF onto a page, read it in a companion pane, and highlight as you go. Each highlight becomes an ordinary bullet you can write under, quote anywhere, and follow back to the exact spot — so a paper turns into linked, searchable notes without leaving Tine. The precise highlight and storage rules live in [[Features/PDF annotation]].
 - ## Bring the document in
   - 1. Drag a PDF from your file manager onto any page and drop it on a block — or paste one you copied, or run the `/Upload an asset` slash command. Tine stores the file in your graph's `assets/` folder and inserts a link where you dropped it.
-  - 2. Click the inserted link. The document opens in the reader pane beside your notes; drag the pane's edge to resize it, and Tine remembers the width on this device.
-  - What you should see: the PDF in its own pane, with a toolbar holding a page-number box, a find button (**Ctrl+F** searches inside the document), zoom controls, an **Area highlight** toggle, a **Notes** button, **Outline**, and a ⋯ menu.
+  - 2. Click the inserted link. On desktop the document opens as a normal tab in a companion pane beside your notes. Drag the shared seam to resize it, or drag the PDF tab to another pane, seam, or pane edge to move it or make a split. On a phone it opens in the current one-pane history, and **Back** returns to the source page.
+  - What you should see: the PDF in an ordinary pane, with a toolbar holding a page-number box, a find button (**Ctrl+F** searches inside the document), zoom controls, an **Area highlight** toggle, a **Notes** button, **Outline**, a ⋯ menu, and the close control at the far edge.
 - ## Read and highlight
   - 1. Select a passage with the mouse and pick a color in the menu that appears — that's a highlight. Click an existing highlight to reopen its menu: recolor it, or remove it with ✕.
   - 2. To clip a figure or table instead, toggle **Area highlight** in the toolbar (or hold **Shift** on Linux/Windows, **Command** on macOS) and drag a rectangle over the region, then choose its color. Dismiss the color menu and nothing is written.
   - 3. Long document? **Outline** navigates its table of contents, the page-number box jumps straight to a page, and the ⋯ menu offers a persistent **Light**, **Warm**, or **Dark** reader theme — remembered on this device, not written into your graph.
   - What you should see: colored marks on the document — and, behind each mark, a bullet on a notes page named after the PDF.
 - ## Turn highlights into notes
-  - 1. Press **Notes** in the reader toolbar. Tine opens the document's highlights page — listed under the document's plain name (its page name starts with `hls__`, like Logseq) — where every highlight is a bullet marked with a colored dot.
+  - 1. Press **Notes** in the reader toolbar. On desktop Tine opens the document's highlights page in the structural companion pane next to the PDF; move its tab if another pane is more useful. On a phone it opens in the same history, so **Back** returns to the PDF. The page is listed under the document's plain name (its page name starts with `hls__`, like Logseq), and every highlight is a bullet marked with a colored dot.
   - 2. Write under a highlight bullet: a summary, a question, your own structure. These are ordinary bullets on an ordinary graph page — edit, nest, tag, and search them like any others.
   - 3. Click the colored dot on a highlight bullet (or the highlight itself back in the PDF) to jump between the two: each note goes straight back to its spot in the document.
   - What you should see: your notes and their source passages stay connected in both directions, and recoloring a highlight updates its dot on the notes page to match.
 - ## Quote a passage in your ordinary notes
   - 1. Click the highlight and choose **Copy ref** (on desktop), then paste into any bullet in your own notes. The pasted `((…))` renders as link-styled text quoting the highlighted passage, and clicking the quote opens the document at that page.
-  - 2. Keep source and words visible while you write: the PDF sits in its resizable side pane next to your notes page, and **Shift-click** on any bullet's dot parks that note in the right sidebar. On a phone the reader instead fills the width of the screen and the sidebars open as overlays — the two-up layout is a wider-window pattern.
+  - 2. Keep source and words visible while you write: the PDF is a normal tab, so it can sit in any resizable pane or quadrant next to your notes page; **Shift-click** on any bullet's dot parks that note in the right sidebar. On a phone the reader instead fills the width of the screen and the sidebars open as overlays — the two-up layout is a wider-window pattern.
   - 3. Choose **Linked references** on the highlight's menu (also on desktop) to list every note that quotes it — the trail from one passage to everywhere you used it.
   - What you should see: your note cites the source live, not as a copied excerpt — touch nothing, and the quote still opens the PDF at the right page tomorrow.
 - ## Share the result

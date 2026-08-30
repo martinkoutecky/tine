@@ -420,8 +420,14 @@ within a column; merged cells are still v2+.
 
 ## PDF annotation
 
-- Open PDFs in a resizable, zoomable pane (instant zoom, HiDPI, per-page
-  virtualization); in-PDF `Ctrl+F` find with a page jump box.
+- Open PDFs as ordinary persisted pane routes and draggable tabs. Desktop opens
+  a companion pane while preserving the source page; the PDF can then move into
+  any pane, split, or quadrant. Mobile opens it in the one-pane history so Back
+  returns to the source. The reader is resizable and zoomable (instant zoom,
+  HiDPI, per-page virtualization), with in-PDF `Ctrl+F` find and a page jump box.
+- **Notes** opens the `hls__` page in the PDF's structural companion pane on
+  desktop, or in the same history on mobile. Saved workspaces restore PDF tabs,
+  histories, page and scale without a separate global PDF pane or width limit.
 - Select text → colored **highlights**, or hold **Shift** while dragging on Linux
   and Windows (**Command** on macOS) and then choose a color to clip an **area
   (image) highlight**. The drag must exceed 10 pixels in both dimensions, and

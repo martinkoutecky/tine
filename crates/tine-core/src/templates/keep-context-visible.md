@@ -18,8 +18,9 @@ icon:: 📌
   - 1. Desktop only: **Ctrl+click** (Cmd on Mac) any `[[link]]`, tag, or block reference to open it in another pane — with a single pane, Tine splits right for it. In **Ctrl+K**, **Alt+Enter** does the same for the highlighted result. The direct bindings: `Ctrl+Alt+\` splits right with a copy of the current tab, `Ctrl+Alt+Shift+\` splits down.
   - 2. Each pane keeps its own tab strip and its own back/forward history — **Alt+Left** and **Alt+Right** step through it, even mid-edit.
   - 3. Drag the seam between panes to resize them. Drag a tab onto another pane's strip to move it there, onto a pane's body to append it, or onto a seam or pane edge to split that spot and drop the tab into the new pane — **Esc** cancels a drag mid-way.
-  - 4. From the keyboard, **Ctrl+1** … **Ctrl+9** focus panes in reading order, **Ctrl+Alt+←↑↓→** moves focus to the nearest pane in that direction, and **Ctrl+Alt+Shift+←↑↓→** moves the active tab there instead. Moving the last page tab out of a pane closes the emptied pane; a journals feed keeps its last tab.
-  - 5. Prefer staged control? **Esc** climbs from editing to block selection into pane-select mode — a hint pill at the bottom tells you when it's on. Arrows step between panes, seams, and window edges; **Enter** on a seam makes a mirror split; typing opens the new pane with the search box pre-filled. Another **Esc** backs out.
+  - 4. PDF readers use the same tabs and panes. Opening a PDF link makes a companion pane while preserving the source page; you can then drag the PDF tab into any pane or quadrant. **Notes** opens the PDF's notes page in its structural companion pane, and that notes tab can be moved in exactly the same way.
+  - 5. From the keyboard, **Ctrl+1** … **Ctrl+9** focus panes in reading order, **Ctrl+Alt+←↑↓→** moves focus to the nearest pane in that direction, and **Ctrl+Alt+Shift+←↑↓→** moves the active tab there instead. Moving the last tab out of a pane closes the emptied pane; a journals feed keeps its last tab.
+  - 6. Prefer staged control? **Esc** climbs from editing to block selection into pane-select mode — a hint pill at the bottom tells you when it's on. Arrows step between panes, seams, and window edges; **Enter** on a seam makes a mirror split; typing opens the new pane with the search box pre-filled. Another **Esc** backs out.
   - What you should see: two note panes that scroll, navigate, and keep tabs independently — source and draft side by side, never fighting over one cursor.
 - ## Save the arrangement as a workspace
   - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**; name it once.
@@ -28,6 +29,6 @@ icon:: 📌
 - ## Clear everything else away
   - **t f** (focus mode) hides the sidebars and toolbar so the screen is just text — on desktop it also takes the window full screen. Hover the top edge to reach the toolbar again; layered **Esc** steps back out.
   - **t b** fades every block except the one you're editing. Settings → **Appearance** → **Dim in focus mode** can dim for you while focus mode is on — without rewriting your manual **t b** choice.
-  - On a phone the layout stays one page: the sidebars open as overlays (dismiss with the shaded edge, Esc, or Android Back), and tabs and splits are desktop-only.
+  - On a phone the layout stays one page: the sidebars open as overlays (dismiss with the shaded edge, Esc, or Android Back), and tabs and splits are desktop-only. A PDF and its Notes page use that same history, so Back returns to the previous surface.
 - ## Where next
   - [[Features/Tips & shortcuts]] has the compact shortcut map, [[Start/Where things are]] is the plain map of the places used here, and [[Workflows/Find and revisit]] covers getting back to anything you parked.
