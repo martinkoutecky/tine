@@ -378,7 +378,13 @@ export function parsePersistedSession(raw: string, environment: SessionMigration
           [...snapshots].find(([, snap]) =>
             sameRoute(currentRoute(snap.tabs[snap.activeIndex]), { kind: "journals" })
           )?.[0] ?? [...snapshots.keys()][0];
-        const parsed = {
+        const parsed: {
+          layout: LayoutNode;
+          snapshots: Map<string, PaneSnapshot>;
+          focusedPaneId: string;
+          sidebar: SidebarSessionState;
+          recent: RecentItem[];
+        } = {
           layout: { kind: "pane", paneId: "main" },
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
@@ -391,7 +397,13 @@ export function parsePersistedSession(raw: string, environment: SessionMigration
     }
     const legacy = parseSnapshotValue(s, seenViewIds);
     if (!legacy) return null;
-    const parsed = {
+    const parsed: {
+      layout: LayoutNode;
+      snapshots: Map<string, PaneSnapshot>;
+      focusedPaneId: string;
+      sidebar: SidebarSessionState;
+      recent: RecentItem[];
+    } = {
       layout: { kind: "pane", paneId: "main" },
       snapshots: new Map([["main", legacy]]),
       focusedPaneId: "main",

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyParsedSession, buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
+import { buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
 import { makePdfRoute, type PaneSnapshot } from "./router";
 import {
@@ -45,7 +45,7 @@ describe("persisted split session", () => {
     });
 
     const persisted = buildPersistedSession();
-    expect((persisted as Record<string, unknown>).pdfTarget).toBeUndefined();
+    expect(Object.hasOwn(persisted, "pdfTarget")).toBe(false);
     expect(persisted.tabs[0].history[0]).toEqual(pdf);
     const parsed = parsePersistedSession(JSON.stringify(persisted))!;
     expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual(pdf);

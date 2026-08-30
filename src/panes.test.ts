@@ -5,6 +5,7 @@ import {
   closePane,
   focusPane,
   openRouteInOtherPane,
+  openPdf,
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
@@ -682,5 +683,45 @@ describe("openRouteInOtherPane", () => {
     openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main");
 
     expect(paneRouter(other).tabs().length).toBe(before + 1);
+  });
+});
+
+describe("PDF pane routes", () => {
+  it("opens beside the source in one exact PDF tab without cloned source history", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+
+    const opened = openPdf("assets/alpha.pdf", "Alpha", 3, undefined, { sourcePaneId: "main" });
+
+    expect(opened).toMatchObject({ kind: "pdf", filename: "assets/alpha.pdf", page: 3 });
+    expect(layoutPaneIds()).toHaveLength(2);
+    const pdfPane = layoutPaneIds().find((id) => id !== "main")!;
+    expect(paneRouter(pdfPane).snapshot().tabs).toEqual([{
+      history: [opened], pos: 0, pinned: false,
+    }]);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+  });
+
+  it("reuses one companion pane for different PDFs and focuses an existing document tab", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const alpha = openPdf("assets/alpha.pdf", "Alpha", 1, undefined, { sourcePaneId: "main" })!;
+    const pdfPane = focusedPaneId();
+    focusPane("main");
+    openPdf("assets/beta.pdf", "Beta", 2, undefined, { sourcePaneId: "main" });
+    expect(layoutPaneIds()).toHaveLength(2);
+    expect(paneRouter(pdfPane).tabs()).toHaveLength(2);
+
+    focusPane("main");
+    const reused = openPdf("assets/alpha.pdf", "Alpha", 9, "hl-9", { sourcePaneId: "main" });
+    expect(reused?.viewId).toBe(alpha.viewId);
+    expect(layoutPaneIds()).toHaveLength(2);
+    expect(paneRouter(pdfPane).route()).toMatchObject({ kind: "pdf", viewId: alpha.viewId, page: 9 });
+  });
+
+  it("does not expose deliberate duplicate views before shared annotation ownership lands", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, { sourcePaneId: "main" });
+    expect(openPdf("assets/alpha.pdf", "Alpha", undefined, undefined, {
+      sourcePaneId: "main", anotherView: true,
+    })).toBeNull();
   });
 });

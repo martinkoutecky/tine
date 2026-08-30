@@ -7,13 +7,16 @@ import {
   installNavigationInterceptor,
   historyRouteContextAdapter,
   mainPaneRouter,
+  makePdfRoute,
   tabRoute,
   type AdoptedTab,
   type PaneSnapshot,
   type PaneRouter,
+  type PdfRoute,
   type Route,
   type PageTarget,
 } from "./router";
+import { publishPdfNavigationIntent } from "./pdfNavigation";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import {
@@ -540,6 +543,81 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
   }
   setFocusedPaneId(sourcePaneId);
   return target;
+}
+
+function pdfTab(filename: string): { paneId: string; tabId: string; route: PdfRoute } | null {
+  for (const paneId of layoutPaneIds()) {
+    for (const tab of paneRouter(paneId).tabs()) {
+      const route = tabRoute(tab);
+      if (route.kind === "pdf" && route.filename === filename) return { paneId, tabId: tab.id, route };
+    }
+  }
+  return null;
+}
+
+export interface OpenPdfOptions {
+  sourcePaneId?: string;
+  inPlace?: boolean;
+  background?: boolean;
+  anotherView?: boolean;
+}
+
+/** Open a graph PDF as an ordinary route. Desktop preserves the source in a
+ * reusable companion pane; mobile uses the current route history so hardware
+ * Back returns to the link. Deliberate duplicates are a separate operation and
+ * remain disabled until shared annotation mutation ownership lands. */
+export function openPdf(
+  filename: string,
+  label: string,
+  page?: number,
+  highlightId?: string,
+  options: OpenPdfOptions = {},
+): PdfRoute | null {
+  const sourcePaneId = options.sourcePaneId && layoutPaneIds().includes(options.sourcePaneId)
+    ? options.sourcePaneId
+    : focusedPaneId();
+  const existing = options.anotherView ? null : pdfTab(filename);
+  if (existing) {
+    const router = paneRouter(existing.paneId);
+    router.setActiveTab(existing.tabId);
+    if (page !== undefined) router.updateActivePdfViewState({ page });
+    publishPdfNavigationIntent(existing.route.viewId, { page, highlightId });
+    if (!options.background) focusPane(existing.paneId);
+    return existing.route;
+  }
+
+  // Do not expose editable duplicate views until the shared annotation session
+  // and committed-merge backend reply exist.
+  if (options.anotherView) return null;
+
+  const route = makePdfRoute(filename, label, { page });
+  publishPdfNavigationIntent(route.viewId, { page, highlightId });
+  if (isMobilePlatform || options.inPlace) {
+    paneRouter(sourcePaneId).openPdf(route);
+    return route;
+  }
+
+  const companion = nearestPane(layoutRoot(), sourcePaneId)
+    ?? layoutPaneIds().find((paneId) => paneId !== sourcePaneId)
+    ?? null;
+  if (companion) {
+    paneRouter(companion).openInNewTab(route, !options.background);
+    if (!options.background) focusPane(companion);
+    else setFocusedPaneId(sourcePaneId);
+    return route;
+  }
+
+  const created = splitPane(sourcePaneId, "row", {
+    focusNew: !options.background,
+    snapshot: {
+      tabs: [{ history: [route], pos: 0, pinned: false }],
+      activeIndex: 0,
+      scrolls: [null],
+    },
+  });
+  if (!created) return null;
+  if (options.background) setFocusedPaneId(sourcePaneId);
+  return route;
 }
 
 export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {
