@@ -12,6 +12,11 @@ const viewerTypes = readFileSync(
   "node_modules/pdfjs-dist/types/web/pdf_viewer.component.d.ts",
   "utf8",
 );
+const pageViewTypes = readFileSync(
+  "node_modules/pdfjs-dist/types/web/pdf_page_view.d.ts",
+  "utf8",
+);
+const apiSource = readFileSync("node_modules/pdfjs-dist/build/pdf.mjs", "utf8");
 
 describe("pinned PDF.js viewer contract", () => {
   it("pins the API and web viewer to the exact characterized version", () => {
@@ -40,5 +45,18 @@ describe("pinned PDF.js viewer contract", () => {
     expect(viewerSource).toContain("The `container` must be absolutely positioned.");
     expect(viewerSource).toContain('id = "hiddenCopyElement"');
     expect(viewerSource).toContain("getCachedPageViews()");
+  });
+
+  it("pins the destructive page-view lifecycle that Tine must not call", () => {
+    expect(pageViewTypes).toMatch(/\bdestroy\(\): void/);
+    expect(viewerSource).toMatch(/destroy\(\) \{\s*this\.reset\(\);\s*this\.pdfPage\?\.cleanup\(\);/);
+  });
+
+  it("pins the private count-buffer and lazy document-loading seams", () => {
+    expect(viewerSource).toContain("#buffer = null");
+    expect(viewerSource).toMatch(/getCachedPageViews\(\) \{\s*return new Set\(this\.#buffer\);/);
+    expect(viewerSource).toContain("pdfDocument.loadingParams.disableAutoFetch");
+    expect(apiSource).toContain("const disableAutoFetch = src.disableAutoFetch === true");
+    expect(apiSource).toMatch(/loadingParams: \{\s*disableAutoFetch,/);
   });
 });
