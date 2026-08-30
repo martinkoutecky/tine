@@ -69,6 +69,8 @@ export function pageTargetMatchesLoaded(
 export type Route =
   | { kind: "journals" }
   | QueryRoute
+  | PdfRoute
+  | InvalidRoute
   | (PageTarget & {
       kind: "page";
       block?: string;
@@ -77,6 +79,25 @@ export type Route =
        *  (#21). Absent for normal pages, which resolve by name. */
       path?: string;
     });
+
+export interface PdfRoute {
+  kind: "pdf";
+  /** Stable identity of this reading view, independent of the document. */
+  viewId: string;
+  /** Graph-assets-relative backend identity. */
+  filename: string;
+  label: string;
+  page?: number;
+  scale?: number;
+}
+
+/** A malformed persisted route remains a closable tab instead of collapsing
+ * its containing pane (and potentially changing the whole split layout). */
+export interface InvalidRoute {
+  kind: "invalid";
+  title: string;
+  message: string;
+}
 
 export type QueryPresentation = "search" | "list" | "table" | "board";
 
@@ -136,6 +157,9 @@ export interface PaneRouter {
   ): void;
   openPageTarget(target: PageTarget, opts?: { inPlace?: boolean }): void;
   openJournals(opts?: { inPlace?: boolean }): void;
+  openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
+  updateActivePdfViewState(state: { page?: number; scale?: number }): void;
+  closePdf(): Promise<boolean>;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
   updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation">>): void;
   replaceActiveRoute(route: Route): void;
@@ -185,6 +209,8 @@ export function tabRoute(t: Tab): Route {
 
 export function routeTitle(r: Route): string {
   if (r.kind === "journals") return "Journals";
+  if (r.kind === "pdf") return r.label.trim() || r.filename;
+  if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
     const source = r.source.trim().replace(/\s+/g, " ");
     return source ? `Search: ${source.slice(0, 36)}${source.length > 36 ? "…" : ""}` : "Search";
@@ -199,6 +225,8 @@ export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
+  if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
+  if (a.kind === "invalid") return a === b;
   const bb = b as typeof a;
   return (
     a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
@@ -209,6 +237,7 @@ const CLOSED_CAP = 10;
 const MOBILE_HISTORY_STATE = { tineRouter: true };
 const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
 let queryRouteCounter = 0;
+let pdfViewCounter = 0;
 
 export function makeQueryRoute(
   source: string,
@@ -223,6 +252,34 @@ export function makeQueryRoute(
     source,
     presentation,
   };
+}
+
+export function mintPdfViewId(used: ReadonlySet<string> = new Set()): string {
+  let candidate = "";
+  do {
+    pdfViewCounter += 1;
+    candidate = `pdf-${Date.now().toString(36)}-${pdfViewCounter.toString(36)}`;
+  } while (used.has(candidate));
+  return candidate;
+}
+
+export function makePdfRoute(
+  filename: string,
+  label: string,
+  state: { page?: number; scale?: number; viewId?: string } = {},
+): PdfRoute {
+  return {
+    kind: "pdf",
+    viewId: state.viewId ?? mintPdfViewId(),
+    filename,
+    label,
+    ...(state.page !== undefined ? { page: state.page } : {}),
+    ...(state.scale !== undefined ? { scale: state.scale } : {}),
+  };
+}
+
+function duplicateRoute(route: Route): Route {
+  return route.kind === "pdf" ? { ...route, viewId: mintPdfViewId() } : { ...route };
 }
 
 function isGuideRouteName(name: string): boolean {
@@ -305,6 +362,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   let mobileHistoryBackPending = false;
   let handlingMobilePopState = false;
   let mobileHistoryListenerAttached = false;
+  let pdfViewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function setScrollerElement(el: HTMLElement | null) {
     scrollerElement = el;
   }
@@ -501,6 +559,50 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openJournals(opts: { inPlace?: boolean } = {}) {
     navigate({ kind: "journals" }, { sticky: !opts.inPlace });
+  }
+
+  function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
+    navigate(pdfRoute, { sticky: !opts.inPlace });
+  }
+
+  function updateActivePdfViewState(state: { page?: number; scale?: number }) {
+    const current = route();
+    if (current.kind !== "pdf") return;
+    const page = state.page !== undefined && Number.isSafeInteger(state.page) && state.page > 0
+      ? state.page
+      : current.page;
+    const scale = state.scale !== undefined && Number.isFinite(state.scale) && state.scale > 0
+      ? state.scale
+      : current.scale;
+    if (page === current.page && scale === current.scale) return;
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = {
+        ...current,
+        ...(page !== undefined ? { page } : {}),
+        ...(scale !== undefined ? { scale } : {}),
+      };
+      return { ...tab, history };
+    }));
+    clearTimeout(pdfViewStateSaveTimer);
+    pdfViewStateSaveTimer = setTimeout(persist, 750);
+  }
+
+  async function closePdf(): Promise<boolean> {
+    if (route().kind !== "pdf") return false;
+    const list = tabs();
+    if (list.length > 1) {
+      await closeTab(activeId());
+      return true;
+    }
+    if (activeTab().pos > 0) {
+      goBack();
+      return true;
+    }
+    if (lastTabCloseHandler(paneId)) return true;
+    replaceActiveRoute({ kind: "journals" });
+    return true;
   }
 
   function replaceActiveRoute(nextRoute: Route) {
@@ -938,7 +1040,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     rememberScroll();
     const active = activeTab();
     return {
-      tabs: [{ history: active.history.map((r) => ({ ...r })), pos: active.pos, pinned: active.pinned }],
+      tabs: [{ history: active.history.map(duplicateRoute), pos: active.pos, pinned: active.pinned }],
       activeIndex: 0,
       scrolls: [scrollByRoute.get(active.history[active.pos]) ?? null],
     };
@@ -971,6 +1073,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openPage,
     openPageTarget,
     openJournals,
+    openPdf,
+    updateActivePdfViewState,
+    closePdf,
     openQueryInNewTab,
     updateActiveQuery,
     replaceActiveRoute,

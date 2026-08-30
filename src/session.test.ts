@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyParsedSession, buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
-import type { PaneSnapshot } from "./router";
+import { makePdfRoute, type PaneSnapshot } from "./router";
 import {
   applySidebarSession,
   favoritesSectionExpanded,
@@ -15,12 +15,7 @@ import {
   setRightSidebar,
   setFavoritesSectionExpanded,
   setRecentSectionExpanded,
-  pdfTarget,
-  restorePendingPdfSessionTarget,
-  restorePdfSessionTarget,
-  setPdfTarget,
 } from "./ui";
-import { activatePdfOwnership, resetPdfOwnershipForTest } from "./pdfOwnership";
 
 const journals = (): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
@@ -35,47 +30,91 @@ const page = (name: string): PaneSnapshot => ({
 });
 
 beforeEach(() => {
-  resetPdfOwnershipForTest();
   resetPaneLayoutToSingle(journals());
   applySidebarSession({});
-  restorePdfSessionTarget(null);
 });
 
 describe("persisted split session", () => {
-  it("persists only the stable PDF resource identity and restores it with fresh ownership", () => {
-    setPdfTarget({
-      filename: "assets/paper.pdf",
-      label: "Paper",
-      owner: { graphRoot: "/old", generation: 41 },
-      page: 7,
-      highlightId: "highlight-7",
+  it("round-trips only explicit PDF route fields and preserves view state", () => {
+    const pdf = makePdfRoute("assets/paper.pdf", "Paper", {
+      viewId: "pdf-view-stable", page: 7, scale: 1.75,
+    });
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ ...pdf, injected: { unsafe: true } } as typeof pdf], pos: 0, pinned: false }],
+      activeIndex: 0,
     });
 
     const persisted = buildPersistedSession();
-    expect(persisted.pdfTarget).toEqual({ filename: "assets/paper.pdf", label: "Paper" });
-    expect(JSON.stringify(persisted.pdfTarget)).not.toContain("generation");
-    expect(JSON.stringify(persisted.pdfTarget)).not.toContain("page");
-    expect(JSON.stringify(persisted.pdfTarget)).not.toContain("highlight");
-
+    expect((persisted as Record<string, unknown>).pdfTarget).toBeUndefined();
+    expect(persisted.tabs[0].history[0]).toEqual(pdf);
     const parsed = parsePersistedSession(JSON.stringify(persisted))!;
-    setPdfTarget(null);
-    applyParsedSession(parsed);
-    expect(pdfTarget()).toBeNull(); // no live graph ownership: stable identity remains pending for bind
-
-    const owner = activatePdfOwnership("/fresh-graph");
-    expect(restorePendingPdfSessionTarget()).toBe(true);
-    expect(pdfTarget()).toEqual({ filename: "assets/paper.pdf", label: "Paper", owner });
+    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual(pdf);
   });
 
-  it("fails a malformed PDF target closed without discarding the rest of the session", () => {
+  it("migrates a legacy dedicated PDF beside the intact desktop layout", () => {
     const raw = JSON.stringify({
       ...buildPersistedSession(),
-      pdfTarget: { filename: "assets/paper.pdf", label: 42, owner: { generation: 9 } },
+      pdfTarget: { filename: "assets/paper.pdf", label: "Paper" },
     });
 
-    const parsed = parsePersistedSession(raw)!;
-    expect(parsed.pdfTarget).toBeNull();
+    const parsed = parsePersistedSession(raw, {
+      mobile: false, legacyPdfWidth: 560, viewportWidth: 1_400,
+    })!;
+    expect(parsed.layout).toMatchObject({
+      kind: "split", dir: "row", ratio: 0.6,
+      children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pdf-migrated" }],
+    });
     expect(parsed.snapshots.get("main")?.tabs).toHaveLength(1);
+    expect(parsed.snapshots.get("pdf-migrated")?.tabs[0].history[0]).toMatchObject({
+      kind: "pdf", filename: "assets/paper.pdf", label: "Paper",
+    });
+  });
+
+  it("migrates a legacy dedicated PDF into mobile history so Back returns to its source", () => {
+    const raw = JSON.stringify({
+      ...buildPersistedSession(),
+      pdfTarget: { filename: "assets/paper.pdf", label: "Paper" },
+    });
+    const parsed = parsePersistedSession(raw, { mobile: true })!;
+    const tab = parsed.snapshots.get("main")!.tabs[0];
+    expect(tab.history.map((route) => route.kind)).toEqual(["journals", "pdf"]);
+    expect(tab.pos).toBe(1);
+  });
+
+  it("keeps a malformed PDF route as a closable error tab without discarding its pane", () => {
+    const raw = JSON.stringify({
+      tabs: [{
+        history: [{ kind: "pdf", viewId: "bad", filename: 42, label: "Broken" }],
+        pos: 0,
+        pinned: false,
+      }],
+      activeIndex: 0,
+    });
+    const parsed = parsePersistedSession(raw)!;
+    expect(parsed.layout).toEqual({ kind: "pane", paneId: "main" });
+    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toMatchObject({
+      kind: "invalid", title: "Unavailable PDF",
+    });
+  });
+
+  it("remints duplicate PDF view ids across the complete pane tree", () => {
+    const route = { kind: "pdf", viewId: "duplicate", filename: "assets/paper.pdf", label: "Paper" };
+    const snapshot = (paneId: string) => ({
+      kind: "pane", paneId,
+      tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0,
+    });
+    const parsed = parsePersistedSession(JSON.stringify({
+      layout: {
+        kind: "split", dir: "row", ratio: 0.5,
+        children: [snapshot("main"), snapshot("pane-2")],
+      },
+      tabs: journals().tabs,
+      activeIndex: 0,
+    }), { mobile: false })!;
+    const first = parsed.snapshots.get("main")!.tabs[0].history[0];
+    const second = parsed.snapshots.get("pane-2")!.tabs[0].history[0];
+    expect(first.kind === "pdf" ? first.viewId : null).toBe("duplicate");
+    expect(second.kind === "pdf" ? second.viewId : null).not.toBe("duplicate");
   });
 
   it("copies only bounded route fields while retaining exact page ownership", () => {

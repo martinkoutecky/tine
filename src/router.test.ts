@@ -21,6 +21,9 @@ import {
   openQueryInNewTab,
   updateActiveQuery,
   replaceActiveRoute,
+  createPaneRouter,
+  installLastTabCloseHandler,
+  makePdfRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { doc, setDoc } from "./store";
@@ -29,6 +32,7 @@ import { doc, setDoc } from "./store";
 // tab before each test. confirm() is stubbed true so closing pinned tabs (which
 // now prompts) doesn't hang the teardown.
 beforeEach(() => {
+  installLastTabCloseHandler(() => false);
   vi.stubGlobal("confirm", () => true);
   setNavReuseTabs(true);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
@@ -38,6 +42,51 @@ beforeEach(() => {
   while (tabs().length > 1) void closeTab(tabs()[tabs().length - 1].id);
   setActiveTab(tabs()[0].id);
   openJournals(); // reset its route in place
+});
+
+describe("first-class PDF routes", () => {
+  it("uses view identity for route equality and remints duplicated snapshots", () => {
+    const router = createPaneRouter("pdf-route-identity");
+    const routeA = makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-a" });
+    const sameDocument = makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-b" });
+    expect(sameRoute(routeA, { ...routeA, page: 9, scale: 2 })).toBe(true);
+    expect(sameRoute(routeA, sameDocument)).toBe(false);
+
+    router.openPdf(routeA, { inPlace: true });
+    const duplicate = router.duplicateActiveSnapshot().tabs[0].history.at(-1)!;
+    expect(duplicate).toMatchObject({ kind: "pdf", filename: "assets/paper.pdf" });
+    expect(duplicate.kind === "pdf" ? duplicate.viewId : null).not.toBe(routeA.viewId);
+  });
+
+  it("updates page and scale in place without appending history", () => {
+    const router = createPaneRouter("pdf-route-state");
+    router.openPdf(makePdfRoute("assets/paper.pdf", "Paper", { viewId: "pdf-view-state" }), { inPlace: true });
+    router.updateActivePdfViewState({ page: 7, scale: 1.75 });
+    expect(router.route()).toMatchObject({ kind: "pdf", page: 7, scale: 1.75 });
+    expect(router.activeTab().history).toHaveLength(2);
+  });
+
+  it("closes through history, pane collapse, and Journals fallback in that order", async () => {
+    const withHistory = createPaneRouter("pdf-close-history");
+    withHistory.openPage("Source", "page", { inPlace: true });
+    withHistory.openPdf(makePdfRoute("assets/a.pdf", "A"));
+    await expect(withHistory.closePdf()).resolves.toBe(true);
+    expect(withHistory.route()).toMatchObject({ kind: "page", name: "Source" });
+
+    const disposable = createPaneRouter("pdf-close-disposable");
+    disposable.replaceActiveRoute(makePdfRoute("assets/b.pdf", "B"));
+    const collapsed = vi.fn(() => true);
+    installLastTabCloseHandler((paneId) => paneId === disposable.paneId && collapsed());
+    await disposable.closePdf();
+    expect(collapsed).toHaveBeenCalledOnce();
+    expect(disposable.route().kind).toBe("pdf");
+
+    installLastTabCloseHandler(() => false);
+    const root = createPaneRouter("pdf-close-root");
+    root.replaceActiveRoute(makePdfRoute("assets/c.pdf", "C"));
+    await root.closePdf();
+    expect(root.route()).toEqual({ kind: "journals" });
+  });
 });
 
 const pinActive = () => togglePin(activeId());

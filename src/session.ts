@@ -2,8 +2,10 @@ import { backend } from "./backend";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
+  mintPdfViewId,
   sameRoute,
   type PaneSnapshot,
+  type PdfRoute,
   type Route,
   type SerializedTab,
 } from "./router";
@@ -22,8 +24,6 @@ import {
   type SidebarSessionState,
   sanitizeRecent,
   setRecentPages,
-  capturePdfSessionTarget,
-  restorePdfSessionTarget,
 } from "./ui";
 import {
   feedPaneId,
@@ -63,7 +63,11 @@ export interface PersistedSession extends PaneSnapshot, Partial<GraphSessionUiSt
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-function validRoute(r: unknown): Route | null {
+function invalidPersistedPdf(message: string): Route {
+  return { kind: "invalid", title: "Unavailable PDF", message };
+}
+
+function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return { kind: "journals" };
@@ -74,6 +78,31 @@ function validRoute(r: unknown): Route | null {
       && (o.presentation === "search" || o.presentation === "list"
         || o.presentation === "table" || o.presentation === "board"))) return null;
     return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation };
+  }
+  if (o.kind === "invalid") {
+    if (typeof o.title !== "string" || !o.title || o.title.length > 256
+      || typeof o.message !== "string" || !o.message || o.message.length > 4096) return null;
+    return { kind: "invalid", title: o.title, message: o.message };
+  }
+  if (o.kind === "pdf") {
+    if (!(typeof o.viewId === "string" && o.viewId.length > 0 && o.viewId.length <= 128
+      && typeof o.filename === "string" && o.filename.length > 0 && o.filename.length <= 4096
+      && typeof o.label === "string" && o.label.length <= 4096
+      && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5_000))
+      && (o.scale === undefined || (typeof o.scale === "number" && Number.isFinite(o.scale)
+        && o.scale >= 0.05 && o.scale <= 20)))) {
+      return invalidPersistedPdf("This saved PDF tab is malformed and was not opened.");
+    }
+    const viewId = seenViewIds.has(o.viewId) ? mintPdfViewId(seenViewIds) : o.viewId;
+    seenViewIds.add(viewId);
+    return {
+      kind: "pdf",
+      viewId,
+      filename: o.filename,
+      label: o.label,
+      ...(o.page !== undefined ? { page: Number(o.page) } : {}),
+      ...(o.scale !== undefined ? { scale: o.scale } : {}),
+    };
   }
   if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;
@@ -86,13 +115,13 @@ function validRoute(r: unknown): Route | null {
   };
 }
 
-function parseSnapshotValue(raw: unknown): PaneSnapshot | null {
+function parseSnapshotValue(raw: unknown, seenViewIds: Set<string>): PaneSnapshot | null {
   const s = raw as Partial<PaneSnapshot> | null | undefined;
   if (!s || !Array.isArray(s.tabs)) return null;
   const tabs: SerializedTab[] = [];
   for (const t of s.tabs as Partial<SerializedTab>[]) {
     if (!t || !Array.isArray(t.history) || !t.history.length) continue;
-    const history = t.history.map(validRoute).filter((route): route is Route => !!route);
+    const history = t.history.map((route) => validRoute(route, seenViewIds)).filter((route): route is Route => !!route);
     if (!history.length) continue;
     tabs.push({
       history,
@@ -114,13 +143,13 @@ function currentRoute(t: SerializedTab): Route {
   return t.history[Math.min(Math.max(0, t.pos | 0), t.history.length - 1)];
 }
 
-function previousPageRoute(t: SerializedTab): Route | null {
+function previousNonJournalsRoute(t: SerializedTab): Route | null {
   for (let i = t.pos - 1; i >= 0; i--) {
     const r = t.history[i];
-    if (r?.kind === "page") return r;
+    if (r?.kind !== "journals") return r;
   }
   for (const r of t.history) {
-    if (r?.kind === "page") return r;
+    if (r?.kind !== "journals") return r;
   }
   return null;
 }
@@ -134,7 +163,7 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
     let next = tab;
     if (active.kind === "journals") {
       if (journalsSeen.value) {
-        const repl = previousPageRoute(tab);
+        const repl = previousNonJournalsRoute(tab);
         if (!repl) return;
         const history = [...tab.history];
         history[tab.pos] = repl;
@@ -154,14 +183,15 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
 function parseLayoutNode(
   raw: unknown,
   snapshots: Map<string, PaneSnapshot>,
-  journalsSeen: { value: boolean }
+  journalsSeen: { value: boolean },
+  seenViewIds: Set<string>,
 ): LayoutNode | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   if (o.kind === "pane") {
     const paneId = typeof o.paneId === "string" && o.paneId ? o.paneId : null;
     if (!paneId) return null;
-    const snap = parseSnapshotValue(o);
+    const snap = parseSnapshotValue(o, seenViewIds);
     if (!snap) return null;
     const sanitized = sanitizeJournals(snap, journalsSeen);
     if (!sanitized) return null;
@@ -171,8 +201,8 @@ function parseLayoutNode(
   if (o.kind === "split") {
     if (o.dir !== "row" && o.dir !== "col") return null;
     const children = Array.isArray(o.children) ? o.children : [];
-    const a = parseLayoutNode(children[0], snapshots, journalsSeen);
-    const b = parseLayoutNode(children[1], snapshots, journalsSeen);
+    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds);
+    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds);
     if (a && b) {
       const ratio = typeof o.ratio === "number" ? Math.min(0.85, Math.max(0.15, o.ratio)) : 0.5;
       return { kind: "split", dir: o.dir, ratio, children: [a, b] };
@@ -182,9 +212,46 @@ function parseLayoutNode(
   return null;
 }
 
+function serializeRoute(route: Route): Route {
+  if (route.kind === "journals") return { kind: "journals" };
+  if (route.kind === "query") {
+    return {
+      kind: "query", id: route.id, sourceKind: route.sourceKind,
+      source: route.source, presentation: route.presentation,
+    };
+  }
+  if (route.kind === "pdf") {
+    return {
+      kind: "pdf", viewId: route.viewId, filename: route.filename, label: route.label,
+      ...(route.page !== undefined ? { page: route.page } : {}),
+      ...(route.scale !== undefined ? { scale: route.scale } : {}),
+    };
+  }
+  if (route.kind === "invalid") {
+    return { kind: "invalid", title: route.title, message: route.message };
+  }
+  return {
+    kind: "page", name: route.name, pageKind: route.pageKind,
+    ...(route.path ? { path: route.path } : {}),
+    ...(route.block ? { block: route.block } : {}),
+  };
+}
+
+function serializeSnapshot(snapshot: PaneSnapshot): PaneSnapshot {
+  return {
+    tabs: snapshot.tabs.map((tab) => ({
+      history: tab.history.map(serializeRoute),
+      pos: tab.pos,
+      pinned: tab.pinned,
+    })),
+    activeIndex: snapshot.activeIndex,
+    ...(snapshot.scrolls ? { scrolls: [...snapshot.scrolls] } : {}),
+  };
+}
+
 function serializeLayout(node: LayoutNode): PersistedLayoutNode {
   if (node.kind === "pane") {
-    return { kind: "pane", paneId: node.paneId, ...paneRouter(node.paneId).snapshot() };
+    return { kind: "pane", paneId: node.paneId, ...serializeSnapshot(paneRouter(node.paneId).snapshot()) };
   }
   return {
     kind: "split",
@@ -197,7 +264,7 @@ function serializeLayout(node: LayoutNode): PersistedLayoutNode {
 export function buildPersistedSession(): PersistedSession {
   const ids = layoutPaneIds();
   const mirrorId = feedPaneId() ?? (ids.includes(focusedPaneId()) ? focusedPaneId() : ids[0]) ?? "main";
-  const mirror = paneRouter(mirrorId).snapshot();
+  const mirror = serializeSnapshot(paneRouter(mirrorId).snapshot());
   return {
     ...mirror,
     leftSidebar: sidebarOpen(),
@@ -208,17 +275,72 @@ export function buildPersistedSession(): PersistedSession {
     layout: serializeLayout(layoutRoot()),
     focusedPaneId: focusedPaneId(),
     recentPages: recentPages(),
-    pdfTarget: capturePdfSessionTarget(),
   };
 }
 
-export function parsePersistedSession(raw: string): {
+export interface SessionMigrationEnvironment {
+  mobile?: boolean;
+  legacyPdfWidth?: number;
+  viewportWidth?: number;
+}
+
+function containsEquivalentPdf(snapshots: Map<string, PaneSnapshot>, filename: string): boolean {
+  for (const snapshot of snapshots.values()) {
+    for (const tab of snapshot.tabs) {
+      if (tab.history.some((route) => route.kind === "pdf" && route.filename === filename)) return true;
+    }
+  }
+  return false;
+}
+
+function migratedPdfRoute(target: PersistedPdfTarget, seenViewIds: Set<string>): PdfRoute {
+  const viewId = mintPdfViewId(seenViewIds);
+  seenViewIds.add(viewId);
+  return { kind: "pdf", viewId, filename: target.filename, label: target.label };
+}
+
+function migrateLegacyPdf(
+  parsed: { layout: LayoutNode; snapshots: Map<string, PaneSnapshot>; focusedPaneId: string },
+  target: PersistedPdfTarget | null,
+  environment: SessionMigrationEnvironment,
+  seenViewIds: Set<string>,
+): void {
+  if (!target || containsEquivalentPdf(parsed.snapshots, target.filename)) return;
+  const route = migratedPdfRoute(target, seenViewIds);
+  if (environment.mobile ?? isMobilePlatform) {
+    const snapshot = parsed.snapshots.get(parsed.focusedPaneId) ?? parsed.snapshots.values().next().value;
+    if (!snapshot) return;
+    const tab = snapshot.tabs[snapshot.activeIndex];
+    tab.history = [...tab.history.slice(0, tab.pos + 1), route];
+    tab.pos = tab.history.length - 1;
+    return;
+  }
+  const used = new Set(parsed.snapshots.keys());
+  let paneId = "pdf-migrated";
+  let suffix = 1;
+  while (used.has(paneId)) paneId = `pdf-migrated-${suffix++}`;
+  parsed.snapshots.set(paneId, {
+    tabs: [{ history: [route], pos: 0, pinned: false }],
+    activeIndex: 0,
+    scrolls: [null],
+  });
+  const viewport = environment.viewportWidth;
+  const width = environment.legacyPdfWidth;
+  const ratio = typeof viewport === "number" && viewport > 0 && typeof width === "number" && width > 0
+    ? Math.min(0.85, Math.max(0.15, (viewport - width) / viewport))
+    : 0.65;
+  parsed.layout = {
+    kind: "split", dir: "row", ratio,
+    children: [parsed.layout, { kind: "pane", paneId }],
+  };
+}
+
+export function parsePersistedSession(raw: string, environment: SessionMigrationEnvironment = {}): {
   layout: LayoutNode;
   snapshots: Map<string, PaneSnapshot>;
   focusedPaneId: string;
   sidebar: SidebarSessionState;
   recent: RecentItem[];
-  pdfTarget: PersistedPdfTarget | null;
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
@@ -231,48 +353,53 @@ export function parsePersistedSession(raw: string): {
     };
     const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
     const restoredPdfTarget = parsePersistedPdfTarget(s.pdfTarget);
-    if (s.layout && !isMobilePlatform) {
+    const mobile = environment.mobile ?? isMobilePlatform;
+    const seenViewIds = new Set<string>();
+    if (s.layout && !mobile) {
       const snapshots = new Map<string, PaneSnapshot>();
-      const layout = parseLayoutNode(s.layout, snapshots, { value: false });
+      const layout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (layout && snapshots.size) {
-        return {
+        const parsed = {
           layout,
           snapshots,
           focusedPaneId: typeof s.focusedPaneId === "string" ? s.focusedPaneId : "main",
           sidebar,
           recent,
-          pdfTarget: restoredPdfTarget,
         };
+        migrateLegacyPdf(parsed, restoredPdfTarget, environment, seenViewIds);
+        return parsed;
       }
     }
-    if (s.layout && isMobilePlatform) {
+    if (s.layout && mobile) {
       const snapshots = new Map<string, PaneSnapshot>();
-      const parsed = parseLayoutNode(s.layout, snapshots, { value: false });
-      if (parsed && snapshots.size) {
+      const parsedLayout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
+      if (parsedLayout && snapshots.size) {
         const feedId =
           [...snapshots].find(([, snap]) =>
             sameRoute(currentRoute(snap.tabs[snap.activeIndex]), { kind: "journals" })
           )?.[0] ?? [...snapshots.keys()][0];
-        return {
+        const parsed = {
           layout: { kind: "pane", paneId: "main" },
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
           sidebar,
           recent,
-          pdfTarget: restoredPdfTarget,
         };
+        migrateLegacyPdf(parsed, restoredPdfTarget, { ...environment, mobile: true }, seenViewIds);
+        return parsed;
       }
     }
-    const legacy = parseSnapshotValue(s);
+    const legacy = parseSnapshotValue(s, seenViewIds);
     if (!legacy) return null;
-    return {
+    const parsed = {
       layout: { kind: "pane", paneId: "main" },
       snapshots: new Map([["main", legacy]]),
       focusedPaneId: "main",
       sidebar,
       recent,
-      pdfTarget: restoredPdfTarget,
     };
+    migrateLegacyPdf(parsed, restoredPdfTarget, environment, seenViewIds);
+    return parsed;
   } catch {
     return null;
   }
@@ -293,7 +420,6 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
   } else {
     restorePaneLayout(parsed.layout, parsed.snapshots, parsed.focusedPaneId);
   }
-  restorePdfSessionTarget(parsed.pdfTarget);
 }
 
 export async function flushSession(): Promise<void> {
